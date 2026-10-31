@@ -902,7 +902,9 @@ extern "C" {
     ///
     /// # Safety
     /// `config` and `properties` may be null. `memory` must point to `size`
-    /// readable bytes. `exception` must point to a cleared [`Exception`].
+    /// readable bytes holding a data set that loads, because memory that cannot
+    /// load can crash this call or stop it returning. `exception` must point to
+    /// a cleared [`Exception`].
     pub fn fiftyoneDegreesIpiSizeManagerFromMemory(
         config: *mut ConfigIpi,
         properties: *mut PropertiesRequired,

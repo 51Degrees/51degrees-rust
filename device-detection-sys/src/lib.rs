@@ -346,8 +346,10 @@ extern "C" {
     /// from a memory buffer, or zero if not constant.
     ///
     /// # Safety
-    /// `memory` must point to `size` readable bytes. `config` and `properties`
-    /// may be null. `exception` must be valid.
+    /// `memory` must point to `size` readable bytes holding a data set that
+    /// loads, because memory that cannot load can crash this call or stop it
+    /// returning. `config` and `properties` may be null. `exception` must be
+    /// valid.
     pub fn fiftyoneDegreesHashSizeManagerFromMemory(
         config: *mut ConfigHash,
         properties: *mut PropertiesRequired,
