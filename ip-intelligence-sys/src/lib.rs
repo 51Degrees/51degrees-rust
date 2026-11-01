@@ -898,13 +898,13 @@ extern "C" {
     ) -> StatusCode;
 
     /// Returns the constant memory size needed to initialize from memory, or
-    /// zero when the configuration allows runtime allocation.
+    /// zero when the configuration allows runtime allocation. If the memory
+    /// doesn't hold a data set that loads, `exception` holds the status and the
+    /// number returned means nothing.
     ///
     /// # Safety
     /// `config` and `properties` may be null. `memory` must point to `size`
-    /// readable bytes holding a data set that loads, because memory that cannot
-    /// load can crash this call or stop it returning. `exception` must point to
-    /// a cleared [`Exception`].
+    /// readable bytes. `exception` must point to a cleared [`Exception`].
     pub fn fiftyoneDegreesIpiSizeManagerFromMemory(
         config: *mut ConfigIpi,
         properties: *mut PropertiesRequired,

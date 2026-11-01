@@ -343,13 +343,13 @@ extern "C" {
     ) -> StatusCode;
 
     /// Returns the constant number of bytes needed to initialize a Hash manager
-    /// from a memory buffer, or zero if not constant.
+    /// from a memory buffer, or zero if not constant. If the memory doesn't
+    /// hold a data set that loads, `exception` holds the status and the number
+    /// returned means nothing.
     ///
     /// # Safety
-    /// `memory` must point to `size` readable bytes holding a data set that
-    /// loads, because memory that cannot load can crash this call or stop it
-    /// returning. `config` and `properties` may be null. `exception` must be
-    /// valid.
+    /// `memory` must point to `size` readable bytes. `config` and `properties`
+    /// may be null. `exception` must be valid.
     pub fn fiftyoneDegreesHashSizeManagerFromMemory(
         config: *mut ConfigHash,
         properties: *mut PropertiesRequired,
