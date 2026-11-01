@@ -198,7 +198,7 @@ fn main() -> Result<()> {
         println!(
             "No resource key available. Set the 51DEGREES_RESOURCE_KEY environment \
              variable or pass a key as the first argument. Create a key for free at \
-             https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-getting-started.rs&utm_term=resource-key-required."
+             https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-getting-started.rs&utm_term=resource-key-required."
         );
         return Ok(());
     };
@@ -261,7 +261,7 @@ mod tests {
  * results keeps improving.
  *
  * To run this example, create a Resource Key for free at
- * https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-getting-started.rs&utm_term=ipi-cloud-getting-started and supply it via the 51DEGREES_RESOURCE_KEY
+ * https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-getting-started.rs&utm_term=ipi-cloud-getting-started and supply it via the 51DEGREES_RESOURCE_KEY
  * environment variable or as the first command-line argument. By default the
  * pipeline talks to the public cloud endpoint; set the 51DEGREES_CLOUD_ENDPOINT
  * environment variable to point at a self-hosted Cloud service instead.

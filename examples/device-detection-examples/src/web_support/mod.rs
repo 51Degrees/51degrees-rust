@@ -116,9 +116,9 @@ pub fn response_header_table(headers: &[(String, String)]) -> String {
 pub const CLOUD_CONTACT_BANNER: &str = "\
 <div class=\"c-eg-message\">\
   <p class=\"c-eg-message__text\">Want to try on-premise? \
-  <a href=\"https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=on-premise\">Contact us</a> to discuss requirements. \
-  <a href=\"https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=on-premise\">See pricing</a>.</p>\
-  <a class=\"b-btn c-eg-message__cta\" href=\"https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=on-premise\">Contact us</a>\
+  <a href=\"https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=on-premise\">Contact us</a> to discuss requirements. \
+  <a href=\"https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=on-premise\">See pricing</a>.</p>\
+  <a class=\"b-btn c-eg-message__cta\" href=\"https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=on-premise\">Contact us</a>\
 </div>";
 
 /// The contact-us banner shown on the on-premise Lite page, listing the benefits
@@ -128,9 +128,9 @@ pub const ONPREM_CONTACT_BANNER: &str = "\
   <p class=\"c-eg-message__text\">This example uses the free Lite data file, which detects only \
   a limited set of properties. A paid data file adds thousands of device models, hardware vendor \
   and model, finer platform and browser detail and Apple-model resolution. \
-  <a href=\"https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=data-file-benefits\">See pricing</a> or \
-  <a href=\"https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=data-file-benefits\">contact us</a>.</p>\
-  <a class=\"b-btn c-eg-message__cta\" href=\"https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=data-file-benefits\">See pricing</a>\
+  <a href=\"https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=data-file-benefits\">See pricing</a> or \
+  <a href=\"https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=data-file-benefits\">contact us</a>.</p>\
+  <a class=\"b-btn c-eg-message__cta\" href=\"https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=data-file-benefits\">See pricing</a>\
 </div>";
 
 /// The alert shown when the response carries no `Accept-CH` header, which usually

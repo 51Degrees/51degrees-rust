@@ -157,7 +157,7 @@ fn main() -> Result<()> {
         eprintln!(
             "No resource key available. Set the 51DEGREES_RESOURCE_KEY environment \
              variable (or pass the key as the first argument). Create a free key at \
-             https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-configurator.rs&utm_term=resource-key-required."
+             https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-configurator.rs&utm_term=resource-key-required."
         );
         return Ok(());
     };
@@ -216,7 +216,7 @@ mod tests {
  * @example dd-cloud-configurator.rs
  *
  * The device-detection cloud configurator console example. It illustrates how a
- * resource key created in the 51Degrees configurator (https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-configurator.rs&utm_term=dd-cloud-configurator) is
+ * resource key created in the 51Degrees configurator (https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-configurator.rs&utm_term=dd-cloud-configurator) is
  * turned into a configured, ready-to-run cloud pipeline.
  *
  * The configurator lets you choose exactly which properties a key returns and,
