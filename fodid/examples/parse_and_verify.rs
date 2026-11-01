@@ -31,11 +31,11 @@ use fodid::{Creator, Crypto, FodId, SignatureStatus};
 const FIND_OUT_MORE: &[(&str, &str)] = &[
     (
         "What a 51Did is and how it is used",
-        "https://51degrees.com/documentation/_identifiers_51_did.html?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=fodid-examples-parse_and_verify.rs&utm_term=find-out-more-51did",
+        "https://51degrees.com/documentation/_identifiers_51_did.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=fodid-examples-parse_and_verify.rs&utm_term=find-out-more-51did",
     ),
     (
         "The 51Did inspector, a visual breakdown of an identifier",
-        "https://51degrees.com/developers/51did-inspector?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=fodid-examples-parse_and_verify.rs&utm_term=find-out-more-51did-inspector",
+        "https://51degrees.com/developers/51did-inspector?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=fodid-examples-parse_and_verify.rs&utm_term=find-out-more-51did-inspector",
     ),
     (
         "The layout of a 51Did",
@@ -45,7 +45,7 @@ const FIND_OUT_MORE: &[(&str, &str)] = &[
         "The OWID envelope a 51Did travels in",
         "https://github.com/SWAN-community/owid/blob/main/explainer.md",
     ),
-    ("51Degrees for Rust", "https://github.com/51Degrees/rust"),
+    ("51Degrees for Rust", "https://github.com/51Degrees/51degrees-rust"),
     ("OWID for Rust", "https://github.com/SWAN-community/owid-rust"),
 ];
 

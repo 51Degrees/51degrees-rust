@@ -123,7 +123,7 @@ fn ipi_data_file() -> Option<PathBuf> {
 mod device_detection {
     use super::dd_lite_data_file;
     use fiftyone_native::{dd, PerformanceProfile};
-    use fiftyone_pipeline_core::Evidence;
+    use fiftyone_pipeline_core::{Error, Evidence};
     use std::sync::Arc;
 
     /// A representative desktop Chrome on Windows user agent.
@@ -228,6 +228,171 @@ mod device_detection {
             .value_as_string("IsMobile", ",")
             .expect("reading IsMobile should not error");
         assert_eq!(value.as_deref(), Some("True"));
+    }
+
+    /// The longest header the default configuration uses, in bytes.
+    const HEADER_LIMIT: usize = 500;
+
+    /// The mobile User-Agent padded to `length` bytes. The padding does not
+    /// change the match, so only the length can change the result.
+    fn padded_user_agent(length: usize) -> String {
+        format!("{MOBILE_USER_AGENT:x<length$}")
+    }
+
+    /// A header over the limit is ignored with no error, through the direct
+    /// User-Agent call and through evidence alike.
+    #[test]
+    fn a_header_over_the_limit_is_ignored() {
+        let Some(data_file) = dd_lite_data_file() else {
+            eprintln!("no Lite Hash data file found; skipping header limit test");
+            return;
+        };
+        let manager = open_loaded(&data_file);
+
+        for (length, matched) in [(HEADER_LIMIT, true), (HEADER_LIMIT + 1, false)] {
+            let user_agent = padded_user_agent(length);
+
+            let mut direct = manager.create_results().expect("results should allocate");
+            direct
+                .process_user_agent(&user_agent)
+                .expect("a long user agent should not raise an exception");
+
+            let mut through_evidence = manager.create_results().expect("results should allocate");
+            let evidence = Evidence::builder()
+                .add("header.user-agent", user_agent.as_str())
+                .build();
+            through_evidence
+                .process_evidence(&evidence)
+                .expect("a long header should not raise an exception");
+
+            for results in [&direct, &through_evidence] {
+                let has_values = results
+                    .has_values("IsMobile")
+                    .expect("has_values should not error");
+                assert_eq!(has_values, matched, "a header of {length} bytes");
+            }
+        }
+    }
+
+    /// Detection moves on from a header over the limit to the next evidence,
+    /// so the header is used here even though a query value takes precedence.
+    #[test]
+    fn detection_moves_on_from_a_header_over_the_limit() {
+        let Some(data_file) = dd_lite_data_file() else {
+            eprintln!("no Lite Hash data file found; skipping next header test");
+            return;
+        };
+        let manager = open_loaded(&data_file);
+        let mut results = manager.create_results().expect("results should allocate");
+
+        let over_limit = padded_user_agent(HEADER_LIMIT + 1);
+        let evidence = Evidence::builder()
+            .add("query.user-agent", over_limit.as_str())
+            .add("header.user-agent", DESKTOP_USER_AGENT)
+            .build();
+        results
+            .process_evidence(&evidence)
+            .expect("processing evidence should not raise an exception");
+
+        let value = results
+            .value_as_string("IsMobile", ",")
+            .expect("reading IsMobile should not error");
+        assert_eq!(value.as_deref(), Some("False"));
+    }
+
+    /// The limit is on headers. A high-entropy values blob is not a header, so
+    /// a longer blob is still turned into client hint headers.
+    #[test]
+    fn a_high_entropy_values_blob_over_the_limit_is_used() {
+        let Some(data_file) = dd_lite_data_file() else {
+            eprintln!("no Lite Hash data file found; skipping long blob test");
+            return;
+        };
+        let manager = open_loaded(&data_file);
+        // Base64 of the high-entropy values of Chrome on macOS, with brands
+        // and a full version list.
+        let ghev = "eyJhcmNoaXRlY3R1cmUiOiJhcm0iLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9t\
+            ZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMx\
+            In0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lv\
+            bkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4\
+            LjE0MCJ9LHsiYnJhbmQiOiJDaHJvbWl1bSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9\
+            LHsiYnJhbmQiOiJOb3RfQSBCcmFuZCIsInZlcnNpb24iOiIyNC4wLjAuMCJ9XSwibW9iaWxl\
+            IjpmYWxzZSwibW9kZWwiOiIiLCJwbGF0Zm9ybSI6Im1hY09TIiwicGxhdGZvcm1WZXJzaW9u\
+            IjoiMTUuMS4xIn0=";
+        assert!(ghev.len() > HEADER_LIMIT);
+
+        for key in [
+            "query.51d_gethighentropyvalues",
+            "cookie.51d_gethighentropyvalues",
+        ] {
+            let mut results = manager.create_results().expect("results should allocate");
+            let evidence = Evidence::builder().add(key, ghev).build();
+            results
+                .process_evidence(&evidence)
+                .expect("processing evidence should not raise an exception");
+
+            let value = results
+                .value_as_string("PlatformName", ",")
+                .expect("reading PlatformName should not error");
+            assert_eq!(value.as_deref(), Some("macOS"), "{key}");
+        }
+    }
+
+    /// Naming `DeviceId` resolves every component, whatever else is named, so
+    /// the id is the one a data set with every property gives. Without it, a
+    /// component with no named property reads as zero.
+    #[test]
+    fn naming_device_id_resolves_every_component() {
+        let Some(data_file) = dd_lite_data_file() else {
+            eprintln!("no Lite Hash data file found; skipping named device id test");
+            return;
+        };
+        let device_id = |names: Option<&[&str]>| {
+            let manager =
+                dd::Manager::open_with_properties(&data_file, PerformanceProfile::Default, names)
+                    .unwrap_or_else(|err| panic!("{names:?} should load: {err}"));
+            let mut results = manager.create_results().expect("results should allocate");
+            results
+                .process_user_agent(MOBILE_USER_AGENT)
+                .expect("processing a user agent should not raise an exception");
+            results
+                .device_id()
+                .expect("reading the device id should not error")
+                .expect("a match should produce a device id")
+        };
+
+        let every_property = device_id(None);
+        for names in [
+            &["DeviceId"][..],
+            &["deviceid"],
+            &["DeviceId", "IsMobile"],
+            &["IsMobile", "DeviceId"],
+        ] {
+            assert_eq!(device_id(Some(names)), every_property, "{names:?}");
+        }
+        assert_ne!(device_id(Some(&["IsMobile"])), every_property);
+    }
+
+    /// A data file that can't be used is named in the error, so the caller can
+    /// see which one.
+    #[test]
+    fn a_failed_load_names_the_data_file() {
+        let directory = std::env::temp_dir();
+        let missing = directory.join("fiftyone-native-smoke-dd-missing.hash");
+        let not_data = directory.join("fiftyone-native-smoke-dd-not-data.hash");
+        std::fs::write(&not_data, vec![7u8; 64 * 1024]).expect("a temporary file");
+
+        for file in [&missing, &not_data] {
+            let name = file.file_name().unwrap().to_string_lossy();
+            match dd::Manager::open(file, PerformanceProfile::Default) {
+                Err(Error::Native { message, .. }) => {
+                    assert!(message.contains(&*name), "{name} is not in {message:?}");
+                }
+                Err(other) => panic!("{name} gave another kind of error: {other}"),
+                Ok(_) => panic!("{name} should not load"),
+            }
+        }
+        std::fs::remove_file(&not_data).ok();
     }
 
     /// Evidence the engine expands during processing (a high-entropy values
@@ -450,8 +615,9 @@ mod device_detection {
 #[cfg(feature = "ipi")]
 mod ip_intelligence {
     use super::ipi_data_file;
+    use fiftyone_native::ipi::PropertyRead;
     use fiftyone_native::{ipi, PerformanceProfile};
-    use fiftyone_pipeline_core::Evidence;
+    use fiftyone_pipeline_core::{Error, Evidence};
 
     /// Open the IP Intelligence data file through the safe API. Both products are
     /// linked in this binary and now coexist, and the resolved ASN file matches
@@ -531,6 +697,180 @@ mod ip_intelligence {
             results.process_evidence(&evidence).is_err(),
             "evidence with no client IP should be an error"
         );
+    }
+
+    /// An IPv4-mapped IPv6 address gives the answers of its IPv4 address, in
+    /// either form, looked up as an address or from evidence.
+    #[test]
+    fn a_mapped_address_gives_the_answers_of_its_ipv4_address() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping mapped address test");
+            return;
+        };
+        let manager = open_loaded(&data_file);
+        let names = manager.available_property_names();
+        let read = |address: &str, from_evidence: bool| {
+            let mut results = manager.create_results().expect("results should allocate");
+            let processed = if from_evidence {
+                let evidence = Evidence::builder().add("server.client-ip", address).build();
+                results.process_evidence(&evidence)
+            } else {
+                results.process_ip(address)
+            };
+            processed.expect("looking up an address should not raise an exception");
+            names
+                .iter()
+                .map(|name| {
+                    (
+                        results
+                            .value_as_string(name, "|")
+                            .expect("reading a value should not error"),
+                        results
+                            .read_property(name)
+                            .expect("reading a property should not error"),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        // Agreeing only because nothing has a value would prove nothing.
+        let mut results = manager.create_results().expect("results should allocate");
+        results
+            .process_ip("::ffff:1.1.1.1")
+            .expect("looking up a mapped address should not raise an exception");
+        let asn = results
+            .value_as_string("Asn", "|")
+            .expect("reading the Asn property should not error")
+            .expect("the Asn property should be present in the ASN data set");
+        assert!(
+            asn.contains("AS13335"),
+            "::ffff:1.1.1.1 should resolve to AS13335 as 1.1.1.1 does, got {asn:?}"
+        );
+
+        for (ipv4, mapped) in [
+            ("1.1.1.1", "::ffff:1.1.1.1"),
+            ("185.28.167.77", "::ffff:b91c:a74d"),
+        ] {
+            for from_evidence in [false, true] {
+                assert_eq!(
+                    read(mapped, from_evidence),
+                    read(ipv4, from_evidence),
+                    "{mapped} against {ipv4}, from evidence {from_evidence}"
+                );
+            }
+        }
+    }
+
+    /// A data file that can't be used is named in the error, so the caller can
+    /// see which one.
+    #[test]
+    fn a_failed_load_names_the_data_file() {
+        let directory = std::env::temp_dir();
+        let missing = directory.join("fiftyone-native-smoke-ipi-missing.ipi");
+        let not_data = directory.join("fiftyone-native-smoke-ipi-not-data.ipi");
+        std::fs::write(&not_data, vec![7u8; 64 * 1024]).expect("a temporary file");
+
+        for file in [&missing, &not_data] {
+            let name = file.file_name().unwrap().to_string_lossy();
+            match ipi::Manager::open(file, PerformanceProfile::Default) {
+                Err(Error::Native { message, .. }) => {
+                    assert!(message.contains(&*name), "{name} is not in {message:?}");
+                }
+                Err(other) => panic!("{name} gave another kind of error: {other}"),
+                Ok(_) => panic!("{name} should not load"),
+            }
+        }
+        std::fs::remove_file(&not_data).ok();
+    }
+
+    /// The addresses whose answers are compared, in both families, including
+    /// one that no public range holds and an IPv4 address in its mapped form.
+    const COMPARED_ADDRESSES: [&str; 6] = [
+        "1.1.1.1",
+        "8.8.8.8",
+        "185.28.167.77",
+        "2001:4860:4860::8888",
+        "10.0.0.1",
+        "::ffff:185.28.167.77",
+    ];
+
+    /// What a caller can read of a property for each compared address.
+    fn answers(
+        manager: &std::sync::Arc<ipi::Manager>,
+        property: &str,
+    ) -> Vec<(Option<String>, PropertyRead)> {
+        COMPARED_ADDRESSES
+            .iter()
+            .map(|address| {
+                let mut results = manager.create_results().expect("results should allocate");
+                results
+                    .process_ip(address)
+                    .expect("looking up an address should not raise an exception");
+                (
+                    results
+                        .value_as_string(property, "|")
+                        .expect("reading a value should not error"),
+                    results
+                        .read_property(property)
+                        .expect("reading a property should not error"),
+                )
+            })
+            .collect()
+    }
+
+    /// Naming properties can change how a profile reads the data file, and
+    /// never an answer. Each list is read under each profile and compared with
+    /// a data set holding every property.
+    #[test]
+    fn naming_properties_keeps_the_answers_under_every_profile() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping named properties test");
+            return;
+        };
+        let every_property = ipi::Manager::open(&data_file, PerformanceProfile::LowMemory)
+            .expect("the data file should load");
+        let names = every_property.available_property_names();
+        // Lists agreeing only because nothing has a value would prove nothing.
+        let answered = names
+            .iter()
+            .filter(|name| {
+                answers(&every_property, name)
+                    .iter()
+                    .any(|(value, _)| value.as_deref().is_some_and(|value| !value.is_empty()))
+            })
+            .count();
+        eprintln!(
+            "{answered} of {} properties have an answer to compare",
+            names.len()
+        );
+        assert!(answered > 0, "the compared addresses should have answers");
+
+        let mut lists: Vec<Vec<&str>> = names.iter().map(|name| vec![name.as_str()]).collect();
+        lists.push(vec![names[0].as_str(), names[names.len() - 1].as_str()]);
+        lists.push(names.iter().map(String::as_str).collect());
+
+        for profile in [
+            PerformanceProfile::Default,
+            PerformanceProfile::Balanced,
+            PerformanceProfile::LowMemory,
+            PerformanceProfile::HighPerformance,
+            PerformanceProfile::InMemory,
+        ] {
+            for list in &lists {
+                let manager =
+                    ipi::Manager::open_with_properties(&data_file, profile, Some(list.as_slice()))
+                        .unwrap_or_else(|err| {
+                            panic!("{profile:?} naming {list:?} should load: {err}")
+                        });
+                for name in list {
+                    assert_eq!(
+                        answers(&manager, name),
+                        answers(&every_property, name),
+                        "{profile:?} naming {list:?}, reading {name}"
+                    );
+                }
+            }
+        }
     }
 }
 

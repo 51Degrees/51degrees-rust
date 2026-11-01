@@ -160,7 +160,7 @@ workspace reads the submodule and never needs the copy.
   the create last programme in the cloud service, so comparing against the
   branch would fail work here that has nothing to do with that programme.
   The weekly schedule and a manual run still compare against the branch, so
-  a real drift is still reported. 51Degrees/rust#52 lifts the pin, by moving
+  a real drift is still reported. 51Degrees/51degrees-rust#52 lifts the pin, by moving
   the bundled asset and `UPSTREAM_PINNED_REF` to the same commit in one pull
   request.
 - `nightly-performance.yml` — nightly (and on-demand) on-premise throughput
@@ -189,7 +189,7 @@ workspace reads the submodule and never needs the copy.
   code.
 - **UTM links.** Links to `51degrees.com` in source, docs and READMEs must
   carry the five UTM parameters in order (`utm_source`, `utm_medium`,
-  `utm_campaign`, `utm_content`, `utm_term`), with `utm_campaign=rust`. The
+  `utm_campaign`, `utm_content`, `utm_term`), with `utm_campaign=51degrees-rust`. The
   lint config is `.utm-lint.json`; `Cargo.toml` `homepage`/`repository`
   metadata URLs are allow-listed as untagged.
 - **Code style.** Wrap code and doc comments to about 80 columns (soft limit;

@@ -20,7 +20,7 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! [![51Degrees](https://51degrees.com/img/logo.png?utm_source=docs.rs&utm_medium=docs&utm_campaign=rust&utm_content=fiftyone-device-detection-sys-lib.rs&utm_term=logo "Data rewards the curious")](https://51degrees.com/?utm_source=docs.rs&utm_medium=docs&utm_campaign=rust&utm_content=fiftyone-device-detection-sys-lib.rs&utm_term=logo)
+//! [![51Degrees](https://51degrees.com/img/logo.png?utm_source=docs.rs&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=fiftyone-device-detection-sys-lib.rs&utm_term=logo "Data rewards the curious")](https://51degrees.com/?utm_source=docs.rs&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=fiftyone-device-detection-sys-lib.rs&utm_term=logo)
 //!
 //! Raw FFI bindings to the Hash on-premise device detection ABI in
 //! the 51degrees-cxx C sources.
@@ -343,7 +343,9 @@ extern "C" {
     ) -> StatusCode;
 
     /// Returns the constant number of bytes needed to initialize a Hash manager
-    /// from a memory buffer, or zero if not constant.
+    /// from a memory buffer, or zero if not constant. If the memory doesn't
+    /// hold a data set that loads, `exception` holds the status and the number
+    /// returned means nothing.
     ///
     /// # Safety
     /// `memory` must point to `size` readable bytes. `config` and `properties`

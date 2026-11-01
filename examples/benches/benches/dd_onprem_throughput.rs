@@ -210,5 +210,5 @@ criterion_main!(benches);
  * the evidence file via `find_file`). When either is missing the benchmark
  * registers nothing and exits cleanly, so `cargo bench` is safe to run without
  * the data submodules. See
- * https://51degrees.com/documentation/_device_detection__features__performance_options.html?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-benches-benches-dd_onprem_throughput.rs&utm_term=header
+ * https://51degrees.com/documentation/_device_detection__features__performance_options.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-benches-benches-dd_onprem_throughput.rs&utm_term=header
  */

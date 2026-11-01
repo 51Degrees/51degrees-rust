@@ -55,6 +55,11 @@ fn main() {
     // picked up without a manual clean.
     println!("cargo:rerun-if-env-changed=FIFTYONE_CXX_DIR");
 
+    // A changed header must rebuild the C library and rerun the checks in
+    // src/declarations.c, as a changed source file does. Cargo scans a
+    // directory for any change.
+    println!("cargo:rerun-if-changed={}", cxx.join("src").display());
+
     // Collect the device detection C sources (the fiftyone-device-detection-c
     // target) and the Hash C sources (the fiftyone-hash-c target). Globbing
     // keeps the list in step with the 51degrees-cxx sources.

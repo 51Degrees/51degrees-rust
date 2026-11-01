@@ -223,7 +223,7 @@ mod tests {
  * # Data file
  *
  * Resolved by `examples_shared::ipi_data_path`. Contact 51Degrees for an
- * Enterprise file with the full property set: <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-metrics.rs&utm_term=ipi-onprem-metrics>.
+ * Enterprise file with the full property set: <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-metrics.rs&utm_term=ipi-onprem-metrics>.
  *
  * # Usage sharing
  *

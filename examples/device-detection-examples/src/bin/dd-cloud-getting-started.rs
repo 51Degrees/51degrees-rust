@@ -44,7 +44,7 @@ const PRICING_MESSAGE: &str =
     "Some values were not present in the results. This is usually because the \
      resource key in use does not include the property. A resource key that \
      includes all the properties used by this example can be created at \
-     https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=pricing-message.";
+     https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=pricing-message.";
 
 /// Options the example runs with. Keeping the inputs in one struct lets `main`
 /// and the test feed the same `run` entry point.
@@ -192,7 +192,7 @@ fn main() -> Result<()> {
             "No resource key available. Set the 51DEGREES_RESOURCE_KEY environment \
              variable (or pass the key as the first argument). The 51Degrees cloud \
              service is accessed using a resource key, which you can create for free \
-             at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=resource-key-required."
+             at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=resource-key-required."
         );
         return Ok(());
     };
@@ -270,5 +270,5 @@ mod tests {
  *
  * The resource key is read from the first command-line argument or the
  * `51DEGREES_RESOURCE_KEY` environment variable. Create a free key, or a paid key
- * with the full property set, at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=dd-cloud-getting-started.
+ * with the full property set, at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=dd-cloud-getting-started.
  */

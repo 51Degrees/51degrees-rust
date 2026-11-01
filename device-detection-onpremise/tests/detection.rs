@@ -187,6 +187,32 @@ fn detects_a_mobile_user_agent() {
     );
 }
 
+/// Naming `DeviceId` gives the same id as an engine with every property, even
+/// when it is the only name, which leaves no data file properties to read.
+#[test]
+fn naming_device_id_gives_the_same_id_as_every_property() {
+    let (Some(engine), Some(data_file)) = (build_engine(), lite_data_file()) else {
+        eprintln!("no Lite Hash data file found; skipping named device id test");
+        return;
+    };
+    let every_property = detect(engine, MOBILE_USER_AGENT).device_id();
+    let every_property = every_property.value().unwrap();
+
+    for names in [&["DeviceId"][..], &["DeviceId", "IsMobile"]] {
+        let engine = DeviceDetectionOnPremiseEngineBuilder::new(&data_file)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            .properties(names.iter().copied())
+            .build()
+            .expect("an engine naming DeviceId should build");
+        let device = detect(engine, MOBILE_USER_AGENT);
+        assert_eq!(
+            device.device_id().value().unwrap(),
+            every_property,
+            "{names:?}"
+        );
+    }
+}
+
 #[test]
 fn concurrency_sizes_the_pool_for_parallel_use() {
     // The LowMemory profile reads collections through a fixed-size handle pool.

@@ -303,7 +303,7 @@ fn main() -> anyhow::Result<()> {
                      Enterprise .ipi file (the diversity and behavioral properties this \
                      example reads are only present in an Enterprise file). Contact \
                      51Degrees for one: \
-                     https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-suspicious.rs&utm_term=enterprise-data-required.",
+                     https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-suspicious.rs&utm_term=enterprise-data-required.",
                     examples_shared::IPI_PATH_ENV_VAR
                 )?;
                 return Ok(());
@@ -442,7 +442,7 @@ mod tests {
  * This example requires an Enterprise IP Intelligence data file (`.ipi`), which is
  * the tier that carries the diversity and behavioral properties. The data file is
  * resolved by `examples_shared::ipi_data_path`. Contact 51Degrees for an
- * Enterprise file: <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-suspicious.rs&utm_term=ipi-onprem-suspicious>.
+ * Enterprise file: <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-suspicious.rs&utm_term=ipi-onprem-suspicious>.
  *
  * # Usage sharing
  *

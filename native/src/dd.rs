@@ -58,7 +58,7 @@ use crate::buffer::with_value_string;
 use crate::evidence::with_native_evidence;
 use crate::file_reads::{FileReadPermit, FileReads};
 use crate::profile::PerformanceProfile;
-use crate::status::{status_name, status_to_result, NativeException, NativeStatus};
+use crate::status::{status_name, status_to_result, take_message, NativeException, NativeStatus};
 
 /// The character a data set puts between the header names it joins into one
 /// pseudo header, for example the User-Agent Client Hints it reads together.
@@ -202,6 +202,9 @@ impl Manager {
     ///
     /// Limiting the property set reduces the memory footprint of the loaded data
     /// set, matching the `properties` option in the other 51Degrees ports.
+    ///
+    /// A component with no named property reads as `0` in the device id. Naming
+    /// `DeviceId` resolves every component, so the device id is complete.
     pub fn open_with_properties(
         path: impl AsRef<Path>,
         profile: PerformanceProfile,
@@ -272,7 +275,7 @@ impl Manager {
             )
         };
 
-        if let Err(err) = status_to_result(status, || exception_detail(&mut exception)) {
+        if let Err(err) = status_to_result(status, || status_detail(status, &path_c)) {
             // The manager was not populated, so free just the box.
             // Safety: `manager_ptr` came from `Box::into_raw` above.
             unsafe { drop(Box::from_raw(manager_ptr)) };
@@ -505,6 +508,9 @@ impl Results {
     /// The evidence is marshalled into the native evidence array (reusing the
     /// thread-local pool) and processed. Header and query values are read as
     /// user agent style evidence and server values as the client IP.
+    ///
+    /// A header longer than 500 bytes is ignored with no error, and detection
+    /// moves on to the next header.
     pub fn process_evidence(&mut self, evidence: &fiftyone_pipeline_core::Evidence) -> Result<()> {
         let mut exception = sys::Exception::cleared();
         let results = self.as_ptr();
@@ -520,6 +526,9 @@ impl Results {
     }
 
     /// Run a detection from a single User-Agent string.
+    ///
+    /// A User-Agent longer than 500 bytes is ignored with no error, which gives
+    /// the same results as no evidence.
     pub fn process_user_agent(&mut self, user_agent: &str) -> Result<()> {
         let mut exception = sys::Exception::cleared();
         let _file_read = self.manager.file_read();
@@ -842,14 +851,17 @@ impl Drop for Results {
     }
 }
 
-/// Read and consume the message from a set exception, returning a descriptive
-/// fallback when no message is available. Used to attach detail to a non-success
-/// init status.
-fn exception_detail(exception: &mut sys::Exception) -> String {
-    if exception.is_okay() {
-        return String::from("native initialization reported a non-success status");
+/// The message for a failed init, naming the data file. An exception holds no
+/// file name, so its message would say `null` instead.
+fn status_detail(status: sys::StatusCode, path: &CStr) -> String {
+    // Safety: the path is null terminated and outlives the call, and the library
+    // allocated the message.
+    unsafe {
+        take_message::<sys::Exception>(
+            sys::fiftyoneDegreesStatusGetMessage(status, path.as_ptr()),
+            "native initialization failed with no message",
+        )
     }
-    exception.message_or("native initialization failed with no message")
 }
 
 #[cfg(test)]

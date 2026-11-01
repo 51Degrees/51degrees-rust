@@ -20,7 +20,7 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! [![51Degrees](https://51degrees.com/img/logo.png?utm_source=docs.rs&utm_medium=docs&utm_campaign=rust&utm_content=fiftyone-ip-intelligence-sys-lib.rs&utm_term=logo "Data rewards the curious")](https://51degrees.com/?utm_source=docs.rs&utm_medium=docs&utm_campaign=rust&utm_content=fiftyone-ip-intelligence-sys-lib.rs&utm_term=logo)
+//! [![51Degrees](https://51degrees.com/img/logo.png?utm_source=docs.rs&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=fiftyone-ip-intelligence-sys-lib.rs&utm_term=logo "Data rewards the curious")](https://51degrees.com/?utm_source=docs.rs&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=fiftyone-ip-intelligence-sys-lib.rs&utm_term=logo)
 //!
 //! Raw FFI bindings to the on-premise IP Intelligence ABI (`Ipi`) in
 //! the 51degrees-cxx C sources, including the weighted value getters.
@@ -369,6 +369,21 @@ pub mod common {
         /// `exception` must point to a valid, set [`Exception`].
         #[link_name = "ipi_fiftyoneDegreesExceptionGetMessage"]
         pub fn fiftyoneDegreesExceptionGetMessage(exception: *mut Exception) -> *const c_char;
+
+        /// Returns a newly allocated English message describing the status,
+        /// naming the file when the message is about one. Free the returned
+        /// pointer with [`fiftyoneDegreesFree`].
+        ///
+        /// The native symbol is `ipi_`-prefixed for the same reason as
+        /// [`fiftyoneDegreesExceptionGetMessage`] above.
+        ///
+        /// # Safety
+        /// `file_name` must be a valid null terminated string or null.
+        #[link_name = "ipi_fiftyoneDegreesStatusGetMessage"]
+        pub fn fiftyoneDegreesStatusGetMessage(
+            status: StatusCode,
+            file_name: *const c_char,
+        ) -> *const c_char;
 
         /// Frees memory through the C runtime's `free`, which is how the
         /// library frees memory unless its allocator has been replaced. Release
@@ -883,7 +898,9 @@ extern "C" {
     ) -> StatusCode;
 
     /// Returns the constant memory size needed to initialize from memory, or
-    /// zero when the configuration allows runtime allocation.
+    /// zero when the configuration allows runtime allocation. If the memory
+    /// doesn't hold a data set that loads, `exception` holds the status and the
+    /// number returned means nothing.
     ///
     /// # Safety
     /// `config` and `properties` may be null. `memory` must point to `size`

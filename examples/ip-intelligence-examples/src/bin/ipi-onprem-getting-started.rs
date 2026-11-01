@@ -380,7 +380,7 @@ mod tests {
  * The data file is resolved by `examples_shared::ipi_data_path`, which prefers
  * the `51DEGREES_IPI_PATH` environment variable and otherwise locates the ASN
  * file checked into the `cxx` submodule. An Enterprise `.ipi`
- * file (with the full property set) is available from 51Degrees: see <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-getting-started.rs&utm_term=ipi-onprem-getting-started>.
+ * file (with the full property set) is available from 51Degrees: see <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-getting-started.rs&utm_term=ipi-onprem-getting-started>.
  *
  * # Usage sharing
  *
