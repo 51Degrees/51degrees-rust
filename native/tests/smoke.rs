@@ -699,6 +699,68 @@ mod ip_intelligence {
         );
     }
 
+    /// An IPv4-mapped IPv6 address gives the answers of its IPv4 address, in
+    /// either form, looked up as an address or from evidence.
+    #[test]
+    fn a_mapped_address_gives_the_answers_of_its_ipv4_address() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping mapped address test");
+            return;
+        };
+        let manager = open_loaded(&data_file);
+        let names = manager.available_property_names();
+        let read = |address: &str, from_evidence: bool| {
+            let mut results = manager.create_results().expect("results should allocate");
+            let processed = if from_evidence {
+                let evidence = Evidence::builder().add("server.client-ip", address).build();
+                results.process_evidence(&evidence)
+            } else {
+                results.process_ip(address)
+            };
+            processed.expect("looking up an address should not raise an exception");
+            names
+                .iter()
+                .map(|name| {
+                    (
+                        results
+                            .value_as_string(name, "|")
+                            .expect("reading a value should not error"),
+                        results
+                            .read_property(name)
+                            .expect("reading a property should not error"),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        // Agreeing only because nothing has a value would prove nothing.
+        let mut results = manager.create_results().expect("results should allocate");
+        results
+            .process_ip("::ffff:1.1.1.1")
+            .expect("looking up a mapped address should not raise an exception");
+        let asn = results
+            .value_as_string("Asn", "|")
+            .expect("reading the Asn property should not error")
+            .expect("the Asn property should be present in the ASN data set");
+        assert!(
+            asn.contains("AS13335"),
+            "::ffff:1.1.1.1 should resolve to AS13335 as 1.1.1.1 does, got {asn:?}"
+        );
+
+        for (ipv4, mapped) in [
+            ("1.1.1.1", "::ffff:1.1.1.1"),
+            ("185.28.167.77", "::ffff:b91c:a74d"),
+        ] {
+            for from_evidence in [false, true] {
+                assert_eq!(
+                    read(mapped, from_evidence),
+                    read(ipv4, from_evidence),
+                    "{mapped} against {ipv4}, from evidence {from_evidence}"
+                );
+            }
+        }
+    }
+
     /// A data file that can't be used is named in the error, so the caller can
     /// see which one.
     #[test]
@@ -722,13 +784,14 @@ mod ip_intelligence {
     }
 
     /// The addresses whose answers are compared, in both families, including
-    /// one that no public range holds.
-    const COMPARED_ADDRESSES: [&str; 5] = [
+    /// one that no public range holds and an IPv4 address in its mapped form.
+    const COMPARED_ADDRESSES: [&str; 6] = [
         "1.1.1.1",
         "8.8.8.8",
         "185.28.167.77",
         "2001:4860:4860::8888",
         "10.0.0.1",
+        "::ffff:185.28.167.77",
     ];
 
     /// What a caller can read of a property for each compared address.

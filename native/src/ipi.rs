@@ -519,6 +519,9 @@ impl Results {
     }
 
     /// Run a lookup from an IP address string (IPv4 or IPv6).
+    ///
+    /// An IPv4-mapped IPv6 address, such as `::ffff:1.1.1.1`, gives the answers
+    /// of its IPv4 address.
     pub fn process_ip(&mut self, ip_address: &str) -> Result<()> {
         // The native parser reads one byte past the supplied length, expecting a
         // string terminator (or another break character such as a space or comma)
@@ -554,7 +557,8 @@ impl Results {
     /// native evidence lookup, which uses the first in its order. A value that
     /// does not read as an IP address is left out, as the .NET engine does,
     /// because the native lookup would stop at it rather than try the next key.
-    /// The accepted forms are those of [`crate::evidence::parse_client_ip`].
+    /// The accepted forms are those of [`crate::evidence::parse_client_ip`]. An
+    /// IPv4-mapped IPv6 address gives the answers of its IPv4 address.
     ///
     /// Returns an [`Error::Native`] with status `InvalidInput` when the evidence
     /// holds no client IP address that can be read.
