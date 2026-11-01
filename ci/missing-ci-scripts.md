@@ -57,8 +57,8 @@ Rust consumer, so there is nothing to share. Every other language keeps its
   `ci/run-performance-tests.ps1`, matching the org's `<repo>/ci/<verb>.ps1`
   convention. This is the customization entry point that further repo-specific
   work will build on.
-- Repoints `nightly-performance.yml` to run `./rust/ci/run-performance-tests.ps1`
-  (the workflow checks this repo out into a `rust/` subdirectory) instead of
+- Repoints `nightly-performance.yml` to run `./51degrees-rust/ci/run-performance-tests.ps1`
+  (the workflow checks this repo out into a `51degrees-rust/` subdirectory) instead of
   `./common-ci/rust/run-performance-tests.ps1`.
 - Keeps the `Checkout common-ci` step, because the steps that publish and
   compare the results, `steps/publish-performance-results.ps1` and
