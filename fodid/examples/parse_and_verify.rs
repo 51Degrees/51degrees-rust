@@ -45,7 +45,7 @@ const FIND_OUT_MORE: &[(&str, &str)] = &[
         "The OWID envelope a 51Did travels in",
         "https://github.com/SWAN-community/owid/blob/main/explainer.md",
     ),
-    ("51Degrees for Rust", "https://github.com/51Degrees/rust"),
+    ("51Degrees for Rust", "https://github.com/51Degrees/51degrees-rust"),
     ("OWID for Rust", "https://github.com/SWAN-community/owid-rust"),
 ];
 

@@ -123,7 +123,7 @@ languages.
 
 ## Links
 
-- Source and issues: [github.com/51Degrees/rust](https://github.com/51Degrees/rust)
+- Source and issues: [github.com/51Degrees/51degrees-rust](https://github.com/51Degrees/51degrees-rust)
 - API documentation: [docs.rs/fiftyone-derived-properties](https://docs.rs/fiftyone-derived-properties)
 - The script format and the shipped scripts: [github.com/51Degrees/derived-properties](https://github.com/51Degrees/derived-properties)
 - The element specification: [51Degrees/specifications](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/derived-property-element.md)
@@ -133,4 +133,4 @@ languages.
 ## License
 
 Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the
-[repository](https://github.com/51Degrees/rust) for the full text.
+[repository](https://github.com/51Degrees/51degrees-rust) for the full text.

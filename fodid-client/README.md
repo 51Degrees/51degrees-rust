@@ -276,7 +276,7 @@ variable, which is the same variable the cloud request engine honours.
 
 The other 51Did clients this crate is a port of, and the engine repositories:
 
-- https://github.com/51Degrees/rust
+- https://github.com/51Degrees/51degrees-rust
 - https://github.com/51Degrees/pipeline-dotnet
 - https://github.com/51Degrees/pipeline-java
 - https://github.com/51Degrees/pipeline-node

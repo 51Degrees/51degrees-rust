@@ -160,7 +160,7 @@ workspace reads the submodule and never needs the copy.
   the create last programme in the cloud service, so comparing against the
   branch would fail work here that has nothing to do with that programme.
   The weekly schedule and a manual run still compare against the branch, so
-  a real drift is still reported. 51Degrees/rust#52 lifts the pin, by moving
+  a real drift is still reported. 51Degrees/51degrees-rust#52 lifts the pin, by moving
   the bundled asset and `UPSTREAM_PINNED_REF` to the same commit in one pull
   request.
 - `nightly-performance.yml` — nightly (and on-demand) on-premise throughput

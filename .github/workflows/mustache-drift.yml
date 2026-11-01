@@ -19,7 +19,7 @@ name: Mustache Drift Check
 # has nothing to do with that programme. Push and pull request builds therefore
 # compare against the commit the bundled asset was taken from, whilst the weekly
 # schedule and a manual run still compare against the branch so a real drift is
-# reported. 51Degrees/rust#52 is the issue that lifts the pin, by moving the
+# reported. 51Degrees/51degrees-rust#52 is the issue that lifts the pin, by moving the
 # bundled asset and UPSTREAM_PINNED_REF to the same new commit in one pull
 # request, which is then green on its own.
 
@@ -91,6 +91,6 @@ jobs:
           if diff -u "$BUNDLED" upstream.mustache; then
             echo "Bundled JavaScriptResource.mustache matches ${UPSTREAM_REPO}@${UPSTREAM_REF}, the ${UPSTREAM_REF_KIND}."
           else
-            echo "::error file=${BUNDLED}::Bundled JavaScriptResource.mustache differs from ${UPSTREAM_REPO}@${UPSTREAM_REF}, the ${UPSTREAM_REF_KIND}. Refresh the bundled copy, and where the refresh is deliberate move UPSTREAM_PINNED_REF to the same commit in the same pull request. See 51Degrees/rust#52."
+            echo "::error file=${BUNDLED}::Bundled JavaScriptResource.mustache differs from ${UPSTREAM_REPO}@${UPSTREAM_REF}, the ${UPSTREAM_REF_KIND}. Refresh the bundled copy, and where the refresh is deliberate move UPSTREAM_PINNED_REF to the same commit in the same pull request. See 51Degrees/51degrees-rust#52."
             exit 1
           fi

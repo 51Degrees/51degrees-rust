@@ -42,7 +42,7 @@ data file and from the 51Degrees cloud.
 
 ## Links
 
-- Source and issues: [github.com/51Degrees/rust](https://github.com/51Degrees/rust)
+- Source and issues: [github.com/51Degrees/51degrees-rust](https://github.com/51Degrees/51degrees-rust)
 - API documentation: [docs.rs/fiftyone-caching](https://docs.rs/fiftyone-caching)
 - About 51Degrees: [51degrees.com](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=fiftyone-caching-readme.md&utm_term=about)
 - Data files and pricing: [51degrees.com/pricing](https://51degrees.com/pricing?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=fiftyone-caching-readme.md&utm_term=pricing)
@@ -50,4 +50,4 @@ data file and from the 51Degrees cloud.
 ## License
 
 Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the
-[repository](https://github.com/51Degrees/rust) for the full text.
+[repository](https://github.com/51Degrees/51degrees-rust) for the full text.
