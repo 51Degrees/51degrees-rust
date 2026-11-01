@@ -265,7 +265,7 @@ mod tests {
  * # Data file
  *
  * Contact 51Degrees for an Enterprise file with the full property set:
- * <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-offline-processing.rs&utm_term=ipi-onprem-offline-processing>.
+ * <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-offline-processing.rs&utm_term=ipi-onprem-offline-processing>.
  *
  * # Usage sharing
  *

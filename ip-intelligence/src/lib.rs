@@ -20,7 +20,7 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! [![51Degrees](https://51degrees.com/img/logo.png?utm_source=docs.rs&utm_medium=docs&utm_campaign=rust&utm_content=fiftyone-ip-intelligence-lib.rs&utm_term=logo "Data rewards the curious")](https://51degrees.com/?utm_source=docs.rs&utm_medium=docs&utm_campaign=rust&utm_content=fiftyone-ip-intelligence-lib.rs&utm_term=logo)
+//! [![51Degrees](https://51degrees.com/img/logo.png?utm_source=docs.rs&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=fiftyone-ip-intelligence-lib.rs&utm_term=logo "Data rewards the curious")](https://51degrees.com/?utm_source=docs.rs&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=fiftyone-ip-intelligence-lib.rs&utm_term=logo)
 //!
 //! The IP-intelligence facade.
 //!
@@ -154,7 +154,7 @@ impl IpIntelligencePipelineBuilder {
     /// Intelligence.
     ///
     /// `resource_key` authenticates the request and selects which properties are
-    /// returned. Create one for free at <https://configure.51degrees.com?utm_source=code&utm_medium=comment&utm_campaign=rust&utm_content=ip-intelligence-src-lib.rs&utm_term=cloud>.
+    /// returned. Create one for free at <https://configure.51degrees.com?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=ip-intelligence-src-lib.rs&utm_term=cloud>.
     ///
     /// Returns a [`CloudIpIntelligencePipelineBuilder`] to configure (endpoint,
     /// origin, timeout) and [`build`](CloudIpIntelligencePipelineBuilder::build)

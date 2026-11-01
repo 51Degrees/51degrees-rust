@@ -149,7 +149,7 @@ fn main() -> Result<()> {
         eprintln!(
             "No resource key available. Set the 51DEGREES_RESOURCE_KEY environment \
              variable (or pass the key as the first argument). Create a free key at \
-             https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-get-all-properties.rs&utm_term=resource-key-required, making sure to include all the \
+             https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-get-all-properties.rs&utm_term=resource-key-required, making sure to include all the \
              properties you want this example to display."
         );
         return Ok(());
@@ -213,5 +213,5 @@ mod tests {
  *
  * The resource key is read from the first command-line argument or the
  * `51DEGREES_RESOURCE_KEY` environment variable. To see the widest set of
- * properties, create a key that includes them at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-get-all-properties.rs&utm_term=dd-cloud-get-all-properties.
+ * properties, create a key that includes them at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-get-all-properties.rs&utm_term=dd-cloud-get-all-properties.
  */

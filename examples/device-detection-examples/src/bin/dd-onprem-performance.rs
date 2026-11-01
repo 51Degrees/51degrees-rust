@@ -169,7 +169,7 @@ pub fn run(options: ExampleOptions) -> Result<()> {
     // (HighPerformance, Balanced, Default, LowMemory) trade memory, load time and
     // detection speed differently. The performance options documentation explains
     // each one:
-    // https://51degrees.com/documentation/_device_detection__features__performance_options.html?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-performance.rs&utm_term=performance-options
+    // https://51degrees.com/documentation/_device_detection__features__performance_options.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-performance.rs&utm_term=performance-options
     //
     // Requesting fewer properties (ideally from one component) also speeds
     // detection. This benchmark already requests only IsMobile. See the
@@ -482,6 +482,6 @@ mod tests {
  * The data and User-Agent files are read from the first two command-line
  * arguments, the `51DEGREES_DD_PATH` environment variable, or the files shipped
  * in the cxx submodule. For more on adjusting performance see
- * https://51degrees.com/documentation/_device_detection__features__performance_options.html?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-performance.rs&utm_term=dd-onprem-performance
+ * https://51degrees.com/documentation/_device_detection__features__performance_options.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-performance.rs&utm_term=dd-onprem-performance
  * and the hash data-set production documentation.
  */

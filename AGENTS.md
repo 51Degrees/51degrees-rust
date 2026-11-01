@@ -189,7 +189,7 @@ workspace reads the submodule and never needs the copy.
   code.
 - **UTM links.** Links to `51degrees.com` in source, docs and READMEs must
   carry the five UTM parameters in order (`utm_source`, `utm_medium`,
-  `utm_campaign`, `utm_content`, `utm_term`), with `utm_campaign=rust`. The
+  `utm_campaign`, `utm_content`, `utm_term`), with `utm_campaign=51degrees-rust`. The
   lint config is `.utm-lint.json`; `Cargo.toml` `homepage`/`repository`
   metadata URLs are allow-listed as untagged.
 - **Code style.** Wrap code and doc comments to about 80 columns (soft limit;

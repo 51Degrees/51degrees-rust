@@ -1,15 +1,15 @@
 # 51Degrees Identifier Client
 
-[![51Degrees](https://51degrees.com/img/logo.png?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=fodid-client-readme.md&utm_term=logo "Data rewards the curious")](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=fodid-client-readme.md&utm_term=logo)
+[![51Degrees](https://51degrees.com/img/logo.png?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=logo "Data rewards the curious")](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=logo)
 **Pipeline API**
 
-[Developer Documentation](https://51degrees.com/documentation/index.html?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=fodid-client-readme.md&utm_term=documentation)
+[Developer Documentation](https://51degrees.com/documentation/index.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=documentation)
 
 ## Introduction
 
 The server side of the **51Degrees identifier** (51Did) two-step
 verification, for Rust. The
-[identifiers documentation](https://51degrees.com/documentation/_identifiers__index.html?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=fodid-client-readme.md&utm_term=51did)
+[identifiers documentation](https://51degrees.com/documentation/_identifiers__index.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=51did)
 describes what a 51Did is and how it is used. This crate is the Rust port of
 the client the .NET, Java, Node, Python and PHP packages already carry, with
 the .NET `DidClient` as its model. It fetches and caches the published signing
@@ -290,9 +290,9 @@ The OWID envelope a 51Did travels in:
 
 On 51degrees.com:
 
-- [What a 51Did is and how it is used](https://51degrees.com/documentation/_identifiers__index.html?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=fodid-client-readme.md&utm_term=identifiers-documentation)
-- [The 51Did inspector, a visual breakdown of an identifier](https://51degrees.com/developers/51did-inspector?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=fodid-client-readme.md&utm_term=51did-inspector)
-- [Get a resource key](https://configure.51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=fodid-client-readme.md&utm_term=configure)
+- [What a 51Did is and how it is used](https://51degrees.com/documentation/_identifiers__index.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=identifiers-documentation)
+- [The 51Did inspector, a visual breakdown of an identifier](https://51degrees.com/developers/51did-inspector?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=51did-inspector)
+- [Get a resource key](https://configure.51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=configure)
 
 ## License
 
