@@ -611,10 +611,12 @@ extern "C" {
     ) -> usize;
 
     /// Reads the match metrics of the results into the output pointers and
-    /// returns 1, or returns 0 when `results` is null. The results hold one
-    /// result for each component, each from the header that matched it. As in
-    /// the C++ results, `method` receives the highest match-method enum value
-    /// of any result (0 None, 1 Performance, 2 Combined, 3 Predictive), and the
+    /// returns 1, or returns 0 when `results` is null or a graph cannot be
+    /// walked. Any graph not yet walked is walked first, as the walks set the
+    /// metrics, so this can read the data file. The results hold one result
+    /// for each component, each from the header that matched it. As in the C++
+    /// results, `method` receives the highest match-method enum value of any
+    /// result (0 None, 1 Performance, 2 Combined, 3 Predictive), and the
     /// difference, drift, iterations and matched-node count are summed across
     /// the results. With no results every metric is zero. Any output pointer
     /// may be null to skip that metric. See `src/shim.c`.
@@ -640,8 +642,9 @@ extern "C" {
 
     /// Reads the match metrics of the single result at `result_index` into the
     /// output pointers and returns 1, or returns 0 when the index is out of
-    /// range. Any output pointer may be null to skip that metric. See
-    /// `src/shim.c`.
+    /// range or a graph cannot be walked. Any graph not yet walked is walked
+    /// first, so this can read the data file. Any output pointer may be null
+    /// to skip that metric. See `src/shim.c`.
     ///
     /// # Safety
     /// `results` must be an initialized Hash results structure or null. Each
@@ -659,8 +662,10 @@ extern "C" {
     /// Writes the matched User-Agent of the result at `result_index` into
     /// `buffer` as a null terminated string and returns the number of
     /// characters written, excluding the terminator. Returns zero when the
-    /// index is out of range or the result records no matched User-Agent, and
-    /// cuts the value short when the buffer is too small. See `src/shim.c`.
+    /// index is out of range, a graph cannot be walked or the result records
+    /// no matched User-Agent, and cuts the value short when the buffer is too
+    /// small. Any graph not yet walked is walked first, so this can read the
+    /// data file. See `src/shim.c`.
     ///
     /// # Safety
     /// `results` must be an initialized Hash results structure. `buffer` must
