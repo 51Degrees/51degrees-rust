@@ -373,6 +373,48 @@ mod device_detection {
         assert_ne!(device_id(Some(&["IsMobile"])), every_property);
     }
 
+    /// A name the data set has no property for, such as `DeviceId`, keeps its
+    /// place among the names given, so a property named after it is still
+    /// read, by its name and by its index.
+    #[test]
+    fn a_name_without_a_property_leaves_the_others_readable() {
+        let Some(data_file) = dd_lite_data_file() else {
+            eprintln!("no Lite Hash data file found; skipping a name without a property");
+            return;
+        };
+        for names in [&["DeviceId", "IsMobile"][..], &["IsMobile", "DeviceId"]] {
+            let manager = dd::Manager::open_with_properties(
+                &data_file,
+                PerformanceProfile::Default,
+                Some(names),
+            )
+            .unwrap_or_else(|err| panic!("{names:?} should load: {err}"));
+            let mut results = manager.create_results().expect("results should allocate");
+            results
+                .process_user_agent(MOBILE_USER_AGENT)
+                .expect("processing a user agent should not raise an exception");
+            let index = manager
+                .required_property_index("IsMobile")
+                .unwrap_or_else(|| panic!("{names:?} should give IsMobile an index"));
+            assert_eq!(
+                results
+                    .value_as_string("IsMobile", ",")
+                    .expect("reading IsMobile should not error")
+                    .as_deref(),
+                Some("True"),
+                "{names:?}"
+            );
+            assert_eq!(
+                results
+                    .value_as_string_by_index(index, c",")
+                    .expect("reading IsMobile by index should not error")
+                    .as_deref(),
+                Some("True"),
+                "{names:?}"
+            );
+        }
+    }
+
     /// A data file that can't be used is named in the error, so the caller can
     /// see which one.
     #[test]
@@ -870,6 +912,33 @@ mod ip_intelligence {
                     );
                 }
             }
+        }
+    }
+
+    /// A name the data file has no property for keeps its place among the
+    /// names given, so a property named after it still gives the answers of a
+    /// data set holding every property.
+    #[test]
+    fn a_name_without_a_property_leaves_the_others_readable() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping a name without a property");
+            return;
+        };
+        let every_property = ipi::Manager::open(&data_file, PerformanceProfile::LowMemory)
+            .expect("the data file should load");
+        for name in every_property.available_property_names() {
+            let list = ["NoSuchProperty", name.as_str()];
+            let manager = ipi::Manager::open_with_properties(
+                &data_file,
+                PerformanceProfile::LowMemory,
+                Some(list.as_slice()),
+            )
+            .unwrap_or_else(|err| panic!("naming {list:?} should load: {err}"));
+            assert_eq!(
+                answers(&manager, &name),
+                answers(&every_property, &name),
+                "naming {list:?}"
+            );
         }
     }
 }
