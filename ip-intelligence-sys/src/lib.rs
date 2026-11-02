@@ -1171,10 +1171,12 @@ extern "C" {
 
     // -- property enumeration shim (src/shim.c) --
 
-    /// Returns the number of required (available) properties in the data set
-    /// managed by `manager`, or zero when no data set or available property set
-    /// is present. Defined by this crate's `src/shim.c`, not by the upstream
-    /// library, so the deeply nested `available` field can be read from C.
+    /// Returns the number of required property indexes of the data set managed
+    /// by `manager`, which is the number of names it was created with, or the
+    /// number of its available properties when it was created naming none.
+    /// Returns zero when no data set or available property set is present.
+    /// Defined by this crate's `src/shim.c`, not by the upstream library, so
+    /// the deeply nested `available` field can be read from C.
     ///
     /// # Safety
     /// `manager` must point to a manager initialized by one of the IP
@@ -1183,7 +1185,8 @@ extern "C" {
 
     /// Writes the name of the required property at `required_property_index`
     /// into `buffer` as a null terminated string and returns the number of
-    /// characters written, excluding the terminator. Returns zero when the
+    /// characters written, excluding the terminator. A name the data set has
+    /// no property for is written as it was given. Returns zero when the
     /// index is out of range, the buffer is too small or no data set is
     /// available. Defined by this crate's `src/shim.c`.
     ///

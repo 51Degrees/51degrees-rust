@@ -543,8 +543,10 @@ extern "C" {
 // ---------------------------------------------------------------------------
 
 extern "C" {
-    /// Returns the number of required (available) properties in the data set
-    /// managed by `manager`, or zero if no data set is available.
+    /// Returns the number of required property indexes of the data set managed
+    /// by `manager`, which is the number of names it was created with, or the
+    /// number of its available properties when it was created naming none.
+    /// Returns zero if no data set is available.
     ///
     /// # Safety
     /// `manager` must be an initialized Hash manager.
@@ -552,7 +554,8 @@ extern "C" {
 
     /// Writes the name of the required property at `required_property_index`
     /// into `buffer` as a null terminated string and returns the number of
-    /// characters written, excluding the terminator.
+    /// characters written, excluding the terminator. A name the data set has
+    /// no property for is written as it was given.
     ///
     /// # Safety
     /// `manager` must be an initialized Hash manager. `buffer` must point to

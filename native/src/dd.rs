@@ -312,13 +312,17 @@ impl Manager {
         self.file_reads.as_ref().map(FileReads::permit)
     }
 
-    /// The number of required (available) properties in the loaded data set.
+    /// The number of required properties in the loaded data set, which is the
+    /// number of names it was opened with, or the number of its properties
+    /// when it was opened naming none.
     pub fn property_count(&self) -> u32 {
         // Safety: the manager is initialized for the lifetime of `self`.
         unsafe { sys::fiftyoneDegreesShimHashGetRequiredPropertyCount(self.as_ptr()) }
     }
 
-    /// The names of the required (available) properties, in index order.
+    /// The names of the required properties, in index order. With properties
+    /// named, these are the names given, in the order given, including any the
+    /// data set has no property for.
     pub fn property_names(&self) -> Vec<String> {
         let count = self.property_count();
         let mut names = Vec::with_capacity(count as usize);

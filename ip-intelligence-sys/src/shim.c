@@ -42,9 +42,11 @@
 #include "ipi.h"
 
 /*
- * Returns the number of required (available) properties in the data set managed
- * by `manager`, or zero if the data set or its available properties are not
- * present. The data set reference is taken and released around the read.
+ * Returns the number of required property indexes of the data set managed by
+ * `manager`, which is the number of names it was created with, or when it was
+ * created naming no property, the number of its available properties. Returns
+ * zero if the data set or its available properties are not present. The data
+ * set reference is taken and released around the read.
  */
 uint32_t fiftyoneDegreesShimIpiGetRequiredPropertyCount(
     fiftyoneDegreesResourceManager *manager) {
@@ -53,10 +55,8 @@ uint32_t fiftyoneDegreesShimIpiGetRequiredPropertyCount(
     if (dataSet == NULL) {
         return 0;
     }
-    uint32_t count = 0;
-    if (dataSet->b.b.available != NULL) {
-        count = dataSet->b.b.available->count;
-    }
+    uint32_t count = fiftyoneDegreesPropertiesGetRequiredPropertyCount(
+        dataSet->b.b.available);
     fiftyoneDegreesDataSetIpiRelease(dataSet);
     return count;
 }
@@ -64,9 +64,10 @@ uint32_t fiftyoneDegreesShimIpiGetRequiredPropertyCount(
 /*
  * Writes the name of the required property at `requiredPropertyIndex` into
  * `buffer` as a null terminated string and returns the number of characters
- * written, excluding the terminator. Returns zero when the index is out of
- * range, the buffer is too small or no data set is available. The buffer is
- * always null terminated when `length` is at least one.
+ * written, excluding the terminator. A name the data set has no property for
+ * is written as it was given. Returns zero when the index is out of range, the
+ * buffer is too small or no data set is available. The buffer is always null
+ * terminated when `length` is at least one.
  */
 size_t fiftyoneDegreesShimIpiGetRequiredPropertyName(
     fiftyoneDegreesResourceManager *manager,
@@ -87,7 +88,8 @@ size_t fiftyoneDegreesShimIpiGetRequiredPropertyName(
     fiftyoneDegreesPropertiesAvailable *available = dataSet->b.b.available;
     if (available != NULL &&
         requiredPropertyIndex >= 0 &&
-        (uint32_t)requiredPropertyIndex < (uint32_t)available->count) {
+        (uint32_t)requiredPropertyIndex <
+            fiftyoneDegreesPropertiesGetRequiredPropertyCount(available)) {
         fiftyoneDegreesString *name =
             fiftyoneDegreesPropertiesGetNameFromRequiredIndex(
                 available, requiredPropertyIndex);
