@@ -1,7 +1,9 @@
 [package]
 name = "fiftyone-ip-intelligence-cloud"
 version = "4.5.2"
-description = "Cloud IP-intelligence engine that maps the cloud JSON response to IpIntelligenceData."
+description = "IP Intelligence and IP geolocation for Rust. Finds an IP address's likely location (country, region, town, and coordinates), connection type, and network, using the 51Degrees cloud service. This cloud engine maps the cloud JSON response to IpIntelligenceData."
+keywords = ["ip-geolocation", "geoip", "ip-intelligence", "ip-lookup", "asn"]
+categories = ["network-programming", "web-programming", "wasm"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -1,7 +1,9 @@
 [package]
 name = "fiftyone-ip-intelligence-onpremise"
 version = "4.5.2"
-description = "On-premise IP-intelligence engine built over the safe fiftyone-native wrapper."
+description = "IP Intelligence and IP geolocation for Rust. Finds an IP address's likely location (country, region, town, and coordinates), connection type, and network, reading a data file on your server. This on-premise engine is built over the safe fiftyone-native wrapper."
+keywords = ["ip-geolocation", "geoip", "ip-intelligence", "ip-lookup", "asn"]
+categories = ["network-programming", "web-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
