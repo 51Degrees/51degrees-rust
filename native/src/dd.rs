@@ -312,13 +312,17 @@ impl Manager {
         self.file_reads.as_ref().map(FileReads::permit)
     }
 
-    /// The number of required (available) properties in the loaded data set.
+    /// The number of required properties in the loaded data set, which is the
+    /// number of names it was opened with, or the number of its properties
+    /// when it was opened naming none.
     pub fn property_count(&self) -> u32 {
         // Safety: the manager is initialized for the lifetime of `self`.
         unsafe { sys::fiftyoneDegreesShimHashGetRequiredPropertyCount(self.as_ptr()) }
     }
 
-    /// The names of the required (available) properties, in index order.
+    /// The names of the required properties, in index order. With properties
+    /// named, these are the names given, in the order given, including any the
+    /// data set has no property for.
     pub fn property_names(&self) -> Vec<String> {
         let count = self.property_count();
         let mut names = Vec::with_capacity(count as usize);
@@ -734,17 +738,20 @@ impl Results {
     /// metrics are summed across them. With no results every metric is zero,
     /// which is the method `NONE`.
     ///
-    /// These are computed during detection and live on the native results, not
-    /// in the data file's property values, so they are read directly here
-    /// rather than through [`value_as_string`](Self::value_as_string) (which
-    /// only resolves real data-file properties). Returns [`None`] only when the
-    /// native results cannot be read.
+    /// These are set by the walk of each component's graph and live on the
+    /// native results, not in the data file's property values, so they are
+    /// read directly here rather than through
+    /// [`value_as_string`](Self::value_as_string) (which only resolves real
+    /// data-file properties). Any graph not yet walked is walked first, which
+    /// can read the data file. Returns [`None`] only when the native results
+    /// cannot be read, or a graph cannot be read from the data file.
     pub fn match_metrics(&self) -> Option<MatchMetrics> {
         let mut method = 0;
         let mut difference = 0;
         let mut drift = 0;
         let mut iterations = 0;
         let mut matched_nodes = 0;
+        let _file_read = self.manager.file_read();
         // Safety: the results came from `ResultsHashCreate` and remain valid for
         // the lifetime of `self`; every output pointer is writable.
         let ok = unsafe {
@@ -772,8 +779,10 @@ impl Results {
     /// The matched User-Agent of each result, without repeats, in result
     /// order. Each is the evidence value the component was matched from, with
     /// the characters the match did not use replaced by underscores. Empty
-    /// when nothing matched.
+    /// when nothing matched, or a graph cannot be read from the data file.
+    /// Any graph not yet walked is walked first, which can read the data file.
     pub fn matched_user_agents(&self) -> Vec<String> {
+        let _file_read = self.manager.file_read();
         // Safety: the results came from `ResultsHashCreate` and remain valid
         // for the lifetime of `self`.
         let count = unsafe { sys::fiftyoneDegreesShimHashGetResultCount(self.as_ptr()) };

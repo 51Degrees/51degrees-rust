@@ -347,7 +347,9 @@ impl Manager {
     }
 
     /// The names of every property the data set was initialized with, in
-    /// required-property index order.
+    /// required-property index order. With properties named, these are the
+    /// names given, in the order given, including any the data file has no
+    /// property for.
     ///
     /// When the engine opens the file without a property restriction this is the
     /// data file's full property catalogue, so it reflects the tier (an ASN file
