@@ -8,7 +8,7 @@ name: Publish
 # then tags the release and creates its GitHub release.
 #
 # crates.io Trusted Publishing accepts this file and nightly-pipeline.yml, which
-# ci/setup-trusted-publishing.sh registers for every crate, so no crates.io
+# ci/setup-trusted-publishing.ps1 registers for every crate, so no crates.io
 # token is stored. The publish step exchanges the run's GitHub OIDC identity
 # for a short-lived token, which needs id-token on the calling job.
 

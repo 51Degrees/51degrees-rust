@@ -16,7 +16,7 @@ dependencies from the index, which can lag the upload by many minutes.
 Each publish uses a crates.io token exchanged for this run's GitHub OIDC
 identity, so no crates.io token is stored. crates.io accepts it because the
 workflow that started the run is registered as the crates' trusted publisher
-(see ci/setup-trusted-publishing.sh). The token is revoked straight after the
+(see ci/setup-trusted-publishing.ps1). The token is revoked straight after the
 publish.
 
 Runs from the common-ci checkout, with this repository cloned beside it and

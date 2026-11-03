@@ -2,7 +2,7 @@
 # crate appears after every workspace crate it depends on.
 #
 # This is the single list. ci/build-package.ps1 packages these,
-# ci/publish-package.ps1 publishes them and ci/setup-trusted-publishing.sh
+# ci/publish-package.ps1 publishes them and ci/setup-trusted-publishing.ps1
 # authorises the publishing workflows for them, so a crate added here is
 # packaged, published and authorised together.
 #

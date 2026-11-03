@@ -62,7 +62,7 @@ crates being released before anything is published.
 
 crates.io matches the workflow that started the run, so both
 `nightly-pipeline.yml` and `publish.yml` are registered as trusted publishers
-for every crate by `ci/setup-trusted-publishing.sh`. The calling jobs grant
+for every crate by `ci/setup-trusted-publishing.ps1`. The calling jobs grant
 `id-token: write`, and `ci/publish-package.ps1` exchanges the run's GitHub OIDC
 identity for a short-lived crates.io token for each crate and revokes it after
 the publish. No crates.io token is stored.

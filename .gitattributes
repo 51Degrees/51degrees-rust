@@ -1,5 +1,0 @@
-# Files read by bash keep LF on every platform. A carriage return stops a
-# script at its first line, and in the crate list it is added to every crate
-# name, so cargo refuses a name that looks right in any error message.
-*.sh        text eol=lf
-ci/*.txt    text eol=lf

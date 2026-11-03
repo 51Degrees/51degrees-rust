@@ -114,7 +114,7 @@ Authentication uses crates.io **Trusted Publishing**. The publish exchanges the
 run's GitHub OIDC identity for a short-lived token, so no API token is stored.
 Each crate has this repository's `nightly-pipeline.yml` and `publish.yml`
 registered as trusted publishers (one-time setup in
-`ci/setup-trusted-publishing.sh`).
+`ci/setup-trusted-publishing.ps1`).
 
 The OWID library the `fodid` crates build on is not a crates.io dependency.
 Its source is compiled into `fodid` as a private module from the `owid-rust`
