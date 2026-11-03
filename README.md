@@ -3,7 +3,7 @@
 ![51Degrees](https://raw.githubusercontent.com/51Degrees/common-ci/main/images/logo/360x67.png "Data rewards the curious")
 **Pipeline API**
 
-[Developer Documentation](https://51degrees.com/documentation/index.html?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=readme.md&utm_term=documentation)
+[Developer Documentation](https://51degrees.com/documentation/index.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=documentation)
 
 ## Introduction
 
@@ -87,7 +87,7 @@ path, so cloud-only users and most of CI build without a C compiler.
 | [`pipeline-examples`](examples/pipeline-examples) | Runnable pipeline examples: custom flow elements, caching, usage sharing and the combined-pipeline server-side examples. |
 | [`fodid-examples`](examples/fodid-examples) | Runnable 51Did examples: the creator context web demo, which verifies a 51Did from the browser and redeems the encrypted verdict on the server. |
 | [`examples-benches`](examples/benches) | Criterion micro-benchmarks guarding the DD, IPI and JavaScript-builder throughput budgets. |
-| [`fodid`](fodid) | Standalone reader for the 51Did (51Degrees Identifier) returned by the cloud, described in the [identifiers documentation](https://51degrees.com/documentation/_identifiers__index.html?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=readme.md&utm_term=51did). It parses the OWID envelope and is independent of the pipeline stack. |
+| [`fodid`](fodid) | Standalone reader for the 51Did (51Degrees Identifier) returned by the cloud, described in the [identifiers documentation](https://51degrees.com/documentation/_identifiers__index.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=51did). It parses the OWID envelope and is independent of the pipeline stack. |
 | [`fodid-client`](fodid-client) | The server side of the 51Did two-step verification: fetches and caches the signing keys, verifies a signature offline or through the cloud, and redeems the sealed creator context result a browser relays, with the typed outcomes the other 51Did packages report. Builds without a network stack by default; the `reqwest-client` feature turns on the built-in transport. |
 
 ## Feature notes
@@ -105,7 +105,7 @@ path, so cloud-only users and most of CI build without a C compiler.
   `.share_usage(true)` is called, and the element's sender is a no-op unless the
   `fiftyone-pipeline-engines-fiftyone/share-usage-transport` feature is
   enabled, so no network connection to 51Degrees is made. See the
-  [usage sharing](https://51degrees.com/documentation/_pipeline_api__features__usage_sharing.html?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=readme.md&utm_term=usage-sharing)
+  [usage sharing](https://51degrees.com/documentation/_pipeline_api__features__usage_sharing.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=usage-sharing)
   documentation for what is shared, and the `fiftyone-pipeline-engines-fiftyone`
   crate docs for the feature detail.
 - Automatic data file updates are on by default in the facades' on-premise
@@ -131,8 +131,8 @@ flow data, add evidence, process, then read the strongly-typed result back
 through a shared key.
 
 A cloud build needs a resource key. Create one for free with the
-[configurator](https://configure.51degrees.com?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=readme.md&utm_term=resource-key), and see the
-[resource keys](https://51degrees.com/documentation/_services__cloud__resource_keys.html?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=readme.md&utm_term=resource-keys)
+[configurator](https://configure.51degrees.com?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=resource-key), and see the
+[resource keys](https://51degrees.com/documentation/_services__cloud__resource_keys.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=resource-keys)
 documentation for what a key grants.
 
 ### Cloud Device Detection

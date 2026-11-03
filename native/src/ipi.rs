@@ -70,7 +70,7 @@ use crate::buffer::with_value_string;
 use crate::evidence::parse_client_ip;
 use crate::file_reads::{FileReadPermit, FileReads};
 use crate::profile::PerformanceProfile;
-use crate::status::{status_name, status_to_result, NativeException, NativeStatus};
+use crate::status::{status_name, status_to_result, take_message, NativeException, NativeStatus};
 
 // ---------------------------------------------------------------------------
 // Status and exception trait wiring for the IP Intelligence common C library
@@ -244,7 +244,7 @@ impl Manager {
             )
         };
 
-        if let Err(err) = status_to_result(status, || exception_detail(&mut exception)) {
+        if let Err(err) = status_to_result(status, || status_detail(status, &path_c)) {
             // Safety: `manager_ptr` came from `Box::into_raw` and was not
             // populated by a failed init.
             unsafe { drop(Box::from_raw(manager_ptr)) };
@@ -347,7 +347,9 @@ impl Manager {
     }
 
     /// The names of every property the data set was initialized with, in
-    /// required-property index order.
+    /// required-property index order. With properties named, these are the
+    /// names given, in the order given, including any the data file has no
+    /// property for.
     ///
     /// When the engine opens the file without a property restriction this is the
     /// data file's full property catalogue, so it reflects the tier (an ASN file
@@ -519,6 +521,9 @@ impl Results {
     }
 
     /// Run a lookup from an IP address string (IPv4 or IPv6).
+    ///
+    /// An IPv4-mapped IPv6 address, such as `::ffff:1.1.1.1`, gives the answers
+    /// of its IPv4 address.
     pub fn process_ip(&mut self, ip_address: &str) -> Result<()> {
         // The native parser reads one byte past the supplied length, expecting a
         // string terminator (or another break character such as a space or comma)
@@ -554,7 +559,8 @@ impl Results {
     /// native evidence lookup, which uses the first in its order. A value that
     /// does not read as an IP address is left out, as the .NET engine does,
     /// because the native lookup would stop at it rather than try the next key.
-    /// The accepted forms are those of [`crate::evidence::parse_client_ip`].
+    /// The accepted forms are those of [`crate::evidence::parse_client_ip`]. An
+    /// IPv4-mapped IPv6 address gives the answers of its IPv4 address.
     ///
     /// Returns an [`Error::Native`] with status `InvalidInput` when the evidence
     /// holds no client IP address that can be read.
@@ -987,13 +993,17 @@ impl Drop for Results {
     }
 }
 
-/// Read and consume the message from a set IP Intelligence exception, returning
-/// a fallback when none is available.
-fn exception_detail(exception: &mut sys::Exception) -> String {
-    if exception.is_okay() {
-        return String::from("native initialization reported a non-success status");
+/// The message for a failed init, naming the data file. An exception holds no
+/// file name, so its message would say `null` instead.
+fn status_detail(status: sys::StatusCode, path: &CStr) -> String {
+    // Safety: the path is null terminated and outlives the call, and the library
+    // allocated the message.
+    unsafe {
+        take_message::<sys::Exception>(
+            sys::common::fiftyoneDegreesStatusGetMessage(status, path.as_ptr()),
+            "native initialization failed with no message",
+        )
     }
-    exception.message_or("native initialization failed with no message")
 }
 
 #[cfg(test)]

@@ -20,7 +20,7 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! [![51Degrees](https://51degrees.com/img/logo.png?utm_source=docs.rs&utm_medium=docs&utm_campaign=rust&utm_content=fiftyone-device-detection-sys-lib.rs&utm_term=logo "Data rewards the curious")](https://51degrees.com/?utm_source=docs.rs&utm_medium=docs&utm_campaign=rust&utm_content=fiftyone-device-detection-sys-lib.rs&utm_term=logo)
+//! [![51Degrees](https://51degrees.com/img/logo.png?utm_source=docs.rs&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=fiftyone-device-detection-sys-lib.rs&utm_term=logo "Data rewards the curious")](https://51degrees.com/?utm_source=docs.rs&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=fiftyone-device-detection-sys-lib.rs&utm_term=logo)
 //!
 //! Raw FFI bindings to the Hash on-premise device detection ABI in
 //! the 51degrees-cxx C sources.
@@ -343,7 +343,9 @@ extern "C" {
     ) -> StatusCode;
 
     /// Returns the constant number of bytes needed to initialize a Hash manager
-    /// from a memory buffer, or zero if not constant.
+    /// from a memory buffer, or zero if not constant. If the memory doesn't
+    /// hold a data set that loads, `exception` holds the status and the number
+    /// returned means nothing.
     ///
     /// # Safety
     /// `memory` must point to `size` readable bytes. `config` and `properties`
@@ -541,8 +543,10 @@ extern "C" {
 // ---------------------------------------------------------------------------
 
 extern "C" {
-    /// Returns the number of required (available) properties in the data set
-    /// managed by `manager`, or zero if no data set is available.
+    /// Returns the number of required property indexes of the data set managed
+    /// by `manager`, which is the number of names it was created with, or the
+    /// number of its available properties when it was created naming none.
+    /// Returns zero if no data set is available.
     ///
     /// # Safety
     /// `manager` must be an initialized Hash manager.
@@ -550,7 +554,8 @@ extern "C" {
 
     /// Writes the name of the required property at `required_property_index`
     /// into `buffer` as a null terminated string and returns the number of
-    /// characters written, excluding the terminator.
+    /// characters written, excluding the terminator. A name the data set has
+    /// no property for is written as it was given.
     ///
     /// # Safety
     /// `manager` must be an initialized Hash manager. `buffer` must point to
@@ -609,10 +614,12 @@ extern "C" {
     ) -> usize;
 
     /// Reads the match metrics of the results into the output pointers and
-    /// returns 1, or returns 0 when `results` is null. The results hold one
-    /// result for each component, each from the header that matched it. As in
-    /// the C++ results, `method` receives the highest match-method enum value
-    /// of any result (0 None, 1 Performance, 2 Combined, 3 Predictive), and the
+    /// returns 1, or returns 0 when `results` is null or a graph cannot be
+    /// walked. Any graph not yet walked is walked first, as the walks set the
+    /// metrics, so this can read the data file. The results hold one result
+    /// for each component, each from the header that matched it. As in the C++
+    /// results, `method` receives the highest match-method enum value of any
+    /// result (0 None, 1 Performance, 2 Combined, 3 Predictive), and the
     /// difference, drift, iterations and matched-node count are summed across
     /// the results. With no results every metric is zero. Any output pointer
     /// may be null to skip that metric. See `src/shim.c`.
@@ -638,8 +645,9 @@ extern "C" {
 
     /// Reads the match metrics of the single result at `result_index` into the
     /// output pointers and returns 1, or returns 0 when the index is out of
-    /// range. Any output pointer may be null to skip that metric. See
-    /// `src/shim.c`.
+    /// range or a graph cannot be walked. Any graph not yet walked is walked
+    /// first, so this can read the data file. Any output pointer may be null
+    /// to skip that metric. See `src/shim.c`.
     ///
     /// # Safety
     /// `results` must be an initialized Hash results structure or null. Each
@@ -657,8 +665,10 @@ extern "C" {
     /// Writes the matched User-Agent of the result at `result_index` into
     /// `buffer` as a null terminated string and returns the number of
     /// characters written, excluding the terminator. Returns zero when the
-    /// index is out of range or the result records no matched User-Agent, and
-    /// cuts the value short when the buffer is too small. See `src/shim.c`.
+    /// index is out of range, a graph cannot be walked or the result records
+    /// no matched User-Agent, and cuts the value short when the buffer is too
+    /// small. Any graph not yet walked is walked first, so this can read the
+    /// data file. See `src/shim.c`.
     ///
     /// # Safety
     /// `results` must be an initialized Hash results structure. `buffer` must

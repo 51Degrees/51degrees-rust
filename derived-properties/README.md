@@ -1,11 +1,11 @@
-[![51Degrees](https://51degrees.com/img/logo.png?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=fiftyone-derived-properties-readme.md&utm_term=logo "Data rewards the curious")](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=fiftyone-derived-properties-readme.md&utm_term=logo)
+[![51Degrees](https://51degrees.com/img/logo.png?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fiftyone-derived-properties-readme.md&utm_term=logo "Data rewards the curious")](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fiftyone-derived-properties-readme.md&utm_term=logo)
 
 # 51Degrees Derived Properties
 
 `DerivedPropertyElement` for the 51Degrees pipeline: computes one more property
 from the properties other elements have already produced.
 
-This crate is part of the [51Degrees](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=fiftyone-derived-properties-readme.md&utm_term=introduction) Rust solution for high-performance
+This crate is part of the [51Degrees](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fiftyone-derived-properties-readme.md&utm_term=introduction) Rust solution for high-performance
 device detection and IP intelligence, available both on-premise from a local
 data file and from the 51Degrees cloud.
 
@@ -123,14 +123,14 @@ languages.
 
 ## Links
 
-- Source and issues: [github.com/51Degrees/rust](https://github.com/51Degrees/rust)
+- Source and issues: [github.com/51Degrees/51degrees-rust](https://github.com/51Degrees/51degrees-rust)
 - API documentation: [docs.rs/fiftyone-derived-properties](https://docs.rs/fiftyone-derived-properties)
 - The script format and the shipped scripts: [github.com/51Degrees/derived-properties](https://github.com/51Degrees/derived-properties)
 - The element specification: [51Degrees/specifications](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/derived-property-element.md)
-- About 51Degrees: [51degrees.com](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=fiftyone-derived-properties-readme.md&utm_term=about)
-- Data files and pricing: [51degrees.com/pricing](https://51degrees.com/pricing?utm_source=github&utm_medium=readme&utm_campaign=rust&utm_content=fiftyone-derived-properties-readme.md&utm_term=pricing)
+- About 51Degrees: [51degrees.com](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fiftyone-derived-properties-readme.md&utm_term=about)
+- Data files and pricing: [51degrees.com/pricing](https://51degrees.com/pricing?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fiftyone-derived-properties-readme.md&utm_term=pricing)
 
 ## License
 
 Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the
-[repository](https://github.com/51Degrees/rust) for the full text.
+[repository](https://github.com/51Degrees/51degrees-rust) for the full text.

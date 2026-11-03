@@ -46,7 +46,7 @@ edition = "2021"
 rust-version = "1.94"
 license = "EUPL-1.2"
 authors = ["51Degrees Engineering <support@51degrees.com>"]
-repository = "https://github.com/51Degrees/rust"
+repository = "https://github.com/51Degrees/51degrees-rust"
 homepage = "https://51degrees.com"
 
 [workspace.dependencies]

@@ -130,7 +130,7 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
     // (HighPerformance, LowMemory, Balanced, Default) trade memory, load time and
     // lookup speed differently. The performance options documentation explains
     // each one (the compare example shows them side by side):
-    // https://51degrees.com/documentation/_device_detection__features__performance_options.html?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-performance.rs&utm_term=performance-options
+    // https://51degrees.com/documentation/_device_detection__features__performance_options.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-performance.rs&utm_term=performance-options
     let pipeline: Arc<Pipeline> = IpIntelligencePipelineBuilder::on_premise(&options.data_file)
         .performance_profile(PerformanceProfile::InMemory)
         .properties(["Asn"])
@@ -379,7 +379,7 @@ mod tests {
  * It shows how to:
  *
  * 1. Build an on-premise IP Intelligence pipeline tuned for throughput with the
- *    `HighPerformance` profile. The other profiles (InMemory, LowMemory,
+ *    `InMemory` profile. The other profiles (HighPerformance, LowMemory,
  *    Balanced, Default) are documented inline so they can be swapped in to
  *    compare their memory/speed trade-offs.
  * 2. Load a set of IP addresses from the evidence file in the data submodule.
@@ -393,7 +393,7 @@ mod tests {
  * # Data file
  *
  * Resolved by `examples_shared::ipi_data_path`. Contact 51Degrees for an
- * Enterprise file: <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-performance.rs&utm_term=ipi-onprem-performance>.
+ * Enterprise file: <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-performance.rs&utm_term=ipi-onprem-performance>.
  *
  * # Usage sharing
  *

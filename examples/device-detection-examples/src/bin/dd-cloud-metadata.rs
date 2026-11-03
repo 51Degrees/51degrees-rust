@@ -147,7 +147,7 @@ fn main() -> Result<()> {
         eprintln!(
             "No resource key available. Set the 51DEGREES_RESOURCE_KEY environment \
              variable (or pass the key as the first argument). Create a free key at \
-             https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-metadata.rs&utm_term=resource-key-required."
+             https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-metadata.rs&utm_term=resource-key-required."
         );
         return Ok(());
     };
@@ -212,5 +212,5 @@ mod tests {
  *
  * The resource key is read from the first command-line argument or the
  * `51DEGREES_RESOURCE_KEY` environment variable. Create a free key, or a paid key
- * with the full property set, at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-metadata.rs&utm_term=dd-cloud-metadata.
+ * with the full property set, at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-metadata.rs&utm_term=dd-cloud-metadata.
  */

@@ -3,7 +3,7 @@
 ![51Degrees](https://raw.githubusercontent.com/51Degrees/common-ci/main/images/logo/360x67.png "Data rewards the curious")
 **Pipeline API**
 
-[Developer Documentation](https://51degrees.com/documentation/index.html?utm_source=github&utm_medium=docs&utm_campaign=rust&utm_content=architecture.md&utm_term=documentation)
+[Developer Documentation](https://51degrees.com/documentation/index.html?utm_source=github&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=architecture.md&utm_term=documentation)
 
 This Cargo workspace is a Rust implementation of the 51Degrees libraries, built
 to the 51Degrees specification. A customer can run cloud or on-premise Device

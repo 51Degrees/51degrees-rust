@@ -348,7 +348,7 @@ async fn main() -> anyhow::Result<()> {
         eprintln!(
             "Set 51DEGREES_RESOURCE_KEY (or _51DEGREES_RESOURCE_KEY_BESPOKE or \
              _51DEGREES_RESOURCE_KEY_BASIC) to a resource key from \
-             https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=resource-key-required \
+             https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=resource-key-required \
              and run again."
         );
         std::process::exit(1);
@@ -713,6 +713,6 @@ mod tests {
  * `examples-web-shared` crate and served at the page's relative URL. It uses
  * the `.c-eg-*` class contract.
  *
- * Build a resource key at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=fodid-web-creator-context and export it as
+ * Build a resource key at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=fodid-web-creator-context and export it as
  * `51DEGREES_RESOURCE_KEY`, then run the binary and open http://localhost:5100/.
  */

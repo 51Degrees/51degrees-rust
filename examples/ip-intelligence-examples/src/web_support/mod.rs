@@ -240,9 +240,9 @@ pub fn map_init_script(coordinates: &Option<(String, String)>) -> String {
 pub const CLOUD_CONTACT_BANNER: &str = "\
 <div class=\"c-eg-message\">\
   <p class=\"c-eg-message__text\">Want to run IP Intelligence on-premise from a local data file? \
-  <a href=\"https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-ip-intelligence-examples-src-web_support-mod.rs&utm_term=on-premise\">Contact us</a> to discuss requirements. \
-  <a href=\"https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-ip-intelligence-examples-src-web_support-mod.rs&utm_term=on-premise\">See pricing</a>.</p>\
-  <a class=\"b-btn c-eg-message__cta\" href=\"https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-ip-intelligence-examples-src-web_support-mod.rs&utm_term=on-premise\">Contact us</a>\
+  <a href=\"https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-web_support-mod.rs&utm_term=on-premise\">Contact us</a> to discuss requirements. \
+  <a href=\"https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-web_support-mod.rs&utm_term=on-premise\">See pricing</a>.</p>\
+  <a class=\"b-btn c-eg-message__cta\" href=\"https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-web_support-mod.rs&utm_term=on-premise\">Contact us</a>\
 </div>";
 
 /// The contact-us banner shown on the on-premise page, describing what the free
@@ -252,9 +252,9 @@ pub const ONPREM_CONTACT_BANNER: &str = "\
   <p class=\"c-eg-message__text\">This example uses a free IP Intelligence data file, which resolves \
   a limited set of network and location properties. A paid Enterprise data file adds far more \
   detailed and accurate location, registered network ownership and broader coverage. \
-  <a href=\"https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-ip-intelligence-examples-src-web_support-mod.rs&utm_term=data-file-benefits\">See pricing</a> or \
-  <a href=\"https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-ip-intelligence-examples-src-web_support-mod.rs&utm_term=data-file-benefits\">contact us</a>.</p>\
-  <a class=\"b-btn c-eg-message__cta\" href=\"https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-ip-intelligence-examples-src-web_support-mod.rs&utm_term=data-file-benefits\">See pricing</a>\
+  <a href=\"https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-web_support-mod.rs&utm_term=data-file-benefits\">See pricing</a> or \
+  <a href=\"https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-web_support-mod.rs&utm_term=data-file-benefits\">contact us</a>.</p>\
+  <a class=\"b-btn c-eg-message__cta\" href=\"https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-web_support-mod.rs&utm_term=data-file-benefits\">See pricing</a>\
 </div>";
 
 /// The Leaflet and wellknown libraries the shared `initLocationMap` helper needs,

@@ -134,6 +134,9 @@ impl DeviceDetectionOnPremiseEngineBuilder {
     /// Restrict the engine to a single named property, adding to any already
     /// requested. With no restriction the engine loads every property the data
     /// file supports.
+    ///
+    /// A component with no named property reads as `0` in the device id. Naming
+    /// `DeviceId` resolves every component, so the device id is complete.
     pub fn property(mut self, name: impl Into<String>) -> Self {
         let name = name.into();
         if !self

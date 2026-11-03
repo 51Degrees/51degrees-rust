@@ -39,7 +39,7 @@
 //! library functions in [`crate::dd`] and [`crate::ipi`].
 
 use std::ffi::CStr;
-use std::os::raw::c_void;
+use std::os::raw::{c_char, c_void};
 
 use fiftyone_pipeline_core::Error;
 
@@ -81,12 +81,11 @@ pub trait NativeException: Sized {
     /// `self` must point to a set exception.
     unsafe fn message_ptr(&mut self) -> *const std::os::raw::c_char;
 
-    /// Free a message pointer previously returned by
-    /// [`NativeException::message_ptr`] through the engine's own allocator.
+    /// Free a message this engine's library allocated, through the engine's own
+    /// allocator.
     ///
     /// # Safety
-    /// `ptr` must come from [`NativeException::message_ptr`] for this engine, or
-    /// be null.
+    /// `ptr` must be a message this engine's library allocated, or be null.
     unsafe fn free_message(ptr: *mut c_void);
 
     /// Read the set exception's message as an owned [`String`], returning
@@ -97,19 +96,9 @@ pub trait NativeException: Sized {
     /// the boundary. The caller is responsible for only treating the result as a
     /// real message when the exception is actually set.
     fn message_or(&mut self, fallback: &str) -> String {
-        // Safety: when set, the exception has a message; the pointer is owned by
-        // us and freed below through the matching allocator. When no message is
-        // available the pointer is null and the fallback is returned.
-        unsafe {
-            let raw = self.message_ptr();
-            if raw.is_null() {
-                String::from(fallback)
-            } else {
-                let owned = CStr::from_ptr(raw).to_string_lossy().into_owned();
-                Self::free_message(raw as *mut c_void);
-                owned
-            }
-        }
+        // Safety: when set, the exception has a message, which the engine's
+        // library allocated. When no message is available the pointer is null.
+        unsafe { take_message::<Self>(self.message_ptr(), fallback) }
     }
 
     /// If the exception is set, read its message and return it as an
@@ -190,12 +179,33 @@ macro_rules! status_name {
 // a `#[macro_export]` (it is an internal mapping helper, not public surface).
 pub(crate) use status_name;
 
+/// Copy a message the native library allocated into an owned [`String`] and
+/// release the native allocation, returning `fallback` when `raw` is null.
+///
+/// # Safety
+/// `raw` must be null, or a null terminated message the library of engine `E`
+/// allocated. This call takes ownership of it.
+pub(crate) unsafe fn take_message<E: NativeException>(
+    raw: *const c_char,
+    fallback: &str,
+) -> String {
+    if raw.is_null() {
+        return String::from(fallback);
+    }
+    // Safety: the caller promises a null terminated message from this engine.
+    unsafe {
+        let owned = CStr::from_ptr(raw).to_string_lossy().into_owned();
+        E::free_message(raw as *mut c_void);
+        owned
+    }
+}
+
 /// Convert a native initialization status into a [`Result`].
 ///
 /// A success status yields `Ok(())`. Any other status yields an
 /// [`Error::Native`] whose `status` is the code name and whose `message` is the
-/// supplied detail (usually drawn from the exception that accompanied the
-/// failed call).
+/// supplied detail, which each engine builds from the status so that it can name
+/// the data file.
 ///
 /// Only an enabled product's manager init calls this, so it is compiled when at
 /// least one product feature is on. The [`NativeStatus`] and [`NativeException`]

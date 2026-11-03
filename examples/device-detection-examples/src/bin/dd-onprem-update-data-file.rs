@@ -297,7 +297,7 @@ mod tests {
  * the example documents the wiring and runs only the safe no-network paths. Supply
  * a key (second argument or the `51DEGREES_LICENSE_KEY` environment variable) and
  * point at an Enterprise file to perform a real download. An Enterprise license is
- * available from https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-update-data-file.rs&utm_term=dd-onprem-update-data-file.
+ * available from https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-update-data-file.rs&utm_term=dd-onprem-update-data-file.
  *
  * The data file is read from the first command-line argument, the
  * `51DEGREES_DD_PATH` environment variable, or the Lite Hash file shipped in the

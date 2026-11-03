@@ -29,7 +29,7 @@ set -uo pipefail
 : "${CRATES_IO_TOKEN:?Set CRATES_IO_TOKEN to a crates.io API token that owns the crates}"
 
 OWNER="51Degrees"
-REPO="rust"
+REPO="51degrees-rust"
 WORKFLOWS=("nightly-pipeline.yml" "publish.yml")
 API="https://crates.io/api/v1/trusted_publishing/github_configs"
 UA="51degrees-trusted-publishing-setup (support@51degrees.com)"
@@ -48,23 +48,36 @@ if [ "${#CRATES[@]}" -eq 0 ]; then
   exit 1
 fi
 
+# Returns 0 when one of the crate in $1's github configs names this owner,
+# repository and the workflow in $2, 1 when none does, and 2 when the configs
+# cannot be listed. Each config is put on its own line so the three are matched
+# within one config. The owner and repository ignore case, as crates.io does
+# when it matches them.
 already_configured() {
-  # True when a github config for this owner/repo and the workflow in $2
-  # already exists for the crate in $1.
-  curl -fsS -H "User-Agent: $UA" -H "Authorization: $CRATES_IO_TOKEN" \
-    "$API?crate=$1" 2>/dev/null \
-    | grep -q "\"repository_owner\":\"$OWNER\"" 2>/dev/null \
-    && curl -fsS -H "User-Agent: $UA" -H "Authorization: $CRATES_IO_TOKEN" \
-       "$API?crate=$1" 2>/dev/null | grep -q "\"workflow_filename\":\"$2\""
+  local configs
+  configs=$(curl -fsS -H "User-Agent: $UA" -H "Authorization: $CRATES_IO_TOKEN" \
+    "$API?crate=$1" 2>/dev/null) || return 2
+  printf '%s' "$configs" | tr '{' '\n' \
+    | grep -i "\"repository_owner\":\"$OWNER\"" \
+    | grep -i "\"repository_name\":\"$REPO\"" \
+    | grep "\"workflow_filename\":\"$2\"" >/dev/null
 }
 
 failures=0
 for crate in "${CRATES[@]}"; do
   for workflow in "${WORKFLOWS[@]}"; do
-    if already_configured "$crate" "$workflow"; then
-      echo "= $crate ($workflow): trusted publisher already configured, skipping"
-      continue
-    fi
+    already_configured "$crate" "$workflow"
+    case $? in
+      0)
+        echo "= $crate ($workflow): trusted publisher already configured, skipping"
+        continue
+        ;;
+      2)
+        echo "! $crate ($workflow): FAILED -> could not list its trusted publishers"
+        failures=$((failures + 1))
+        continue
+        ;;
+    esac
     body=$(printf '{"github_config":{"crate":"%s","repository_owner":"%s","repository_name":"%s","workflow_filename":"%s","environment":null}}' \
       "$crate" "$OWNER" "$REPO" "$workflow")
     resp=$(curl -sS -X POST -H "User-Agent: $UA" -H "Authorization: $CRATES_IO_TOKEN" \

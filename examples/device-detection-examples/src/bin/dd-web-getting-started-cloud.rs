@@ -61,7 +61,7 @@ use web_support::{
 /// deployment; the bind address lets the test pick an ephemeral port while the
 /// binary uses a fixed one.
 pub struct Options {
-    /// The 51Degrees cloud resource key (from <https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=resource_key>).
+    /// The 51Degrees cloud resource key (from <https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=resource_key>).
     pub resource_key: String,
     /// An optional override for the cloud endpoint, read from
     /// `51DEGREES_CLOUD_ENDPOINT`. `None` leaves the choice to the cloud request
@@ -239,7 +239,7 @@ fn main() -> anyhow::Result<()> {
     // The resource key is read from the aligned/legacy/CI environment variables.
     let resource_key = examples_shared::resource_key_from_env().context(
         "no 51Degrees cloud resource key found. Set 51DEGREES_RESOURCE_KEY to a key from \
-         https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=resource-key-required and run again.",
+         https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=resource-key-required and run again.",
     )?;
 
     // A fixed local port for the runnable binary; override with PORT if taken.
@@ -480,6 +480,6 @@ mod tests {
  * class contract for the results, evidence and response-header tables and the
  * `c-eg-message` contact-us banner.
  *
- * Build a resource key at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=dd-web-getting-started-cloud and export it as
+ * Build a resource key at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=dd-web-getting-started-cloud and export it as
  * `51DEGREES_RESOURCE_KEY`, then run the binary and open http://127.0.0.1:8080.
  */

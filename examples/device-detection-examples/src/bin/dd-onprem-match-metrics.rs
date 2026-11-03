@@ -112,7 +112,7 @@ fn print_match_metrics(pipeline: &Arc<Pipeline>, pairs: &[(&str, &str)]) -> Resu
 
     // The match metrics describe how the detection was reached. For a discussion
     // of what they mean see
-    // https://51degrees.com/documentation/_device_detection__hash.html?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-match-metrics.rs&utm_term=print_match_metrics
+    // https://51degrees.com/documentation/_device_detection__hash.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-match-metrics.rs&utm_term=print_match_metrics
     let mut message = String::new();
     let _ = writeln!(message, "Match metrics:");
     // DeviceId is the four hyphen-separated profile ids that uniquely identify
@@ -366,7 +366,7 @@ mod tests {
  * warnings (Lite tier has a small number of properties and limited accuracy; a
  * file more than 30 days old may miss the latest devices). For a discussion of
  * metrics and data-set production see
- * https://51degrees.com/documentation/_device_detection__hash.html?utm_source=code&utm_medium=example&utm_campaign=rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-match-metrics.rs&utm_term=dd-onprem-match-metrics and the
+ * https://51degrees.com/documentation/_device_detection__hash.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-match-metrics.rs&utm_term=dd-onprem-match-metrics and the
  * performance-options page.
  *
  * Usage sharing is turned off with `.share_usage(false)`, because this is a

@@ -20,7 +20,7 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! [![51Degrees](https://51degrees.com/img/logo.png?utm_source=docs.rs&utm_medium=docs&utm_campaign=rust&utm_content=fiftyone-device-detection-lib.rs&utm_term=logo "Data rewards the curious")](https://51degrees.com/?utm_source=docs.rs&utm_medium=docs&utm_campaign=rust&utm_content=fiftyone-device-detection-lib.rs&utm_term=logo)
+//! [![51Degrees](https://51degrees.com/img/logo.png?utm_source=docs.rs&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=fiftyone-device-detection-lib.rs&utm_term=logo "Data rewards the curious")](https://51degrees.com/?utm_source=docs.rs&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=fiftyone-device-detection-lib.rs&utm_term=logo)
 //!
 //! # 51Degrees device detection (the unified facade)
 //!
@@ -229,7 +229,7 @@ impl DeviceDetectionPipelineBuilder {
     /// `resource_key`.
     ///
     /// Obtain a resource key from
-    /// <https://configure.51degrees.com?utm_source=code&utm_medium=comment&utm_campaign=rust&utm_content=device-detection-src-lib.rs&utm_term=cloud>.
+    /// <https://configure.51degrees.com?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=device-detection-src-lib.rs&utm_term=cloud>.
     /// The returned [`DeviceDetectionCloudPipelineBuilder`] assembles a
     /// [`CloudRequestEngine`] followed by a [`DeviceDetectionCloudEngine`], with
     /// share usage on.
@@ -402,6 +402,10 @@ impl DeviceDetectionOnPremisePipelineBuilder {
     /// Restrict the engine to a single named property, adding to any already
     /// requested. With no restriction every property the data file supports is
     /// loaded.
+    ///
+    /// On premise, a component with no named property reads as `0` in the device
+    /// id. Naming `DeviceId` resolves every component, so the device id is
+    /// complete.
     pub fn property(mut self, name: impl Into<String>) -> Self {
         let name = name.into();
         if !self

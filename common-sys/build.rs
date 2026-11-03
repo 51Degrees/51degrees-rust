@@ -43,6 +43,10 @@ fn main() {
     // picked up without a manual clean.
     println!("cargo:rerun-if-env-changed=FIFTYONE_CXX_DIR");
 
+    // A changed header must rebuild the C library, as a changed source file
+    // does. Cargo scans a directory for any change.
+    println!("cargo:rerun-if-changed={}", common_cxx.display());
+
     // The `.c` files form the C library that CMake builds as `fiftyone-common-c`.
     // Globbing keeps the source list in step with the 51degrees-cxx sources.
     let mut sources: Vec<PathBuf> = Vec::new();

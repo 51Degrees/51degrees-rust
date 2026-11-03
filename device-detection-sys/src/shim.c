@@ -56,9 +56,11 @@ static size_t copy_bounded(char *buffer, size_t length, const char *value) {
 }
 
 /*
- * Returns the number of required (available) properties in the data set managed
- * by `manager`, or zero if the data set or its available properties are not
- * present. The data set reference is taken and released around the read.
+ * Returns the number of required property indexes of the data set managed by
+ * `manager`, which is the number of names it was created with, or when it was
+ * created naming no property, the number of its available properties. Returns
+ * zero if the data set or its available properties are not present. The data
+ * set reference is taken and released around the read.
  */
 uint32_t fiftyoneDegreesShimHashGetRequiredPropertyCount(
     fiftyoneDegreesResourceManager *manager) {
@@ -67,10 +69,8 @@ uint32_t fiftyoneDegreesShimHashGetRequiredPropertyCount(
     if (dataSet == NULL) {
         return 0;
     }
-    uint32_t count = 0;
-    if (dataSet->b.b.available != NULL) {
-        count = dataSet->b.b.available->count;
-    }
+    uint32_t count = fiftyoneDegreesPropertiesGetRequiredPropertyCount(
+        dataSet->b.b.available);
     fiftyoneDegreesDataSetHashRelease(dataSet);
     return count;
 }
@@ -78,9 +78,10 @@ uint32_t fiftyoneDegreesShimHashGetRequiredPropertyCount(
 /*
  * Writes the name of the required property at `requiredPropertyIndex` into
  * `buffer` as a null terminated string and returns the number of characters
- * written, excluding the terminator. Returns zero when the index is out of
- * range, the buffer is too small or no data set is available. The buffer is
- * always null terminated when `length` is at least one.
+ * written, excluding the terminator. A name the data set has no property for
+ * is written as it was given. Returns zero when the index is out of range, the
+ * buffer is too small or no data set is available. The buffer is always null
+ * terminated when `length` is at least one.
  */
 size_t fiftyoneDegreesShimHashGetRequiredPropertyName(
     fiftyoneDegreesResourceManager *manager,
@@ -101,7 +102,8 @@ size_t fiftyoneDegreesShimHashGetRequiredPropertyName(
     fiftyoneDegreesPropertiesAvailable *available = dataSet->b.b.available;
     if (available != NULL &&
         requiredPropertyIndex >= 0 &&
-        (uint32_t)requiredPropertyIndex < available->count) {
+        (uint32_t)requiredPropertyIndex <
+            fiftyoneDegreesPropertiesGetRequiredPropertyCount(available)) {
         fiftyoneDegreesString *name =
             fiftyoneDegreesPropertiesGetNameFromRequiredIndex(
                 available, requiredPropertyIndex);
@@ -229,17 +231,32 @@ size_t fiftyoneDegreesShimHashGetDataSetName(
 }
 
 /*
+ * Walks the graph of each component the results have not yet walked, and
+ * returns 1, or 0 when a walk fails. The walk of a component's graph sets the
+ * match metrics and the matched User-Agent of its result. Unless the data set
+ * was created with its properties named, a component's graph is walked only
+ * when one of its properties is first read, so the readers of the results
+ * below call this first. It walks nothing when no graph is left to walk.
+ */
+static int evaluate_all(fiftyoneDegreesResultsHash *results) {
+    FIFTYONE_DEGREES_EXCEPTION_CREATE;
+    fiftyoneDegreesResultsEvaluateAll(&results->b.b, exception);
+    return FIFTYONE_DEGREES_EXCEPTION_OKAY ? 1 : 0;
+}
+
+/*
  * Reads the match metrics of the results into the output parameters and
- * returns 1, or returns 0 when `results` is NULL. The results hold one result
- * for each component, such as the hardware or the browser, each from the
- * header that matched it. As in the C++ ResultsHash, `method` receives the
- * highest fiftyoneDegreesHashMatchMethod of any result (0 None,
- * 1 Performance, 2 Combined, 3 Predictive), and the difference, drift,
- * iterations and matched-node count are summed across the results. With no
- * results every metric is zero, which is the method None. The metrics are
- * computed during detection and live on the results, not in the data file's
- * property values, so they are read here rather than through the property
- * value reader. Any output pointer may be null to skip that metric.
+ * returns 1, or returns 0 when `results` is NULL or a graph cannot be walked.
+ * The results hold one result for each component, such as the hardware or the
+ * browser, each from the header that matched it. As in the C++ ResultsHash,
+ * `method` receives the highest fiftyoneDegreesHashMatchMethod of any result
+ * (0 None, 1 Performance, 2 Combined, 3 Predictive), and the difference,
+ * drift, iterations and matched-node count are summed across the results.
+ * With no results every metric is zero, which is the method None. The metrics
+ * are set by the walk of each component's graph and live on the results, not
+ * in the data file's property values, so they are read here rather than
+ * through the property value reader. Any output pointer may be null to skip
+ * that metric.
  */
 int fiftyoneDegreesShimHashGetResultMetrics(
     fiftyoneDegreesResultsHash *results,
@@ -248,7 +265,7 @@ int fiftyoneDegreesShimHashGetResultMetrics(
     int32_t *drift,
     int32_t *iterations,
     int32_t *matchedNodes) {
-    if (results == NULL) {
+    if (results == NULL || evaluate_all(results) == 0) {
         return 0;
     }
     int32_t highestMethod = 0;
@@ -295,8 +312,9 @@ uint32_t fiftyoneDegreesShimHashGetResultCount(
 
 /*
  * Reads the match metrics of the single result at `resultIndex` into the
- * output parameters and returns 1, or returns 0 when the index is out of range.
- * Any output pointer may be null to skip that metric.
+ * output parameters and returns 1, or returns 0 when the index is out of range
+ * or a graph cannot be walked. Any output pointer may be null to skip that
+ * metric.
  */
 int fiftyoneDegreesShimHashGetResultMetricsAt(
     fiftyoneDegreesResultsHash *results,
@@ -306,7 +324,8 @@ int fiftyoneDegreesShimHashGetResultMetricsAt(
     int32_t *drift,
     int32_t *iterations,
     int32_t *matchedNodes) {
-    if (results == NULL || resultIndex >= results->count) {
+    if (results == NULL || resultIndex >= results->count ||
+        evaluate_all(results) == 0) {
         return 0;
     }
     fiftyoneDegreesResultHash *result = &results->items[resultIndex];
@@ -331,10 +350,10 @@ int fiftyoneDegreesShimHashGetResultMetricsAt(
 /*
  * Writes the matched User-Agent of the result at `resultIndex` into `buffer` as
  * a null terminated string and returns the number of characters written,
- * excluding the terminator. Returns zero when the index is out of range or the
- * result records no matched User-Agent, which it does only when the
- * updateMatchedUserAgent option is on, and cuts the value short when the
- * buffer is too small.
+ * excluding the terminator. Returns zero when the index is out of range, a
+ * graph cannot be walked or the result records no matched User-Agent, which it
+ * does only when the updateMatchedUserAgent option is on, and cuts the value
+ * short when the buffer is too small.
  */
 size_t fiftyoneDegreesShimHashGetMatchedUserAgent(
     fiftyoneDegreesResultsHash *results,
@@ -344,7 +363,8 @@ size_t fiftyoneDegreesShimHashGetMatchedUserAgent(
     if (buffer != NULL && length > 0) {
         buffer[0] = '\0';
     }
-    if (results == NULL || resultIndex >= results->count) {
+    if (results == NULL || resultIndex >= results->count ||
+        evaluate_all(results) == 0) {
         return 0;
     }
     return copy_bounded(

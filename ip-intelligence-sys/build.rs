@@ -58,6 +58,11 @@ fn main() {
     // picked up without a manual clean.
     println!("cargo:rerun-if-env-changed=FIFTYONE_CXX_DIR");
 
+    // A changed header must rebuild the C library and rerun the checks in
+    // src/declarations.c, as a changed source file does. Cargo scans a
+    // directory for any change.
+    println!("cargo:rerun-if-changed={}", cxx_src.display());
+
     // Gather the C sources for the three layers that make up the C library.
     // Globbing keeps the lists in step with the 51degrees-cxx sources.
     let mut sources: Vec<PathBuf> = Vec::new();
@@ -165,6 +170,21 @@ fn main() {
     }
 
     build.compile("fiftyone-ip-intelligence-c");
+
+    // Check the hand-written structures in src/lib.rs against the C headers
+    // being compiled (see src/declarations.c). The object is not linked.
+    let declarations = PathBuf::from(
+        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is always set by cargo"),
+    )
+    .join("src/declarations.c");
+    println!("cargo:rerun-if-changed={}", declarations.display());
+    cc::Build::new()
+        .file(&declarations)
+        .include(&src)
+        .define("FIFTYONE_DEGREES_LARGE_DATA_FILE_SUPPORT", None)
+        .define("FIFTYONE_DEGREES_REDUCED_FILE", None)
+        .cargo_metadata(false)
+        .compile("fiftyone-ip-intelligence-declarations");
 
     // The math library is required by the graph and weighted value code. The
     // threading layer's double-width (128-bit) compare-exchange lowers to a
