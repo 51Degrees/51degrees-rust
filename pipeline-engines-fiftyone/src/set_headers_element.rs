@@ -37,19 +37,22 @@
 //!
 //! # Start-up scan
 //!
-//! Scanning the pipeline metadata for `SetHeader*` properties is done once and
-//! cached behind a [`OnceLock`], because the property set is fixed for the
-//! lifetime of the pipeline. On each request the element only reads the cached
-//! mapping and the relevant element-data values.
+//! Scanning the pipeline metadata for `SetHeader*` properties is done once for
+//! each pipeline and kept, because a pipeline's property set is fixed for its
+//! lifetime. One element can be in several pipelines, so each keeps its own
+//! list, as the
+//! [multi-pipeline elements specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/advanced-features/multi-pipeline-elements.md)
+//! requires. On each request the element only reads the kept list and the
+//! relevant element-data values.
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::OnceLock;
+use std::sync::{Arc, PoisonError, RwLock, Weak};
 
 use fiftyone_pipeline_core::{
     ElementData, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
-    MapElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType, Result,
-    TypedKey,
+    MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue, PropertyValueType,
+    Result, TypedKey,
 };
 
 use crate::constants::{SET_HEADERS_DEFAULT_ELEMENT_DATA_KEY, SET_HEADER_PROPERTY_PREFIX};
@@ -120,20 +123,27 @@ struct SetHeaderProperty {
     response_header_name: String,
 }
 
+/// The `SetHeader*` properties found in one pipeline.
+struct PipelineProperties {
+    /// Weak, so the entry does not keep the pipeline alive, and so the
+    /// pipeline's address is not reused while the entry exists.
+    pipeline: Weak<Pipeline>,
+    properties: Arc<[SetHeaderProperty]>,
+}
+
 /// Builds the HTTP response headers other elements want set.
 ///
 /// The element uses no evidence and takes no configuration. It scans the
 /// pipeline's element properties for the `SetHeader` naming convention and
-/// caches the first non-empty result. Caching only a non-empty scan matters for
-/// cloud engines, which discover their property metadata lazily on their first
-/// process, so a request that reaches this element before that discovery has
-/// completed does not freeze an empty set for the life of the element.
+/// keeps the first non-empty result for each pipeline. Keeping only a non-empty
+/// scan matters for cloud engines, which discover their property metadata
+/// lazily on their first process, so a request that reaches this element before
+/// that discovery has completed does not freeze an empty set for the life of
+/// the pipeline.
 pub struct SetHeadersElement {
     filter: EvidenceKeyFilterWhitelist,
     properties: Vec<PropertyMetaData>,
-    // Populated from the pipeline metadata with the first non-empty scan, then
-    // reused. The element is added to a single pipeline, so one slot suffices.
-    set_header_properties: OnceLock<Vec<SetHeaderProperty>>,
+    by_pipeline: RwLock<Vec<PipelineProperties>>,
 }
 
 impl SetHeadersElement {
@@ -153,8 +163,43 @@ impl SetHeadersElement {
         SetHeadersElement {
             filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
             properties,
-            set_header_properties: OnceLock::new(),
+            by_pipeline: RwLock::new(Vec::new()),
         }
+    }
+
+    /// The `SetHeader*` properties of the flow data's pipeline, from the first
+    /// non-empty scan of that pipeline. An empty scan is not kept, so it is
+    /// retried on the next request.
+    fn set_header_properties(&self, data: &FlowData) -> Arc<[SetHeaderProperty]> {
+        let pipeline = data.pipeline();
+        let kept = self
+            .by_pipeline
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(properties) = kept_for(&kept, pipeline) {
+            return properties;
+        }
+        drop(kept);
+
+        let scanned: Arc<[SetHeaderProperty]> = Self::scan(data).into();
+        if scanned.is_empty() {
+            return scanned;
+        }
+        let mut kept = self
+            .by_pipeline
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
+        // Entries for pipelines that have gone are removed as each new one is
+        // added, so the list holds no more than the live pipelines.
+        kept.retain(|entry| entry.pipeline.strong_count() > 0);
+        if let Some(properties) = kept_for(&kept, pipeline) {
+            return properties;
+        }
+        kept.push(PipelineProperties {
+            pipeline: Arc::downgrade(pipeline),
+            properties: Arc::clone(&scanned),
+        });
+        scanned
     }
 
     /// Scan the pipeline's elements for properties named with the `SetHeader`
@@ -238,24 +283,19 @@ impl Default for SetHeadersElement {
     }
 }
 
+/// The properties kept for `pipeline`, if any.
+fn kept_for(
+    kept: &[PipelineProperties],
+    pipeline: &Arc<Pipeline>,
+) -> Option<Arc<[SetHeaderProperty]>> {
+    kept.iter()
+        .find(|entry| std::ptr::eq(entry.pipeline.as_ptr(), Arc::as_ptr(pipeline)))
+        .map(|entry| Arc::clone(&entry.properties))
+}
+
 impl FlowElement for SetHeadersElement {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        // Build the list of SetHeader* properties from pipeline metadata and
-        // reuse it on every subsequent request. Only a non-empty scan is cached,
-        // because a cloud engine discovers its properties lazily on its first
-        // process. A scan that runs before that completes must not freeze an
-        // empty result, so it is retried on the next request instead.
-        let properties = match self.set_header_properties.get() {
-            Some(cached) => cached.clone(),
-            None => {
-                let scanned = Self::scan(data);
-                if !scanned.is_empty() {
-                    let _ = self.set_header_properties.set(scanned.clone());
-                }
-                scanned
-            }
-        };
-
+        let properties = self.set_header_properties(data);
         let headers = self.build_headers(data, &properties);
         data.get_or_add(Self::KEY, || SetHeadersData::new(headers))?;
         Ok(())

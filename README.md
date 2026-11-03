@@ -233,14 +233,18 @@ use std::sync::Arc;
 
 # async fn run() -> anyhow::Result<()> {
 // Usage sharing is on by default, and is set here so the choice is visible.
-// It helps improve 51Degrees data.
-let pipeline = DeviceDetectionPipelineBuilder::cloud("YOUR_RESOURCE_KEY")
-    .share_usage(true)
-    .build()?;
+// It helps improve 51Degrees data. The facade's pipeline is only used for its
+// elements and is dropped at the end of this statement, because a usage
+// sharing element can be in only one pipeline at a time.
+let elements: Vec<Arc<dyn FlowElement>> =
+    DeviceDetectionPipelineBuilder::cloud("YOUR_RESOURCE_KEY")
+        .share_usage(true)
+        .build()?
+        .flow_elements()
+        .to_vec();
 
 // Hand the facade's elements to the web pipeline, which adds the sequence,
 // set-headers, JSON and JavaScript elements on top.
-let elements: Vec<Arc<dyn FlowElement>> = pipeline.flow_elements().to_vec();
 let web = WebPipeline::build(elements, WebIntegrationOptions::default())?;
 let state = FiftyOneState::from_web_pipeline(&web);
 

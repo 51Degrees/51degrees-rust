@@ -78,7 +78,9 @@ use std::io::Write;
 use std::net::UdpSocket;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(feature = "share-usage-transport")]
+use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -88,7 +90,9 @@ use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::writer::Writer;
 
 use fiftyone_pipeline_core::constants::EVIDENCE_CLIENT_IP_KEY;
-use fiftyone_pipeline_core::{EvidenceKeyFilter, FlowData, FlowElement, PropertyMetaData, Result};
+use fiftyone_pipeline_core::{
+    Error, EvidenceKeyFilter, FlowData, FlowElement, Pipeline, PropertyMetaData, Result,
+};
 
 use crate::constants::{
     EVIDENCE_SEQUENCE, EVIDENCE_SESSIONID, SHARE_USAGE_DEFAULT_ADD_TIMEOUT_MS,
@@ -147,6 +151,9 @@ struct ShareUsageData {
     session_id: Option<String>,
     sequence: Option<i64>,
     client_ip: Option<String>,
+    /// The type names of the elements in the pipeline that processed the
+    /// request.
+    flow_elements: Vec<&'static str>,
     /// category -> (field -> (value, truncated)).
     evidence: BTreeMap<String, BTreeMap<String, (String, bool)>>,
 }
@@ -369,36 +376,24 @@ impl Default for ShareUsageConfigBuilder {
     }
 }
 
-/// The values that are the same in every record this element sends.
-///
-/// Everything but the element list is gathered when the element is created.
-/// The element list needs the pipeline, so it is set by the first request and
-/// read without a lock after that.
+/// The values that are the same in every record this element sends, gathered
+/// when the element is created.
 #[derive(Debug, Default)]
 struct StaticInfo {
     core_version: String,
     language_version: String,
     server_ip: String,
     platform: String,
-    flow_elements: OnceLock<Vec<String>>,
 }
 
 impl StaticInfo {
-    /// Gather the values that do not depend on the pipeline.
     fn gather() -> Self {
         StaticInfo {
             core_version: env!("CARGO_PKG_VERSION").to_owned(),
             language_version: env!("FIFTYONE_RUSTC_VERSION").to_owned(),
             server_ip: server_ip(),
             platform: platform(),
-            flow_elements: OnceLock::new(),
         }
-    }
-
-    /// The type names of the pipeline's elements, or none before the first
-    /// request.
-    fn flow_elements(&self) -> &[String] {
-        self.flow_elements.get().map(Vec::as_slice).unwrap_or(&[])
     }
 }
 
@@ -542,6 +537,9 @@ enum Discarded {
 /// Construct one with [`ShareUsageElement::new`]. The background sending thread
 /// is started on construction and stopped, after a final flush, when the
 /// element is dropped.
+///
+/// One element can be in only one pipeline at a time. Building a second
+/// pipeline with it fails while the first is still alive.
 pub struct ShareUsageElement {
     filter: Arc<EvidenceKeyFilterShareUsage>,
     properties: Vec<PropertyMetaData>,
@@ -549,7 +547,8 @@ pub struct ShareUsageElement {
     config: ShareUsageConfig,
     sender: SyncSender<ShareUsageData>,
     worker: Mutex<Option<JoinHandle<()>>>,
-    static_info: Arc<StaticInfo>,
+    /// The pipeline the element is in, so a second can be refused.
+    pipeline: Mutex<Weak<Pipeline>>,
     success_count: Arc<AtomicU64>,
     fail_count: Arc<AtomicU64>,
     discarded: LogThrottle,
@@ -622,7 +621,6 @@ impl ShareUsageElement {
 
         let (tx, rx) = sync_channel::<ShareUsageData>(config.maximum_queue_size);
 
-        let static_info = Arc::new(StaticInfo::gather());
         let success_count = Arc::new(AtomicU64::new(0));
         let fail_count = Arc::new(AtomicU64::new(0));
 
@@ -630,7 +628,7 @@ impl ShareUsageElement {
             receiver: rx,
             sender,
             config: config.clone(),
-            static_info: Arc::clone(&static_info),
+            static_info: StaticInfo::gather(),
             success_count: Arc::clone(&success_count),
             fail_count: Arc::clone(&fail_count),
             send_failures: LogThrottle::new(),
@@ -659,7 +657,7 @@ impl ShareUsageElement {
             config,
             sender: tx,
             worker: Mutex::new(worker),
-            static_info,
+            pipeline: Mutex::new(Weak::new()),
             success_count,
             fail_count,
             discarded: LogThrottle::new(),
@@ -698,7 +696,15 @@ impl ShareUsageElement {
     /// Extract the wanted evidence from a flow data into a self-contained
     /// [`ShareUsageData`].
     fn extract(&self, data: &FlowData) -> ShareUsageData {
-        let mut out = ShareUsageData::default();
+        let mut out = ShareUsageData {
+            flow_elements: data
+                .pipeline()
+                .flow_elements()
+                .iter()
+                .map(|element| element.type_name())
+                .collect(),
+            ..ShareUsageData::default()
+        };
         // The session id and sequence are written into their own XML elements,
         // so they are kept out of the generic evidence map.
         let mut evidence_session_id = None;
@@ -788,14 +794,6 @@ impl Default for ShareUsageElement {
 
 impl FlowElement for ShareUsageElement {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        self.static_info.flow_elements.get_or_init(|| {
-            data.pipeline()
-                .flow_elements()
-                .iter()
-                .map(|element| element.type_name().to_owned())
-                .collect()
-        });
-
         if self.is_ignored(data) {
             return Ok(());
         }
@@ -839,6 +837,22 @@ impl FlowElement for ShareUsageElement {
     fn is_concurrent(&self) -> bool {
         // This element runs a background sending thread.
         true
+    }
+
+    /// Refuses a second pipeline while the first is alive, matching the .NET
+    /// element, which refuses a second at any time.
+    fn add_pipeline(&self, pipeline: &Arc<Pipeline>) -> Result<()> {
+        let mut current = self.pipeline.lock().unwrap_or_else(PoisonError::into_inner);
+        if current.strong_count() > 0 {
+            return Err(Error::configuration(
+                "A ShareUsageElement can be in only one pipeline at a time, and \
+                 this one is in a pipeline that is still alive. Give each \
+                 pipeline its own ShareUsageElement, or drop the other pipeline \
+                 first.",
+            ));
+        }
+        *current = Arc::downgrade(pipeline);
+        Ok(())
     }
 }
 
@@ -898,7 +912,7 @@ struct Worker {
     receiver: Receiver<ShareUsageData>,
     sender: Box<dyn UsageSender>,
     config: ShareUsageConfig,
-    static_info: Arc<StaticInfo>,
+    static_info: StaticInfo,
     success_count: Arc<AtomicU64>,
     fail_count: Arc<AtomicU64>,
     send_failures: LogThrottle,
@@ -1034,7 +1048,7 @@ fn write_device(
     // The per-machine static information.
     write_text_element(writer, "Version", &info.core_version)?;
     write_text_element(writer, "Product", "Pipeline")?;
-    for element in info.flow_elements() {
+    for element in &data.flow_elements {
         write_text_element(writer, "FlowElement", element)?;
     }
     write_text_element(writer, "Language", "rust")?;
@@ -1763,6 +1777,56 @@ mod tests {
         wait_for(|| element.fail_count() > 0);
         assert_eq!(element.fail_count(), 1);
         assert_eq!(element.success_count(), 0);
+    }
+
+    #[test]
+    fn each_record_lists_the_elements_of_the_pipeline_that_made_it() {
+        let capture = Capture::default();
+        let element = Arc::new(ShareUsageElement::with_sender(
+            ShareUsageConfig::default(),
+            Box::new(capture.clone()),
+        ));
+        // The first pipeline is dropped before the second is built, because
+        // the element can be in only one pipeline at a time.
+        let first = Pipeline::builder()
+            .add_element(Arc::new(SequenceElement::new()))
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        first
+            .create_flow_data_with(user_agent("first-agent"))
+            .process()
+            .unwrap();
+        drop(first);
+        let second = Pipeline::builder()
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        second
+            .create_flow_data_with(user_agent("second-agent"))
+            .process()
+            .unwrap();
+        drop(second);
+        drop(element);
+
+        let xml = capture.messages().concat();
+        let device = |agent: &str| {
+            xml.split("<Device>")
+                .find(|device| device.contains(agent))
+                .unwrap()
+                .to_owned()
+        };
+        let sequence = "<FlowElement>fiftyone_pipeline_engines_fiftyone::\
+                        sequence_element::SequenceElement</FlowElement>";
+        let share = "<FlowElement>fiftyone_pipeline_engines_fiftyone::\
+                     share_usage_element::ShareUsageElement</FlowElement>";
+        let first = device("first-agent");
+        assert!(first.contains(sequence) && first.contains(share), "{first}");
+        let second = device("second-agent");
+        assert!(
+            !second.contains(sequence) && second.contains(share),
+            "{second}"
+        );
     }
 
     #[test]
