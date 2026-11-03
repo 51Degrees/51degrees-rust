@@ -1,7 +1,7 @@
 [package]
 name = "fiftyone-ip-intelligence"
 version = "4.5.2"
-description = "IP Intelligence and IP geolocation for Rust. Finds an IP address's likely location (country, region, town, and coordinates), connection type, and network, on-premise with a data file or in the cloud. This facade re-exports the cloud and on-premise engines, with a builder that selects the deployment."
+description = "IP Intelligence and IP geolocation for Rust. Finds an IP address's likely location (country, region, town, and coordinates), connection type, and network, on-premise with a data file or in the cloud. This facade re-exports the cloud and on-premise engines, with a builder that selects the deployment. An alternative to MaxMind and IPinfo."
 keywords = ["ip-geolocation", "geoip", "ip-intelligence", "ip-lookup", "asn"]
 categories = ["network-programming", "web-programming"]
 edition.workspace = true
