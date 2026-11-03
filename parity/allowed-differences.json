@@ -1,0 +1,152 @@
+[
+  {
+    "path": "*device*",
+    "cases": ["ua-long"],
+    "reason": "C code. 51degrees-cxx ignores a single header longer than the maximum matched User-Agent length (src/dd/results-dd.h, bufferPseudoLength), so the crates find no device for a 2,000 character User-Agent. The .NET package builds older C code, which matches the start of it. Judged again once the .NET packages build the same 51degrees-cxx release."
+  },
+  {
+    "path": "*ip.asn*",
+    "cases": ["ip-v6-mapped"],
+    "reason": "C code. 51degrees-cxx looks up an address in ::ffff:0:0/96 as the IPv4 address it holds (RFC 4291 section 2.5.5.2, src/ipi/ipi.c), so ::ffff:1.1.1.1 gives 1.1.1.1's network. The older C code the .NET package builds does not. Judged again once the .NET packages build the same 51degrees-cxx release."
+  },
+  {
+    "path": "*",
+    "cases": ["sequence-over-int", "sequence-text"],
+    "kind": "value",
+    "reason": "A sequence .NET cannot read as a 32-bit integer gives an error from the Sequence element and another from the JSON builder, which then writes nothing. The crates give no error and carry on.",
+    "issue": 231
+  },
+  {
+    "path": "json",
+    "cases": ["sequence-over-int", "sequence-text"],
+    "kind": "presence",
+    "reason": "The JSON builder in .NET writes nothing when the sequence in the evidence is not a 32-bit integer.",
+    "issue": 231
+  },
+  {
+    "path": "json.javascriptProperties",
+    "cases": ["sequence-int-max"],
+    "kind": "onlyInDotnet",
+    "reason": "The sequence after 2147483647 wraps to a negative 32-bit number in .NET, so JavaScript properties are still listed. The crates hold a 64-bit sequence.",
+    "issue": 231
+  },
+  {
+    "path": "session",
+    "kind": "value",
+    "reason": "The crates hold the sequence as a 64-bit integer and start again at 1 for a sequence that is not a number, where .NET holds a 32-bit integer and leaves a bad value as it was.",
+    "issue": 231
+  },
+  {
+    "path": "evidenceAfter",
+    "kind": "value",
+    "reason": "The crates' Sequence element writes the session id and sequence into its own data, where .NET writes them back into the evidence.",
+    "issue": 231
+  },
+  {
+    "path": "properties.sequence",
+    "kind": "onlyInRust",
+    "reason": "The crates' Sequence element lists the session id and sequence as properties of its own data. .NET's lists none.",
+    "issue": 231
+  },
+  {
+    "path": "json.sequence",
+    "kind": "onlyInRust",
+    "reason": "The JSON builder writes the data of the crates' Sequence element, which .NET's Sequence element does not have.",
+    "issue": 231
+  },
+  {
+    "path": "properties.ip",
+    "kind": "presence",
+    "reason": "With no address in the evidence the crates' IP Intelligence engine gives an error and no data, where .NET gives data in which no property has a value.",
+    "issue": 226
+  },
+  {
+    "path": "errors",
+    "kind": "value",
+    "reason": "The crates' IP Intelligence engine gives an error when the evidence holds no address it can read. .NET gives none.",
+    "issue": 226
+  },
+  {
+    "path": "json.errors",
+    "kind": "onlyInRust",
+    "reason": "The JSON builder writes the IP Intelligence error the crates give when the evidence holds no address it can read.",
+    "issue": 226
+  },
+  {
+    "path": "json.ip",
+    "kind": "onlyInDotnet",
+    "reason": "The crates' IP Intelligence engine writes no data when the evidence holds no address it can read, so the JSON has no ip object.",
+    "issue": 226
+  },
+  {
+    "path": "*ip.ip",
+    "reason": "The crates do not fill the Ip property with the address looked up, as .NET does.",
+    "issue": 226
+  },
+  {
+    "path": "*ip.ipv6",
+    "reason": "The crates do not fill the IpV6 property with the address looked up, as .NET does.",
+    "issue": 226
+  },
+  {
+    "path": "properties.ip.*",
+    "kind": "onlyInRust",
+    "data": "lite",
+    "reason": "The crates' IP Intelligence engine lists a fixed set of property names whatever the data file holds. The ASN file holds few of them.",
+    "issue": 223
+  },
+  {
+    "path": "properties.*",
+    "kind": "noValueMessage",
+    "reason": "Every Device Detection property with no value gives the same sentence and IP Intelligence gives none of .NET's reasons.",
+    "issue": 223
+  },
+  {
+    "path": "properties.device.*",
+    "kind": "type",
+    "reason": "The crates take Device Detection property types from a table compiled into the crate rather than from the data file, so the JavaScript properties are strings.",
+    "issue": 223
+  },
+  {
+    "path": "properties.device.*",
+    "kind": "state",
+    "reason": "With no User-Agent the crates give an empty string where .NET gives no value, and the screen sizes have no value where .NET gives 0.",
+    "issue": 224
+  },
+  {
+    "path": "json.device.*",
+    "kind": "type",
+    "reason": "The JSON holds the empty strings the crates give where .NET gives no value (properties.device state).",
+    "issue": 224
+  },
+  {
+    "path": "json.device.*",
+    "kind": "onlyInDotnet",
+    "reason": "The crates' JSON builder leaves out a property with no value, where .NET writes null and a nullreason entry.",
+    "issue": 229
+  },
+  {
+    "path": "json*",
+    "kind": "order",
+    "reason": "The crates' JSON builder sorts element keys and property names, where .NET keeps their order.",
+    "issue": 229
+  },
+  {
+    "path": "json.javascriptProperties*",
+    "kind": "value",
+    "reason": "The crates' JSON builder lists JavaScript properties in name order, where .NET keeps the property order.",
+    "issue": 229
+  },
+  {
+    "path": "javascript",
+    "kind": "text",
+    "reason": "The JavaScript holds the JSON, so every JSON difference shows here too, and the template output has its own differences.",
+    "issue": 230
+  },
+  {
+    "path": "usage",
+    "kind": "presence",
+    "reason": "The crates have no public sink for usage records yet, so the Rust producer writes none.",
+    "issue": 232
+  }
+]

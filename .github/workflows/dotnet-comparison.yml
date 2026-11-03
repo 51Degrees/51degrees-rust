@@ -1,0 +1,187 @@
+name: Comparison with .NET
+
+# Runs the crates and the .NET packages over the corpus in parity/ and fails
+# on any difference that parity/allowed-differences.json does not list with
+# its reason. parity/README.md describes the programs and the line format.
+#
+# The lite job uses the free data files the cxx submodule carries. The
+# enterprise job uses the Enterprise files, fetched with the license keys
+# when they are available to the run, and is skipped with a warning when
+# they are not.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, 'release/**']
+  workflow_dispatch:
+
+concurrency:
+  group: dotnet-comparison-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  compare:
+    name: compare (${{ matrix.data }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        data: [lite, enterprise]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout workspace
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # The Lite files are Git LFS content inside the data submodules.
+      - name: Fetch LFS data for the cxx submodule
+        if: matrix.data == 'lite'
+        run: git -C cxx submodule foreach --recursive 'git lfs install --local && git lfs pull'
+
+      - name: Choose the Lite data files
+        if: matrix.data == 'lite'
+        run: |
+          dd="${GITHUB_WORKSPACE}/cxx/device-detection-data/51Degrees-LiteV4.1.hash"
+          ipi="${GITHUB_WORKSPACE}/cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi"
+          for file in "$dd" "$ipi"; do
+            if [ ! -f "$file" ] || head -c 64 "$file" | grep -q 'git-lfs'; then
+              echo "::error::$file is missing or is a Git LFS pointer"
+              exit 1
+            fi
+          done
+          echo "DD_FILE=$dd" >> "$GITHUB_ENV"
+          echo "IPI_FILE=$ipi" >> "$GITHUB_ENV"
+          echo "RUN=true" >> "$GITHUB_ENV"
+
+      - name: Check the license keys are available
+        if: matrix.data == 'enterprise'
+        env:
+          DEVICE_DETECTION_KEY: ${{ secrets.DEVICE_DETECTION_KEY }}
+          IP_INTELLIGENCE_KEY: ${{ secrets.IP_INTELLIGENCE_KEY }}
+        run: |
+          if [ -n "$DEVICE_DETECTION_KEY" ] && [ -n "$IP_INTELLIGENCE_KEY" ]; then
+            echo "RUN=true" >> "$GITHUB_ENV"
+          else
+            echo "::warning title=No license keys::DEVICE_DETECTION_KEY and IP_INTELLIGENCE_KEY are not both available, so the Enterprise comparison is skipped."
+            echo "RUN=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Fetch the Enterprise data files
+        if: matrix.data == 'enterprise' && env.RUN == 'true'
+        uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: |
+            TAC-HashV41.hash
+            51Degrees-EnterpriseIpiV41.ipi
+          cache: true
+          device-detection-key: ${{ secrets.DEVICE_DETECTION_KEY }}
+          device-detection-url: ${{ secrets.DEVICE_DETECTION_URL }}
+          ip-intelligence-key: ${{ secrets.IP_INTELLIGENCE_KEY }}
+          ip-intelligence-url: ${{ secrets.IPI_DATA_FILE_URL }}
+
+      - name: Choose the Enterprise data files
+        if: matrix.data == 'enterprise' && env.RUN == 'true'
+        run: |
+          echo "DD_FILE=${GITHUB_WORKSPACE}/assets/TAC-HashV41.hash" >> "$GITHUB_ENV"
+          echo "IPI_FILE=${GITHUB_WORKSPACE}/assets/51Degrees-EnterpriseIpiV41.ipi" >> "$GITHUB_ENV"
+
+      - name: Install .NET SDK
+        if: env.RUN == 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install Rust toolchain
+        if: env.RUN == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        if: env.RUN == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: parity
+
+      # The JavaScript builder depends on the 51Did crates, which compile in
+      # the OWID source.
+      - name: Copy the OWID source into fodid
+        if: env.RUN == 'true'
+        shell: pwsh
+        run: ./ci/copy-owid-source.ps1
+
+      - name: Check the parity workspace
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test -p parity-compare
+
+      - name: Build
+        if: env.RUN == 'true'
+        working-directory: parity
+        run: |
+          cargo build -p parity-rust -p parity-compare
+          dotnet build dotnet -c Release -o out/dotnet
+
+      - name: Write the answers
+        if: env.RUN == 'true'
+        working-directory: parity
+        run: |
+          args=(--corpus corpus/evidence.json --dd "$DD_FILE" --ipi "$IPI_FILE")
+          dotnet out/dotnet/Parity.dll "${args[@]}" --out out/dotnet.jsonl
+          target/debug/parity-rust "${args[@]}" --out out/rust.jsonl
+
+      - name: Compare
+        if: env.RUN == 'true'
+        working-directory: parity
+        run: |
+          strict=()
+          if [ "${{ matrix.data }}" = lite ]; then strict=(--strict); fi
+          set +e
+          target/debug/parity-compare --corpus corpus/evidence.json \
+            --dotnet out/dotnet.jsonl --rust out/rust.jsonl \
+            --allowed allowed-differences.json --data ${{ matrix.data }} \
+            --report out/report.md "${strict[@]}" > /dev/null
+          status=$?
+          set -e
+          cat out/report.md >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      # A changed Rust answer must fail the comparison and be named in the
+      # report, or the comparison proves nothing.
+      - name: Check that a changed answer fails
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          jq -c 'if .id == "ua-iphone" then .properties.device.ismobile.value |= not else . end' \
+            out/rust.jsonl > out/rust-changed.jsonl
+          if target/debug/parity-compare --corpus corpus/evidence.json \
+            --dotnet out/dotnet.jsonl --rust out/rust-changed.jsonl \
+            --allowed allowed-differences.json --data lite \
+            --report out/report-changed.md > /dev/null; then
+            echo "::error::The comparison passed with a changed Rust answer"
+            exit 1
+          fi
+          grep -q 'ua-iphone.*properties.device.ismobile' out/report-changed.md
+
+      - name: Upload the answers and the report
+        if: always() && env.RUN == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: comparison-${{ matrix.data }}
+          path: |
+            parity/out/*.jsonl
+            parity/out/*.md
+          if-no-files-found: ignore
