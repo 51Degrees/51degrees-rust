@@ -788,3 +788,16 @@ fn named_keys_are_listed_by_whitelists_and_their_unions() {
         Some(vec![String::from("header.user-agent")])
     );
 }
+
+/// A map holds exactly the properties set on it, whatever their case, and
+/// data that does not say holds every property.
+#[test]
+fn has_property_tells_a_missing_property_from_a_held_one() {
+    let map = MapElementData::new().set("IsMobile", true);
+    assert!(map.has_property("ismobile"));
+    assert!(!map.has_property("ScreenWidth"));
+    assert!(map.get("ScreenWidth").is_err());
+
+    let other = OtherData;
+    assert!(other.has_property("anything"));
+}

@@ -173,14 +173,21 @@ impl FlowElement for SequenceElement {
 
         // If a sequence is supplied, increment it, wrapping after the largest
         // integer as the .NET and Java pipelines do. Anything that does not
-        // parse as an integer is treated as a fresh sequence of 1, which keeps
-        // the element robust to malformed client input rather than failing the
-        // whole flow.
-        let sequence = data
-            .evidence()
-            .get(EVIDENCE_SEQUENCE)
-            .and_then(|raw| raw.trim().parse::<i64>().ok())
-            .map_or(1, |sequence| sequence.wrapping_add(1));
+        // parse as an integer is logged at error level, as .NET logs it, and
+        // treated as a fresh sequence of 1 rather than failing the whole flow.
+        let sequence = match data.evidence().get(EVIDENCE_SEQUENCE) {
+            None => 1,
+            Some(raw) => match raw.trim().parse::<i64>() {
+                Ok(sequence) => sequence.wrapping_add(1),
+                Err(_) => {
+                    log::error!(
+                        "Failed to increment the usage sequence number, because \
+                         the sequence is not an integer."
+                    );
+                    1
+                }
+            },
+        };
 
         data.get_or_add(Self::KEY, || SequenceData::new(session_id, sequence))?;
         Ok(())
