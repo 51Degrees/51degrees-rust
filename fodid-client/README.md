@@ -278,7 +278,7 @@ The other 51Did clients this crate is a port of, and the engine repositories:
 
 - https://github.com/51Degrees/51degrees-rust
 - https://github.com/51Degrees/pipeline-dotnet
-- https://github.com/51Degrees/pipeline-java
+- https://github.com/51Degrees/51degrees-java
 - https://github.com/51Degrees/pipeline-node
 - https://github.com/51Degrees/pipeline-python
 - https://github.com/51Degrees/pipeline-php-did
