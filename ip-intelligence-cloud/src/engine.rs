@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use once_cell::sync::OnceCell;
 
-use fiftyone_cloud_request_engine::{CloudRequestEngine, LicensedProducts};
+use fiftyone_cloud_request_engine::{CloudRequestEngine, LicensedProducts, ProductPropertyNames};
 use fiftyone_ip_intelligence_shared::{
     default_aspect_property_metadata, default_property_metadata, IpIntelligenceDataBase,
     IP_DATA_KEY, IP_DATA_KEY_NAME, WEIGHTED_PROPERTY_VALUE_TYPE,
@@ -138,6 +138,10 @@ pub struct IpIntelligenceCloudEngine {
     default_properties: Vec<PropertyMetaData>,
     /// The shared default aspect metadata, returned before discovery completes.
     default_aspect_properties: Vec<AspectPropertyMetaData>,
+
+    /// The IP Intelligence properties the resource key is granted, which each
+    /// response is checked against.
+    granted: ProductPropertyNames,
 }
 
 impl IpIntelligenceCloudEngine {
@@ -258,6 +262,8 @@ impl IpIntelligenceCloudEngine {
         // yields empty data rather than an error, so a response that simply
         // carried no IPI data still produces a valid (empty) result.
         if let Some(Value::Object(aspect)) = root.get(IP_DATA_KEY_NAME) {
+            self.granted
+                .warn_unlisted(aspect.keys().map(String::as_str));
             let kinds = self.value_kinds();
             parse::populate_from_aspect(&mut element, aspect, &kinds);
         }
@@ -352,7 +358,9 @@ impl IpIntelligenceCloudEngineBuilder {
     }
 
     /// Build the engine, returning an [`Error::PipelineConfiguration`] if no
-    /// cloud request engine was supplied.
+    /// cloud request engine was supplied. An error is logged when the request
+    /// engine has a resource key that is not granted the IP Intelligence
+    /// product.
     pub fn build(self) -> Result<IpIntelligenceCloudEngine> {
         let request_engine = self.request_engine.ok_or_else(|| {
             Error::configuration(
@@ -361,8 +369,15 @@ impl IpIntelligenceCloudEngineBuilder {
             )
         })?;
 
+        let granted = ProductPropertyNames::new(
+            &request_engine,
+            "IpIntelligenceCloudEngine",
+            IP_DATA_KEY_NAME,
+            None,
+        );
         Ok(IpIntelligenceCloudEngine {
             request_engine,
+            granted,
             evidence_filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
             properties: OnceCell::new(),
             aspect_properties: OnceCell::new(),

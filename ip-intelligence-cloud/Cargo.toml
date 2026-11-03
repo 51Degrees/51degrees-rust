@@ -20,6 +20,10 @@ serde.workspace = true
 serde_json.workspace = true
 once_cell.workspace = true
 
+[dev-dependencies]
+# The logging tests capture what the engines log through the log facade.
+log = "0.4"
+
 [features]
 # Forward the cloud request engine's built-in reqwest client. Off by default so
 # this crate builds without reqwest (and so for wasm32-wasip1). A native consumer

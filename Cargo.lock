@@ -650,6 +650,7 @@ dependencies = [
  "fiftyone-caching",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "log",
  "once_cell",
  "reqwest",
  "serde",
@@ -698,6 +699,7 @@ dependencies = [
  "fiftyone-device-detection-shared",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "log",
  "serde",
  "serde_json",
 ]
@@ -768,6 +770,7 @@ dependencies = [
  "fiftyone-ip-intelligence-shared",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "log",
  "once_cell",
  "serde",
  "serde_json",

@@ -347,7 +347,7 @@ impl CloudRequestEngine {
         // Strip prefixes and de-duplicate on the stripped key, keeping the last
         // (highest-precedence) writer.
         let mut stripped: Vec<(String, String)> = Vec::new();
-        for (key, value) in entries {
+        for &(key, value) in &entries {
             let field = strip_prefix(key);
             // The engine writes the credential and the property list itself, and
             // the service advertises `query.values` as accepted evidence, so
@@ -359,6 +359,11 @@ impl CloudRequestEngine {
                 continue;
             }
             if let Some(existing) = stripped.iter_mut().find(|(k, _)| k == &field) {
+                // Query evidence is expected to replace what the request
+                // carried, so only other clashes are logged.
+                if !has_prefix(key, EvidencePrefix::Query) {
+                    log_conflict(key, value, &field, &entries);
+                }
                 existing.1 = value.to_owned();
             } else {
                 stripped.push((field, value.to_owned()));
@@ -425,6 +430,15 @@ impl CloudRequestEngine {
             eprintln!("51Degrees cloud request engine: {warning}");
             parsed.warnings.push(warning);
         }
+    }
+}
+
+/// Log each warning the cloud service returned, on every response, as .NET
+/// does. Called before the engine adds its own missing property warning,
+/// which goes to standard error instead.
+fn log_cloud_warnings(parsed: &ParsedResponse) {
+    for warning in &parsed.warnings {
+        log::warn!("{warning}");
     }
 }
 
@@ -543,6 +557,26 @@ fn strip_prefix(key: &str) -> String {
     }
 }
 
+/// Whether an evidence key starts with `prefix` and a separator.
+fn has_prefix(key: &str, prefix: EvidencePrefix) -> bool {
+    key.split_once('.')
+        .is_some_and(|(start, _)| start.eq_ignore_ascii_case(prefix.as_str()))
+}
+
+/// Log a warning that `key` replaces evidence sent under the same `field`,
+/// naming every other entry whose key ends with that field, as .NET does.
+fn log_conflict(key: &str, value: &str, field: &str, entries: &[(&str, &str)]) {
+    let conflicts: Vec<String> = entries
+        .iter()
+        .filter(|(other, _)| *other != key && other.ends_with(field))
+        .map(|(other, other_value)| format!("{other}={other_value}"))
+        .collect();
+    log::warn!(
+        "'{key}={value}' evidence conflicts with '{}'",
+        conflicts.join("', '")
+    );
+}
+
 impl FlowElement for CloudRequestEngine {
     fn process(&self, data: &mut FlowData) -> Result<()> {
         // Discovery already happened at build time, so processing goes straight
@@ -578,6 +612,7 @@ impl FlowElement for CloudRequestEngine {
                     // A cached body is as good a sample as a live one for the
                     // asked-for property check, and on a short-lived host the
                     // first response after a cold start may well be this one.
+                    log_cloud_warnings(&parsed);
                     self.add_missing_values_warning(&mut parsed);
                     if let Some(cloud) = data.get_mut_cloud() {
                         cloud.set_cache_hit();
@@ -604,6 +639,7 @@ impl FlowElement for CloudRequestEngine {
             true,
             &self.secrets,
         )?;
+        log_cloud_warnings(&parsed);
         self.add_missing_values_warning(&mut parsed);
 
         // Store the successful response so the next identical request is a hit,
@@ -977,7 +1013,8 @@ impl CloudRequestEngineBuilder {
     /// built-in client cannot be constructed, or if a discovery fetch fails (for
     /// example because the cloud is unavailable). A consumer that must tolerate a
     /// temporarily unavailable cloud at start-up supplies a cached state with
-    /// `set_state`.
+    /// `set_state`. A discovery request that fails, or is answered with an
+    /// error, is also logged at error level.
     pub fn build(&mut self) -> Result<CloudRequestEngine> {
         let (resource_key, license_key, values) = self.resolve_credentials()?;
 
@@ -1310,6 +1347,15 @@ fn signals_service_trouble(status: u16) -> bool {
     status == 429 || !(400..500).contains(&status)
 }
 
+/// Log an error for a discovery request that failed or was answered with an
+/// error, as .NET does. JSON of the wrong shape is only returned.
+fn log_discovery_failure(what: &str, endpoint: &str) {
+    log::error!(
+        "Failed to retrieve {what} from cloud service at {}.",
+        url_without_query(endpoint)
+    );
+}
+
 /// Fetch the accepted evidence keys from the cloud, mapping any failure to an
 /// [`Error::CloudRequest`]. The evidence-keys body is a flat JSON array, so
 /// error-message checking is disabled for it.
@@ -1326,7 +1372,8 @@ fn fetch_evidence_keys(
         form: Vec::new(),
         origin: origin.map(str::to_owned),
     };
-    let parsed = send_and_validate(http, recovery, &request, false, secrets)?;
+    let parsed = send_and_validate(http, recovery, &request, false, secrets)
+        .inspect_err(|_| log_discovery_failure("evidence keys", &endpoints.evidence_keys))?;
     let keys: Vec<String> = serde_json::from_str(&parsed.json).map_err(|e| {
         redact_secrets(
             cloud_error(
@@ -1378,7 +1425,8 @@ fn fetch_public_properties(
         form: Vec::new(),
         origin: origin.map(str::to_owned),
     };
-    let parsed = send_and_validate(http, recovery, &request, true, secrets)?;
+    let parsed = send_and_validate(http, recovery, &request, true, secrets)
+        .inspect_err(|_| log_discovery_failure("available properties", &endpoints.properties))?;
     LicensedProducts::parse(&parsed.json).map_err(|e| {
         // The address of this one request carries both keys, so the message
         // names the endpoint without its query string and is then cleaned

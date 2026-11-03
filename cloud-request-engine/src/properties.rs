@@ -31,9 +31,14 @@
 //! `Name`), so [`serde`] aliases accept both PascalCase and camelCase to be
 //! robust to either casing.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
+
+use crate::engine::CloudRequestEngine;
+
+/// The suffix of a response entry explaining why its sibling has no value.
+const NULL_REASON_SUFFIX: &[u8] = b"nullreason";
 
 /// The top-level accessible-properties response.
 ///
@@ -108,6 +113,88 @@ impl LicensedProducts {
     pub fn parse(json: &str) -> Result<LicensedProducts, serde_json::Error> {
         serde_json::from_str(json)
     }
+}
+
+/// The property names one product is granted, which a cloud aspect engine
+/// checks each response against, logging as .NET's cloud aspect engines do.
+///
+/// Made once with the engine. An error is logged then when the request
+/// engine has a resource key and the product is not among its accessible
+/// properties. With only a license key there are no accessible properties to
+/// read, so nothing is logged and no names are checked.
+#[derive(Debug, Clone)]
+pub struct ProductPropertyNames {
+    engine: String,
+    /// Lower-case names, or `None` when there is nothing to check against.
+    names: Option<HashSet<String>>,
+}
+
+impl ProductPropertyNames {
+    /// Read the names `product` is granted from `request_engine`, naming
+    /// `engine` in what is logged. When `list` names one of the product's
+    /// properties, the names are those of its items, for a product whose
+    /// response is a list of entries.
+    pub fn new(
+        request_engine: &CloudRequestEngine,
+        engine: &str,
+        product: &str,
+        list: Option<&str>,
+    ) -> Self {
+        let granted = match request_engine.resource_key() {
+            Some(_) => request_engine.public_properties().ok(),
+            None => None,
+        }
+        .map(|products| products.products.get(product));
+        let names = match granted {
+            None => None,
+            Some(None) => {
+                log::error!("Aspect properties could not be loaded for {engine} - '{product}'");
+                None
+            }
+            Some(Some(granted)) => match list {
+                Some(list) => granted
+                    .properties
+                    .iter()
+                    .find(|property| property.name == list)
+                    .map(|property| lower_case_names(&property.item_properties)),
+                None => Some(lower_case_names(&granted.properties)),
+            },
+        };
+        ProductPropertyNames {
+            engine: engine.to_owned(),
+            names,
+        }
+    }
+
+    /// Log a warning for each of `names` the product does not list, as .NET
+    /// does for every response. A name ending `nullreason` explains why its
+    /// sibling has no value and is not a property itself.
+    pub fn warn_unlisted<'a>(&self, names: impl IntoIterator<Item = &'a str>) {
+        let Some(known) = &self.names else {
+            return;
+        };
+        for name in names {
+            if !is_null_reason(name) && !known.contains(&name.to_ascii_lowercase()) {
+                log::warn!(
+                    "No meta-data entry for property '{name}' in '{}'",
+                    self.engine
+                );
+            }
+        }
+    }
+}
+
+fn lower_case_names(properties: &[CloudPropertyMetaData]) -> HashSet<String> {
+    properties
+        .iter()
+        .map(|property| property.name.to_ascii_lowercase())
+        .collect()
+}
+
+fn is_null_reason(name: &str) -> bool {
+    let name = name.as_bytes();
+    name.len() >= NULL_REASON_SUFFIX.len()
+        && name[name.len() - NULL_REASON_SUFFIX.len()..].eq_ignore_ascii_case(NULL_REASON_SUFFIX)
 }
 
 #[cfg(test)]

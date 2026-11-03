@@ -23,6 +23,10 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 once_cell.workspace = true
+# Logs the cloud's warnings, evidence that clashes, failed discovery and
+# properties a response carries without metadata through the log facade,
+# which does nothing until the application installs a logger.
+log = "0.4"
 # Blocking HTTP client for the cloud request. rustls-tls avoids a system
 # OpenSSL dependency on Windows. The blocking client is used because the engine
 # processes one flow data per thread and does not need an async runtime. The

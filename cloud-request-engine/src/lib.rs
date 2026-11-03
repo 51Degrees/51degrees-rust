@@ -191,7 +191,9 @@ pub use fiftyone_caching::{Cache, LruCache, PutCache};
 #[cfg(feature = "reqwest-client")]
 pub use http::ReqwestClient;
 pub use http::{CloudHttpClient, CloudHttpRequest, CloudHttpResponse, HttpMethod};
-pub use properties::{CloudPropertyMetaData, LicensedProducts, ProductMetaData};
+pub use properties::{
+    CloudPropertyMetaData, LicensedProducts, ProductMetaData, ProductPropertyNames,
+};
 pub use recovery::{RecoveryConfig, RecoveryGate};
 pub use response::{cloud_error, parse_retry_after, validate_response, ParsedResponse};
 pub use state::{CloudEngineState, EvidenceKeyEntry};

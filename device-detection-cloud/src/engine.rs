@@ -33,11 +33,14 @@ use fiftyone_pipeline_engines::{
     MissingPropertyResult,
 };
 
-use fiftyone_cloud_request_engine::CloudRequestEngine;
+use fiftyone_cloud_request_engine::{CloudRequestEngine, ProductPropertyNames};
 use fiftyone_device_detection_shared::{DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY};
 
 use crate::dto::map_device_object;
 use crate::meta::{cloud_json, refresh_product_metadata};
+
+/// The engine's name in configuration errors and log records.
+const ENGINE_NAME: &str = "DeviceDetectionCloudEngine";
 
 /// An engine that turns the cloud JSON response into a
 /// [`DeviceDataBase`](fiftyone_device_detection_shared::DeviceDataBase).
@@ -126,6 +129,10 @@ pub struct DeviceDetectionCloudEngine {
     /// is what lets later elements (the set-headers element in particular) see
     /// the device `SetHeader*` properties at request time.
     metadata: OnceLock<DiscoveredMetadata>,
+
+    /// The device properties the resource key is granted, which each
+    /// response is checked against.
+    granted: ProductPropertyNames,
 }
 
 /// The property metadata a cloud engine discovers from the request engine's
@@ -151,10 +158,15 @@ impl DeviceDetectionCloudEngine {
     ///
     /// Property metadata is not fetched here. It is populated lazily on the first
     /// [`FlowElement::process`] call, or eagerly by calling
-    /// [`DeviceDetectionCloudEngine::refresh_properties`].
+    /// [`DeviceDetectionCloudEngine::refresh_properties`]. An error is logged when the
+    /// request engine has a resource key that is not granted the device
+    /// product.
     pub fn new(request_engine: Arc<CloudRequestEngine>) -> Self {
+        let granted =
+            ProductPropertyNames::new(&request_engine, ENGINE_NAME, DEVICE_ELEMENT_DATA_KEY, None);
         DeviceDetectionCloudEngine {
             request_engine,
+            granted,
             evidence_filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
             // Metadata is intentionally empty until discovery runs on the first
             // process call, or until an eager build pre-fills it.
@@ -222,12 +234,16 @@ impl DeviceDetectionCloudEngine {
     /// request engine itself failed and already reported the error) leaves the
     /// device data unpopulated and does not raise a new error.
     fn populate(&self, data: &mut FlowData) -> Result<()> {
-        let json = match cloud_json(data, "DeviceDetectionCloudEngine")? {
+        let json = match cloud_json(data, ENGINE_NAME)? {
             Some(json) => json,
             None => return Ok(()),
         };
 
         let device = slice_device_json(&json)?;
+        if let Some(device) = device.as_object() {
+            self.granted
+                .warn_unlisted(device.keys().map(String::as_str));
+        }
         let device_data = map_device_object(&device);
         data.get_or_add(DEVICE_DATA_KEY, || device_data)?;
         Ok(())

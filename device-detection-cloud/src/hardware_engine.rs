@@ -33,11 +33,17 @@ use fiftyone_pipeline_engines::{
     MissingPropertyResult,
 };
 
-use fiftyone_cloud_request_engine::CloudRequestEngine;
+use fiftyone_cloud_request_engine::{CloudRequestEngine, ProductPropertyNames};
 
 use crate::dto::map_device_object;
 use crate::meta::{cloud_json, refresh_product_metadata};
 use crate::multi_device::{MultiDeviceData, HARDWARE_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY};
+
+/// The engine's name in configuration errors and log records.
+const ENGINE_NAME: &str = "HardwareProfileCloudEngine";
+
+/// The hardware property whose items describe each matched profile.
+const PROFILES_PROPERTY: &str = "Profiles";
 
 /// A cloud engine that returns the several device profiles matching a single
 /// lookup parameter, such as a Type Allocation Code (TAC) or a native model
@@ -120,6 +126,10 @@ pub struct HardwareProfileCloudEngine {
 
     /// The data tier reported for the hardware product, once discovered.
     data_source_tier: String,
+
+    /// The profile properties the resource key is granted, which each
+    /// profile in a response is checked against.
+    granted: ProductPropertyNames,
 }
 
 impl HardwareProfileCloudEngine {
@@ -133,10 +143,19 @@ impl HardwareProfileCloudEngine {
     ///
     /// Property metadata is not fetched here. It is populated lazily on the first
     /// [`FlowElement::process`] call, or eagerly by calling
-    /// [`HardwareProfileCloudEngine::refresh_properties`].
+    /// [`HardwareProfileCloudEngine::refresh_properties`]. An error is logged when the
+    /// request engine has a resource key that is not granted the hardware
+    /// product.
     pub fn new(request_engine: Arc<CloudRequestEngine>) -> Self {
+        let granted = ProductPropertyNames::new(
+            &request_engine,
+            ENGINE_NAME,
+            HARDWARE_ELEMENT_DATA_KEY,
+            Some(PROFILES_PROPERTY),
+        );
         HardwareProfileCloudEngine {
             request_engine,
+            granted,
             evidence_filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
             properties: Vec::new(),
             aspect_properties: Vec::new(),
@@ -176,12 +195,12 @@ impl HardwareProfileCloudEngine {
     /// itself failed and already reported the error) leaves the result
     /// unpopulated and does not raise a new error.
     fn populate(&self, data: &mut FlowData) -> Result<()> {
-        let json = match cloud_json(data, "HardwareProfileCloudEngine")? {
+        let json = match cloud_json(data, ENGINE_NAME)? {
             Some(json) => json,
             None => return Ok(()),
         };
 
-        let result = slice_hardware_profiles(&json)?;
+        let result = slice_hardware_profiles(&json, Some(&self.granted))?;
         data.get_or_add(HARDWARE_DATA_KEY, || result)?;
         Ok(())
     }
@@ -195,8 +214,12 @@ impl HardwareProfileCloudEngine {
 /// result. A missing `hardware` block or `profiles` array yields an empty
 /// result rather than an error, since that is the normal response from a
 /// resource key without the hardware-profile-lookup product. Returns an
-/// [`Error::CloudRequest`] only when the body is not valid JSON.
-fn slice_hardware_profiles(json: &str) -> Result<MultiDeviceData> {
+/// [`Error::CloudRequest`] only when the body is not valid JSON. Each profile
+/// is checked against `granted` when it is given.
+fn slice_hardware_profiles(
+    json: &str,
+    granted: Option<&ProductPropertyNames>,
+) -> Result<MultiDeviceData> {
     let document: serde_json::Value =
         serde_json::from_str(json).map_err(|e| Error::CloudRequest {
             status_code: 0,
@@ -213,6 +236,9 @@ fn slice_hardware_profiles(json: &str) -> Result<MultiDeviceData> {
 
     if let Some(profiles) = profiles {
         for profile in profiles {
+            if let (Some(granted), Some(profile)) = (granted, profile.as_object()) {
+                granted.warn_unlisted(profile.keys().map(String::as_str));
+            }
             result.push_profile(map_device_object(profile));
         }
     }
@@ -351,7 +377,7 @@ mod tests {
             {"hardwarevendor":"Apple","hardwarename":["iPhone 11"],"hardwaremodel":"iPhone11,8"},
             {"hardwarevendor":"Apple","hardwarename":["iPhone 11 Pro"],"hardwaremodel":"iPhone12,3"}
         ]}}"#;
-        let result = slice_hardware_profiles(json).unwrap();
+        let result = slice_hardware_profiles(json, None).unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(
             result.profiles()[0].hardware_vendor().value().unwrap(),
@@ -372,13 +398,13 @@ mod tests {
         // A standard single-device response (key without the hardware-profile
         // product) has no `hardware` block, so the result is empty, not an error.
         let json = r#"{"device":{"hardwarename":["Desktop"]}}"#;
-        let result = slice_hardware_profiles(json).unwrap();
+        let result = slice_hardware_profiles(json, None).unwrap();
         assert!(result.is_empty());
     }
 
     #[test]
     fn slice_profiles_invalid_json_is_cloud_error() {
-        match slice_hardware_profiles("not json") {
+        match slice_hardware_profiles("not json", None) {
             Err(Error::CloudRequest { .. }) => {}
             other => panic!("expected a cloud request error, got {other:?}"),
         }
