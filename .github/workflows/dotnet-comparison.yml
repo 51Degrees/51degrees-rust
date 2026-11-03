@@ -147,13 +147,11 @@ jobs:
         if: env.RUN == 'true'
         working-directory: parity
         run: |
-          strict=()
-          if [ "${{ matrix.data }}" = lite ]; then strict=(--strict); fi
           set +e
           target/debug/parity-compare --corpus corpus/evidence.json \
             --dotnet out/dotnet.jsonl --rust out/rust.jsonl \
             --allowed allowed-differences.json --data ${{ matrix.data }} \
-            --report out/report.md "${strict[@]}" > /dev/null
+            --report out/report.md --strict > /dev/null
           status=$?
           set -e
           cat out/report.md >> "$GITHUB_STEP_SUMMARY"

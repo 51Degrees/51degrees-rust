@@ -83,9 +83,9 @@ A difference is allowed only when an entry in `allowed-differences.json`
 matches it. An entry has a `path` pattern, where `*` matches any run of
 characters, an optional `kind`, optional `cases` patterns, optional `data`
 (`lite` or `enterprise`), a required `reason`, and an `issue` number. The
-first entry that matches takes the difference. On the Lite files the run
-also fails when an entry allows nothing, so a change that removes a
-difference removes its entry in the same pull request.
+first entry that matches takes the difference. The run also fails when an
+entry that applies to its data files allows nothing, so a change that
+removes a difference removes its entry in the same pull request.
 
 ## The C code
 
