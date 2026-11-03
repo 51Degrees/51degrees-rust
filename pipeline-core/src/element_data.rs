@@ -37,6 +37,9 @@
 //!
 //! [`MapElementData`] is a ready-made backing that concrete element data can
 //! embed to get the dynamic bag for free.
+//!
+//! Element data is `Send + Sync`, so the elements of a parallel group can read
+//! what earlier elements added while they run at the same time.
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -51,13 +54,19 @@ use crate::value::PropertyValue;
 ///
 /// The trait is bound on [`Any`] so [`crate::FlowData`] can downcast a stored
 /// `dyn ElementData` back to its concrete type given a [`crate::TypedKey`]. It
-/// is bound on [`Send`] because a flow data may be moved between threads (for
-/// example handed from a request-handling thread to a worker), matching the
-/// `ElementData: Any + Send` design in the plan. It is deliberately **not**
-/// `Sync`: element data is single-thread access per the
-/// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#element-data),
-/// so implementations may use cheap non-synchronised interior mutability.
-pub trait ElementData: Any + Send {
+/// is bound on [`Send`] because a flow data may be moved between threads, for
+/// example handed from a request-handling thread to a worker.
+///
+/// It is bound on [`Sync`] because the elements of a parallel group (see
+/// [`crate::PipelineBuilder::add_parallel_elements`]) read the element data
+/// added before the group from several threads at once. Plain data is `Sync`
+/// with no extra code. A value worked out on first read needs a [`std::sync`]
+/// type such as `Mutex` or `OnceLock`, not a `Cell` or `RefCell`.
+///
+/// Element data is still written from one thread only, by the element that
+/// adds it. See the
+/// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#element-data).
+pub trait ElementData: Any + Send + Sync {
     /// Get a property value by name.
     ///
     /// Returns `Err(NoValueError)` when the property is present in this data but

@@ -154,6 +154,36 @@ fn a_suppressed_error_is_logged_without_credentials() {
 }
 
 #[test]
+fn a_suppressed_error_in_a_parallel_group_is_logged() {
+    capture_logs();
+    let group: [Arc<dyn FlowElement>; 2] = [
+        Arc::new(FailingElement::new("grouped-failure", || {
+            Error::configuration("deliberate failure")
+        })),
+        Arc::new(FailingElement::new("grouped-beside", || {
+            Error::configuration("deliberate failure")
+        })),
+    ];
+    Pipeline::builder()
+        .add_parallel_elements(group)
+        .suppress_process_exceptions(true)
+        .build()
+        .unwrap()
+        .create_flow_data()
+        .process()
+        .unwrap();
+
+    assert_eq!(
+        logged_about("'grouped-failure'"),
+        vec![
+            "DEBUG Suppressed an error in element 'grouped-failure': pipeline \
+             configuration error: deliberate failure"
+        ]
+    );
+    assert_eq!(logged_about("'grouped-beside'").len(), 1);
+}
+
+#[test]
 fn a_returned_error_is_left_to_the_caller() {
     capture_logs();
     let result = process(

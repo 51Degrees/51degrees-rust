@@ -28,25 +28,34 @@
 //! [conceptual overview](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/conceptual-overview.md#pipeline).
 //!
 //! Build one with [`PipelineBuilder`]: add elements in execution order, then
-//! call [`PipelineBuilder::build`] to obtain an `Arc<Pipeline>`.
+//! call [`PipelineBuilder::build`] to obtain an `Arc<Pipeline>`. Elements added
+//! with [`PipelineBuilder::add_parallel_elements`] run at the same time, as the
+//! [parallel processing specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/advanced-features/parallel-processing.md)
+//! describes.
 
 use std::any::Any;
+use std::ops::Range;
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
+use std::thread;
 
 use crate::constants;
 use crate::error::{Error, FlowError, Result};
 use crate::evidence::{Evidence, EvidenceKeyFilter, EvidenceKeyFilterAggregator};
-use crate::flow_data::FlowData;
+use crate::flow_data::{BeforeGroup, FlowData};
 use crate::flow_element::FlowElement;
+use crate::group_threads::Job;
 
 /// An immutable, shareable container of ordered flow elements.
 ///
-/// A pipeline runs its elements sequentially, in the order they were added, for
-/// each flow data it processes. It exposes a pipeline-wide evidence filter (the
-/// union of its elements' filters) and the `suppress_process_exceptions` flag
-/// that controls error handling.
+/// A pipeline runs its elements in the order they were added, for each flow
+/// data it processes, and the elements of a parallel group at the same time.
+/// It exposes a pipeline-wide evidence filter (the union of its elements'
+/// filters) and the `suppress_process_exceptions` flag that controls error
+/// handling.
 pub struct Pipeline {
     elements: Vec<Arc<dyn FlowElement>>,
+    steps: Vec<Step>,
     evidence_key_filter: EvidenceKeyFilterAggregator,
     suppress_process_exceptions: bool,
     concurrent: bool,
@@ -61,7 +70,9 @@ impl Pipeline {
         PipelineBuilder::new()
     }
 
-    /// The flow elements in this pipeline, in execution order.
+    /// The flow elements in this pipeline, in the order they were added. The
+    /// elements of a parallel group are listed in the order given to the
+    /// group, and the group itself is not an element.
     pub fn flow_elements(&self) -> &[Arc<dyn FlowElement>] {
         &self.elements
     }
@@ -85,7 +96,8 @@ impl Pipeline {
         self.suppress_process_exceptions
     }
 
-    /// True if any element in this pipeline runs multiple threads internally.
+    /// True if this pipeline has a parallel group, or any element in it runs
+    /// multiple threads internally.
     pub fn is_concurrent(&self) -> bool {
         self.concurrent
     }
@@ -113,8 +125,9 @@ impl Pipeline {
 
     /// Run every element against the flow data in order.
     ///
-    /// Each element's `process` is called in turn. On an element error the
-    /// behavior depends on `suppress_process_exceptions`:
+    /// Each element's `process` is called in turn, and the elements of a
+    /// parallel group at the same time. On an element error the behavior
+    /// depends on `suppress_process_exceptions`:
     ///
     /// - **Suppressed** (`true`): the error is recorded on the flow data via
     ///   [`FlowData::errors`], logged at debug level, and the remaining
@@ -125,21 +138,21 @@ impl Pipeline {
     ///   [`FlowError::should_throw`] is `true`. If none qualify, it returns
     ///   `Ok(())`.
     ///
+    /// A parallel group's errors are recorded in the order its elements were
+    /// given, whichever finished first.
+    ///
     /// This follows the
     /// [exception-handling specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/exception-handling.md#process-function).
     pub(crate) fn process(&self, data: &mut FlowData) -> Result<()> {
-        for element in &self.elements {
-            if let Err(error) = element.process(data) {
-                // A suppressed error is logged as well as recorded, so it can
-                // be seen without reading the flow data. Debug level, because
-                // suppressing says the caller carries on past failures.
-                if self.suppress_process_exceptions {
-                    log::debug!(
-                        "Suppressed an error in element '{}': {error}",
-                        element.data_key()
-                    );
+        for step in &self.steps {
+            match step {
+                Step::Element(index) => {
+                    let element = &self.elements[*index];
+                    if let Err(error) = element.process(data) {
+                        self.record_error(data, element.data_key(), error);
+                    }
                 }
-                data.add_error(FlowError::new(element.data_key(), error));
+                Step::Group(range) => self.process_group(&self.elements[range.clone()], data),
             }
         }
 
@@ -164,6 +177,105 @@ impl Pipeline {
         }
         Ok(())
     }
+
+    /// Record an element's error on the flow data. A suppressed error is
+    /// logged as well, so it can be seen without reading the flow data. Debug
+    /// level, because suppressing says the caller carries on past failures.
+    fn record_error(&self, data: &mut FlowData, data_key: &str, error: Error) {
+        if self.suppress_process_exceptions {
+            log::debug!("Suppressed an error in element '{data_key}': {error}");
+        }
+        data.add_error(FlowError::new(data_key, error));
+    }
+
+    /// Run a parallel group's elements at the same time, each on a flow data
+    /// of its own that reads what `data` held before the group, then add what
+    /// each one added and record each one's errors, in the order given.
+    ///
+    /// A panic in an element is raised again here once every element has
+    /// finished and `data` holds its evidence and earlier results again.
+    fn process_group(&self, elements: &[Arc<dyn FlowElement>], data: &mut FlowData) {
+        let before = data.begin_group();
+        let outcomes: Vec<_> = run_at_once(elements, data.pipeline(), &before)
+            .into_iter()
+            // Dropping each member's flow data releases its share of `before`.
+            .map(|outcome| outcome.map(|(member, result)| (member.into_added_data(), result)))
+            .collect();
+        data.end_group(before);
+
+        let mut first_panic = None;
+        for (element, outcome) in elements.iter().zip(outcomes) {
+            match outcome {
+                Ok((added, result)) => {
+                    if let Err(error) = result {
+                        self.record_error(data, element.data_key(), error);
+                    }
+                    for key in data.add_group_member_data(added) {
+                        let error = Error::configuration(format!(
+                            "Element data under key '{key}' was added by more \
+                             than one element of a parallel group, so only \
+                             the first is kept."
+                        ));
+                        self.record_error(data, element.data_key(), error);
+                    }
+                }
+                Err(payload) => {
+                    first_panic.get_or_insert(payload);
+                }
+            }
+        }
+        if let Some(payload) = first_panic {
+            panic::resume_unwind(payload);
+        }
+    }
+}
+
+/// One step of processing, as positions in the pipeline's elements.
+enum Step {
+    /// One element on its own.
+    Element(usize),
+    /// A parallel group, whose elements run at the same time.
+    Group(Range<usize>),
+}
+
+/// What one element of a parallel group gave, being its flow data and its
+/// result, or what it panicked with.
+type Outcome = thread::Result<(FlowData, Result<()>)>;
+
+/// Run each element on a group member flow data, all at the same time, and
+/// return the outcomes in element order.
+///
+/// Every element but the first is offered to the group threads, and the first
+/// runs on this thread. This thread then runs any element no group thread has
+/// started, so the group finishes even when no group thread is free or the
+/// platform cannot start threads.
+fn run_at_once(
+    elements: &[Arc<dyn FlowElement>],
+    pipeline: &Arc<Pipeline>,
+    before: &Arc<BeforeGroup>,
+) -> Vec<Outcome> {
+    let Some((first, others)) = elements.split_first() else {
+        return Vec::new();
+    };
+    let jobs: Vec<_> = others
+        .iter()
+        .map(|element| {
+            let element = Arc::clone(element);
+            let mut member = FlowData::group_member(pipeline, before);
+            Job::offer(move || {
+                let result = element.process(&mut member);
+                (member, result)
+            })
+        })
+        .collect();
+    let mut member = FlowData::group_member(pipeline, before);
+    let mut outcomes = Vec::with_capacity(elements.len());
+    outcomes.push(panic::catch_unwind(AssertUnwindSafe(move || {
+        let result = first.process(&mut member);
+        (member, result)
+    })));
+    outcomes.extend(jobs.iter().map(Job::finish));
+    outcomes
 }
 
 /// Produce a value-equivalent copy of an [`Error`] for aggregation.
@@ -221,6 +333,7 @@ fn clone_error(error: &Error) -> Error {
 #[derive(Default)]
 pub struct PipelineBuilder {
     elements: Vec<Arc<dyn FlowElement>>,
+    steps: Vec<Step>,
     suppress_process_exceptions: bool,
     resources: Vec<Arc<dyn Any + Send + Sync>>,
 }
@@ -231,6 +344,7 @@ impl PipelineBuilder {
     pub fn new() -> Self {
         PipelineBuilder {
             elements: Vec::new(),
+            steps: Vec::new(),
             suppress_process_exceptions: constants::DEFAULT_SUPPRESS_PROCESS_EXCEPTIONS,
             resources: Vec::new(),
         }
@@ -239,7 +353,32 @@ impl PipelineBuilder {
     /// Add a flow element. Elements execute in the order they are added.
     /// Returns `self` for chaining.
     pub fn add_element(mut self, element: Arc<dyn FlowElement>) -> Self {
+        self.steps.push(Step::Element(self.elements.len()));
         self.elements.push(element);
+        self
+    }
+
+    /// Add elements that run at the same time, as a parallel group. The
+    /// pipeline waits for all of them before it runs the next element, and
+    /// records their errors as it does for any element, in the order given
+    /// here. Returns `self` for chaining.
+    ///
+    /// Each element of the group reads the evidence, element data and errors
+    /// from before the group, and none sees what another element of the group
+    /// adds. One element is added on its own and no elements add nothing, as
+    /// the 51Degrees .NET pipeline does. See the
+    /// [parallel processing specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/advanced-features/parallel-processing.md).
+    pub fn add_parallel_elements(
+        mut self,
+        elements: impl IntoIterator<Item = Arc<dyn FlowElement>>,
+    ) -> Self {
+        let start = self.elements.len();
+        self.elements.extend(elements);
+        match self.elements.len() - start {
+            0 => {}
+            1 => self.steps.push(Step::Element(start)),
+            _ => self.steps.push(Step::Group(start..self.elements.len())),
+        }
         self
     }
 
@@ -281,10 +420,12 @@ impl PipelineBuilder {
             }));
         }
 
-        let concurrent = self.elements.iter().any(|e| e.is_concurrent());
+        let concurrent = self.elements.iter().any(|e| e.is_concurrent())
+            || self.steps.iter().any(|step| matches!(step, Step::Group(_)));
 
         Ok(Arc::new(Pipeline {
             elements: self.elements,
+            steps: self.steps,
             evidence_key_filter: aggregator,
             suppress_process_exceptions: self.suppress_process_exceptions,
             concurrent,
