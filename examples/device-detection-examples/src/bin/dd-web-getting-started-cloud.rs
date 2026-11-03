@@ -368,7 +368,7 @@ mod tests {
     /// nothing, because no request is processed.
     #[test]
     fn builds_with_usage_sharing_on() {
-        build_app(
+        let _app = build_app(
             "resource-key-placeholder",
             None,
             Some(CloudEngineState::default()),
