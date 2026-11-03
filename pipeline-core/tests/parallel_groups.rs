@@ -26,10 +26,9 @@
 
 use std::any::Any;
 use std::collections::BTreeMap;
-use std::panic::{self, AssertUnwindSafe};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use fiftyone_pipeline_core::{
     ElementData, Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData,
@@ -39,11 +38,6 @@ use fiftyone_pipeline_core::{
 
 /// How long each of the two slow elements waits.
 const WAIT_MILLISECONDS: u64 = 200;
-/// The longest two slow elements in a group may take together.
-const GROUP_LIMIT_MILLISECONDS: u64 = 300;
-/// How long an element waits for the others of its group to start, long
-/// enough that only elements run one after another reach it.
-const MEETING_SECONDS: u64 = 10;
 
 /// Element data holding string values.
 struct ValueData(MapElementData);
@@ -125,14 +119,6 @@ fn writer(key: &'static str, value: &'static str) -> Arc<dyn FlowElement> {
 /// An element that always fails with `message`.
 fn failing(key: &'static str, message: &'static str) -> Arc<dyn FlowElement> {
     element(key, &[], move |_, _| Err(Error::configuration(message)))
-}
-
-/// An element that waits, then writes.
-fn slow(key: &'static str) -> Arc<dyn FlowElement> {
-    element(key, &[], |element, data| {
-        thread::sleep(Duration::from_millis(WAIT_MILLISECONDS));
-        element.write(data, "waited")
-    })
 }
 
 /// A string value another element added, or a word saying why there is none.
@@ -229,72 +215,128 @@ fn evidence() -> Evidence {
         .build()
 }
 
-#[test]
-fn the_elements_of_a_group_run_at_the_same_time() {
-    let pipeline = Pipeline::builder()
-        .add_parallel_elements([slow("one"), slow("two")])
-        .build()
-        .unwrap();
-    let mut data = pipeline.create_flow_data();
+/// Tests that need threads, which WebAssembly here cannot start. There the
+/// group's elements run one after another, as
+/// `without_threads_a_group_runs_on_the_calling_thread` shows.
+#[cfg(not(target_family = "wasm"))]
+mod at_the_same_time {
+    use std::sync::{Condvar, Mutex};
+    use std::time::Instant;
 
-    let started = Instant::now();
-    data.process().unwrap();
-    let took = started.elapsed();
+    use super::*;
 
-    assert!(
-        took < Duration::from_millis(GROUP_LIMIT_MILLISECONDS),
-        "two elements that each wait {WAIT_MILLISECONDS} ms took {took:?}"
-    );
-    assert_eq!(read(&data, "one"), "waited");
-    assert_eq!(read(&data, "two"), "waited");
-}
+    /// The longest two slow elements in a group may take together.
+    const GROUP_LIMIT_MILLISECONDS: u64 = 300;
+    /// How long an element waits for the others of its group to start, long
+    /// enough that only elements run one after another reach it.
+    const MEETING_SECONDS: u64 = 10;
 
-/// A point that elements reach one at a time and wait at until all of them
-/// have reached it, as a .NET `Barrier` does.
-struct Meeting {
-    expected: usize,
-    arrived: Mutex<usize>,
-    all_here: Condvar,
-}
-
-impl Meeting {
-    fn new(expected: usize) -> Arc<Self> {
-        Arc::new(Meeting {
-            expected,
-            arrived: Mutex::new(0),
-            all_here: Condvar::new(),
+    /// An element that waits, then writes.
+    fn slow(key: &'static str) -> Arc<dyn FlowElement> {
+        element(key, &[], |element, data| {
+            thread::sleep(Duration::from_millis(WAIT_MILLISECONDS));
+            element.write(data, "waited")
         })
     }
 
-    /// Arrive, then wait for the others. False when they did not all arrive
-    /// in time, as happens when elements run one after another.
-    fn arrive_and_wait(&self) -> bool {
-        let mut arrived = self.arrived.lock().unwrap();
-        *arrived += 1;
-        self.all_here.notify_all();
-        let (_arrived, waited) = self
-            .all_here
-            .wait_timeout_while(arrived, Duration::from_secs(MEETING_SECONDS), |arrived| {
-                *arrived < self.expected
-            })
+    #[test]
+    fn the_elements_of_a_group_run_at_the_same_time() {
+        let pipeline = Pipeline::builder()
+            .add_parallel_elements([slow("one"), slow("two")])
+            .build()
             .unwrap();
-        !waited.timed_out()
+        let mut data = pipeline.create_flow_data();
+
+        let started = Instant::now();
+        data.process().unwrap();
+        let took = started.elapsed();
+
+        assert!(
+            took < Duration::from_millis(GROUP_LIMIT_MILLISECONDS),
+            "two elements that each wait {WAIT_MILLISECONDS} ms took {took:?}"
+        );
+        assert_eq!(read(&data, "one"), "waited");
+        assert_eq!(read(&data, "two"), "waited");
+    }
+
+    /// A point that elements reach one at a time and wait at until all of them
+    /// have reached it, as a .NET `Barrier` does.
+    struct Meeting {
+        expected: usize,
+        arrived: Mutex<usize>,
+        all_here: Condvar,
+    }
+
+    impl Meeting {
+        fn new(expected: usize) -> Arc<Self> {
+            Arc::new(Meeting {
+                expected,
+                arrived: Mutex::new(0),
+                all_here: Condvar::new(),
+            })
+        }
+
+        /// Arrive, then wait for the others. False when they did not all arrive
+        /// in time, as happens when elements run one after another.
+        fn arrive_and_wait(&self) -> bool {
+            let mut arrived = self.arrived.lock().unwrap();
+            *arrived += 1;
+            self.all_here.notify_all();
+            let (_arrived, waited) = self
+                .all_here
+                .wait_timeout_while(arrived, Duration::from_secs(MEETING_SECONDS), |arrived| {
+                    *arrived < self.expected
+                })
+                .unwrap();
+            !waited.timed_out()
+        }
+    }
+
+    #[test]
+    fn every_element_of_a_group_starts_before_any_finishes() {
+        let keys = ["one", "two", "three"];
+        let meeting = Meeting::new(keys.len());
+        let group: Vec<_> = keys
+            .into_iter()
+            .map(|key| {
+                let meeting = Arc::clone(&meeting);
+                element(key, &[], move |element, data| {
+                    if meeting.arrive_and_wait() {
+                        element.write(data, "met")
+                    } else {
+                        Err(Error::configuration("the others never started"))
+                    }
+                })
+            })
+            .collect();
+        let pipeline = Pipeline::builder()
+            .add_parallel_elements(group)
+            .build()
+            .unwrap();
+        let mut data = pipeline.create_flow_data();
+
+        data.process().unwrap();
+
+        assert!(data.errors().is_empty(), "{:?}", errors(&data));
+        for key in keys {
+            assert_eq!(read(&data, key), "met");
+        }
     }
 }
 
+#[cfg(target_family = "wasm")]
 #[test]
-fn every_element_of_a_group_starts_before_any_finishes() {
+fn without_threads_a_group_runs_on_the_calling_thread() {
     let keys = ["one", "two", "three"];
-    let meeting = Meeting::new(keys.len());
+    let caller = thread::current().id();
     let group: Vec<_> = keys
         .into_iter()
         .map(|key| {
-            let meeting = Arc::clone(&meeting);
             element(key, &[], move |element, data| {
-                if meeting.arrive_and_wait() {
-                    element.write(data, "met")
+                if thread::current().id() == caller {
+                    element.write(data, "calling thread")
                 } else {
-                    Err(Error::configuration("the others never started"))
+                    element.write(data, "another thread")
                 }
             })
         })
@@ -309,7 +351,7 @@ fn every_element_of_a_group_starts_before_any_finishes() {
 
     assert!(data.errors().is_empty(), "{:?}", errors(&data));
     for key in keys {
-        assert_eq!(read(&data, key), "met");
+        assert_eq!(read(&data, key), "calling thread");
     }
 }
 
@@ -525,8 +567,11 @@ fn only_the_first_of_two_elements_adding_one_key_is_kept() {
     );
 }
 
+#[cfg(panic = "unwind")]
 #[test]
 fn a_panic_in_a_group_reaches_the_caller_with_the_flow_data_intact() {
+    use std::panic::{self, AssertUnwindSafe};
+
     let pipeline = Pipeline::builder()
         .add_element(writer("before", "kept"))
         .add_parallel_elements([
