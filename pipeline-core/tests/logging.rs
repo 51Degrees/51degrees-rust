@@ -153,8 +153,10 @@ fn a_suppressed_error_is_logged_without_credentials() {
     assert!(records[0].contains("status 400"), "{records:?}");
 }
 
+/// .NET's pipeline logs one error-level record for an element that fails
+/// while errors are not suppressed, and still throws.
 #[test]
-fn a_returned_error_is_left_to_the_caller() {
+fn a_returned_error_is_logged_at_error_level() {
     capture_logs();
     let result = process(
         FailingElement::new("returned-failure", || {
@@ -164,5 +166,32 @@ fn a_returned_error_is_left_to_the_caller() {
     );
 
     assert!(matches!(result, Err(Error::Aggregate(_))));
-    assert!(logged_about("'returned-failure'").is_empty());
+    assert_eq!(
+        logged_about("'returned-failure'"),
+        vec![
+            "ERROR An error occurred in element 'returned-failure': pipeline \
+             configuration error: deliberate failure"
+        ]
+    );
+}
+
+#[test]
+fn a_returned_error_is_logged_without_credentials() {
+    const NOT_A_KEY: &str = "AQ-NOT-A-REAL-KEY-000001";
+    capture_logs();
+    let result = process(
+        FailingElement::new("returned-cloud", || Error::CloudRequest {
+            status_code: 400,
+            retry_after_seconds: None,
+            message: format!("'{NOT_A_KEY}' could not be read as a valid resource key."),
+        }),
+        false,
+    );
+
+    assert!(matches!(result, Err(Error::Aggregate(_))));
+    let records = logged_about("'returned-cloud'");
+    assert_eq!(records.len(), 1, "{records:?}");
+    assert!(records[0].starts_with("ERROR "), "{records:?}");
+    assert!(!records[0].contains(NOT_A_KEY), "{records:?}");
+    assert!(records[0].contains("status 400"), "{records:?}");
 }
