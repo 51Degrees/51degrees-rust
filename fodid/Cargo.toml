@@ -9,7 +9,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage.workspace = true
+homepage = "https://51degrees.com/developers/51did?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-cargo.toml&utm_term=homepage"
 # The OWID source under src/owid is ignored by git, because
 # ci/copy-owid-source.ps1 copies it from the owid-rust submodule before a
 # build, and cargo leaves an ignored directory out of a package unless the
