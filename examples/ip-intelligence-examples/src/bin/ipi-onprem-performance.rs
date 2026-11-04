@@ -41,7 +41,7 @@ use fiftyone_ip_intelligence::{IpIntelligencePipelineBuilder, PerformanceProfile
 use fiftyone_pipeline_core::{Evidence, Pipeline};
 
 /// The relative path to the IP-intelligence evidence file in the data submodule.
-const IPI_EVIDENCE_RELATIVE_PATH: &str = "cxx/ip-intelligence-data/evidence.yml";
+const IPI_EVIDENCE_RELATIVE_PATH: &str = "cxx/data/ip-intelligence/evidence.yml";
 
 /// The options that drive a run of this example.
 pub struct ExampleOptions {
@@ -305,16 +305,13 @@ fn main() -> anyhow::Result<()> {
 
     let options = match ExampleOptions::from_env() {
         Some(options) => options,
-        None => {
-            writeln!(
-                out,
-                "Could not locate both an IP Intelligence data file and the \
-                 evidence.yml file. Set {} to an .ipi file, and check out the \
-                 cxx submodule so evidence.yml is present.",
-                examples_shared::IPI_PATH_ENV_VAR
-            )?;
-            return Ok(());
-        }
+        None => anyhow::bail!(
+            "Could not locate both an IP Intelligence data file and the \
+             evidence.yml file. Set {} to an .ipi file, and run git submodule \
+             update --init --recursive so cxx/data/ip-intelligence/evidence.yml \
+             is present.",
+            examples_shared::IPI_PATH_ENV_VAR
+        ),
     };
 
     run(&options, &mut out)

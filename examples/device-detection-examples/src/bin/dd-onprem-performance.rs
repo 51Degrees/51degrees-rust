@@ -39,10 +39,9 @@ use fiftyone_device_detection::{
     DEVICE_DATA_KEY,
 };
 
-/// The relative path to the bundled User-Agent CSV within the
-/// data in the `cxx` submodule, used when no evidence path is supplied.
-const USER_AGENTS_RELATIVE_PATH: &str =
-    "cxx/device-detection-data/20000 User Agents.csv";
+/// The relative path to the User-Agent CSV in the data repository inside the
+/// `cxx` submodule, used when no evidence path is supplied.
+const USER_AGENTS_RELATIVE_PATH: &str = "cxx/data/device-detection/20000 User Agents.csv";
 
 /// Options the example runs with, so `main` and the test share one entry point.
 pub struct ExampleOptions {
@@ -290,15 +289,15 @@ fn load_user_agents(path: &PathBuf, max: usize) -> Result<Vec<String>> {
     Ok(user_agents)
 }
 
-/// Locate the bundled User-Agent file, walking up the tree so it resolves from an
-/// IDE, the crate directory or CI.
+/// Locate the User-Agent file, walking up the tree so it resolves from an IDE,
+/// the crate directory or CI, and downloading it when it is missing.
 fn default_user_agents_file() -> Option<PathBuf> {
-    examples_shared::find_file(USER_AGENTS_RELATIVE_PATH)
+    examples_shared::find_data_file(USER_AGENTS_RELATIVE_PATH)
 }
 
 /// Resolve the data and evidence files then run the benchmark. The data and
 /// User-Agent files use the usual fallbacks. With either missing the example
-/// prints a clear message and exits successfully.
+/// fails, after the resolver has printed the command that gets the file.
 fn main() -> Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let json_output = examples_shared::json_output_path(&arguments);
@@ -313,13 +312,10 @@ fn main() -> Result<()> {
         .or_else(default_user_agents_file);
 
     let (Some(data_file), Some(user_agents_file)) = (data_file, user_agents_file) else {
-        eprintln!(
-            "Missing the data file or the User-Agent file. Set 51DEGREES_DD_PATH and \
-             ensure the device-detection-data submodule is present (run `git \
-             submodule update --recursive`), or pass the data-file and User-Agent-file \
-             paths as the first two arguments."
+        anyhow::bail!(
+            "Missing the data file or the User-Agent file. Set 51DEGREES_DD_PATH, or \
+             pass the data-file and User-Agent-file paths as the first two arguments."
         );
-        return Ok(());
     };
 
     run(ExampleOptions {
@@ -443,7 +439,7 @@ mod tests {
  * The device-detection on-premise performance-benchmark console example. It
  * measures a "clock-time" detection throughput.
  *
- * The example loads a list of User-Agents (the bundled "20000 User Agents.csv",
+ * The example loads a list of User-Agents (the "20000 User Agents.csv" file,
  * one per line), builds a single on-premise pipeline configured for speed, warms
  * it up, then runs many detections in parallel across several worker threads and
  * reports the detections-per-second throughput plus the average real-time per
@@ -480,8 +476,9 @@ mod tests {
  * default, so 51Degrees receives evidence that improves detection.
  *
  * The data and User-Agent files are read from the first two command-line
- * arguments, the `51DEGREES_DD_PATH` environment variable, or the files shipped
- * in the cxx submodule. For more on adjusting performance see
+ * arguments, the `51DEGREES_DD_PATH` environment variable, or the files in the
+ * data repository inside the cxx submodule, which the example downloads when
+ * they are missing. For more on adjusting performance see
  * https://51degrees.com/documentation/_device_detection__features__performance_options.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-performance.rs&utm_term=dd-onprem-performance
  * and the hash data-set production documentation.
  */

@@ -296,18 +296,14 @@ fn main() -> anyhow::Result<()> {
         },
         None => match ExampleOptions::from_env() {
             Some(options) => options,
-            None => {
-                writeln!(
-                    out,
-                    "No IP Intelligence data file could be located. Set {} to an \
-                     Enterprise .ipi file (the diversity and behavioral properties this \
-                     example reads are only present in an Enterprise file). Contact \
-                     51Degrees for one: \
-                     https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-suspicious.rs&utm_term=enterprise-data-required.",
-                    examples_shared::IPI_PATH_ENV_VAR
-                )?;
-                return Ok(());
-            }
+            None => anyhow::bail!(
+                "No IP Intelligence data file could be located. Set {} to an \
+                 Enterprise .ipi file (the diversity and behavioral properties this \
+                 example reads are only present in an Enterprise file). Contact \
+                 51Degrees for one: \
+                 https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-suspicious.rs&utm_term=enterprise-data-required.",
+                examples_shared::IPI_PATH_ENV_VAR
+            ),
         },
     };
 

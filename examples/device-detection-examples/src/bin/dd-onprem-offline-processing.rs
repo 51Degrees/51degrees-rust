@@ -40,10 +40,9 @@ use fiftyone_device_detection::{
     DEVICE_DATA_KEY,
 };
 
-/// The relative path to the bundled evidence file within the
-/// data in the `cxx` submodule, used when no path is supplied.
-const EVIDENCE_RELATIVE_PATH: &str =
-    "cxx/device-detection-data/20000 Evidence Records.yml";
+/// The relative path to the evidence file in the data repository inside the
+/// `cxx` submodule, used when no path is supplied.
+const EVIDENCE_RELATIVE_PATH: &str = "cxx/data/device-detection/20000 Evidence Records.yml";
 
 /// Options the example runs with, so `main` and the test share one entry point.
 pub struct ExampleOptions {
@@ -207,16 +206,17 @@ fn write_record(output: &mut std::fs::File, record: &BTreeMap<String, String>) -
     Ok(())
 }
 
-/// Locate the bundled evidence file, walking up the tree from the crate so it
-/// resolves whether the example runs from an IDE, its crate directory or CI.
+/// Locate the evidence file, walking up the tree from the crate so it resolves
+/// whether the example runs from an IDE, its crate directory or CI, and
+/// downloading it when it is missing.
 fn default_evidence_file() -> Option<PathBuf> {
-    examples_shared::find_file(EVIDENCE_RELATIVE_PATH)
+    examples_shared::find_data_file(EVIDENCE_RELATIVE_PATH)
 }
 
 /// Resolve the data, evidence and output files, then run the example. The data
 /// and evidence files use the usual fallbacks; the output file defaults to a file
 /// next to the evidence file. With the data or evidence file missing the example
-/// prints a clear message and exits successfully.
+/// fails, after the resolver has printed the command that gets the file.
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let data_file = args
@@ -229,13 +229,10 @@ fn main() -> Result<()> {
         .or_else(default_evidence_file);
 
     let (Some(data_file), Some(evidence_file)) = (data_file, evidence_file) else {
-        eprintln!(
-            "Missing a data file or the evidence file. Set 51DEGREES_DD_PATH and \
-             ensure the device-detection-data submodule is present (run `git \
-             submodule update --recursive`), or pass the data-file and evidence-file \
-             paths as the first two arguments."
+        anyhow::bail!(
+            "Missing the data file or the evidence file. Set 51DEGREES_DD_PATH, or \
+             pass the data-file and evidence-file paths as the first two arguments."
         );
-        return Ok(());
     };
 
     // The output goes next to the evidence file by default, or to the third
@@ -362,7 +359,7 @@ mod tests {
  * The device-detection on-premise offline-processing console example. It shows
  * batch processing of a YAML file of evidence.
  *
- * The bundled "20000 Evidence Records.yml" file holds 20,000 records of evidence
+ * The "20000 Evidence Records.yml" file holds 20,000 records of evidence
  * representing HTTP headers, for example:
  *
  *   header.user-agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ...'
@@ -393,8 +390,9 @@ mod tests {
  * server, leave it on, which is the builder's default.
  *
  * The data and evidence files are read from the first two command-line arguments,
- * the `51DEGREES_DD_PATH` environment variable, or the files shipped in the
- * cxx submodule. The output file defaults to
+ * the `51DEGREES_DD_PATH` environment variable, or the files in the data
+ * repository inside the cxx submodule, which the example downloads when they
+ * are missing. The output file defaults to
  * `dd-offline-processing-output.yml` next to the evidence file, or the third
  * command-line argument.
  *
