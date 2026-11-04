@@ -6,7 +6,7 @@ $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 
 # Readies the cxx submodule, which holds the C sources the -sys crates compile
-# and, in its own data submodules, the on-premise data files and the evidence
+# and, at cxx/data, the data repository that links the on-premise data files
 # the tests read. common-ci clones the repository with its submodules, so the
 # update below normally finds nothing to do, and it is there so the script
 # also works on a clone made without them.
@@ -19,11 +19,16 @@ Write-Output "::group::Check out the cxx submodule"
 git -C $RepoName submodule update --init --recursive
 Write-Output "::endgroup::"
 
-# The data files are Git LFS content. A clone brings down the pointer files
-# alone, and the native loader reads a pointer as corrupt data, so fetch the
-# real content before anything tries to open a data file.
-Write-Output "::group::Fetch LFS content for the cxx submodule"
-git -C "$RepoName/cxx" submodule foreach --recursive 'git lfs install --local && git lfs pull'
+# The data repository holds a link for each data file rather than the file, so
+# its script downloads the two files the tests read before anything opens
+# them. A file that is already there is kept. The tests skip without the
+# files, so a download that fails stops the build here.
+Write-Output "::group::Download the data files"
+& (Join-Path $RepoName "cxx/data/get-data-files.ps1") `
+    51Degrees-LiteV4.1.hash 51Degrees-IPIV4AsnIpiV41.ipi
+if ($LASTEXITCODE) {
+    throw "The data files the tests read were not downloaded."
+}
 Write-Output "::endgroup::"
 
 # Any compiler or documentation warning fails the build, which is the rule

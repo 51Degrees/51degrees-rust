@@ -6,9 +6,9 @@ name: Pull Request
 #
 # The workspace links the 51Degrees C sources through three -sys crates
 # (common-sys, device-detection-sys, ip-intelligence-sys), whose build scripts
-# compile them from the cxx submodule. The data submodules inside cxx supply
-# the on-premise data files and the evidence the examples read, at the commits
-# the C sources were tested with.
+# compile them from the cxx submodule. The data repository inside cxx, at
+# cxx/data, links the free on-premise data files, which the build job
+# downloads with that repository's own script.
 
 on:
   push:
@@ -47,41 +47,78 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-22.04, ubuntu-24.04, macos-latest]
 
+    env:
+      # The data files the tests read, one per line. The cache steps and the
+      # check below all take this list, so they cannot drift apart.
+      DATA_FILES: |
+        cxx/data/device-detection/51Degrees-LiteV4.1.hash
+        cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi
+
     steps:
       # 1. The Rust workspace with its submodules, recursively, so the cxx
-      #    submodule brings its data submodules with it.
+      #    submodule brings the data repository with it at cxx/data.
       - name: Checkout workspace
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # 2. The data files are stored in Git LFS inside the data submodules.
-      #    actions/checkout brings the submodule pointers down but not their LFS
-      #    content, so fetch it explicitly. Without the real files the native
-      #    loader reads a pointer and reports CorruptData.
-      - name: Fetch LFS data for the cxx submodule
+      # 2. The data repository holds a link for each data file rather than the
+      #    file, and its own script downloads them. The Distributor refuses an
+      #    address that downloads a file too often, so the files are kept in
+      #    the Actions cache under the day's date, in one entry that every
+      #    runner shares. Only a day's first run asks the Distributor. It starts
+      #    from the latest earlier entry, and the script replaces a file only
+      #    when the Distributor has a newer one. A failed refresh leaves the
+      #    restored files in place, so the check in step 3 decides.
+      - name: Date the data file cache
+        id: data-date
         shell: bash
-        run: git -C cxx submodule foreach --recursive 'git lfs install --local && git lfs pull'
+        run: echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
 
-      # 3. Point the on-premise tests at the data files the cxx submodule
-      #    carries, which they otherwise look for in the workspace and skip
-      #    when they do not find them. Setting these in GITHUB_ENV makes them
-      #    available to every later step in this job. A data file that is
-      #    missing, or is still a Git LFS pointer, fails the job here, because
+      - name: Restore the data files
+        id: data-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.DATA_FILES }}
+          key: data-files-pull-request-${{ steps.data-date.outputs.date }}
+          restore-keys: data-files-pull-request-
+          enableCrossOsArchive: true
+
+      - name: Download the data files
+        continue-on-error: true
+        shell: pwsh
+        env:
+          CACHE_HIT: ${{ steps.data-cache.outputs.cache-hit }}
+        run: |
+          $names = $env:DATA_FILES.Trim() -split '\r?\n' |
+            ForEach-Object { Split-Path -Leaf $_.Trim() }
+          ./cxx/data/get-data-files.ps1 @names -Update:($env:CACHE_HIT -ne 'true')
+
+      # 3. Point the on-premise tests at the data files, which they otherwise
+      #    look for in the workspace and skip when they do not find them.
+      #    Setting these in GITHUB_ENV makes them available to every later step
+      #    in this job. A data file that is missing fails the job here, because
       #    the tests would skip without it.
       - name: Configure data files
         shell: bash
         run: |
-          echo "51DEGREES_DD_PATH=${GITHUB_WORKSPACE}/cxx/device-detection-data/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
-          echo "51DEGREES_IPI_PATH=${GITHUB_WORKSPACE}/cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
-          for file in \
-            "${GITHUB_WORKSPACE}/cxx/device-detection-data/51Degrees-LiteV4.1.hash" \
-            "${GITHUB_WORKSPACE}/cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi"; do
-            if [ ! -f "$file" ] || head -c 64 "$file" | grep -q 'git-lfs'; then
-              echo "::error::$file is missing or is a Git LFS pointer, so the on-premise tests would skip"
+          echo "51DEGREES_DD_PATH=${GITHUB_WORKSPACE}/cxx/data/device-detection/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
+          echo "51DEGREES_IPI_PATH=${GITHUB_WORKSPACE}/cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
+          while IFS= read -r file; do
+            if [ -n "$file" ] && [ ! -f "$file" ]; then
+              echo "::error::$file is missing, so the on-premise tests would skip"
               exit 1
             fi
-          done
+          done <<< "$DATA_FILES"
+
+      # The day's cache entry is written only once every file is there.
+      - name: Save the data files
+        if: steps.data-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.DATA_FILES }}
+          key: data-files-pull-request-${{ steps.data-date.outputs.date }}
+          enableCrossOsArchive: true
 
       # 4. The native build toolchain. ubuntu-latest and windows-latest both ship
       #    a C/C++ compiler and CMake preinstalled, but install CMake explicitly so
