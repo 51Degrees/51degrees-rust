@@ -20,6 +20,9 @@ fiftyone-device-detection-shared = { version = "4.5.2", path = "../device-detect
 fiftyone-native = { version = "4.5.2", path = "../native", default-features = false, features = ["dd"] }
 arc-swap.workspace = true
 chrono.workspace = true
+# Logs a refresh that fails through the log facade, which does nothing until
+# the application installs a logger.
+log = "0.4"
 
 [package.metadata.docs.rs]
 # Build the documentation on docs.rs with every feature enabled, so the
