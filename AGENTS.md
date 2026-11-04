@@ -5,6 +5,130 @@ repository. Keep it short and current, recording the things that are not
 obvious from the code or git history, and update it as the project changes. It
 is not tied to any one assistant.
 
+If you have been asked to get an example running, follow
+[Run the examples](#run-the-examples). It gives every step in order, from a
+fresh clone to the output.
+
+## Run the examples
+
+The two on-premise getting-started examples are the ones to show first,
+because they need no key and run against free data files that come with the
+repository. The cloud examples need a resource key.
+
+### Prerequisites
+
+- Git, and [Git LFS](https://git-lfs.github.com/) for the Device Detection
+  data file.
+- Rust 1.94 or later, the `rust-version` of both workspaces.
+- A C compiler, being the Visual Studio Build Tools on Windows and GCC or
+  Clang elsewhere. The `-sys` crates compile the 51Degrees C sources with the
+  `cc` crate, and `aws-lc-sys`, which the HTTPS client brings in, compiles C
+  too. If `aws-lc-sys` fails to build, its
+  [requirements](https://aws.github.io/aws-lc-rs/requirements/index.html) list
+  what it needs on each platform.
+- Network access to GitHub and crates.io.
+- PowerShell 7 (`pwsh`), only to run the examples against this checkout.
+
+Clone the repository with its submodules.
+
+```sh
+git clone --recurse-submodules https://github.com/51Degrees/51degrees-rust.git
+cd 51degrees-rust
+```
+
+In a clone made without `--recurse-submodules`, fetch them.
+
+```sh
+git submodule update --init --recursive
+```
+
+### Data files
+
+If `README.md` in your checkout has a "Data files" section, the examples read
+the [data](https://github.com/51Degrees/data) repository at `cxx/data`, and
+that section says how to get the files. Otherwise the files are in the `cxx`
+submodule's own data submodules, as follows.
+
+- The Device Detection Lite file,
+  `cxx/device-detection-data/51Degrees-LiteV4.1.hash`, is stored with Git LFS,
+  so a clone holds a pointer of about 130 bytes until the content is pulled.
+  Pull it as CI does.
+
+  ```sh
+  git -C cxx submodule foreach --recursive 'git lfs install --local && git lfs pull'
+  ```
+
+- The IP Intelligence ASN file,
+  `cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi`, is an ordinary file,
+  so it arrives with the submodule.
+
+### Run
+
+The examples are a Cargo workspace of their own in `examples/`, which the root
+`Cargo.toml` excludes, so run them from there. From the root,
+`-p device-detection-examples` matches no package.
+
+```sh
+cd examples
+cargo run -p device-detection-examples --bin dd-onprem-getting-started
+cargo run -p ip-intelligence-examples --bin ipi-onprem-getting-started
+```
+
+The first build compiles the 51Degrees C libraries, so it is the slow one.
+
+### What correct output looks like
+
+- `dd-onprem-getting-started` processes a desktop and a mobile User-Agent. For
+  each it prints the evidence under "Input values:" and then, under
+  "Results:", Mobile Device, Platform Name, Platform Version, Browser Name,
+  Browser Version and Device Id. It ends with the Lite data file's warnings.
+- `ipi-onprem-getting-started` prints "Looking up 2 IP address(es) against"
+  the data file, then for `1.1.1.1` and `2606:4700:4700::1111` the address
+  and the properties it asks for, from Asn and AsnName to Mcc. A property the
+  ASN file does not hold is printed with the reason it has no value.
+
+An exit code of 0 does not show that an example ran. With no data file found,
+each prints a message, "No device-detection data file found" or "No IP
+Intelligence data file could be located", and exits 0. A Device Detection
+file that is still a Git LFS pointer fails instead, with "failed to build the
+on-premise device-detection pipeline".
+
+### Paths and keys from the environment
+
+The examples read `51DEGREES_DD_PATH` and `51DEGREES_IPI_PATH` for a data file
+elsewhere, and the cloud examples read `51DEGREES_RESOURCE_KEY`, for which a
+key comes from the
+[Configurator](https://configure.51degrees.com/?utm_source=github&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=agents.md&utm_term=configure).
+These names start with a digit, so bash and sh refuse both `export
+51DEGREES_RESOURCE_KEY=...` and the `51DEGREES_RESOURCE_KEY=... cargo run`
+prefix. Use `env` there, and `$env:` in PowerShell.
+
+```sh
+env 51DEGREES_RESOURCE_KEY=<key> cargo run -p device-detection-examples --bin dd-cloud-getting-started
+```
+
+```powershell
+$env:51DEGREES_RESOURCE_KEY = '<key>'
+cargo run -p device-detection-examples --bin dd-cloud-getting-started
+```
+
+### Run them against this checkout
+
+The examples depend on the crates published on crates.io, so by default they
+show the last release and not a change made here. To run one against this
+checkout, use the script CI uses, from PowerShell 7 at the repository root.
+It needs the release tags, which a full clone has, and the OWID source that
+the `fodid` crate compiles in, placed once as the README's "Building" section
+says.
+
+```powershell
+./ci/copy-owid-source.ps1
+./ci/test-examples-against-source.ps1 -Command { cargo run --config source.toml -p device-detection-examples --bin dd-onprem-getting-started }
+```
+
+The command runs in `examples/`, and with no `-Command` the script runs the
+examples' tests instead. It puts the manifests and the lock back when it ends.
+
 ## What this is
 
 The 51Degrees Rust SDK is a single Cargo workspace of libraries plus a separate

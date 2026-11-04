@@ -316,7 +316,13 @@ cargo build -p fiftyone-device-detection --no-default-features --features cloud
 
 ### Running the examples
 
+The examples are a workspace of their own, so run them from `examples/`.
+[AGENTS.md](AGENTS.md#run-the-examples) gives every step, from a fresh clone
+to the output.
+
 ```sh
+cd examples
+
 # Cloud examples read 51DEGREES_RESOURCE_KEY from the environment.
 cargo run -p device-detection-examples --bin dd-cloud-getting-started
 cargo run -p ip-intelligence-examples --bin ipi-cloud-getting-started
@@ -339,10 +345,12 @@ cloud for performance reasons. This is the private hosting option of the
 51Degrees cloud service. Both run the same service as the public cloud, so the
 examples work unchanged. The variable is the same one the cloud request engine
 reads, so setting it once points every example at the same place, and the
-value is the API base including the `/api/v4/` segment.
+value is the API base including the `/api/v4/` segment. The name starts with a
+digit, which bash and sh do not allow before a command, so set it with `env`
+there, or with `$env:51DEGREES_CLOUD_ENDPOINT` in PowerShell.
 
 ```sh
-51DEGREES_CLOUD_ENDPOINT=http://localhost:8080/api/v4/ cargo run -p ip-intelligence-examples --bin ipi-cloud-getting-started
+env 51DEGREES_CLOUD_ENDPOINT=http://localhost:8080/api/v4/ cargo run -p ip-intelligence-examples --bin ipi-cloud-getting-started
 ```
 
 #### Browser (Selenium) tests
