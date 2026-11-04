@@ -29,7 +29,7 @@ use std::sync::Arc;
 use fiftyone_cloud_request_engine::{
     CloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine,
 };
-use fiftyone_pipeline_core::{Evidence, FlowElement};
+use fiftyone_pipeline_core::{Evidence, EvidenceKeyFilter, FlowElement};
 use fiftyone_pipeline_web::{serve_json, RequestData, WebIntegrationOptions, WebPipeline};
 
 /// A transport whose evidence keys request fails until `reachable` is set.
