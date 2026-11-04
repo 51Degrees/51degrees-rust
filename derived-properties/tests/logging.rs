@@ -93,23 +93,26 @@ fn derived(source: &str) -> Arc<DerivedPropertyElement> {
     )
 }
 
-/// Writes `src` with `N` = 1, or fails.
+/// Writes `N` = 1 under its key, or fails.
 struct SourceElement {
+    key: &'static str,
     fail: bool,
     filter: EvidenceKeyFilterWhitelist,
     properties: Vec<PropertyMetaData>,
 }
 
 impl SourceElement {
+    /// An element writing `src`.
     fn new(fail: bool) -> Arc<Self> {
+        Self::writing("src", fail)
+    }
+
+    fn writing(key: &'static str, fail: bool) -> Arc<Self> {
         Arc::new(SourceElement {
+            key,
             fail,
             filter: EvidenceKeyFilterWhitelist::new(Vec::<&str>::new()),
-            properties: vec![PropertyMetaData::new(
-                "N",
-                "src",
-                PropertyValueType::Integer,
-            )],
+            properties: vec![PropertyMetaData::new("N", key, PropertyValueType::Integer)],
         })
     }
 }
@@ -119,14 +122,14 @@ impl FlowElement for SourceElement {
         if self.fail {
             return Err(Error::configuration("the source failed"));
         }
-        let key: TypedKey<MapElementData> = TypedKey::new("src");
+        let key: TypedKey<MapElementData> = TypedKey::new(self.key);
         data.get_or_add(key, MapElementData::default)?
             .insert("N", 1i64);
         Ok(())
     }
 
     fn data_key(&self) -> &str {
-        "src"
+        self.key
     }
 
     fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
@@ -290,4 +293,50 @@ fn a_script_reading_another_derived_property_logs_nothing() {
         .build()
         .unwrap();
     assert_eq!(run(&pipeline, 2), vec![Vec::<String>::new(); 2]);
+}
+
+#[test]
+fn a_script_whose_source_was_carried_logs_nothing_after_one_whose_source_was_not() {
+    let _serial = start();
+    let element = Arc::new(
+        DerivedPropertyElement::builder()
+            .add_script("Demo", &script("Demo", "src.N", ""))
+            .add_script("Other", &script("Other", "pre.N", ""))
+            .build()
+            .unwrap(),
+    );
+    let pipeline = Pipeline::builder()
+        .add_element(SourceElement::writing("pre", false))
+        .add_element(element)
+        .add_element(SourceElement::new(false))
+        .build()
+        .unwrap();
+    assert_eq!(run(&pipeline, 2), vec![vec![AFTER.to_owned()], vec![]]);
+}
+
+#[test]
+fn a_script_reading_two_missing_elements_names_the_first_it_reads() {
+    let _serial = start();
+    let text = "Format: 1\n\
+        Name: Demo\n\
+        Version: 1.0.0\n\
+        Output:\n  Name: Demo\n  Description: A demonstration.\n  ValueType: string\n  \
+        IsList: false\n\
+        Checks:\n  First:\n    Property: src.N\n    Lt: 2\n  \
+        Second:\n    Property: late.N\n    Lt: 2\n\
+        Rules:\n  - When:\n      Check: First\n    Then: \"first\"\n  \
+        - When:\n      Check: Second\n    Then: \"second\"\n  - Else: \"no\"\n";
+    let element = Arc::new(
+        DerivedPropertyElement::builder()
+            .add_script("Demo", text)
+            .build()
+            .expect("the script is sound"),
+    );
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .add_element(SourceElement::new(false))
+        .add_element(SourceElement::writing("late", false))
+        .build()
+        .unwrap();
+    assert_eq!(run(&pipeline, 2), vec![vec![AFTER.to_owned()], vec![]]);
 }
