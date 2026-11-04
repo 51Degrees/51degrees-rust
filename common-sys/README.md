@@ -17,6 +17,7 @@ Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the
 
 - Source and issues: [github.com/51Degrees/51degrees-rust](https://github.com/51Degrees/51degrees-rust)
 - API documentation: [docs.rs/fiftyone-common-sys](https://docs.rs/fiftyone-common-sys)
+- 51Degrees services: [51degrees.com/services](https://51degrees.com/services?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-common-sys-readme.md&utm_term=services)
 - Device detection: [51degrees.com/device-detection](https://51degrees.com/device-detection?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-common-sys-readme.md&utm_term=device-detection)
 - IP intelligence: [51degrees.com/ip-intelligence](https://51degrees.com/ip-intelligence?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-common-sys-readme.md&utm_term=ip-intelligence)
 - Documentation: [51degrees.com/documentation](https://51degrees.com/documentation/index.html?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-common-sys-readme.md&utm_term=documentation)
