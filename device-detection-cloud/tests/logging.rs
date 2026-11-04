@@ -26,6 +26,7 @@
 //! process, and each test holds [`SERIAL`] so the records it reads are its
 //! own.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use fiftyone_cloud_request_engine::{
@@ -33,6 +34,7 @@ use fiftyone_cloud_request_engine::{
 };
 use fiftyone_device_detection_cloud::{DeviceDetectionCloudEngine, HardwareProfileCloudEngine};
 use fiftyone_pipeline_core::{Evidence, FlowElement, Pipeline};
+use fiftyone_pipeline_engines::AspectEngine;
 
 const DEVICE_PRODUCT: &str = r#""device":{"DataTier":"CloudV4TAC","Properties":[
     {"Name":"IsMobile","Type":"Boolean","Category":"Device"}]}"#;
@@ -53,18 +55,20 @@ static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// Held by each test for its whole run.
 static SERIAL: Mutex<()> = Mutex::new(());
 
-/// Keeps the cloud engines' records at warning level or above in [`LOGGED`].
-/// The checks are made in the cloud request engine crate, so its records are
-/// the ones kept. The pipeline's own record of an element's error is left
-/// out.
+/// Keeps the records of this crate and the cloud request engine at warning
+/// level or above in [`LOGGED`]. The pipeline's own record of an element's
+/// error is left out.
 struct TestLogger;
 
 impl log::Log for TestLogger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
         metadata.level() <= log::Level::Warn
-            && metadata
+            && (metadata
                 .target()
                 .starts_with("fiftyone_cloud_request_engine")
+                || metadata
+                    .target()
+                    .starts_with("fiftyone_device_detection_cloud"))
     }
 
     fn log(&self, record: &log::Record) {
@@ -99,14 +103,19 @@ fn take_logged() -> Vec<String> {
 }
 
 /// A fake cloud granting `products` and answering every data request with
-/// `data`.
+/// `data`. While `evidence_keys_down` is set the evidence keys request
+/// cannot reach it.
 struct FakeCloud {
     products: String,
     data: &'static str,
+    evidence_keys_down: Arc<AtomicBool>,
 }
 
 impl CloudHttpClient for FakeCloud {
     fn send(&self, request: &CloudHttpRequest) -> Result<CloudHttpResponse, String> {
+        if request.url.contains("evidencekeys") && self.evidence_keys_down.load(Ordering::Relaxed) {
+            return Err("connection refused".to_owned());
+        }
         let body = if request.url.contains("accessibleproperties") {
             format!(r#"{{"Products":{{{}}}}}"#, self.products)
         } else if request.url.contains("evidencekeys") {
@@ -124,6 +133,16 @@ impl CloudHttpClient for FakeCloud {
 
 /// A request engine with a resource key, on a cloud granting `products`.
 fn request_engine(products: &[&str], data: &'static str) -> Arc<CloudRequestEngine> {
+    request_engine_on(products, data, Arc::default())
+}
+
+/// A request engine with a resource key, on a cloud granting `products`
+/// whose evidence keys cannot be reached while `evidence_keys_down` is set.
+fn request_engine_on(
+    products: &[&str],
+    data: &'static str,
+    evidence_keys_down: Arc<AtomicBool>,
+) -> Arc<CloudRequestEngine> {
     Arc::new(
         CloudRequestEngine::builder()
             .resource_key("test-resource-key")
@@ -131,6 +150,7 @@ fn request_engine(products: &[&str], data: &'static str) -> Arc<CloudRequestEngi
             .http_client(Arc::new(FakeCloud {
                 products: products.join(","),
                 data,
+                evidence_keys_down,
             }))
             .build()
             .unwrap(),
@@ -170,9 +190,81 @@ fn a_device_product_that_is_not_granted_logs_one_error_when_built() {
 }
 
 #[test]
-fn device_properties_with_no_metadata_log_a_warning_on_every_request() {
+fn a_device_product_listed_with_no_properties_logs_one_error_when_built() {
     let _serial = start();
-    // IsMobile is listed, and matches whatever its case.
+    let request = request_engine(
+        &[r#""device":{"DataTier":"CloudV4","Properties":[]}"#],
+        r#"{"device":{"ismobile":true}}"#,
+    );
+    let engine = DeviceDetectionCloudEngine::builder()
+        .cloud_request_engine(Arc::clone(&request))
+        .build();
+    assert_eq!(take_logged(), vec![NOT_GRANTED_DEVICE]);
+    assert!(engine.has_loaded_properties());
+
+    let pipeline = pipeline(request, Arc::new(engine));
+    process(&pipeline, "header.user-agent", "A");
+    assert_eq!(take_logged(), Vec::<String>::new());
+}
+
+#[test]
+fn a_device_product_that_is_not_granted_is_logged_once_discovery_completes() {
+    let _serial = start();
+    let down = Arc::new(AtomicBool::new(true));
+    let request = request_engine_on(
+        &[IP_PRODUCT],
+        r#"{"device":{"ismobile":true}}"#,
+        Arc::clone(&down),
+    );
+    take_logged();
+    let engine = Arc::new(
+        DeviceDetectionCloudEngine::builder()
+            .cloud_request_engine(Arc::clone(&request))
+            .build(),
+    );
+    assert_eq!(take_logged(), Vec::<String>::new(), "not known yet");
+    assert!(!engine.has_loaded_properties());
+
+    down.store(false, Ordering::Relaxed);
+    let pipeline = pipeline(request, engine.clone());
+    process(&pipeline, "header.user-agent", "A");
+    assert_eq!(take_logged(), vec![NOT_GRANTED_DEVICE]);
+    assert!(engine.has_loaded_properties());
+    process(&pipeline, "header.user-agent", "A");
+    assert_eq!(take_logged(), Vec::<String>::new());
+}
+
+#[test]
+fn device_metadata_is_read_on_the_first_request_after_discovery_completes() {
+    let _serial = start();
+    let down = Arc::new(AtomicBool::new(true));
+    let request = request_engine_on(
+        &[DEVICE_PRODUCT],
+        r#"{"device":{"ismobile":true}}"#,
+        Arc::clone(&down),
+    );
+    let engine = Arc::new(
+        DeviceDetectionCloudEngine::builder()
+            .cloud_request_engine(Arc::clone(&request))
+            .build(),
+    );
+    assert!(engine.aspect_properties().is_empty());
+
+    down.store(false, Ordering::Relaxed);
+    let pipeline = pipeline(request, engine.clone());
+    process(&pipeline, "header.user-agent", "A");
+    let names: Vec<&str> = engine
+        .aspect_properties()
+        .iter()
+        .map(|property| property.name())
+        .collect();
+    assert_eq!(names, vec!["IsMobile"]);
+    assert_eq!(engine.data_source_tier(), "CloudV4TAC");
+}
+
+#[test]
+fn device_properties_with_no_metadata_log_nothing() {
+    let _serial = start();
     let request = request_engine(
         &[DEVICE_PRODUCT],
         r#"{"device":{"IsMobile":true,"unlisted":"x","unlistedtoo":null,
@@ -185,16 +277,7 @@ fn device_properties_with_no_metadata_log_a_warning_on_every_request() {
     assert_eq!(take_logged(), Vec::<String>::new());
     for request in 1..=2 {
         process(&pipeline, "header.user-agent", "A");
-        assert_eq!(
-            take_logged(),
-            vec![
-                "WARN No meta-data entry for property 'unlisted' in \
-                 'DeviceDetectionCloudEngine'",
-                "WARN No meta-data entry for property 'unlistedtoo' in \
-                 'DeviceDetectionCloudEngine'",
-            ],
-            "request {request}"
-        );
+        assert_eq!(take_logged(), Vec::<String>::new(), "request {request}");
     }
 }
 
@@ -209,6 +292,7 @@ fn a_license_key_alone_has_nothing_to_check_and_logs_nothing() {
             .http_client(Arc::new(FakeCloud {
                 products: String::new(),
                 data: r#"{"device":{"ismobile":true,"unlisted":"x"}}"#,
+                evidence_keys_down: Arc::default(),
             }))
             .build()
             .unwrap(),
@@ -236,7 +320,7 @@ fn a_hardware_product_that_is_not_granted_logs_one_error_when_built() {
 }
 
 #[test]
-fn profile_properties_with_no_metadata_log_a_warning_for_each_profile() {
+fn profile_properties_with_no_metadata_log_nothing() {
     let _serial = start();
     let request = request_engine(
         &[HARDWARE_PRODUCT],
@@ -249,10 +333,8 @@ fn profile_properties_with_no_metadata_log_a_warning_for_each_profile() {
         .build();
     let pipeline = pipeline(request, Arc::new(engine));
     assert_eq!(take_logged(), Vec::<String>::new());
-    let unlisted = "WARN No meta-data entry for property 'unlisted' in \
-         'HardwareProfileCloudEngine'";
     for request in 1..=2 {
         process(&pipeline, "query.tac", "35925406");
-        assert_eq!(take_logged(), vec![unlisted, unlisted], "request {request}");
+        assert_eq!(take_logged(), Vec::<String>::new(), "request {request}");
     }
 }

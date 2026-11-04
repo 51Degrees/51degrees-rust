@@ -278,42 +278,65 @@ fn a_data_response_with_no_body_is_left_to_the_pipeline_to_log() {
     assert_eq!(take_logged(), Vec::<String>::new());
 }
 
+const EVIDENCE_KEYS_ERROR: &str = "ERROR Failed to retrieve evidence keys from cloud service \
+     at https://cloud.example.test/api/v4/evidencekeys.";
+const PROPERTIES_ERROR: &str = "ERROR Failed to retrieve available properties from cloud \
+     service at https://cloud.example.test/api/v4/accessibleproperties.";
+const WARM_UP_WARNING: &str = "WARN Failed to warm up the cloud request engine due to a \
+     transient error. The engine will retry the discovery requests when it is first used.";
+
 #[test]
-fn evidence_keys_that_cannot_be_fetched_log_one_error() {
-    let evidence_keys_error = "ERROR Failed to retrieve evidence keys from cloud service at \
-         https://cloud.example.test/api/v4/evidencekeys.";
-    for answer in [
-        (500, "fault"),
-        (403, r#"{"errors":["refused"]}"#),
-        (200, ""),
-    ] {
+fn evidence_keys_refused_with_a_4xx_log_one_error_and_fail_the_build() {
+    let _serial = start();
+    let built = build(FakeCloud {
+        evidence_keys: (403, r#"{"errors":["refused"]}"#),
+        ..FakeCloud::default()
+    });
+    assert!(built.is_err());
+    assert_eq!(take_logged(), vec![EVIDENCE_KEYS_ERROR]);
+}
+
+#[test]
+fn evidence_keys_failing_for_a_transient_reason_log_an_error_and_a_warning() {
+    for answer in [(500, "fault"), (200, "")] {
         let _serial = start();
         let built = build(FakeCloud {
             evidence_keys: answer,
             ..FakeCloud::default()
         });
-        assert!(built.is_err(), "{answer:?}");
-        assert_eq!(take_logged(), vec![evidence_keys_error], "{answer:?}");
+        assert!(built.is_ok(), "{answer:?}");
+        assert_eq!(
+            take_logged(),
+            vec![EVIDENCE_KEYS_ERROR, WARM_UP_WARNING],
+            "{answer:?}"
+        );
     }
 }
 
 #[test]
-fn properties_that_cannot_be_fetched_log_one_error() {
-    let properties_error = "ERROR Failed to retrieve available properties from cloud \
-         service at https://cloud.example.test/api/v4/accessibleproperties.";
-    for answer in [(403, r#"{"errors":["refused"]}"#), (500, "fault")] {
-        let _serial = start();
-        let built = build(FakeCloud {
-            properties: answer,
-            ..FakeCloud::default()
-        });
-        assert!(built.is_err(), "{answer:?}");
-        assert_eq!(take_logged(), vec![properties_error], "{answer:?}");
-    }
+fn properties_refused_with_a_4xx_log_one_error_and_fail_the_build() {
+    let _serial = start();
+    let built = build(FakeCloud {
+        properties: (403, r#"{"errors":["refused"]}"#),
+        ..FakeCloud::default()
+    });
+    assert!(built.is_err());
+    assert_eq!(take_logged(), vec![PROPERTIES_ERROR]);
 }
 
 #[test]
-fn discovery_json_of_the_wrong_shape_is_only_returned() {
+fn properties_failing_for_a_transient_reason_log_an_error_and_a_warning() {
+    let _serial = start();
+    let built = build(FakeCloud {
+        properties: (500, "fault"),
+        ..FakeCloud::default()
+    });
+    assert!(built.is_ok());
+    assert_eq!(take_logged(), vec![PROPERTIES_ERROR, WARM_UP_WARNING]);
+}
+
+#[test]
+fn discovery_json_of_the_wrong_shape_logs_only_the_warning() {
     for cloud in [
         FakeCloud {
             evidence_keys: (200, r#"{"a":1}"#),
@@ -325,7 +348,32 @@ fn discovery_json_of_the_wrong_shape_is_only_returned() {
         },
     ] {
         let _serial = start();
-        assert!(build(cloud).is_err());
-        assert_eq!(take_logged(), Vec::<String>::new());
+        assert!(build(cloud).is_ok());
+        assert_eq!(take_logged(), vec![WARM_UP_WARNING]);
     }
+}
+
+#[test]
+fn each_retry_on_first_use_that_fails_logs_an_error_and_a_warning() {
+    let _serial = start();
+    let cloud = FakeCloud {
+        evidence_keys: (500, "fault"),
+        ..FakeCloud::default()
+    };
+    let data_requests = Arc::clone(&cloud.data_requests);
+    let pipeline = pipeline(cloud, true);
+    take_logged();
+    for request in 1..=2 {
+        process(&pipeline, &[("header.user-agent", "A")]);
+        assert_eq!(
+            take_logged(),
+            vec![
+                EVIDENCE_KEYS_ERROR,
+                "WARN Could not fetch evidence key filter from \
+                 'https://cloud.example.test/api/v4/evidencekeys'",
+            ],
+            "request {request}"
+        );
+    }
+    assert_eq!(data_requests.load(Ordering::Relaxed), 0);
 }

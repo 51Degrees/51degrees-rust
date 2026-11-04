@@ -25,6 +25,7 @@
 //! logger is installed once for the whole process, and each test holds
 //! [`SERIAL`] so the records it reads are its own.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use fiftyone_cloud_request_engine::{
@@ -44,18 +45,20 @@ static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// Held by each test for its whole run.
 static SERIAL: Mutex<()> = Mutex::new(());
 
-/// Keeps the cloud engine's records at warning level or above in [`LOGGED`].
-/// The checks are made in the cloud request engine crate, so its records are
-/// the ones kept. The pipeline's own record of an element's error is left
-/// out.
+/// Keeps the records of this crate and the cloud request engine at warning
+/// level or above in [`LOGGED`]. The pipeline's own record of an element's
+/// error is left out.
 struct TestLogger;
 
 impl log::Log for TestLogger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
         metadata.level() <= log::Level::Warn
-            && metadata
+            && (metadata
                 .target()
                 .starts_with("fiftyone_cloud_request_engine")
+                || metadata
+                    .target()
+                    .starts_with("fiftyone_ip_intelligence_cloud"))
     }
 
     fn log(&self, record: &log::Record) {
@@ -90,14 +93,19 @@ fn take_logged() -> Vec<String> {
 }
 
 /// A fake cloud granting `product` and answering every data request with
-/// `data`.
+/// `data`. While `evidence_keys_down` is set the evidence keys request
+/// cannot reach it.
 struct FakeCloud {
     product: &'static str,
     data: &'static str,
+    evidence_keys_down: Arc<AtomicBool>,
 }
 
 impl CloudHttpClient for FakeCloud {
     fn send(&self, request: &CloudHttpRequest) -> Result<CloudHttpResponse, String> {
+        if request.url.contains("evidencekeys") && self.evidence_keys_down.load(Ordering::Relaxed) {
+            return Err("connection refused".to_owned());
+        }
         let body = if request.url.contains("accessibleproperties") {
             format!(r#"{{"Products":{{{}}}}}"#, self.product)
         } else if request.url.contains("evidencekeys") {
@@ -116,11 +124,25 @@ impl CloudHttpClient for FakeCloud {
 /// The request engine and the IP Intelligence engine, built with the logger
 /// recording, and a pipeline holding both.
 fn build(product: &'static str, data: &'static str) -> Arc<Pipeline> {
+    build_on(product, data, Arc::default())
+}
+
+/// As [`build`], on a cloud whose evidence keys cannot be reached while
+/// `evidence_keys_down` is set.
+fn build_on(
+    product: &'static str,
+    data: &'static str,
+    evidence_keys_down: Arc<AtomicBool>,
+) -> Arc<Pipeline> {
     let request = Arc::new(
         CloudRequestEngine::builder()
             .resource_key("test-resource-key")
             .endpoint("https://cloud.example.test/api/v4/")
-            .http_client(Arc::new(FakeCloud { product, data }))
+            .http_client(Arc::new(FakeCloud {
+                product,
+                data,
+                evidence_keys_down,
+            }))
             .build()
             .unwrap(),
     );
@@ -157,7 +179,50 @@ fn a_product_that_is_not_granted_logs_one_error_when_built() {
 }
 
 #[test]
-fn a_property_with_no_metadata_logs_a_warning_on_every_request() {
+fn a_product_listed_with_no_properties_logs_one_error_when_built() {
+    let _serial = start();
+    let pipeline = build(
+        r#""ip":{"DataTier":"CloudV4","Properties":[]}"#,
+        r#"{"ip":{"registeredname":"Example"}}"#,
+    );
+    assert_eq!(
+        take_logged(),
+        vec!["ERROR Aspect properties could not be loaded for IpIntelligenceCloudEngine - 'ip'"]
+    );
+    for request in 1..=2 {
+        process(&pipeline);
+        assert_eq!(take_logged(), Vec::<String>::new(), "request {request}");
+    }
+}
+
+#[test]
+fn a_product_that_is_not_granted_is_logged_once_discovery_completes() {
+    let _serial = start();
+    let down = Arc::new(AtomicBool::new(true));
+    let pipeline = build_on(
+        DEVICE_PRODUCT,
+        r#"{"ip":{"registeredname":"Example"}}"#,
+        Arc::clone(&down),
+    );
+    assert!(
+        !take_logged()
+            .iter()
+            .any(|record| record.contains("Aspect properties")),
+        "not known yet"
+    );
+
+    down.store(false, Ordering::Relaxed);
+    process(&pipeline);
+    assert_eq!(
+        take_logged(),
+        vec!["ERROR Aspect properties could not be loaded for IpIntelligenceCloudEngine - 'ip'"]
+    );
+    process(&pipeline);
+    assert_eq!(take_logged(), Vec::<String>::new());
+}
+
+#[test]
+fn a_property_with_no_metadata_logs_nothing() {
     let _serial = start();
     let pipeline = build(
         IP_PRODUCT,
@@ -167,10 +232,6 @@ fn a_property_with_no_metadata_logs_a_warning_on_every_request() {
     assert_eq!(take_logged(), Vec::<String>::new());
     for request in 1..=2 {
         process(&pipeline);
-        assert_eq!(
-            take_logged(),
-            vec!["WARN No meta-data entry for property 'unlisted' in 'IpIntelligenceCloudEngine'"],
-            "request {request}"
-        );
+        assert_eq!(take_logged(), Vec::<String>::new(), "request {request}");
     }
 }

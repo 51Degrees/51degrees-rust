@@ -23,11 +23,12 @@
 //! The cloud IP-intelligence engine and its builder.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use once_cell::sync::OnceCell;
 
-use fiftyone_cloud_request_engine::{CloudRequestEngine, LicensedProducts, ProductPropertyNames};
+use fiftyone_cloud_request_engine::{CloudRequestEngine, LicensedProducts};
 use fiftyone_ip_intelligence_shared::{
     default_aspect_property_metadata, default_property_metadata, IpIntelligenceDataBase,
     IP_DATA_KEY, IP_DATA_KEY_NAME, WEIGHTED_PROPERTY_VALUE_TYPE,
@@ -43,6 +44,9 @@ use fiftyone_pipeline_engines::{
 use serde_json::Value;
 
 use crate::parse::{self, ValueKind};
+
+/// The engine's name in log records.
+const ENGINE_NAME: &str = "IpIntelligenceCloudEngine";
 
 /// The metadata derived from the request engine's accessible properties for the
 /// IPI product, kept together so the three pieces are computed and cached as a
@@ -72,11 +76,14 @@ struct DerivedMetadata {
 ///
 /// # Metadata
 ///
-/// The property metadata is derived lazily from the
-/// [`CloudRequestEngine::public_properties`] of the supplied request engine, the
-/// first time it is needed, taking the product whose key is `ip`. Until that
-/// fetch succeeds the engine reports the shared default metadata so a consumer
-/// always sees the documented property set. The metadata `Type` field of each
+/// The property metadata is derived from the
+/// [`CloudRequestEngine::public_properties`] of the supplied request engine when
+/// the engine is built, taking the product whose key is `ip`. When the request
+/// engine's discovery has not completed, it is derived the first time it is
+/// needed after it has, and until then the engine reports the shared default
+/// metadata so a consumer always sees the documented property set. A resource
+/// key that grants no `ip` product keeps the defaults and logs an error once.
+/// The metadata `Type` field of each
 /// cloud property also drives how its weighted values are parsed (string,
 /// integer or floating-point).
 ///
@@ -119,19 +126,19 @@ struct DerivedMetadata {
 /// ```
 pub struct IpIntelligenceCloudEngine {
     /// The request engine whose response and accessible-properties this engine
-    /// reads. Held so the metadata can be discovered lazily on first use.
+    /// reads. Held so the metadata can be derived once discovery completes.
     request_engine: Arc<CloudRequestEngine>,
 
     /// The empty evidence filter. This engine reads no evidence directly.
     evidence_filter: EvidenceKeyFilterWhitelist,
 
-    /// Lazily derived core metadata for the IPI product, cached after the first
-    /// successful discovery from the request engine.
+    /// Core metadata for the IPI product, derived once the request engine's
+    /// discovery has completed.
     properties: OnceCell<Vec<PropertyMetaData>>,
     /// The aspect view of the same metadata.
     aspect_properties: OnceCell<Vec<AspectPropertyMetaData>>,
-    /// Lazily derived map of property name (lower case) to value kind, used to
-    /// parse each weighted property as the right type.
+    /// Property name (lower case) to value kind, derived with the metadata and
+    /// used to parse each weighted property as the right type.
     value_kinds: OnceCell<HashMap<String, ValueKind>>,
 
     /// The shared default core metadata, returned before discovery completes.
@@ -139,9 +146,9 @@ pub struct IpIntelligenceCloudEngine {
     /// The shared default aspect metadata, returned before discovery completes.
     default_aspect_properties: Vec<AspectPropertyMetaData>,
 
-    /// The IP Intelligence properties the resource key is granted, which each
-    /// response is checked against.
-    granted: ProductPropertyNames,
+    /// Whether the request engine's accessible properties have been read, so
+    /// that a missing product is logged once.
+    product_checked: AtomicBool,
 }
 
 impl IpIntelligenceCloudEngine {
@@ -199,20 +206,41 @@ impl IpIntelligenceCloudEngine {
         })
     }
 
-    /// Ensure the lazily derived metadata is populated, fetching the request
-    /// engine's accessible properties on first use. A discovery failure leaves
-    /// the caches empty, so the engine continues with the shared defaults. It is
-    /// not fatal, degrading gracefully when the metadata cannot be loaded.
+    /// Derive the metadata from the request engine's accessible properties if
+    /// it is not there yet. Makes no cloud request. While the request engine's
+    /// discovery has not completed, or the resource key grants no `ip` product,
+    /// the caches stay empty and the engine reports the shared defaults.
     fn ensure_metadata(&self) {
         if self.properties.get().is_some() {
             return;
         }
         if let Ok(products) = self.request_engine.public_properties() {
+            self.log_missing_product(products);
             if let Some(derived) = Self::derive_metadata(products) {
                 let _ = self.properties.set(derived.core);
                 let _ = self.aspect_properties.set(derived.aspect);
                 let _ = self.value_kinds.set(derived.kinds);
             }
+        }
+    }
+
+    /// Log an error the first time the accessible properties are read, when
+    /// the resource key grants no IP Intelligence product or lists it with no
+    /// properties, as .NET does. With only a license key there are no
+    /// accessible properties to read, so nothing is logged. The flag is read
+    /// before it is set so a request after the first writes nothing shared.
+    fn log_missing_product(&self, products: &LicensedProducts) {
+        if !self.product_checked.load(Ordering::Relaxed)
+            && !self.product_checked.swap(true, Ordering::Relaxed)
+            && self.request_engine.resource_key().is_some()
+            && products
+                .products
+                .get(IP_DATA_KEY_NAME)
+                .is_none_or(|product| product.properties.is_empty())
+        {
+            log::error!(
+                "Aspect properties could not be loaded for {ENGINE_NAME} - '{IP_DATA_KEY_NAME}'"
+            );
         }
     }
 
@@ -262,8 +290,6 @@ impl IpIntelligenceCloudEngine {
         // yields empty data rather than an error, so a response that simply
         // carried no IPI data still produces a valid (empty) result.
         if let Some(Value::Object(aspect)) = root.get(IP_DATA_KEY_NAME) {
-            self.granted
-                .warn_unlisted(aspect.keys().map(String::as_str));
             let kinds = self.value_kinds();
             parse::populate_from_aspect(&mut element, aspect, &kinds);
         }
@@ -358,9 +384,12 @@ impl IpIntelligenceCloudEngineBuilder {
     }
 
     /// Build the engine, returning an [`Error::PipelineConfiguration`] if no
-    /// cloud request engine was supplied. An error is logged when the request
-    /// engine has a resource key that is not granted the IP Intelligence
-    /// product.
+    /// cloud request engine was supplied.
+    ///
+    /// The metadata is read from the request engine here, which makes no cloud
+    /// request, and an error is logged when the request engine has a resource
+    /// key that is not granted the IP Intelligence product. When the request
+    /// engine's discovery has not completed, both wait until it has.
     pub fn build(self) -> Result<IpIntelligenceCloudEngine> {
         let request_engine = self.request_engine.ok_or_else(|| {
             Error::configuration(
@@ -369,22 +398,18 @@ impl IpIntelligenceCloudEngineBuilder {
             )
         })?;
 
-        let granted = ProductPropertyNames::new(
-            &request_engine,
-            "IpIntelligenceCloudEngine",
-            IP_DATA_KEY_NAME,
-            None,
-        );
-        Ok(IpIntelligenceCloudEngine {
+        let engine = IpIntelligenceCloudEngine {
             request_engine,
-            granted,
             evidence_filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
             properties: OnceCell::new(),
             aspect_properties: OnceCell::new(),
             value_kinds: OnceCell::new(),
             default_properties: default_property_metadata(),
             default_aspect_properties: default_aspect_property_metadata(),
-        })
+            product_checked: AtomicBool::new(false),
+        };
+        engine.ensure_metadata();
+        Ok(engine)
     }
 }
 

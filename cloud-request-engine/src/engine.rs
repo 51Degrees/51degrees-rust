@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use fiftyone_caching::PutCache;
@@ -51,9 +51,9 @@ use crate::state::CloudEngineState;
 struct Endpoints {
     /// The data (JSON) endpoint, POSTed to with the evidence form body.
     data: String,
-    /// The accessible-properties endpoint, fetched lazily on first use.
+    /// The accessible-properties endpoint, asked at build time.
     properties: String,
-    /// The evidence-keys endpoint, fetched lazily on first use.
+    /// The evidence-keys endpoint, asked at build time.
     evidence_keys: String,
 }
 
@@ -122,11 +122,21 @@ struct Endpoints {
 /// cloud. The accessible properties are asked for with the resource key and,
 /// when one is set, the license key, because a license key adds products
 /// to those the resource key carries and the data request sends both. The
-/// builder fetches both when it builds the engine, so a built
-/// engine is fully resolved and immutable: there is no lazy first-use discovery.
-/// If either fetch fails (for example the cloud is unavailable),
-/// [`CloudRequestEngineBuilder::build`] returns an error rather than producing a
-/// half-initialized engine.
+/// builder fetches both when it builds the engine, so a built engine is
+/// normally ready to process with no further discovery.
+///
+/// A failure is handled as the
+/// [start-up section](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/cloud-request-engine.md#start-up-activity)
+/// of the specification says. A 4xx answer, such as an unknown resource key,
+/// is a configuration error no retry can fix, so
+/// [`CloudRequestEngineBuilder::build`] returns it. Any other failure, being
+/// the service unreachable, a timeout, a 5xx answer or a body that cannot be
+/// read, is logged and the build completes. Each process call
+/// then retries the discovery that is missing and fails until it succeeds,
+/// so a cloud outage at start-up cannot stop the application starting.
+/// Until then [`CloudRequestEngine::public_properties`] and
+/// [`CloudRequestEngine::accepted_evidence_keys`] return an error and the
+/// engine's evidence key filter accepts nothing.
 ///
 /// An engine holding a license key and no resource key is the exception,
 /// because the accessible-properties endpoint takes a resource key and refuses
@@ -225,14 +235,20 @@ pub struct CloudRequestEngine {
     /// The aspect view of the same metadata.
     aspect_properties: Vec<AspectPropertyMetaData>,
 
-    /// The accepted evidence keys the cloud advertises for this resource key.
-    /// Resolved once at build time, either fetched from the `evidencekeys`
-    /// endpoint or supplied via [`CloudRequestEngineBuilder::set_state`].
-    evidence_filter: EvidenceKeyFilterWhitelist,
-    /// The accessible properties for this resource key. Resolved once at build
-    /// time, either fetched from the `accessibleproperties` endpoint or supplied
-    /// via [`CloudRequestEngineBuilder::set_state`].
-    public_properties: LicensedProducts,
+    /// The accepted evidence keys the cloud advertises for this resource key,
+    /// fetched from the `evidencekeys` endpoint or supplied via
+    /// [`CloudRequestEngineBuilder::set_state`]. Set at build time, or after a
+    /// transient failure then, by the first process call that fetches them.
+    evidence_filter: OnceLock<EvidenceKeyFilterWhitelist>,
+    /// The accessible properties for this resource key, from the
+    /// `accessibleproperties` endpoint, set as the evidence keys are.
+    public_properties: OnceLock<LicensedProducts>,
+    /// Held while a process call retries discovery, so requests arriving
+    /// together wait for one attempt rather than each making their own.
+    discovery: Mutex<()>,
+    /// The evidence key filter until the evidence keys are known, which
+    /// accepts nothing.
+    no_evidence_keys: EvidenceKeyFilterWhitelist,
 }
 
 impl CloudRequestEngine {
@@ -271,31 +287,94 @@ impl CloudRequestEngine {
 
     /// The accessible properties for the configured credential.
     ///
-    /// The builder resolved these at build time (fetched from the cloud, or
-    /// supplied via [`CloudRequestEngineBuilder::set_state`]), so this is a cheap
-    /// accessor and never performs I/O. Downstream cloud aspect engines call it to
-    /// discover which properties the credential grants. The [`Result`] is
-    /// retained for API stability and is always [`Ok`].
+    /// The builder normally resolves these at build time (fetched from the
+    /// cloud, or supplied via [`CloudRequestEngineBuilder::set_state`]), and
+    /// this accessor never performs I/O. Downstream cloud aspect engines call it
+    /// to discover which properties the credential grants. After a transient
+    /// failure at build time it returns an [`Error::CloudRequest`] until a
+    /// process call has fetched them.
     ///
     /// It is empty for an engine authenticating with a license key, because the
     /// accessible-properties endpoint takes a resource key and refuses a request
     /// without one, so there is nothing for the builder to fetch.
     pub fn public_properties(&self) -> Result<&LicensedProducts> {
-        Ok(&self.public_properties)
+        self.public_properties.get().ok_or_else(discovery_pending)
     }
 
     /// The accepted evidence keys for the configured resource key.
     ///
-    /// Resolved at build time, so this is a cheap accessor and never performs
-    /// I/O. The [`Result`] is retained for API stability and is always [`Ok`].
+    /// Resolved as [`CloudRequestEngine::public_properties`] are, so this never
+    /// performs I/O and returns an [`Error::CloudRequest`] until they are known.
     pub fn accepted_evidence_keys(&self) -> Result<&EvidenceKeyFilterWhitelist> {
-        Ok(&self.evidence_filter)
+        self.evidence_filter.get().ok_or_else(discovery_pending)
     }
 
-    /// True once the discovery metadata is available. The builder resolves it at
-    /// build time, so this is always true for a successfully built engine.
+    /// True once both discovery results are available, which is at build time
+    /// unless discovery failed transiently then.
     pub fn has_loaded_metadata(&self) -> bool {
-        true
+        self.evidence_filter.get().is_some() && self.public_properties.get().is_some()
+    }
+
+    /// The evidence key filter the engine sends evidence through, which
+    /// accepts nothing until the evidence keys are known.
+    fn accepted(&self) -> &EvidenceKeyFilterWhitelist {
+        self.evidence_filter.get().unwrap_or(&self.no_evidence_keys)
+    }
+
+    /// Fetch whichever discovery result is missing after a transient failure
+    /// at build time. Does nothing once both are known.
+    ///
+    /// The evidence keys are fetched first and a failure stops there, so an
+    /// outage costs one failed request per call, and the recovery gate stops
+    /// the attempts while the service is failing. A failure is logged as .NET
+    /// logs it and returned, so suppressed process exceptions cover it.
+    fn discover(&self) -> Result<()> {
+        if self.has_loaded_metadata() {
+            return Ok(());
+        }
+        let _discovery = self
+            .discovery
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let origin = self.cloud_request_origin.as_deref();
+        if self.evidence_filter.get().is_none() {
+            let filter = fetch_evidence_keys(
+                self.http.as_ref(),
+                &self.recovery,
+                &self.endpoints,
+                origin,
+                &self.secrets,
+            )
+            .inspect_err(|_| {
+                log::warn!(
+                    "Could not fetch evidence key filter from '{}'",
+                    url_without_query(&self.endpoints.evidence_keys)
+                );
+            })?;
+            let _ = self.evidence_filter.set(filter);
+        }
+        if self.public_properties.get().is_none() {
+            let products = match &self.resource_key {
+                Some(key) => fetch_public_properties(
+                    self.http.as_ref(),
+                    &self.recovery,
+                    &self.endpoints,
+                    key,
+                    self.license_key.as_deref(),
+                    origin,
+                    &self.secrets,
+                ),
+                None => Ok(LicensedProducts::default()),
+            }
+            .inspect_err(|_| {
+                log::warn!(
+                    "Could not fetch public properties from '{}'",
+                    url_without_query(&self.endpoints.properties)
+                );
+            })?;
+            let _ = self.public_properties.set(products);
+        }
+        Ok(())
     }
 
     /// Build the url-encoded form body for a flow data.
@@ -330,9 +409,9 @@ impl CloudRequestEngine {
             ));
         }
 
-        // Collect the evidence the server accepts. The accepted-evidence filter
-        // was resolved at build time, so only the keys it includes are sent.
-        let accepted = &self.evidence_filter;
+        // Collect the evidence the server accepts, so only the keys the
+        // accepted-evidence filter includes are sent.
+        let accepted = self.accepted();
         let mut entries: Vec<(&str, &str)> = data
             .evidence()
             .iter()
@@ -579,14 +658,16 @@ fn log_conflict(key: &str, value: &str, field: &str, entries: &[(&str, &str)]) {
 
 impl FlowElement for CloudRequestEngine {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        // Discovery already happened at build time, so processing goes straight
-        // to the data request.
-
         // Record that the engine started before making the request, so a
         // consumer can tell the engine ran even if the request then fails.
         data.get_or_add(Self::DATA_KEY, || {
             CloudRequestData::new(constants::ELEMENT_DATA_KEY).with_process_started(true)
         })?;
+
+        // Discovery normally completed at build time. After a transient
+        // failure then, it is retried here and the request fails until it
+        // succeeds.
+        self.discover()?;
 
         let form = self.build_content(data);
 
@@ -667,8 +748,7 @@ impl FlowElement for CloudRequestEngine {
     }
 
     fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
-        // The accepted-evidence filter was resolved at build time.
-        &self.evidence_filter
+        self.accepted()
     }
 
     fn properties(&self) -> &[PropertyMetaData] {
@@ -691,7 +771,8 @@ impl AspectEngine for CloudRequestEngine {
     }
 
     fn has_loaded_properties(&self) -> bool {
-        // Properties are resolved at build time, so they are always loaded.
+        // The engine's own three properties are fixed, so they are always
+        // loaded.
         true
     }
 
@@ -978,10 +1059,12 @@ impl CloudRequestEngineBuilder {
     /// Unless a [`CloudEngineState`] was supplied with
     /// [`CloudRequestEngineBuilder::set_state`], the builder fetches the
     /// `evidencekeys` and `accessibleproperties` documents from the cloud here, so
-    /// the returned engine is fully resolved with no lazy first-use discovery.
+    /// the returned engine is normally ready to process with no further
+    /// discovery. After a transient failure the engine retries on process, as
+    /// [`CloudRequestEngine`] describes under "Discovery at build time".
     ///
     /// The builder takes `&mut self` and retains the resolved state, so after a
-    /// successful build [`CloudRequestEngineBuilder::export_state`] returns the
+    /// build that resolved it [`CloudRequestEngineBuilder::export_state`] returns the
     /// state for persistence. The engine itself holds only the working values it
     /// needs to process flow data and knows nothing about the state snapshot.
     ///
@@ -1010,11 +1093,12 @@ impl CloudRequestEngineBuilder {
     /// of the accepted combinations, or if no [`CloudHttpClient`] was
     /// supplied and the `reqwest-client` feature is not enabled (there is then no
     /// transport to fall back to). Returns an [`Error::CloudRequest`] if the
-    /// built-in client cannot be constructed, or if a discovery fetch fails (for
-    /// example because the cloud is unavailable). A consumer that must tolerate a
-    /// temporarily unavailable cloud at start-up supplies a cached state with
-    /// `set_state`. A discovery request that fails, or is answered with an
-    /// error, is also logged at error level.
+    /// built-in client cannot be constructed, or if a discovery request is
+    /// answered with a 4xx status. Any other discovery failure is logged as a
+    /// warning and left to the first process call to retry. A consumer that
+    /// must build with no discovery request at all supplies a cached state
+    /// with `set_state`. A discovery request that fails, or is answered with
+    /// an error, is also logged at error level.
     pub fn build(&mut self) -> Result<CloudRequestEngine> {
         let (resource_key, license_key, values) = self.resolve_credentials()?;
 
@@ -1041,16 +1125,20 @@ impl CloudRequestEngineBuilder {
         let (properties, aspect_properties) = build_property_metadata();
 
         // Resolve the discovery state and retain it on the builder. A supplied
-        // state is used verbatim and no request is made; otherwise the builder
-        // fetches both discovery documents from the cloud now and keeps the
-        // result, so the engine is fully resolved once built and the builder can
-        // export the state afterwards.
+        // state is used verbatim and no request is made. Otherwise the builder
+        // fetches both discovery documents from the cloud now, and keeps the
+        // result when both arrive so it can export the state afterwards.
         let secrets = credentials(resource_key.as_deref(), license_key.as_deref());
-        if self.cloud_state.is_none() {
+        let evidence_filter = OnceLock::new();
+        let public_properties = OnceLock::new();
+        if let Some(state) = &self.cloud_state {
+            let _ = evidence_filter.set(state.evidence_filter());
+            let _ = public_properties.set(state.accessible_properties.clone());
+        } else {
             let origin = self.cloud_request_origin.as_deref();
-            let evidence_filter =
-                fetch_evidence_keys(http.as_ref(), &recovery, &endpoints, origin, &secrets)?;
-            let public_properties = match &resource_key {
+            let evidence =
+                fetch_evidence_keys(http.as_ref(), &recovery, &endpoints, origin, &secrets);
+            let products = match &resource_key {
                 Some(key) => fetch_public_properties(
                     http.as_ref(),
                     &recovery,
@@ -1059,7 +1147,7 @@ impl CloudRequestEngineBuilder {
                     license_key.as_deref(),
                     origin,
                     &secrets,
-                )?,
+                ),
                 // The accessible-properties endpoint takes a resource key and
                 // refuses a request without one, so an engine holding only a
                 // license key has nothing to fetch and starts with none. A
@@ -1067,18 +1155,34 @@ impl CloudRequestEngineBuilder {
                 // metadata, reading the response JSON and inferring each
                 // property's type from its value, which is what it does today
                 // for a resource key that grants it no product.
-                None => LicensedProducts::default(),
+                None => Ok(LicensedProducts::default()),
             };
-            self.cloud_state = Some(CloudEngineState::from_parts(
-                &evidence_filter,
-                public_properties,
-            ));
+            // Both requests are made first, so a 4xx answer to either fails
+            // the build even when the other failed for a transient reason.
+            let evidence = definitive_fails_build(evidence)?;
+            let products = definitive_fails_build(products)?;
+            match (evidence, products) {
+                (Ok(evidence), Ok(products)) => {
+                    self.cloud_state =
+                        Some(CloudEngineState::from_parts(&evidence, products.clone()));
+                    let _ = evidence_filter.set(evidence);
+                    let _ = public_properties.set(products);
+                }
+                (evidence, products) => {
+                    if let Ok(evidence) = evidence {
+                        let _ = evidence_filter.set(evidence);
+                    }
+                    if let Ok(products) = products {
+                        let _ = public_properties.set(products);
+                    }
+                    log::warn!(
+                        "Failed to warm up the cloud request engine due to a transient \
+                         error. The engine will retry the discovery requests when it is \
+                         first used."
+                    );
+                }
+            }
         }
-        // The state is now present (injected or just fetched). The engine receives
-        // its own working copy; the snapshot stays on the builder for export.
-        let state = self.cloud_state.as_ref().expect("state resolved above");
-        let evidence_filter = state.evidence_filter();
-        let public_properties = state.accessible_properties.clone();
 
         Ok(CloudRequestEngine {
             resource_key,
@@ -1095,6 +1199,8 @@ impl CloudRequestEngineBuilder {
             aspect_properties,
             evidence_filter,
             public_properties,
+            discovery: Mutex::new(()),
+            no_evidence_keys: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
         })
     }
 
@@ -1108,9 +1214,9 @@ impl CloudRequestEngineBuilder {
     /// store, a baked-in const, and so on) and inject it into a later builder to
     /// skip the build-time fetch.
     ///
-    /// Returns [`None`] when no state has been resolved yet, that is when neither
+    /// Returns [`None`] when no state has been resolved, that is when neither
     /// [`set_state`](CloudRequestEngineBuilder::set_state) has been called nor a
-    /// build has run.
+    /// build has fetched both discovery documents, as after a transient failure.
     pub fn export_state(&self) -> Option<CloudEngineState> {
         self.cloud_state.clone()
     }
@@ -1345,6 +1451,34 @@ fn send_and_validate_inner(
 /// visitor can choose, such as a user agent too long for the service.
 fn signals_service_trouble(status: u16) -> bool {
     status == 429 || !(400..500).contains(&status)
+}
+
+/// The error an accessor returns while discovery has not completed.
+fn discovery_pending() -> Error {
+    cloud_error(
+        0,
+        None,
+        "the cloud request engine has not completed discovery, and the next process \
+         call retries it"
+            .to_owned(),
+    )
+}
+
+/// Return a discovery request's 4xx answer as the build's error, and pass any
+/// other result back. A 4xx answer, such as an unknown resource key, is a
+/// definitive configuration error, which a retry with the same configuration
+/// can never fix. Anything else, including a request that did not complete,
+/// is transient.
+fn definitive_fails_build<T>(result: Result<T>) -> Result<Result<T>> {
+    match result {
+        Err(
+            error @ Error::CloudRequest {
+                status_code: 400..=499,
+                ..
+            },
+        ) => Err(error),
+        other => Ok(other),
+    }
 }
 
 /// Log an error for a discovery request that failed or was answered with an
