@@ -198,37 +198,18 @@ jobs:
 
       # 8. Live cloud tests. These are #[ignore]d so the steps above stay green
       #    offline; here they run with a real resource key when one is available.
-      #    The key is sourced from the organization secrets through the common-ci
-      #    central script when present, with a direct fallback to the well-known
-      #    secret names so the tests still run if the script is unavailable. The
-      #    examples-shared resolver reads 51DEGREES_RESOURCE_KEY first, then the
-      #    bespoke tiered key then the basic tiered key.
-      - name: Checkout common-ci
-        uses: actions/checkout@v4
-        with:
-          repository: 51Degrees/common-ci
-          path: common-ci
-
+      #    Each key is passed by name, so the step gets only the secrets it
+      #    reads, and a new key needs a line here as well as the organization
+      #    secret. The examples-shared resolver reads 51DEGREES_RESOURCE_KEY
+      #    first, then the bespoke tiered key then the basic tiered key, and
+      #    treats an empty value, which a secret that does not exist gives, as
+      #    unset.
       - name: Cloud tests (with resource key when available)
         shell: pwsh
         env:
-          SECRETS: ${{ toJSON(secrets) }}
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY_BASIC: ${{ secrets._51DEGREES_RESOURCE_KEY_BASIC }}
         run: |
-          # Map every organization secret into the process environment so the
-          # central script (when present) and the direct fallback both see them.
-          $all = ConvertFrom-Json -AsHashtable $env:SECRETS
-          $script = './common-ci/steps/set-resource-keys.ps1'
-          if (Test-Path $script) {
-            Write-Host 'Exporting resource keys via common-ci set-resource-keys.ps1'
-            & $script -Keys $all
-          } else {
-            Write-Host 'common-ci set-resource-keys.ps1 not found; using direct secret names'
-            foreach ($name in '_51DEGREES_RESOURCE_KEY_BESPOKE','_51DEGREES_RESOURCE_KEY_BASIC') {
-              if ($all.ContainsKey($name) -and $all[$name]) {
-                [System.Environment]::SetEnvironmentVariable($name, $all[$name])
-              }
-            }
-          }
           # Resolve a single key in the examples-shared resolver order. The
           # leading-digit name must use the ${env:NAME} brace form to read.
           $key = ${env:51DEGREES_RESOURCE_KEY}
