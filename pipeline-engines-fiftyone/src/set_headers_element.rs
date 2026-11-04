@@ -157,12 +157,14 @@ impl SetHeadersElement {
         }
     }
 
-    /// Scan the pipeline's elements for properties named with the `SetHeader`
-    /// convention and record the header each targets.
+    /// Scan the pipeline's elements for available properties named with the
+    /// `SetHeader` convention and record the header each targets. A property
+    /// marked unavailable is left out, as .NET reads only the pipeline's
+    /// available properties.
     fn scan(data: &FlowData) -> Vec<SetHeaderProperty> {
         let mut found = Vec::new();
         for element in data.pipeline().flow_elements() {
-            for property in element.properties() {
+            for property in element.properties().iter().filter(|p| p.available) {
                 if !property
                     .name
                     .to_lowercase()

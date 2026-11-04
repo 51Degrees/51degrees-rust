@@ -222,6 +222,35 @@ fn set_headers_merges_comma_separated_values_per_header() {
 }
 
 #[test]
+fn set_headers_leaves_out_an_unavailable_set_header_property() {
+    // An engine lists the properties its data set was opened without as
+    // unavailable, and .NET scans only the pipeline's available properties, so
+    // an unavailable SetHeader property sets nothing even when the data holds
+    // a value for it.
+    let mut device = FakeDeviceElement::new();
+    device.properties[1] = PropertyMetaData::new(
+        "SetHeaderHardwareAccept-CH",
+        "device",
+        PropertyValueType::String,
+    )
+    .with_available(false);
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(device))
+        .add_element(Arc::new(SetHeadersElement::new()))
+        .build()
+        .unwrap();
+
+    let mut data = pipeline.create_flow_data();
+    data.process().unwrap();
+
+    let headers = data.get(SetHeadersElement::KEY).unwrap().response_headers();
+    assert_eq!(
+        headers.get("Accept-CH").map(String::as_str),
+        Some("SEC-CH-UA,SEC-CH-UA-Full-Version")
+    );
+}
+
+#[test]
 fn set_headers_is_empty_when_no_set_header_properties_present() {
     // A pipeline with only the sequence element has no SetHeader* properties.
     let pipeline = Pipeline::builder()

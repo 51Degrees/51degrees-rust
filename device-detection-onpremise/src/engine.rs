@@ -30,6 +30,7 @@
 
 use std::collections::HashMap;
 use std::ffi::CStr;
+use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -40,7 +41,7 @@ use fiftyone_device_detection_shared::{
     declared_property_value_type, DeviceDataBase, DevicePropertyReader, UachJsConversionElement,
     DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY, UACH_EVIDENCE_COOKIE_KEY, UACH_EVIDENCE_QUERY_KEY,
 };
-use fiftyone_native::dd::{Manager, Results};
+use fiftyone_native::dd::{DataFileComponent, DataFileProperty, DataFileValue, Manager, Results};
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{
     constants, Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData,
@@ -49,6 +50,9 @@ use fiftyone_pipeline_core::{
 use fiftyone_pipeline_engines::{
     AspectEngine, AspectEngineDataFile, AspectPropertyMetaData, DataFileConfiguration,
     EngineDeployment, MissingPropertySource, OnPremiseAspectEngine,
+};
+use fiftyone_pipeline_engines_fiftyone::{
+    ComponentMetaData, FiftyOneAspectPropertyMetaData, ValueMetaData,
 };
 
 use crate::operational_copy::OperationalCopy;
@@ -72,56 +76,95 @@ const DEFAULT_DATA_SOURCE_TIER: &str = "Lite";
 /// file upgrade names.
 const ENGINE_TYPE_NAME: &str = "DeviceDetectionOnPremiseEngine";
 
-/// The match-metric pseudo-properties the Hash engine exposes in addition to the
-/// data file's own properties. Each is read from the native results just like a
-/// data-file property and carries the value type used to store it.
-///
-/// `DeviceId` and `Method` are strings, `UserAgents` is a list of strings and
-/// the remaining metrics are integers. They are advertised so a caller
+/// A match-metric pseudo-property, which the Hash engine gives in addition to
+/// the data file's own properties. Its value is read from each result as the
+/// detection finishes, not from the data file.
+struct MetricProperty {
+    name: &'static str,
+    value_type: PropertyValueType,
+    description: &'static str,
+    default_value: &'static str,
+    values: &'static [&'static str],
+}
+
+/// The match metrics, in the order and with the descriptions, default values
+/// and values the .NET engine gives them. They are listed so a caller
 /// enumerating [`AspectEngine::aspect_properties`] sees them, and so the typed
 /// match-metric accessors on [`fiftyone_device_detection_shared::DeviceData`]
 /// resolve.
-const METRIC_PROPERTIES: &[(&str, PropertyValueType, &str)] = &[
-    (
-        "MatchedNodes",
-        PropertyValueType::Integer,
-        "Indicates the number of hash nodes matched within the evidence.",
-    ),
-    (
-        "Difference",
-        PropertyValueType::Integer,
-        "Used when the detection method is not Exact or None. The larger the \
-         value the less confident the detector is in the result.",
-    ),
-    (
-        "Drift",
-        PropertyValueType::Integer,
-        "Total difference in character positions where the substring hashes \
-         were found away from where they were expected.",
-    ),
-    (
-        "Iterations",
-        PropertyValueType::Integer,
-        "The number of graph nodes visited in order to find a match.",
-    ),
-    (
-        "DeviceId",
-        PropertyValueType::String,
-        "Four profile ids separated by hyphens in the form \
-         Hardware-Platform-Browser-IsCrawler.",
-    ),
-    (
-        "Method",
-        PropertyValueType::String,
-        "The method used to determine the match result: NONE, PERFORMANCE, \
-         COMBINED or PREDICTIVE.",
-    ),
-    (
-        "UserAgents",
-        PropertyValueType::StringList,
-        "The matched User-Agents.",
-    ),
+const METRIC_PROPERTIES: &[MetricProperty] = &[
+    MetricProperty {
+        name: "MatchedNodes",
+        value_type: PropertyValueType::Integer,
+        description: "Indicates the number of hash nodes matched within the evidence.",
+        default_value: "0",
+        values: &[],
+    },
+    MetricProperty {
+        name: "Difference",
+        value_type: PropertyValueType::Integer,
+        description: "Used when detection method is not Exact or None. This is an \
+                      integer value and the larger the value the less confident the \
+                      detector is in this result.",
+        default_value: "0",
+        values: &[],
+    },
+    MetricProperty {
+        name: "Drift",
+        value_type: PropertyValueType::Integer,
+        description: "Total difference in character positions where the substrings \
+                      hashes were found away from where they were expected.",
+        default_value: "0",
+        values: &[],
+    },
+    MetricProperty {
+        name: "DeviceId",
+        value_type: PropertyValueType::String,
+        description: "Consists of four components separated by a hyphen symbol: \
+                      Hardware-Platform-Browser-IsCrawler where each Component \
+                      represents an ID of the corresponding Profile.",
+        default_value: "0-0-0-0",
+        values: &[],
+    },
+    MetricProperty {
+        name: "UserAgents",
+        value_type: PropertyValueType::StringList,
+        description: "The matched User-Agents.",
+        default_value: "n/a",
+        values: &[],
+    },
+    MetricProperty {
+        name: "Iterations",
+        value_type: PropertyValueType::Integer,
+        description: "The number of iterations carried out in order to find a match. \
+                      This is the number of nodes in the graph which have been visited.",
+        default_value: "0",
+        values: &[],
+    },
+    MetricProperty {
+        name: "Method",
+        value_type: PropertyValueType::String,
+        description: "The method used to determine the match result.",
+        default_value: "NONE",
+        values: &["NONE", "PERFORMANCE", "COMBINED", "PREDICTIVE"],
+    },
 ];
+
+/// The data tiers every match metric is listed in.
+const METRIC_DATA_TIERS: [&str; 5] = ["Lite", "Premium", "Enterprise", "TAC", "CloudFree"];
+
+/// The category of every match metric.
+const METRIC_CATEGORY: &str = "Device Metrics";
+
+/// The id of the component the match metrics belong to, which no data file
+/// component has.
+const METRICS_COMPONENT_ID: u8 = 255;
+
+/// The name of the component the match metrics belong to.
+const METRICS_COMPONENT_NAME: &str = "Metrics";
+
+/// The display order of every match metric.
+const METRIC_DISPLAY_ORDER: u8 = 255;
 
 /// An on-premise Hash device-detection engine.
 ///
@@ -197,6 +240,9 @@ pub struct DeviceDetectionOnPremiseEngine {
 struct LoadedDataSet {
     manager: Arc<Manager>,
     readable: Arc<ReadableProperties>,
+    /// The place of each data file property among the data file's properties,
+    /// by name, which [`Manager::data_file_property_values`] takes.
+    property_indexes: HashMap<String, u32>,
     /// Why a property is missing, from the metadata of this data set, added to
     /// every device data a detection writes.
     missing: Arc<MissingPropertySource>,
@@ -205,11 +251,13 @@ struct LoadedDataSet {
     _copy: Option<OperationalCopy>,
 }
 
-/// The property metadata and tier of a loaded data set.
+/// The property and component metadata and tier of a loaded data set.
 #[derive(PartialEq)]
 struct EngineMetadata {
     properties: Vec<PropertyMetaData>,
     aspect_properties: Vec<AspectPropertyMetaData>,
+    fiftyone_properties: Vec<FiftyOneAspectPropertyMetaData>,
+    components: Vec<ComponentMetaData>,
     tier: String,
 }
 
@@ -228,15 +276,20 @@ fn describe(
         .clone()
         .or_else(|| manager.data_set_name())
         .unwrap_or_else(|| DEFAULT_DATA_SOURCE_TIER.to_owned());
-    let (properties, aspect_properties) = build_property_metadata(&manager, &Some(tier.clone()));
-    let readable = Arc::new(ReadableProperties::new(&aspect_properties));
+    let file_properties = manager.data_file_properties();
+    let metadata = build_metadata(&file_properties, &manager.data_file_components(), tier);
+    let readable = Arc::new(ReadableProperties::new(&file_properties));
+    let property_indexes = file_properties
+        .iter()
+        .map(|property| (property.name.clone(), property.index))
+        .collect();
     let missing = Arc::new(
         MissingPropertySource::new(
             DEVICE_ELEMENT_DATA_KEY,
             ENGINE_TYPE_NAME,
             EngineDeployment::OnPremise,
-            tier.clone(),
-            aspect_properties.clone(),
+            metadata.tier.clone(),
+            metadata.aspect_properties.clone(),
         )
         .with_typed_properties(is_typed_property),
     );
@@ -244,14 +297,11 @@ fn describe(
         LoadedDataSet {
             manager,
             readable,
+            property_indexes,
             missing,
             _copy: copy,
         },
-        EngineMetadata {
-            properties,
-            aspect_properties,
-            tier,
-        },
+        metadata,
     )
 }
 
@@ -316,15 +366,55 @@ impl DeviceDetectionOnPremiseEngine {
         named_evidence_keys(&self.loaded.load().manager)
     }
 
-    /// The names of the available (required) properties in the loaded data set,
-    /// including the match-metric pseudo-properties.
+    /// The names of the properties the loaded data set was opened with, being
+    /// those [`AspectEngine::aspect_properties`] marks available, including the
+    /// match-metric pseudo-properties.
     pub fn available_properties(&self) -> Vec<String> {
         self.metadata
             .current()
             .aspect_properties
             .iter()
+            .filter(|p| p.available())
             .map(|p| p.name().to_owned())
             .collect()
+    }
+
+    /// The 51Degrees metadata of each property in
+    /// [`AspectEngine::aspect_properties`], in the same order, with the URL,
+    /// display order, flags, component and default value the data file gives
+    /// it.
+    ///
+    /// A data file property's values are not copied into its metadata, because
+    /// a data file can hold hundreds of thousands of them, so
+    /// [`Self::property_values`] reads them when they are asked for. A match
+    /// metric's metadata lists its values.
+    pub fn fiftyone_properties(&self) -> &[FiftyOneAspectPropertyMetaData] {
+        &self.metadata.current().fiftyone_properties
+    }
+
+    /// The components the data file defines, such as the hardware and the
+    /// browser, each with every property the data file gives it, then the
+    /// `Metrics` component, which holds the match metrics.
+    pub fn components(&self) -> &[ComponentMetaData] {
+        &self.metadata.current().components
+    }
+
+    /// The values the property named `property_name`, matched exactly, can
+    /// have, or [`None`] when the engine lists no such property.
+    ///
+    /// A data file property's values are read from the loaded data file on
+    /// each call, in the data file's order. A match metric gives the values its
+    /// metadata lists, which is none for all but `Method`.
+    pub fn property_values(&self, property_name: &str) -> Option<Vec<ValueMetaData>> {
+        let loaded = self.loaded.load();
+        if let Some(index) = loaded.property_indexes.get(property_name) {
+            let values = loaded.manager.data_file_property_values(*index);
+            return Some(values.iter().map(value_metadata).collect());
+        }
+        self.fiftyone_properties()
+            .iter()
+            .find(|property| property.name() == property_name)
+            .map(|property| property.values().to_vec())
     }
 
     /// Run a detection for `data` into new device data.
@@ -580,11 +670,20 @@ pub(crate) fn open_manager(
     Manager::open_with_options(path, profile, requested.as_deref(), concurrency)
 }
 
-/// The data file properties a detection can read, each with the value type its
-/// rendered value is converted to.
+/// A data file property a detection can read.
+struct ReadableProperty {
+    /// The property's name as the data file spells it.
+    name: String,
+    /// The type the property's rendered value is converted to.
+    value_type: PropertyValueType,
+    /// The index the results' value reader takes for the property.
+    index: c_int,
+}
+
+/// The data file properties a detection can read.
 struct ReadableProperties {
-    /// Each property's name as the metadata spells it, and its value type.
-    properties: Vec<(String, PropertyValueType)>,
+    /// Each property a detection can read.
+    properties: Vec<ReadableProperty>,
     /// Each property's name in lowercase, in the same order.
     lowercase_names: Vec<String>,
     /// The position of each property in `properties`, by lowercase name.
@@ -592,21 +691,31 @@ struct ReadableProperties {
 }
 
 impl ReadableProperties {
-    /// Every property in the engine's metadata except the match metrics, which
-    /// the engine reads from each result straight away.
-    fn new(aspect_properties: &[AspectPropertyMetaData]) -> Self {
-        let properties: Vec<(String, PropertyValueType)> = aspect_properties
+    /// Every data file property the data set was opened with and results hold
+    /// a value for, except any with a match metric's name, which the engine
+    /// reads from each result straight away.
+    fn new(file_properties: &[DataFileProperty]) -> Self {
+        let properties: Vec<ReadableProperty> = file_properties
             .iter()
-            .filter(|meta| {
+            .filter(|property| property.available)
+            .filter(|property| {
                 !METRIC_PROPERTIES
                     .iter()
-                    .any(|(metric, _, _)| metric.eq_ignore_ascii_case(meta.name()))
+                    .any(|metric| metric.name.eq_ignore_ascii_case(&property.name))
             })
-            .map(|meta| (meta.name().to_owned(), meta.core().value_type))
+            .filter_map(|property| {
+                property
+                    .required_property_index
+                    .map(|index| ReadableProperty {
+                        name: property.name.clone(),
+                        value_type: property.value_type,
+                        index,
+                    })
+            })
             .collect();
         let lowercase_names: Vec<String> = properties
             .iter()
-            .map(|(name, _)| name.to_lowercase())
+            .map(|property| property.name.to_lowercase())
             .collect();
         let by_name = lowercase_names
             .iter()
@@ -643,16 +752,16 @@ impl DevicePropertyReader for DetectionReader {
     }
 
     fn read_property(&self, position: usize) -> std::result::Result<Option<PropertyValue>, String> {
-        let (name, value_type) = &self.loaded.readable.properties[position];
-        let Some(index) = self.loaded.manager.required_property_index(name) else {
-            return Ok(None);
-        };
+        let property = &self.loaded.readable.properties[position];
         let results = self.results.lock().unwrap_or_else(PoisonError::into_inner);
         let raw = results
-            .value_as_string_by_index(index, NATIVE_VALUE_SEPARATOR)
+            .value_as_string_by_index(property.index, NATIVE_VALUE_SEPARATOR)
             .map_err(|error| error.to_string())?;
         Ok(raw.and_then(|raw| {
-            let raw = if name.eq_ignore_ascii_case(JAVASCRIPT_HARDWARE_PROFILE) {
+            let raw = if property
+                .name
+                .eq_ignore_ascii_case(JAVASCRIPT_HARDWARE_PROFILE)
+            {
                 wrap_hardware_profile(raw)
             } else {
                 raw
@@ -660,70 +769,131 @@ impl DevicePropertyReader for DetectionReader {
             // A typed property whose value does not parse (the `Unknown` or
             // `N/A` no-value sentinels, say) has no value, so its accessor
             // reports a clean no-value.
-            native_value(&raw, *value_type)
+            native_value(&raw, property.value_type)
         }))
     }
 }
 
-/// Build the core and aspect property metadata for the loaded data set.
+/// Build the engine's metadata from the data file's properties and components.
 ///
-/// Combines the data file's own properties (read from the native data set) with
-/// the match-metric pseudo-properties the Hash engine always exposes. The data
-/// tier (when known) is recorded on each property so missing-property reasoning
-/// can tell a data-file upgrade apart from a configuration exclusion.
-fn build_property_metadata(
-    manager: &Manager,
-    data_source_tier: &Option<String>,
-) -> (Vec<PropertyMetaData>, Vec<AspectPropertyMetaData>) {
-    let tier = data_source_tier
-        .clone()
-        .unwrap_or_else(|| DEFAULT_DATA_SOURCE_TIER.to_owned());
-
-    let mut aspect = Vec::new();
-
-    // The data file's own properties. They are strings as far as the native
-    // string reader is concerned, but the shared device-data accessors coerce
-    // the well-known ones (IsMobile, the screen dimensions) to their natural
-    // type, so the declared value type here matches that coercion where it is
-    // known and defaults to string otherwise.
-    for name in manager.property_names() {
-        let value_type = known_property_type(&name);
-        aspect.push(
-            AspectPropertyMetaData::new(&name, DEVICE_ELEMENT_DATA_KEY, value_type)
-                .with_data_tiers([tier.clone()]),
-        );
-    }
-
-    // The match-metric pseudo-properties.
-    for (name, value_type, description) in METRIC_PROPERTIES {
-        // Skip a metric that the data file already declares as a real property
-        // so it is not advertised twice.
-        if aspect.iter().any(|p| p.name().eq_ignore_ascii_case(name)) {
+/// Every property the data file defines is listed, in the data file's order,
+/// with the type, category, description, data tiers and the rest the data
+/// file gives it, and one the data set was opened without is marked
+/// unavailable, as the C++ `PropertyMetaDataBuilderHash` in 51degrees-cxx
+/// does. The match metrics follow, then the components, each with its
+/// properties, and the `Metrics` component last, as the .NET engine lists
+/// them.
+fn build_metadata(
+    file_properties: &[DataFileProperty],
+    file_components: &[DataFileComponent],
+    tier: String,
+) -> EngineMetadata {
+    let mut fiftyone_properties: Vec<FiftyOneAspectPropertyMetaData> = file_properties
+        .iter()
+        .map(|property| file_property_metadata(property, file_components))
+        .collect();
+    for metric in METRIC_PROPERTIES {
+        // A metric the data file already defines is not listed twice.
+        if fiftyone_properties
+            .iter()
+            .any(|property| property.name().eq_ignore_ascii_case(metric.name))
+        {
             continue;
         }
-        aspect.push(
-            AspectPropertyMetaData::new(*name, DEVICE_ELEMENT_DATA_KEY, *value_type)
-                .with_description(*description)
-                .with_data_tiers(["Lite", "Premium", "Enterprise", "TAC", "CloudFree"])
-                .map_core(|c| c.with_category("Device Metrics")),
-        );
+        fiftyone_properties.push(metric_property_metadata(metric));
     }
 
-    let core = aspect.iter().map(|p| p.core().clone()).collect();
-    (core, aspect)
+    let aspect_properties: Vec<AspectPropertyMetaData> = fiftyone_properties
+        .iter()
+        .map(|property| property.aspect().clone())
+        .collect();
+    let properties = aspect_properties
+        .iter()
+        .map(|property| property.core().clone())
+        .collect();
+
+    let component = |id: u8, name: &str| {
+        ComponentMetaData::new(id, name).with_properties(
+            fiftyone_properties
+                .iter()
+                .filter(|property| property.component_id() == Some(id))
+                .cloned(),
+        )
+    };
+    let mut components: Vec<ComponentMetaData> = file_components
+        .iter()
+        .map(|file_component| {
+            component(file_component.component_id, &file_component.name)
+                .with_default_profile_id(file_component.default_profile_id)
+        })
+        .collect();
+    components.push(component(METRICS_COMPONENT_ID, METRICS_COMPONENT_NAME));
+
+    EngineMetadata {
+        properties,
+        aspect_properties,
+        fiftyone_properties,
+        components,
+        tier,
+    }
 }
 
-/// The natural value type for a device-detection property name, so the declared
-/// metadata matches how the shared accessors read the value back.
-///
-/// Looked up in the generated property-type table, which the
-/// `PropertyGenerator` tool derives from the common metadata, so the full
-/// property set is typed (the booleans, the integer and double measurements, and
-/// the string lists), not just a hand-picked few. Anything not in the generated
-/// set (for example a property only a newer data file carries) is treated as a
-/// string, the lossless default for a value read from the native string reader.
-fn known_property_type(name: &str) -> PropertyValueType {
-    declared_property_value_type(name).unwrap_or(PropertyValueType::String)
+/// The metadata of a data file property.
+fn file_property_metadata(
+    property: &DataFileProperty,
+    file_components: &[DataFileComponent],
+) -> FiftyOneAspectPropertyMetaData {
+    let aspect =
+        AspectPropertyMetaData::new(&property.name, DEVICE_ELEMENT_DATA_KEY, property.value_type)
+            .with_description(&property.description)
+            .with_data_tiers(property.data_tiers.iter().cloned())
+            .map_core(|core| {
+                core.with_category(&property.category)
+                    .with_available(property.available)
+            });
+    let mut metadata = FiftyOneAspectPropertyMetaData::from_aspect(aspect)
+        .with_url(&property.url)
+        .with_display_order(property.display_order)
+        .with_mandatory(property.mandatory)
+        .with_list(property.list)
+        .with_obsolete(property.obsolete)
+        .with_show(property.show)
+        .with_show_values(property.show_values);
+    if let Some(component) = file_components
+        .iter()
+        .find(|component| component.component_id == property.component_id)
+    {
+        metadata = metadata
+            .with_component_id(component.component_id)
+            .with_component_name(&component.name);
+    }
+    if let Some(default_value) = &property.default_value {
+        metadata = metadata.with_default_value(value_metadata(default_value));
+    }
+    metadata
+}
+
+/// The metadata of a match metric, with the display order and flags the .NET
+/// engine gives every metric.
+fn metric_property_metadata(metric: &MetricProperty) -> FiftyOneAspectPropertyMetaData {
+    let aspect =
+        AspectPropertyMetaData::new(metric.name, DEVICE_ELEMENT_DATA_KEY, metric.value_type)
+            .with_description(metric.description)
+            .with_data_tiers(METRIC_DATA_TIERS)
+            .map_core(|core| core.with_category(METRIC_CATEGORY));
+    FiftyOneAspectPropertyMetaData::from_aspect(aspect)
+        .with_component_id(METRICS_COMPONENT_ID)
+        .with_component_name(METRICS_COMPONENT_NAME)
+        .with_display_order(METRIC_DISPLAY_ORDER)
+        .with_default_value(ValueMetaData::new(metric.default_value))
+        .with_values(metric.values.iter().map(|value| ValueMetaData::new(*value)))
+}
+
+/// The metadata of a data file value.
+fn value_metadata(value: &DataFileValue) -> ValueMetaData {
+    ValueMetaData::new(&value.name)
+        .with_description(&value.description)
+        .with_url(&value.url)
 }
 
 /// Convert a native string value into the property value of the declared type,
@@ -941,22 +1111,58 @@ mod tests {
     }
 
     #[test]
-    fn known_property_types_are_coerced() {
-        assert_eq!(known_property_type("IsMobile"), PropertyValueType::Bool);
-        assert_eq!(known_property_type("ismobile"), PropertyValueType::Bool);
+    fn the_metrics_are_listed_as_the_dotnet_engine_lists_them() {
+        let metadata = build_metadata(&[], &[], String::from("Lite"));
+        let names: Vec<&str> = metadata
+            .fiftyone_properties
+            .iter()
+            .map(|property| property.name())
+            .collect();
         assert_eq!(
-            known_property_type("ScreenPixelsWidth"),
-            PropertyValueType::Integer
+            names,
+            [
+                "MatchedNodes",
+                "Difference",
+                "Drift",
+                "DeviceId",
+                "UserAgents",
+                "Iterations",
+                "Method"
+            ]
+        );
+        for property in &metadata.fiftyone_properties {
+            assert_eq!(property.core().category, METRIC_CATEGORY);
+            assert_eq!(property.component_id(), Some(METRICS_COMPONENT_ID));
+            assert_eq!(property.display_order(), METRIC_DISPLAY_ORDER);
+            assert!(property.core().available && property.show() && property.show_values());
+            assert!(!property.mandatory() && !property.list() && !property.obsolete());
+            assert_eq!(
+                property.aspect().data_tiers_where_present(),
+                METRIC_DATA_TIERS
+            );
+            assert!(property.default_value().is_some());
+        }
+        let method = &metadata.fiftyone_properties[6];
+        let values: Vec<&str> = method.values().iter().map(|v| v.name.as_str()).collect();
+        assert_eq!(values, ["NONE", "PERFORMANCE", "COMBINED", "PREDICTIVE"]);
+        assert_eq!(
+            method.default_value().map(|v| v.name.as_str()),
+            Some("NONE")
         );
         assert_eq!(
-            known_property_type("ScreenMMWidth"),
-            PropertyValueType::Double
+            metadata.fiftyone_properties[1].aspect().description(),
+            "Used when detection method is not Exact or None. This is an integer \
+             value and the larger the value the less confident the detector is \
+             in this result."
         );
-        // An unknown property is a string, the lossless default.
-        assert_eq!(
-            known_property_type("HardwareVendor"),
-            PropertyValueType::String
-        );
+
+        let components: Vec<(u8, &str, usize)> = metadata
+            .components
+            .iter()
+            .map(|c| (c.component_id, c.name.as_str(), c.properties().len()))
+            .collect();
+        assert_eq!(components, [(METRICS_COMPONENT_ID, "Metrics", 7)]);
+        assert_eq!(metadata.components[0].default_profile_id, None);
     }
 
     #[test]

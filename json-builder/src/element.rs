@@ -58,10 +58,12 @@ struct PipelineConfig {
 }
 
 impl PipelineConfig {
-    /// Walk every element's property metadata and record which dotted paths are
-    /// delayed-execution JavaScript and which carry evidence properties. The
-    /// JSON builder, JavaScript builder and other excluded elements are skipped
-    /// because their data never reaches the output.
+    /// Walk every element's available property metadata and record which
+    /// dotted paths are delayed-execution JavaScript and which carry evidence
+    /// properties. The JSON builder, JavaScript builder and other excluded
+    /// elements are skipped because their data never reaches the output, and
+    /// so are properties marked unavailable, as .NET reads only the pipeline's
+    /// available properties.
     fn from_pipeline(pipeline: &Pipeline, element_exclusion: &HashSet<String>) -> Self {
         let mut config = PipelineConfig::default();
         for element in pipeline.flow_elements() {
@@ -69,7 +71,7 @@ impl PipelineConfig {
             if element_exclusion.contains(&element_key) {
                 continue;
             }
-            for property in element.properties() {
+            for property in element.properties().iter().filter(|p| p.available) {
                 config.record_property(&element_key, property);
             }
         }
@@ -395,8 +397,8 @@ impl JsonBuilderElement {
     /// the output, in sorted order.
     ///
     /// A property counts as JavaScript when its metadata declares the JavaScript
-    /// value type; the path is `elementkey.propertyname`. Excluded elements and
-    /// excluded properties never contribute.
+    /// value type; the path is `elementkey.propertyname`. Excluded elements,
+    /// excluded properties and properties marked unavailable never contribute.
     fn javascript_property_paths(&self, data: &FlowData) -> Vec<String> {
         let mut paths = Vec::new();
         for element in data.pipeline().flow_elements() {
@@ -411,7 +413,7 @@ impl JsonBuilderElement {
             if !present {
                 continue;
             }
-            for property in element.properties() {
+            for property in element.properties().iter().filter(|p| p.available) {
                 let name = property.name.to_lowercase();
                 if property.value_type == PropertyValueType::JavaScript
                     && !self.is_property_excluded(&name)

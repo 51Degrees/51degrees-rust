@@ -52,7 +52,7 @@ use std::ptr::NonNull;
 use std::sync::{Arc, OnceLock};
 
 use fiftyone_device_detection_sys as sys;
-use fiftyone_pipeline_core::{constants, Error, Result};
+use fiftyone_pipeline_core::{constants, Error, PropertyValueType, Result};
 
 use crate::buffer::with_value_string;
 use crate::evidence::with_native_evidence;
@@ -459,6 +459,318 @@ impl Manager {
             manager: Arc::clone(self),
         })
     }
+}
+
+/// The length of the buffer a metadata string is first read into. A longer
+/// string is read again into a buffer that fits it.
+const METADATA_STRING_BUFFER_LENGTH: usize = 256;
+
+/// The metadata the data file holds for one of its properties, as the C++
+/// `PropertyMetaDataBuilderHash` in 51degrees-cxx reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DataFileProperty {
+    /// The property's place among the data file's properties, which
+    /// [`Manager::data_file_property_values`] takes.
+    pub index: u32,
+    /// The property's name.
+    pub name: String,
+    /// The type of the property's values. A string property that can hold
+    /// several values is a [`PropertyValueType::StringList`].
+    pub value_type: PropertyValueType,
+    /// True when the data set was opened with the property, so results can
+    /// hold its values.
+    pub available: bool,
+    /// The index [`Results::value_as_string_by_index`] takes for the
+    /// property, or [`None`] when results do not hold it. The C library finds
+    /// the property among the names the data set was opened with ignoring
+    /// case, so this is found for a property named in another case.
+    pub required_property_index: Option<c_int>,
+    /// The property's category, or empty when it has none.
+    pub category: String,
+    /// The property's description, or empty when it has none.
+    pub description: String,
+    /// A URL with more about the property, or empty when it has none.
+    pub url: String,
+    /// The id of the component the property belongs to, or 0 when the data
+    /// file names none.
+    pub component_id: u8,
+    /// The order to display the property in among the others.
+    pub display_order: u8,
+    /// True when every profile must have a value for the property.
+    pub mandatory: bool,
+    /// True when a profile can have several values for the property.
+    pub list: bool,
+    /// True when the property is kept only for backward compatibility.
+    pub obsolete: bool,
+    /// True when the property should be shown in lists of properties.
+    pub show: bool,
+    /// True when the property's values should be shown in lists of values.
+    pub show_values: bool,
+    /// The data tiers whose data files hold the property, in the data file's
+    /// order.
+    pub data_tiers: Vec<String>,
+    /// The property's default value, which a profile with no other value for
+    /// the property has, or [`None`] when it has none.
+    pub default_value: Option<DataFileValue>,
+    /// The number of values the data file holds for the property.
+    pub value_count: u32,
+}
+
+/// The metadata the data file holds for one of its components, such as the
+/// hardware or the browser.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DataFileComponent {
+    /// The component's id, which stays the same from one data file to the
+    /// next.
+    pub component_id: u8,
+    /// The component's name.
+    pub name: String,
+    /// The profile id of the component's default profile.
+    pub default_profile_id: u32,
+}
+
+/// The metadata the data file holds for one value of a property.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DataFileValue {
+    /// The value as a string.
+    pub name: String,
+    /// The value's description, or empty when it has none.
+    pub description: String,
+    /// A URL with more about the value, or empty when it has none.
+    pub url: String,
+}
+
+/// The fields of a data file property that are not strings.
+struct PropertyFields {
+    value_type: u8,
+    available: u8,
+    required_index: i32,
+    component_id: u8,
+    display_order: u8,
+    is_mandatory: u8,
+    is_list: u8,
+    is_obsolete: u8,
+    show: u8,
+    show_values: u8,
+    value_count: u32,
+    default_value_number: i32,
+    map_count: u32,
+}
+
+impl Manager {
+    /// Every property the data file defines, in the data file's order. A
+    /// property the data set was opened without is listed as unavailable.
+    pub fn data_file_properties(&self) -> Vec<DataFileProperty> {
+        let _file_read = self.file_read();
+        // Safety: the manager is initialized for the lifetime of `self`.
+        let count = unsafe { sys::fiftyoneDegreesShimHashGetDataFilePropertyCount(self.as_ptr()) };
+        (0..count)
+            .filter_map(|index| self.read_data_file_property(index))
+            .collect()
+    }
+
+    /// The components the data file defines, in the data file's order.
+    pub fn data_file_components(&self) -> Vec<DataFileComponent> {
+        let _file_read = self.file_read();
+        // Safety: the manager is initialized for the lifetime of `self`.
+        let count = unsafe { sys::fiftyoneDegreesShimHashGetComponentCount(self.as_ptr()) };
+        let mut components = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            let mut component_id = 0u8;
+            let mut default_profile_id = 0u32;
+            // Safety: both output pointers are writable locals.
+            let read = unsafe {
+                sys::fiftyoneDegreesShimHashGetComponent(
+                    self.as_ptr(),
+                    index,
+                    &mut component_id,
+                    &mut default_profile_id,
+                )
+            };
+            if read == 0 {
+                continue;
+            }
+            // Safety: the buffer is writable for the length given.
+            let name = read_metadata_string(|buffer, length| unsafe {
+                sys::fiftyoneDegreesShimHashGetComponentName(self.as_ptr(), index, buffer, length)
+            });
+            components.push(DataFileComponent {
+                component_id,
+                name,
+                default_profile_id,
+            });
+        }
+        components
+    }
+
+    /// The values the data file holds for the property at `property_index`
+    /// among [`Self::data_file_properties`], in the data file's order, or none
+    /// when the index is out of range.
+    ///
+    /// The values are read from the data set each time, because a data file
+    /// can hold hundreds of thousands of them.
+    pub fn data_file_property_values(&self, property_index: u32) -> Vec<DataFileValue> {
+        let _file_read = self.file_read();
+        let Some(fields) = self.read_property_fields(property_index) else {
+            return Vec::new();
+        };
+        (0..fields.value_count)
+            .map(|number| self.read_value(property_index, number))
+            .collect()
+    }
+
+    /// The value at `number` among those the data file holds for the
+    /// property at `property_index`. The caller holds the file read permit.
+    fn read_value(&self, property_index: u32, number: u32) -> DataFileValue {
+        let field = |field| {
+            // Safety: the buffer is writable for the length given.
+            read_metadata_string(|buffer, length| unsafe {
+                sys::fiftyoneDegreesShimHashGetDataFilePropertyValueString(
+                    self.as_ptr(),
+                    property_index,
+                    number,
+                    field,
+                    buffer,
+                    length,
+                )
+            })
+        };
+        DataFileValue {
+            name: field(sys::SHIM_VALUE_NAME),
+            description: field(sys::SHIM_VALUE_DESCRIPTION),
+            url: field(sys::SHIM_VALUE_URL),
+        }
+    }
+
+    /// The fields of the data file property at `index` that are not strings,
+    /// or [`None`] when the index is out of range. The caller holds the file
+    /// read permit.
+    fn read_property_fields(&self, index: u32) -> Option<PropertyFields> {
+        let mut fields = PropertyFields {
+            value_type: 0,
+            available: 0,
+            required_index: -1,
+            component_id: 0,
+            display_order: 0,
+            is_mandatory: 0,
+            is_list: 0,
+            is_obsolete: 0,
+            show: 0,
+            show_values: 0,
+            value_count: 0,
+            default_value_number: -1,
+            map_count: 0,
+        };
+        // Safety: every output pointer is a writable field of `fields`.
+        let read = unsafe {
+            sys::fiftyoneDegreesShimHashGetDataFileProperty(
+                self.as_ptr(),
+                index,
+                &mut fields.value_type,
+                &mut fields.available,
+                &mut fields.required_index,
+                &mut fields.component_id,
+                &mut fields.display_order,
+                &mut fields.is_mandatory,
+                &mut fields.is_list,
+                &mut fields.is_obsolete,
+                &mut fields.show,
+                &mut fields.show_values,
+                &mut fields.value_count,
+                &mut fields.default_value_number,
+                &mut fields.map_count,
+            )
+        };
+        (read != 0).then_some(fields)
+    }
+
+    /// The data file property at `index`, or [`None`] when the index is out
+    /// of range. The caller holds the file read permit.
+    fn read_data_file_property(&self, index: u32) -> Option<DataFileProperty> {
+        let fields = self.read_property_fields(index)?;
+        let string = |field| {
+            // Safety: the buffer is writable for the length given.
+            read_metadata_string(|buffer, length| unsafe {
+                sys::fiftyoneDegreesShimHashGetDataFilePropertyString(
+                    self.as_ptr(),
+                    index,
+                    field,
+                    buffer,
+                    length,
+                )
+            })
+        };
+        let data_tiers = (0..fields.map_count)
+            .map(|map| {
+                // Safety: the buffer is writable for the length given.
+                read_metadata_string(|buffer, length| unsafe {
+                    sys::fiftyoneDegreesShimHashGetDataFilePropertyMap(
+                        self.as_ptr(),
+                        index,
+                        map,
+                        buffer,
+                        length,
+                    )
+                })
+            })
+            .filter(|tier| !tier.is_empty())
+            .collect();
+        let default_value = u32::try_from(fields.default_value_number)
+            .ok()
+            .map(|number| self.read_value(index, number));
+        Some(DataFileProperty {
+            index,
+            name: string(sys::SHIM_PROPERTY_NAME),
+            value_type: data_file_value_type(fields.value_type, fields.is_list != 0),
+            available: fields.available != 0,
+            required_property_index: (fields.required_index >= 0)
+                .then_some(fields.required_index as c_int),
+            category: string(sys::SHIM_PROPERTY_CATEGORY),
+            description: string(sys::SHIM_PROPERTY_DESCRIPTION),
+            url: string(sys::SHIM_PROPERTY_URL),
+            component_id: fields.component_id,
+            display_order: fields.display_order,
+            mandatory: fields.is_mandatory != 0,
+            list: fields.is_list != 0,
+            obsolete: fields.is_obsolete != 0,
+            show: fields.show != 0,
+            show_values: fields.show_values != 0,
+            data_tiers,
+            default_value,
+            value_count: fields.value_count,
+        })
+    }
+}
+
+/// The value type of a data file property from the C library's
+/// `fiftyoneDegreesPropertyValueType`, as the C++ `PropertyMetaDataBuilderHash`
+/// names it. A type the builder does not name is a string, as there.
+fn data_file_value_type(value_type: u8, is_list: bool) -> PropertyValueType {
+    match value_type {
+        1 => PropertyValueType::Integer,
+        2 => PropertyValueType::Double,
+        3 => PropertyValueType::Bool,
+        4 => PropertyValueType::JavaScript,
+        0 if is_list => PropertyValueType::StringList,
+        _ => PropertyValueType::String,
+    }
+}
+
+/// Read a metadata string a shim function writes. `read` writes as much of
+/// the string as fits into the buffer it is given and returns the string's
+/// full length, so a longer string is read again into a buffer that fits it.
+fn read_metadata_string(mut read: impl FnMut(*mut c_char, usize) -> usize) -> String {
+    let mut buffer = vec![0u8; METADATA_STRING_BUFFER_LENGTH];
+    let mut length = read(buffer.as_mut_ptr() as *mut c_char, buffer.len());
+    if length >= buffer.len() {
+        buffer = vec![0u8; length + 1];
+        length = read(buffer.as_mut_ptr() as *mut c_char, buffer.len());
+    }
+    let end = length.min(buffer.len() - 1);
+    String::from_utf8_lossy(&buffer[..end]).into_owned()
 }
 
 impl Drop for Manager {
@@ -1140,6 +1452,215 @@ mod tests {
                 .value_as_string_by_index(index, c"|")
                 .expect_err("an index outside the data set should be refused");
             assert!(matches!(err, Error::Native { ref status, .. } if status == "InvalidInput"));
+        }
+    }
+
+    /// The profiles that hold the data set in memory and the ones that read
+    /// it from the file, so the metadata readers are run against both.
+    const METADATA_PROFILES: [PerformanceProfile; 3] = [
+        PerformanceProfile::LowMemory,
+        PerformanceProfile::Balanced,
+        PerformanceProfile::InMemory,
+    ];
+
+    #[test]
+    fn every_data_file_property_is_listed_whether_or_not_it_was_opened() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping data file properties");
+            return;
+        };
+        for profile in METADATA_PROFILES {
+            let all = Manager::open(&path, profile).expect("data file loads");
+            let properties = all.data_file_properties();
+            // Opened naming no property, every property is available, so the
+            // data file lists exactly the required properties, which the C
+            // library keeps in name order rather than the data file's.
+            assert_eq!(properties.len(), all.property_count() as usize);
+            assert!(properties.iter().all(|p| p.available));
+            let names: Vec<&str> = properties.iter().map(|p| p.name.as_str()).collect();
+            let mut sorted = names.clone();
+            sorted.sort_unstable();
+            let mut required = all.property_names();
+            required.sort_unstable();
+            assert_eq!(sorted, required);
+            for (index, property) in properties.iter().enumerate() {
+                assert_eq!(property.index as usize, index);
+            }
+
+            let one = Manager::open_with_properties(&path, profile, Some(&["IsMobile"]))
+                .expect("data file loads");
+            let restricted = one.data_file_properties();
+            let restricted_names: Vec<&str> = restricted.iter().map(|p| p.name.as_str()).collect();
+            assert_eq!(restricted_names, names, "{}", profile.as_str());
+            let available: Vec<&str> = restricted
+                .iter()
+                .filter(|p| p.available)
+                .map(|p| p.name.as_str())
+                .collect();
+            assert_eq!(available, ["IsMobile"], "{}", profile.as_str());
+            for property in &properties {
+                assert_eq!(
+                    property.required_property_index,
+                    all.required_property_index(&property.name),
+                    "{}",
+                    property.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_property_named_in_another_case_is_found_and_read() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping a name in another case");
+            return;
+        };
+        let manager =
+            Manager::open_with_properties(&path, PerformanceProfile::Default, Some(&["ismobile"]))
+                .expect("data file loads");
+        let properties = manager.data_file_properties();
+        let is_mobile = properties
+            .iter()
+            .find(|p| p.name == "IsMobile")
+            .expect("IsMobile is in every Hash data file");
+        assert!(is_mobile.available);
+        // The name was given in lower case, so the crate's own map of the names
+        // given does not hold the data file's spelling.
+        assert_eq!(manager.required_property_index("IsMobile"), None);
+        let index = is_mobile
+            .required_property_index
+            .expect("the C library finds IsMobile ignoring case");
+        let results = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
+        let value = results
+            .value_as_string_by_index(index, c"|")
+            .expect("IsMobile is read");
+        assert_eq!(value.as_deref(), Some("False"));
+    }
+
+    #[test]
+    fn a_data_file_property_carries_the_metadata_the_file_holds() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping property metadata");
+            return;
+        };
+        for profile in METADATA_PROFILES {
+            let manager = Manager::open(&path, profile).expect("data file loads");
+            let properties = manager.data_file_properties();
+            let find = |name: &str| {
+                properties
+                    .iter()
+                    .find(|p| p.name == name)
+                    .unwrap_or_else(|| panic!("{name} is in every Hash data file"))
+            };
+            let tier = manager
+                .data_set_name()
+                .expect("the data file names its tier");
+
+            let is_mobile = find("IsMobile");
+            assert_eq!(is_mobile.value_type, PropertyValueType::Bool);
+            assert_eq!(is_mobile.category, "Device");
+            let default_value = is_mobile.default_value.as_ref().expect("IsMobile has one");
+            assert_eq!(default_value.name, "False");
+            assert!(!default_value.description.is_empty());
+            assert_eq!(is_mobile.component_id, 1, "IsMobile is a hardware property");
+            assert!(is_mobile.mandatory && is_mobile.show && is_mobile.show_values);
+            assert!(!is_mobile.list && !is_mobile.obsolete);
+            assert!(
+                is_mobile.data_tiers.contains(&tier),
+                "{:?}",
+                is_mobile.data_tiers
+            );
+            assert!(is_mobile.data_tiers.iter().all(|t| !t.is_empty()));
+            assert_eq!(is_mobile.value_count, 2);
+            // The description is longer than the first buffer, so it is only
+            // whole when the second read gives the rest.
+            assert!(
+                is_mobile.description.len() > METADATA_STRING_BUFFER_LENGTH,
+                "{}",
+                is_mobile.description
+            );
+            assert!(is_mobile.description.starts_with("Indicates if the device"));
+            assert!(!is_mobile.description.contains('\0'));
+
+            let browser_name = find("BrowserName");
+            assert_eq!(browser_name.value_type, PropertyValueType::String);
+            assert_eq!(
+                browser_name.component_id, 3,
+                "BrowserName is a browser property"
+            );
+            assert!(browser_name.url.starts_with("http"), "{}", browser_name.url);
+
+            let script = find("JavascriptHardwareProfile");
+            assert_eq!(script.value_type, PropertyValueType::JavaScript);
+            assert!(properties.iter().all(|p| !p.name.is_empty()));
+        }
+    }
+
+    #[test]
+    fn the_components_are_the_four_the_data_file_defines() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping components");
+            return;
+        };
+        for profile in METADATA_PROFILES {
+            let manager = Manager::open(&path, profile).expect("data file loads");
+            let components = manager.data_file_components();
+            let ids_and_names: Vec<(u8, &str)> = components
+                .iter()
+                .map(|c| (c.component_id, c.name.as_str()))
+                .collect();
+            assert_eq!(
+                ids_and_names,
+                [
+                    (1, "HardwarePlatform"),
+                    (2, "SoftwarePlatform"),
+                    (3, "BrowserUA"),
+                    (4, "Crawler"),
+                ],
+                "{}",
+                profile.as_str()
+            );
+            assert!(components.iter().all(|c| c.default_profile_id > 0));
+        }
+    }
+
+    #[test]
+    fn a_property_gives_every_value_the_data_file_holds_for_it() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping property values");
+            return;
+        };
+        for profile in METADATA_PROFILES {
+            let manager = Manager::open(&path, profile).expect("data file loads");
+            let properties = manager.data_file_properties();
+            let is_mobile = properties
+                .iter()
+                .find(|p| p.name == "IsMobile")
+                .expect("IsMobile is in every Hash data file");
+            let values = manager.data_file_property_values(is_mobile.index);
+            let mut names: Vec<&str> = values.iter().map(|v| v.name.as_str()).collect();
+            names.sort_unstable();
+            assert_eq!(names, ["False", "True"], "{}", profile.as_str());
+
+            for property in &properties {
+                let values = manager.data_file_property_values(property.index);
+                assert_eq!(
+                    values.len(),
+                    property.value_count as usize,
+                    "{}",
+                    property.name
+                );
+                if let Some(default) = &property.default_value {
+                    assert!(
+                        values.contains(default),
+                        "{}'s default value {} is one of its values",
+                        property.name,
+                        default.name
+                    );
+                }
+            }
+            let outside = u32::try_from(properties.len()).expect("few properties");
+            assert!(manager.data_file_property_values(outside).is_empty());
         }
     }
 }
