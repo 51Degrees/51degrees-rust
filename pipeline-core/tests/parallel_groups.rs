@@ -609,6 +609,38 @@ fn an_element_of_a_group_cannot_process_its_flow_data_again() {
 }
 
 #[test]
+fn an_element_of_a_group_reads_its_pipeline_which_is_released_after() {
+    let reader = element("reader", &[], |element, data| {
+        let pipeline = data.pipeline();
+        let seen = format!(
+            "{:p} {} {}",
+            Arc::as_ptr(pipeline),
+            pipeline.flow_elements().len(),
+            data.evidence_key_filter().include("query.after")
+        );
+        element.write(data, seen)
+    });
+    let pipeline = Pipeline::builder()
+        .add_parallel_elements([writer("beside", "ran"), reader])
+        .add_element(element("after", &["query.after"], |_, _| Ok(())))
+        .build()
+        .unwrap();
+    let mut data = pipeline.create_flow_data();
+
+    data.process().unwrap();
+
+    assert_eq!(
+        read(&data, "reader"),
+        format!("{:p} 3 true", Arc::as_ptr(&pipeline))
+    );
+    assert_eq!(
+        Arc::strong_count(&pipeline),
+        2,
+        "only `pipeline` and `data` hold the pipeline"
+    );
+}
+
+#[test]
 fn one_element_is_added_on_its_own_and_none_adds_nothing() {
     let one = Pipeline::builder()
         .add_parallel_elements([writer("only", "ran")])

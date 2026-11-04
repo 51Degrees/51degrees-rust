@@ -165,6 +165,14 @@ impl Evidence {
         EvidenceBuilder::new()
     }
 
+    /// An empty evidence using this one's hasher. Seeding a new hasher writes
+    /// a counter every thread shares, so copying one is cheaper under load.
+    pub(crate) fn empty_with_same_hasher(&self) -> Evidence {
+        Evidence {
+            entries: HashMap::with_hasher(self.entries.hasher().clone()),
+        }
+    }
+
     /// Look up a value by key. The key is matched case-insensitively.
     pub fn get(&self, key: &str) -> Option<&str> {
         ci_get(&self.entries, key).map(|value| value.as_str())

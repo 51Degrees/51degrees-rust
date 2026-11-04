@@ -59,20 +59,29 @@ use crate::value::PropertyValue;
 /// creating it, call [`FlowData::process`], then read results with
 /// [`FlowData::get`] (typed) or [`FlowData::get_str`] (by key).
 pub struct FlowData {
-    pipeline: Arc<Pipeline>,
+    source: Source,
     evidence: Evidence,
     data: DataMap,
     errors: Vec<FlowError>,
     processed: bool,
-    /// For an element in a parallel group, what the flow data held before the
-    /// group, read but never changed. The evidence and errors are read from
-    /// here in place of the fields above.
-    before_group: Option<Arc<BeforeGroup>>,
 }
 
-/// The evidence, element data and errors of a flow data before a parallel
-/// group runs, shared by every element in the group.
+/// Where a flow data finds its pipeline.
+enum Source {
+    /// The pipeline that created the flow data.
+    Pipeline(Arc<Pipeline>),
+    /// For an element in a parallel group, what the group's flow data held
+    /// before the group, read but never changed. The pipeline, evidence and
+    /// errors are read from here in place of the flow data's own.
+    Group(Arc<BeforeGroup>),
+}
+
+/// The pipeline, evidence, element data and errors of a flow data before a
+/// parallel group runs, shared by every element in the group. Holding the
+/// pipeline here means an element of the group does not write the pipeline's
+/// reference count, which every thread processing with it shares.
 pub(crate) struct BeforeGroup {
+    pipeline: Arc<Pipeline>,
     evidence: Evidence,
     data: DataMap,
     errors: Vec<FlowError>,
@@ -85,23 +94,25 @@ impl FlowData {
     /// uses that method (or its builder) rather than calling this directly.
     pub(crate) fn new(pipeline: Arc<Pipeline>, evidence: Evidence) -> Self {
         FlowData {
-            pipeline,
+            source: Source::Pipeline(pipeline),
             evidence,
             data: HashMap::default(),
             errors: Vec::new(),
             processed: false,
-            before_group: None,
         }
     }
 
     /// The pipeline that created this flow data.
     pub fn pipeline(&self) -> &Arc<Pipeline> {
-        &self.pipeline
+        match &self.source {
+            Source::Pipeline(pipeline) => pipeline,
+            Source::Group(before) => &before.pipeline,
+        }
     }
 
     /// The immutable evidence supplied to this flow data.
     pub fn evidence(&self) -> &Evidence {
-        match &self.before_group {
+        match self.before_group() {
             Some(before) => &before.evidence,
             None => &self.evidence,
         }
@@ -114,7 +125,7 @@ impl FlowData {
     /// group. Errors from the group are recorded once every element in it has
     /// finished.
     pub fn errors(&self) -> &[FlowError] {
-        match &self.before_group {
+        match self.before_group() {
             Some(before) => &before.errors,
             None => &self.errors,
         }
@@ -147,8 +158,8 @@ impl FlowData {
         }
         self.processed = true;
         // Clone the Arc so we do not hold an immutable borrow of `self` (via
-        // `self.pipeline`) while `process` needs `&mut self`.
-        let pipeline = Arc::clone(&self.pipeline);
+        // `self.pipeline()`) while `process` needs `&mut self`.
+        let pipeline = Arc::clone(self.pipeline());
         pipeline.process(self)
     }
 
@@ -161,24 +172,28 @@ impl FlowData {
     /// Move the evidence, element data and errors into the view every element
     /// of a parallel group shares. [`FlowData::end_group`] puts them back.
     pub(crate) fn begin_group(&mut self) -> Arc<BeforeGroup> {
+        let evidence = self.evidence.empty_with_same_hasher();
+        let data = DataMap::with_hasher(self.data.hasher().clone());
         Arc::new(BeforeGroup {
-            evidence: std::mem::take(&mut self.evidence),
-            data: std::mem::take(&mut self.data),
+            pipeline: Arc::clone(self.pipeline()),
+            evidence: std::mem::replace(&mut self.evidence, evidence),
+            data: std::mem::replace(&mut self.data, data),
             errors: std::mem::take(&mut self.errors),
         })
     }
 
     /// A flow data for one element of a parallel group, reading what the
     /// group's flow data held before the group. It counts as processed, so
-    /// the element cannot process it again.
-    pub(crate) fn group_member(pipeline: &Arc<Pipeline>, before: &Arc<BeforeGroup>) -> Self {
+    /// the element cannot process it again. Its maps copy the hasher of the
+    /// group's, because seeding a new hasher writes a counter every thread
+    /// shares.
+    pub(crate) fn group_member(before: &Arc<BeforeGroup>) -> Self {
         FlowData {
-            pipeline: Arc::clone(pipeline),
-            evidence: Evidence::default(),
-            data: HashMap::default(),
+            source: Source::Group(Arc::clone(before)),
+            evidence: before.evidence.empty_with_same_hasher(),
+            data: DataMap::with_hasher(before.data.hasher().clone()),
             errors: Vec::new(),
             processed: true,
-            before_group: Some(Arc::clone(before)),
         }
     }
 
@@ -262,7 +277,7 @@ impl FlowData {
         F: FnOnce() -> T,
     {
         let stored_key = key.name().to_lowercase();
-        if let Some(before) = &self.before_group {
+        if let Some(before) = self.before_group() {
             if before.data.contains_key(&stored_key) {
                 return Err(Error::configuration(format!(
                     "Element data under key '{}' was added before the parallel \
@@ -334,7 +349,7 @@ impl FlowData {
     /// A filter including the evidence keys usable by any element in this flow
     /// data's pipeline. Delegates to [`crate::Pipeline::evidence_key_filter`].
     pub fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
-        self.pipeline.evidence_key_filter()
+        self.pipeline().evidence_key_filter()
     }
 
     /// Build a deterministic [`DataKey`] from this flow data's evidence using
@@ -348,8 +363,7 @@ impl FlowData {
     fn lookup(&self, data_key: &str) -> Option<&dyn ElementData> {
         ci_get(&self.data, data_key)
             .or_else(|| {
-                self.before_group
-                    .as_ref()
+                self.before_group()
                     .and_then(|before| ci_get(&before.data, data_key))
             })
             .map(|boxed| boxed.as_ref())
@@ -358,10 +372,19 @@ impl FlowData {
     /// Every element data, with what was held before a parallel group last.
     fn all_data(&self) -> impl Iterator<Item = (&String, &Box<dyn ElementData>)> {
         let before = self
-            .before_group
-            .iter()
+            .before_group()
+            .into_iter()
             .flat_map(|before| before.data.iter());
         self.data.iter().chain(before)
+    }
+
+    /// For an element in a parallel group, what the group's flow data held
+    /// before the group.
+    fn before_group(&self) -> Option<&BeforeGroup> {
+        match &self.source {
+            Source::Pipeline(_) => None,
+            Source::Group(before) => Some(before),
+        }
     }
 }
 

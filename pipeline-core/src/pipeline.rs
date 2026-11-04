@@ -196,7 +196,7 @@ impl Pipeline {
     /// finished and `data` holds its evidence and earlier results again.
     fn process_group(&self, elements: &[Arc<dyn FlowElement>], data: &mut FlowData) {
         let before = data.begin_group();
-        let outcomes: Vec<_> = run_at_once(elements, data.pipeline(), &before)
+        let outcomes: Vec<_> = run_at_once(elements, &before)
             .into_iter()
             // Dropping each member's flow data releases its share of `before`.
             .map(|outcome| outcome.map(|(member, result)| (member.into_added_data(), result)))
@@ -249,11 +249,7 @@ type Outcome = thread::Result<(FlowData, Result<()>)>;
 /// runs on this thread. This thread then runs any element no group thread has
 /// started, so the group finishes even when no group thread is free or the
 /// platform cannot start threads.
-fn run_at_once(
-    elements: &[Arc<dyn FlowElement>],
-    pipeline: &Arc<Pipeline>,
-    before: &Arc<BeforeGroup>,
-) -> Vec<Outcome> {
+fn run_at_once(elements: &[Arc<dyn FlowElement>], before: &Arc<BeforeGroup>) -> Vec<Outcome> {
     let Some((first, others)) = elements.split_first() else {
         return Vec::new();
     };
@@ -261,14 +257,14 @@ fn run_at_once(
         .iter()
         .map(|element| {
             let element = Arc::clone(element);
-            let mut member = FlowData::group_member(pipeline, before);
+            let mut member = FlowData::group_member(before);
             Job::offer(move || {
                 let result = element.process(&mut member);
                 (member, result)
             })
         })
         .collect();
-    let mut member = FlowData::group_member(pipeline, before);
+    let mut member = FlowData::group_member(before);
     let mut outcomes = Vec::with_capacity(elements.len());
     outcomes.push(panic::catch_unwind(AssertUnwindSafe(move || {
         let result = first.process(&mut member);
@@ -368,6 +364,14 @@ impl PipelineBuilder {
     /// adds. One element is added on its own and no elements add nothing, as
     /// the 51Degrees .NET pipeline does. See the
     /// [parallel processing specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/advanced-features/parallel-processing.md).
+    ///
+    /// A group pays for elements that wait, for example on a call to another
+    /// service. It pays for elements that use the processor only when each
+    /// takes much longer than waking another thread, and only while
+    /// processors are idle. Under load every element still needs a processor
+    /// and the group adds the hand over between threads, so a group of short
+    /// elements that only use the processor lowers throughput. Add those with
+    /// [`PipelineBuilder::add_element`] instead.
     pub fn add_parallel_elements(
         mut self,
         elements: impl IntoIterator<Item = Arc<dyn FlowElement>>,
