@@ -42,13 +42,15 @@
 //! lifetime. One element can be in several pipelines, so each keeps its own
 //! list, as the
 //! [multi-pipeline elements specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/advanced-features/multi-pipeline-elements.md)
-//! requires. On each request the element only reads the kept list and the
-//! relevant element-data values.
+//! requires. On each request the element reads the kept list without taking a
+//! lock, and reads the relevant element-data values.
 
 use std::any::Any;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, PoisonError, RwLock, Weak};
+use std::sync::{Arc, OnceLock, Weak};
 
+use arc_swap::ArcSwap;
 use fiftyone_pipeline_core::{
     ElementData, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
     MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue, PropertyValueType,
@@ -128,7 +130,34 @@ struct PipelineProperties {
     /// Weak, so the entry does not keep the pipeline alive, and so the
     /// pipeline's address is not reused while the entry exists.
     pipeline: Weak<Pipeline>,
-    properties: Arc<[SetHeaderProperty]>,
+    /// The first non-empty scan of the pipeline.
+    properties: OnceLock<Box<[SetHeaderProperty]>>,
+}
+
+impl PipelineProperties {
+    fn new(pipeline: &Arc<Pipeline>) -> Self {
+        PipelineProperties {
+            pipeline: Arc::downgrade(pipeline),
+            properties: OnceLock::new(),
+        }
+    }
+
+    fn is_for(&self, pipeline: &Arc<Pipeline>) -> bool {
+        std::ptr::eq(self.pipeline.as_ptr(), Arc::as_ptr(pipeline))
+    }
+
+    /// The kept scan, or a new one, kept if it is not empty. An empty scan is
+    /// retried on the next request.
+    fn properties(&self, data: &FlowData) -> Cow<'_, [SetHeaderProperty]> {
+        if let Some(properties) = self.properties.get() {
+            return Cow::Borrowed(properties);
+        }
+        let scanned = SetHeadersElement::scan(data);
+        if scanned.is_empty() {
+            return Cow::Owned(scanned);
+        }
+        Cow::Borrowed(self.properties.get_or_init(|| scanned.into()))
+    }
 }
 
 /// Builds the HTTP response headers other elements want set.
@@ -143,7 +172,9 @@ struct PipelineProperties {
 pub struct SetHeadersElement {
     filter: EvidenceKeyFilterWhitelist,
     properties: Vec<PropertyMetaData>,
-    by_pipeline: RwLock<Vec<PipelineProperties>>,
+    /// An entry for each live pipeline the element is in. The list is replaced
+    /// whole when a pipeline is added, so a request reads it without a lock.
+    by_pipeline: ArcSwap<Vec<Arc<PipelineProperties>>>,
 }
 
 impl SetHeadersElement {
@@ -163,43 +194,24 @@ impl SetHeadersElement {
         SetHeadersElement {
             filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
             properties,
-            by_pipeline: RwLock::new(Vec::new()),
+            by_pipeline: ArcSwap::from_pointee(Vec::new()),
         }
     }
 
-    /// The `SetHeader*` properties of the flow data's pipeline, from the first
-    /// non-empty scan of that pipeline. An empty scan is not kept, so it is
-    /// retried on the next request.
-    fn set_header_properties(&self, data: &FlowData) -> Arc<[SetHeaderProperty]> {
-        let pipeline = data.pipeline();
-        let kept = self
-            .by_pipeline
-            .read()
-            .unwrap_or_else(PoisonError::into_inner);
-        if let Some(properties) = kept_for(&kept, pipeline) {
-            return properties;
-        }
-        drop(kept);
-
-        let scanned: Arc<[SetHeaderProperty]> = Self::scan(data).into();
-        if scanned.is_empty() {
-            return scanned;
-        }
-        let mut kept = self
-            .by_pipeline
-            .write()
-            .unwrap_or_else(PoisonError::into_inner);
-        // Entries for pipelines that have gone are removed as each new one is
-        // added, so the list holds no more than the live pipelines.
-        kept.retain(|entry| entry.pipeline.strong_count() > 0);
-        if let Some(properties) = kept_for(&kept, pipeline) {
-            return properties;
-        }
-        kept.push(PipelineProperties {
-            pipeline: Arc::downgrade(pipeline),
-            properties: Arc::clone(&scanned),
+    /// Add an entry for `pipeline` unless it has one, and remove the entries
+    /// of pipelines that have gone, so the list holds only live pipelines.
+    fn keep(&self, pipeline: &Arc<Pipeline>) {
+        self.by_pipeline.rcu(|kept| {
+            let mut next: Vec<_> = kept
+                .iter()
+                .filter(|entry| entry.pipeline.strong_count() > 0)
+                .cloned()
+                .collect();
+            if !next.iter().any(|entry| entry.is_for(pipeline)) {
+                next.push(Arc::new(PipelineProperties::new(pipeline)));
+            }
+            next
         });
-        scanned
     }
 
     /// Scan the pipeline's elements for properties named with the `SetHeader`
@@ -283,19 +295,18 @@ impl Default for SetHeadersElement {
     }
 }
 
-/// The properties kept for `pipeline`, if any.
-fn kept_for(
-    kept: &[PipelineProperties],
-    pipeline: &Arc<Pipeline>,
-) -> Option<Arc<[SetHeaderProperty]>> {
-    kept.iter()
-        .find(|entry| std::ptr::eq(entry.pipeline.as_ptr(), Arc::as_ptr(pipeline)))
-        .map(|entry| Arc::clone(&entry.properties))
-}
-
 impl FlowElement for SetHeadersElement {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        let properties = self.set_header_properties(data);
+        let kept = self.by_pipeline.load();
+        let properties = match kept.iter().find(|entry| entry.is_for(data.pipeline())) {
+            Some(entry) => entry.properties(data),
+            // A wrapper that does not pass add_pipeline on. The next request
+            // finds the entry.
+            None => {
+                self.keep(data.pipeline());
+                Cow::Owned(Self::scan(data))
+            }
+        };
         let headers = self.build_headers(data, &properties);
         data.get_or_add(Self::KEY, || SetHeadersData::new(headers))?;
         Ok(())
@@ -311,6 +322,11 @@ impl FlowElement for SetHeadersElement {
 
     fn properties(&self) -> &[PropertyMetaData] {
         &self.properties
+    }
+
+    fn add_pipeline(&self, pipeline: &Arc<Pipeline>) -> Result<()> {
+        self.keep(pipeline);
+        Ok(())
     }
 }
 
@@ -353,4 +369,30 @@ fn response_header_name(property_name: &str) -> Option<String> {
 /// caller skips them.
 fn string_value(value: &PropertyValue) -> Option<String> {
     value.as_str().map(str::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pipeline_of(element: &Arc<SetHeadersElement>, places: usize) -> Arc<Pipeline> {
+        let mut builder = Pipeline::builder();
+        for _ in 0..places {
+            builder = builder.add_element(Arc::clone(element) as Arc<dyn FlowElement>);
+        }
+        builder.build().unwrap()
+    }
+
+    #[test]
+    fn keeps_one_entry_for_each_live_pipeline() {
+        let element = Arc::new(SetHeadersElement::new());
+        let first = pipeline_of(&element, 2);
+        assert_eq!(element.by_pipeline.load().len(), 1);
+        let second = pipeline_of(&element, 1);
+        assert_eq!(element.by_pipeline.load().len(), 2);
+        drop(first);
+        let third = pipeline_of(&element, 1);
+        assert_eq!(element.by_pipeline.load().len(), 2);
+        drop((second, third));
+    }
 }

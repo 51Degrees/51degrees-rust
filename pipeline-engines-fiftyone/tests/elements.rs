@@ -399,6 +399,43 @@ impl FlowElement for Wrapped {
     }
 }
 
+/// An element that wraps another and passes on every call but
+/// `add_pipeline`, as a wrapper written before that method existed does.
+struct WrappedWithoutAddPipeline(Arc<dyn FlowElement>);
+
+impl FlowElement for WrappedWithoutAddPipeline {
+    fn process(&self, data: &mut FlowData) -> Result<()> {
+        self.0.process(data)
+    }
+    fn data_key(&self) -> &str {
+        self.0.data_key()
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        self.0.evidence_key_filter()
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        self.0.properties()
+    }
+}
+
+/// Set Headers on its own, wrapped by an element that passes every call on,
+/// and wrapped by one that does not pass `add_pipeline` on.
+fn set_headers_three_ways() -> [(&'static str, Arc<dyn FlowElement>); 3] {
+    [
+        ("plain", Arc::new(SetHeadersElement::new())),
+        (
+            "wrapped",
+            Arc::new(Wrapped(Arc::new(SetHeadersElement::new()))),
+        ),
+        (
+            "wrapped without add_pipeline",
+            Arc::new(WrappedWithoutAddPipeline(
+                Arc::new(SetHeadersElement::new()),
+            )),
+        ),
+    ]
+}
+
 /// The Accept-CH value of one request through `pipeline`.
 fn accept_ch(pipeline: &Arc<Pipeline>) -> Option<String> {
     let mut data = pipeline.create_flow_data();
@@ -412,13 +449,7 @@ fn accept_ch(pipeline: &Arc<Pipeline>) -> Option<String> {
 
 #[test]
 fn set_headers_keeps_each_pipelines_headers_apart() {
-    for wrap in [false, true] {
-        let shared: Arc<dyn FlowElement> = Arc::new(SetHeadersElement::new());
-        let shared = if wrap {
-            Arc::new(Wrapped(shared))
-        } else {
-            shared
-        };
+    for (how, shared) in set_headers_three_ways() {
         let a = Pipeline::builder()
             .add_element(Arc::new(FakeDeviceElement::new()))
             .add_element(Arc::clone(&shared))
@@ -436,15 +467,73 @@ fn set_headers_keeps_each_pipelines_headers_apart() {
             .unwrap();
 
         // B first, so a single kept scan would be B's.
-        assert_eq!(accept_ch(&b).as_deref(), Some("X-Test"), "wrapped {wrap}");
-        let from_a = accept_ch(&a);
-        assert!(from_a.is_some(), "wrapped {wrap}");
-        assert!(
-            !from_a.as_deref().unwrap().contains("X-Test"),
-            "wrapped {wrap}"
-        );
-        assert_eq!(from_a, accept_ch(&alone), "wrapped {wrap}");
-        assert_eq!(accept_ch(&b).as_deref(), Some("X-Test"), "wrapped {wrap}");
+        // Twice each, because a wrapper that does not pass add_pipeline on
+        // has the pipeline's entry added by its first request.
+        for _ in 0..2 {
+            assert_eq!(accept_ch(&b).as_deref(), Some("X-Test"), "{how}");
+        }
+        for _ in 0..2 {
+            let from_a = accept_ch(&a);
+            assert!(from_a.is_some(), "{how}");
+            assert!(!from_a.as_deref().unwrap().contains("X-Test"), "{how}");
+            assert_eq!(from_a, accept_ch(&alone), "{how}");
+        }
+        assert_eq!(accept_ch(&b).as_deref(), Some("X-Test"), "{how}");
+    }
+}
+
+/// A [`HeaderElement`] that counts the calls to `properties`, which Set
+/// Headers makes when it scans a pipeline.
+struct CountedHeaderElement {
+    inner: HeaderElement,
+    scans: AtomicUsize,
+}
+
+impl FlowElement for CountedHeaderElement {
+    fn process(&self, data: &mut FlowData) -> Result<()> {
+        self.inner.process(data)
+    }
+    fn data_key(&self) -> &str {
+        self.inner.data_key()
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        self.inner.evidence_key_filter()
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        self.scans.fetch_add(1, Ordering::Relaxed);
+        self.inner.properties()
+    }
+}
+
+#[test]
+fn set_headers_stops_scanning_a_pipeline_once_its_scan_is_kept() {
+    for (how, set_headers) in set_headers_three_ways() {
+        let counted = Arc::new(CountedHeaderElement {
+            inner: HeaderElement::new("test", "X-Test"),
+            scans: AtomicUsize::new(0),
+        });
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::clone(&counted) as Arc<dyn FlowElement>)
+            .add_element(set_headers)
+            .build()
+            .unwrap();
+        // add_pipeline adds the pipeline's entry, so the first request keeps
+        // its scan. Through a wrapper that does not pass add_pipeline on, the
+        // first request adds the entry and the second keeps its scan.
+        let first_kept = if how == "wrapped without add_pipeline" {
+            2
+        } else {
+            1
+        };
+        for _ in 0..first_kept {
+            assert_eq!(accept_ch(&pipeline).as_deref(), Some("X-Test"), "{how}");
+        }
+        let scans = counted.scans.load(Ordering::Relaxed);
+        assert!(scans > 0, "{how}");
+        for _ in 0..10 {
+            assert_eq!(accept_ch(&pipeline).as_deref(), Some("X-Test"), "{how}");
+        }
+        assert_eq!(counted.scans.load(Ordering::Relaxed), scans, "{how}");
     }
 }
 
