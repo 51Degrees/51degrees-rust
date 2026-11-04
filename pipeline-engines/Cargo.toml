@@ -17,6 +17,10 @@ thiserror.workspace = true
 # If-Modified-Since header. `default-features = false` with `clock` keeps the
 # dependency lean while still giving the local-clock access the service needs.
 chrono.workspace = true
+# Aspect data logs a read of a property it does not hold, and the data-update
+# service logs its refreshes, through the log facade, which does nothing until
+# the application installs a logger.
+log = "0.4"
 # The data-update service's transport and helpers, all optional and gated behind
 # the `data-update` feature so a cloud-only or wasm consumer can drop them (none
 # of these build for targets such as wasm32-wasip1).
@@ -31,7 +35,6 @@ notify = { version = "7", default-features = false, features = ["macos_fsevent"]
 # header) and gzip decompression of the downloaded payload.
 md-5 = { version = "0.10", optional = true }
 flate2 = { workspace = true, optional = true }
-log = { version = "0.4", optional = true }
 
 [features]
 # The data-update service keeps on-premise data files current. It polls the
@@ -42,7 +45,7 @@ log = { version = "0.4", optional = true }
 # unchanged. A cloud-only or wasm consumer turns it off with
 # `default-features = false` and loses only DataUpdateService.
 default = ["data-update"]
-data-update = ["dep:reqwest", "dep:notify", "dep:md-5", "dep:flate2", "dep:log"]
+data-update = ["dep:reqwest", "dep:notify", "dep:md-5", "dep:flate2"]
 
 [dev-dependencies]
 # A local HTTP server is spun up in tests to exercise the remote-poll path

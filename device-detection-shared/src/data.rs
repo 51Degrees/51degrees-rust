@@ -73,6 +73,9 @@ const ABSENT_MESSAGE: &str = "The property was not present in the device data.";
 const WRONG_TYPE_MESSAGE: &str =
     "The property was present but its stored value did not match the requested type.";
 
+/// The type the warning for a read of a missing property names.
+const DATA_TYPE_NAME: &str = "DeviceDataBase";
+
 /// Reads the properties of one detection from its native results when they are
 /// requested.
 ///
@@ -129,12 +132,17 @@ impl DeferredValues {
         read[position].get_or_insert_with(|| self.reader.read_property(position))
     }
 
+    /// The position of a property the reader can read, or `None` when it
+    /// cannot.
+    fn readable(&self, name: &str) -> Option<usize> {
+        self.position(name)
+            .filter(|position| *position < self.reader.property_names().len())
+    }
+
     /// The value of a property, read on its first request, or `None` when the
     /// reader cannot read it.
     fn get(&self, name: &str) -> Option<ReadOutcome> {
-        let position = self
-            .position(name)
-            .filter(|position| *position < self.reader.property_names().len())?;
+        let position = self.readable(name)?;
         let mut read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
         Some(self.outcome(&mut read, position).clone())
     }
@@ -216,7 +224,8 @@ enum Lookup {
 /// added a
 /// [`MissingPropertySource`](fiftyone_pipeline_engines::MissingPropertySource)
 /// to the wrapped [`AspectDataBase`], its no-value carries the reason, as
-/// .NET's `PropertyMissingException` does.
+/// .NET's `PropertyMissingException` does, and each read of the property logs
+/// a warning, as .NET's aspect data does.
 ///
 /// # Example
 ///
@@ -295,11 +304,21 @@ impl DeviceDataBase {
             // The reader holds the property, with no value for this detection.
             Some(Ok(None)) => self.absent(name),
             // Neither the bag nor the reader holds the property.
-            None => match self.base.missing_property_reason(name) {
+            None => match self.base.missing_property(name, DATA_TYPE_NAME) {
                 Some(missing) => Lookup::Missing(missing.description),
                 None => self.absent(name),
             },
         }
+    }
+
+    /// Whether the bag or the reader holds a property, with or without a
+    /// value.
+    fn holds(&self, name: &str) -> bool {
+        self.base.values().get_value(name).is_some()
+            || self
+                .deferred
+                .as_ref()
+                .is_some_and(|deferred| deferred.readable(name).is_some())
     }
 
     /// The bag's own explanation of a property it has no value for.
@@ -417,6 +436,14 @@ impl ElementData for DeviceDataBase {
             Lookup::Absent(absent) => Err(absent),
             Lookup::Missing(reason) | Lookup::Failed(reason) => Err(NoValueError::new(reason)),
         }
+    }
+
+    /// Whether the bag or the reader holds the property. Without a
+    /// [`MissingPropertySource`](fiftyone_pipeline_engines::MissingPropertySource)
+    /// it answers `true`, because a cloud engine leaves a property with no
+    /// value out of the bag.
+    fn has_property(&self, name: &str) -> bool {
+        !self.base.has_missing_property_sources() || self.holds(name)
     }
 
     /// The names of the properties that have a value. With a reader attached
@@ -864,6 +891,27 @@ mod tests {
             Some(source.reason("DeviceType").description.as_str())
         );
         assert!(*device.is_mobile().value().unwrap());
+    }
+
+    #[test]
+    fn a_source_lets_the_data_say_what_it_holds() {
+        let (reader, reads) = CountingReader::new();
+        let mut device = DeviceDataBase::new()
+            .set("DeviceId", "1-2-3-4")
+            .with_reader(reader);
+        assert!(device.has_property("DeviceType"));
+
+        device
+            .base_mut()
+            .add_missing_property_source(missing_property_source());
+        // In the bag, then read with a value, with none, and failing.
+        for name in ["DeviceId", "IsMobile", "browsername", "HardwareVendor"] {
+            assert!(device.has_property(name), "{name}");
+        }
+        assert!(!device.has_property("DeviceType"));
+        assert!(!device.has_property("NotAProperty"));
+        // Asking reads nothing.
+        assert_eq!(reads_of(&reads, "ismobile"), 0);
     }
 
     // WebAssembly has no threads to spawn.
