@@ -1,11 +1,10 @@
 # The 51Degrees crates published to crates.io, in dependency order, so that a
 # crate appears after every workspace crate it depends on.
 #
-# This is the single list. ci/publish-crates.sh publishes these and
-# ci/setup-trusted-publishing.sh authorises the publish workflow for these, so
-# a crate added here is both published and authorised. Keeping two lists let
-# fodid-client reach publish-crates.sh without ever being authorised, and the
-# first release that needed it failed on crates.io with 403.
+# This is the single list. ci/build-package.ps1 packages these,
+# ci/publish-package.ps1 publishes them and ci/setup-trusted-publishing.ps1
+# authorises the publishing workflows for them, so a crate added here is
+# packaged, published and authorised together.
 #
 # Blank lines and lines starting with # are ignored.
 

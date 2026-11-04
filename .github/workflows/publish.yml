@@ -1,179 +1,58 @@
 name: Publish
 
-# Publish the 51Degrees crates to crates.io when main changes, in dependency
-# order, skipping versions already published. The version comes from the tags,
-# so a release is a tag and no commit decides one on its own.
+# Publishes main to crates.io by hand, through common-ci's shared publish, the
+# same workflow the 01:00 nightly pipeline runs, as in the other languages. It
+# publishes only when main has moved past the last release tag. It works the
+# version out from the tags, refuses a major or minor move unless
+# allow-version-bump is set, publishes every crate through the ci/*.ps1 hooks,
+# then tags the release and creates its GitHub release.
 #
-# Authentication uses crates.io Trusted Publishing: the
-# rust-lang/crates-io-auth-action exchanges this run's GitHub OIDC identity for a
-# short-lived crates.io token, so no long-lived API token is stored in the
-# repository. Each published crate must have this repository and workflow
-# registered as a trusted publisher on crates.io (one-time setup, see
-# ci/setup-trusted-publishing.sh and https://crates.io/docs/trusted-publishing).
+# crates.io Trusted Publishing accepts this file and nightly-pipeline.yml, which
+# ci/setup-trusted-publishing.ps1 registers for every crate, so no crates.io
+# token is stored. The publish step exchanges the run's GitHub OIDC identity
+# for a short-lived token, which needs id-token on the calling job.
 
 on:
-  push:
-    branches: [main]
-  # The only route that can allow a major or minor bump, so that releasing one
-  # is a person dispatching this workflow with their name on the run rather
-  # than something a commit message does quietly.
   workflow_dispatch:
     inputs:
+      dryrun:
+        type: boolean
+        default: false
+      # The only route that can allow a major or minor bump, so that releasing
+      # one is a person dispatching this workflow with their name on the run.
       allow-version-bump:
         description: 'Publish even though the version moves the major or minor place.'
         type: boolean
         default: false
 
-# Never let two publish runs race; a second push waits for the first to finish.
+# One publish at a time, whether it starts here or in the nightly pipeline.
 concurrency:
   group: publish-crates-io
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: publish to crates.io
-    runs-on: ubuntu-latest
+  Publish:
+    name: Publish
     permissions:
-      # write, because a successful publish writes the tag the next release
-      # counts from and creates the GitHub release, as the publish does in
-      # the other languages.
-      contents: write
-      # Required to mint the OIDC token Trusted Publishing exchanges for a
-      # short-lived crates.io token.
+      contents: read
       id-token: write
-    steps:
-      # The owid-rust submodule holds the OWID source that ci/copy-owid-source.ps1
-      # compiles into fodid, and the cxx submodule holds the C sources that
-      # ci/copy-cxx-sources.ps1 copies into the -sys crates. Each copy is
-      # ignored by git and listed in its crate manifest's include, so cargo
-      # publish packages it with the crate. The data submodules inside cxx are
-      # not needed to publish, so the checkout is not recursive.
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-          # GitVersion reads the tags to work out the next version, and a
-          # shallow clone has none of them.
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      # The version rule and the bump check below are taken from common-ci,
-      # which the other five languages publish through, so there is one rule
-      # and not two that drift apart.
-      - name: Checkout common-ci
-        uses: actions/checkout@v4
-        with:
-          repository: 51Degrees/common-ci
-          path: common-ci
-      # The version comes from the tags, as it does in the other five
-      # languages, rather than from a number committed in each manifest. No
-      # commit can then release a version by accident, and all 24 crates move
-      # together instead of drifting apart, which is how three of them reached
-      # 4.6 while the other twenty one stayed at 4.5.2. common-ci's
-      # GitVersion.yml gives main a plain version such as 4.5.9, where
-      # GitVersion's own defaults give a pre-release such as 4.5.9-7, which a
-      # requirement such as 4.5 never selects.
-      - name: Work out the version from the tags
-        id: version
-        shell: pwsh
-        run: |
-          # GitVersion counts from the last version tag. Given none it does
-          # not fail, it answers 0.0.1, and publishing that to crates.io
-          # could never be undone. So having no tags stops the run rather
-          # than being worked around quietly.
-          $tags = git tag --list | Where-Object { $_ -match '^v?[0-9]+[.][0-9]+[.][0-9]+$' }
-          if (-not $tags) {
-            Write-Output "::error title=No version tags::There is nothing for the version to count from, so this run has stopped."
-            Write-Output ""
-            Write-Output "GitVersion answers 0.0.1 where a repository has no version tags. It does not fail, so without this check that number would be written into all the crate manifests and published. crates.io can never be unpublished."
-            Write-Output ""
-            Write-Output "The crates already published are fodid 4.5.5 and fodid-client 4.5.0, so the line to continue from is 4.5.5. Create that tag on the commit those were built from, then run this again:"
-            Write-Output ""
-            Write-Output "    git tag 4.5.5 <commit> && git push origin 4.5.5"
-            Write-Output ""
-            Write-Output "This is needed once. After a release has gone out from here the tag is written by this workflow."
-            exit 1
-          }
-          # The version common-ci installs, so the rule reads the same here.
-          dotnet tool install --global GitVersion.Tool --version 6.1
-          $v = dotnet-gitversion /config common-ci/GitVersion.yml /showvariable SemVer
-          if (-not $v) { throw 'GitVersion produced no version' }
-          Write-Output "version=$v" >> $env:GITHUB_OUTPUT
-          Write-Output "Releasing $v"
-      # Refuses a version that moves the major or minor place unless this run
-      # was dispatched by someone who asked for it. A push to main carries no
-      # inputs, so that route can never allow one and no commit message can
-      # release a 4.6 by itself. Three crates reached 4.6 overnight on
-      # 18 September 2026 by exactly that route.
-      #
-      # This runs before the version is written into the manifests, so a
-      # refused run leaves the tree alone as well as publishing nothing.
-      - name: Refuse a major or minor bump nobody approved
-        shell: pwsh
-        env:
-          ALLOW_VERSION_BUMP: ${{ inputs.allow-version-bump }}
-        run: >-
-          ./common-ci/steps/check-version-bump.ps1
-          -Version '${{ steps.version.outputs.version }}'
-          -RepoName '.'
-      - name: Write that version into every crate
-        shell: pwsh
-        run: ./ci/set-crate-versions.ps1 -Version '${{ steps.version.outputs.version }}'
-      - name: Copy the OWID source into fodid
-        shell: pwsh
-        run: ./ci/copy-owid-source.ps1
-      - name: Copy the C sources into the -sys crates
-        shell: pwsh
-        run: ./ci/copy-cxx-sources.ps1
-      # The examples are built and tested against these crates at the version
-      # being released, as the other languages test their examples against the
-      # package they are about to publish. A failure here stops the release.
-      - name: Test the examples against the crates being released
-        shell: pwsh
-        run: ./ci/test-examples-against-source.ps1 -Version '${{ steps.version.outputs.version }}'
-      - name: Authenticate to crates.io (Trusted Publishing)
-        uses: rust-lang/crates-io-auth-action@v1
-        id: auth
-      - name: Publish workspace crates in dependency order
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: bash ci/publish-crates.sh
+    uses: 51Degrees/common-ci/.github/workflows/nightly-publish.yml@main
+    with:
+      repo-name: ${{ github.event.repository.name }}
+      org-name: ${{ github.event.repository.owner.login }}
+      dryrun: ${{ inputs.dryrun }}
+      allow-version-bump: ${{ inputs.allow-version-bump }}
+      skip-compare-performance: true
+    secrets:
+      token: ${{ secrets.ACCESS_TOKEN }}
 
-      # The tag is what the next release counts from, and the GitHub release
-      # is created from it with generated notes, as common-ci's
-      # steps/update-tag.ps1 does for the other languages. Each half is
-      # skipped when it already exists, so a rerun finishes what a failed run
-      # left undone.
-      - name: Tag and release what was published
-        shell: pwsh
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if (git tag --list $env:VERSION) {
-            Write-Output "Tag $env:VERSION is already here, leaving it alone."
-          } else {
-            git tag $env:VERSION
-            git push origin $env:VERSION
-            Write-Output "Tagged $env:VERSION"
-          }
-          # A missing release makes gh release view exit non-zero, which is an
-          # answer here, not a failure.
-          $PSNativeCommandUseErrorActionPreference = $false
-          gh release view $env:VERSION *> $null
-          $exists = $LASTEXITCODE -eq 0
-          $PSNativeCommandUseErrorActionPreference = $true
-          if ($exists) {
-            Write-Output "Release $env:VERSION is already here, leaving it alone."
-            exit 0
-          }
-          gh release create $env:VERSION --verify-tag --generate-notes --title $env:VERSION
-          Write-Output "Released $env:VERSION"
-
-  # AFTER publish: prove the just-released packages work by building and testing
-  # the examples against crates.io (no source.toml patch). The pre-publish check
-  # against local source lives in examples.yml.
-  verify-published:
+  # The examples built and tested against the crates on crates.io, with no
+  # source.toml patch. The publish already tested them against the crates being
+  # released, and this checks the packages as crates.io serves them.
+  published-examples:
     name: examples vs published crates
-    needs: publish
+    needs: Publish
+    if: ${{ !inputs.dryrun }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -181,8 +60,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      # Give the crates.io index a moment to serve the just-published versions,
-      # then resolve them and run the examples' tests against the real packages.
-      - run: sleep 90
       - run: cargo update
       - run: cargo test

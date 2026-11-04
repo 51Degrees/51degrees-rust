@@ -5,8 +5,9 @@ name: Examples
 # BEFORE-publish gate: it tests the examples against the LOCAL source tree
 # (cargo --config source.toml), so a change is validated through the examples
 # before it ships. The AFTER-publish check, that the RELEASED packages work,
-# runs in publish.yml once a release has been published, and the published
-# job below is the same check, run by hand on a branch before a release.
+# runs in the nightly pipeline and in publish.yml after each publish, and the
+# published job below is the same check, run by hand on a branch before a
+# release.
 #
 # The contract job runs the shared browser tests against the two device
 # detection web examples built from this checkout. It can be started by hand
@@ -85,8 +86,9 @@ jobs:
         working-directory: .
         run: ./ci/test-examples-against-source.ps1
 
-  # The check publish.yml runs after a release, here so that it can be run by
-  # hand on a branch before one: gh workflow run Examples --ref <branch>. It
+  # The check the nightly pipeline and publish.yml run after a publish, here so
+  # that it can be run by hand on a branch before one:
+  # gh workflow run Examples --ref <branch>. It
   # builds the examples against the crates on crates.io, so an example that
   # needs a change not yet released fails here until the release, which is
   # why it does not run on pull requests.

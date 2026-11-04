@@ -93,20 +93,28 @@ Example binaries live in `<crate>/src/bin/*.rs` (run with `--bin`), not in an
 
 ## Releasing to crates.io
 
-Releases are automated, and every push to `main` releases. The version is never
-committed. `.github/workflows/publish.yml` works it out from the release tags
-with GitVersion and common-ci's `GitVersion.yml`, which gives `main` the next
-plain patch, such as 4.5.9 after 4.5.8, and `ci/set-crate-versions.ps1` writes
-it into every manifest on the build machine. The workflow refuses a major or
-minor move unless a person dispatches it with `allow-version-bump`, tests the
-examples against the crates at that version, publishes each crate to crates.io
-in dependency order with `ci/publish-crates.sh`, skipping any version already
-published, and tags the commit.
+Releases are automated, as in the other languages. The nightly pipeline at
+01:00 UTC merges the eligible pull requests and then publishes `main` through
+common-ci's shared publish when it has moved past the last release tag, so a
+night's merges go out as one patch release. `.github/workflows/publish.yml`
+runs the same publish by hand. The version is never committed. The shared
+publish works it out from the release tags with GitVersion and common-ci's
+`GitVersion.yml`, which gives `main` the next plain patch, such as 4.5.10 after
+4.5.9, and refuses a major or minor move unless a person dispatches
+`publish.yml` with `allow-version-bump`. The `ci/*.ps1` publish hooks write
+the version into every manifest on the build machine, copy the OWID source
+into `fodid` and the C sources into the `-sys` crates, test the examples
+against the crates at that version, package every crate, and publish each to
+crates.io in dependency order, skipping any version already published and
+waiting for the crates.io index to list each one before the next. The shared
+publish then tags the commit and creates the GitHub release.
+`ci/missing-ci-scripts.md` describes the hooks.
 
-Authentication uses crates.io **Trusted Publishing**: the publish workflow
-exchanges the run's GitHub OIDC identity for a short-lived token, so no API
-token is stored. Each crate has this repository and `publish.yml` registered as
-a trusted publisher (one-time setup in `ci/setup-trusted-publishing.sh`).
+Authentication uses crates.io **Trusted Publishing**. The publish exchanges the
+run's GitHub OIDC identity for a short-lived token, so no API token is stored.
+Each crate has this repository's `nightly-pipeline.yml` and `publish.yml`
+registered as trusted publishers (one-time setup in
+`ci/setup-trusted-publishing.ps1`).
 
 The OWID library the `fodid` crates build on is not a crates.io dependency.
 Its source is compiled into `fodid` as a private module from the `owid-rust`
@@ -133,13 +141,6 @@ workspace reads the submodule and never needs the copy.
   builds the C sources and reads the data files in the `cxx` submodule. It
   also runs `ci/check-native-symbols.ps1` and the property lookup scaling
   test in release.
-- `nightly-pipeline.yml` first runs common-ci's submodule update, which moves
-  every submodule to the head of its default branch and raises a pull request
-  when one has moved, then runs the eligible pull requests through common-ci's
-  nightly checks. That covers `owid-rust` as well as `cxx`, so a push to the
-  main branch of SWAN-community/owid-rust reaches `fodid` through the next
-  update pull request once its checks pass. Merging an update releases the
-  crates, as any merge to `main` does.
 - `caching-wasm.yml` lints and tests `fiftyone-caching`, the loading cache
   included, on wasm32-wasip1 under wasmtime and, with default features off,
   on wasm32-unknown-unknown under Node through `ci/run-wasm-unknown.mjs`.
@@ -151,8 +152,16 @@ workspace reads the submodule and never needs the copy.
   reads no secrets.
 - `examples.yml` — builds and tests `examples/` against local source
   (`source.toml`) before a release. Runs on every PR.
-- `publish.yml` — publishes on push to `main`, then a `verify-published` job
-  builds and tests `examples/` against the just-released crates.io packages.
+- `nightly-pipeline.yml` runs at 01:00 UTC. It first runs common-ci's submodule
+  update, which moves every submodule to the head of its default branch and
+  raises a pull request when one has moved. That covers `owid-rust` as well as
+  `cxx`, so a push to the main branch of SWAN-community/owid-rust reaches
+  `fodid` through the next update pull request once its checks pass. It then
+  merges the eligible pull requests, publishes `main` through common-ci's
+  shared workflows, and builds and tests `examples/` against the crates.io
+  packages.
+- `publish.yml` — the same publish, dispatched by hand, the only route that can
+  allow a major or minor version move.
 - `utm-link-lint.yml` — see UTM conventions below. Runs on every PR.
 - `mustache-drift.yml` — guards the generated JavaScript resource template.
   Push and pull request builds compare against a pinned upstream commit
@@ -170,8 +179,8 @@ workspace reads the submodule and never needs the copy.
   example writes its own results JSON, and common-ci provides the steps that
   validate and compare it (`steps/publish-performance-results.ps1` and
   `steps/compare-performance.ps1`). See
-  [ci/missing-ci-scripts.md](ci/missing-ci-scripts.md) for how this relates to
-  the org-standard reusable-workflow contract and the planned direction.
+  [ci/missing-ci-scripts.md](ci/missing-ci-scripts.md) for how the repository
+  uses the shared reusable workflows.
 
 ## Conventions and gotchas
 
