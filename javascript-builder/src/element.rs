@@ -131,10 +131,10 @@ fn safe_sequence(sequence: i32) -> i32 {
 ///   boolean if present, else the configured default (true).
 /// - **callback URL**: built only when protocol, host and endpoint are all
 ///   present, normalizing the single slash between host and endpoint. A URL
-///   that .NET's `Uri` would refuse is left out and logged at error level the
-///   first time, and characters after the host that could end the string the
-///   script holds the URL in are percent-encoded. When a URL is built the
-///   background-update mechanism is enabled.
+///   that is not valid is left out and logged at error level the first time,
+///   and characters after the host that could end the string the script holds
+///   the URL in are percent-encoded. When a URL is built the background-update
+///   mechanism is enabled.
 /// - **parameters**: every `query.*` evidence entry except the session id and
 ///   sequence, with the prefix stripped and the key and value URL-encoded,
 ///   serialized as a JSON object.

@@ -24,9 +24,9 @@
 //!
 //! The protocol and host usually come from the request, so the URL is checked
 //! before it is written into the script, where it sits inside a single-quoted
-//! JavaScript string. A URL that is not valid is refused, as .NET's `Uri`
-//! refuses it, and the characters left after the host that could end the
-//! string or the script are percent-encoded.
+//! JavaScript string. A URL that is not valid is refused, and the characters
+//! left after the host that could end the string or the script are
+//! percent-encoded.
 
 use std::net::Ipv6Addr;
 
@@ -86,8 +86,8 @@ fn is_scheme(protocol: &str) -> bool {
         && bytes.all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
 }
 
-/// The user information, host and port, or `None` when .NET's `Uri` would
-/// refuse them.
+/// The user information, host and port, or `None` when the host or the port is
+/// not valid.
 fn checked_authority(authority: &str) -> Option<String> {
     let (user, host_port) = match authority.split_once('@') {
         Some((user, host_port)) => (Some(user), host_port),
@@ -137,17 +137,13 @@ fn checked_host_port(host_port: &str) -> Option<String> {
     Some(format!("{}{port}", host.to_ascii_lowercase()))
 }
 
-/// A label of a host name, being letters, digits, `-` and `_`. Letters
-/// outside ASCII are allowed, as .NET allows them, but other characters
-/// outside ASCII are not.
+/// A label of a host name, being ASCII letters, digits, `-` and `_`. A host is
+/// ASCII only, so an internationalized name is given as A-labels.
 fn is_label(label: &str) -> bool {
     !label.is_empty()
-        && label.chars().all(|c| {
-            c.is_ascii_alphanumeric()
-                || c == '-'
-                || c == '_'
-                || (!c.is_ascii() && c.is_alphanumeric())
-        })
+        && label
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// The unreserved characters of RFC 3986 section 2.3.
@@ -266,7 +262,6 @@ mod tests {
                 "u\tx@example.com",
                 "https://u%09x@example.com/51dpipeline/json",
             ),
-            ("b\u{fc}cher.de", "https://b\u{fc}cher.de/51dpipeline/json"),
             ("example.com.", "https://example.com./51dpipeline/json"),
             (
                 "example.com/path",
@@ -407,10 +402,16 @@ mod tests {
         assert_eq!(text, "https://example.com/json%27x");
     }
 
-    // The hosts outside ASCII that .NET accepts but are not letters are refused.
+    // A host must be ASCII, so an internationalized name is given as A-labels,
+    // and anything else outside ASCII is refused.
     #[test]
-    fn refuses_characters_outside_ascii_that_are_not_letters() {
-        for host in ["a\u{a0}b.com", "a\u{200b}b.com", "a\u{2028}b.com"] {
+    fn refuses_hosts_outside_ascii() {
+        for host in [
+            "b\u{fc}cher.de",
+            "a\u{a0}b.com",
+            "a\u{200b}b.com",
+            "a\u{2028}b.com",
+        ] {
             assert!(
                 matches!(url("https", host), CallbackUrl::Invalid(_)),
                 "host {host:?}"
