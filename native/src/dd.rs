@@ -547,7 +547,7 @@ pub struct DataFileValue {
 struct PropertyFields {
     value_type: u8,
     available: u8,
-    required_index: i32,
+    required_index: c_int,
     component_id: u8,
     display_order: u8,
     is_mandatory: u8,
@@ -726,8 +726,7 @@ impl Manager {
             name: string(sys::SHIM_PROPERTY_NAME),
             value_type: data_file_value_type(fields.value_type, fields.is_list != 0),
             available: fields.available != 0,
-            required_property_index: (fields.required_index >= 0)
-                .then_some(fields.required_index as c_int),
+            required_property_index: (fields.required_index >= 0).then_some(fields.required_index),
             category: string(sys::SHIM_PROPERTY_CATEGORY),
             description: string(sys::SHIM_PROPERTY_DESCRIPTION),
             url: string(sys::SHIM_PROPERTY_URL),
