@@ -1,15 +1,52 @@
-# 51Degrees Rust
+# 51Degrees Device Detection and IP Intelligence for Rust
 
-![51Degrees](https://raw.githubusercontent.com/51Degrees/common-ci/main/images/logo/360x67.png "Data rewards the curious")
+<img src=".github/images/logo.png" alt="51Degrees" title="Data rewards the curious" width="160">
+
+Our User-Agent parser for Rust supports Device Detection, browser detection, mobile detection, and crawler detection on-premise or in the cloud. IP Intelligence adds IP geolocation, including IP to country data.
+
+It reads User-Agent and User-Agent Client Hints, HTTP request headers that carry browser and device information. For cloud bot detection, Human Confidence reports confidence that a person is viewing the page.
+
+## Install
+
+Each product is a separate crate on crates.io. For Device Detection and IP Intelligence, cloud or on-premise:
+
+```sh
+cargo add fiftyone-device-detection
+cargo add fiftyone-ip-intelligence
+```
+
+The crates below list the others. To build from source, see [Building](#building).
+
+Try the [User-Agent tester](https://51degrees.com/developers/user-agent-tester?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install) and [IP tester](https://51degrees.com/developers/ip-tester?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install). For cloud use, [create a Resource Key](https://configure.51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install).
+
+This repository was renamed from `rust` and continues that work.
+
+### Example
+
+Prepare the data file and build requirements described below before running this example.
+
+```rust
+use fiftyone_ip_intelligence::{
+    IpIntelligencePipelineBuilder, PerformanceProfile, IP_DATA_KEY,
+};
+
+// Use an on-premise IP Intelligence data file. The ASN file checked into the
+// data repository suits quick tests; a full data file is downloaded from the
+// data repository (see its README).
+let pipeline = IpIntelligencePipelineBuilder::on_premise("51Degrees-IPIV4AsnIpiV41.ipi")
+    .performance_profile(PerformanceProfile::HighPerformance)
+    // Off because the free ASN file has no licence key for updates.
+    .auto_update(false)
+    .build()?;
+```
+
 **Pipeline API**
 
 [Developer Documentation](https://51degrees.com/documentation/index.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=documentation)
 
 ## Introduction
 
-Rust implementations of the 51Degrees libraries, organized as a Cargo workspace.
-It lets a customer run cloud or on-premise Device Detection and IP Intelligence,
-in console or axum web applications, with full example coverage, docs and tests.
+Our libraries form a Cargo workspace for console and axum web applications, with examples, documentation, and tests.
 
 The
 [specification](https://github.com/51Degrees/specifications)
@@ -88,7 +125,7 @@ path, so cloud-only users and most of CI build without a C compiler.
 | [`fodid-examples`](examples/fodid-examples) | Runnable 51Did examples: the creator context web demo, which verifies a 51Did from the browser and redeems the encrypted verdict on the server. |
 | [`examples-benches`](examples/benches) | Criterion micro-benchmarks guarding the DD, IPI and JavaScript-builder throughput budgets. |
 | [`fodid`](fodid) | Standalone reader for the 51Did (51Degrees Identifier) returned by the cloud, described in the [identifiers documentation](https://51degrees.com/documentation/_identifiers__index.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=51did). It parses the OWID envelope and is independent of the pipeline stack. |
-| [`fodid-client`](fodid-client) | The server side of the 51Did two-step verification: fetches and caches the signing keys, verifies a signature offline or through the cloud, and redeems the sealed creator context result a browser relays, with the typed outcomes the other 51Did packages report. Builds without a network stack by default; the `reqwest-client` feature turns on the built-in transport. |
+| [`fodid-client`](fodid-client) | The server side of the 51Did two-step verification: fetches and caches the signing keys, verifies a signature offline or through the cloud, and redeems the sealed creator context result a browser relays, with the typed outcomes the other 51Did packages report. Builds without a network stack by default. The `reqwest-client` feature turns on the built-in transport. |
 
 ## Feature notes
 
@@ -99,7 +136,7 @@ path, so cloud-only users and most of CI build without a C compiler.
 - Usage sharing is on by default in the facades' pipeline builders, as it is
   in the other languages. The default `share-usage` feature adds the
   share-usage element to both builders and compiles the built-in HTTP sender
-  it posts with. A console or off-line tool turns it off, as the console
+  it posts with. A console or offline tool turns it off, as the console
   examples do, with `.share_usage(false)` or by leaving out the feature. With
   the feature off, the builders leave usage sharing off unless
   `.share_usage(true)` is called, and the element's sender is a no-op unless the
@@ -110,10 +147,10 @@ path, so cloud-only users and most of CI build without a C compiler.
   crate docs for the feature detail.
 - Automatic data file updates are on by default in the facades' on-premise
   pipeline builders, as they are in .NET and Java. The pipeline owns a
-  data update service that polls the 51Degrees Distributor every thirty
-  minutes, staggered by up to ten minutes, with the licence keys given through
+  data update service that polls the 51Degrees data download service every thirty
+  minutes, staggered by up to ten minutes, with the License Keys given through
   `.data_update_license_keys(..)`, and that refreshes the engine when the data
-  file changes on disk. The Distributor serves nothing without a licence key,
+  file changes on disk. The data download service serves nothing without a License Key,
   so a build with polling on and no key fails with an error that says so, as
   it does in .NET, and a deployment of the free Lite file turns automatic
   updates off with `.auto_update(false)`, which stops the polling and the file
@@ -126,13 +163,11 @@ path, so cloud-only users and most of CI build without a C compiler.
 
 ## Quick start
 
-The two facades share one shape: a builder picks the deployment, you create a
-flow data, add evidence, process, then read the strongly-typed result back
-through a shared key.
+Both facade crates use the same steps. A builder picks the deployment. Create flow data, add evidence, process it, and read the typed result through a shared key.
 
-A cloud build needs a resource key. Create one for free with the
-[configurator](https://configure.51degrees.com?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=resource-key), and see the
-[resource keys](https://51degrees.com/documentation/_services__cloud__resource_keys.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=resource-keys)
+A cloud build needs a Resource Key. Choose the properties you need and
+[create a Resource Key](https://configure.51degrees.com?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=resource-key), and see the
+[Resource Keys](https://51degrees.com/documentation/_services__cloud__resource_keys.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=resource-keys)
 documentation for what a key grants.
 
 ### Cloud Device Detection
@@ -260,7 +295,7 @@ axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).a
 ## Building
 
 The `fodid` crate compiles the OWID library in from the `owid-rust` submodule,
-so place that source once per clone before building:
+so place that source once per clone before building.
 
 ```sh
 git submodule update --init
@@ -321,9 +356,9 @@ evidence flows back, and that the server renders a real detection result.
 
 CI runs it here in the `contract` job of the Examples workflow
 (`.github/workflows/examples.yml`), through `ci/run-browser-contract.ps1`,
-against both device detection web examples built from this checkout. The
+against both Device Detection web examples built from this checkout. The
 cloud example (`dd-web-getting-started-cloud`) talks to the public cloud with
-the bespoke resource key. The on-premise example
+the bespoke Resource Key. The on-premise example
 (`dd-web-getting-started-onprem`) loads the TAC data file, because the Lite
 file has neither `DeviceType` nor the screen size JavaScript properties the
 contract checks. A test that fails, or that the suite skips as inconclusive,
@@ -368,7 +403,7 @@ and `.vscode/extensions.json` recommends the two extensions they rely on:
   for debugging. The launch configurations use its `lldb` debug type and `cargo`
   integration, which resolve the built binary on Linux, macOS and Windows
   (including the Windows `.exe` suffix). If CodeLLDB is not installed, VS Code
-  reports the launch configurations' debug type as unrecognised. Installing it
+  reports the launch configurations' debug type as unrecognized. Installing it
   clears that.
 
 Opening the folder prompts to install the recommended extensions. Then run a
@@ -385,3 +420,15 @@ Output then rust-analyzer Language Server) before expecting the buttons.
 ## License
 
 EUPL-1.2. See [LICENSE](LICENSE).
+
+## History
+
+This repository was renamed from `rust` and continues that work. The old address redirects here, and the repository retains its history, stars, and issues.
+
+## Find out more
+
+- [Device Detection](https://51degrees.com/device-detection?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=find-out-more)
+- [IP Intelligence](https://51degrees.com/ip-intelligence?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=find-out-more)
+- [Bots and humans](https://51degrees.com/bots-and-humans?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=find-out-more)
+- [Documentation](https://51degrees.com/documentation/index.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=documentation)
+- https://github.com/51Degrees/51degrees-cxx
