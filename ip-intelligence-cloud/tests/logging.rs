@@ -93,17 +93,19 @@ fn take_logged() -> Vec<String> {
 }
 
 /// A fake cloud granting `product` and answering every data request with
-/// `data`. While `evidence_keys_down` is set the evidence keys request
-/// cannot reach it.
+/// `data`. While `properties_down` is set the accessible properties
+/// request cannot reach it.
 struct FakeCloud {
     product: &'static str,
     data: &'static str,
-    evidence_keys_down: Arc<AtomicBool>,
+    properties_down: Arc<AtomicBool>,
 }
 
 impl CloudHttpClient for FakeCloud {
     fn send(&self, request: &CloudHttpRequest) -> Result<CloudHttpResponse, String> {
-        if request.url.contains("evidencekeys") && self.evidence_keys_down.load(Ordering::Relaxed) {
+        if request.url.contains("accessibleproperties")
+            && self.properties_down.load(Ordering::Relaxed)
+        {
             return Err("connection refused".to_owned());
         }
         let body = if request.url.contains("accessibleproperties") {
@@ -127,12 +129,12 @@ fn build(product: &'static str, data: &'static str) -> Arc<Pipeline> {
     build_on(product, data, Arc::default())
 }
 
-/// As [`build`], on a cloud whose evidence keys cannot be reached while
-/// `evidence_keys_down` is set.
+/// As [`build`], on a cloud whose accessible properties cannot be reached
+/// while `properties_down` is set.
 fn build_on(
     product: &'static str,
     data: &'static str,
-    evidence_keys_down: Arc<AtomicBool>,
+    properties_down: Arc<AtomicBool>,
 ) -> Arc<Pipeline> {
     let request = Arc::new(
         CloudRequestEngine::builder()
@@ -141,7 +143,7 @@ fn build_on(
             .http_client(Arc::new(FakeCloud {
                 product,
                 data,
-                evidence_keys_down,
+                properties_down,
             }))
             .build()
             .unwrap(),

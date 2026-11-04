@@ -103,17 +103,19 @@ fn take_logged() -> Vec<String> {
 }
 
 /// A fake cloud granting `products` and answering every data request with
-/// `data`. While `evidence_keys_down` is set the evidence keys request
-/// cannot reach it.
+/// `data`. While `properties_down` is set the accessible properties
+/// request cannot reach it.
 struct FakeCloud {
     products: String,
     data: &'static str,
-    evidence_keys_down: Arc<AtomicBool>,
+    properties_down: Arc<AtomicBool>,
 }
 
 impl CloudHttpClient for FakeCloud {
     fn send(&self, request: &CloudHttpRequest) -> Result<CloudHttpResponse, String> {
-        if request.url.contains("evidencekeys") && self.evidence_keys_down.load(Ordering::Relaxed) {
+        if request.url.contains("accessibleproperties")
+            && self.properties_down.load(Ordering::Relaxed)
+        {
             return Err("connection refused".to_owned());
         }
         let body = if request.url.contains("accessibleproperties") {
@@ -137,11 +139,11 @@ fn request_engine(products: &[&str], data: &'static str) -> Arc<CloudRequestEngi
 }
 
 /// A request engine with a resource key, on a cloud granting `products`
-/// whose evidence keys cannot be reached while `evidence_keys_down` is set.
+/// whose accessible properties cannot be reached while `properties_down` is set.
 fn request_engine_on(
     products: &[&str],
     data: &'static str,
-    evidence_keys_down: Arc<AtomicBool>,
+    properties_down: Arc<AtomicBool>,
 ) -> Arc<CloudRequestEngine> {
     Arc::new(
         CloudRequestEngine::builder()
@@ -150,7 +152,7 @@ fn request_engine_on(
             .http_client(Arc::new(FakeCloud {
                 products: products.join(","),
                 data,
-                evidence_keys_down,
+                properties_down,
             }))
             .build()
             .unwrap(),
@@ -292,7 +294,7 @@ fn a_license_key_alone_has_nothing_to_check_and_logs_nothing() {
             .http_client(Arc::new(FakeCloud {
                 products: String::new(),
                 data: r#"{"device":{"ismobile":true,"unlisted":"x"}}"#,
-                evidence_keys_down: Arc::default(),
+                properties_down: Arc::default(),
             }))
             .build()
             .unwrap(),
