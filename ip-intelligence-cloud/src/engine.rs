@@ -23,7 +23,6 @@
 //! The cloud IP-intelligence engine and its builder.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use once_cell::sync::OnceCell;
@@ -82,8 +81,8 @@ struct DerivedMetadata {
 /// engine's discovery has not completed, it is derived the first time it is
 /// needed after it has, and until then the engine reports the shared default
 /// metadata so a consumer always sees the documented property set. A resource
-/// key that grants no `ip` product keeps the defaults and logs an error once.
-/// The metadata `Type` field of each
+/// key that grants no `ip` product, or lists it with no properties, leaves the
+/// metadata empty and logs an error once. The metadata `Type` field of each
 /// cloud property also drives how its weighted values are parsed (string,
 /// integer or floating-point).
 ///
@@ -145,10 +144,6 @@ pub struct IpIntelligenceCloudEngine {
     default_properties: Vec<PropertyMetaData>,
     /// The shared default aspect metadata, returned before discovery completes.
     default_aspect_properties: Vec<AspectPropertyMetaData>,
-
-    /// Whether the request engine's accessible properties have been read, so
-    /// that a missing product is logged once.
-    product_checked: AtomicBool,
 }
 
 impl IpIntelligenceCloudEngine {
@@ -163,9 +158,8 @@ impl IpIntelligenceCloudEngine {
     }
 
     /// Derive the IPI metadata from the request engine's accessible properties,
-    /// taking the product keyed by `ip`. Returns `None` if the discovery fetch
-    /// fails or the resource key grants no IPI product, in which case the engine
-    /// keeps reporting the shared defaults.
+    /// taking the product keyed by `ip`. Returns `None` when there is no such
+    /// product or it lists no properties.
     fn derive_metadata(products: &LicensedProducts) -> Option<DerivedMetadata> {
         // The product is looked up by the element data key, which for IPI is
         // `ip`.
@@ -207,40 +201,40 @@ impl IpIntelligenceCloudEngine {
     }
 
     /// Derive the metadata from the request engine's accessible properties if
-    /// it is not there yet. Makes no cloud request. While the request engine's
-    /// discovery has not completed, or the resource key grants no `ip` product,
-    /// the caches stay empty and the engine reports the shared defaults.
+    /// it is not there yet. Makes no cloud request.
+    ///
+    /// While the request engine's discovery has not completed the caches stay
+    /// empty and the engine reports the shared defaults. A resource key that
+    /// grants no `ip` product, or lists it with no properties, gets empty
+    /// metadata, as the Device Detection cloud engine and .NET do, and the
+    /// call that sets it logs an error, so it is logged once. With only a
+    /// license key there are no accessible properties to read, so the engine
+    /// keeps the defaults and logs nothing. The properties are set last
+    /// because a request that finds them set reads the rest.
     fn ensure_metadata(&self) {
         if self.properties.get().is_some() {
             return;
         }
-        if let Ok(products) = self.request_engine.public_properties() {
-            self.log_missing_product(products);
-            if let Some(derived) = Self::derive_metadata(products) {
-                let _ = self.properties.set(derived.core);
-                let _ = self.aspect_properties.set(derived.aspect);
+        let Ok(products) = self.request_engine.public_properties() else {
+            return;
+        };
+        match Self::derive_metadata(products) {
+            Some(derived) => {
                 let _ = self.value_kinds.set(derived.kinds);
+                let _ = self.aspect_properties.set(derived.aspect);
+                let _ = self.properties.set(derived.core);
             }
-        }
-    }
-
-    /// Log an error the first time the accessible properties are read, when
-    /// the resource key grants no IP Intelligence product or lists it with no
-    /// properties, as .NET does. With only a license key there are no
-    /// accessible properties to read, so nothing is logged. The flag is read
-    /// before it is set so a request after the first writes nothing shared.
-    fn log_missing_product(&self, products: &LicensedProducts) {
-        if !self.product_checked.load(Ordering::Relaxed)
-            && !self.product_checked.swap(true, Ordering::Relaxed)
-            && self.request_engine.resource_key().is_some()
-            && products
-                .products
-                .get(IP_DATA_KEY_NAME)
-                .is_none_or(|product| product.properties.is_empty())
-        {
-            log::error!(
-                "Aspect properties could not be loaded for {ENGINE_NAME} - '{IP_DATA_KEY_NAME}'"
-            );
+            None if self.request_engine.resource_key().is_some() => {
+                let _ = self.value_kinds.set(HashMap::new());
+                let _ = self.aspect_properties.set(Vec::new());
+                if self.properties.set(Vec::new()).is_ok() {
+                    log::error!(
+                        "Aspect properties could not be loaded for {ENGINE_NAME} - \
+                         '{IP_DATA_KEY_NAME}'"
+                    );
+                }
+            }
+            None => {}
         }
     }
 
@@ -406,7 +400,6 @@ impl IpIntelligenceCloudEngineBuilder {
             value_kinds: OnceCell::new(),
             default_properties: default_property_metadata(),
             default_aspect_properties: default_aspect_property_metadata(),
-            product_checked: AtomicBool::new(false),
         };
         engine.ensure_metadata();
         Ok(engine)
@@ -426,14 +419,14 @@ mod tests {
         CloudEngineState, CloudHttpClient, CloudHttpRequest, CloudHttpResponse,
     };
     use fiftyone_ip_intelligence_shared::IpIntelligenceData;
+    use fiftyone_pipeline_core::MissingPropertyReason;
 
     /// A request engine wired to a stub HTTP client, so no network is touched.
     ///
     /// An empty state is supplied so the builder resolves without a discovery
     /// fetch (the stub would otherwise error). The empty accessible-properties set
-    /// leaves the engine with no metadata, which exercises the graceful fall back
-    /// to inferred value kinds, the same scenario discovery being unavailable
-    /// produced before.
+    /// grants no `ip` product, which leaves the engine with no metadata and
+    /// exercises the fall back to inferred value kinds.
     fn request_engine() -> Arc<CloudRequestEngine> {
         struct Stub;
         impl CloudHttpClient for Stub {
@@ -468,6 +461,18 @@ mod tests {
             Err(other) => panic!("expected a configuration error, got {other:?}"),
             Ok(_) => panic!("expected a configuration error without a request engine"),
         }
+    }
+
+    #[test]
+    fn a_key_without_the_ip_product_has_no_properties_and_says_why() {
+        let engine = engine();
+        assert!(engine.has_loaded_properties());
+        assert!(engine.properties().is_empty());
+        assert!(engine.aspect_properties().is_empty());
+        assert_eq!(
+            engine.missing_property_reason("RegisteredName").reason,
+            MissingPropertyReason::ProductNotAccessibleWithResourceKey
+        );
     }
 
     #[test]
