@@ -19,9 +19,8 @@ fiftyone-cloud-request-engine = { version = "4.5.2", path = "../cloud-request-en
 serde.workspace = true
 serde_json.workspace = true
 once_cell.workspace = true
-
-[dev-dependencies]
-# The logging tests capture what the engines log through the log facade.
+# Logs a product the key lacks through the log facade, which does nothing
+# until the application installs a logger.
 log = "0.4"
 
 [features]
