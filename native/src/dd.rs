@@ -1523,12 +1523,13 @@ mod tests {
             .find(|p| p.name == "IsMobile")
             .expect("IsMobile is in every Hash data file");
         assert!(is_mobile.available);
-        // The name was given in lower case, so the crate's own map of the names
-        // given does not hold the data file's spelling.
-        assert_eq!(manager.required_property_index("IsMobile"), None);
         let index = is_mobile
             .required_property_index
             .expect("the C library finds IsMobile ignoring case");
+        // The C library gives back the data file's spelling for a name it
+        // finds, so the required property names hold `IsMobile` too.
+        assert_eq!(manager.property_names(), ["IsMobile"]);
+        assert_eq!(manager.required_property_index("IsMobile"), Some(index));
         let results = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
         let value = results
             .value_as_string_by_index(index, c"|")
