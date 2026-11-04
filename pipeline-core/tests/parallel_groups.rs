@@ -225,8 +225,10 @@ mod at_the_same_time {
 
     use super::*;
 
-    /// The longest two slow elements in a group may take together.
-    const GROUP_LIMIT_MILLISECONDS: u64 = 300;
+    /// The longest two slow elements in a group may take together. A sleep
+    /// never ends early, so in sequence they take at least this long, and the
+    /// margin over one wait allows for a busy machine waking threads late.
+    const GROUP_LIMIT_MILLISECONDS: u64 = 2 * WAIT_MILLISECONDS;
     /// How long an element waits for the others of its group to start, long
     /// enough that only elements run one after another reach it.
     const MEETING_SECONDS: u64 = 10;
