@@ -106,10 +106,12 @@
 //!
 //! The accepted evidence keys (`evidencekeys`) and accessible properties
 //! (`accessibleproperties`) are fetched from the cloud. The builder fetches them
-//! as it builds the engine, so a built engine is fully resolved and immutable
-//! with no lazy first-use discovery. If a fetch fails,
-//! [`CloudRequestEngineBuilder::build`] returns an error rather than producing a
-//! half-initialized engine.
+//! as it builds the engine, so a built engine is normally ready to process. A
+//! 4xx answer, such as an unknown resource key, makes
+//! [`CloudRequestEngineBuilder::build`] return an error. Any other failure is
+//! logged, the build completes, and each process call retries
+//! the missing discovery and fails until it succeeds, so a cloud outage at
+//! start-up cannot stop the application starting.
 //!
 //! The accessible-properties request carries the resource key and, when one is
 //! set, the license key, because the cloud adds the products the license grants

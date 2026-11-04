@@ -26,14 +26,16 @@
 //! accessible-properties request carries the key as a query parameter, and the
 //! service repeats the key back inside its own message when it cannot read the
 //! key. Both paths run through the builder, which is what every live test and
-//! every example calls, and both the `Display` and the `Debug` form are checked
-//! because `unwrap` and `expect` print the `Debug` one.
+//! every example calls, and through the first process call, which retries a
+//! failure that is not a 4xx. Both the `Display` and the `Debug` form are
+//! checked because `unwrap` and `expect` print the `Debug` one.
 
 use std::sync::{Arc, Mutex};
 
 use fiftyone_cloud_request_engine::{
     CloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine,
 };
+use fiftyone_pipeline_core::{Evidence, Pipeline};
 
 /// The only key-shaped value written anywhere in this repository. It is not a
 /// real resource key and the service refuses it.
@@ -81,16 +83,35 @@ impl CloudHttpClient for FailingProperties {
 }
 
 /// Build an engine for `key` against a transport that fails the discovery
-/// request, and return the error as `Display` and as `Debug`.
+/// request, and return the error as `Display` and as `Debug`. A 4xx answer
+/// fails the build. Any other failure is retried by the first process call,
+/// so the error is the one that call records.
 fn build_failure(key: &str, failure: Result<CloudHttpResponse, String>) -> (String, String) {
     let built = CloudRequestEngine::builder()
         .resource_key(key)
         .endpoint("https://cloud.example.test/api/v4/")
         .http_client(FailingProperties::answering(failure))
         .build();
-    let Err(error) = built else {
-        panic!("the discovery fetch was scripted to fail, so the build must fail");
-    };
+    match built {
+        Err(error) => (error.to_string(), format!("{error:?}")),
+        Ok(engine) => first_process_failure(engine),
+    }
+}
+
+/// Process one flow data through `engine` and return the one error it
+/// records, as `Display` and as `Debug`.
+fn first_process_failure(engine: CloudRequestEngine) -> (String, String) {
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(engine))
+        .suppress_process_exceptions(true)
+        .build()
+        .unwrap();
+    let mut data =
+        pipeline.create_flow_data_with(Evidence::builder().add("header.user-agent", "UA").build());
+    data.process().unwrap();
+    let errors = data.errors();
+    assert_eq!(errors.len(), 1, "the first process call records one error");
+    let error = &errors[0].source;
     (error.to_string(), format!("{error:?}"))
 }
 

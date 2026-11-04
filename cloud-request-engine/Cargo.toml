@@ -1,7 +1,7 @@
 [package]
 name = "fiftyone-cloud-request-engine"
 version = "4.5.2"
-description = "Cloud HTTP engine with lazy evidence-keys and accessible-properties discovery and recovery mode for the 51Degrees pipeline."
+description = "Cloud HTTP engine that resolves the accepted evidence keys and accessible properties at build time, retrying on first use after a transient failure, with recovery mode, for the 51Degrees pipeline."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -23,6 +23,10 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 once_cell.workspace = true
+# Logs the cloud's warnings, evidence that clashes and failed discovery
+# through the log facade, which does nothing until the application installs
+# a logger.
+log = "0.4"
 # Blocking HTTP client for the cloud request. rustls-tls avoids a system
 # OpenSSL dependency on Windows. The blocking client is used because the engine
 # processes one flow data per thread and does not need an async runtime. The
