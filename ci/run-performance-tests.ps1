@@ -26,7 +26,9 @@ if (!(Test-Path -Path $publishStep -PathType Leaf)) {
 # latest file. The script is resolved against $RepoName rather than the
 # caller's current directory, so a CI run from the folder above the checkout
 # and a local run from the repo root both find it. A failed download stops
-# the run, rather than measuring an older file.
+# the run, rather than measuring an older file. The script sets an exit code
+# only when it fails, so any code an earlier command left is cleared first.
+$global:LASTEXITCODE = 0
 & (Join-Path $RepoName "cxx/data/get-data-files.ps1") 51Degrees-IPIV4AsnIpiV41.ipi -Force
 if ($LASTEXITCODE) {
     throw "The ASN data file was not downloaded."
