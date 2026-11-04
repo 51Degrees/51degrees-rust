@@ -48,9 +48,9 @@
 //!   recorded errors carries no `ETag`, so a browser that kept it fetches it
 //!   again in full rather than having it confirmed by a `304`.
 //! - `Vary`: the comma-joined list of HTTP-header evidence keys in the
-//!   evidence-key whitelist supplied through [`EndpointOptions`], with the
-//!   `header.` prefix stripped and the names de-duplicated case-insensitively.
-//!   Omitted when the list is empty or no whitelist was supplied.
+//!   evidence-key whitelist [`EndpointOptions::current_vary_whitelist`] gives,
+//!   with the `header.` prefix stripped and the names de-duplicated
+//!   case-insensitively. Omitted when the list is empty or there is none.
 //! - `ETag`: a digest of the cache key the flow data's evidence produces
 //!   under the pipeline filter, the same in every process running the same
 //!   build. The digest is opaque and non-portable (see [`compute_etag`]).
@@ -64,11 +64,17 @@
 //! # Where the `Vary` whitelist comes from
 //!
 //! The [`crate::WebPipeline`] builder collects the header keys every element
-//! names through its evidence key filter, and the adapter passes that list to
-//! the endpoint through [`EndpointOptions`]. An adapter with its own view of
-//! the headers that change the result can pass a different list.
+//! names through its evidence key filter, and the adapter serves the endpoints
+//! with [`crate::WebPipeline::endpoint_options`], which takes that list at each
+//! response. An element can still be learning its accepted evidence after the
+//! pipeline is built, as the cloud request engine is after a transient
+//! discovery failure, so the list is collected again once every element's
+//! filter is complete (see [`crate::WebPipeline::vary_whitelist`]). An adapter
+//! with its own view of the headers that change the result can pass a
+//! different list to [`EndpointOptions::new`].
 
 use std::hash::{BuildHasher, Hash, Hasher};
+use std::sync::Arc;
 
 use ahash::RandomState;
 use fiftyone_javascript_builder::JAVASCRIPT_BUILDER_DATA_KEY;
@@ -76,6 +82,7 @@ use fiftyone_json_builder::JSON_BUILDER_DATA_KEY;
 use fiftyone_pipeline_core::constants::EVIDENCE_HTTP_HEADER_PREFIX;
 use fiftyone_pipeline_core::{EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData};
 
+use crate::pipeline::VaryList;
 use crate::request::RequestData;
 use crate::response::WebResponse;
 
@@ -109,14 +116,20 @@ const ETAG_SEED_3: u64 = 0x_dead_beef_51de_9e55;
 
 /// Options shared by both client-side endpoints.
 ///
-/// The defaults serve the common case. Supply a `vary_whitelist` (normally the
-/// one [`crate::WebPipeline`] computes) so the response advertises the HTTP
-/// headers that influence the result, and the caching/CORS headers are emitted.
+/// Take them from [`crate::WebPipeline::endpoint_options`] so the response
+/// advertises the HTTP headers that influence the result, and the caching and
+/// CORS headers are emitted. [`EndpointOptions::new`] takes a fixed list
+/// instead.
 #[derive(Debug, Clone, Default)]
 pub struct EndpointOptions {
-    /// The evidence-key whitelist whose `header.*` keys derive the `Vary`
-    /// header. `None` (or an empty whitelist) means no `Vary` header is emitted.
+    /// An evidence-key whitelist whose `header.*` keys derive the `Vary`
+    /// header, used in place of the pipeline's list. `None` with no pipeline
+    /// list, or an empty whitelist, means no `Vary` header is emitted.
     pub vary_whitelist: Option<EvidenceKeyFilterWhitelist>,
+
+    /// The pipeline's list, for options from
+    /// [`crate::WebPipeline::endpoint_options`].
+    pipeline_vary: Option<Arc<VaryList>>,
 
     /// When `false`, the caching, `Vary`, `ETag` and CORS headers are not added
     /// (only `Content-Type` and `Content-Length` are), so an adapter can apply
@@ -131,8 +144,28 @@ impl EndpointOptions {
     pub fn new(vary_whitelist: EvidenceKeyFilterWhitelist) -> Self {
         EndpointOptions {
             vary_whitelist: Some(vary_whitelist),
+            pipeline_vary: None,
             suppress_extra_headers: false,
         }
+    }
+
+    /// Options taking the `Vary` header from a pipeline's list, with the
+    /// caching/CORS headers enabled.
+    pub(crate) fn from_vary_list(list: Arc<VaryList>) -> Self {
+        EndpointOptions {
+            vary_whitelist: None,
+            pipeline_vary: Some(list),
+            suppress_extra_headers: false,
+        }
+    }
+
+    /// The whitelist the next response's `Vary` header is derived from, being
+    /// [`EndpointOptions::vary_whitelist`] when set, otherwise the pipeline's
+    /// list for options from [`crate::WebPipeline::endpoint_options`].
+    pub fn current_vary_whitelist(&self) -> Option<&EvidenceKeyFilterWhitelist> {
+        self.vary_whitelist
+            .as_ref()
+            .or_else(|| self.pipeline_vary.as_deref().map(VaryList::whitelist))
     }
 
     /// Disable the caching, `Vary`, `ETag` and CORS headers. Returns `self` for
@@ -218,7 +251,7 @@ fn build_response(
     if !options.suppress_extra_headers {
         headers.push(("Cache-Control".to_owned(), cache_control(flow_data)));
 
-        if let Some(whitelist) = options.vary_whitelist.as_ref() {
+        if let Some(whitelist) = options.current_vary_whitelist() {
             let vary = vary_header(whitelist);
             if !vary.is_empty() {
                 headers.push(("Vary".to_owned(), vary));

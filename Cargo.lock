@@ -891,6 +891,7 @@ name = "fiftyone-pipeline-web"
 version = "4.5.2"
 dependencies = [
  "ahash",
+ "fiftyone-cloud-request-engine",
  "fiftyone-javascript-builder",
  "fiftyone-json-builder",
  "fiftyone-pipeline-core",

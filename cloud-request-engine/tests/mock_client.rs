@@ -392,6 +392,7 @@ fn evidence_keys_that_cannot_be_reached_are_fetched_on_first_use() {
         "the other request worked"
     );
     assert!(!engine.evidence_key_filter().include("header.user-agent"));
+    assert!(!engine.is_evidence_key_filter_complete());
     assert!(builder.export_state().is_none());
 
     let engine = Arc::new(engine);
@@ -411,6 +412,7 @@ fn evidence_keys_that_cannot_be_reached_are_fetched_on_first_use() {
     assert_eq!(errors_processing(&pipeline), Vec::<String>::new());
     assert!(engine.has_loaded_metadata());
     assert!(engine.evidence_key_filter().include("header.user-agent"));
+    assert!(engine.is_evidence_key_filter_complete());
     let sent = client.requests.lock().unwrap().last().cloned().unwrap();
     assert!(
         sent.form
@@ -437,6 +439,10 @@ fn properties_answered_5xx_are_fetched_on_first_use() {
     assert!(
         engine.accepted_evidence_keys().is_ok(),
         "the other request worked"
+    );
+    assert!(
+        engine.is_evidence_key_filter_complete(),
+        "the evidence keys arrived at build"
     );
 
     let pipeline = Pipeline::builder()

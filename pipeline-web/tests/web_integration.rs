@@ -26,7 +26,7 @@
 //! are exercised against hand-built requests.
 
 use std::any::Any;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use fiftyone_pipeline_core::{
     ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
@@ -722,6 +722,122 @@ fn vary_lists_a_header_only_the_element_knows() {
     let vary = response.header("Vary").unwrap();
     assert!(vary.split(',').any(|h| h == "x-forwarded-for"), "{vary}");
     assert!(vary.split(',').any(|h| h == "user-agent"), "{vary}");
+}
+
+// ----------------------------------------------------------------------------
+// Vary after an element learns its accepted evidence.
+// ----------------------------------------------------------------------------
+
+/// An element that learns the evidence it accepts after it is built, as the
+/// cloud request engine does after a transient discovery failure. Its filter
+/// is complete once `learned` is set. `later` stands for a filter that changes
+/// after it said it was complete, so a test can see whether the list was kept.
+#[derive(Default)]
+struct LearningElement {
+    learned: OnceLock<EvidenceKeyFilterWhitelist>,
+    later: OnceLock<EvidenceKeyFilterWhitelist>,
+    nothing: EvidenceKeyFilterWhitelist,
+}
+
+impl FlowElement for LearningElement {
+    fn process(&self, _data: &mut FlowData) -> Result<()> {
+        Ok(())
+    }
+    fn data_key(&self) -> &str {
+        "learning"
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        self.later
+            .get()
+            .or(self.learned.get())
+            .unwrap_or(&self.nothing)
+    }
+    fn is_evidence_key_filter_complete(&self) -> bool {
+        self.learned.get().is_some()
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        &[]
+    }
+}
+
+/// The `Vary` header names of a JSON response served with `options`.
+fn vary_names(web: &WebPipeline, options: &EndpointOptions) -> Vec<String> {
+    let data = processed(web.pipeline(), Evidence::default());
+    serve_json(&data, &TestRequest::default(), options)
+        .header("Vary")
+        .map(|vary| vary.split(',').map(str::to_owned).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn vary_gains_the_headers_an_element_learns_after_the_build() {
+    let element = Arc::new(LearningElement::default());
+    let web = WebPipeline::build(vec![element.clone()], WebIntegrationOptions::default())
+        .expect("web pipeline builds");
+    let options = web.endpoint_options();
+    let copy = EndpointOptions::new(web.vary_whitelist().clone());
+
+    let before = vary_names(&web, &options);
+    assert!(before.iter().any(|h| h == "host"), "{before:?}");
+    assert!(!before.iter().any(|h| h == "x-learned"), "{before:?}");
+    assert!(!web.vary_whitelist().include("header.x-learned"));
+
+    element
+        .learned
+        .set(EvidenceKeyFilterWhitelist::new(["header.x-learned"]))
+        .unwrap();
+
+    let after = vary_names(&web, &options);
+    assert!(after.iter().any(|h| h == "x-learned"), "{after:?}");
+    assert!(after.iter().any(|h| h == "host"), "{after:?}");
+    assert!(web.vary_whitelist().include("header.x-learned"));
+    assert!(options
+        .current_vary_whitelist()
+        .is_some_and(|list| list.include("header.x-learned")));
+
+    // A copy of the list taken before the element learned stays as it was.
+    let copied = vary_names(&web, &copy);
+    assert!(!copied.iter().any(|h| h == "x-learned"), "{copied:?}");
+}
+
+#[test]
+fn vary_is_kept_once_every_element_is_complete() {
+    let element = Arc::new(LearningElement::default());
+    let web = WebPipeline::build(vec![element.clone()], WebIntegrationOptions::default())
+        .expect("web pipeline builds");
+    let options = web.endpoint_options();
+    element
+        .learned
+        .set(EvidenceKeyFilterWhitelist::new(["header.x-learned"]))
+        .unwrap();
+    let first = vary_names(&web, &options);
+    assert!(first.iter().any(|h| h == "x-learned"), "{first:?}");
+
+    // The list is collected once after every filter is complete, so a later
+    // change to a filter does not reach it.
+    element
+        .later
+        .set(EvidenceKeyFilterWhitelist::new(["header.x-later"]))
+        .unwrap();
+    assert_eq!(vary_names(&web, &options), first);
+    assert!(!web.vary_whitelist().include("header.x-later"));
+}
+
+#[test]
+fn a_supplied_vary_list_is_used_in_place_of_the_pipelines() {
+    let web = web_pipeline(false);
+    let mut options = web.endpoint_options();
+    options.vary_whitelist = Some(EvidenceKeyFilterWhitelist::new(["header.x-mine"]));
+    assert_eq!(vary_names(&web, &options), vec!["x-mine".to_owned()]);
+}
+
+#[test]
+fn endpoint_options_give_the_same_vary_as_the_list() {
+    let web = web_pipeline(false);
+    let from_list = EndpointOptions::new(web.vary_whitelist().clone());
+    let names = vary_names(&web, &web.endpoint_options());
+    assert!(names.iter().any(|h| h == "user-agent"), "{names:?}");
+    assert_eq!(names, vary_names(&web, &from_list));
 }
 
 // ----------------------------------------------------------------------------

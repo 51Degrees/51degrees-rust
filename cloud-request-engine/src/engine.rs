@@ -751,6 +751,10 @@ impl FlowElement for CloudRequestEngine {
         self.accepted()
     }
 
+    fn is_evidence_key_filter_complete(&self) -> bool {
+        self.evidence_filter.get().is_some()
+    }
+
     fn properties(&self) -> &[PropertyMetaData] {
         &self.properties
     }
