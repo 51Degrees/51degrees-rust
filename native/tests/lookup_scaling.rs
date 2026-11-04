@@ -65,7 +65,7 @@ fn lite_data_file() -> Option<PathBuf> {
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()?
         .to_path_buf();
-    let relative = ["cxx", "device-detection-data", "51Degrees-LiteV4.1.hash"]
+    let relative = ["cxx", "data", "device-detection", "51Degrees-LiteV4.1.hash"]
         .iter()
         .collect::<PathBuf>();
     for root in [Some(workspace.as_path()), workspace.parent()]

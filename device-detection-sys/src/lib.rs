@@ -698,7 +698,7 @@ mod tests {
     use std::ffi::{CStr, CString};
 
     /// Optional path to the Lite Hash data file, injected by the build script
-    /// when the packaged file is found under the checkout.
+    /// when the file has been downloaded into the checkout.
     const LITE_DATA_FILE: Option<&str> = option_env!("51DEGREES_DD_PATH");
 
     /// A representative desktop Chrome on Windows user agent.

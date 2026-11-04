@@ -1321,11 +1321,12 @@ mod tests {
             .join("cxx")
     }
 
-    /// Path to the ASN IP Intelligence data file checked into the data
-    /// repository, if present.
+    /// Path to the ASN IP Intelligence data file in the data repository, if it
+    /// has been downloaded.
     fn asn_data_file() -> Option<PathBuf> {
         let path = cxx_dir()
-            .join("ip-intelligence-data")
+            .join("data")
+            .join("ip-intelligence")
             .join("51Degrees-IPIV4AsnIpiV41.ipi");
         path.is_file().then_some(path)
     }

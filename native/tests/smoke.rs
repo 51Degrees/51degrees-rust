@@ -100,21 +100,21 @@ fn dd_lite_data_file() -> Option<PathBuf> {
     find_data_file(
         "51DEGREES_DD_PATH",
         "cxx",
-        "device-detection-data",
+        "data/device-detection",
         "51Degrees-LiteV4.1.hash",
     )
 }
 
 /// Locate an IP Intelligence data file for the IP Intelligence smoke test.
 ///
-/// Resolves the ASN file (`51Degrees-IPIV4AsnIpiV41.ipi`) checked into the data
+/// Resolves the ASN file (`51Degrees-IPIV4AsnIpiV41.ipi`) from the data
 /// repository, which loads against this source revision.
 #[cfg(feature = "ipi")]
 fn ipi_data_file() -> Option<PathBuf> {
     find_data_file(
         "51DEGREES_IPI_PATH",
         "cxx",
-        "ip-intelligence-data",
+        "data/ip-intelligence",
         "51Degrees-IPIV4AsnIpiV41.ipi",
     )
 }
