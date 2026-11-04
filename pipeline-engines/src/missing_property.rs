@@ -61,6 +61,14 @@ const MESSAGE_PROPERTY_EXCLUDED: &str =
 const MESSAGE_UNKNOWN: &str = "The reason for this is unknown. Please check that \
      the aspect and property name are correct.";
 
+/// The description for [`MissingPropertyReason::CloudRequestFailed`].
+const MESSAGE_CLOUD_REQUEST_FAILED: &str = "This is because an upstream cloud request \
+     failed, so no data was available to populate the property.";
+
+/// The element named in the message for a failed cloud request when the data
+/// names no engine.
+const UNKNOWN_ELEMENT: &str = "Unknown";
+
 /// The tier list written when the property is not in the engine's metadata.
 const UNKNOWN_TIERS: &str = "Unknown";
 
@@ -317,6 +325,27 @@ impl MissingPropertySource {
     }
 }
 
+/// The result for a property of data whose cloud request failed, naming the
+/// element that should have populated it, or `Unknown` when there is none.
+pub(crate) fn cloud_request_failed(
+    property_name: &str,
+    element_data_key: Option<&str>,
+) -> MissingPropertyResult {
+    let element = element_data_key.unwrap_or(UNKNOWN_ELEMENT);
+    MissingPropertyResult {
+        reason: MissingPropertyReason::CloudRequestFailed,
+        description: format!(
+            "{}{MESSAGE_CLOUD_REQUEST_FAILED}",
+            description_prefix(property_name, element)
+        ),
+    }
+}
+
+/// The start of every description, naming the property and the element.
+fn description_prefix(property_name: &str, element_data_key: &str) -> String {
+    format!("Property '{property_name}' not found in data for element '{element_data_key}'. ")
+}
+
 /// Apply the rules to one engine and describe the outcome.
 pub(crate) fn resolve(property_name: &str, engine: &EngineView<'_>) -> MissingPropertyResult {
     let (reason, property) = determine_reason(property_name, engine);
@@ -404,7 +433,7 @@ fn build_description(
     property: Option<&AspectPropertyMetaData>,
 ) -> String {
     let element = engine.element_data_key;
-    let prefix = format!("Property '{property_name}' not found in data for element '{element}'. ");
+    let prefix = description_prefix(property_name, element);
 
     let detail = match reason {
         MissingPropertyReason::DataFileUpgradeRequired => {
@@ -440,6 +469,7 @@ fn build_description(
             )
         }
         MissingPropertyReason::Unknown => MESSAGE_UNKNOWN.to_owned(),
+        MissingPropertyReason::CloudRequestFailed => MESSAGE_CLOUD_REQUEST_FAILED.to_owned(),
         // A reason added later has no sentence of its own yet, so the
         // description is the prefix alone.
         _ => String::new(),
@@ -494,6 +524,25 @@ mod tests {
                  this property. It is available with the Premium,Enterprise \
                  license/data for the TestEngine. To upgrade, see {PRICING_URL}."
             )
+        );
+    }
+
+    #[test]
+    fn a_failed_cloud_request_reads_as_dotnet_says() {
+        let result = cloud_request_failed("IsMobile", Some("device"));
+        assert_eq!(result.reason, MissingPropertyReason::CloudRequestFailed);
+        assert_eq!(
+            result.description,
+            format!(
+                "{PREFIX}This is because an upstream cloud request failed, so no data was \
+                 available to populate the property."
+            )
+        );
+        assert_eq!(
+            cloud_request_failed("IsMobile", None).description,
+            "Property 'IsMobile' not found in data for element 'Unknown'. This is because \
+             an upstream cloud request failed, so no data was available to populate the \
+             property."
         );
     }
 

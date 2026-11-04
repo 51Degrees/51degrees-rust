@@ -70,6 +70,9 @@ pub enum MissingPropertyReason {
     /// The property is unknown to the element entirely, or the reason could not
     /// be determined.
     Unknown,
+    /// Cloud only. The cloud request for this flow data failed, so the cloud
+    /// engines had no response to populate the property from.
+    CloudRequestFailed,
 }
 
 impl MissingPropertyReason {
@@ -91,6 +94,10 @@ impl MissingPropertyReason {
                 "your resource key does not include access to this property"
             }
             MissingPropertyReason::Unknown => "the property is not available in the result set",
+            MissingPropertyReason::CloudRequestFailed => {
+                "an upstream cloud request failed, so no data was available to populate \
+                 the property"
+            }
         }
     }
 }
@@ -274,6 +281,17 @@ pub enum Error {
         /// The human-readable detail of the failure.
         message: String,
     },
+
+    /// A failure in an element that none of the other variants describes,
+    /// as .NET's `PipelineException`.
+    ///
+    /// A cloud engine records one, without failing processing, when the cloud
+    /// request engine before it left no response.
+    #[error("pipeline error: {}", crate::redact::redact(.message))]
+    Pipeline {
+        /// A description of the failure.
+        message: String,
+    },
 }
 
 /// Debug is written by hand rather than derived so that the free-text fields
@@ -330,6 +348,10 @@ impl fmt::Debug for Error {
             Error::Native { status, message } => f
                 .debug_struct("Native")
                 .field("status", status)
+                .field("message", &crate::redact::redact(message))
+                .finish(),
+            Error::Pipeline { message } => f
+                .debug_struct("Pipeline")
                 .field("message", &crate::redact::redact(message))
                 .finish(),
         }
@@ -463,6 +485,33 @@ mod tests {
                 "(error in element 'device': pipeline configuration error: the engine failed)"
             ),
             "the second error is named: {shown}"
+        );
+    }
+
+    #[test]
+    fn a_pipeline_error_is_redacted() {
+        let error = Error::Pipeline {
+            message: format!("the element failed calling '?resource={NOT_A_KEY}'"),
+        };
+        assert!(!error.to_string().contains(NOT_A_KEY));
+        assert!(!format!("{error:?}").contains(NOT_A_KEY));
+        assert!(error
+            .to_string()
+            .starts_with("pipeline error: the element failed"));
+    }
+
+    #[test]
+    fn a_failed_cloud_request_reads_as_dotnet_says() {
+        let error = Error::PropertyMissing {
+            property: "ismobile".to_owned(),
+            element_data_key: "device".to_owned(),
+            reason: MissingPropertyReason::CloudRequestFailed,
+        };
+        assert_eq!(
+            error.to_string(),
+            "property 'ismobile' not found in data for element 'device'. This is because \
+             an upstream cloud request failed, so no data was available to populate the \
+             property."
         );
     }
 

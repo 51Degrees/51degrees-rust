@@ -209,6 +209,9 @@ fn clone_error(error: &Error) -> Error {
             status: status.clone(),
             message: message.clone(),
         },
+        Error::Pipeline { message } => Error::Pipeline {
+            message: message.clone(),
+        },
         // Nested aggregates and any future non-clonable variants collapse to a
         // configuration error carrying the rendered message.
         other => Error::PipelineConfiguration {

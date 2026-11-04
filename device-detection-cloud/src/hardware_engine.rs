@@ -28,10 +28,7 @@ use fiftyone_pipeline_core::{
     Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
     Result,
 };
-use fiftyone_pipeline_engines::{
-    AspectEngine, AspectPropertyMetaData, EngineDeployment, EngineMissingPropertyContext,
-    MissingPropertyResult,
-};
+use fiftyone_pipeline_engines::{AspectEngine, AspectPropertyMetaData, EngineDeployment};
 
 use fiftyone_cloud_request_engine::CloudRequestEngine;
 
@@ -182,13 +179,21 @@ impl HardwareProfileCloudEngine {
     /// resulting [`MultiDeviceData`] under [`HARDWARE_DATA_KEY`].
     ///
     /// Returns an [`Error::PipelineConfiguration`] if no cloud request engine ran
-    /// before this engine. An empty or absent JSON response (the request engine
-    /// itself failed and already reported the error) leaves the result
-    /// unpopulated and does not raise a new error.
+    /// before this engine. An empty or absent JSON response, which means the
+    /// request engine failed and recorded its own error, gives a result with no
+    /// profiles and a flow error that does not fail processing, as .NET does.
     fn populate(&self, data: &mut FlowData) -> Result<()> {
         let json = match cloud_json(data, ENGINE_NAME)? {
             Some(json) => json,
-            None => return Ok(()),
+            None => {
+                CloudRequestEngine::record_not_processed(
+                    data,
+                    ENGINE_NAME,
+                    HARDWARE_ELEMENT_DATA_KEY,
+                );
+                data.get_or_add(HARDWARE_DATA_KEY, MultiDeviceData::new)?;
+                return Ok(());
+            }
         };
 
         let result = slice_hardware_profiles(&json)?;
@@ -270,17 +275,6 @@ impl AspectEngine for HardwareProfileCloudEngine {
 
     fn has_loaded_properties(&self) -> bool {
         self.metadata.get().is_some()
-    }
-
-    fn missing_property_reason(&self, property_name: &str) -> MissingPropertyResult {
-        let ctx = EngineMissingPropertyContext {
-            element_data_key: self.data_key(),
-            deployment: self.deployment(),
-            data_source_tier: self.data_source_tier(),
-            properties_loaded: self.has_loaded_properties(),
-            properties: self.aspect_properties(),
-        };
-        fiftyone_pipeline_engines::missing_property_reason(property_name, &ctx)
     }
 }
 
