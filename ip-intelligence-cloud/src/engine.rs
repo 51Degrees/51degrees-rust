@@ -710,7 +710,8 @@ mod tests {
     fn a_failed_cloud_request_is_not_reported_as_a_configuration_error() {
         // The request engine records its own error when its call fails and
         // leaves no response. Nothing in the configuration is wrong, so this
-        // engine adds no error of its own, as the device engine adds none.
+        // engine only records that it did not process, as an error that does
+        // not fail processing, as .NET's cloud aspect engines do.
         use fiftyone_pipeline_core::{Evidence, Pipeline};
         let request_engine = request_engine();
         let ip_engine = IpIntelligenceCloudEngine::builder()
@@ -737,9 +738,12 @@ mod tests {
             .collect();
         assert_eq!(
             reported.len(),
-            1,
-            "only the request engine's own failure is reported, got {reported:?}"
+            2,
+            "the request engine's failure and this engine's record, got {reported:?}"
         );
+        assert_eq!(data.errors()[1].element_data_key, IP_DATA_KEY_NAME);
+        assert!(!data.errors()[1].should_throw);
+        assert!(matches!(data.errors()[1].source, Error::Pipeline { .. }));
         assert!(
             !data
                 .errors()
