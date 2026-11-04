@@ -44,9 +44,9 @@
 //!   (JSON).
 //! - `Content-Length`: the UTF-8 byte length of the body.
 //! - `Cache-Control`: `private, max-age=1800` when the flow data recorded no
-//!   processing errors, otherwise `no-cache`. A response to a request that
-//!   recorded errors carries no `ETag`, so a browser that kept it fetches it
-//!   again in full rather than having it confirmed by a `304`.
+//!   processing errors and the builder's data was there, otherwise `no-cache`.
+//!   A `no-cache` response carries no `ETag`, so a browser that kept it
+//!   fetches it again in full rather than having it confirmed by a `304`.
 //! - `Vary`: the comma-joined list of HTTP-header evidence keys in the
 //!   evidence-key whitelist supplied through [`EndpointOptions`], with the
 //!   `header.` prefix stripped and the names de-duplicated case-insensitively.
@@ -61,6 +61,18 @@
 //! endpoints instead return `304 Not Modified` with an empty body and no other
 //! headers.
 //!
+//! # When a builder left no data
+//!
+//! A builder in the pipeline can leave no data for a request, for example when
+//! it failed and the pipeline suppresses errors. The endpoint then logs that
+//! at error level, serves the response with `no-cache`, and builds the body
+//! again from the flow data with the builder the pipeline holds as a resource
+//! (see [`fiftyone_pipeline_core::Pipeline::resource`]), which
+//! [`crate::WebPipeline`] adds for its own builders. The JavaScript is built
+//! around the JSON builder's output, itself built again if that builder left
+//! no data too. With no such resource the body is empty. A pipeline without
+//! the builder serves an empty body and logs nothing.
+//!
 //! # Where the `Vary` whitelist comes from
 //!
 //! The [`crate::WebPipeline`] builder collects the header keys every element
@@ -71,8 +83,12 @@
 use std::hash::{BuildHasher, Hash, Hasher};
 
 use ahash::RandomState;
-use fiftyone_javascript_builder::JAVASCRIPT_BUILDER_DATA_KEY;
-use fiftyone_json_builder::JSON_BUILDER_DATA_KEY;
+use fiftyone_javascript_builder::{
+    JavaScriptBuilderElement, JAVASCRIPT_BUILDER_DATA_KEY, JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY,
+};
+use fiftyone_json_builder::{
+    JsonBuilderElement, JSON_BUILDER_DATA_KEY, JSON_BUILDER_ELEMENT_DATA_KEY,
+};
 use fiftyone_pipeline_core::constants::EVIDENCE_HTTP_HEADER_PREFIX;
 use fiftyone_pipeline_core::{EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData};
 
@@ -148,8 +164,9 @@ impl EndpointOptions {
 /// The body is the JavaScript produced by the JavaScript builder element (its
 /// element data under
 /// [`fiftyone_javascript_builder::JAVASCRIPT_BUILDER_DATA_KEY`]). If that element
-/// did not run the body is empty. The response uses the
-/// [`CONTENT_TYPE_JAVASCRIPT`] content type and, unless
+/// left no data the body is built again as the module documentation describes,
+/// and if the pipeline has no such element the body is empty. The response uses
+/// the [`CONTENT_TYPE_JAVASCRIPT`] content type and, unless
 /// [`EndpointOptions::without_extra_headers`] was used, the shared caching and
 /// CORS headers described in the module documentation.
 ///
@@ -161,10 +178,18 @@ pub fn serve_javascript(
     request: &dyn RequestData,
     options: &EndpointOptions,
 ) -> WebResponse {
-    let body = flow_data
-        .get(JAVASCRIPT_BUILDER_DATA_KEY)
-        .map(|data| data.javascript().to_owned())
-        .unwrap_or_default();
+    let body = match flow_data.get(JAVASCRIPT_BUILDER_DATA_KEY) {
+        Some(data) => Body::cacheable(data.javascript().to_owned()),
+        None if has_element(flow_data, JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY) => {
+            log_missing_data(JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY);
+            let content = match flow_data.pipeline().resource::<JavaScriptBuilderElement>() {
+                Some(builder) => builder.javascript_for(flow_data, &json_body(flow_data).content),
+                None => String::new(),
+            };
+            Body::failed(content)
+        }
+        None => Body::cacheable(String::new()),
+    };
 
     build_response(flow_data, request, body, CONTENT_TYPE_JAVASCRIPT, options)
 }
@@ -173,7 +198,9 @@ pub fn serve_javascript(
 ///
 /// The body is the JSON produced by the JSON builder element (its element data
 /// under [`fiftyone_json_builder::JSON_BUILDER_DATA_KEY`], the `json` property).
-/// If that element did not run the body is empty. The response uses the
+/// If that element left no data the body is built again as the module
+/// documentation describes, and if the pipeline has no such element the body
+/// is empty. The response uses the
 /// [`CONTENT_TYPE_JSON`] content type and the shared caching and CORS headers
 /// described in the module documentation. As with the JavaScript endpoint a
 /// matching `If-None-Match` yields a bare `304 Not Modified`.
@@ -182,19 +209,75 @@ pub fn serve_json(
     request: &dyn RequestData,
     options: &EndpointOptions,
 ) -> WebResponse {
-    let body = flow_data
-        .get(JSON_BUILDER_DATA_KEY)
-        .map(|data| data.json().to_owned())
-        .unwrap_or_default();
+    build_response(
+        flow_data,
+        request,
+        json_body(flow_data),
+        CONTENT_TYPE_JSON,
+        options,
+    )
+}
 
-    build_response(flow_data, request, body, CONTENT_TYPE_JSON, options)
+/// A response body, and whether a builder left no data for it, which stops the
+/// response being cached.
+struct Body {
+    content: String,
+    failed: bool,
+}
+
+impl Body {
+    fn cacheable(content: String) -> Self {
+        Body {
+            content,
+            failed: false,
+        }
+    }
+
+    fn failed(content: String) -> Self {
+        Body {
+            content,
+            failed: true,
+        }
+    }
+}
+
+/// The JSON builder's output for the request, built again when the builder
+/// left no data.
+fn json_body(flow_data: &FlowData) -> Body {
+    if let Some(data) = flow_data.get(JSON_BUILDER_DATA_KEY) {
+        return Body::cacheable(data.json().to_owned());
+    }
+    if !has_element(flow_data, JSON_BUILDER_ELEMENT_DATA_KEY) {
+        return Body::cacheable(String::new());
+    }
+    log_missing_data(JSON_BUILDER_ELEMENT_DATA_KEY);
+    let content = flow_data
+        .pipeline()
+        .resource::<JsonBuilderElement>()
+        .map(|builder| builder.json_for(flow_data))
+        .unwrap_or_default();
+    Body::failed(content)
+}
+
+/// True if the flow data's pipeline has an element with this data key.
+fn has_element(flow_data: &FlowData, data_key: &str) -> bool {
+    flow_data
+        .pipeline()
+        .flow_elements()
+        .iter()
+        .any(|element| element.data_key() == data_key)
+}
+
+/// Log that the builder with this data key left no data for the request.
+fn log_missing_data(data_key: &str) {
+    log::error!("Failed to get data from element '{data_key}', so the response is not cached.");
 }
 
 /// Build the response for either endpoint, applying the shared header rules.
 fn build_response(
     flow_data: &FlowData,
     request: &dyn RequestData,
-    body: String,
+    body: Body,
     content_type: &str,
     options: &EndpointOptions,
 ) -> WebResponse {
@@ -213,10 +296,11 @@ fn build_response(
     headers.push(("Content-Type".to_owned(), content_type.to_owned()));
     // String::len is the UTF-8 byte length, which is exactly the Content-Length
     // the body needs.
-    headers.push(("Content-Length".to_owned(), body.len().to_string()));
+    headers.push(("Content-Length".to_owned(), body.content.len().to_string()));
 
     if !options.suppress_extra_headers {
-        headers.push(("Cache-Control".to_owned(), cache_control(flow_data)));
+        let cacheable = !body.failed && flow_data.errors().is_empty();
+        headers.push(("Cache-Control".to_owned(), cache_control(cacheable)));
 
         if let Some(whitelist) = options.vary_whitelist.as_ref() {
             let vary = vary_header(whitelist);
@@ -226,9 +310,9 @@ fn build_response(
         }
 
         // The validator stands for the evidence, not for whether processing
-        // worked, so a response to a request that recorded errors goes without
-        // one rather than being confirmed by a 304 once processing recovers.
-        if flow_data.errors().is_empty() {
+        // worked, so a response that is not cacheable goes without one rather
+        // than being confirmed by a 304 once processing recovers.
+        if cacheable {
             headers.push(("ETag".to_owned(), etag));
         }
 
@@ -237,13 +321,12 @@ fn build_response(
         }
     }
 
-    WebResponse::text(body, headers)
+    WebResponse::text(body.content, headers)
 }
 
-/// The `Cache-Control` value for a flow data: cacheable when it recorded no
-/// errors, `no-cache` when it did.
-fn cache_control(flow_data: &FlowData) -> String {
-    if flow_data.errors().is_empty() {
+/// The `Cache-Control` value for a response.
+fn cache_control(cacheable: bool) -> String {
+    if cacheable {
         CACHE_CONTROL_CACHEABLE.to_owned()
     } else {
         CACHE_CONTROL_NO_CACHE.to_owned()

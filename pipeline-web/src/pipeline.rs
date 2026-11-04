@@ -50,7 +50,9 @@
 //!
 //! When [`WebIntegrationOptions::client_side_evidence_enabled`] is `false` the
 //! JSON and JavaScript builders are omitted, because the client-side endpoints
-//! are not in use.
+//! are not in use. When they are added, the pipeline also holds them as
+//! resources, so an endpoint can build a response again when a builder left no
+//! data for a request.
 //!
 //! # Endpoint matching
 //!
@@ -154,7 +156,7 @@ impl WebPipeline {
         elements: Vec<Arc<dyn FlowElement>>,
         options: WebIntegrationOptions,
     ) -> Result<WebPipeline> {
-        let ordered = order_elements(elements, &options);
+        let (ordered, builders) = order_elements(elements, &options);
 
         // The Vary whitelist is the union of the header keys every element in
         // the pipeline names, collected here and handed to the endpoints.
@@ -164,6 +166,9 @@ impl WebPipeline {
             Pipeline::builder().suppress_process_exceptions(options.suppress_process_exceptions);
         for element in ordered {
             builder = builder.add_element(element);
+        }
+        for resource in builders {
+            builder = builder.add_resource(resource);
         }
         let pipeline = builder.build()?;
 
@@ -218,12 +223,16 @@ pub fn endpoint_matches(path: &str, endpoint: &str) -> bool {
     path.to_lowercase().ends_with(&endpoint.to_lowercase())
 }
 
+/// A resource for the pipeline to hold, which it finds again by type.
+type Resource = Arc<dyn std::any::Any + Send + Sync>;
+
 /// Insert the web elements around the application elements and return the full
-/// ordered list.
+/// ordered list, with the client-side builders added to it as resources for the
+/// pipeline.
 fn order_elements(
     elements: Vec<Arc<dyn FlowElement>>,
     options: &WebIntegrationOptions,
-) -> Vec<Arc<dyn FlowElement>> {
+) -> (Vec<Arc<dyn FlowElement>>, Vec<Resource>) {
     let mut ordered: Vec<Arc<dyn FlowElement>> = Vec::with_capacity(elements.len() + 4);
 
     // 1. Sequence element first, unless the application's elements already
@@ -245,12 +254,17 @@ fn order_elements(
 
     // 4 and 5. JSON penultimate, JavaScript last. Both only when the client-side
     // endpoints are in use.
+    let mut builders: Vec<Resource> = Vec::new();
     if options.client_side_evidence_enabled {
-        ordered.push(Arc::new(JsonBuilderElement::new()));
-        ordered.push(Arc::new(JavaScriptBuilderElement::new()));
+        let json = Arc::new(JsonBuilderElement::new());
+        let javascript = Arc::new(JavaScriptBuilderElement::new());
+        ordered.push(json.clone());
+        ordered.push(javascript.clone());
+        builders.push(json);
+        builders.push(javascript);
     }
 
-    ordered
+    (ordered, builders)
 }
 
 /// Build the union of the `header.*` keys the elements accept, for the `Vary`
