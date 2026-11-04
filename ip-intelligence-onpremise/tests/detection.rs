@@ -49,7 +49,7 @@ use fiftyone_ip_intelligence_onpremise::{
 use fiftyone_ip_intelligence_shared::{generated_property_names, GENERATED_PROPERTY_TYPES};
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{ElementData, Evidence, FlowElement, Pipeline, PropertyValueType};
-use fiftyone_pipeline_engines::{AspectEngine, OnPremiseAspectEngine};
+use fiftyone_pipeline_engines::{AspectEngine, MissingPropertyReason, OnPremiseAspectEngine};
 
 /// Cloudflare's public DNS resolver. It maps to autonomous system AS13335 in
 /// every IP Intelligence tier, so it is a stable lookup target for assertions.
@@ -463,4 +463,59 @@ fn enterprise_resolves_location_for_a_public_ip() {
             candidate.value
         );
     }
+}
+
+/// A property the ASN data file does not hold, but that `IpIntelligenceData`
+/// has an accessor for, needs a data file upgrade, as .NET gives it. The
+/// engine's metadata does not list the property, so the message names no
+/// tiers.
+#[test]
+fn a_property_the_asn_file_lacks_needs_a_data_file_upgrade() {
+    let Some(file) = asn_data_file() else {
+        eprintln!("no ASN data file found; skipping missing property test");
+        return;
+    };
+    let Some(engine) = build_engine(&file, PerformanceProfile::HighPerformance, ASN_PROPERTIES)
+    else {
+        return;
+    };
+
+    let result = engine.missing_property_reason("CountryCode");
+
+    assert_eq!(
+        result.reason,
+        MissingPropertyReason::DataFileUpgradeRequired
+    );
+    assert!(
+        result.description.starts_with(
+            "Property 'CountryCode' not found in data for element 'ip'. This is because \
+             your license or data file does not include this property. It is available \
+             with the Unknown license/data for the IpIntelligenceOnPremiseEngine. To \
+             upgrade, see "
+        ),
+        "{}",
+        result.description
+    );
+}
+
+/// A name no engine knows gives .NET's unknown reason and text.
+#[test]
+fn an_unknown_property_has_an_unknown_reason() {
+    let Some(file) = asn_data_file() else {
+        eprintln!("no ASN data file found; skipping missing property test");
+        return;
+    };
+    let Some(engine) = build_engine(&file, PerformanceProfile::HighPerformance, ASN_PROPERTIES)
+    else {
+        return;
+    };
+
+    let result = engine.missing_property_reason("NotAProperty");
+
+    assert_eq!(result.reason, MissingPropertyReason::Unknown);
+    assert_eq!(
+        result.description,
+        "Property 'NotAProperty' not found in data for element 'ip'. The reason for this \
+         is unknown. Please check that the aspect and property name are correct."
+    );
 }

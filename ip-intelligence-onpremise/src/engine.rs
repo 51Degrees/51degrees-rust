@@ -659,6 +659,11 @@ impl AspectEngine for IpIntelligenceOnPremiseEngine {
     fn aspect_properties(&self) -> &[AspectPropertyMetaData] {
         &self.metadata.current().aspect_properties
     }
+
+    /// True for every property `IpIntelligenceData` has a typed accessor for.
+    fn has_typed_property(&self, property_name: &str) -> bool {
+        declared_property_value_type(property_name).is_some()
+    }
 }
 
 impl OnPremiseAspectEngine for IpIntelligenceOnPremiseEngine {
