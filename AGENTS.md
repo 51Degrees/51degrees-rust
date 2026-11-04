@@ -23,9 +23,13 @@ workspace of runnable examples.
 The three `-sys` crates (`common-sys`, `device-detection-sys`,
 `ip-intelligence-sys`) link the 51Degrees C sources, which come from the `cxx`
 submodule at the root of the repository
-(https://github.com/51Degrees/51degrees-cxx). The submodule's data submodules,
-`cxx/device-detection-data` and `cxx/ip-intelligence-data`, hold the Lite data
-files and the evidence the tests and examples read. The submodule pointer
+(https://github.com/51Degrees/51degrees-cxx). Its `data` submodule is the data
+repository (https://github.com/51Degrees/data). It lists each free data file,
+and the Device Detection evidence the examples read, as a `.link` file in
+`cxx/data/device-detection` and `cxx/data/ip-intelligence`, and that
+repository's script downloads them. The IP Intelligence evidence is stored in
+it. Nothing here reads the older `cxx/device-detection-data` and
+`cxx/ip-intelligence-data` folders. The submodule pointer
 records which C commit the crates build, and the nightly pipeline moves it
 with an update pull request when 51degrees-cxx changes. After a move, build
 and run `pwsh ./ci/check-native-symbols.ps1`, which fails when a common C
@@ -35,12 +39,14 @@ function is missing from `ip-intelligence-sys/src/symbol_prefix.h`.
 
 Once per clone, and again whenever the `owid-rust` submodule moves, check out
 the submodules and place the OWID source that `fodid` compiles in (see
-"Releasing to crates.io" below for why it is carried this way). The data files
-are Git LFS content, so pull them too:
+"Releasing to crates.io" below for why it is carried this way). Then download
+the data files the tests read with the data repository's script, which keeps a
+file that is already there (`sh cxx/data/get-data-files.sh` takes the same
+names, and `-u` or `-Update` replaces a file that has a newer version):
 
 ```
 git submodule update --init --recursive
-git -C cxx submodule foreach --recursive 'git lfs pull'
+pwsh ./cxx/data/get-data-files.ps1 51Degrees-LiteV4.1.hash 51Degrees-IPIV4AsnIpiV41.ipi
 pwsh ./ci/copy-owid-source.ps1
 ```
 
@@ -61,9 +67,12 @@ Each `-sys` `build.rs` resolves its C sources in this order: the
 then the `cxx` submodule, then the `cxx` folder inside the crate, which only a
 packaged crate has (see "Releasing to crates.io" below).
 
-On-premise tests and examples need a data file. They find the Lite files in
-the `cxx` submodule, and skip cleanly when no file is present, so the offline
-build and tests stay green without data. To run them against another file,
+On-premise tests and examples need a data file. They find the free files in
+`cxx/data`, and the tests skip cleanly when no file is present, so the offline
+build and tests stay green without data. An example that cannot find its file
+runs the data repository's script for that one file, with the source
+`examples-51degrees-rust`, and fails with the command to run if it still
+cannot find it. To run them against another file,
 point the relevant variable at it: `51DEGREES_DD_PATH` for a Device Detection
 `.hash` file, `51DEGREES_IPI_PATH` for an IP Intelligence `.ipi` file. Live
 cloud tests are `#[ignore]`d and read a resource key from
@@ -130,7 +139,8 @@ workspace reads the submodule and never needs the copy.
 - `pull-request.yml` — fmt, build, test, clippy and doc on Windows, Linux
   (two LTS) and macOS (Intel and Apple Silicon), plus a wasm32-wasip1 job for
   the cloud crates. Runs on pushes to `main` and PRs targeting `main`. It
-  builds the C sources and reads the data files in the `cxx` submodule. It
+  builds the C sources and downloads the data files into `cxx/data` with the
+  data repository's script, keeping them in the Actions cache for the day. It
   also runs `ci/check-native-symbols.ps1` and the property lookup scaling
   test in release.
 - `nightly-pipeline.yml` first runs common-ci's submodule update, which moves

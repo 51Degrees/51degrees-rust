@@ -30,9 +30,8 @@ use fiftyone_ip_intelligence::{
     IpIntelligencePipelineBuilder, PerformanceProfile, IP_DATA_KEY,
 };
 
-// Use an on-premise IP Intelligence data file. The ASN file checked into the
-// data repository suits quick tests; a full data file is downloaded from the
-// data repository (see its README).
+// Use an on-premise IP Intelligence data file. The free ASN file from the data
+// repository suits quick tests. An Enterprise file has the full property set.
 let pipeline = IpIntelligencePipelineBuilder::on_premise("51Degrees-IPIV4AsnIpiV41.ipi")
     .performance_profile(PerformanceProfile::HighPerformance)
     // Off because the free ASN file has no licence key for updates.
@@ -245,9 +244,8 @@ use fiftyone_ip_intelligence::{
     IpIntelligencePipelineBuilder, PerformanceProfile, IP_DATA_KEY,
 };
 
-// Use an on-premise IP Intelligence data file. The ASN file checked into the
-// data repository suits quick tests; a full data file is downloaded from the
-// data repository (see its README).
+// Use an on-premise IP Intelligence data file. The free ASN file from the data
+// repository suits quick tests. An Enterprise file has the full property set.
 let pipeline = IpIntelligencePipelineBuilder::on_premise("51Degrees-IPIV4AsnIpiV41.ipi")
     .performance_profile(PerformanceProfile::HighPerformance)
     // Off because the free ASN file has no licence key for updates.
@@ -314,6 +312,36 @@ A cloud-only build that skips the native path:
 cargo build -p fiftyone-device-detection --no-default-features --features cloud
 ```
 
+### Data files
+
+The on-premise tests and examples read the free data files from the
+[data repository](https://github.com/51Degrees/data), which the `cxx` submodule
+holds at `cxx/data`. The files are not stored in git. Each one is listed as a
+`.link` file in `cxx/data/device-detection` or `cxx/data/ip-intelligence`, and
+the data repository's script downloads it. These commands get the two files the
+tests read.
+
+```sh
+git submodule update --init --recursive
+sh cxx/data/get-data-files.sh 51Degrees-LiteV4.1.hash 51Degrees-IPIV4AsnIpiV41.ipi
+```
+
+On Windows, run `cxx\data\get-data-files.ps1` with the same file names. An
+on-premise example that cannot find its data file runs the script for that file
+itself, and a test skips when its file is missing.
+
+A clone made while 51degrees-cxx still has its `device-detection-data` and
+`ip-intelligence-data` submodules holds those two folders inside `cxx`. Once
+51degrees-cxx removes the two submodules, delete both folders, because git
+leaves a removed submodule's folder on disk with the old data files in it.
+
+```sh
+rm -rf cxx/device-detection-data cxx/ip-intelligence-data
+```
+
+On Windows, run
+`Remove-Item -Recurse -Force cxx\device-detection-data, cxx\ip-intelligence-data`.
+
 ### Running the examples
 
 ```sh
@@ -321,8 +349,8 @@ cargo build -p fiftyone-device-detection --no-default-features --features cloud
 cargo run -p device-detection-examples --bin dd-cloud-getting-started
 cargo run -p ip-intelligence-examples --bin ipi-cloud-getting-started
 
-# On-premise examples resolve a data file from a sibling -cxx checkout, or from
-# 51DEGREES_DD_PATH / 51DEGREES_IPI_PATH.
+# On-premise examples read the data files in cxx/data, downloading one that is
+# missing, or the files 51DEGREES_DD_PATH and 51DEGREES_IPI_PATH name.
 cargo run -p device-detection-examples --bin dd-onprem-getting-started
 cargo run -p ip-intelligence-examples --bin ipi-onprem-getting-started
 

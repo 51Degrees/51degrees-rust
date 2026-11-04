@@ -129,19 +129,20 @@ symbol list and the note on how to regenerate it.
 The IP Intelligence data files come in two tiers. The example data-path
 resolver in `examples-shared` (`ipi_data_path(IpiTier)`) encodes the strategy:
 
-- **ASN** (`51Degrees-IPIV4AsnIpiV41.ipi`). Small, current and checked into the
-  `ip-intelligence-data` repository (checked out inside the `cxx`
-  submodule). It loads against the current native library and is the default
-  offline tier, suitable for quick tests.
+- **ASN** (`51Degrees-IPIV4AsnIpiV41.ipi`). Small, current and free. The data
+  repository, checked out inside the `cxx` submodule at `cxx/data`, links it,
+  and that repository's script downloads it into `cxx/data/ip-intelligence`,
+  as the examples do when it is missing. It loads against the current native
+  library and is the default offline tier, suitable for quick tests.
 - **Enterprise** (`51Degrees-IPIV4EnterpriseIpiV41.ipi`, on the dated production
   UNC share). The full-accuracy file, reachable only from the 51Degrees network.
   The resolver walks the `YYYY/MM/DD` share layout for the latest dated folder
   that actually contains the file, and treats any I/O error (the common case off
   the network) as "not reachable" rather than blocking or panicking.
 
-A full IP Intelligence data file is downloaded from the data repository (see its
-README); the file committed to the repository for convenient testing is the ASN
-file.
+The data repository links the free files for convenient testing, the ASN file
+among them, and its README describes them. An Enterprise file, with the full
+property set, is available from 51Degrees.
 
 The default, `IpiTier::BestAvailable`, picks the best *loadable* tier:
 Enterprise when the production share is reachable, otherwise ASN. The

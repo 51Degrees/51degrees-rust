@@ -959,9 +959,9 @@ mod ip_intelligence {
 /// explicit env path, else a sibling `*-cxx` checkout). When both are present the
 /// proof runs in full and any open or lookup error is a hard failure, so a
 /// reintroduced collision cannot pass silently. When either file is absent (for
-/// example a checkout without the LFS data) the test skips, since the proof needs
-/// both real files. It prints the IsMobile value and one IP Intelligence value so
-/// the proof is visible in the test output.
+/// example a checkout where the data files have not been downloaded) the test
+/// skips, since the proof needs both real files. It prints the IsMobile value and
+/// one IP Intelligence value so the proof is visible in the test output.
 #[cfg(all(feature = "dd", feature = "ipi"))]
 #[test]
 fn both_engines_coexist() {
@@ -969,7 +969,8 @@ fn both_engines_coexist() {
 
     // Resolve both data files the same way the per-product smoke tests do, rather
     // than hard-coding a path. The proof needs both real files, so skip cleanly
-    // when either is absent (for example a checkout without the LFS data).
+    // when either is absent (for example a checkout where the data files have
+    // not been downloaded).
     let (Some(dd_path), Some(ipi_path)) = (dd_lite_data_file(), ipi_data_file()) else {
         eprintln!(
             "skipping both_engines_coexist: both a Device Detection Hash file and \
