@@ -33,8 +33,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 
 use fiftyone_device_detection::{
-    DeviceDetectionOnPremiseEngine, DeviceDetectionOnPremiseEngineBuilder, FlowElement,
-    PerformanceProfile,
+    DeviceDetectionOnPremiseEngine, DeviceDetectionOnPremiseEngineBuilder, PerformanceProfile,
 };
 use fiftyone_pipeline_core::PropertyValueType;
 use fiftyone_pipeline_engines::{AspectEngine, OnPremiseAspectEngine};
