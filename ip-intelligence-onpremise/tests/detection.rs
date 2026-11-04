@@ -519,3 +519,40 @@ fn an_unknown_property_has_an_unknown_reason() {
          is unknown. Please check that the aspect and property name are correct."
     );
 }
+
+/// IP data from an engine restricted to the ASN properties gives the engine's
+/// reason for each property it does not hold, through its typed accessors and
+/// by name, where .NET throws a `PropertyMissingException` with that reason.
+#[test]
+fn ip_data_gives_the_engine_reason_for_a_missing_property() {
+    let Some(file) = asn_data_file() else {
+        eprintln!("no ASN data file found; skipping missing property test");
+        return;
+    };
+    let Some(engine) = build_engine(&file, PerformanceProfile::HighPerformance, ASN_PROPERTIES)
+    else {
+        return;
+    };
+
+    let ip_data = lookup(Arc::clone(&engine), CLOUDFLARE_IPV4);
+
+    assert!(ip_data.asn().has_value());
+    let country_code = engine.missing_property_reason("CountryCode");
+    assert_eq!(
+        country_code.reason,
+        MissingPropertyReason::DataFileUpgradeRequired
+    );
+    assert_eq!(
+        ip_data.country_code().no_value_message(),
+        Some(country_code.description.as_str())
+    );
+    for name in ["CountryCode", "NotAProperty"] {
+        let expected = engine.missing_property_reason(name).description;
+        assert_eq!(ip_data.get(name).unwrap_err().message, expected, "{name}");
+        assert_eq!(
+            ip_data.string(name).no_value_message(),
+            Some(expected.as_str()),
+            "{name}"
+        );
+    }
+}

@@ -35,6 +35,9 @@
 //! [`Error::PropertyMissing`](fiftyone_pipeline_core::Error::PropertyMissing)
 //! from the result. [`missing_property_reason_for_engines`] resolves the reason
 //! across every engine that writes to one aspect data.
+//!
+//! An aspect data gives the reason for a property it does not hold through a
+//! [`MissingPropertySource`] that the engine attached when it wrote the data.
 
 use fiftyone_pipeline_core::MissingPropertyReason;
 
@@ -183,16 +186,27 @@ impl MissingPropertyService {
         property_name: &str,
         engines: &[&dyn AspectEngine],
     ) -> Option<MissingPropertyResult> {
-        let mut result = None;
-        for engine in engines {
-            let reason = engine.missing_property_reason(property_name);
-            if reason.reason != MissingPropertyReason::Unknown {
-                return Some(reason);
-            }
-            result = Some(reason);
-        }
-        result
+        first_known_reason(
+            engines
+                .iter()
+                .map(|engine| engine.missing_property_reason(property_name)),
+        )
     }
+}
+
+/// The first result whose reason is not [`MissingPropertyReason::Unknown`],
+/// otherwise the last result, and [`None`] when there are no results.
+pub(crate) fn first_known_reason(
+    results: impl IntoIterator<Item = MissingPropertyResult>,
+) -> Option<MissingPropertyResult> {
+    let mut last = None;
+    for result in results {
+        if result.reason != MissingPropertyReason::Unknown {
+            return Some(result);
+        }
+        last = Some(result);
+    }
+    last
 }
 
 /// Resolve the missing-property reason for a single engine context.
@@ -213,6 +227,94 @@ pub fn missing_property_reason_for_engines(
     engines: &[&dyn AspectEngine],
 ) -> Option<MissingPropertyResult> {
     MissingPropertyService::new().reason_for_engines(property_name, engines)
+}
+
+/// What an aspect data needs from the engine that wrote it to say why a
+/// property it does not hold is missing.
+///
+/// An engine builds one each time it loads its data and adds it to every
+/// aspect data it writes with
+/// [`AspectDataBase::add_missing_property_source`](crate::AspectDataBase::add_missing_property_source).
+/// Its reasons are the ones [`AspectEngine::missing_property_reason`] gives
+/// when the engine reports the same type name, tier, metadata and typed
+/// accessors.
+///
+/// # Example
+///
+/// ```
+/// use fiftyone_pipeline_core::PropertyValueType;
+/// use fiftyone_pipeline_engines::{
+///     AspectPropertyMetaData, EngineDeployment, MissingPropertyReason,
+///     MissingPropertySource,
+/// };
+///
+/// let source = MissingPropertySource::new(
+///     "device",
+///     "DeviceEngine",
+///     EngineDeployment::OnPremise,
+///     "Lite",
+///     vec![AspectPropertyMetaData::new("IsMobile", "device", PropertyValueType::Bool)
+///         .with_data_tiers(["Lite"])],
+/// );
+/// assert_eq!(
+///     source.reason("NotAProperty").reason,
+///     MissingPropertyReason::Unknown
+/// );
+/// ```
+#[derive(Debug, Clone)]
+pub struct MissingPropertySource {
+    element_data_key: String,
+    type_name: String,
+    deployment: EngineDeployment,
+    data_source_tier: String,
+    properties: Vec<AspectPropertyMetaData>,
+    has_typed_property: Option<fn(&str) -> bool>,
+}
+
+impl MissingPropertySource {
+    /// The details of an engine whose property metadata is loaded, with no
+    /// typed accessors.
+    pub fn new(
+        element_data_key: impl Into<String>,
+        type_name: impl Into<String>,
+        deployment: EngineDeployment,
+        data_source_tier: impl Into<String>,
+        properties: Vec<AspectPropertyMetaData>,
+    ) -> Self {
+        MissingPropertySource {
+            element_data_key: element_data_key.into(),
+            type_name: type_name.into(),
+            deployment,
+            data_source_tier: data_source_tier.into(),
+            properties,
+            has_typed_property: None,
+        }
+    }
+
+    /// Use `has_typed_property` to say whether the engine's data type has a
+    /// typed accessor for a name, as
+    /// [`AspectEngine::has_typed_property`] does.
+    pub fn with_typed_properties(mut self, has_typed_property: fn(&str) -> bool) -> Self {
+        self.has_typed_property = Some(has_typed_property);
+        self
+    }
+
+    /// Resolve why `property_name` is missing.
+    pub fn reason(&self, property_name: &str) -> MissingPropertyResult {
+        let view = EngineView {
+            element_data_key: &self.element_data_key,
+            type_name: &self.type_name,
+            deployment: self.deployment,
+            data_source_tier: &self.data_source_tier,
+            properties_loaded: true,
+            properties: &self.properties,
+            has_typed_property: self
+                .has_typed_property
+                .as_ref()
+                .map(|check| check as &dyn Fn(&str) -> bool),
+        };
+        resolve(property_name, &view)
+    }
 }
 
 /// Apply the rules to one engine and describe the outcome.
@@ -582,5 +684,81 @@ mod tests {
             missing_property_reason("ScreenWidth", &ctx).reason,
             MissingPropertyReason::Unknown
         );
+    }
+
+    fn typed_is_mobile(name: &str) -> bool {
+        name.eq_ignore_ascii_case("IsMobile")
+    }
+
+    fn source(properties: Vec<AspectPropertyMetaData>) -> MissingPropertySource {
+        MissingPropertySource::new(
+            "device",
+            "TestEngine",
+            EngineDeployment::OnPremise,
+            "Lite",
+            properties,
+        )
+    }
+
+    #[test]
+    fn a_source_gives_the_reasons_of_the_engine_it_describes() {
+        let props = vec![
+            prop("IsMobile").with_data_tiers(["Premium"]),
+            prop("BrowserName")
+                .with_data_tiers(["Lite"])
+                .map_core(|c| c.with_available(false)),
+        ];
+        let typed = |name: &str| typed_is_mobile(name);
+        let view = EngineView {
+            has_typed_property: Some(&typed),
+            ..on_premise(&props)
+        };
+        let source = source(props.clone()).with_typed_properties(typed_is_mobile);
+        for name in ["IsMobile", "BrowserName", "ismobile", "NotAProperty"] {
+            assert_eq!(source.reason(name), resolve(name, &view), "{name}");
+        }
+        assert_eq!(
+            source.reason("BrowserName").reason,
+            MissingPropertyReason::PropertyExcludedFromConfig
+        );
+    }
+
+    #[test]
+    fn a_source_uses_its_typed_accessors_only_when_given_them() {
+        assert_eq!(
+            source(Vec::new()).reason("IsMobile").reason,
+            MissingPropertyReason::Unknown
+        );
+        let result = source(Vec::new())
+            .with_typed_properties(typed_is_mobile)
+            .reason("IsMobile");
+        assert_eq!(
+            result.reason,
+            MissingPropertyReason::DataFileUpgradeRequired
+        );
+        assert!(result
+            .description
+            .contains("It is available with the Unknown license/data for the TestEngine."));
+    }
+
+    fn result(reason: MissingPropertyReason, description: &str) -> MissingPropertyResult {
+        MissingPropertyResult {
+            reason,
+            description: description.to_owned(),
+        }
+    }
+
+    #[test]
+    fn the_first_known_reason_decides() {
+        let unknown = result(MissingPropertyReason::Unknown, "first");
+        let excluded = result(MissingPropertyReason::PropertyExcludedFromConfig, "second");
+        let upgrade = result(MissingPropertyReason::DataFileUpgradeRequired, "third");
+        assert_eq!(
+            first_known_reason([unknown.clone(), excluded.clone(), upgrade]),
+            Some(excluded)
+        );
+        let last = result(MissingPropertyReason::Unknown, "last");
+        assert_eq!(first_known_reason([unknown, last.clone()]), Some(last));
+        assert_eq!(first_known_reason(Vec::new()), None);
     }
 }

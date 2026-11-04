@@ -588,3 +588,48 @@ fn an_unknown_property_has_an_unknown_reason() {
          this is unknown. Please check that the aspect and property name are correct."
     );
 }
+
+/// Device data from an engine restricted to IsMobile gives the engine's reason
+/// for each property it does not hold, through its typed accessors and by
+/// name, where .NET throws a `PropertyMissingException` with that reason.
+#[test]
+fn device_data_gives_the_engine_reason_for_a_missing_property() {
+    let Some(data_file) = lite_data_file() else {
+        eprintln!("no Lite Hash data file found; skipping missing property test");
+        return;
+    };
+    let engine = match DeviceDetectionOnPremiseEngineBuilder::new(data_file)
+        .performance_profile(PerformanceProfile::HighPerformance)
+        .property("IsMobile")
+        .build()
+    {
+        Ok(engine) => engine,
+        Err(e) => {
+            eprintln!("the native Hash data set did not load ({e}); skipping");
+            return;
+        }
+    };
+
+    let device = detect(Arc::clone(&engine), MOBILE_USER_AGENT);
+
+    assert!(*device.is_mobile().value().unwrap());
+    let browser = engine.missing_property_reason("BrowserName");
+    assert_ne!(browser.reason, MissingPropertyReason::Unknown);
+    assert_eq!(
+        device.browser_name().no_value_message(),
+        Some(browser.description.as_str())
+    );
+    for name in ["BrowserName", "HardwareVendor", "NotAProperty"] {
+        let expected = engine.missing_property_reason(name).description;
+        assert_eq!(device.get(name).unwrap_err().message, expected, "{name}");
+        assert_eq!(
+            device.string_property(name).no_value_message(),
+            Some(expected.as_str()),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        engine.missing_property_reason("NotAProperty").reason,
+        MissingPropertyReason::Unknown
+    );
+}

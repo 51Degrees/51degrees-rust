@@ -103,6 +103,7 @@ pub use lazy_loading::{LazyLoadingConfiguration, LAZY_LOADING_DEFAULT_TIMEOUT_MS
 pub use missing_property::{
     missing_property_reason, missing_property_reason_for_engines, EngineDeployment,
     EngineMissingPropertyContext, MissingPropertyResult, MissingPropertyService,
+    MissingPropertySource,
 };
 pub use on_premise_aspect_engine::OnPremiseAspectEngine;
 
