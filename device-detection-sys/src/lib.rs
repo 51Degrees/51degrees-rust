@@ -204,7 +204,20 @@ pub struct ConfigDeviceDetection {
     pub b: ConfigBase,
     /// True if the matched user agent characters should be recorded.
     pub update_matched_user_agent: bool,
-    /// Number of characters to consider in the matched user agent.
+    /// The limit, in bytes, on the length of each header value that detection
+    /// uses. Despite the name it applies to every header and every
+    /// pseudo-header, not only the User-Agent, and a pseudo-header counts one
+    /// separator byte between each of the values it joins. A value longer
+    /// than the limit is ignored with no error, and detection moves on to the
+    /// next header.
+    ///
+    /// The predefined configurations set 500 bytes, the C library's default.
+    /// The reason for that default is given where [the default is defined]
+    /// and in the C library's [header length limit] documentation, which
+    /// also gives the memory a larger limit costs.
+    ///
+    /// [the default is defined]: https://github.com/51Degrees/51degrees-cxx/blob/e866f6d3cea936587790f87967eff7863778b30e/src/dd/config-dd.h#L100-L106
+    /// [header length limit]: https://github.com/51Degrees/51degrees-cxx/blob/e866f6d3cea936587790f87967eff7863778b30e/docs/dd/README.md#header-length-limit
     pub max_matched_user_agent_length: usize,
     /// True if a result with no matched node should still be considered valid.
     pub allow_unmatched: bool,

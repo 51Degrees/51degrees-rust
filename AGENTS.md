@@ -1,13 +1,137 @@
 # AGENTS.md
 
 A shared, tool-neutral handover for anyone (human or AI agent) working in this
-repository. Keep it short and current: record the things that are not obvious
-from the code or git history, and update it as the project changes. It is not
-tied to any one assistant.
+repository. Keep it short and current, recording the things that are not
+obvious from the code or git history, and update it as the project changes. It
+is not tied to any one assistant.
+
+If you have been asked to get an example running, follow
+[Run the examples](#run-the-examples). It gives every step in order, from a
+fresh clone to the output.
+
+## Run the examples
+
+The two on-premise getting-started examples are the ones to show first,
+because they need no key and run against free data files that come with the
+repository. The cloud examples need a resource key.
+
+### Prerequisites
+
+- Git.
+- Rust 1.94 or later, the `rust-version` of both workspaces.
+- A C compiler, being the Visual Studio Build Tools on Windows and GCC or
+  Clang elsewhere. The `-sys` crates compile the 51Degrees C sources with the
+  `cc` crate, and `aws-lc-sys`, which the HTTPS client brings in, compiles C
+  too. If `aws-lc-sys` fails to build, its
+  [requirements](https://aws.github.io/aws-lc-rs/requirements/index.html) list
+  what it needs on each platform.
+- Network access to GitHub, crates.io and the 51Degrees Distributor, from
+  which the data repository's script downloads the free data files.
+- PowerShell 7 (`pwsh`) on Windows, or `sh` elsewhere, for that script, and
+  `pwsh` to run the examples against this checkout.
+
+Clone the repository with its submodules.
+
+```sh
+git clone --recurse-submodules https://github.com/51Degrees/51degrees-rust.git
+cd 51degrees-rust
+```
+
+In a clone made without `--recurse-submodules`, fetch them.
+
+```sh
+git submodule update --init --recursive
+```
+
+### Data files
+
+The examples read the free data files in the
+[data](https://github.com/51Degrees/data) repository, which is at `cxx/data`.
+It lists each file as a `.link` file, and its script downloads the files. An
+on-premise example that cannot find its file runs that script for the one file
+itself, so this step is only needed to download the files ahead of time.
+
+```sh
+sh cxx/data/get-data-files.sh 51Degrees-LiteV4.1.hash 51Degrees-IPIV4AsnIpiV41.ipi
+```
+
+On Windows, run `pwsh ./cxx/data/get-data-files.ps1` with the same names. The
+IP Intelligence getting-started example also reads the Lite IP Intelligence
+file, `51Degrees-LiteV41.ipi`, a download of about 320 MB, which it fetches
+the first time it runs.
+
+### Run
+
+The examples are a Cargo workspace of their own in `examples/`, which the root
+`Cargo.toml` excludes, so run them from there. From the root,
+`-p device-detection-examples` matches no package.
+
+```sh
+cd examples
+cargo run -p device-detection-examples --bin dd-onprem-getting-started
+cargo run -p ip-intelligence-examples --bin ipi-onprem-getting-started
+```
+
+The first build compiles the 51Degrees C libraries, so it is the slow one.
+
+### What correct output looks like
+
+- `dd-onprem-getting-started` processes a desktop and a mobile User-Agent. For
+  each it prints the evidence under "Input values:" and then, under
+  "Results:", the properties the Lite file carries, such as Mobile Device,
+  Platform Name and Browser Name. Each property only the Enterprise data file
+  carries, such as Hardware Vendor and Device Type, reads "needs the
+  Enterprise data file".
+- `ipi-onprem-getting-started` reads the ASN file and then the Lite IP
+  Intelligence file, and for `1.1.1.1` and `2606:4700:4700::1111` prints Asn
+  and AsnName from the first and RegisteredName, RegisteredOwner and
+  RegisteredCountry from the second. The location properties need the
+  Enterprise data file.
+- Both end by naming the properties the file in use lacks, with a link to ask
+  about the Enterprise data file, and a "Find out more" section.
+
+An example that cannot find or download its data file fails with the command
+to run, so an exit code of 0 means it ran against a file.
+
+### Paths and keys from the environment
+
+The examples read `51DEGREES_DD_PATH` and `51DEGREES_IPI_PATH` for a data file
+elsewhere, and the cloud examples read `51DEGREES_RESOURCE_KEY`, for which a
+key comes from the
+[Configurator](https://configure.51degrees.com/?utm_source=github&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=agents.md&utm_term=configure).
+These names start with a digit, so bash and sh refuse both `export
+51DEGREES_RESOURCE_KEY=...` and the `51DEGREES_RESOURCE_KEY=... cargo run`
+prefix. Use `env` there, and `$env:` in PowerShell.
+
+```sh
+env 51DEGREES_RESOURCE_KEY=<key> cargo run -p device-detection-examples --bin dd-cloud-getting-started
+```
+
+```powershell
+$env:51DEGREES_RESOURCE_KEY = '<key>'
+cargo run -p device-detection-examples --bin dd-cloud-getting-started
+```
+
+### Run them against this checkout
+
+The examples depend on the crates published on crates.io, so by default they
+show the last release and not a change made here. To run one against this
+checkout, use the script CI uses, from PowerShell 7 at the repository root.
+It needs the release tags, which a full clone has, and the OWID source that
+the `fodid` crate compiles in, placed once as the README's "Building" section
+says.
+
+```powershell
+./ci/copy-owid-source.ps1
+./ci/test-examples-against-source.ps1 -Command { cargo run --config source.toml -p device-detection-examples --bin dd-onprem-getting-started }
+```
+
+The command runs in `examples/`, and with no `-Command` the script runs the
+examples' tests instead. It puts the manifests and the lock back when it ends.
 
 ## What this is
 
-The 51Degrees Rust SDK: a single Cargo workspace of libraries plus a separate
+The 51Degrees Rust SDK is a single Cargo workspace of libraries plus a separate
 workspace of runnable examples.
 
 - **Library workspace** (repository root): the pipeline core and engines,
@@ -132,7 +256,7 @@ one `ci/crates.txt` does not publish, and on a `ci/crates.txt` order that
 publishes a crate before one it requires. A project therefore takes all its
 51Degrees crates from one release, which `cargo update` does.
 
-Authentication uses crates.io **Trusted Publishing**: the publish workflow
+Authentication uses crates.io **Trusted Publishing**, where the publish workflow
 exchanges the run's GitHub OIDC identity for a short-lived token, so no API
 token is stored. Each crate has this repository and `publish.yml` registered as
 a trusted publisher (one-time setup in `ci/setup-trusted-publishing.sh`).
@@ -156,13 +280,13 @@ workspace reads the submodule and never needs the copy.
 
 ## CI gates
 
-- `pull-request.yml` — fmt, build, test, clippy and doc on Windows, Linux
+- `pull-request.yml` runs fmt, build, test, clippy and doc on Windows, Linux
   (two LTS) and macOS (Apple Silicon), plus a wasm32-wasip1 job for the cloud
-  crates. Runs on pushes to `main` and on PRs into `main`, `rc` and
-  `release/**`. It builds the C sources and restores the data files into
-  `cxx/data` from the entry `data-files.yml` keeps in the Actions cache,
-  downloading with the data repository's script only a file it lacks. It also
-  runs `ci/check-native-symbols.ps1` and the property lookup scaling test in
+  crates, on pushes to `main` and on PRs into `main`, `rc` and `release/**`.
+  It builds the C sources and restores the data files into `cxx/data` from
+  the entry `data-files.yml` keeps in the Actions cache, downloading with the
+  data repository's script only a file it lacks. It also runs
+  `ci/check-native-symbols.ps1` and the property lookup scaling test in
   release.
 - `data-files.yml` runs each day on `main` and keeps the free data files in
   one Actions cache entry. It restores the newest entry, asks the Distributor
@@ -198,12 +322,12 @@ workspace reads the submodule and never needs the copy.
   the component in `caching/host-tests/spin` on Spin, and that job also
   tests the crate on wasm32-wasip2 under wasmtime. Same triggers, and it
   reads no secrets.
-- `examples.yml` — builds and tests `examples/` against local source
-  (`source.toml`) before a release. Runs on every PR.
-- `publish.yml` — publishes on push to `main`, then a `verify-published` job
+- `examples.yml` builds and tests `examples/` against local source
+  (`source.toml`) before a release, on every PR.
+- `publish.yml` publishes on push to `main`, then a `verify-published` job
   builds and tests `examples/` against the just-released crates.io packages.
-- `utm-link-lint.yml` — see UTM conventions below. Runs on every PR.
-- `mustache-drift.yml` — guards the generated JavaScript resource template.
+- `utm-link-lint.yml` checks the UTM links described below, on every PR.
+- `mustache-drift.yml` guards the generated JavaScript resource template.
   Push and pull request builds compare against a pinned upstream commit
   rather than the branch, so a change upstream does not fail work here that
   has nothing to do with it. The weekly schedule and a manual run still
@@ -213,9 +337,10 @@ workspace reads the submodule and never needs the copy.
 - `dotnet-comparison.yml` runs the crates and the published .NET packages
   over the corpus in `parity/` and fails on any difference that
   `parity/allowed-differences.json` does not list with its reason. See
-  [parity/README.md](parity/README.md). Runs on every PR.
-- `nightly-performance.yml` — nightly (and on-demand) on-premise throughput
-  run that feeds the documentation performance graphs. Its adapter,
+  [parity/README.md](parity/README.md). It runs on pushes to `main` and on
+  pull requests into `main` and `release/**`.
+- `nightly-performance.yml` is the nightly (and on-demand) on-premise
+  throughput run that feeds the documentation performance graphs. Its adapter,
   `ci/run-performance-tests.ps1`, runs the performance examples against this
   checkout's crates through `ci/test-examples-against-source.ps1`. Each
   example writes its own results JSON, and common-ci provides the steps that
@@ -229,11 +354,11 @@ workspace reads the submodule and never needs the copy.
 - **Generated accessors.** The strongly typed property accessors in
   `device-detection-shared/src/device_data.rs` and
   `ip-intelligence-shared/src/ip_intelligence_data.rs` are generated by the
-  `PropertyGenerator` tool in the 51Degrees `tools` repository. Do not edit
-  them by hand; change the generator.
+  `PropertyGenerator` tool in the 51Degrees `tools` repository. Change the
+  generator rather than editing them by hand.
 - **Feature unification with examples.** The library crates' default features
-  are cloud + on-premise; `reqwest-client` is off by default. Some tests are
-  gated on `reqwest-client` and rely on it being enabled to compile. Because
+  are cloud and on-premise, and `reqwest-client` is off by default. Some tests
+  are gated on `reqwest-client` and rely on it being enabled to compile. Because
   `examples/` is a separate workspace, the root `cargo build --workspace` no
   longer unifies `reqwest-client` on, so gate test-only imports and helpers on
   the exact feature whose test uses them, or `-D warnings` will fail on unused
@@ -241,10 +366,11 @@ workspace reads the submodule and never needs the copy.
 - **UTM links.** Links to `51degrees.com` in source, docs and READMEs must
   carry the five UTM parameters in order (`utm_source`, `utm_medium`,
   `utm_campaign`, `utm_content`, `utm_term`), with `utm_campaign=51degrees-rust`. The
-  lint config is `.utm-lint.json`; `Cargo.toml` `homepage`/`repository`
-  metadata URLs are allow-listed as untagged.
-- **Code style.** Wrap code and doc comments to about 80 columns (soft limit;
-  do not break URLs or string literals to hit it). This keeps diffs reviewable.
+  lint config is `.utm-lint.json`, which allows untagged links in `Cargo.toml`
+  files.
+- **Code style.** Wrap code and doc comments to about 80 columns, a soft limit,
+  so do not break URLs or string literals to hit it. This keeps diffs
+  reviewable.
 - **Caching on WebAssembly.** `fiftyone-caching` must keep building and
   running on wasm32-unknown-unknown with default features off, where the
   standard library has no clock and no randomness. Only its `pipeline`
@@ -266,9 +392,9 @@ workspace reads the submodule and never needs the copy.
 
 ## 51Did terminology
 
-When working on `fodid`, keep the three levels distinct: the **51Did** is the
-identifier as a whole; the **envelope** (also called the wrapper) is the signed
-OWID that carries it and changes on every issue; the **match key** is the
+When working on `fodid`, keep the three levels distinct. The **51Did** is the
+identifier as a whole. The **envelope** (also called the wrapper) is the signed
+OWID that carries it and changes on every issue. The **match key** is the
 stable, comparable part of the payload, read through `FodId::match_key`.
 Compare match keys, never envelopes. The payload offsets and lengths are
 internal to the crate, so every field is read through its typed accessor,
