@@ -38,7 +38,7 @@ use crate::constants::{
     DELAY_EXECUTION_SUFFIX, ERRORS_KEY, EVIDENCE_PROPERTIES_SUFFIX, JAVASCRIPT_PROPERTIES_KEY,
     MAX_JAVASCRIPT_ITERATIONS, NULL_REASON_SUFFIX, WARNINGS_KEY,
 };
-use crate::element::JsonBuilderElement;
+use crate::element::{lies_under, JsonBuilderElement};
 use crate::steps::{JsonBuilderContext, JsonBuilderSteps};
 use crate::text::{write_indented, NEW_LINE};
 use crate::value::{JsonObject, JsonValue};
@@ -106,7 +106,9 @@ pub fn get_all_properties<S: JsonBuilderSteps + ?Sized>(
 /// [`JsonBuilderElement::is_property_selected`]) gives only its meta
 /// properties, without its value, as the specification says meta properties
 /// are always written. A JavaScript property, by its metadata or by its
-/// value, is written in full whether or not it is selected.
+/// value, is written in full whether or not it is selected. So is a list of
+/// records holding one, with only the selected and JavaScript properties in
+/// each record.
 pub fn get_values<S: JsonBuilderSteps + ?Sized>(
     steps: &S,
     context: &JsonBuilderContext<'_>,
@@ -162,8 +164,9 @@ fn add_meta_values_for_property(
     }
 }
 
-/// True when a property is selected, or is a JavaScript property by its
-/// metadata or by its value, as JavaScript properties are always written.
+/// True when a property is selected, or is or holds a JavaScript property by
+/// its metadata or by its value, as JavaScript properties are always
+/// written. A list of records holding one is kept so it can be written.
 fn is_written(
     context: &JsonBuilderContext<'_>,
     data_path: &str,
@@ -171,15 +174,29 @@ fn is_written(
     value: &Result<PropertyValue, NoValueError>,
 ) -> bool {
     let element = context.element();
-    if element.selects_every_property() || matches!(value, Ok(PropertyValue::JavaScript(_))) {
+    if element.selects_every_property() || value.as_ref().is_ok_and(holds_javascript) {
         return true;
     }
     let complete_name = format!("{}.{name}", data_path.to_lowercase());
+    let javascript = context.config().javascript_properties();
     element.is_property_selected(&complete_name)
-        || context
-            .config()
-            .javascript_properties()
-            .contains(&complete_name)
+        || javascript.contains(&complete_name)
+        || javascript
+            .iter()
+            .any(|path| lies_under(path, &complete_name))
+}
+
+/// True when a value is JavaScript, or is a list of records holding
+/// JavaScript at any depth.
+fn holds_javascript(value: &PropertyValue) -> bool {
+    match value {
+        PropertyValue::JavaScript(_) => true,
+        PropertyValue::KeyValueList(records) => records
+            .iter()
+            .flat_map(|record| record.values())
+            .any(holds_javascript),
+        _ => false,
+    }
 }
 
 /// The default of [`JsonBuilderSteps::add_json_values_for_property`].

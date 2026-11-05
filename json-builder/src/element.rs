@@ -334,7 +334,7 @@ impl JsonBuilderElement {
 
 /// True when `name` lies under `parent`, as `hardware.profiles.hardwarename`
 /// lies under `hardware.profiles`.
-fn lies_under(name: &str, parent: &str) -> bool {
+pub(crate) fn lies_under(name: &str, parent: &str) -> bool {
     name.strip_prefix(parent)
         .is_some_and(|rest| rest.starts_with('.'))
 }

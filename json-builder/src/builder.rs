@@ -145,9 +145,11 @@ impl JsonBuilderElementBuilder {
     ///
     /// JavaScript properties and meta properties are always written, as the
     /// specification says. So a property that is not selected still gives
-    /// its `nullreason` and `evidenceproperties` keys, without its value.
-    /// Every element keeps its entry, which is empty when it has nothing to
-    /// write. See [`JsonBuilderElement::is_property_selected`].
+    /// its `nullreason` and `evidenceproperties` keys, without its value,
+    /// and a list of records holding a JavaScript property is kept with that
+    /// property in each record. Every element keeps its entry, which is
+    /// empty when it has nothing to write. See
+    /// [`JsonBuilderElement::is_property_selected`].
     ///
     /// # Example
     ///

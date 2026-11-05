@@ -556,6 +556,72 @@ fn a_listed_list_keeps_every_property_of_each_record() {
     );
 }
 
+/// A JavaScript property in a list of records is always written, so a list
+/// that is not listed is kept with only that property in each record. That
+/// holds for one known by its metadata and one known only by its value.
+#[test]
+fn a_javascript_property_in_a_list_keeps_the_list() {
+    let profiles = |javascript: PropertyValue| {
+        let record = |name: &str| {
+            let mut record = BTreeMap::new();
+            record.insert(
+                "HardwareName".to_owned(),
+                PropertyValue::String(name.to_owned()),
+            );
+            record.insert("ProfileJavaScript".to_owned(), javascript.clone());
+            record
+        };
+        PropertyValue::KeyValueList(vec![record("Pixel 8"), record("iPhone")])
+    };
+    let expected = |javascript: &str| {
+        json!({
+            "profilecount": 2,
+            "profiles": [
+                { "profilejavascript": javascript },
+                { "profilejavascript": javascript }
+            ]
+        })
+    };
+
+    // Known by its metadata, with a value that is plain text.
+    let by_metadata: Arc<dyn FlowElement> = Arc::new(
+        TestElement::new("hardware")
+            .meta(
+                PropertyMetaData::new("profiles", "hardware", PropertyValueType::KeyValueList)
+                    .with_item_properties([PropertyMetaData::new(
+                        "profilejavascript",
+                        "hardware",
+                        PropertyValueType::JavaScript,
+                    )]),
+            )
+            .value("profilecount", 2_i64)
+            .value(
+                "profiles",
+                profiles(PropertyValue::String("var p = 1;".to_owned())),
+            ),
+    );
+    let value = parse(&run(
+        vec![by_metadata],
+        JsonBuilderElement::builder().set_properties(["hardware.profilecount"]),
+    ));
+    assert_eq!(value["hardware"], expected("var p = 1;"));
+
+    // Known only by its value.
+    let by_value: Arc<dyn FlowElement> = Arc::new(
+        TestElement::new("hardware")
+            .value("profilecount", 2_i64)
+            .value(
+                "profiles",
+                profiles(PropertyValue::JavaScript("var p = 2;".to_owned())),
+            ),
+    );
+    let value = parse(&run(
+        vec![by_value],
+        JsonBuilderElement::builder().set_properties(["hardware.profilecount"]),
+    ));
+    assert_eq!(value["hardware"], expected("var p = 2;"));
+}
+
 /// "There MUST be a top-level entry for each Element Data", so an element
 /// with nothing selected keeps an empty entry, and the errors and warnings
 /// are written as they are with no list.
