@@ -27,6 +27,9 @@
 //! pipeline in the process. A thread is started only when none is idle, and a
 //! thread that has had no work for [`IDLE_SECONDS`] ends.
 //!
+//! The `group_load` bench in this crate measures the two, as its `threads`
+//! and `group` patterns (`benches/group_load.rs`).
+//!
 //! The thread that offers work takes it back if no pool thread has started
 //! it, so a group always finishes, even with every pool thread busy or on a
 //! platform that cannot start threads. The first time work finds all

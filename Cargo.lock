@@ -853,6 +853,7 @@ name = "fiftyone-pipeline-core"
 version = "4.5.2"
 dependencies = [
  "ahash",
+ "libc",
  "log",
  "thiserror 2.0.18",
 ]

@@ -394,6 +394,12 @@ impl PipelineBuilder {
     /// and the group adds the hand over between threads, so a group of short
     /// elements that only use the processor lowers throughput. Add those with
     /// [`PipelineBuilder::add_element`] instead.
+    ///
+    /// The `group_load` bench in this crate measures groups of waiting
+    /// elements, of elements that use the processor and of elements that do
+    /// nothing, against the same elements added one at a time, from 1 to 48
+    /// client threads. Run it with
+    /// `cargo bench -p fiftyone-pipeline-core --bench group_load`.
     pub fn add_parallel_elements(
         mut self,
         elements: impl IntoIterator<Item = Arc<dyn FlowElement>>,
