@@ -277,10 +277,10 @@ variable, which is the same variable the cloud request engine honours.
 The other 51Did clients this crate is a port of, and the engine repositories:
 
 - https://github.com/51Degrees/51degrees-rust
-- https://github.com/51Degrees/pipeline-dotnet
-- https://github.com/51Degrees/pipeline-java
-- https://github.com/51Degrees/pipeline-node
-- https://github.com/51Degrees/pipeline-python
+- https://github.com/51Degrees/51degrees-dotnet/tree/main/pipeline
+- https://github.com/51Degrees/51degrees-java/tree/main/pipeline
+- https://github.com/51Degrees/51degrees-node/tree/main/pipeline
+- https://github.com/51Degrees/51degrees-python/tree/main/pipeline
 - https://github.com/51Degrees/pipeline-php-did
 - https://github.com/SWAN-community/owid-rust
 
