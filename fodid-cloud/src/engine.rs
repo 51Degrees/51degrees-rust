@@ -285,7 +285,12 @@ impl FlowElement for FodIdCloudEngine {
         let element = match self.build_data(data)? {
             Some(element) => element,
             None => {
-                CloudRequestEngine::record_not_processed(data, ENGINE_NAME, FODID_ELEMENT_DATA_KEY);
+                CloudRequestEngine::record_not_processed(
+                    data,
+                    ENGINE_NAME,
+                    FODID_ELEMENT_DATA_KEY,
+                    module_path!(),
+                );
                 FodIdDataBase::new()
             }
         };

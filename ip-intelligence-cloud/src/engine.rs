@@ -308,7 +308,12 @@ impl FlowElement for IpIntelligenceCloudEngine {
         let element = match self.build_data(data)? {
             Some(element) => element,
             None => {
-                CloudRequestEngine::record_not_processed(data, ENGINE_NAME, IP_DATA_KEY_NAME);
+                CloudRequestEngine::record_not_processed(
+                    data,
+                    ENGINE_NAME,
+                    IP_DATA_KEY_NAME,
+                    module_path!(),
+                );
                 let mut element = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
                 element.base_mut().mark_cloud_request_failed();
                 element

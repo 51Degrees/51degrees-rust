@@ -193,6 +193,7 @@ impl HardwareProfileCloudEngine {
                     data,
                     ENGINE_NAME,
                     HARDWARE_ELEMENT_DATA_KEY,
+                    module_path!(),
                 );
                 data.get_or_add(HARDWARE_DATA_KEY, MultiDeviceData::new)?;
                 return Ok(());
