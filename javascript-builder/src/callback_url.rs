@@ -25,8 +25,8 @@
 //! The protocol and host usually come from the request, so the URL is checked
 //! before it is written into the script, where it sits inside a single-quoted
 //! JavaScript string. A URL that is not valid is refused, and the characters
-//! left after the host that could end the string or the script are
-//! percent-encoded.
+//! in the user information, after the host and in the endpoint that could
+//! end the string or the script are percent-encoded.
 
 use std::net::Ipv6Addr;
 
@@ -76,14 +76,10 @@ pub(crate) fn callback_url(protocol: &str, host: &str, endpoint: &str) -> Callba
     }
 }
 
-/// A scheme as RFC 3986 section 3.1 defines one, being a letter followed by
-/// letters, digits, `+`, `-` and `.`.
+/// `http` or `https`, ignoring case. The script uses the URL only with
+/// `fetch` and `XMLHttpRequest`, which reach a server with no other scheme.
 fn is_scheme(protocol: &str) -> bool {
-    let mut bytes = protocol.bytes();
-    bytes
-        .next()
-        .is_some_and(|first| first.is_ascii_alphabetic())
-        && bytes.all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
+    protocol.eq_ignore_ascii_case("http") || protocol.eq_ignore_ascii_case("https")
 }
 
 /// The user information, host and port, or `None` when the host or the port is
@@ -292,9 +288,58 @@ mod tests {
                 "example.com/a\u{2028}b",
                 "https://example.com/a%E2%80%A8b/51dpipeline/json",
             ),
+            ("a-b.com", "https://a-b.com/51dpipeline/json"),
+            ("ab-.com", "https://ab-.com/51dpipeline/json"),
+            ("127.0.0.1", "https://127.0.0.1/51dpipeline/json"),
+            ("300.1.1.1", "https://300.1.1.1/51dpipeline/json"),
+            ("localhost", "https://localhost/51dpipeline/json"),
+            ("1", "https://1/51dpipeline/json"),
+            ("0x7f.1", "https://0x7f.1/51dpipeline/json"),
+            ("a.b.c.d.e.f", "https://a.b.c.d.e.f/51dpipeline/json"),
+            (
+                "xn--bcher-kva.de",
+                "https://xn--bcher-kva.de/51dpipeline/json",
+            ),
+            (
+                "user@example.com",
+                "https://user@example.com/51dpipeline/json",
+            ),
+            (
+                "u%41@example.com",
+                "https://u%41@example.com/51dpipeline/json",
+            ),
+            (
+                "u\"x@example.com",
+                "https://u%22x@example.com/51dpipeline/json",
+            ),
+            (
+                "u\nx@example.com",
+                "https://u%0Ax@example.com/51dpipeline/json",
+            ),
+            (
+                "u\u{1}x@example.com",
+                "https://u%01x@example.com/51dpipeline/json",
+            ),
+            ("example.com#x", "https://example.com#x/51dpipeline/json"),
+            (
+                "example.com:8080/x",
+                "https://example.com:8080/x/51dpipeline/json",
+            ),
+            (
+                "example.com/a'b",
+                "https://example.com/a%27b/51dpipeline/json",
+            ),
         ];
         for (host, expected) in cases {
             assert_eq!(url("https", host), valid(expected), "host {host:?}");
+        }
+        for length in [63, 64] {
+            let host = format!("{}.com", "a".repeat(length));
+            assert_eq!(
+                url("https", &host),
+                valid(&format!("https://{host}/51dpipeline/json")),
+                "host {host:?}"
+            );
         }
     }
 
@@ -310,6 +355,7 @@ mod tests {
             "a\"b.com",
             "a'b.com",
             "a<b.com",
+            "a>b.com",
             "::1",
             "[::1",
             "[v1.x]",
@@ -346,6 +392,92 @@ mod tests {
         }
     }
 
+    // Inside the brackets only an IPv6 address, optionally followed by `%25`
+    // and a zone of unreserved characters, and after them only a port.
+    #[test]
+    fn refuses_a_zone_or_text_after_the_bracket_that_is_not_valid() {
+        let hosts = [
+            "[fe80::1%25]",
+            "[fe80::1%25'+alert(1)+']",
+            "[fe80::1%eth0]",
+            "[fe80::1%25eth%0]",
+            "[::1]x",
+            "[::1]80",
+            "[::1]:80x",
+            "[::1]]",
+        ];
+        for host in hosts {
+            assert!(
+                matches!(url("https", host), CallbackUrl::Invalid(_)),
+                "host {host:?}"
+            );
+        }
+        assert_eq!(
+            url("https", "[fe80::1%25eth0]:8080"),
+            valid("https://[fe80::1%25eth0]:8080/51dpipeline/json")
+        );
+    }
+
+    // A port goes by its value, so leading zeros are allowed, and a port too
+    // long to parse is refused rather than read as small enough.
+    #[test]
+    fn checks_the_port_by_its_value() {
+        assert_eq!(
+            url("https", "example.com:00080"),
+            valid("https://example.com:00080/51dpipeline/json")
+        );
+        assert_eq!(
+            url("https", "example.com:0065535"),
+            valid("https://example.com:0065535/51dpipeline/json")
+        );
+        for host in [
+            "example.com:0065536",
+            "example.com:123456",
+            "example.com:4294967296",
+            "example.com:99999999999999999999",
+        ] {
+            assert!(
+                matches!(url("https", host), CallbackUrl::Invalid(_)),
+                "host {host:?}"
+            );
+        }
+    }
+
+    // Each character rule 8 lists, in the user information, after the host
+    // and in the endpoint, and a `%` without two hexadecimal digits after it,
+    // even at the end.
+    #[test]
+    fn encodes_the_characters_rule_8_lists() {
+        assert_eq!(
+            callback_url("https", "u\"^`{|}@example.com/\"^`{|}", "/j\"^`{|}"),
+            valid(
+                "https://u%22%5E%60%7B%7C%7D@example.com/%22%5E%60%7B%7C%7D\
+                 /j%22%5E%60%7B%7C%7D"
+            )
+        );
+        let cases = [
+            (
+                "example.com/a%",
+                "https://example.com/a%25/51dpipeline/json",
+            ),
+            (
+                "example.com/a%4",
+                "https://example.com/a%254/51dpipeline/json",
+            ),
+            (
+                "example.com/a%41",
+                "https://example.com/a%41/51dpipeline/json",
+            ),
+        ];
+        for (host, expected) in cases {
+            assert_eq!(url("https", host), valid(expected), "host {host:?}");
+        }
+        assert_eq!(
+            callback_url("https", "example.com", "/json%"),
+            valid("https://example.com/json%25")
+        );
+    }
+
     #[test]
     fn the_invalid_url_is_the_one_built() {
         assert_eq!(
@@ -354,19 +486,32 @@ mod tests {
         );
     }
 
+    // Only `http` and `https`, ignoring case, as specifications#74 at 5e998b1
+    // asks.
     #[test]
     fn checks_the_scheme() {
-        for protocol in ["https", "http", "ftp", "h+t-p.s"] {
-            assert!(matches!(
-                url(protocol, "example.com"),
-                CallbackUrl::Valid(_)
-            ));
+        for protocol in ["https", "http", "HtTp"] {
+            assert!(
+                matches!(url(protocol, "example.com"), CallbackUrl::Valid(_)),
+                "protocol {protocol:?}"
+            );
         }
         assert_eq!(
             url("HTTPS", "example.com"),
             valid("https://example.com/51dpipeline/json")
         );
-        for protocol in ["1http", "h t", "x');alert(1);//", "a://b"] {
+        for protocol in [
+            "ftp",
+            "h+t-p.s",
+            "ws",
+            "javascript",
+            "httpx",
+            "https ",
+            "1http",
+            "h t",
+            "x');alert(1);//",
+            "a://b",
+        ] {
             assert!(
                 matches!(url(protocol, "example.com"), CallbackUrl::Invalid(_)),
                 "protocol {protocol:?}"
@@ -411,6 +556,9 @@ mod tests {
             "a\u{a0}b.com",
             "a\u{200b}b.com",
             "a\u{2028}b.com",
+            "\u{65e5}\u{672c}.jp",
+            "\u{e9}xample.com",
+            "\u{430}pple.com",
         ] {
             assert!(
                 matches!(url("https", host), CallbackUrl::Invalid(_)),

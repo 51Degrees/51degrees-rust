@@ -183,6 +183,47 @@ fn an_invalid_protocol_in_the_evidence_is_logged() {
     assert!(!js.contains("processRequest"));
 }
 
+/// The record writes the URL escaped, so a line break in the host cannot
+/// start a new log line.
+#[test]
+fn an_invalid_callback_url_is_logged_on_one_line() {
+    let pipeline = pipeline(
+        JavaScriptBuilderElement::builder()
+            .set_minify(false)
+            .build(),
+    );
+    let (js, records) = request(&pipeline, &[("header.host", "a\nb.com\r\u{2028}")]);
+    assert_eq!(records.len(), 1, "{records:?}");
+    for c in ['\n', '\r', '\u{2028}'] {
+        assert!(!records[0].1.contains(c), "{c:?} in {records:?}");
+    }
+    assert!(!js.contains("processRequest"));
+}
+
+/// A scheme other than `http` or `https` in the evidence is refused and
+/// logged like any other URL that is not valid.
+#[test]
+fn a_scheme_other_than_http_in_the_evidence_is_logged() {
+    let pipeline = pipeline(
+        JavaScriptBuilderElement::builder()
+            .set_minify(false)
+            .build(),
+    );
+    let (js, records) = request(
+        &pipeline,
+        &[("header.host", "example.com"), ("header.protocol", "ftp")],
+    );
+    assert_eq!(records.len(), 1, "{records:?}");
+    assert_eq!(records[0].0, log::Level::Error);
+    assert!(
+        records[0]
+            .1
+            .contains("\"ftp://example.com/51dpipeline/json\""),
+        "{records:?}"
+    );
+    assert!(!js.contains("processRequest"));
+}
+
 #[test]
 fn a_host_that_would_end_the_string_does_not_reach_the_script() {
     let pipeline = pipeline(
