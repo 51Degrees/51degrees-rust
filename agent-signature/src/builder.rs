@@ -35,7 +35,7 @@ use crate::constants::{
     DEFAULT_WAIT_BUDGET, MAXIMUM_PERIOD,
 };
 use crate::element::AgentSignatureElement;
-use crate::fetcher::Fetcher;
+use crate::fetcher::{is_https_without_user_info, Fetcher};
 use crate::http::HttpClient;
 use crate::Clock;
 
@@ -171,10 +171,11 @@ impl AgentSignatureElementBuilder {
     }
 
     /// Add the address of a registry of agent cards. More than one may be
-    /// added. The registries are read once for the life of the element, so
-    /// a registry or card that cannot be fetched then is not tried again
-    /// until the element is built again. Only the card properties are
-    /// affected.
+    /// added. Each must be HTTPS with no user information, or building the
+    /// element fails. The registries are read once for the life of the
+    /// element, so a registry or card that cannot be fetched then is not
+    /// tried again until the element is built again. Only the card
+    /// properties are affected.
     pub fn set_registry(mut self, url: impl Into<String>) -> Self {
         let url = url.into();
         if !url.is_empty() {
@@ -262,6 +263,18 @@ impl AgentSignatureElementBuilder {
             return Err(Error::configuration(
                 "The response limit must allow at least one byte to be read.",
             ));
+        }
+        // A registry read over plain HTTP would let anyone on the network
+        // path add a card naming a real agent's keys.
+        if let Some(registry) = self
+            .registries
+            .iter()
+            .find(|registry| !is_https_without_user_info(registry))
+        {
+            return Err(Error::configuration(format!(
+                "The registry address '{registry}' must be HTTPS and carry no user \
+                 information."
+            )));
         }
         let client = match self.http_client {
             Some(client) => client,

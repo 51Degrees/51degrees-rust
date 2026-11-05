@@ -328,18 +328,31 @@ pub(crate) fn parse_registry(text: &str) -> Vec<String> {
 /// that only appears inside a network, because a sender-chosen address in one
 /// is how a server is made to fetch its own internal services.
 pub(crate) fn is_safe_url(url: &str) -> bool {
-    let Ok(parsed) = Url::parse(url) else {
+    let Some(parsed) = parse_https_without_user_info(url) else {
         return false;
     };
-    if parsed.scheme() != "https" || !parsed.username().is_empty() || parsed.password().is_some() {
-        return false;
-    }
     match parsed.host() {
         Some(Host::Domain(_)) => true,
         Some(Host::Ipv4(address)) => !is_private_ipv4(address),
         Some(Host::Ipv6(address)) => !is_private_ipv6(address),
         None => false,
     }
+}
+
+/// Whether an address is HTTPS with no user information, which the
+/// specification asks of every address fetched, a registry's included.
+pub(crate) fn is_https_without_user_info(url: &str) -> bool {
+    parse_https_without_user_info(url).is_some()
+}
+
+/// The address, where it is HTTPS and carries no user information. Anything
+/// before an '@' in the authority names a user rather than a host, and is a
+/// well worn way of writing an address that reads as one host and connects
+/// to another.
+fn parse_https_without_user_info(url: &str) -> Option<Url> {
+    let parsed = Url::parse(url).ok()?;
+    (parsed.scheme() == "https" && parsed.username().is_empty() && parsed.password().is_none())
+        .then_some(parsed)
 }
 
 /// Loopback, private, link local, carrier grade and the unspecified address.
