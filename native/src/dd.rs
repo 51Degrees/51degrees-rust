@@ -1246,7 +1246,8 @@ mod tests {
             .into_iter()
             .map(|root| {
                 root.join("cxx")
-                    .join("device-detection-data")
+                    .join("data")
+                    .join("device-detection")
                     .join("51Degrees-LiteV4.1.hash")
             })
             .find(|path| path.is_file())

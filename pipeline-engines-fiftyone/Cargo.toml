@@ -7,7 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage.workspace = true
+homepage = "https://51degrees.com/build-your-own?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-engines-fiftyone-cargo.toml&utm_term=homepage"
 
 [dependencies]
 fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
@@ -35,9 +35,6 @@ fastrand = "2"
 uuid = { version = "1", features = ["v4"] }
 # GZip compression of the usage-sharing XML payload before it is posted.
 flate2.workspace = true
-# Streaming XML writer used to build the usage-sharing payload. The crate is
-# small and writer-only which is all this element needs.
-quick-xml = "0.37"
 # Blocking HTTP client used by the usage-sharing background thread. The blocking
 # client runs on its own std::thread and does not need an async runtime. rustls
 # avoids a system OpenSSL dependency, matching the sibling engines crate. Optional
@@ -45,6 +42,11 @@ quick-xml = "0.37"
 # wasm32-wasip1, so without the feature the usage-sharing element collects evidence
 # but does not transmit (its sender is a no-op).
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"], optional = true }
+
+[target.'cfg(unix)'.dependencies]
+# The host's name, and on Linux and macOS its interface addresses, from which
+# usage sharing works out the ServerIP each record gives.
+libc = "0.2"
 
 [features]
 # Both features are off by default so a default build carries no reqwest, notify

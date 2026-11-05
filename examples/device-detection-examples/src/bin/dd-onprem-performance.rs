@@ -39,10 +39,21 @@ use fiftyone_device_detection::{
     DEVICE_DATA_KEY,
 };
 
-/// The relative path to the bundled User-Agent CSV within the
-/// data in the `cxx` submodule, used when no evidence path is supplied.
-const USER_AGENTS_RELATIVE_PATH: &str =
-    "cxx/device-detection-data/20000 User Agents.csv";
+use device_detection_examples::ENTERPRISE_PROPERTIES;
+
+/// The relative path to the User-Agent CSV in the data repository inside the
+/// `cxx` submodule, used when no evidence path is supplied.
+const USER_AGENTS_RELATIVE_PATH: &str = "cxx/data/device-detection/20000 User Agents.csv";
+
+/// Where to ask about a copy of the Enterprise data file.
+const CONTACT_US_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-performance.rs&utm_term=enterprise-data-file";
+
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-performance.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-performance.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-performance.rs&utm_term=find-out-more"),
+];
 
 /// Options the example runs with, so `main` and the test share one entry point.
 pub struct ExampleOptions {
@@ -101,6 +112,8 @@ impl BenchmarkResult {
 /// Loads a list of User-Agents, builds a single on-premise pipeline that requests
 /// only `IsMobile` (the fastest realistic configuration), warms it up, then runs
 /// many detections across several threads and reports detections per second.
+/// It ends by saying which Enterprise properties the data file does not carry,
+/// with where to ask about a copy, and the "Find out more" links.
 pub fn run(options: ExampleOptions) -> Result<()> {
     // Load the User-Agents to benchmark against.
     let user_agents = load_user_agents(&options.user_agents_file, options.max_user_agents)?;
@@ -175,6 +188,27 @@ pub fn run(options: ExampleOptions) -> Result<()> {
     // detection. This benchmark already requests only IsMobile. See the
     // match-metrics example for that effect in isolation.
 
+    // The benchmark's engine asks only for IsMobile, so the data file's own
+    // properties are read from a second engine to say which Enterprise
+    // properties it carries.
+    let available = device_detection_examples::data_file_properties(&options.data_file)?;
+    println!();
+    println!("--- Enterprise properties ---");
+    for name in ENTERPRISE_PROPERTIES {
+        let state = if examples_shared::is_available(name, &available) {
+            "in this data file"
+        } else {
+            examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+        };
+        println!("\t{name:<22}: {state}");
+    }
+    let missing = examples_shared::missing_properties(ENTERPRISE_PROPERTIES, &available);
+    if let Some(message) = examples_shared::enterprise_data_file_message(&missing, CONTACT_US_URL) {
+        println!();
+        println!("{message}");
+    }
+
+    examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::ON_PREMISE_REPOSITORIES);
     Ok(())
 }
 // [example]
@@ -290,15 +324,15 @@ fn load_user_agents(path: &PathBuf, max: usize) -> Result<Vec<String>> {
     Ok(user_agents)
 }
 
-/// Locate the bundled User-Agent file, walking up the tree so it resolves from an
-/// IDE, the crate directory or CI.
+/// Locate the User-Agent file, walking up the tree so it resolves from an IDE,
+/// the crate directory or CI, and downloading it when it is missing.
 fn default_user_agents_file() -> Option<PathBuf> {
-    examples_shared::find_file(USER_AGENTS_RELATIVE_PATH)
+    examples_shared::find_data_file(USER_AGENTS_RELATIVE_PATH)
 }
 
 /// Resolve the data and evidence files then run the benchmark. The data and
 /// User-Agent files use the usual fallbacks. With either missing the example
-/// prints a clear message and exits successfully.
+/// fails, after the resolver has printed the command that gets the file.
 fn main() -> Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let json_output = examples_shared::json_output_path(&arguments);
@@ -313,13 +347,10 @@ fn main() -> Result<()> {
         .or_else(default_user_agents_file);
 
     let (Some(data_file), Some(user_agents_file)) = (data_file, user_agents_file) else {
-        eprintln!(
-            "Missing the data file or the User-Agent file. Set 51DEGREES_DD_PATH and \
-             ensure the device-detection-data submodule is present (run `git \
-             submodule update --recursive`), or pass the data-file and User-Agent-file \
-             paths as the first two arguments."
+        anyhow::bail!(
+            "Missing the data file or the User-Agent file. Set 51DEGREES_DD_PATH, or \
+             pass the data-file and User-Agent-file paths as the first two arguments."
         );
-        return Ok(());
     };
 
     run(ExampleOptions {
@@ -371,7 +402,7 @@ mod tests {
             return;
         };
         run(ExampleOptions {
-            data_file,
+            data_file: data_file.clone(),
             user_agents_file,
             // Two threads with a small slice keeps the test quick while still
             // exercising the multi-threaded path.
@@ -381,6 +412,18 @@ mod tests {
             json_output: None,
         })
         .expect("the on-premise performance example should complete");
+
+        // The Lite file carries none of the Enterprise properties, so the run
+        // names them all with the contact link. 51DEGREES_DD_PATH can name
+        // another file.
+        if data_file.ends_with(examples_shared::DD_LITE_RELATIVE_PATH) {
+            let available = device_detection_examples::data_file_properties(&data_file)
+                .expect("the data file opens");
+            assert_eq!(
+                examples_shared::missing_properties(ENTERPRISE_PROPERTIES, &available),
+                ENTERPRISE_PROPERTIES
+            );
+        }
     }
 
     /// The results file CI publishes must be written in the shared schema, with
@@ -443,7 +486,7 @@ mod tests {
  * The device-detection on-premise performance-benchmark console example. It
  * measures a "clock-time" detection throughput.
  *
- * The example loads a list of User-Agents (the bundled "20000 User Agents.csv",
+ * The example loads a list of User-Agents (the "20000 User Agents.csv" file,
  * one per line), builds a single on-premise pipeline configured for speed, warms
  * it up, then runs many detections in parallel across several worker threads and
  * reports the detections-per-second throughput plus the average real-time per
@@ -479,9 +522,17 @@ mod tests {
  * console example. In normal operation leave it on, which is the builder's
  * default, so 51Degrees receives evidence that improves detection.
  *
+ * After the benchmark the example lists the properties only the Enterprise
+ * data file carries (HardwareVendor, HardwareModel, DeviceType, PriceBand and
+ * ScreenInchesDiagonal), saying for each whether the data file in use carries
+ * it, read from the data file's own properties. With the free Lite file each
+ * "needs the Enterprise data file", and the run ends by naming them with a
+ * link to contact 51Degrees about a copy, then a "Find out more" section.
+ *
  * The data and User-Agent files are read from the first two command-line
- * arguments, the `51DEGREES_DD_PATH` environment variable, or the files shipped
- * in the cxx submodule. For more on adjusting performance see
+ * arguments, the `51DEGREES_DD_PATH` environment variable, or the files in the
+ * data repository inside the cxx submodule, which the example downloads when
+ * they are missing. For more on adjusting performance see
  * https://51degrees.com/documentation/_device_detection__features__performance_options.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-performance.rs&utm_term=dd-onprem-performance
  * and the hash data-set production documentation.
  */

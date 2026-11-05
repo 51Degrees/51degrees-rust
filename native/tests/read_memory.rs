@@ -52,7 +52,7 @@ fn asn_data_file() -> Option<PathBuf> {
             return Some(path);
         }
     }
-    let relative = "cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi";
+    let relative = "cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi";
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     loop {
         let candidate = dir.join(relative);

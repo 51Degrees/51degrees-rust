@@ -282,6 +282,47 @@ jobs:
           grep -q '^- `javascript` lineEndings, ' out/report-script.md
           grep -q '`values-promise-none`.* at `javascript`: ' out/report-script.md
 
+      # Both usage sharing elements must write a record for every case of the
+      # engines' pipeline apart from the one whose evidence they ignore, on
+      # both sides, or comparing the records proves nothing.
+      - name: Check every usage record is written
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          want=$(jq -r '.[] | select(.pipeline == null and .id != "usage-health-check") | .id' \
+            corpus/evidence.json | LC_ALL=C sort | paste -sd ' ')
+          for side in dotnet rust; do
+            for field in usage usageCustom; do
+              got=$(jq -r --arg field "$field" 'select(.[$field] != null) | .id' "out/$side.jsonl" \
+                | LC_ALL=C sort | paste -sd ' ')
+              if [ "$got" != "$want" ]; then
+                echo "::error::The $side $field records are for: $got"
+                exit 1
+              fi
+            done
+          done
+          echo "Both sides wrote both records for: $want"
+
+      # The records are compared as text, so a Rust record with one evidence
+      # value changed, or with one of the second element's Flow Element names
+      # changed, must fail.
+      - name: Check that a changed usage record fails
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          jq -c 'if .id == "usage-evidence" then .usage |= sub("en-GB"; "en-US")
+            elif .id == "ua-iphone" then .usageCustom |= sub("Custom element 2"; "Custom element 3")
+            else . end' out/rust.jsonl > out/rust-usage.jsonl
+          if target/debug/parity-compare --corpus corpus/evidence.json \
+            --dotnet out/dotnet.jsonl --rust out/rust-usage.jsonl \
+            --allowed allowed-differences.json --data lite \
+            --report out/report-usage.md > /dev/null; then
+            echo "::error::The comparison passed with a changed usage record"
+            exit 1
+          fi
+          grep -q '`usage-evidence`.* at `usage`: ' out/report-usage.md
+          grep -q '`ua-iphone`.* at `usageCustom`: ' out/report-usage.md
+
       - name: Upload the answers and the report
         if: always() && env.RUN == 'true'
         uses: actions/upload-artifact@v4

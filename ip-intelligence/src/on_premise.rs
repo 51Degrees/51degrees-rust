@@ -289,8 +289,8 @@ mod tests {
 
     /// Resolve the ASN IP-intelligence data file at run time.
     ///
-    /// The default test/CI data file is the ASN file checked into the data
-    /// repository (small, current and loads reliably). Set `51DEGREES_IPI_PATH`
+    /// The default test/CI data file is the ASN file from the data repository
+    /// (small, current and loads reliably). Set `51DEGREES_IPI_PATH`
     /// to override the path. Returns [`None`] when no data file is present, so
     /// the test skips cleanly on a machine without it.
     fn asn_data_file() -> Option<PathBuf> {
@@ -304,16 +304,17 @@ mod tests {
             .parent()?
             .to_path_buf();
         let name = "51Degrees-IPIV4AsnIpiV41.ipi";
-        // The data file lives in the `cxx` submodule, or directly in the wider
-        // Workspace tree beside the Rust workspace.
+        // The data repository is in the `cxx` submodule, or checked out in the
+        // wider Workspace tree beside the Rust workspace.
         let candidates = [
             workspace
                 .join("cxx")
-                .join("ip-intelligence-data")
+                .join("data")
+                .join("ip-intelligence")
                 .join(name),
             workspace
                 .parent()
-                .map(|p| p.join("ip-intelligence-data").join(name))
+                .map(|p| p.join("data").join("ip-intelligence").join(name))
                 .unwrap_or_default(),
         ];
         candidates.into_iter().find(|p| p.is_file())

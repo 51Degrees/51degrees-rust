@@ -1,6 +1,6 @@
 # 51Degrees Identifier Client
 
-[![51Degrees](https://51degrees.com/img/logo.png?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=logo "Data rewards the curious")](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=logo)
+[![51Degrees](https://raw.githubusercontent.com/51Degrees/51degrees-rust/main/.github/images/logo-160.png "Data rewards the curious")](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=logo)
 **Pipeline API**
 
 [Developer Documentation](https://51degrees.com/documentation/index.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=documentation)
@@ -272,15 +272,19 @@ A privately hosted copy of the service is reached by giving the builder its
 base with `endpoint(...)`, or by setting the `FOD_CLOUD_API_URL` environment
 variable, which is the same variable the cloud request engine honours.
 
+## License
+
+EUPL-1.2. See [LICENSE](../LICENSE).
+
 ## Find out more
 
 The other 51Did clients this crate is a port of, and the engine repositories:
 
 - https://github.com/51Degrees/51degrees-rust
-- https://github.com/51Degrees/pipeline-dotnet
-- https://github.com/51Degrees/pipeline-java
-- https://github.com/51Degrees/pipeline-node
-- https://github.com/51Degrees/pipeline-python
+- https://github.com/51Degrees/51degrees-dotnet/tree/main/pipeline
+- https://github.com/51Degrees/51degrees-java/tree/main/pipeline
+- https://github.com/51Degrees/51degrees-node/tree/main/pipeline
+- https://github.com/51Degrees/51degrees-python/tree/main/pipeline
 - https://github.com/51Degrees/pipeline-php-did
 - https://github.com/SWAN-community/owid-rust
 
@@ -290,10 +294,8 @@ The OWID envelope a 51Did travels in:
 
 On 51degrees.com:
 
-- [What a 51Did is and how it is used](https://51degrees.com/documentation/_identifiers__index.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=identifiers-documentation)
-- [The 51Did inspector, a visual breakdown of an identifier](https://51degrees.com/developers/51did-inspector?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=51did-inspector)
-- [Get a resource key](https://configure.51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=configure)
-
-## License
-
-EUPL-1.2. See [LICENSE](../LICENSE).
+- [51Did](https://51degrees.com/developers/51did?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=51did)
+- [What a 51Did is and how it is used](https://51degrees.com/documentation/_identifiers__index.html?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=identifiers-documentation)
+- [The 51Did inspector, a visual breakdown of an identifier](https://51degrees.com/developers/51did-inspector?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=51did-inspector)
+- [Get a resource key](https://configure.51degrees.com/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=configure)
+- [Pricing](https://51degrees.com/pricing?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=pricing)

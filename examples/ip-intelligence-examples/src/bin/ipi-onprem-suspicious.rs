@@ -26,8 +26,10 @@
 //!
 //! Combines the diversity and behavioral properties an Enterprise data file
 //! carries to make a basic judgement about whether an IP address is a likely
-//! source of suspicious requests. The descriptive block the documentation tooling
-//! renders lives at the bottom of the file.
+//! source of suspicious requests. With a free data file it shows the free
+//! properties and says the judgement needs the Enterprise data file. The
+//! descriptive block the documentation tooling renders lives at the bottom of
+//! the file.
 //!
 //! @snippet ipi-onprem-suspicious.rs example
 
@@ -40,10 +42,19 @@ use fiftyone_ip_intelligence::{
 };
 use fiftyone_pipeline_core::{Evidence, Pipeline};
 
-/// The behavioral and diversity properties this example reads. They are carried
-/// by an Enterprise data file and are requested by name so the on-premise engine
-/// surfaces them. An ASN or Lite file does not carry them, in which case each
-/// reads back as a no-value and the verdict falls through to its safe default.
+/// Where to ask about a copy of the Enterprise data file.
+const CONTACT_US_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-suspicious.rs&utm_term=enterprise-data-file";
+
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-suspicious.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-suspicious.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-suspicious.rs&utm_term=find-out-more"),
+];
+
+/// The behavioral and diversity properties the judgement reads. Only the
+/// Enterprise data file carries them, and they are requested by name so the
+/// on-premise engine surfaces them.
 const SUSPICIOUS_PROPERTIES: &[&str] = &[
     "IsCellular",
     "HardwareDiversity",
@@ -51,9 +62,17 @@ const SUSPICIOUS_PROPERTIES: &[&str] = &[
     "LocationConfidence",
     "IsHosted",
     "CountryCode",
-    "RegisteredCountry",
     "HumanProbability",
 ];
+
+/// The free properties also requested and shown. The ASN file carries Asn and
+/// AsnName and the Lite file RegisteredCountry, which the judgement also reads.
+/// A data file opens only when it carries at least one property asked for, so
+/// these let either free file open.
+const FREE_PROPERTIES: &[&str] = &["Asn", "AsnName", "RegisteredCountry"];
+
+/// Shown for a free property the data file in use does not carry.
+const NOT_IN_THIS_FILE: &str = "not in this data file";
 
 /// The options that drive a run of this example.
 pub struct ExampleOptions {
@@ -64,17 +83,18 @@ pub struct ExampleOptions {
 }
 
 impl ExampleOptions {
-    /// Default options, using the best-available loadable data-file tier. In
-    /// practice the diversity and behavioral properties are only present in an
-    /// Enterprise file, so the verdict is meaningful only when an Enterprise file
-    /// is resolved.
+    /// Default options, reading the Enterprise file when its share is
+    /// reachable and otherwise the free Lite file. The diversity and
+    /// behavioral properties are only present in an Enterprise file, so the
+    /// judgement is made only when an Enterprise file is resolved.
     pub fn from_env() -> Option<Self> {
-        Self::for_tier(examples_shared::IpiTier::BestAvailable)
+        Self::for_tier(examples_shared::IpiTier::EnterpriseOrLite)
     }
 
-    /// Options pinned to a specific data-file tier. The test pins the Enterprise
-    /// tier, the only tier that carries the diversity and behavioral properties
-    /// this example relies on, and skips when it is not reachable.
+    /// Options pinned to a specific data-file tier. One test pins the
+    /// Enterprise tier, the only tier that carries the diversity and behavioral
+    /// properties, and skips when it is not reachable. Another pins the ASN
+    /// tier, which runs without them.
     pub fn for_tier(tier: examples_shared::IpiTier) -> Option<Self> {
         Some(ExampleOptions {
             data_file: examples_shared::ipi_data_path(tier)?,
@@ -116,16 +136,22 @@ struct SuspiciousInputs {
 ///
 /// Builds an on-premise IP Intelligence pipeline, requesting the diversity and
 /// behavioral properties, and for each IP prints the contributing values and an
-/// IsSuspicious verdict. Usage sharing is not enabled, because this is a console
-/// example. A production deployment, and every web example, should enable it.
+/// IsSuspicious verdict. When the data file does not carry the properties the
+/// verdict reads, each says it needs the Enterprise data file, and so does the
+/// verdict. Usage sharing is not enabled, because this is a console example. A
+/// production deployment, and every web example, should enable it.
 pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> {
+    // The data file's own list of properties says which of the judgement's
+    // properties it carries. The free files carry none of them.
+    let available = ip_intelligence_examples::data_file_properties(&options.data_file)?;
+
     // LowMemory pages the (potentially multi-gigabyte) Enterprise data file from
     // disk rather than loading it entirely into memory. The behavioral
     // properties are requested by name so the engine surfaces them in addition to
     // the typed location and network set.
     let pipeline: Arc<Pipeline> = IpIntelligencePipelineBuilder::on_premise(&options.data_file)
         .performance_profile(PerformanceProfile::LowMemory)
-        .properties(SUSPICIOUS_PROPERTIES.iter().copied())
+        .properties(SUSPICIOUS_PROPERTIES.iter().chain(FREE_PROPERTIES).copied())
         // Automatic updates and the file-system watcher are left off so the
         // example is self-contained and does not reach out to the network.
         .auto_update(false)
@@ -141,15 +167,33 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
     )?;
 
     for ip in &options.ips {
-        assess_ip(&pipeline, ip, out)?;
+        assess_ip(&pipeline, ip, &available, out)?;
     }
 
+    writeln!(out)?;
+    ip_intelligence_examples::write_data_file_warnings(&options.data_file, out)?;
+    let missing = examples_shared::missing_properties(SUSPICIOUS_PROPERTIES, &available);
+    if let Some(message) = examples_shared::enterprise_data_file_message(&missing, CONTACT_US_URL) {
+        writeln!(out)?;
+        writeln!(out, "{message}")?;
+    }
+    examples_shared::write_find_out_more(
+        out,
+        FIND_OUT_MORE,
+        examples_shared::ON_PREMISE_REPOSITORIES,
+    )?;
     Ok(())
 }
 // [example]
 
 /// Assess one IP address and print the contributing values plus the verdict.
-fn assess_ip(pipeline: &Arc<Pipeline>, ip: &str, out: &mut dyn Write) -> anyhow::Result<()> {
+/// `available` holds the properties the data file carries.
+fn assess_ip(
+    pipeline: &Arc<Pipeline>,
+    ip: &str,
+    available: &[String],
+    out: &mut dyn Write,
+) -> anyhow::Result<()> {
     let mut data =
         pipeline.create_flow_data_with(Evidence::builder().add("query.client-ip", ip).build());
     data.process()
@@ -159,10 +203,12 @@ fn assess_ip(pipeline: &Arc<Pipeline>, ip: &str, out: &mut dyn Write) -> anyhow:
         .get(IP_DATA_KEY)
         .context("the pipeline produced no IP Intelligence data")?;
 
-    // The on-premise engine surfaces every non-typed property as a weighted
-    // string, so each behavioral property is read through `weighted_string` and
-    // reduced to its most probable candidate. A property the data tier does not
-    // carry reads back as a no-value, which the helpers map to a safe default.
+    // The on-premise engine stores each value either under its declared type
+    // or as a weighted list, so each input is read under its declared type and
+    // otherwise reduced to the most probable candidate of the list. A property
+    // the data file does not carry reads back as a no-value, which the helpers
+    // map to a safe default. That default is never shown, because its line says
+    // why there is none.
     let inputs = SuspiciousInputs {
         is_cellular: top_bool(ip_data, "IsCellular"),
         hardware_diversity: top_integer(ip_data, "HardwareDiversity"),
@@ -174,38 +220,69 @@ fn assess_ip(pipeline: &Arc<Pipeline>, ip: &str, out: &mut dyn Write) -> anyhow:
         human_probability: top_integer(ip_data, "HumanProbability"),
     };
 
-    let is_suspicious = is_suspicious(&inputs);
+    // The verdict is made only when the data file carries every property it
+    // reads, so a free file never shows a verdict built on missing values.
+    let verdict =
+        if examples_shared::missing_properties(SUSPICIOUS_PROPERTIES, available).is_empty() {
+            is_suspicious(&inputs).to_string()
+        } else {
+            examples_shared::NEEDS_ENTERPRISE_DATA_FILE.to_owned()
+        };
+
+    let no_value = || "(no value)".to_owned();
+    let lines = [
+        ("Asn", plain_string(ip_data, "Asn")),
+        ("AsnName", plain_string(ip_data, "AsnName")),
+        ("IsCellular", inputs.is_cellular.to_string()),
+        ("HardwareDiversity", inputs.hardware_diversity.to_string()),
+        ("BrowserDiversity", inputs.browser_diversity.to_string()),
+        (
+            "LocationConfidence",
+            inputs.location_confidence.clone().unwrap_or_else(no_value),
+        ),
+        ("IsHosted", inputs.is_hosted.to_string()),
+        (
+            "CountryCode",
+            inputs.country.clone().unwrap_or_else(no_value),
+        ),
+        (
+            "RegisteredCountry",
+            inputs.registered_country.clone().unwrap_or_else(no_value),
+        ),
+        ("HumanProbability", inputs.human_probability.to_string()),
+    ];
 
     writeln!(out)?;
     writeln!(out, "Input values:")?;
     writeln!(out, "\tquery.client-ip: {ip}")?;
     writeln!(out, "Results:")?;
-    writeln!(out, "\tIsCellular: {}", inputs.is_cellular)?;
-    writeln!(out, "\tHardwareDiversity: {}", inputs.hardware_diversity)?;
-    writeln!(out, "\tBrowserDiversity: {}", inputs.browser_diversity)?;
-    writeln!(
-        out,
-        "\tLocationConfidence: {}",
-        inputs
-            .location_confidence
-            .as_deref()
-            .unwrap_or("(no value)")
-    )?;
-    writeln!(out, "\tIsHosted: {}", inputs.is_hosted)?;
-    writeln!(
-        out,
-        "\tCountryCode: {}",
-        inputs.country.as_deref().unwrap_or("(no value)")
-    )?;
-    writeln!(
-        out,
-        "\tRegisteredCountry: {}",
-        inputs.registered_country.as_deref().unwrap_or("(no value)")
-    )?;
-    writeln!(out, "\tHumanProbability: {}", inputs.human_probability)?;
-    writeln!(out, "\tIsSuspicious: {is_suspicious}")?;
+    for (name, value) in lines {
+        writeln!(out, "\t{name}: {}", shown(name, value, available))?;
+    }
+    writeln!(out, "\tIsSuspicious: {verdict}")?;
 
     Ok(())
+}
+
+/// The text for a property's line, being `value` when the data file carries
+/// the property, otherwise why there is none.
+fn shown(name: &str, value: String, available: &[String]) -> String {
+    if examples_shared::is_available(name, available) {
+        value
+    } else if SUSPICIOUS_PROPERTIES.contains(&name) {
+        examples_shared::NEEDS_ENTERPRISE_DATA_FILE.to_owned()
+    } else {
+        NOT_IN_THIS_FILE.to_owned()
+    }
+}
+
+/// Read a plain string property, or `(no value)` when it has none.
+fn plain_string(ip_data: &IpIntelligenceDataBase, name: &str) -> String {
+    ip_data
+        .string(name)
+        .value()
+        .map(String::clone)
+        .unwrap_or_else(|_| "(no value)".to_owned())
 }
 
 /// The three-branch heuristic for deciding whether an IP looks suspicious.
@@ -236,23 +313,26 @@ fn is_suspicious(inputs: &SuspiciousInputs) -> bool {
     high_diversity_low_confidence || hosted_country_mismatch || browser_outpaces_hardware
 }
 
-/// Read the most probable candidate of a weighted string property, or `None`
-/// when the property had no value (for example because the data tier does not
-/// carry it).
+/// Read a property as text, being its plain string value, or otherwise the most
+/// probable candidate of a weighted list. `None` when the property had no value
+/// (for example because the data tier does not carry it).
 fn top_string(ip_data: &IpIntelligenceDataBase, name: &str) -> Option<String> {
-    ip_data
-        .weighted_string(name)
-        .value()
-        .ok()
-        .and_then(|list| list.first().map(|w| w.value.clone()))
+    ip_data.string(name).value().ok().cloned().or_else(|| {
+        ip_data
+            .weighted_string(name)
+            .value()
+            .ok()
+            .and_then(|list| list.first().map(|w| w.value.clone()))
+    })
 }
 
-/// Read the most probable candidate of a weighted property as an integer.
-///
-/// The on-premise engine surfaces these counts as weighted strings, so the top
-/// candidate is parsed to an `i64`, tolerating a trailing fractional part.
+/// Read a property as an integer, being its plain integer value, or otherwise
+/// [`top_string`] parsed to an `i64`, tolerating a trailing fractional part.
 /// Returns `0` when the property had no value or did not parse.
 fn top_integer(ip_data: &IpIntelligenceDataBase, name: &str) -> i64 {
+    if let Ok(value) = ip_data.integer(name).value() {
+        return i64::from(*value);
+    }
     match top_string(ip_data, name) {
         Some(value) => {
             let trimmed = value.trim();
@@ -266,11 +346,13 @@ fn top_integer(ip_data: &IpIntelligenceDataBase, name: &str) -> i64 {
     }
 }
 
-/// Read the most probable candidate of a weighted property as a boolean.
-///
-/// The native side renders booleans as `True`/`False` (or `1`/`0`), so both
-/// spellings are accepted. Returns `false` when the property had no value.
+/// Read a property as a boolean, being its plain boolean value, or otherwise
+/// [`top_string`] read as `True`/`False` (or `1`/`0`), the spellings the native
+/// side renders. Returns `false` when the property had no value.
 fn top_bool(ip_data: &IpIntelligenceDataBase, name: &str) -> bool {
+    if let Ok(value) = ip_data.boolean(name).value() {
+        return *value;
+    }
     match top_string(ip_data, name) {
         Some(value) => {
             let trimmed = value.trim();
@@ -296,18 +378,13 @@ fn main() -> anyhow::Result<()> {
         },
         None => match ExampleOptions::from_env() {
             Some(options) => options,
-            None => {
-                writeln!(
-                    out,
-                    "No IP Intelligence data file could be located. Set {} to an \
-                     Enterprise .ipi file (the diversity and behavioral properties this \
-                     example reads are only present in an Enterprise file). Contact \
-                     51Degrees for one: \
-                     https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-suspicious.rs&utm_term=enterprise-data-required.",
-                    examples_shared::IPI_PATH_ENV_VAR
-                )?;
-                return Ok(());
-            }
+            None => anyhow::bail!(
+                "No IP Intelligence data file could be located. Set {} to an .ipi \
+                 file, or pass its path as the first argument. The judgement needs \
+                 the Enterprise data file. Contact us about getting a copy at {}",
+                examples_shared::IPI_PATH_ENV_VAR,
+                CONTACT_US_URL
+            ),
         },
     };
 
@@ -338,6 +415,79 @@ mod tests {
             printed.contains("IsSuspicious"),
             "expected an IsSuspicious verdict, output was:\n{printed}"
         );
+    }
+
+    /// The example runs on the free ASN file, which carries none of the
+    /// judgement's properties, so it gives no verdict and says why.
+    #[test]
+    fn suspicious_runs_against_the_asn_file() {
+        let Some(options) = ExampleOptions::for_tier(examples_shared::IpiTier::Asn) else {
+            eprintln!("no usable IP Intelligence data file; skipping suspicious run");
+            return;
+        };
+
+        let mut buffer = Vec::new();
+        run(&options, &mut buffer).expect("the suspicious example should run");
+
+        let printed = String::from_utf8(buffer).expect("output should be valid UTF-8");
+        assert!(printed.contains("Asn:"));
+        assert!(printed.contains(examples_shared::FIND_OUT_MORE_HEADING));
+        // 51DEGREES_IPI_PATH can name another file.
+        let asn_file = examples_shared::IPI_ASN_RELATIVE_PATH.rsplit('/').next();
+        if options.data_file.file_name().and_then(|n| n.to_str()) == asn_file {
+            assert!(
+                printed.contains("IsSuspicious: needs the Enterprise data file"),
+                "a free file gives no verdict, output was:\n{printed}"
+            );
+            assert!(printed.contains("utm_term=enterprise-data-file"));
+        }
+    }
+
+    /// Each input is read whether the engine stored it under its declared type
+    /// or as a weighted list. The free Lite file gives RegisteredCountry as a
+    /// plain string, which a weighted read alone missed.
+    #[test]
+    fn inputs_are_read_as_stored() {
+        use fiftyone_ip_intelligence::{WeightedValue, IP_DATA_KEY_NAME};
+
+        let mut plain = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        plain.set_string("RegisteredCountry", "GB");
+        plain.set_integer("HardwareDiversity", 8);
+        plain.set_boolean("IsHosted", true);
+        assert_eq!(
+            top_string(&plain, "RegisteredCountry").as_deref(),
+            Some("GB")
+        );
+        assert_eq!(top_integer(&plain, "HardwareDiversity"), 8);
+        assert!(top_bool(&plain, "IsHosted"));
+
+        let mut weighted = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        weighted.set_weighted_string(
+            "RegisteredCountry",
+            vec![
+                WeightedValue::new(20000, "US".to_owned()),
+                WeightedValue::new(40000, "GB".to_owned()),
+            ],
+        );
+        weighted.set_weighted_string(
+            "HardwareDiversity",
+            vec![WeightedValue::new(65535, "8.0".to_owned())],
+        );
+        weighted.set_weighted_string(
+            "IsHosted",
+            vec![WeightedValue::new(65535, "True".to_owned())],
+        );
+        assert_eq!(
+            top_string(&weighted, "RegisteredCountry").as_deref(),
+            Some("GB")
+        );
+        assert_eq!(top_integer(&weighted, "HardwareDiversity"), 8);
+        assert!(top_bool(&weighted, "IsHosted"));
+
+        let empty = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        assert_eq!(top_string(&empty, "RegisteredCountry"), None);
+        assert_eq!(top_integer(&empty, "HardwareDiversity"), 0);
+        assert!(!top_bool(&empty, "IsHosted"));
     }
 
     /// The heuristic's three branches each independently flag a suspicious IP,
@@ -417,11 +567,18 @@ mod tests {
  *    activity.
  *
  * The IP is supplied as `query.client-ip` evidence and the result is read back
- * through the shared `IP_DATA_KEY`. The on-premise engine surfaces these
- * properties as weighted values, so each is reduced to its most probable
- * candidate before the heuristic runs. A property the data tier does not carry
- * reads back as a no-value and the contributing value falls through to its safe
- * default.
+ * through the shared `IP_DATA_KEY`. Each property is read under its declared
+ * type, or reduced to its most probable candidate when the engine gives a
+ * weighted list, before the heuristic runs.
+ *
+ * The example also asks for `Asn` and `AsnName` from the free ASN file and
+ * `RegisteredCountry` from the free Lite file, so it opens and shows something
+ * useful on either free file. The data file's own list of properties says
+ * which of the judgement's properties it carries. With a free file each of
+ * them, and the IsSuspicious verdict, says "needs the Enterprise data file",
+ * and the run names them with a link to contact 51Degrees about a copy of the
+ * Enterprise data file. It also prints the standard data-file warnings and
+ * ends with a "Find out more" section.
  *
  * The verdict combines three independent branches, matching the reference
  * example:
@@ -439,9 +596,11 @@ mod tests {
  *
  * # Data file
  *
- * This example requires an Enterprise IP Intelligence data file (`.ipi`), which is
+ * The judgement needs an Enterprise IP Intelligence data file (`.ipi`), which is
  * the tier that carries the diversity and behavioral properties. The data file is
- * resolved by `examples_shared::ipi_data_path`. Contact 51Degrees for an
+ * resolved by `examples_shared::ipi_data_path`, which gives the free Lite file
+ * when no other file is set, and the example runs on either free file without
+ * a verdict. Contact 51Degrees for an
  * Enterprise file: <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-suspicious.rs&utm_term=ipi-onprem-suspicious>.
  *
  * # Usage sharing

@@ -1321,11 +1321,12 @@ mod tests {
             .join("cxx")
     }
 
-    /// Path to the ASN IP Intelligence data file checked into the data
-    /// repository, if present.
+    /// Path to the ASN IP Intelligence data file in the data repository, if it
+    /// has been downloaded.
     fn asn_data_file() -> Option<PathBuf> {
         let path = cxx_dir()
-            .join("ip-intelligence-data")
+            .join("data")
+            .join("ip-intelligence")
             .join("51Degrees-IPIV4AsnIpiV41.ipi");
         path.is_file().then_some(path)
     }
@@ -1468,9 +1469,8 @@ mod tests {
             // returned a well defined status. That alone proves the
             // initialization symbols and the whole common plus
             // graph plus `ipi` link is sound on the host toolchain. The
-            // data file itself may be absent or unusable (for example a Git LFS
-            // pointer rather than the real file in a checkout without LFS),
-            // reported as a non-Success status. Treat that as a clean skip rather
+            // data file itself may be absent or unusable, reported as a
+            // non-Success status. Treat that as a clean skip rather
             // than a failure: the real lookup path is exercised by the
             // higher-level on-premise tests when a usable data file is present.
             if status != StatusCode::Success {
