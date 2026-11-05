@@ -1016,7 +1016,7 @@ mod tests {
     /// wider Workspace tree. Returns [`None`] when none is present so the smoke
     /// tests can skip cleanly.
     ///
-    /// The ASN file checked into the `ip-intelligence-data` repository loads
+    /// The ASN file from the data repository, which its script downloads, loads
     /// against this source revision and is the convenient default. Point
     /// `51DEGREES_IPI_PATH` at another data file to run the lookups against it.
     fn ipi_data_file() -> Option<PathBuf> {
@@ -1033,11 +1033,12 @@ mod tests {
         let candidates = [
             workspace
                 .join("cxx")
-                .join("ip-intelligence-data")
+                .join("data")
+                .join("ip-intelligence")
                 .join(name),
             workspace
                 .parent()
-                .map(|p| p.join("ip-intelligence-data").join(name))
+                .map(|p| p.join("data").join("ip-intelligence").join(name))
                 .unwrap_or_default(),
         ];
         candidates.into_iter().find(|p| p.is_file())

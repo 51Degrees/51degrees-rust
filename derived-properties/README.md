@@ -121,16 +121,18 @@ checks that every script in `vendor/tests/invalid` is refused for the reason
 its file name gives, which is what proves this crate agrees with the other
 languages.
 
-## Links
+## License
+
+Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the
+[repository](https://github.com/51Degrees/51degrees-rust) for the full text.
+
+## Find out more
 
 - Source and issues: [github.com/51Degrees/51degrees-rust](https://github.com/51Degrees/51degrees-rust)
 - API documentation: [docs.rs/fiftyone-derived-properties](https://docs.rs/fiftyone-derived-properties)
 - The script format and the shipped scripts: [github.com/51Degrees/derived-properties](https://github.com/51Degrees/derived-properties)
 - The element specification: [51Degrees/specifications](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/derived-property-element.md)
-- About 51Degrees: [51degrees.com](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fiftyone-derived-properties-readme.md&utm_term=about)
-- Data files and pricing: [51degrees.com/pricing](https://51degrees.com/pricing?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fiftyone-derived-properties-readme.md&utm_term=pricing)
-
-## License
-
-Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the
-[repository](https://github.com/51Degrees/51degrees-rust) for the full text.
+- Build custom data services with the Pipeline API: [51degrees.com/build-your-own](https://51degrees.com/build-your-own?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-derived-properties-readme.md&utm_term=build-your-own)
+- Pipeline API documentation: [51degrees.com/documentation](https://51degrees.com/documentation/_pipeline_api__index.html?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-derived-properties-readme.md&utm_term=documentation)
+- About 51Degrees: [51degrees.com](https://51degrees.com/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-derived-properties-readme.md&utm_term=about)
+- Data files and pricing: [51degrees.com/pricing](https://51degrees.com/pricing?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-derived-properties-readme.md&utm_term=pricing)

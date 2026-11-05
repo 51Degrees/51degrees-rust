@@ -27,9 +27,11 @@
 //! It builds an on-premise Hash device-detection pipeline, wraps it in a
 //! [`WebPipeline`] so the two client-side endpoints are mounted, and serves an
 //! HTML page that shows
-//! server-side detection then refreshes it client-side. Because the bundled data
+//! server-side detection then refreshes it client-side. Because the default data
 //! file is the free Lite tier, the page shows the standard Lite/stale warnings
-//! and a contact-us banner that lists the benefits of a paid data file.
+//! and a contact-us banner that lists the benefits of a paid data file. Each
+//! Enterprise property the data file does not carry says it needs the
+//! Enterprise data file, with a link to ask about a copy.
 //!
 //! @snippet dd-web-getting-started-onprem.rs example
 
@@ -71,7 +73,9 @@ pub struct Options {
 /// The Hash engine is built once so its data-file warnings (Lite tier, and over
 /// 28/30 days old) can be read with [`examples_shared::check_data_file`] and
 /// shown on the page, and the very same engine instance is then used as the
-/// application element of the web pipeline.
+/// application element of the web pipeline. The engine's properties, which are
+/// those its data file carries, go to the page handler so it can say which
+/// Enterprise properties the data file lacks.
 ///
 /// `share_usage` is true when the binary serves the page. The tests pass false,
 /// so a test run sends nothing to 51Degrees.
@@ -90,6 +94,7 @@ pub fn build_app(
     // the engine is moved into the pipeline element list. `engine` is an
     // `Arc<DeviceDetectionOnPremiseEngine>`, which derefs to the trait object.
     let warnings = examples_shared::check_data_file(engine.as_ref());
+    let available = Arc::new(engine.available_properties());
 
     // Assemble the application's own elements in the order the on-premise facade
     // uses: usage sharing first (REQUIRED for a web example), then the UA-CH
@@ -106,7 +111,10 @@ pub fn build_app(
 
     let app = register(
         Router::new()
-            .route("/", get(home))
+            .route(
+                "/",
+                get(move |result: FiftyOneResult| home(result, Arc::clone(&available))),
+            )
             .route(ASSETS_CSS_ROUTE, get(serve_css))
             .route(ASSETS_JS_ROUTE, get(serve_js)),
         state,
@@ -172,11 +180,12 @@ fn current_warnings() -> Vec<String> {
 
 /// The home-page handler: render the server-side detection results, the
 /// evidence and response-header tables, and the Lite/stale data-file warnings.
-async fn home(result: FiftyOneResult) -> Html<String> {
+/// `available` holds the properties the data file carries.
+async fn home(result: FiftyOneResult, available: Arc<Vec<String>>) -> Html<String> {
     let (results_html, evidence_html, headers_html, has_accept_ch) = result.with(|flow_data| {
         let results = flow_data
             .get(DEVICE_DATA_KEY)
-            .map(|device| detection_results_table(device))
+            .map(|device| detection_results_table(device, Some(available.as_slice())))
             .unwrap_or_else(|| {
                 "<p class=\"c-eg-page__lead\">No device data was produced.</p>".to_owned()
             });
@@ -233,15 +242,16 @@ async fn home(result: FiftyOneResult) -> Html<String> {
         // The on-premise Lite page lists the benefits of a paid data file.
         message_html: web_support::ONPREM_CONTACT_BANNER,
         client_script: web_support::SERVER_CLIENT_SCRIPT,
+        repositories: examples_shared::ON_PREMISE_REPOSITORIES,
     }))
 }
 
 fn main() -> anyhow::Result<()> {
     // Resolve the on-premise data file: an explicit 51DEGREES_DD_PATH first, then
-    // the Lite Hash file in a cxx submodule.
+    // the Lite Hash file in the data repository inside the cxx submodule, which
+    // is downloaded when it is missing.
     let data_file = examples_shared::dd_data_path().context(
-        "no on-premise Hash data file found. Set 51DEGREES_DD_PATH to a .hash data file, or \
-         check out the cxx submodule with its Lite data file.",
+        "no on-premise Hash data file found. Set 51DEGREES_DD_PATH to a .hash data file.",
     )?;
 
     let port: u16 = std::env::var("PORT")
@@ -323,6 +333,8 @@ mod tests {
             );
             return;
         };
+        let lite = examples_shared::dd_data_path()
+            .is_some_and(|file| file.ends_with(examples_shared::DD_LITE_RELATIVE_PATH));
 
         let runtime = runtime();
         let (page, script) = runtime.block_on(async {
@@ -341,6 +353,20 @@ mod tests {
             page.body.contains("c-eg-alert"),
             "the on-premise Lite page shows a data-file alert"
         );
+        assert!(
+            page.body.contains(examples_shared::FIND_OUT_MORE_HEADING),
+            "the page ends with the Find out more section"
+        );
+        // The Lite file carries none of the Enterprise properties, so each says
+        // so with the contact link. 51DEGREES_DD_PATH can name another file.
+        if lite {
+            assert!(
+                page.body
+                    .contains(examples_shared::NEEDS_ENTERPRISE_DATA_FILE)
+                    && page.body.contains("utm_term=enterprise-data-file"),
+                "the Lite page says which properties need the Enterprise data file"
+            );
+        }
 
         assert_eq!(script.status, StatusCode::OK);
         assert!(
@@ -369,17 +395,25 @@ mod tests {
  *   3. Client-side refinement via `/51Degrees.core.js` and `/51dpipeline/json`,
  *      with the shared `examples.min.js` appending a refreshed results table.
  *
- * Because the bundled data file is the free Lite tier, the page shows the
+ * Because the default data file is the free Lite tier, the page shows the
  * standard data-file warnings (from `examples_shared::check_data_file`): a
  * Lite-tier notice, and a stale-file notice when the file is more than 30 days
  * old. These are rendered as a `c-eg-alert` at the top of the page. The
  * `c-eg-message` contact-us banner lists what a paid data file adds (more device
  * models, hardware vendor and model, Apple-model resolution and so on).
  *
+ * The results table also shows properties only the Enterprise data file
+ * carries (HardwareVendor, HardwareName, HardwareModel, DeviceType, PriceBand
+ * and ScreenInchesDiagonal). The engine's properties are those its data file
+ * carries, so with the Lite file each of these says it needs the Enterprise
+ * data file, with a link to contact 51Degrees about a copy. The page ends with
+ * a "Find out more" section.
+ *
  * Usage sharing is enabled, as a web deployment should. The Hash engine is built
  * once: its data-file warnings are read before it is handed to the web pipeline
  * as the application element, so no data file is opened twice.
  *
  * Resolve the data file with `51DEGREES_DD_PATH` (or rely on the Lite file in
- * the `cxx` submodule), then run the binary and open http://127.0.0.1:8081.
+ * the data repository inside the `cxx` submodule, which is downloaded when it
+ * is missing), then run the binary and open http://127.0.0.1:8081.
  */

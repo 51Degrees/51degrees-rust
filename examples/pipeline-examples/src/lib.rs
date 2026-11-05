@@ -38,3 +38,10 @@
 #![warn(missing_docs)]
 
 pub mod star_sign;
+
+/// The repositories the pipeline examples list in their "Find out more"
+/// section, being this SDK and the specifications its pipeline follows.
+pub const REPOSITORIES: &[&str] = &[
+    "https://github.com/51Degrees/51degrees-rust",
+    "https://github.com/51Degrees/specifications",
+];

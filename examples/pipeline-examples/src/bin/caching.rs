@@ -37,6 +37,13 @@ use pipeline_examples::star_sign::{
     STAR_SIGN_PROPERTY, UNKNOWN_STAR_SIGN,
 };
 
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("Pipeline API", "https://51degrees.com/documentation/_pipeline_api__index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-caching.rs&utm_term=find-out-more"),
+    ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-caching.rs&utm_term=find-out-more"),
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-caching.rs&utm_term=find-out-more"),
+];
+
 /// The evidence key the engine reads the birth date from.
 const DATE_OF_BIRTH_EVIDENCE: &str = "date-of-birth";
 
@@ -185,7 +192,9 @@ pub fn run(options: &ExampleOptions) -> Result<()> {
 
 /// Run the example with the default batch of dates.
 fn main() -> Result<()> {
-    run(&ExampleOptions::default())
+    let result = run(&ExampleOptions::default());
+    examples_shared::print_find_out_more(FIND_OUT_MORE, pipeline_examples::REPOSITORIES);
+    result
 }
 
 #[cfg(test)]

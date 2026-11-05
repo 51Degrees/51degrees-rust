@@ -36,6 +36,14 @@ use pipeline_examples::star_sign::{
     StarSignData, STAR_SIGN_DATA_KEY, STAR_SIGN_PROPERTY, UNKNOWN_STAR_SIGN,
 };
 
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("Pipeline API", "https://51degrees.com/documentation/_pipeline_api__index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-cloud.rs&utm_term=find-out-more"),
+    ("Cloud service", "https://51degrees.com/documentation/_services__cloud__index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-cloud.rs&utm_term=find-out-more"),
+    ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-cloud.rs&utm_term=find-out-more"),
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-cloud.rs&utm_term=find-out-more"),
+];
+
 /// The evidence key the request engine sends to the remote service.
 const DATE_OF_BIRTH_EVIDENCE: &str = "date-of-birth";
 
@@ -300,7 +308,9 @@ fn main() -> Result<()> {
     if let Some(endpoint) = examples_shared::cloud_endpoint_from_env() {
         options.endpoint = format!("{}/", endpoint.trim_end_matches('/'));
     }
-    run(&options)
+    let result = run(&options);
+    examples_shared::print_find_out_more(FIND_OUT_MORE, pipeline_examples::REPOSITORIES);
+    result
 }
 
 #[cfg(test)]

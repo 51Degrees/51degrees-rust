@@ -222,11 +222,11 @@ fn resolve_cxx_dir() -> PathBuf {
 
 /// Find a Lite Hash data file under the checkout, if one is present.
 ///
-/// The packaged file is `device-detection-data/51Degrees-LiteV4.1.hash`. Any
-/// `*.hash` in that directory is accepted as a fallback so a differently named
-/// Lite file still enables the smoke test.
+/// The file is `data/device-detection/51Degrees-LiteV4.1.hash`, where the data
+/// repository's script downloads it. Any `*.hash` in that directory is accepted
+/// as a fallback so a differently named Lite file still enables the smoke test.
 fn find_lite_data_file(cxx: &Path) -> Option<PathBuf> {
-    let data_dir = cxx.join("device-detection-data");
+    let data_dir = cxx.join("data").join("device-detection");
 
     let preferred = data_dir.join("51Degrees-LiteV4.1.hash");
     if preferred.is_file() {

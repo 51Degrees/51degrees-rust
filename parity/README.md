@@ -205,7 +205,7 @@ from Git LFS and `pwsh ../ci/copy-owid-source.ps1` run once, as
 ```
 cargo build -p parity-rust -p parity-compare
 dotnet build dotnet -c Release -o out/dotnet
-DATA="--corpus corpus/evidence.json --dd ../cxx/device-detection-data/51Degrees-LiteV4.1.hash --ipi ../cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi"
+DATA="--corpus corpus/evidence.json --dd ../cxx/data/device-detection/51Degrees-LiteV4.1.hash --ipi ../cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi"
 dotnet out/dotnet/Parity.dll $DATA --out out/dotnet.jsonl
 target/debug/parity-rust $DATA --out out/rust.jsonl
 target/debug/parity-compare --corpus corpus/evidence.json --dotnet out/dotnet.jsonl \

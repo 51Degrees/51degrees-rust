@@ -42,6 +42,14 @@ use fiftyone_ip_intelligence_cloud::{IpIntelligenceCloudEngine, IpIntelligenceDa
 use fiftyone_pipeline_core::{Evidence, Pipeline};
 use fiftyone_pipeline_engines::AspectPropertyValue;
 
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-mixed-getting-started.rs&utm_term=find-out-more"),
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-mixed-getting-started.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-mixed-getting-started.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-mixed-getting-started.rs&utm_term=find-out-more"),
+];
+
 /// The evidence key under which the User-Agent is supplied. The cloud Device
 /// Detection engine reads it after the cloud request engine forwards it.
 const USER_AGENT_EVIDENCE_KEY: &str = "header.user-agent";
@@ -279,6 +287,11 @@ fn main() -> anyhow::Result<()> {
              https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-mixed-getting-started.rs&utm_term=resource-key-required. \
              The key must grant both the device and IP intelligence products."
         )?;
+        examples_shared::write_find_out_more(
+            &mut out,
+            FIND_OUT_MORE,
+            examples_shared::CLOUD_REPOSITORIES,
+        )?;
         return Ok(());
     };
 
@@ -291,7 +304,13 @@ fn main() -> anyhow::Result<()> {
         endpoint: examples_shared::cloud_endpoint_from_env(),
     };
 
-    run(&options, &mut out)
+    let result = run(&options, &mut out);
+    examples_shared::write_find_out_more(
+        &mut out,
+        FIND_OUT_MORE,
+        examples_shared::CLOUD_REPOSITORIES,
+    )?;
+    result
 }
 
 #[cfg(test)]
