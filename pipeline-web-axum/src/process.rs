@@ -39,7 +39,7 @@
 
 use std::net::SocketAddr;
 
-use axum::http::{HeaderMap, Uri};
+use axum::http::{HeaderMap, Method, Uri};
 use fiftyone_pipeline_core::FlowData;
 use fiftyone_pipeline_web::build_evidence;
 
@@ -93,15 +93,17 @@ pub async fn process_request(
     state: &FiftyOneState,
     captured: CapturedRequest,
 ) -> Result<FlowData, tokio::task::JoinError> {
-    process_then(state, captured, |flow_data, _| flow_data).await
+    process_then(state, captured, None, |flow_data, _| flow_data).await
 }
 
 /// As [`process_request`], then pass the processed [`FlowData`] and the
-/// request view to `then` in the same blocking task and return its result.
-/// This returns `Err` when processing or `then` panics.
+/// request view, carrying `method` when given, to `then` in the same blocking
+/// task and return its result. This returns `Err` when processing or `then`
+/// panics.
 pub(crate) async fn process_then<T, F>(
     state: &FiftyOneState,
     captured: CapturedRequest,
+    method: Option<Method>,
     then: F,
 ) -> Result<T, tokio::task::JoinError>
 where
@@ -113,7 +115,10 @@ where
     tokio::task::spawn_blocking(move || {
         // Evidence is built inside the closure so the borrowed request view
         // never crosses the spawn boundary; only owned data does.
-        let request = captured.request_data();
+        let mut request = captured.request_data();
+        if let Some(method) = method {
+            request = request.with_method(method);
+        }
         let evidence = build_evidence(&request, pipeline.evidence_key_filter());
         let mut flow_data = pipeline.create_flow_data_with(evidence);
         // Errors are suppressed onto the flow data by the web pipeline, so this

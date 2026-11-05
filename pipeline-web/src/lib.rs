@@ -71,7 +71,10 @@
 //! - A matching `If-None-Match` yields a `304 Not Modified` with an empty body
 //!   and the `Cache-Control`, `Vary`, `ETag` and `Access-Control-Allow-Origin`
 //!   fields the `200` would have carried, as RFC 9110 section 15.4.5 requires
-//!   for the first three.
+//!   for the first three. On a method other than `GET` or `HEAD` (see
+//!   [`RequestData::method`]) it yields a `412 Precondition Failed` with an
+//!   empty body and only `Access-Control-Allow-Origin`, as RFC 9110 section
+//!   13.1.2 requires.
 //!
 //! ## A worked, framework-free example
 //!

@@ -201,6 +201,46 @@ async fn json_endpoint_serves_200_with_json_body() {
     assert!(value.is_object(), "JSON body is an object, got: {body}");
 }
 
+/// RFC 9110 section 13.1.2: a matching `If-None-Match` on the JSON endpoint's
+/// `POST` gets a `412`, never a `304` (section 9.3.3), with only the CORS
+/// header.
+#[tokio::test]
+async fn json_endpoint_returns_412_for_matching_if_none_match() {
+    let post = |etag: Option<&str>| {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri("/51dpipeline/json")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .header("host", "localhost")
+            .header("origin", "https://example.com");
+        if let Some(etag) = etag {
+            builder = builder.header("if-none-match", etag);
+        }
+        // The same session and sequence in both, so the evidence and the ETag
+        // are the same.
+        builder
+            .body(Body::from("session-id=abc&sequence=1"))
+            .unwrap()
+    };
+
+    let first = app().oneshot(post(None)).await.unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let etag = header(&first, "etag").expect("ETag present on first response");
+
+    let second = app().oneshot(post(Some(&etag))).await.unwrap();
+
+    assert_eq!(second.status(), StatusCode::PRECONDITION_FAILED);
+    assert_eq!(
+        header(&second, "access-control-allow-origin").as_deref(),
+        Some("https://example.com")
+    );
+    for name in ["etag", "cache-control", "vary", "content-type"] {
+        assert_eq!(header(&second, name), None, "the 412 has no {name}");
+    }
+    let body = to_bytes(second.into_body(), usize::MAX).await.unwrap();
+    assert!(body.is_empty(), "412 has an empty body");
+}
+
 #[tokio::test]
 async fn non_endpoint_request_passes_through_to_application() {
     let app = app();

@@ -127,6 +127,7 @@ struct TestRequest {
     form: Vec<(String, String)>,
     client_ip: Option<String>,
     https: bool,
+    method: Option<String>,
 }
 
 impl RequestData for TestRequest {
@@ -147,6 +148,9 @@ impl RequestData for TestRequest {
     }
     fn is_https(&self) -> bool {
         self.https
+    }
+    fn method(&self) -> Option<String> {
+        self.method.clone()
     }
 }
 
@@ -536,13 +540,121 @@ fn a_304_without_the_extra_headers_carries_none() {
 fn non_matching_if_none_match_returns_200() {
     let web = web_pipeline(false);
     let options = EndpointOptions::new(web.vary_whitelist().clone());
-    let conditional = TestRequest {
-        headers: vec![("If-None-Match".into(), "\"not-the-tag\"".into())],
+    let data = processed(web.pipeline(), Evidence::default());
+    for method in [None, Some("POST")] {
+        let conditional = TestRequest {
+            headers: vec![("If-None-Match".into(), "\"not-the-tag\"".into())],
+            method: method.map(str::to_owned),
+            ..Default::default()
+        };
+        let response = serve_json(&data, &conditional, &options);
+        assert_eq!(response.status, WebResponse::STATUS_OK, "{method:?}");
+    }
+}
+
+/// RFC 9110 section 13.1.2: a matching `If-None-Match` gets a `304` on `GET`
+/// or `HEAD` and a `412` on any other method. Method names are case-sensitive
+/// (section 9.1), so `get` is not `GET`. A request that gives no method is
+/// treated as `GET`.
+#[test]
+fn a_matching_if_none_match_gets_a_304_only_on_get_or_head() {
+    let web = web_pipeline(false);
+    let options = EndpointOptions::new(web.vary_whitelist().clone());
+    let data = processed(
+        web.pipeline(),
+        Evidence::builder().add("header.user-agent", "abc").build(),
+    );
+    let etag = compute_etag(&data, data.evidence_key_filter());
+    let cases = [
+        (None, WebResponse::STATUS_NOT_MODIFIED),
+        (Some("GET"), WebResponse::STATUS_NOT_MODIFIED),
+        (Some("HEAD"), WebResponse::STATUS_NOT_MODIFIED),
+        (Some("POST"), WebResponse::STATUS_PRECONDITION_FAILED),
+        (Some("PUT"), WebResponse::STATUS_PRECONDITION_FAILED),
+        (Some("get"), WebResponse::STATUS_PRECONDITION_FAILED),
+    ];
+    for (method, status) in cases {
+        let request = TestRequest {
+            headers: vec![("If-None-Match".to_owned(), etag.clone())],
+            method: method.map(str::to_owned),
+            ..Default::default()
+        };
+        for response in [
+            serve_json(&data, &request, &options),
+            serve_javascript(&data, &request, &options),
+        ] {
+            assert_eq!(response.status, status, "{method:?}");
+            assert!(response.body.is_empty(), "{method:?}");
+        }
+    }
+}
+
+/// The `412` carries only the CORS header, so a script on another origin can
+/// read the status, and none of the caching fields of a `200` or `304`.
+#[test]
+fn a_412_carries_only_the_cors_header() {
+    let web = web_pipeline(false);
+    let options = EndpointOptions::new(web.vary_whitelist().clone());
+    let request = |etag: Option<&str>| TestRequest {
+        headers: std::iter::once(("Origin".to_owned(), "https://example.com".to_owned()))
+            .chain(etag.map(|etag| ("If-None-Match".to_owned(), etag.to_owned())))
+            .collect(),
+        method: Some("POST".to_owned()),
         ..Default::default()
     };
-    let data = processed(web.pipeline(), Evidence::default());
-    let response = serve_json(&data, &conditional, &options);
-    assert_eq!(response.status, WebResponse::STATUS_OK);
+    let evidence = || Evidence::builder().add("header.user-agent", "abc").build();
+
+    let first = serve_json(
+        &processed(web.pipeline(), evidence()),
+        &request(None),
+        &options,
+    );
+    assert_eq!(first.status, WebResponse::STATUS_OK);
+    let etag = first
+        .header("ETag")
+        .expect("the 200 has an ETag")
+        .to_owned();
+    let second = serve_json(
+        &processed(web.pipeline(), evidence()),
+        &request(Some(&etag)),
+        &options,
+    );
+
+    assert_eq!(second.status, WebResponse::STATUS_PRECONDITION_FAILED);
+    assert!(second.body.is_empty());
+    assert_eq!(
+        second.headers,
+        vec![(
+            "Access-Control-Allow-Origin".to_owned(),
+            "https://example.com".to_owned()
+        )]
+    );
+}
+
+#[test]
+fn a_412_without_the_extra_headers_carries_none() {
+    let web = web_pipeline(false);
+    let options = EndpointOptions::new(web.vary_whitelist().clone()).without_extra_headers();
+    let data = processed(
+        web.pipeline(),
+        Evidence::builder().add("header.user-agent", "abc").build(),
+    );
+    let request = TestRequest {
+        headers: vec![
+            ("Origin".to_owned(), "https://example.com".to_owned()),
+            (
+                "If-None-Match".to_owned(),
+                compute_etag(&data, data.evidence_key_filter()),
+            ),
+        ],
+        method: Some("POST".to_owned()),
+        ..Default::default()
+    };
+
+    let response = serve_json(&data, &request, &options);
+
+    assert_eq!(response.status, WebResponse::STATUS_PRECONDITION_FAILED);
+    assert!(response.headers.is_empty(), "{:?}", response.headers);
 }
 
 /// Set in the environment of the second process the ETag test starts, which
@@ -659,6 +771,7 @@ fn evidence_population_honours_filter() {
         form: vec![("fod-js-object-name".into(), "fromform".into())],
         client_ip: Some("1.2.3.4".into()),
         https: true,
+        method: Some("POST".into()),
     };
 
     let evidence = build_evidence(&request, &filter);

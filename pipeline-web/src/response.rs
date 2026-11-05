@@ -30,8 +30,9 @@
 //! The body is held as a `Vec<u8>` because the JavaScript and JSON endpoints
 //! both produce text that is sent verbatim, and bytes are the lowest common
 //! denominator every framework can accept. Convenience constructors
-//! ([`WebResponse::text`], [`WebResponse::not_modified`]) cover the two shapes
-//! the endpoints return.
+//! ([`WebResponse::text`], [`WebResponse::not_modified`],
+//! [`WebResponse::precondition_failed`]) cover the shapes the endpoints
+//! return.
 
 /// A framework-neutral HTTP response.
 ///
@@ -45,7 +46,8 @@ pub struct WebResponse {
     /// The response headers as ordered `(name, value)` pairs. Names are written
     /// in their canonical HTTP casing (for example `Content-Type`).
     pub headers: Vec<(String, String)>,
-    /// The response body. Empty for a `304 Not Modified`.
+    /// The response body. Empty for a `304 Not Modified` or a `412
+    /// Precondition Failed`.
     pub body: Vec<u8>,
 }
 
@@ -56,6 +58,10 @@ impl WebResponse {
     /// The HTTP status code returned when the client's cached copy is still
     /// current (its `If-None-Match` matched the computed `ETag`).
     pub const STATUS_NOT_MODIFIED: u16 = 304;
+
+    /// The HTTP status code returned when the client's `If-None-Match` matched
+    /// the computed `ETag` on a method other than `GET` or `HEAD`.
+    pub const STATUS_PRECONDITION_FAILED: u16 = 412;
 
     /// Create a `200 OK` text response with the given body and headers.
     ///
@@ -84,6 +90,19 @@ impl WebResponse {
     /// True if this is a `304 Not Modified` response.
     pub fn is_not_modified(&self) -> bool {
         self.status == Self::STATUS_NOT_MODIFIED
+    }
+
+    /// Create a `412 Precondition Failed` response with no body and no
+    /// headers.
+    ///
+    /// The client-side endpoints add to it the CORS header the `200` would
+    /// have carried (see [`crate::serve_json`]).
+    pub fn precondition_failed() -> Self {
+        WebResponse {
+            status: Self::STATUS_PRECONDITION_FAILED,
+            headers: Vec::new(),
+            body: Vec::new(),
+        }
     }
 
     /// The body interpreted as a UTF-8 string slice, if it is valid UTF-8.

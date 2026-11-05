@@ -125,13 +125,28 @@ pub trait RequestData {
     /// The value of the request `If-None-Match` header, if present.
     ///
     /// Used by the client-side endpoints to decide whether to return `304 Not
-    /// Modified`. The default implementation finds it among
-    /// [`RequestData::headers`] case-insensitively.
+    /// Modified` (or `412 Precondition Failed`, see [`RequestData::method`]).
+    /// The default implementation finds it among [`RequestData::headers`]
+    /// case-insensitively.
     fn if_none_match(&self) -> Option<String> {
         self.headers()
             .into_iter()
             .find(|(name, _)| name.eq_ignore_ascii_case("if-none-match"))
             .map(|(_, value)| value)
+    }
+
+    /// The request method, for example `GET` or `POST`, if the adapter knows
+    /// it.
+    ///
+    /// When `If-None-Match` matches, the client-side endpoints answer `304 Not
+    /// Modified` to `GET` or `HEAD` and `412 Precondition Failed` to any other
+    /// method, as
+    /// [RFC 9110 section 13.1.2](https://www.rfc-editor.org/rfc/rfc9110#section-13.1.2)
+    /// requires. Method names are case-sensitive. The default returns `None`,
+    /// which the endpoints treat as `GET`, so an adapter that serves an
+    /// endpoint on any other method implements this.
+    fn method(&self) -> Option<String> {
+        None
     }
 }
 

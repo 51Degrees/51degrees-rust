@@ -35,8 +35,9 @@
 //! thread pool, through [`crate::process::process_then`], because when a
 //! builder left no data, serving builds the body again, which for the script
 //! means rendering and minifying it. The resulting [`fiftyone_pipeline_web::WebResponse`] is mapped onto an axum
-//! response, including the `If-None-Match` -> `304 Not Modified` short circuit
-//! those functions implement.
+//! response, including the `If-None-Match` short circuit those functions
+//! implement, being `304 Not Modified` for the JavaScript endpoint's `GET` (or
+//! `HEAD`) and `412 Precondition Failed` for the JSON endpoint's `POST`.
 
 use std::net::SocketAddr;
 
@@ -85,7 +86,8 @@ pub async fn javascript_handler(
 /// Buffers the form body (bounded by `MAX_BODY_BYTES`), builds evidence
 /// including the form fields, processes the pipeline off the runtime and returns
 /// the generated JSON with the shared caching/CORS headers. A matching
-/// `If-None-Match` yields `304 Not Modified`.
+/// `If-None-Match` yields `412 Precondition Failed`, because RFC 9110 section
+/// 13.1.2 gives a `304` only to `GET` and `HEAD`.
 pub async fn json_handler(State(state): State<FiftyOneState>, request: Request<Body>) -> Response {
     // Split the body off so it can be buffered before the rest is captured.
     let (parts, body) = request.into_parts();
@@ -124,10 +126,15 @@ async fn serve(
     };
 
     let options = state.endpoint_options();
-    let served = process_then(&state, captured, move |flow_data, request| match endpoint {
-        Endpoint::JavaScript => serve_javascript(&flow_data, request, &options),
-        Endpoint::Json => serve_json(&flow_data, request, &options),
-    })
+    let served = process_then(
+        &state,
+        captured,
+        Some(parts.method),
+        move |flow_data, request| match endpoint {
+            Endpoint::JavaScript => serve_javascript(&flow_data, request, &options),
+            Endpoint::Json => serve_json(&flow_data, request, &options),
+        },
+    )
     .await;
 
     match served {

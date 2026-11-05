@@ -68,6 +68,17 @@
 //! is read without building the body, so nothing below is logged or built for
 //! a `304`.
 //!
+//! A `304` answers `GET` or `HEAD` only. On any other method, such as the
+//! `POST` the axum adapter serves the JSON endpoint on, a matching
+//! `If-None-Match` gets `412 Precondition Failed` with an empty body, as
+//! [RFC 9110 section 13.1.2](https://www.rfc-editor.org/rfc/rfc9110#section-13.1.2)
+//! requires, because a response to `POST` is never a `304`
+//! ([section 9.3.3](https://www.rfc-editor.org/rfc/rfc9110#section-9.3.3)).
+//! It carries only the `Access-Control-Allow-Origin` field, so a script on
+//! another origin can read the status. The method is
+//! [`crate::RequestData::method`], and a request that does not give one is
+//! treated as `GET`. Nothing is logged or built for a `412` either.
+//!
 //! # When a builder left no data
 //!
 //! A builder in the pipeline can leave no data for a request, for example when
@@ -171,8 +182,8 @@ pub struct EndpointOptions {
     /// When `true`, set by [`EndpointOptions::without_extra_headers`], the
     /// caching, `Vary`, `ETag` and CORS headers are not added (only
     /// `Content-Type` and `Content-Length` are), so an adapter can apply its
-    /// own. The `If-None-Match` -> `304` short circuit still applies, and the
-    /// `304` carries no headers. `false` by default.
+    /// own. The `If-None-Match` short circuit still applies, and its `304` or
+    /// `412` carries no headers. `false` by default.
     suppress_extra_headers: bool,
 }
 
@@ -245,9 +256,10 @@ impl EndpointOptions {
 /// CORS headers described in the module documentation.
 ///
 /// `request` supplies the conditional-request (`If-None-Match`) and `Origin`
-/// headers. When `If-None-Match` matches the computed `ETag` a `304 Not
-/// Modified` is returned with no body and the caching and CORS headers the
-/// `200` would have carried.
+/// headers and the method. When `If-None-Match` matches the computed `ETag` a
+/// `304 Not Modified` is returned with no body and the caching and CORS
+/// headers the `200` would have carried, or on a method other than `GET` or
+/// `HEAD` a `412 Precondition Failed` with only the CORS header.
 pub fn serve_javascript(
     flow_data: &FlowData,
     request: &dyn RequestData,
@@ -274,7 +286,9 @@ pub fn serve_javascript(
 /// [`CONTENT_TYPE_JSON`] content type and the shared caching and CORS headers
 /// described in the module documentation. As with the JavaScript endpoint a
 /// matching `If-None-Match` yields a `304 Not Modified` with no body and the
-/// caching and CORS headers the `200` would have carried.
+/// caching and CORS headers the `200` would have carried, or on a method other
+/// than `GET` or `HEAD`, such as the `POST` the client-side script sends, a
+/// `412 Precondition Failed` with only the CORS header.
 pub fn serve_json(
     flow_data: &FlowData,
     request: &dyn RequestData,
@@ -377,7 +391,7 @@ fn log_missing_data(data_key: &str) {
 
 /// Build the response for either endpoint, applying the shared header rules.
 /// `left_no_data` says whether a builder left no data for the request, and
-/// `body` is called only when the response is not a `304`.
+/// `body` is called only when the response is a `200`.
 fn build_response(
     flow_data: &FlowData,
     request: &dyn RequestData,
@@ -388,6 +402,27 @@ fn build_response(
 ) -> WebResponse {
     let filter = flow_data.evidence_key_filter();
     let etag = compute_etag(flow_data, filter);
+    let matched = request
+        .if_none_match()
+        .is_some_and(|if_none_match| etag_matches(&if_none_match, &etag));
+
+    // A matching validator on a method other than GET or HEAD fails the
+    // precondition (RFC 9110 section 13.1.2).
+    if matched && !is_get_or_head(request) {
+        let headers = if options.suppress_extra_headers {
+            Vec::new()
+        } else {
+            access_control_allow_origin(request)
+                .map(|origin| ("Access-Control-Allow-Origin".to_owned(), origin))
+                .into_iter()
+                .collect()
+        };
+        return WebResponse {
+            headers,
+            ..WebResponse::precondition_failed()
+        };
+    }
+
     let extra = if options.suppress_extra_headers {
         Vec::new()
     } else {
@@ -397,13 +432,11 @@ fn build_response(
     // A conditional request whose validator matches the current ETag gets a
     // 304 with the headers the 200 would carry, ETag included only when the
     // 200 would send one.
-    if let Some(if_none_match) = request.if_none_match() {
-        if etag_matches(&if_none_match, &etag) {
-            return WebResponse {
-                headers: extra,
-                ..WebResponse::not_modified()
-            };
-        }
+    if matched {
+        return WebResponse {
+            headers: extra,
+            ..WebResponse::not_modified()
+        };
     }
 
     let body = body();
@@ -415,6 +448,15 @@ fn build_response(
     headers.extend(extra);
 
     WebResponse::text(body, headers)
+}
+
+/// True when the request method is `GET` or `HEAD`, or the request does not
+/// give one. Method names are case-sensitive
+/// ([RFC 9110 section 9.1](https://www.rfc-editor.org/rfc/rfc9110#section-9.1)).
+fn is_get_or_head(request: &dyn RequestData) -> bool {
+    request
+        .method()
+        .is_none_or(|method| method == "GET" || method == "HEAD")
 }
 
 /// The caching, `Vary`, `ETag` and CORS headers, which the `200` and the `304`
@@ -529,8 +571,8 @@ pub fn compute_etag(flow_data: &FlowData, filter: &dyn EvidenceKeyFilter) -> Str
 /// The comparison tolerates the optional weak-validator prefix (`W/`) and a
 /// comma-separated list of candidate tags, returning true if any candidate
 /// equals the computed tag. The wildcard `*` always matches. This is the subset
-/// of [RFC 7232](https://www.rfc-editor.org/rfc/rfc7232#section-3.2) the
-/// endpoints need.
+/// of [RFC 9110 section 13.1.2](https://www.rfc-editor.org/rfc/rfc9110#section-13.1.2)
+/// the endpoints need.
 pub fn etag_matches(if_none_match: &str, etag: &str) -> bool {
     for candidate in if_none_match.split(',') {
         let candidate = candidate.trim();

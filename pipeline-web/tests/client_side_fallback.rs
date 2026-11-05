@@ -230,8 +230,8 @@ impl RequestData for TestRequest {
     }
 }
 
-/// A request carrying an `If-None-Match` header.
-struct ConditionalRequest(String);
+/// A request carrying an `If-None-Match` header, and the method when given.
+struct ConditionalRequest(String, Option<&'static str>);
 
 impl RequestData for ConditionalRequest {
     fn headers(&self) -> Vec<(String, String)> {
@@ -248,6 +248,9 @@ impl RequestData for ConditionalRequest {
     }
     fn is_https(&self) -> bool {
         true
+    }
+    fn method(&self) -> Option<String> {
+        self.1.map(str::to_owned)
     }
 }
 
@@ -580,7 +583,7 @@ fn a_matching_if_none_match_is_answered_before_the_body_is_built() {
     ];
 
     for (web, data, cacheable) in &cases {
-        let request = ConditionalRequest(compute_etag(data, data.evidence_key_filter()));
+        let request = ConditionalRequest(compute_etag(data, data.evidence_key_filter()), None);
         let from = mark();
 
         let json = serve_json(data, &request, &options(web));
@@ -597,6 +600,42 @@ fn a_matching_if_none_match_is_answered_before_the_body_is_built() {
             assert!(response.body.is_empty());
             assert_eq!(header(response, "Cache-Control"), Some(cache_control));
             assert_eq!(header(response, "ETag").is_some(), *cacheable);
+        }
+    }
+}
+
+/// On `POST` the same match gets a `412`, also before any body is built, so
+/// a builder that left no data is neither logged nor built again, and the
+/// `412` carries none of the caching fields.
+#[test]
+fn a_matching_if_none_match_on_post_is_answered_before_the_body_is_built() {
+    let clashed = web_pipeline(
+        &[
+            JSON_BUILDER_ELEMENT_DATA_KEY,
+            JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY,
+        ],
+        WebIntegrationOptions::default(),
+    );
+    let unclashed = web_pipeline(&[], WebIntegrationOptions::default());
+    let cases = [
+        (&clashed, processed(clashed.pipeline())),
+        (&unclashed, unclashed.pipeline().create_flow_data()),
+        (&unclashed, processed(unclashed.pipeline())),
+    ];
+
+    for (web, data) in &cases {
+        let etag = compute_etag(data, data.evidence_key_filter());
+        let request = ConditionalRequest(etag, Some("POST"));
+        let from = mark();
+
+        let json = serve_json(data, &request, &options(web));
+        let javascript = serve_javascript(data, &request, &options(web));
+
+        assert_eq!(records_since(from), Vec::new());
+        for response in [&json, &javascript] {
+            assert_eq!(response.status, WebResponse::STATUS_PRECONDITION_FAILED);
+            assert!(response.body.is_empty());
+            assert!(response.headers.is_empty(), "{:?}", response.headers);
         }
     }
 }
