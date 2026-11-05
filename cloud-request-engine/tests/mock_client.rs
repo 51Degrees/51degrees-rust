@@ -21,7 +21,7 @@
  * ********************************************************************* */
 
 //! Engine-level tests driven against an in-process fake HTTP client, so the
-//! full process flow (lazy discovery, form building, response parsing, recovery)
+//! full process flow (discovery, form building, response parsing, recovery)
 //! is exercised without touching the network.
 
 use std::collections::HashMap;
@@ -31,7 +31,7 @@ use fiftyone_cloud_request_engine::{
     Cache, CloudEngineState, CloudHttpClient, CloudHttpRequest, CloudHttpResponse,
     CloudRequestEngine, EvidenceKeyEntry, HttpMethod, LicensedProducts, PutCache,
 };
-use fiftyone_pipeline_core::{Error, Evidence, Pipeline};
+use fiftyone_pipeline_core::{Error, Evidence, FlowElement, Pipeline};
 use fiftyone_pipeline_engines::AspectData;
 
 /// A scripted fake transport. Each endpoint is matched by a substring of the
@@ -303,24 +303,164 @@ fn cloud_error_response_raises_cloud_request_error_when_not_suppressed() {
     }
 }
 
-#[test]
-fn discovery_failure_fails_the_build() {
-    let client = Arc::new(FakeClient::default());
-    // The evidencekeys discovery fails: the cloud is unavailable. Because the
-    // builder fetches discovery as it builds the engine, the build itself fails
-    // rather than deferring the error to process time.
-    client.set_evidence_keys(Err("connection refused".to_owned()));
+/// How many requests `client` received whose URL contains `endpoint`.
+fn requests_to(client: &FakeClient, endpoint: &str) -> usize {
+    client
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|request| request.url.contains(endpoint))
+        .count()
+}
 
-    let result = CloudRequestEngine::builder()
+/// Process one flow data carrying a user agent through `pipeline`, returning
+/// the errors it recorded.
+fn errors_processing(pipeline: &Arc<Pipeline>) -> Vec<String> {
+    let mut data =
+        pipeline.create_flow_data_with(Evidence::builder().add("header.user-agent", "UA").build());
+    data.process().unwrap();
+    data.errors()
+        .iter()
+        .map(|error| error.source.to_string())
+        .collect()
+}
+
+/// A discovery answer refused with `status`.
+fn refused(status: u16) -> Result<CloudHttpResponse, String> {
+    FakeClient::with_status(status, r#"{"errors":["refused"]}"#)
+}
+
+#[test]
+fn a_4xx_answer_to_either_discovery_request_fails_the_build() {
+    let cases = [
+        ("evidence keys 403", Some(refused(403)), None, 403),
+        ("properties 401", None, Some(refused(401)), 401),
+        (
+            "evidence keys 500 and properties 403",
+            Some(FakeClient::with_status(500, "fault")),
+            Some(refused(403)),
+            403,
+        ),
+        (
+            "evidence keys unreachable and properties 404",
+            Some(Err("connection refused".to_owned())),
+            Some(refused(404)),
+            404,
+        ),
+    ];
+    for (case, evidence_keys, properties, expected) in cases {
+        let client = Arc::new(FakeClient::default());
+        if let Some(answer) = evidence_keys {
+            client.set_evidence_keys(answer);
+        }
+        if let Some(answer) = properties {
+            client.set_properties(answer);
+        }
+        let result = CloudRequestEngine::builder()
+            .resource_key("test-resource-key")
+            .endpoint("https://cloud.example.test/api/v4/")
+            .http_client(client)
+            .build();
+        match result {
+            Err(Error::CloudRequest { status_code, .. }) => {
+                assert_eq!(status_code, expected, "{case}")
+            }
+            Ok(_) => panic!("{case}: expected the build to fail"),
+            Err(other) => panic!("{case}: unexpected error {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn evidence_keys_that_cannot_be_reached_are_fetched_on_first_use() {
+    let client = Arc::new(FakeClient::default());
+    client.set_evidence_keys(Err("connection refused".to_owned()));
+    client.set_data(FakeClient::ok(r#"{"device":{"ismobile":true}}"#));
+    let mut builder = CloudRequestEngine::builder()
         .resource_key("test-resource-key")
         .endpoint("https://cloud.example.test/api/v4/")
-        .http_client(client)
-        .build();
-    match result {
-        Err(Error::CloudRequest { .. }) => {}
-        Ok(_) => panic!("expected the build to fail when discovery cannot reach the cloud"),
-        Err(other) => panic!("unexpected error {other:?}"),
-    }
+        .http_client(client.clone());
+    let engine = builder
+        .build()
+        .expect("an unreachable cloud does not fail the build");
+
+    assert!(!engine.has_loaded_metadata());
+    assert!(engine.accepted_evidence_keys().is_err());
+    assert!(
+        engine.public_properties().is_ok(),
+        "the other request worked"
+    );
+    assert!(!engine.evidence_key_filter().include("header.user-agent"));
+    assert!(!engine.is_evidence_key_filter_complete());
+    assert!(builder.export_state().is_none());
+
+    let engine = Arc::new(engine);
+    let pipeline = Pipeline::builder()
+        .add_element(engine.clone())
+        .suppress_process_exceptions(true)
+        .build()
+        .unwrap();
+
+    // Still unreachable, so the request fails before any data request.
+    assert_eq!(errors_processing(&pipeline).len(), 1);
+    assert_eq!(requests_to(&client, "/json"), 0);
+
+    // Reachable again, so the next request fetches the evidence keys and is
+    // answered, sending the evidence they accept.
+    client.set_evidence_keys(FakeClient::ok(r#"["header.user-agent"]"#));
+    assert_eq!(errors_processing(&pipeline), Vec::<String>::new());
+    assert!(engine.has_loaded_metadata());
+    assert!(engine.evidence_key_filter().include("header.user-agent"));
+    assert!(engine.is_evidence_key_filter_complete());
+    let sent = client.requests.lock().unwrap().last().cloned().unwrap();
+    assert!(
+        sent.form
+            .iter()
+            .any(|(name, value)| name == "user-agent" && value == "UA"),
+        "the data request carried the user agent: {:?}",
+        sent.form
+    );
+
+    // Once known, the keys are not asked for again, and the properties that
+    // arrived at build time were never asked for again.
+    assert_eq!(errors_processing(&pipeline), Vec::<String>::new());
+    assert_eq!(requests_to(&client, "evidencekeys"), 3);
+    assert_eq!(requests_to(&client, "accessibleproperties"), 1);
+}
+
+#[test]
+fn properties_answered_5xx_are_fetched_on_first_use() {
+    let client = Arc::new(FakeClient::default());
+    client.set_properties(FakeClient::with_status(503, "Service Unavailable"));
+    client.set_data(FakeClient::ok(r#"{"device":{"ismobile":true}}"#));
+    let engine = Arc::new(engine_with(client.clone()));
+    assert!(engine.public_properties().is_err());
+    assert!(
+        engine.accepted_evidence_keys().is_ok(),
+        "the other request worked"
+    );
+    assert!(
+        engine.is_evidence_key_filter_complete(),
+        "the evidence keys arrived at build"
+    );
+
+    let pipeline = Pipeline::builder()
+        .add_element(engine.clone())
+        .suppress_process_exceptions(true)
+        .build()
+        .unwrap();
+    assert_eq!(errors_processing(&pipeline).len(), 1);
+
+    client.set_properties(FakeClient::ok(
+        r#"{"Products":{"device":{"DataTier":"CloudV4","Properties":[]}}}"#,
+    ));
+    assert_eq!(errors_processing(&pipeline), Vec::<String>::new());
+    assert!(engine.has_loaded_metadata());
+    let products = engine.public_properties().unwrap();
+    assert!(products.products.contains_key("device"));
+    assert_eq!(requests_to(&client, "evidencekeys"), 1);
+    assert_eq!(requests_to(&client, "accessibleproperties"), 3);
 }
 
 #[test]
@@ -1053,31 +1193,47 @@ fn accessible_properties_are_asked_for_without_a_blank_license_key() {
 #[test]
 fn accessible_properties_failure_names_neither_key() {
     // The keys travel in the query string of this request, so a failure must
-    // name the endpoint without them.
-    let client = Arc::new(FakeClient::default());
-    client.set_properties(FakeClient::with_status(500, "{}"));
-    let result = CloudRequestEngine::builder()
-        .resource_key("test-resource-key")
-        .license_key("secret-license-key")
-        .endpoint("https://cloud.example.test/api/v4/")
-        .http_client(client)
-        .build();
-    let message = match result {
-        Err(error) => error.to_string(),
-        Ok(_) => panic!("expected the build to fail on a 500 from the cloud"),
-    };
-    assert!(
-        message.contains("https://cloud.example.test/api/v4/accessibleproperties"),
-        "the endpoint is named: {message}"
-    );
-    assert!(
-        !message.contains("secret-license-key"),
-        "the license key is not in the message: {message}"
-    );
-    assert!(
-        !message.contains("test-resource-key"),
-        "the resource key is not in the message: {message}"
-    );
+    // name the endpoint without them, whether the build returns it (a 4xx) or
+    // a request does after the retry on first use (a 5xx).
+    for status in [403, 500] {
+        let client = Arc::new(FakeClient::default());
+        client.set_properties(FakeClient::with_status(status, "{}"));
+        let result = CloudRequestEngine::builder()
+            .resource_key("test-resource-key")
+            .license_key("secret-license-key")
+            .endpoint("https://cloud.example.test/api/v4/")
+            .http_client(client)
+            .build();
+        let message = match (status, result) {
+            (403, Err(error)) => error.to_string(),
+            (500, Ok(engine)) => {
+                let pipeline = Pipeline::builder()
+                    .add_element(Arc::new(engine))
+                    .suppress_process_exceptions(true)
+                    .build()
+                    .unwrap();
+                let errors = errors_processing(&pipeline);
+                assert_eq!(errors.len(), 1, "{errors:?}");
+                errors[0].clone()
+            }
+            (status, Ok(_)) => panic!("expected the build to fail on a {status}"),
+            (status, Err(error)) => {
+                panic!("expected the build to work on a {status}: {error}")
+            }
+        };
+        assert!(
+            message.contains("https://cloud.example.test/api/v4/accessibleproperties"),
+            "{status}, the endpoint is named: {message}"
+        );
+        assert!(
+            !message.contains("secret-license-key"),
+            "{status}, the license key is not in the message: {message}"
+        );
+        assert!(
+            !message.contains("test-resource-key"),
+            "{status}, the resource key is not in the message: {message}"
+        );
+    }
 }
 
 /// Build an engine that authenticates with a license key alone and asks for the

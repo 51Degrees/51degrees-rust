@@ -232,8 +232,8 @@ fn null_property_becomes_no_value_with_reason() {
 fn derives_aspect_metadata_from_request_engine() {
     let (_pipeline, request_engine) = fake_pipeline();
 
-    // Building with eager properties pulls the device product's metadata up
-    // front. It is the same metadata the engine fills lazily on first process.
+    // The engine reads the device product's metadata when it is built, from
+    // the accessible properties the request engine fetched when it was built.
     let mut engine = DeviceDetectionCloudEngine::builder()
         .cloud_request_engine(request_engine)
         .eager_properties(true)
@@ -258,12 +258,10 @@ fn derives_aspect_metadata_from_request_engine() {
 }
 
 #[test]
-fn properties_are_discovered_lazily_on_process() {
-    // Built without eager properties, the engine exposes no metadata until it
-    // processes. The set-headers element relies on this lazy discovery to see
-    // the device SetHeader* properties at request time, which is what makes the
-    // cloud Accept-CH headers work. Process takes `&self`, so discovery fills an
-    // interior slot that the shared engine reference then reflects.
+fn properties_are_read_when_the_engine_is_built() {
+    // The engine exposes its metadata as soon as it is built, so the
+    // set-headers element sees the device SetHeader* properties before the
+    // first request, which is what makes the cloud Accept-CH headers work.
     use fiftyone_pipeline_core::FlowElement;
 
     let fake = Arc::new(FakeCloud {
@@ -284,10 +282,14 @@ fn properties_are_discovered_lazily_on_process() {
             .build(),
     );
 
-    // Nothing is discovered before the first process call.
+    let names: Vec<String> = device_engine
+        .properties()
+        .iter()
+        .map(|p| p.name.to_lowercase())
+        .collect();
     assert!(
-        device_engine.properties().is_empty(),
-        "properties are empty before discovery runs"
+        names.iter().any(|n| n == "screenpixelswidth"),
+        "metadata is read when the engine is built, names were: {names:?}"
     );
 
     let pipeline = Pipeline::builder()
@@ -302,17 +304,8 @@ fn properties_are_discovered_lazily_on_process() {
     );
     data.process().expect("processing succeeds");
 
-    // After processing, the shared engine reflects the discovered metadata, so a
-    // later element such as set-headers can scan it.
-    let names: Vec<String> = device_engine
-        .properties()
-        .iter()
-        .map(|p| p.name.to_lowercase())
-        .collect();
-    assert!(
-        names.iter().any(|n| n == "screenpixelswidth"),
-        "metadata is discovered lazily on the first process, names were: {names:?}"
-    );
+    // Processing keeps the same metadata.
+    assert_eq!(device_engine.properties().len(), names.len());
 }
 
 #[test]
