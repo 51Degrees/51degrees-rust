@@ -213,44 +213,49 @@ impl FlowElement for IdleElement {
 }
 
 /// An error a member of a parallel group records reaches the flow data once
-/// the group has finished, fails processing only when it should, and is logged
-/// once when it should be, as in sequence. The recording element is the first
-/// of the group, which runs on the calling thread, so its record is this
-/// thread's.
+/// the group has finished, fails processing only when it should and errors
+/// are not suppressed, and is logged once when it should be, as in sequence.
+/// The recording element is the first of the group, which runs on the calling
+/// thread, so its record is this thread's.
 #[test]
 fn an_error_a_group_member_records_reaches_the_flow_data() {
-    for should_throw in [false, true] {
-        for should_log in [false, true] {
-            let case = format!("should_throw {should_throw}, should_log {should_log}");
-            let from = errors_logged().len();
-            let group: [Arc<dyn FlowElement>; 2] = [
-                Arc::new(RecordingErrorElement::new(should_throw, should_log)),
-                Arc::new(IdleElement::new()),
-            ];
-            let pipeline = Pipeline::builder()
-                .add_parallel_elements(group)
-                .build()
-                .unwrap();
-            let mut data = pipeline.create_flow_data();
-            let result = data.process();
+    for suppress in [false, true] {
+        for should_throw in [false, true] {
+            for should_log in [false, true] {
+                let case = format!(
+                    "suppress {suppress}, should_throw {should_throw}, should_log {should_log}"
+                );
+                let from = errors_logged().len();
+                let group: [Arc<dyn FlowElement>; 2] = [
+                    Arc::new(RecordingErrorElement::new(should_throw, should_log)),
+                    Arc::new(IdleElement::new()),
+                ];
+                let pipeline = Pipeline::builder()
+                    .add_parallel_elements(group)
+                    .suppress_process_exceptions(suppress)
+                    .build()
+                    .unwrap();
+                let mut data = pipeline.create_flow_data();
+                let result = data.process();
 
-            let keys: Vec<&str> = data
-                .errors()
-                .iter()
-                .map(|error| error.element_data_key.as_str())
-                .collect();
-            assert_eq!(keys, ["recording"], "{case}");
-            match result {
-                Ok(()) => assert!(!should_throw, "{case}"),
-                Err(Error::Aggregate(errors)) => {
-                    assert!(should_throw, "{case}");
-                    assert_eq!(errors.len(), 1, "{case}");
-                    assert_eq!(errors[0].element_data_key, "recording", "{case}");
+                let keys: Vec<&str> = data
+                    .errors()
+                    .iter()
+                    .map(|error| error.element_data_key.as_str())
+                    .collect();
+                assert_eq!(keys, ["recording"], "{case}");
+                match result {
+                    Ok(()) => assert!(suppress || !should_throw, "{case}"),
+                    Err(Error::Aggregate(errors)) => {
+                        assert!(!suppress && should_throw, "{case}");
+                        assert_eq!(errors.len(), 1, "{case}");
+                        assert_eq!(errors[0].element_data_key, "recording", "{case}");
+                    }
+                    Err(other) => panic!("{case}: expected an aggregate error, got {other:?}"),
                 }
-                Err(other) => panic!("{case}: expected an aggregate error, got {other:?}"),
+                let logged = errors_logged().split_off(from);
+                assert_eq!(logged.len(), usize::from(should_log), "{case}: {logged:?}");
             }
-            let logged = errors_logged().split_off(from);
-            assert_eq!(logged.len(), usize::from(should_log), "{case}: {logged:?}");
         }
     }
 }
