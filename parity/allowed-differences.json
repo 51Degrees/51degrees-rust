@@ -202,32 +202,47 @@
   },
   {
     "path": "json.device.screenpixels*",
-    "kind": "onlyInDotnet",
+    "kind": "type",
     "data": "lite",
     "dotnet": {"value": [0]},
-    "reason": "The crates' JSON builder leaves out a property with no value, so the 0 .NET gives for a screen size that does not parse is missing from the crates' JSON (properties.device.screenpixels* state). A lost screen size that .NET gives as 0 also passes until the difference is removed.",
+    "rust": {"value": [null]},
+    "reason": "A screen size whose data file value does not parse has no value in the crates, so their JSON writes null where .NET writes 0 (properties.device.screenpixels* state). A lost screen size that .NET gives as 0 also passes until the difference is removed.",
+    "issue": 224
+  },
+  {
+    "path": "json.device.screenpixels*nullreason",
+    "kind": "onlyInRust",
+    "data": "lite",
+    "reason": "The crates' JSON gives the reason a screen size whose data file value does not parse has no value, where .NET gives 0 and so no reason (properties.device.screenpixels* state).",
     "issue": 224
   },
   {
     "path": "json.device.*",
-    "kind": "onlyInDotnet",
+    "kind": "type",
     "data": "enterprise",
     "dotnet": {"value": [0, false]},
-    "reason": "The crates' JSON builder leaves out a property with no value, so the 0 or false .NET gives for a value that does not parse is missing from the crates' JSON (properties.device state). It also lets through a lost answer that .NET gives as 0 or false, as that entry says.",
+    "rust": {"value": [null]},
+    "reason": "A number or true or false property whose data file value does not parse has no value in the crates, so their JSON writes null where .NET writes 0 or false (properties.device state). It also lets through a lost answer that .NET gives as 0 or false, as that entry says.",
+    "issue": 224
+  },
+  {
+    "path": "json.device.*nullreason",
+    "kind": "onlyInRust",
+    "data": "enterprise",
+    "reason": "The crates' JSON gives the reason a number or true or false property whose data file value does not parse has no value, where .NET gives 0 or false and so no reason (properties.device state).",
     "issue": 224
   },
   {
     "path": "json.device.*nullreason",
     "kind": "onlyInDotnet",
-    "reason": "The crates' JSON builder writes no nullreason entry for a property with no value, where .NET writes one.",
-    "issue": 229
+    "reason": "The crates give an empty string or an empty list where .NET gives no value, so only .NET's JSON gives a reason (properties.device state).",
+    "issue": 224
   },
   {
-    "path": "json.device.*",
-    "kind": "onlyInDotnet",
-    "dotnet": {"value": [null]},
-    "reason": "The crates' JSON builder leaves out a property with no value, where .NET writes null.",
-    "issue": 229
+    "path": "json.device.*nullreason",
+    "kind": "value",
+    "reason": "The crates give every Device Detection property with no value the reason No value for property and its name, where .NET says why it has none, such as that the evidence it needs was not supplied (properties.* noValueMessage).",
+    "issue": 223
   },
   {
     "path": "json.device",
