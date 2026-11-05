@@ -25,7 +25,9 @@
 //!
 //! Only the Enterprise data file carries these properties, so the test runs
 //! when `51DEGREES_IPI_PATH` names a file that carries Latitude and skips
-//! otherwise.
+//! otherwise. When `51DEGREES_REQUIRE_LOCATION` is set, as the comparison
+//! with .NET sets it for the Enterprise file, the test fails where it would
+//! skip.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -54,6 +56,18 @@ const SEPARATOR: &str = "|";
 
 /// The decimal places the specification gives a location to.
 const PLACES: usize = 3;
+
+/// Set where the test must run, so it fails rather than skips.
+const REQUIRE: &str = "51DEGREES_REQUIRE_LOCATION";
+
+/// Skip the test for `reason`, or fail when [`REQUIRE`] is set.
+fn skip(reason: &str) {
+    assert!(
+        std::env::var_os(REQUIRE).is_none(),
+        "{REQUIRE} is set, but {reason}"
+    );
+    eprintln!("{reason}; skipping");
+}
 
 /// The data file `51DEGREES_IPI_PATH` names, if it exists.
 fn data_file() -> Option<PathBuf> {
@@ -86,7 +100,7 @@ fn quoted_values(text: &str) -> Vec<&str> {
 #[test]
 fn locations_are_given_to_three_decimal_places() {
     let Some(file) = data_file() else {
-        eprintln!("51DEGREES_IPI_PATH names no data file; skipping");
+        skip("51DEGREES_IPI_PATH names no data file");
         return;
     };
     let manager =
@@ -96,7 +110,7 @@ fn locations_are_given_to_three_decimal_places() {
         .iter()
         .any(|name| name == "Latitude")
     {
-        eprintln!("{} carries no Latitude; skipping", file.display());
+        skip(&format!("{} carries no Latitude", file.display()));
         return;
     }
     let engine = IpIntelligenceOnPremiseEngineBuilder::new(&file)
