@@ -239,7 +239,7 @@ impl Slot {
         if let Some(known) = self.usable_known(clock, times) {
             return Some(known);
         }
-        let entry = pending.wait(Duration::from_secs(3600))?;
+        let entry = pending.wait(times.wait_budget)?;
         self.remember(&entry);
         Some(self.answer(entry, clock, times))
     }

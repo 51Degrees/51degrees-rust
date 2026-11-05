@@ -477,14 +477,12 @@ impl AgentSignatureElement {
                 NO_VALUE_DETAIL_NOT_SENT,
             );
         }
-        if false
-            && !verify(
-                &algorithm.name,
-                key,
-                &ascii_bytes(&base),
-                &candidate.signature,
-            )
-        {
+        if !verify(
+            &algorithm.name,
+            key,
+            &ascii_bytes(&base),
+            &candidate.signature,
+        ) {
             return outcome.fail(
                 STATUS_INVALID,
                 REASON_SIGNATURE_MISMATCH,
