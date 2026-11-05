@@ -476,8 +476,12 @@ pub fn default_missing_property_reason<E: AspectEngine + ?Sized>(
     resolve(property_name, &view)
 }
 
-/// Resolve a missing-property reason directly from an [`AspectEngine`] without
-/// going through the trait method, for callers holding a `&dyn AspectEngine`.
+/// Why `property_name` is missing from `engine`'s results, for callers holding
+/// a `&dyn AspectEngine` that need only the reason.
+///
+/// Calls [`AspectEngine::missing_property_reason`], so an engine's override
+/// applies. [`default_missing_property_reason`] applies the default rules
+/// without the trait method.
 pub fn engine_missing_property_reason(
     engine: &dyn AspectEngine,
     property_name: &str,
