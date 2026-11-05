@@ -135,6 +135,33 @@ jobs:
           cargo build -p parity-rust -p parity-compare
           dotnet build dotnet -c Release -o out/dotnet
 
+      # Both sides must build the same C code (parity/README.md, "The C
+      # code"). Each engine package records the 51degrees-dotnet commit it
+      # was built from, and that commit's cxx submodule must be the one this
+      # repository records.
+      - name: Check both sides build the same C code
+        if: env.RUN == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ours=$(git rev-parse HEAD:cxx)
+          assets=parity/dotnet/obj/project.assets.json
+          packages=$(jq -r '.packageFolders | keys_unsorted[0]' "$assets")
+          for id in FiftyOne.DeviceDetection.Hash.Engine.OnPremise FiftyOne.IpIntelligence.Engine.OnPremise; do
+            path=$(jq -r --arg id "$id/" \
+              '.libraries | to_entries[] | select(.key | startswith($id)) | .value.path' "$assets")
+            repository=$(grep -o '<repository [^>]*>' "$packages/$path/${id,,}.nuspec")
+            url=$(sed -n 's/.* url="\([^"]*\)".*/\1/p' <<< "$repository")
+            commit=$(sed -n 's/.* commit="\([0-9a-f]*\)".*/\1/p' <<< "$repository")
+            theirs=$(gh api "repos/${url#https://github.com/}/git/trees/$commit" \
+              --jq '.tree[] | select(.path == "cxx" and .type == "commit") | .sha')
+            echo "$id ($path) was built from $url at $commit, whose cxx is ${theirs:-absent}"
+            if [ "$theirs" != "$ours" ]; then
+              echo "::error::$id was built from $url at $commit, whose cxx submodule is ${theirs:-absent}, but this repository's cxx is $ours. Move the package versions in parity/dotnet/Parity.csproj to the 51degrees-dotnet release built from $ours."
+              exit 1
+            fi
+          done
+
       - name: Write the answers
         if: env.RUN == 'true'
         working-directory: parity
