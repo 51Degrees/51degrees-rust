@@ -117,7 +117,7 @@ path, so cloud-only users and most of CI build without a C compiler.
 
 | Crate | Responsibility |
 |-------|----------------|
-| [`examples-shared`](examples-shared) | Shared example helpers: file-finder, resource-key-from-env, the DD/IPI data-path resolvers, the data-file-age warning, property-as-string and the sample evidence. |
+| [`examples-shared`](examples/examples-shared) | Shared example helpers: file-finder, resource-key-from-env, the DD/IPI data-path resolvers, the data-file-age warning, property-as-string and the sample evidence. |
 | [`device-detection-examples`](examples/device-detection-examples) | Runnable device-detection examples (cloud, on-premise and web). |
 | [`ip-intelligence-examples`](examples/ip-intelligence-examples) | Runnable IP-intelligence examples (cloud, on-premise and web). |
 | [`pipeline-examples`](examples/pipeline-examples) | Runnable pipeline examples: custom flow elements, caching, usage sharing and the combined-pipeline server-side examples. |
