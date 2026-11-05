@@ -43,6 +43,9 @@ use crate::data::{
 };
 use crate::dto::map_fodid_object;
 
+/// The engine's name in log records and messages.
+const ENGINE_NAME: &str = "FodIdCloudEngine";
+
 /// The cloud 51Degrees-identifier engine.
 ///
 /// The engine consumes the JSON response stored by a [`CloudRequestEngine`]
@@ -214,12 +217,13 @@ impl FodIdCloudEngine {
     }
 
     /// Read the upstream cloud JSON, slice out the `fodid` aspect and build the
-    /// element data from it.
+    /// element data from it, or `None` when the request engine left no
+    /// response.
     ///
     /// Returns an [`Error::PipelineConfiguration`] when there is no cloud JSON,
     /// which almost always means no [`CloudRequestEngine`] ran before this
     /// engine.
-    fn build_data(&self, data: &FlowData) -> Result<FodIdDataBase> {
+    fn build_data(&self, data: &FlowData) -> Result<Option<FodIdDataBase>> {
         let cloud = data.get(CloudRequestEngine::DATA_KEY).ok_or_else(|| {
             Error::configuration(
                 "No cloud request data is present. This is probably because there \
@@ -230,14 +234,11 @@ impl FodIdCloudEngine {
         })?;
 
         // An empty or absent response means the request engine failed and has
-        // already recorded its own error: produce empty identifier data rather
-        // than raising a second error.
-        let json = match cloud.json_response() {
-            Some(json) if !json.is_empty() => json,
-            _ => return Ok(FodIdDataBase::new()),
-        };
-
-        self.parse_json(json)
+        // already recorded its own error.
+        match cloud.json_response() {
+            Some(json) if !json.is_empty() => self.parse_json(json).map(Some),
+            _ => Ok(None),
+        }
     }
 
     /// Parse a full cloud response body into the element data, slicing out the
@@ -260,7 +261,13 @@ impl FodIdCloudEngine {
 
 impl FlowElement for FodIdCloudEngine {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        let element = self.build_data(data)?;
+        let element = match self.build_data(data)? {
+            Some(element) => element,
+            None => {
+                CloudRequestEngine::record_not_processed(data, ENGINE_NAME, FODID_ELEMENT_DATA_KEY);
+                FodIdDataBase::new()
+            }
+        };
         data.get_or_add(FODID_DATA_KEY, || element)?;
         Ok(())
     }
@@ -282,6 +289,10 @@ impl FlowElement for FodIdCloudEngine {
 }
 
 impl AspectEngine for FodIdCloudEngine {
+    fn engine_type_name(&self) -> &str {
+        ENGINE_NAME
+    }
+
     fn data_source_tier(&self) -> &str {
         // Cloud engines have no on-premise data tier.
         ""

@@ -78,6 +78,7 @@ impl log::Log for TestLogger {
         let target = metadata.target();
         metadata.level() <= log::Level::Info
             && (target.starts_with("fiftyone_cloud_request_engine")
+                || target.starts_with("fiftyone_pipeline_core")
                 || target.starts_with("fiftyone_ip_intelligence")
                 || target.starts_with("fiftyone_pipeline_engines"))
     }
@@ -219,6 +220,21 @@ fn a_failed_request_gives_ip_data_that_says_why() {
     assert_eq!(data.errors()[1].source.to_string(), NOT_PROCESSED);
     let logged = take_logged();
     assert!(logged.contains(&NOT_PROCESSED_LOG.to_owned()), "{logged:?}");
+    let errors: Vec<&String> = logged
+        .iter()
+        .filter(|record| record.starts_with("ERROR "))
+        .collect();
+    assert_eq!(
+        errors.len(),
+        1,
+        "only the request engine's error: {logged:?}"
+    );
+    assert!(
+        errors[0].starts_with(&format!(
+            "ERROR An error occurred in element '{CLOUD_KEY}': "
+        )),
+        "{logged:?}"
+    );
 
     let ip = data.get(IP_DATA_KEY).expect("the IP data is there");
     assert!(ip.base().cloud_request_failed());
@@ -257,6 +273,11 @@ fn a_failed_request_fails_nothing_more_when_errors_are_suppressed() {
     let (data, error) = process(&pipeline);
     assert!(error.is_none(), "{error:?}");
     assert_eq!(data.errors().len(), 2);
+    let logged = take_logged();
+    assert!(
+        !logged.iter().any(|record| record.starts_with("ERROR ")),
+        "{logged:?}"
+    );
     assert!(data.get(IP_DATA_KEY).unwrap().base().cloud_request_failed());
 }
 

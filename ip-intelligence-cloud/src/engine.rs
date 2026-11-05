@@ -335,6 +335,10 @@ impl FlowElement for IpIntelligenceCloudEngine {
 }
 
 impl AspectEngine for IpIntelligenceCloudEngine {
+    fn engine_type_name(&self) -> &str {
+        ENGINE_NAME
+    }
+
     fn data_source_tier(&self) -> &str {
         // Cloud engines have no on-premise data tier.
         ""

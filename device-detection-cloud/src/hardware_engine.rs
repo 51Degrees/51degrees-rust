@@ -257,6 +257,10 @@ impl FlowElement for HardwareProfileCloudEngine {
 }
 
 impl AspectEngine for HardwareProfileCloudEngine {
+    fn engine_type_name(&self) -> &str {
+        ENGINE_NAME
+    }
+
     fn data_source_tier(&self) -> &str {
         self.metadata
             .get()

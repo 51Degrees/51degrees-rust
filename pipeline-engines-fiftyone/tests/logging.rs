@@ -322,9 +322,11 @@ fn a_refused_send_logs_one_warning() {
         .build();
     pipeline.create_flow_data_with(evidence).process().unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(10);
+    const SEND_DEADLINE_SECONDS: u64 = 10;
+    const POLL_INTERVAL_MILLISECONDS: u64 = 25;
+    let deadline = Instant::now() + Duration::from_secs(SEND_DEADLINE_SECONDS);
     while share.fail_count() == 0 && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(25));
+        std::thread::sleep(Duration::from_millis(POLL_INTERVAL_MILLISECONDS));
     }
     drop(pipeline);
     drop(share);

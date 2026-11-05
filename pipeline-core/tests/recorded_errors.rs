@@ -23,7 +23,8 @@
 //! An element that carries on past a failure records it on the flow data,
 //! and whether that error fails processing is the element's choice.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::thread::{self, ThreadId};
 
 use fiftyone_pipeline_core::{
     Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, FlowError,
@@ -35,27 +36,32 @@ struct RecordingErrorElement {
     filter: EvidenceKeyFilterWhitelist,
     properties: Vec<PropertyMetaData>,
     should_throw: bool,
+    should_log: bool,
 }
 
 impl RecordingErrorElement {
-    fn new(should_throw: bool) -> Self {
+    fn new(should_throw: bool, should_log: bool) -> Self {
         RecordingErrorElement {
             filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
             properties: Vec::new(),
             should_throw,
+            should_log,
         }
     }
 }
 
 impl FlowElement for RecordingErrorElement {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        data.add_error(FlowError::with_should_throw(
-            "recording",
-            Error::Pipeline {
-                message: "carried on".to_owned(),
-            },
-            self.should_throw,
-        ));
+        data.add_error(
+            FlowError::with_should_throw(
+                "recording",
+                Error::Pipeline {
+                    message: "carried on".to_owned(),
+                },
+                self.should_throw,
+            ),
+            self.should_log,
+        );
         Ok(())
     }
     fn data_key(&self) -> &str {
@@ -72,7 +78,7 @@ impl FlowElement for RecordingErrorElement {
 #[test]
 fn an_element_can_record_an_error_that_does_not_fail_processing() {
     let pipeline = Pipeline::builder()
-        .add_element(Arc::new(RecordingErrorElement::new(false)))
+        .add_element(Arc::new(RecordingErrorElement::new(false, false)))
         .suppress_process_exceptions(false)
         .build()
         .unwrap();
@@ -90,7 +96,7 @@ fn an_element_can_record_an_error_that_does_not_fail_processing() {
 #[test]
 fn an_error_an_element_records_to_throw_fails_processing() {
     let pipeline = Pipeline::builder()
-        .add_element(Arc::new(RecordingErrorElement::new(true)))
+        .add_element(Arc::new(RecordingErrorElement::new(true, false)))
         .build()
         .unwrap();
     let mut data = pipeline.create_flow_data();
@@ -101,5 +107,77 @@ fn an_error_an_element_records_to_throw_fails_processing() {
             assert_eq!(errors[0].element_data_key, "recording");
         }
         other => panic!("expected an aggregate error, got {other:?}"),
+    }
+}
+
+/// Error-level records with the thread that logged each, because the tests in
+/// this binary run in parallel and each reads only its own.
+static ERRORS: Mutex<Vec<(ThreadId, String)>> = Mutex::new(Vec::new());
+
+struct ErrorLogger;
+
+impl log::Log for ErrorLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() == log::Level::Error
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            ERRORS
+                .lock()
+                .unwrap()
+                .push((thread::current().id(), record.args().to_string()));
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static LOGGER: ErrorLogger = ErrorLogger;
+
+/// The error-level records the current thread has logged, installing the
+/// logger first if no test has yet.
+fn errors_logged() -> Vec<String> {
+    let _ = log::set_logger(&LOGGER);
+    log::set_max_level(log::LevelFilter::Error);
+    let me = thread::current().id();
+    ERRORS
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(id, _)| *id == me)
+        .map(|(_, message)| message.clone())
+        .collect()
+}
+
+/// An error an element records with `should_log` set is logged once at error
+/// level whether or not the pipeline suppresses errors, as .NET's
+/// `FlowData.AddError` does, and one recorded without it is not logged.
+#[test]
+fn an_error_recorded_to_log_is_logged_once_whether_or_not_suppressed() {
+    for suppress in [false, true] {
+        for should_log in [true, false] {
+            let from = errors_logged().len();
+            let pipeline = Pipeline::builder()
+                .add_element(Arc::new(RecordingErrorElement::new(false, should_log)))
+                .suppress_process_exceptions(suppress)
+                .build()
+                .unwrap();
+            let mut data = pipeline.create_flow_data();
+            assert!(data.process().is_ok());
+            let logged = errors_logged().split_off(from);
+            let expected = if should_log {
+                vec![
+                    "An error occurred in element 'recording': pipeline error: carried on"
+                        .to_owned(),
+                ]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(
+                logged, expected,
+                "suppress {suppress}, should_log {should_log}"
+            );
+        }
     }
 }

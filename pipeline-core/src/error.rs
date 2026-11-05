@@ -137,8 +137,10 @@ impl NoValueError {
 /// A single error recorded against a [`crate::FlowData`] instance during
 /// processing.
 ///
-/// When `suppress_process_exceptions` is enabled, the pipeline collects one of
-/// these per failing element rather than aborting, per the
+/// The pipeline records one of these for each element that returns an error,
+/// whether or not `suppress_process_exceptions` is enabled, and an element
+/// that carries on past a failure can record one with
+/// [`crate::FlowData::add_error`], per the
 /// [exception-handling specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/exception-handling.md#process-function).
 #[derive(Debug, Error)]
 #[error("error in element '{element_data_key}': {source}")]
