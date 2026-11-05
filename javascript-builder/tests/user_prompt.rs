@@ -288,21 +288,27 @@ const WITH_51DID: &str = r#"{"Products":{"FODid":{"Properties":[
 const WITHOUT_51DID: &str = r#"{"Products":{"device":{"Properties":[
     {"Name":"IsMobile","Type":"Bool"}]}}}"#;
 
+/// A key without the 51Did product leaves the 51Did cloud engine no
+/// properties, so the section is left out.
 #[test]
 fn the_51did_cloud_engine_renders_the_section_with_no_setting() {
-    let engine = request_engine(WITH_51DID);
-    let fodid = FodIdCloudEngine::builder()
-        .cloud_request_engine(Arc::clone(&engine))
-        .build()
-        .expect("51Did engine builds");
-    let pipeline = pipeline(
-        |b| {
-            b.add_element(Arc::clone(&engine) as Arc<dyn FlowElement>)
-                .add_element(Arc::new(fodid))
-        },
-        &javascript_builder(|b| b),
-    );
-    assert!(prompts(&pipeline));
+    let prompts_with = |accessible_properties| {
+        let engine = request_engine(accessible_properties);
+        let fodid = FodIdCloudEngine::builder()
+            .cloud_request_engine(Arc::clone(&engine))
+            .build()
+            .expect("51Did engine builds");
+        let pipeline = pipeline(
+            |b| {
+                b.add_element(Arc::clone(&engine) as Arc<dyn FlowElement>)
+                    .add_element(Arc::new(fodid))
+            },
+            &javascript_builder(|b| b),
+        );
+        prompts(&pipeline)
+    };
+    assert!(prompts_with(WITH_51DID));
+    assert!(!prompts_with(WITHOUT_51DID));
 }
 
 #[test]
