@@ -131,14 +131,6 @@
 //! aimed at short-lived hosts such as `wasm32-wasip1` edge runtimes, where
 //! repeating the two round-trips on every cold start would be wasteful.
 //!
-//! This build-time resolution is a deliberate deviation from the specification's
-//! [updated start-up design](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/cloud-request-engine.md#updated-design),
-//! which makes discovery lazy (deferred to the first `Process`) so a
-//! `SuppressProcessExceptions` pipeline can absorb a cloud outage at start-up.
-//! Here the builder returns a `Result`, which a caller can always handle, and the
-//! `set_state` path lets a host that must tolerate an unavailable cloud build from
-//! a cached snapshot instead.
-//!
 //! ## Recovery mode
 //!
 //! Repeated request failures within a window trip a recovery gate, which
