@@ -763,15 +763,17 @@ extern "C" {
 
     /// Reads the fields of the data file property at `property_index` that
     /// are not strings and returns 1, or returns 0 when the index is out of
-    /// range or the property cannot be read. `value_type` is the C library's
-    /// property value type, `available` is 1 when the data set was created
-    /// with the property, `required_index` is the index the results getters
-    /// take for it or -1 for none, `component_id` is the id of the property's
-    /// component or 0 for none, `value_count` is the number of values the
-    /// file holds for the property or 0 when they are not all in its values
-    /// collection, `default_value_number` the place of its default value
-    /// among them or -1 for none, and `map_count` the number of data tiers
-    /// it is in. See `src/shim.c`.
+    /// range or the property or its name cannot be read, the name being read
+    /// to find whether the data set was created with the property.
+    /// `value_type` is the C library's property value type, `available` is 1
+    /// when the data set was created with the property, `required_index` is
+    /// the index the results getters take for it or -1 for none,
+    /// `component_id` is the id of the property's component or 0 for none,
+    /// `value_count` is the number of values the file holds for the property
+    /// or 0 when they are not all in its values collection,
+    /// `default_value_number` the place of its default value among them or -1
+    /// for none, and `map_count` the number of data tiers it is in. See
+    /// `src/shim.c`.
     ///
     /// # Safety
     /// `manager` must be an initialized Hash manager. Every output pointer

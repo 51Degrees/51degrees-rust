@@ -728,8 +728,8 @@ impl Manager {
     }
 
     /// The fields of the data file property at `index` that are not strings,
-    /// or [`None`] when the index is out of range. The caller holds the file
-    /// read permit.
+    /// or [`None`] when the index is out of range or the property or its name
+    /// cannot be read. The caller holds the file read permit.
     fn read_property_fields(&self, index: u32) -> Option<PropertyFields> {
         let mut fields = PropertyFields {
             value_type: 0,
@@ -2040,6 +2040,7 @@ mod tests {
     const PROPERTIES_HEADER: usize = 110;
     const VALUES_HEADER: usize = 122;
     const PROPERTY_SIZE: usize = 44;
+    const NAME_OFFSET: usize = 12;
     const FIRST_VALUE_INDEX: usize = 28;
     const LAST_VALUE_INDEX: usize = 32;
 
@@ -2166,6 +2167,71 @@ mod tests {
                 }
             }
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Whether the data set was created with a property is found by the
+    /// property's name, so a property whose name cannot be read cannot be
+    /// read at all, as the C++ builder raises an exception there. A data set
+    /// reads every property's name when it loads, so only a read that fails
+    /// later reaches this. LowMemory reads each property from the file when
+    /// it is asked for, so the last property's name is made unreadable in the
+    /// file once the data set has loaded.
+    #[test]
+    fn a_property_whose_name_cannot_be_read_is_not_read() {
+        use std::io::{Seek, SeekFrom, Write};
+
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping unreadable names");
+            return;
+        };
+        let bytes = std::fs::read(&path).expect("the data file is read");
+        let start = read_u32(&bytes, PROPERTIES_HEADER) as usize;
+        let length = read_u32(&bytes, PROPERTIES_HEADER + 4) as usize;
+        let count = read_u32(&bytes, PROPERTIES_HEADER + 8);
+        assert_eq!(length, count as usize * PROPERTY_SIZE);
+        let last = count - 1;
+
+        let dir = std::env::temp_dir().join(format!(
+            "fiftyone-native-unreadable-name-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the folder is made");
+        let copy = dir.join("51Degrees.hash");
+        std::fs::write(&copy, &bytes).expect("the copy is written");
+        let manager = Manager::open(&copy, PerformanceProfile::LowMemory).expect("the copy loads");
+        {
+            let _file_read = manager.file_read();
+            let fields = manager
+                .read_property_fields(last)
+                .expect("the last property is read");
+            assert_eq!(fields.available, 1);
+        }
+
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&copy)
+            .expect("the copy opens to write");
+        let name_offset = start + last as usize * PROPERTY_SIZE + NAME_OFFSET;
+        file.seek(SeekFrom::Start(name_offset as u64))
+            .expect("the name offset is found");
+        file.write_all(&(i32::MAX as u32).to_le_bytes())
+            .expect("the name offset is written");
+        drop(file);
+        {
+            let _file_read = manager.file_read();
+            assert!(manager.read_property_fields(0).is_some());
+            assert!(manager.read_property_fields(last).is_none());
+        }
+        let error = manager
+            .data_file_properties()
+            .expect_err("the last property cannot be read");
+        assert!(
+            error.to_string().contains(&format!("(property {last})")),
+            "{error}"
+        );
+        drop(manager);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

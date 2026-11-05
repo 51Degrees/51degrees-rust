@@ -519,9 +519,11 @@ static const fiftyoneDegreesProperty* get_property(
  * builder does, and sets `available` to 1 when the data set was created with
  * it, otherwise 0, and `requiredIndex` to its required property index, which
  * the results getters take, or -1 when it has none. The C library matches the
- * name ignoring case, so a property named in another case is found.
+ * name ignoring case, so a property named in another case is found. Returns
+ * 1, or 0 when the name cannot be read, as the C++ builder raises an
+ * exception there.
  */
-static void find_available(
+static int find_available(
     fiftyoneDegreesDataSetHash *dataSet,
     const fiftyoneDegreesProperty *property,
     uint8_t *available,
@@ -529,8 +531,9 @@ static void find_available(
     *available = 0;
     *requiredIndex = -1;
     if (dataSet->b.b.available == NULL) {
-        return;
+        return 1;
     }
+    int read = 0;
     FIFTYONE_DEGREES_EXCEPTION_CREATE;
     fiftyoneDegreesCollectionItem item;
     fiftyoneDegreesDataReset(&item.data);
@@ -544,9 +547,11 @@ static void find_available(
             *requiredIndex =
                 fiftyoneDegreesPropertiesGetRequiredPropertyIndexFromName(
                     dataSet->b.b.available, value);
+            read = 1;
         }
         FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->strings, &item);
     }
+    return read;
 }
 
 /*
@@ -597,12 +602,14 @@ uint32_t fiftyoneDegreesShimHashGetDataFilePropertyCount(
 /*
  * Reads the fields of the data file property at `propertyIndex` that are not
  * strings into the output parameters and returns 1, or returns 0 when the
- * index is out of range or the property cannot be read. `valueType` is the
- * fiftyoneDegreesPropertyValueType the property's values have. `available` is
- * 1 when the data set was created with the property, so results can hold its
- * values, and `requiredIndex` is the index the results getters take for it,
- * or -1 when it has none. `componentId` is the id of the component the
- * property belongs to, or 0 when the property names no component.
+ * index is out of range or the property or its name cannot be read. The
+ * name is read to find whether the data set was created with the property.
+ * `valueType` is the fiftyoneDegreesPropertyValueType the property's values
+ * have. `available` is 1 when the data set was created with the property, so
+ * results can hold its values, and `requiredIndex` is the index the results
+ * getters take for it, or -1 when it has none. `componentId` is the id of the
+ * component the property belongs to, or 0 when the property names no
+ * component.
  * `valueCount` is the number of values the data file holds for the property,
  * `defaultValueNumber` the place of its default value among them, or -1 when
  * it has none, and `mapCount` the number of data tiers it is in.
@@ -636,7 +643,7 @@ int fiftyoneDegreesShimHashGetDataFileProperty(
         const fiftyoneDegreesComponent *component =
             get_component(dataSet, property->componentIndex);
         *valueType = property->valueType;
-        find_available(dataSet, property, available, requiredIndex);
+        result = find_available(dataSet, property, available, requiredIndex);
         *componentId = component == NULL ? 0 : component->componentId;
         *displayOrder = property->displayOrder;
         *isMandatory = property->isMandatory;
@@ -655,7 +662,6 @@ int fiftyoneDegreesShimHashGetDataFileProperty(
             (int32_t)(property->defaultValueIndex - first) : -1;
         *mapCount = property->mapCount;
         FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->properties, &item);
-        result = 1;
     }
     fiftyoneDegreesDataSetHashRelease(dataSet);
     return result;
