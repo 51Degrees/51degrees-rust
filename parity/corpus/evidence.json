@@ -573,5 +573,40 @@
     "evidence": {
       "query.session-id": "parity-json-values-sequence-absent"
     }
+  },
+  {
+    "id": "values-promise-full",
+    "about": "The values pipeline with session id abc-123, sequence 2, host example.com, https and Promise Full, so promises are on.",
+    "pipeline": "values",
+    "evidence": {
+      "query.session-id": "abc-123",
+      "query.sequence": "1",
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "header.values-promise": "Full"
+    }
+  },
+  {
+    "id": "values-promise-none",
+    "about": "The values pipeline straight after values-promise-full with the same evidence apart from Promise, which has no value, so promises are off.",
+    "pipeline": "values",
+    "evidence": {
+      "query.session-id": "abc-123",
+      "query.sequence": "1",
+      "header.host": "example.com",
+      "header.protocol": "https"
+    }
+  },
+  {
+    "id": "values-promise-full-again",
+    "about": "The values pipeline straight after values-promise-none with Promise Full again, so promises are on again, the builder having decided for each request.",
+    "pipeline": "values",
+    "evidence": {
+      "query.session-id": "abc-123",
+      "query.sequence": "1",
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "header.values-promise": "Full"
+    }
   }
 ]
