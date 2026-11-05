@@ -83,6 +83,13 @@
 //! return), following the
 //! [data-model specification](https://github.com/51Degrees/specifications/blob/main/data-model-specification/README.md).
 //!
+//! ## Configuration
+//!
+//! [`configuration::add_builders`] adds the builders of these three elements
+//! to a [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the
+//! names .NET gives them, so a configuration file written for .NET makes the
+//! same elements here.
+//!
 //! ## A worked example
 //!
 //! ```
@@ -106,6 +113,7 @@
 
 #![warn(missing_docs)]
 
+pub mod configuration;
 pub mod constants;
 mod evidence_filter;
 mod metadata;
