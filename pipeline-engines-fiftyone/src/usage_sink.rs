@@ -40,6 +40,10 @@ use crate::usage_record::{write_default_pipeline_info, UsageRecord, UsageWriteEr
 /// elements to each record in the batch's document, and each writes nothing
 /// of its own unless overridden.
 ///
+/// A panic in any of the four methods fails that batch alone, as an error
+/// from [`receive`](Self::receive) does, and the element goes on to the next
+/// batch. A program built to abort on panic stops instead.
+///
 /// An `Arc` of a sink is a sink too, so a caller can keep a handle to it.
 ///
 /// # Example
@@ -101,8 +105,9 @@ use crate::usage_record::{write_default_pipeline_info, UsageRecord, UsageWriteEr
 /// ));
 /// ```
 pub trait UsageSink: Send + Sync {
-    /// Take one batch. An error counts the batch as failed, and is logged at
-    /// most once a minute with the number of failures since the last report.
+    /// Take one batch. An error or a panic counts the batch as failed, and is
+    /// logged at most once a minute with the number of failures since the
+    /// last report.
     fn receive(&self, batch: UsageBatch) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
     /// Write elements at the start of each record, inside `<Device>` and

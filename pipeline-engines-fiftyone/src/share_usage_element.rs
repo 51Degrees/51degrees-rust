@@ -76,8 +76,11 @@
 //! [`ShareUsageElement::with_sink`] hands each batch to a caller's
 //! [`UsageSink`] in place of the built-in transport, whether or not the
 //! feature is on. The sink gets the records and the document the built-in
-//! transport would send, and can add its own elements to each record.
+//! transport would send, and can add its own elements to each record. An
+//! error or a panic in the sink fails that batch alone.
 
+use std::any::Any;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::OnceLock;
@@ -913,13 +916,36 @@ impl Worker {
     }
 
     /// Write the `<Devices>` document for the batch and hand both to the sink.
+    /// A panic, which a caller's sink can raise, fails this batch alone, so
+    /// the thread goes on to the next one.
     fn deliver(&self, records: Vec<UsageRecord>) -> std::result::Result<(), String> {
+        // The worker's own state is counters and a cell that a panic during
+        // its first fill leaves empty, so it can be used after a panic.
+        catch_unwind(AssertUnwindSafe(|| self.write_and_receive(records)))
+            .unwrap_or_else(|payload| Err(panic_detail(payload.as_ref())))
+    }
+
+    /// The body of [`Worker::deliver`].
+    fn write_and_receive(&self, records: Vec<UsageRecord>) -> std::result::Result<(), String> {
         let static_info = self.static_info.get_or_init(StaticInfo::gather);
         let document = write_document(&records, static_info, &*self.sink, utc_now_iso8601)
             .map_err(|e| format!("A record could not be written, because {e}"))?;
         self.sink
             .receive(UsageBatch::new(records, document))
             .map_err(|e| e.to_string())
+    }
+}
+
+/// What is logged for a batch whose writing or delivery panicked, with the
+/// panic's message when it has one.
+fn panic_detail(payload: &(dyn Any + Send)) -> String {
+    let message = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str));
+    match message {
+        Some(message) => format!("Writing or delivering the batch panicked with '{message}'"),
+        None => "Writing or delivering the batch panicked".to_owned(),
     }
 }
 
@@ -1068,6 +1094,7 @@ fn civil_from_unix(secs: u64) -> (i64, u32, u32, u32, u32, u32) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicBool;
     use std::sync::mpsc;
 
     use fiftyone_pipeline_core::{Evidence, Pipeline};
@@ -1168,6 +1195,43 @@ mod tests {
             _record: &UsageRecord,
         ) -> std::result::Result<(), UsageWriteError> {
             writer.element("Two words", "x")
+        }
+    }
+
+    /// A sink that keeps each batch in a [`Capture`] and panics the first
+    /// time it is called, in `receive` or, with `in_writer`, whilst a record
+    /// is written.
+    struct PanicsOnce {
+        capture: Capture,
+        in_writer: bool,
+        panicked: AtomicBool,
+    }
+
+    impl PanicsOnce {
+        fn panic_the_first_time(&self) {
+            if !self.panicked.swap(true, Ordering::SeqCst) {
+                panic!("the sink failed");
+            }
+        }
+    }
+
+    impl UsageSink for PanicsOnce {
+        fn receive(&self, batch: UsageBatch) -> std::result::Result<(), SinkError> {
+            if !self.in_writer {
+                self.panic_the_first_time();
+            }
+            self.capture.receive(batch)
+        }
+
+        fn write_after_record(
+            &self,
+            _writer: &mut UsageWriter<'_>,
+            _record: &UsageRecord,
+        ) -> std::result::Result<(), UsageWriteError> {
+            if self.in_writer {
+                self.panic_the_first_time();
+            }
+            Ok(())
         }
     }
 
@@ -1515,6 +1579,70 @@ mod tests {
         wait_for(|| element.fail_count() > 0);
         assert_eq!(element.fail_count(), 1);
         assert_eq!(element.success_count(), 0);
+    }
+
+    #[test]
+    fn a_sink_that_panics_loses_one_batch() {
+        for in_writer in [false, true] {
+            let capture = Capture::default();
+            let element = Arc::new(ShareUsageElement::with_sink(
+                ShareUsageConfig::builder()
+                    .minimum_entries_per_message(1)
+                    .build(),
+                PanicsOnce {
+                    capture: capture.clone(),
+                    in_writer,
+                    panicked: AtomicBool::new(false),
+                },
+            ));
+            let pipeline = Pipeline::builder()
+                .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+                .build()
+                .unwrap();
+            let process = |agent: &str| {
+                pipeline
+                    .create_flow_data_with(user_agent(agent))
+                    .process()
+                    .unwrap()
+            };
+
+            // The first batch panics. The second is only queued once the
+            // first has failed, so the two are never one batch.
+            process("one");
+            wait_for(|| element.fail_count() > 0);
+            process("two");
+            wait_for(|| element.success_count() > 0);
+
+            assert_eq!(element.fail_count(), 1, "in_writer {in_writer}");
+            assert_eq!(element.success_count(), 1, "in_writer {in_writer}");
+            let xml = capture.messages().concat();
+            assert!(!xml.contains("[CDATA[one]]"), "{xml}");
+            assert!(
+                xml.contains("[CDATA[two]]"),
+                "the batch after the panic is delivered, in_writer {in_writer}: {xml}"
+            );
+            drop(pipeline);
+            drop(element);
+        }
+    }
+
+    #[test]
+    fn a_panic_is_logged_with_its_message() {
+        let text: Box<dyn Any + Send> = Box::new("text");
+        let formatted: Box<dyn Any + Send> = Box::new(String::from("number 7"));
+        let other: Box<dyn Any + Send> = Box::new(7_u8);
+        assert_eq!(
+            panic_detail(text.as_ref()),
+            "Writing or delivering the batch panicked with 'text'"
+        );
+        assert_eq!(
+            panic_detail(formatted.as_ref()),
+            "Writing or delivering the batch panicked with 'number 7'"
+        );
+        assert_eq!(
+            panic_detail(other.as_ref()),
+            "Writing or delivering the batch panicked"
+        );
     }
 
     #[test]
