@@ -66,6 +66,7 @@ pub fn property_value_to_string(value: &PropertyValue) -> String {
         PropertyValue::Bool(b) => b.to_string(),
         PropertyValue::Integer(i) => i.to_string(),
         PropertyValue::Double(d) => d.to_string(),
+        PropertyValue::Float(f) => f.to_string(),
         PropertyValue::StringList(list) => list.join(", "),
         PropertyValue::KeyValueList(records) => {
             let rendered: Vec<String> = records
@@ -112,6 +113,14 @@ mod tests {
         assert_eq!(get_property_as_string(&data, "PlatformName"), "Windows");
         assert_eq!(get_property_as_string(&data, "Weight"), "42");
         assert_eq!(get_property_as_string(&data, "Ratio"), "1.5");
+    }
+
+    #[test]
+    fn renders_a_32_bit_float_with_its_own_digits() {
+        assert_eq!(
+            property_value_to_string(&PropertyValue::Float(51.352)),
+            "51.352"
+        );
     }
 
     #[test]
