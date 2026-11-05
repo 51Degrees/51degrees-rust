@@ -41,6 +41,11 @@ use fiftyone_pipeline_core::{Evidence, Pipeline};
 /// Render the script for the supplied evidence. The pipeline is the JSON
 /// builder and the JavaScript builder, with a host so the callback URL and
 /// the sections that use it are rendered.
+///
+/// There is no Sequence element, so the JavaScript builder reads the
+/// session id and sequence from the evidence. The JSON builder fails without
+/// a Sequence element, so errors are suppressed, as these tests look only at
+/// the JavaScript builder's script.
 fn render(evidence: &[(&str, &str)]) -> String {
     let pipeline = Pipeline::builder()
         .add_element(Arc::new(JsonBuilderElement::new()))
@@ -49,6 +54,7 @@ fn render(evidence: &[(&str, &str)]) -> String {
                 .set_minify(false)
                 .build(),
         ))
+        .suppress_process_exceptions(true)
         .build()
         .expect("pipeline builds");
     let mut ev = Evidence::builder().add("header.host", "localhost");
@@ -56,7 +62,7 @@ fn render(evidence: &[(&str, &str)]) -> String {
         ev = ev.add(*key, *value);
     }
     let mut data = pipeline.create_flow_data_with(ev.build());
-    data.process().expect("processing succeeds");
+    data.process().expect("errors are suppressed");
     data.get(JAVASCRIPT_BUILDER_DATA_KEY)
         .expect("javascript builder data present")
         .javascript()

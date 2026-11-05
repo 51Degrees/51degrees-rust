@@ -87,8 +87,11 @@
 //! use fiftyone_pipeline_core::{Evidence, Pipeline};
 //! use fiftyone_json_builder::JsonBuilderElement;
 //! use fiftyone_javascript_builder::{JavaScriptBuilderElement, JAVASCRIPT_BUILDER_DATA_KEY};
+//! use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 //!
+//! // The JSON builder needs the sequence number the Sequence element gives.
 //! let pipeline = Pipeline::builder()
+//!     .add_element(Arc::new(SequenceElement::new()))
 //!     .add_element(Arc::new(JsonBuilderElement::new()))
 //!     .add_element(Arc::new(JavaScriptBuilderElement::new()))
 //!     .build()

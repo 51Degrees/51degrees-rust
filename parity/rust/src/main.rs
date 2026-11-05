@@ -26,10 +26,12 @@
 //! parity-rust --corpus <json> --dd <hash file> --ipi <ipi file> --out <jsonl>
 //! ```
 //!
-//! The pipeline and the line format are the same as the .NET producer's, as
+//! The pipelines and the line format are the same as the .NET producer's, as
 //! `parity/README.md` describes. Usage sharing is left out of the pipeline,
 //! because the crates have no public sink for its records yet, so `usage` is
 //! always null.
+
+mod values;
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -51,8 +53,12 @@ use fiftyone_json_builder::{
     JsonBuilderElementBuilder, JSON_BUILDER_DATA_KEY, JSON_BUILDER_ELEMENT_DATA_KEY,
 };
 use fiftyone_native::PerformanceProfile;
-use fiftyone_pipeline_core::{ElementData, Evidence, FlowData, Pipeline, PropertyValue};
+use fiftyone_pipeline_core::{
+    ElementData, Evidence, FlowData, FlowElement, Pipeline, PropertyValue,
+};
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
+
+use values::ValuesElement;
 
 /// The element whose data also gets the match metrics read.
 const DEVICE_DATA_KEY: &str = "device";
@@ -72,11 +78,17 @@ const MATCH_METRICS: &[&str] = &[
 const SESSION_ID_KEY: &str = "query.session-id";
 const SEQUENCE_KEY: &str = "query.sequence";
 
+/// The `pipeline` of a case that runs through the values pipeline.
+const VALUES_PIPELINE: &str = "values";
+
 /// One corpus case. `serde_json` keeps the evidence in file order.
 #[derive(Deserialize)]
 struct Case {
     id: String,
     evidence: Map<String, Value>,
+    /// The pipeline the case runs through, absent for the engines' one.
+    #[serde(default)]
+    pipeline: Option<String>,
 }
 
 struct Args {
@@ -92,12 +104,18 @@ fn main() -> Result<()> {
         .with_context(|| format!("reading {}", args.corpus.display()))?;
     let cases: Vec<Case> = serde_json::from_str(&text).context("parsing the corpus")?;
     let pipeline = build_pipeline(&args)?;
+    let values = build_values_pipeline()?;
 
     let mut out = BufWriter::new(
         File::create(&args.out).with_context(|| format!("creating {}", args.out.display()))?,
     );
     for case in &cases {
-        let line = run_case(&pipeline, case)?;
+        let chosen = match case.pipeline.as_deref() {
+            None => &pipeline,
+            Some(VALUES_PIPELINE) => &values,
+            Some(other) => bail!("{}: unknown pipeline {other}", case.id),
+        };
+        let line = run_case(chosen, case)?;
         serde_json::to_writer(&mut out, &line)?;
         out.write_all(b"\n")?;
     }
@@ -160,6 +178,22 @@ fn build_pipeline(args: &Args) -> Result<Arc<Pipeline>> {
         .build()?)
 }
 
+/// Sequence, the values element and the JSON builder, for the cases that
+/// compare the JSON byte for byte. The crates' Sequence element has data of
+/// its own, which .NET's does not, so the builder here leaves that data out.
+fn build_values_pipeline() -> Result<Arc<Pipeline>> {
+    let sequence = Arc::new(SequenceElement::new());
+    let json = JsonBuilderElementBuilder::new()
+        .exclude_element(sequence.data_key())
+        .build();
+    Ok(Pipeline::builder()
+        .add_element(sequence)
+        .add_element(Arc::new(ValuesElement::new()))
+        .add_element(Arc::new(json))
+        .suppress_process_exceptions(true)
+        .build()?)
+}
+
 fn run_case(pipeline: &Arc<Pipeline>, case: &Case) -> Result<Value> {
     let mut evidence = Evidence::builder();
     for (key, value) in &case.evidence {
@@ -178,7 +212,7 @@ fn run_case(pipeline: &Arc<Pipeline>, case: &Case) -> Result<Value> {
         .map(|error| {
             json!({
                 "element": error.element_data_key,
-                "message": error.source.to_string(),
+                "message": error.source.message(),
             })
         })
         .collect();
@@ -275,6 +309,7 @@ fn typed(value: PropertyValue) -> (&'static str, Value) {
         PropertyValue::Bool(b) => ("bool", json!(b)),
         PropertyValue::Integer(i) => ("integer", json!(i)),
         PropertyValue::Double(d) => ("double", json!(d)),
+        PropertyValue::Float(f) => ("double", json!(f64::from(f))),
         PropertyValue::StringList(list) => ("stringList", json!(list)),
         PropertyValue::JavaScript(s) => ("javascript", json!(s)),
         PropertyValue::KeyValueList(records) => (

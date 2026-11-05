@@ -132,9 +132,19 @@ impl FlowElement for DeviceElement {
     }
 }
 
-/// Build a pipeline: optional device element, then JSON builder, then the
-/// JavaScript builder (configured via `configure`). Returns the generated
-/// JavaScript for the supplied evidence.
+/// A JSON builder that leaves the Sequence element's own data out of the
+/// JSON.
+fn json_builder() -> JsonBuilderElement {
+    JsonBuilderElement::builder()
+        .exclude_element(SequenceElement::DEFAULT_ELEMENT_DATA_KEY)
+        .build()
+}
+
+/// Build a pipeline: the Sequence element, an optional device element, the
+/// JSON builder, then the JavaScript builder (configured via `configure`).
+/// Returns the generated JavaScript for the supplied evidence. The Sequence
+/// element's own data is left out of the JSON, so the JSON holds only what
+/// the device element gives.
 fn run(
     device: Option<DeviceElement>,
     configure: impl FnOnce(
@@ -142,13 +152,13 @@ fn run(
     ) -> JavaScriptBuilderElement,
     evidence: &[(&str, &str)],
 ) -> String {
-    let mut builder = Pipeline::builder();
+    let mut builder = Pipeline::builder().add_element(Arc::new(SequenceElement::new()));
     if let Some(device) = device {
         builder = builder.add_element(Arc::new(device));
     }
     let js_element = configure(JavaScriptBuilderElement::builder());
     let pipeline = builder
-        .add_element(Arc::new(JsonBuilderElement::new()))
+        .add_element(Arc::new(json_builder()))
         .add_element(Arc::new(js_element))
         .build()
         .expect("pipeline builds");
@@ -287,7 +297,6 @@ fn full_template_renders_through_pipeline() {
         |b| b.set_minify(false).set_protocol("https").unwrap().build(),
         &[
             ("header.host", "example.com"),
-            ("query.sequence", "1"),
             ("query.session-id", "abc"),
             ("query.user-agent", "test agent"),
         ],
@@ -454,14 +463,16 @@ impl CloudHttpClient for RecoveringCloud {
     }
 }
 
-/// A pipeline of the request engine, the JSON builder and `element`.
+/// A pipeline of the Sequence element, the request engine, the JSON builder
+/// and `element`.
 fn cloud_pipeline(
     engine: &Arc<CloudRequestEngine>,
     element: JavaScriptBuilderElement,
 ) -> Arc<Pipeline> {
     Pipeline::builder()
+        .add_element(Arc::new(SequenceElement::new()))
         .add_element(Arc::clone(engine) as Arc<dyn FlowElement>)
-        .add_element(Arc::new(JsonBuilderElement::new()))
+        .add_element(Arc::new(json_builder()))
         .add_element(Arc::new(element))
         .suppress_process_exceptions(true)
         .build()
@@ -546,12 +557,18 @@ fn fodid_product_name_matches_the_51did_engine_data_key() {
 #[test]
 fn full_template_render_is_deterministic_under_repetition() {
     // Rendering the full template repeatedly must always yield identical bytes.
-    // This guards against any nondeterminism in the renderer.
+    // This guards against any nondeterminism in the renderer. The session id
+    // is given, as the Sequence element creates a new one for each request
+    // that has none.
     let render = || {
         run(
             None,
             |b| b.set_minify(false).build(),
-            &[("header.host", "localhost"), ("query.sequence", "1")],
+            &[
+                ("header.host", "localhost"),
+                ("query.session-id", "abc"),
+                ("query.sequence", "1"),
+            ],
         )
     };
     let first = render();
@@ -649,15 +666,31 @@ fn supplied_session_id_is_kept_and_the_sequence_moves_on() {
 #[test]
 fn without_a_sequence_element_the_evidence_is_used() {
     // A pipeline with no sequence element still reads the evidence directly.
-    let js = run(
-        None,
-        |b| b.set_minify(false).build(),
-        &[
-            ("header.host", "localhost"),
-            ("query.session-id", "abc"),
-            ("query.sequence", "4"),
-        ],
+    // The JSON builder fails without a Sequence element, so its error is
+    // suppressed and the JavaScript builder still renders.
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(JsonBuilderElement::new()))
+        .add_element(Arc::new(
+            JavaScriptBuilderElement::builder()
+                .set_minify(false)
+                .build(),
+        ))
+        .suppress_process_exceptions(true)
+        .build()
+        .expect("pipeline builds");
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("header.host", "localhost")
+            .add("query.session-id", "abc")
+            .add("query.sequence", "4")
+            .build(),
     );
+    data.process().expect("errors are suppressed");
+    let js = data
+        .get(JAVASCRIPT_BUILDER_DATA_KEY)
+        .expect("javascript builder data present")
+        .javascript()
+        .to_owned();
     assert_eq!(rendered_session_id(&js), "abc");
     assert!(js.contains("var sequence = 4;"));
 }
@@ -729,8 +762,9 @@ fn a_request_without_device_data_leaves_later_visitors_unaffected() {
     // and fetch belongs to the request, so a request that got no device answer
     // must not change the script the next visitor is given.
     let pipeline = Pipeline::builder()
+        .add_element(Arc::new(SequenceElement::new()))
         .add_element(Arc::new(CloudLikeDevice::new()))
-        .add_element(Arc::new(JsonBuilderElement::new()))
+        .add_element(Arc::new(json_builder()))
         .add_element(Arc::new(
             JavaScriptBuilderElement::builder()
                 .set_minify(false)

@@ -311,6 +311,62 @@ fn one_script_can_read_a_property_another_script_produced() {
 }
 
 #[test]
+fn a_32_bit_float_is_read_as_a_number() {
+    // A float on its own, and a float as the value of a weighted record, are
+    // both read as the number they hold rather than as a list.
+    let script = |name: &str, property: &str| {
+        format!(
+            "Format: 1\n\
+             Name: {name}\n\
+             Version: \"1.0.0\"\n\
+             Output:\n\
+             \x20 Name: {name}\n\
+             \x20 Description: Whether the value is above 51.3.\n\
+             \x20 ValueType: string\n\
+             \x20 IsList: false\n\
+             Rules:\n\
+             \x20 - When: {{ Property: ip.{property}, Gt: 51.3 }}\n\
+             \x20   Then: Above\n\
+             \x20 - Else: Below\n"
+        )
+    };
+    let weighted = |value: f32, weight: i64| {
+        let mut record = std::collections::BTreeMap::new();
+        record.insert("value".to_owned(), PropertyValue::Float(value));
+        record.insert("weight".to_owned(), PropertyValue::Integer(weight));
+        record
+    };
+    let ip = StubData::default()
+        .with("Latitude", PropertyValue::Float(51.352))
+        .with(
+            "Weighted",
+            PropertyValue::KeyValueList(vec![weighted(50.5, 1), weighted(51.5, 2)]),
+        );
+    let derived = DerivedPropertyElement::builder()
+        .add_script("FloatAbove", &script("FloatAbove", "Latitude"))
+        .add_script("WeightedAbove", &script("WeightedAbove", "Weighted"))
+        .build()
+        .expect("both scripts");
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(StubElement::new("ip", ip)))
+        .add_element(Arc::new(derived))
+        .build()
+        .unwrap();
+    let mut data = pipeline.create_flow_data();
+    data.process().unwrap();
+
+    let derived = data.get_str(DERIVED_DEFAULT_ELEMENT_DATA_KEY).unwrap();
+    assert_eq!(
+        derived.get("FloatAbove").unwrap(),
+        PropertyValue::String("Above".to_owned())
+    );
+    assert_eq!(
+        derived.get("WeightedAbove").unwrap(),
+        PropertyValue::String("Above".to_owned())
+    );
+}
+
+#[test]
 fn the_element_publishes_metadata_for_every_script() {
     let element = DerivedPropertyElement::builder()
         .add_built_in(BuiltInScript::HumanConfidence)
