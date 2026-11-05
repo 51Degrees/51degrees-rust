@@ -215,12 +215,21 @@ struct RunningFetch(Arc<AtomicUsize>);
 impl RunningFetch {
     /// Take a place, or `None` where every place is taken.
     fn claim(running: &Arc<AtomicUsize>) -> Option<Self> {
-        running
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
-                (count < MAXIMUM_FETCHES_RUNNING).then_some(count + 1)
-            })
-            .ok()?;
-        Some(RunningFetch(Arc::clone(running)))
+        let mut count = running.load(Ordering::SeqCst);
+        loop {
+            if count >= MAXIMUM_FETCHES_RUNNING {
+                return None;
+            }
+            match running.compare_exchange_weak(
+                count,
+                count + 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return Some(RunningFetch(Arc::clone(running))),
+                Err(actual) => count = actual,
+            }
+        }
     }
 }
 
