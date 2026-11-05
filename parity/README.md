@@ -102,16 +102,34 @@ the [51degrees-cxx](https://github.com/51Degrees/51degrees-cxx) commit the
 [51degrees-dotnet](https://github.com/51Degrees/51degrees-dotnet) release
 whose own `cxx` submodule records the same commit, being Device Detection
 4.5.180, IP Intelligence 4.5.155 and Pipeline 4.5.129. So an engine answer
-that differs is a difference in the code around the C, never in the C
-itself.
+that differs comes from what each side does with the same C code, including
+which of its functions each side calls, and never from the two sides
+building different versions of it. Latitude and longitude are an example,
+where .NET reads each value through text 51degrees-cxx writes with three
+decimal places and the crates read the value itself.
 
 When the `cxx` submodule moves, the package versions move in the same pull
-request, to the 51degrees-dotnet release built from the new commit, so no
-comparison runs with the two sides on different C code. A run can try other
-packages by naming them:
+request, to the 51degrees-dotnet release built from the new commit. The
+comparison workflow checks this before it writes any answers. Each engine
+package records the 51degrees-dotnet commit it was built from, and the step
+fails unless that commit's `cxx` submodule is the one this repository
+records, so no comparison runs with the two sides on different C code.
+
+The nightly submodule update moves `cxx` on its own, in a pull request into
+`rc`, and the comparison does not run on pull requests into `rc`. After such
+a move, the next comparison, on a pull request into `main` or a `release/`
+branch, fails at that check until the package versions move to a
+51degrees-dotnet release built from the new commit.
+
+The check runs only in the workflow, so a local run can try other packages
+by naming them. Name all three versions, because each Device Detection and
+IP Intelligence release depends on its own Pipeline release, and a
+`PipelineVersion` older than that is a package downgrade, which the .NET SDK
+treats as an error
+([NU1605](https://learn.microsoft.com/en-us/nuget/reference/errors-and-warnings/nu1605)):
 
 ```
-dotnet build dotnet -c Release -p:DeviceDetectionVersion=<version> -p:IpIntelligenceVersion=<version>
+dotnet build dotnet -c Release -p:DeviceDetectionVersion=<version> -p:IpIntelligenceVersion=<version> -p:PipelineVersion=<version>
 ```
 
 ## Running it

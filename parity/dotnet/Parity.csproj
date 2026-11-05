@@ -6,8 +6,9 @@
     cxx submodule is the 51degrees-cxx commit this repository's cxx
     submodule records, so both sides build the same C code. Move them
     together with that submodule. They are properties so a run can name
-    others, for example
-    dotnet run -p:DeviceDetectionVersion=<version> -p:IpIntelligenceVersion=<version>
+    others. Name all three, because each Device Detection and IP
+    Intelligence release needs its own Pipeline release, for example
+    dotnet run -p:DeviceDetectionVersion=<version> -p:IpIntelligenceVersion=<version> -p:PipelineVersion=<version>
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>

@@ -125,7 +125,7 @@
     "path": "*ip.l*itude",
     "kind": "value",
     "data": "enterprise",
-    "reason": "Both sides build the same 51degrees-cxx but read the value through different functions in it. .NET reads one latitude or longitude with the C++ ResultsBase::getValueAsDouble, which takes the value as text from ResultsIpi::getValuesInternal, written with 3 decimal places (FIFTYONE_DEGREES_WKT_DECIMAL_PLACES in src/ipi/constantsIpi.h), so .NET gives 18.543 as a float, 18.542999267578125. The crates take the unrounded double fiftyoneDegreesResultsIpiGetValuesCollection gives (collect_weighted in native/src/ipi.rs), 18.542741775512695, which is the conversion the specification gives under Declination and Azimuth in pipeline-specification/features/value-types.md, with no rounding.",
+    "reason": "Both sides build the same 51degrees-cxx but read the value through different functions in it. .NET reads one latitude or longitude with the C++ ResultsBase::getValueAsDouble, which takes the value as text from ResultsIpi::getValuesInternal, written with 3 decimal places (FIFTYONE_DEGREES_WKT_DECIMAL_PLACES in src/ipi/constantsIpi.h). .NET then turns that into a 32-bit float, so it gives 18.543 as 18.542999267578125. The crates take the double fiftyoneDegreesResultsIpiGetValuesCollection gives (collect_weighted in native/src/ipi.rs), 18.542741172521133, which is the conversion the specification gives under Declination and Azimuth in pipeline-specification/features/value-types.md, with no rounding, and turn that into a 32-bit float, 18.542741775512695. So the 3 decimal places are the only cause.",
     "issue": 226
   },
   {
