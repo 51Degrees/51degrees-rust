@@ -478,6 +478,13 @@ fn add_errors_can_be_replaced() {
     assert!(replaced.get("errors").is_none());
 }
 
+#[test]
+fn errors_are_written_as_their_messages_alone() {
+    let failing: Arc<dyn FlowElement> = Arc::new(ValuesElement::new("broken").failing());
+    let value = parse(&run(vec![failing], JsonBuilderElement::new()));
+    assert_eq!(messages(&value["errors"]), ["broken failed"]);
+}
+
 /// Writes a warning of its own before the flow data's.
 struct OwnWarningFirst;
 

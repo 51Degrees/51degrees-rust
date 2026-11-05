@@ -216,6 +216,10 @@ pub fn get_javascript_properties<S: JsonBuilderSteps + ?Sized>(
 }
 
 /// The default of [`JsonBuilderSteps::add_errors`].
+///
+/// Each error is written as its message alone, without the words naming
+/// its kind, as .NET and Java write it (see
+/// [`fiftyone_pipeline_core::Error::message`]).
 pub fn add_errors<S: JsonBuilderSteps + ?Sized>(
     _steps: &S,
     context: &JsonBuilderContext<'_>,
@@ -225,7 +229,7 @@ pub fn add_errors<S: JsonBuilderSteps + ?Sized>(
         .data()
         .errors()
         .iter()
-        .map(|error| JsonValue::String(error.source.to_string()))
+        .map(|error| JsonValue::String(error.source.message().into_owned()))
         .collect();
     if !errors.is_empty() {
         all_properties.insert(ERRORS_KEY, JsonValue::Array(errors));
