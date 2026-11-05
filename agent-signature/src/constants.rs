@@ -262,5 +262,13 @@ pub const DEFAULT_TRUST_FORWARDED_EVIDENCE: bool = false;
 /// sent the request, so the size has to be held down.
 pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 256 * 1024;
 
+/// The most key directory fetches one element runs at once. Each fetch runs
+/// on a thread of its own and the sender of a request chooses the address,
+/// so without a bound a stream of requests naming new addresses that never
+/// answer would hold a thread each for the whole fetch timeout. A fetch that
+/// cannot start because the bound is reached reports DirectoryUnavailable,
+/// and a later request for that directory tries again.
+pub const MAXIMUM_FETCHES_RUNNING: usize = 64;
+
 /// The longest period any of the builder's period settings may be given.
 pub const MAXIMUM_PERIOD: Duration = Duration::from_secs(365 * 24 * 60 * 60);

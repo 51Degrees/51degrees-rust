@@ -35,8 +35,12 @@
 //! held answer for at most one further lifetime whilst refreshes keep
 //! failing, because taking a directory offline is how an agent withdraws a
 //! stolen key.
+//!
+//! No more than `MAXIMUM_FETCHES_RUNNING` fetches run at once, because the
+//! sender chooses the address and each fetch holds a thread.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -44,6 +48,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, TimeDelta, Utc};
 use fiftyone_caching::{Cache, LruCache, PutCache};
 
+use crate::constants::MAXIMUM_FETCHES_RUNNING;
 use crate::fetcher::{DirectoryEntry, Fetcher};
 use crate::pending::{lock, Pending};
 use crate::signature_agent::SignatureAgentEntry;
@@ -82,6 +87,8 @@ pub(crate) struct DirectoryCache {
     fetcher: Arc<Fetcher>,
     clock: Clock,
     times: CacheTimes,
+    /// The fetches running now, shared by every slot.
+    running: Arc<AtomicUsize>,
 }
 
 impl DirectoryCache {
@@ -94,6 +101,7 @@ impl DirectoryCache {
             fetcher,
             clock,
             times,
+            running: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -133,6 +141,7 @@ impl DirectoryCache {
                 agent_type: agent_type.to_owned(),
                 fetch_timeout: self.times.fetch_timeout,
                 clock: Arc::clone(&self.clock),
+                running: Arc::clone(&self.running),
             }),
             state: Mutex::new(SlotState::default()),
         });
@@ -148,19 +157,36 @@ struct Loader {
     agent_type: String,
     fetch_timeout: Duration,
     clock: Clock,
+    running: Arc<AtomicUsize>,
 }
 
 impl Loader {
-    /// Start the fetch that completes `pending`.
+    /// Start the fetch that completes `pending`. A fetch that cannot start,
+    /// because too many are running or no thread can be had, completes it
+    /// with a failure dated the earliest time there is, so the entry counts
+    /// as old at once and the next request tries again.
     fn start(self: &Arc<Self>, pending: &Arc<PendingEntry>) {
+        let Some(place) = RunningFetch::claim(&self.running) else {
+            log::debug!(
+                "The key directory at '{}' was not fetched because \
+                 {MAXIMUM_FETCHES_RUNNING} fetches are already running.",
+                self.url
+            );
+            pending.complete(Arc::new(DirectoryEntry::failed(
+                DateTime::<Utc>::MIN_UTC,
+                format!("{MAXIMUM_FETCHES_RUNNING} fetches were already running"),
+            )));
+            return;
+        };
         let loader = Arc::clone(self);
         let target = Arc::clone(pending);
         let spawned = thread::Builder::new()
             .name(FETCH_THREAD_NAME.to_owned())
-            .spawn(move || target.complete(Arc::new(loader.load())));
+            .spawn(move || {
+                target.complete(Arc::new(loader.load()));
+                drop(place);
+            });
         if let Err(error) = spawned {
-            // The earliest time there is, so the entry counts as old at once
-            // and the next request tries again.
             pending.complete(Arc::new(DirectoryEntry::failed(
                 DateTime::<Utc>::MIN_UTC,
                 format!("the fetch could not be started: {error}"),
@@ -178,6 +204,29 @@ impl Loader {
             self.fetcher.fetch(&self.url, &self.agent_type, deadline)
         }))
         .unwrap_or_else(|_| DirectoryEntry::failed((self.clock)(), "the fetch did not complete"))
+    }
+}
+
+/// One of the places among the fetches allowed to run at once, given back
+/// when it is dropped, which is when the fetch thread ends or could not be
+/// started.
+struct RunningFetch(Arc<AtomicUsize>);
+
+impl RunningFetch {
+    /// Take a place, or `None` where every place is taken.
+    fn claim(running: &Arc<AtomicUsize>) -> Option<Self> {
+        running
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+                (count < MAXIMUM_FETCHES_RUNNING).then_some(count + 1)
+            })
+            .ok()?;
+        Some(RunningFetch(Arc::clone(running)))
+    }
+}
+
+impl Drop for RunningFetch {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
