@@ -272,7 +272,7 @@ pub fn missing_property_reason_for_engines(
 ///     MissingPropertyReason::Unknown
 /// );
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MissingPropertySource {
     element_data_key: String,
     type_name: String,
@@ -280,6 +280,21 @@ pub struct MissingPropertySource {
     data_source_tier: String,
     properties: Vec<AspectPropertyMetaData>,
     has_typed_property: Option<fn(&str) -> bool>,
+}
+
+/// Written by hand so that printing data that holds a source prints the
+/// number of properties rather than the engine's whole property metadata.
+impl std::fmt::Debug for MissingPropertySource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MissingPropertySource")
+            .field("element_data_key", &self.element_data_key)
+            .field("type_name", &self.type_name)
+            .field("deployment", &self.deployment)
+            .field("data_source_tier", &self.data_source_tier)
+            .field("properties", &self.properties.len())
+            .field("has_typed_property", &self.has_typed_property.is_some())
+            .finish()
+    }
 }
 
 impl MissingPropertySource {

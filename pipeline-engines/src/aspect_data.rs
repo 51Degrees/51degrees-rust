@@ -392,8 +392,25 @@ mod tests {
             Vec::new(),
         ));
         let known = source("device", "Lite");
+        let later = Arc::new(MissingPropertySource::new(
+            "device",
+            "LaterEngine",
+            EngineDeployment::Cloud,
+            "",
+            Vec::new(),
+        ));
+        assert_ne!(
+            later.reason("IsMobile").reason,
+            known.reason("IsMobile").reason,
+            "the later source must give a different known reason"
+        );
+        assert_ne!(
+            later.reason("IsMobile").reason,
+            MissingPropertyReason::Unknown
+        );
         data.add_missing_property_source(unknown);
         data.add_missing_property_source(Arc::clone(&known));
+        data.add_missing_property_source(later);
         assert_eq!(
             data.missing_property_reason("IsMobile"),
             Some(known.reason("IsMobile"))
@@ -402,6 +419,13 @@ mod tests {
             data.missing_property_reason("NotAProperty").unwrap().reason,
             MissingPropertyReason::Unknown
         );
+    }
+
+    #[test]
+    fn printing_a_source_gives_the_number_of_properties_not_the_properties() {
+        let printed = format!("{:?}", source("device", "Lite"));
+        assert!(printed.contains("properties: 1"), "{printed}");
+        assert!(!printed.contains("IsMobile"), "{printed}");
     }
 
     #[test]
