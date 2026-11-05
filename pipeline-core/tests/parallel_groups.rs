@@ -39,6 +39,15 @@ use fiftyone_pipeline_core::{
 /// How long each of the two slow elements waits.
 const WAIT_MILLISECONDS: u64 = 200;
 
+/// The elements of a group read the data added before the group from several
+/// threads at once, so element data and flow data are `Send + Sync`.
+#[test]
+fn flow_data_and_element_data_are_send_and_sync() {
+    fn send_and_sync<T: Send + Sync + ?Sized>() {}
+    send_and_sync::<FlowData>();
+    send_and_sync::<dyn ElementData>();
+}
+
 /// Element data holding string values.
 struct ValueData(MapElementData);
 

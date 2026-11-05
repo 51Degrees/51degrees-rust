@@ -29,7 +29,7 @@
 //!
 //! # The cache
 //!
-//! Element data is not `Sync`, so the cache cannot store `dyn AspectData`
+//! Element data is not `Clone`, so the cache cannot store `dyn AspectData`
 //! directly. Instead an engine chooses a concrete, `Send + Sync + Clone` aspect
 //! data type `D` and caches that. [`AspectEngineBase`] holds a
 //! [`DataKeyedCache<D>`], keyed by the engine's evidence, exactly as the caching
