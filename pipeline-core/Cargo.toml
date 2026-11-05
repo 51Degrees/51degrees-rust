@@ -20,6 +20,9 @@ ahash.workspace = true
 # Processing logs each element's error through the log facade, which does
 # nothing until the application installs a logger.
 log = "0.4"
+# The ordered map behind Evidence, so entries keep the order and the key
+# spelling they were given in while lookups ignore case.
+indexmap = "2"
 
 [package.metadata.docs.rs]
 # Build the documentation on docs.rs with every feature enabled, so the

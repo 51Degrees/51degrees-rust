@@ -245,6 +245,78 @@ fn duplicate_keys_overwrite_after_case_folding() {
     assert_eq!(evidence.get("query.name"), Some("second"));
 }
 
+/// Evidence with keys in mixed case and in lowercase, and a prefix that comes
+/// back after others, so neither order nor spelling is alphabetical.
+const GIVEN: [(&str, &str); 5] = [
+    ("header.User-Agent", "Mozilla/5.0"),
+    ("query.51D_Test", "x"),
+    ("cookie.b", "2"),
+    ("header.X-Test", "a]]>b"),
+    ("Cookie.A", "1"),
+];
+
+#[test]
+fn entries_keep_the_spelling_and_order_given() {
+    let evidence = Evidence::builder().add_all(GIVEN).build();
+
+    let as_given: Vec<(&str, &str)> = evidence
+        .entries()
+        .map(|entry| (entry.key_as_given(), entry.value()))
+        .collect();
+    assert_eq!(as_given, GIVEN);
+
+    let lowercase: Vec<&str> = evidence.entries().map(|entry| entry.key()).collect();
+    assert_eq!(
+        lowercase,
+        [
+            "header.user-agent",
+            "query.51d_test",
+            "cookie.b",
+            "header.x-test",
+            "cookie.a"
+        ]
+    );
+}
+
+#[test]
+fn iter_gives_lowercase_keys_in_the_order_given() {
+    let evidence = Evidence::builder().add_all(GIVEN).build();
+    let pairs: Vec<(&str, &str)> = evidence.iter().collect();
+    assert_eq!(
+        pairs,
+        [
+            ("header.user-agent", "Mozilla/5.0"),
+            ("query.51d_test", "x"),
+            ("cookie.b", "2"),
+            ("header.x-test", "a]]>b"),
+            ("cookie.a", "1"),
+        ]
+    );
+}
+
+#[test]
+fn a_repeated_key_keeps_its_first_spelling_and_place() {
+    let evidence = Evidence::builder()
+        .add("header.User-Agent", "first")
+        .add("header.Accept", "text/html")
+        .add("HEADER.USER-AGENT", "second")
+        .build();
+
+    assert_eq!(evidence.len(), 2);
+    assert_eq!(evidence.get("header.user-agent"), Some("second"));
+    let as_given: Vec<(&str, &str)> = evidence
+        .entries()
+        .map(|entry| (entry.key_as_given(), entry.value()))
+        .collect();
+    assert_eq!(
+        as_given,
+        [
+            ("header.User-Agent", "second"),
+            ("header.Accept", "text/html")
+        ]
+    );
+}
+
 #[test]
 fn evidence_prefix_precedence_matches_spec_order() {
     assert!(EvidencePrefix::Query.precedence() < EvidencePrefix::Header.precedence());
@@ -310,6 +382,24 @@ fn generate_key_is_deterministic_regardless_of_insertion_order() {
         names,
         vec!["query.user-agent", "header.user-agent", "cookie.session"]
     );
+}
+
+#[test]
+fn generate_key_ignores_the_spelling_given() {
+    let filter = EvidenceKeyFilterWhitelist::new(["header.user-agent", "query.51d_test"]);
+    let lower = Evidence::builder()
+        .add("header.user-agent", "ua")
+        .add("query.51d_test", "x")
+        .build();
+    let mixed = Evidence::builder()
+        .add("Query.51D_Test", "x")
+        .add("Header.User-Agent", "ua")
+        .build();
+
+    let key = mixed.generate_key(&filter);
+    assert_eq!(key, lower.generate_key(&filter));
+    let names: Vec<&str> = key.entries().iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(names, vec!["query.51d_test", "header.user-agent"]);
 }
 
 #[test]
