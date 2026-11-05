@@ -606,6 +606,75 @@ fn a_list_is_refused_where_one_value_is_taken() {
     );
 }
 
+/// A setting such as .NET's `JsonBuilderElementBuilder.SetJsonConverters`,
+/// whose value only code can give. The messages are those .NET 4.5.129 gave
+/// for that setting.
+#[test]
+fn a_setting_taken_in_code_only_refuses_every_value() {
+    struct Converters;
+    let registry = BuilderRegistry::new().with(
+        BuilderDefinition::new("ConvertingElementBuilder", |_: Converters, context| {
+            finish(Element::new("converting", ()), context)
+        })
+        .code_only_setting("SetConverters", "IEnumerable`1")
+        .build_method(vec![], |_, _| Ok(Converters)),
+    );
+    let make = |element: ElementOptions| {
+        PipelineBuilder::new().build_from_configuration(&registry, &one(element))
+    };
+    let named = || ElementOptions::new("ConvertingElementBuilder");
+    let builder = type_name::<Converters>();
+    let refused = |but: &str| {
+        failed(
+            "ConvertingElementBuilder",
+            "No SubElements",
+            &format!(
+                "Method 'SetConverters' on builder '{builder}' for element 0 expects a \
+                 parameter of type 'IEnumerable`1' but {but}"
+            ),
+            NO_INNER,
+        )
+    };
+
+    for (name, value) in [
+        ("Converters", "x"),
+        ("SetConverters", "x"),
+        ("converters", ""),
+    ] {
+        assert_eq!(
+            message(make(named().parameter(name, value))),
+            refused(
+                "this type does not have the expected 'TryParse' method (or has multiples \
+                 that cannot be resolved)."
+            ),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        message(make(named().parameter("Converters", vec!["a"]))),
+        refused("supplied object is of type 'String[]'.")
+    );
+
+    // Left out, the element is made, and the setting is listed with its
+    // .NET type.
+    assert_eq!(keys(&make(named()).unwrap()), ["converting"]);
+    assert_eq!(
+        message(make(named().parameter("Unknown", "1"))),
+        failed(
+            "ConvertingElementBuilder",
+            "No SubElements",
+            &format!(
+                "Builder '{builder}' for element 0 has no 'Set' methods or 'Build' methods \
+                 that match (case-insensitively) the following parameters: UNKNOWN. The \
+                 available configuration methods on this builder are: \nSetConverters \
+                 (IEnumerable`1)\nThe available 'Build' methods have the following \
+                 signatures: \n\n"
+            ),
+            NO_INNER,
+        )
+    );
+}
+
 #[test]
 fn elements_are_made_in_the_order_given() {
     let pipeline = build(

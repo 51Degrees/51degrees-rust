@@ -38,6 +38,7 @@ enum FailureKind {
     Text,
     Enumeration(Vec<String>),
     List,
+    NoTextForm,
 }
 
 impl ParseFailure {
@@ -66,6 +67,14 @@ impl ParseFailure {
         }
     }
 
+    /// The type has no text form, as a .NET type without a `TryParse`
+    /// method has none.
+    pub(crate) fn no_text_form() -> Self {
+        ParseFailure {
+            kind: FailureKind::NoTextForm,
+        }
+    }
+
     /// The message .NET gives, after `prefix`, which says which setting
     /// expects which type. The second part is the message of the cause, as
     /// .NET's inner exception gives it, if there is one.
@@ -91,6 +100,13 @@ impl ParseFailure {
             ),
             FailureKind::List => (
                 format!("{prefix} but supplied object is of type 'String[]'."),
+                None,
+            ),
+            FailureKind::NoTextForm => (
+                format!(
+                    "{prefix} but this type does not have the expected 'TryParse' method (or \
+                     has multiples that cannot be resolved)."
+                ),
                 None,
             ),
         }

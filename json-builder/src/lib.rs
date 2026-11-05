@@ -70,10 +70,18 @@
 //! each element data lists them, as .NET writes them, so the same flow data
 //! always yields byte-identical JSON on one platform. That stability is what
 //! lets downstream code compute a reliable ETag from the JSON.
+//!
+//! ## Configuration
+//!
+//! [`configuration::add_builders`] adds the JSON builder to a
+//! [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the name
+//! .NET gives it, so a configuration file written for .NET makes the same
+//! element here.
 
 #![warn(missing_docs)]
 
 mod builder;
+pub mod configuration;
 mod constants;
 mod converter;
 mod data;

@@ -234,6 +234,24 @@ impl<B: Send + 'static> BuilderDefinition<B> {
         self
     }
 
+    /// A setting called `name` that takes its value in code only, such as a
+    /// list of converters. .NET finds such a method and then refuses any
+    /// value a configuration gives, because the type has no `TryParse`, so
+    /// naming it here fails with .NET's message. `type_name` is the .NET
+    /// type's name, such as ``IEnumerable`1``.
+    pub fn code_only_setting(mut self, name: impl Into<String>, type_name: &'static str) -> Self {
+        self.settings.push(Setting {
+            name: name.into(),
+            alternate_names: Vec::new(),
+            type_name,
+            prepare: Box::new(|value: &ConfigValue| match value {
+                ConfigValue::Text(_) => Err(ParseFailure::no_text_form()),
+                ConfigValue::List(_) => Err(ParseFailure::list()),
+            }),
+        });
+        self
+    }
+
     /// Another name for the settings called `setting`, as .NET's
     /// `AlternateName` attribute gives one.
     ///
