@@ -831,7 +831,7 @@ impl EvidenceResolver<'_> {
                 .evidence
                 .get(self.source.method)
                 .filter(|method| !method.is_empty())
-                .map(str::to_owned),
+                .map(str::to_lowercase),
             // RFC 9421 section 2.2.6. An empty path is the single slash.
             "@path" => self.evidence.get(self.source.path).map(|path| {
                 if path.is_empty() {
