@@ -159,13 +159,11 @@ workspace reads the submodule and never needs the copy.
 - `utm-link-lint.yml` — see UTM conventions below. Runs on every PR.
 - `mustache-drift.yml` — guards the generated JavaScript resource template.
   Push and pull request builds compare against a pinned upstream commit
-  rather than the branch, because the canonical template is being changed by
-  the create last programme in the cloud service, so comparing against the
-  branch would fail work here that has nothing to do with that programme.
-  The weekly schedule and a manual run still compare against the branch, so
-  a real drift is still reported. 51Degrees/51degrees-rust#52 lifts the pin, by moving
-  the bundled asset and `UPSTREAM_PINNED_REF` to the same commit in one pull
-  request.
+  rather than the branch, so a change upstream does not fail work here that
+  has nothing to do with it. The weekly schedule and a manual run still
+  compare against the branch, so a real drift is still reported. A refresh
+  moves the bundled asset and `UPSTREAM_PINNED_REF` to the same commit in one
+  pull request.
 - `dotnet-comparison.yml` runs the crates and the published .NET packages
   over the corpus in `parity/` and fails on any difference that
   `parity/allowed-differences.json` does not list with its reason. See

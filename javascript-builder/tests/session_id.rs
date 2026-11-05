@@ -36,25 +36,46 @@ use std::sync::Arc;
 
 use fiftyone_javascript_builder::{JavaScriptBuilderElement, JAVASCRIPT_BUILDER_DATA_KEY};
 use fiftyone_json_builder::JsonBuilderElement;
-use fiftyone_pipeline_core::{Evidence, Pipeline};
+use fiftyone_pipeline_core::{Evidence, Pipeline, PipelineBuilder};
+use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 
-/// Render the script for the supplied evidence. The pipeline is the JSON
-/// builder and the JavaScript builder, with a host so the callback URL and
-/// the sections that use it are rendered.
-///
-/// There is no Sequence element, so the JavaScript builder reads the
-/// session id and sequence from the evidence. The JSON builder fails without
-/// a Sequence element, so errors are suppressed, as these tests look only at
-/// the JavaScript builder's script.
+/// Render the script for the supplied evidence. The pipeline is the Sequence
+/// element, the JSON builder and the JavaScript builder, with a host so the
+/// callback URL and the sections that use it are rendered. The Sequence
+/// element keeps a `query.session-id` as it is given and adds one to a
+/// `query.sequence`, and the JavaScript builder reads both from its data.
 fn render(evidence: &[(&str, &str)]) -> String {
-    let pipeline = Pipeline::builder()
-        .add_element(Arc::new(JsonBuilderElement::new()))
+    render_on(
+        Pipeline::builder().add_element(Arc::new(SequenceElement::new())),
+        evidence,
+    )
+}
+
+/// Render the script for the supplied evidence with no Sequence element. The
+/// JSON builder fails without one, so errors are suppressed, as these tests
+/// look only at the JavaScript builder's script.
+fn render_without_sequence(evidence: &[(&str, &str)]) -> String {
+    render_on(
+        Pipeline::builder().suppress_process_exceptions(true),
+        evidence,
+    )
+}
+
+/// Render on the supplied start of a pipeline. The JSON builder leaves the
+/// Sequence element's data out, so the session id reaches the script only
+/// through the JavaScript builder.
+fn render_on(builder: PipelineBuilder, evidence: &[(&str, &str)]) -> String {
+    let pipeline = builder
+        .add_element(Arc::new(
+            JsonBuilderElement::builder()
+                .exclude_element(SequenceElement::DEFAULT_ELEMENT_DATA_KEY)
+                .build(),
+        ))
         .add_element(Arc::new(
             JavaScriptBuilderElement::builder()
                 .set_minify(false)
                 .build(),
         ))
-        .suppress_process_exceptions(true)
         .build()
         .expect("pipeline builds");
     let mut ev = Evidence::builder().add("header.host", "localhost");
@@ -62,7 +83,7 @@ fn render(evidence: &[(&str, &str)]) -> String {
         ev = ev.add(*key, *value);
     }
     let mut data = pipeline.create_flow_data_with(ev.build());
-    data.process().expect("errors are suppressed");
+    data.process().expect("the pipeline processes");
     data.get(JAVASCRIPT_BUILDER_DATA_KEY)
         .expect("javascript builder data present")
         .javascript()
@@ -170,7 +191,19 @@ fn unsafe_session_id_is_rendered_empty() {
 
 #[test]
 fn no_session_id_is_rendered_empty() {
-    let script = render(&[]);
+    let script = render_without_sequence(&[]);
+
+    assert_eq!(lines(&script, "sessionId"), ["var sessionId = \"\";"]);
+    assert_eq!(lines(&script, "sequence"), ["var sequence = 1;"]);
+    assert_parses(&script);
+}
+
+#[test]
+fn without_a_sequence_element_the_evidence_is_not_rendered() {
+    // The specification renders an empty session id and a sequence of 1
+    // when there is no Sequence element, whatever the evidence holds.
+    let script =
+        render_without_sequence(&[("query.session-id", "abc-123"), ("query.sequence", "4")]);
 
     assert_eq!(lines(&script, "sessionId"), ["var sessionId = \"\";"]);
     assert_eq!(lines(&script, "sequence"), ["var sequence = 1;"]);
@@ -179,11 +212,16 @@ fn no_session_id_is_rendered_empty() {
 
 #[test]
 fn unusable_sequence_is_rendered_as_one() {
+    // The Sequence element adds one to each number, so the first four give
+    // 0, -4, 2147483648 and 100000000000, and the last 2147483649. It gives 1
+    // for "0" and for the text it cannot read.
     for value in [
-        "abc",
         "-1",
-        "0",
+        "-5",
+        "2147483647",
         "99999999999",
+        "abc",
+        "0",
         "",
         "1;b",
         "1.5",
@@ -202,7 +240,8 @@ fn unusable_sequence_is_rendered_as_one() {
 
 #[test]
 fn usable_sequence_is_rendered() {
-    for (value, expected) in [("7", 7), (" 7 ", 7), ("2147483647", 2147483647)] {
+    // The Sequence element adds one to the sequence the request carried.
+    for (value, expected) in [("7", 8), (" 7 ", 8), ("2147483646", 2147483647)] {
         let script = render(&[("query.session-id", "abc"), ("query.sequence", value)]);
 
         assert_eq!(
