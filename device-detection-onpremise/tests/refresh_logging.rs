@@ -95,7 +95,7 @@ fn refresh_fails(engine: &Arc<DeviceDetectionOnPremiseEngine>, path: &Path, case
     let error = result.expect_err(case);
     assert_eq!(records.len(), 1, "{case}: {records:?}");
     let expected = format!(
-        "ERROR Failed to refresh data from '{}'. The engine keeps the data it had. If this \
+        "ERROR Failed to refresh data from '{}'. The engine keeps the data it had. If issue \
          persists, please contact support@51degrees.com. {error}",
         path.display()
     );
