@@ -48,7 +48,7 @@ use fiftyone_pipeline_core::{
 };
 use fiftyone_pipeline_engines::{
     AspectEngine, AspectEngineDataFile, AspectPropertyMetaData, DataFileConfiguration,
-    EngineDeployment, OnPremiseAspectEngine,
+    EngineDeployment, MissingPropertySource, OnPremiseAspectEngine,
 };
 
 use crate::operational_copy::OperationalCopy;
@@ -67,6 +67,10 @@ const NATIVE_VALUE_SEPARATOR: &CStr = c"|";
 /// data set. The Lite data file is the free tier, so this is the safe default
 /// for a freely distributed engine.
 const DEFAULT_DATA_SOURCE_TIER: &str = "Lite";
+
+/// The engine's type name, which the message for a property that needs a data
+/// file upgrade names.
+const ENGINE_TYPE_NAME: &str = "DeviceDetectionOnPremiseEngine";
 
 /// The match-metric pseudo-properties the Hash engine exposes in addition to the
 /// data file's own properties. Each is read from the native results just like a
@@ -193,6 +197,9 @@ pub struct DeviceDetectionOnPremiseEngine {
 struct LoadedDataSet {
     manager: Arc<Manager>,
     readable: Arc<ReadableProperties>,
+    /// Why a property is missing, from the metadata of this data set, added to
+    /// every device data a detection writes.
+    missing: Arc<MissingPropertySource>,
     /// Held only to be dropped with the data set, and declared after the
     /// manager, so it is removed after the data set that has it open is freed.
     _copy: Option<OperationalCopy>,
@@ -223,10 +230,21 @@ fn describe(
         .unwrap_or_else(|| DEFAULT_DATA_SOURCE_TIER.to_owned());
     let (properties, aspect_properties) = build_property_metadata(&manager, &Some(tier.clone()));
     let readable = Arc::new(ReadableProperties::new(&aspect_properties));
+    let missing = Arc::new(
+        MissingPropertySource::new(
+            DEVICE_ELEMENT_DATA_KEY,
+            ENGINE_TYPE_NAME,
+            EngineDeployment::OnPremise,
+            tier.clone(),
+            aspect_properties.clone(),
+        )
+        .with_typed_properties(is_typed_property),
+    );
     (
         LoadedDataSet {
             manager,
             readable,
+            missing,
             _copy: copy,
         },
         EngineMetadata {
@@ -328,6 +346,9 @@ impl DeviceDetectionOnPremiseEngine {
         results.process_evidence(&evidence)?;
 
         let mut device = DeviceDataBase::new();
+        device
+            .base_mut()
+            .add_missing_property_source(Arc::clone(&loaded.missing));
 
         // The device id is a match metric, not a data-file property, so the
         // reader does not return it. Read it through the dedicated native
@@ -489,6 +510,21 @@ impl AspectEngine for DeviceDetectionOnPremiseEngine {
     fn aspect_properties(&self) -> &[AspectPropertyMetaData] {
         &self.metadata.current().aspect_properties
     }
+
+    fn engine_type_name(&self) -> &str {
+        ENGINE_TYPE_NAME
+    }
+
+    /// True for every property `DeviceData` has a typed accessor for.
+    fn has_typed_property(&self, property_name: &str) -> bool {
+        is_typed_property(property_name)
+    }
+}
+
+/// Whether `DeviceData` has a typed accessor for the property, matched ignoring
+/// case.
+fn is_typed_property(property_name: &str) -> bool {
+    declared_property_value_type(property_name).is_some()
 }
 
 impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
@@ -498,13 +534,20 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
 
     fn refresh(&self, _data_file_identifier: Option<&str>) -> Result<()> {
         // A single-file engine ignores the identifier. Reload from the file's
-        // configured path on disk and hot-swap it in.
+        // configured path on disk and hot-swap it in. A reload that fails is
+        // logged at error level, as .NET does, and returned.
         let path = self
             .data_files
             .first()
             .and_then(|file| file.data_file_path().map(Path::to_path_buf));
         match path {
-            Some(path) => self.reload_from_path(&path),
+            Some(path) => self.reload_from_path(&path).inspect_err(|error| {
+                log::error!(
+                    "Failed to refresh data from '{}'. The engine keeps the data it had. \
+                     If this persists, please contact support@51degrees.com. {error}",
+                    path.display()
+                );
+            }),
             None => Err(Error::configuration(format!(
                 "Engine '{}' has no data file path to refresh from.",
                 self.data_key()
@@ -837,6 +880,12 @@ fn data_file_published_from_disk(path: Option<&Path>) -> Option<DateTime<Utc>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_engine_type_name_is_the_name_of_the_type() {
+        let full = std::any::type_name::<DeviceDetectionOnPremiseEngine>();
+        assert!(full.ends_with(&format!("::{ENGINE_TYPE_NAME}")), "{full}");
+    }
 
     #[test]
     fn native_bool_words_parse_both_cases() {

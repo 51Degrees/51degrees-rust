@@ -92,6 +92,9 @@ pub const WEIGHTED_RECORD_VALUE_KEY: &str = "value";
 /// weighting multiplier in the dynamic property bag mirror.
 pub const WEIGHTED_RECORD_WEIGHT_KEY: &str = "weight";
 
+/// The type the warning for a read of a missing property names.
+const DATA_TYPE_NAME: &str = "IpIntelligenceDataBase";
+
 // ---------------------------------------------------------------------------
 // Value stores
 // ---------------------------------------------------------------------------
@@ -262,20 +265,18 @@ impl DeferredValues {
         failure
     }
 
-    /// Look at the values read so far, after reading the named property if it
-    /// has not been read. `Err` carries the message of a read that failed.
+    /// Look at the values read so far, after reading the property at `position`
+    /// if it has not been read. `Err` carries the message of a read that
+    /// failed.
     fn with<R>(
         &self,
-        name: &str,
+        position: usize,
         look: impl FnOnce(&IpIntelligenceDataBase) -> R,
     ) -> Result<R, String> {
-        let position = self.position(name);
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let state = &mut *state;
-        if let Some(position) = position {
-            if let Some(message) = self.read(state, position) {
-                return Err(message);
-            }
+        if let Some(message) = self.read(state, position) {
+            return Err(message);
         }
         Ok(look(&state.values))
     }
@@ -325,6 +326,13 @@ impl fmt::Debug for DeferredValues {
 /// through [`IpIntelligenceDataBase::with_reader`], and a property not set on
 /// the data directly is then read from the native results the first time it is
 /// requested.
+///
+/// A property neither set directly nor one the reader can read is missing.
+/// When the engine added a
+/// [`MissingPropertySource`](fiftyone_pipeline_engines::MissingPropertySource)
+/// to the embedded [`AspectDataBase`], its no-value carries the reason, as
+/// .NET's `PropertyMissingException` does, and each read of the property logs
+/// a warning, as .NET's aspect data does.
 #[derive(Debug, Clone)]
 pub struct IpIntelligenceDataBase {
     base: AspectDataBase,
@@ -374,19 +382,49 @@ impl IpIntelligenceDataBase {
         self
     }
 
-    /// A typed value read through the reader, or the default no-value when
-    /// there is no reader.
+    /// The reader, and the position of `name` in its names, when there is a
+    /// reader that can read the property.
+    fn readable(&self, name: &str) -> Option<(&DeferredValues, usize)> {
+        let deferred = self.deferred.as_deref()?;
+        Some((deferred, deferred.position(name)?))
+    }
+
+    /// A typed value read through the reader, or the no-value for a missing
+    /// property when the reader cannot read it.
     fn deferred_value<T>(
         &self,
         name: &str,
         look: impl FnOnce(&IpIntelligenceDataBase) -> AspectPropertyValue<T>,
     ) -> AspectPropertyValue<T> {
-        match &self.deferred {
-            Some(deferred) => deferred
-                .with(name, look)
+        match self.readable(name) {
+            Some((deferred, position)) => deferred
+                .with(position, look)
                 .unwrap_or_else(|message| AspectPropertyValue::no_value(message)),
+            None => self.missing(name),
+        }
+    }
+
+    /// The no-value for a property this data does not hold, carrying the
+    /// reason it is missing when the engine gave a source for one, and the
+    /// default no-value otherwise. A reason also logs a warning.
+    fn missing<T>(&self, name: &str) -> AspectPropertyValue<T> {
+        match self.base.missing_property(name, DATA_TYPE_NAME) {
+            Some(missing) => AspectPropertyValue::no_value(missing.description),
             None => AspectPropertyValue::empty(),
         }
+    }
+
+    /// Whether the property is set on this data directly, with or without a
+    /// value, or the reader can read it.
+    fn holds(&self, name: &str) -> bool {
+        let key = key(name);
+        self.base.values().get_value(name).is_some()
+            || self.strings.contains_key(&key)
+            || self.floats.contains_key(&key)
+            || self.integers.contains_key(&key)
+            || self.booleans.contains_key(&key)
+            || self.weighted_strings.contains_key(&key)
+            || self.readable(name).is_some()
     }
 
     /// Borrow the embedded [`AspectDataBase`], which holds the values set on
@@ -600,12 +638,27 @@ impl ElementData for IpIntelligenceDataBase {
         if let Some(value) = self.base.values().get_value(name) {
             return Ok(value.clone());
         }
-        match &self.deferred {
-            Some(deferred) => deferred
-                .with(name, |values| values.base.get(name))
+        match self.readable(name) {
+            Some((deferred, position)) => deferred
+                .with(position, |values| values.base.get(name))
                 .unwrap_or_else(|message| Err(NoValueError::new(message))),
-            None => self.base.get(name),
+            // The property is missing, and the embedded base gives the reason.
+            None => self.base.values().get(name).map_err(|absent| {
+                self.base
+                    .missing_property(name, DATA_TYPE_NAME)
+                    .map_or(absent, |missing| NoValueError::new(missing.description))
+            }),
         }
+    }
+
+    /// Whether the property is set on this data or the reader can read it.
+    /// Unless the embedded [`AspectDataBase`] knows its missing properties,
+    /// through a
+    /// [`MissingPropertySource`](fiftyone_pipeline_engines::MissingPropertySource)
+    /// or a failed cloud request, it answers `true`, as the [`AspectDataBase`]
+    /// does.
+    fn has_property(&self, name: &str) -> bool {
+        !self.base.knows_missing_properties() || self.holds(name)
     }
 
     /// The names of the properties that have a value. With a reader attached
@@ -708,6 +761,9 @@ pub fn default_aspect_property_metadata() -> Vec<AspectPropertyMetaData> {
 mod tests {
     use super::*;
     use crate::IpIntelligenceData;
+    use fiftyone_pipeline_engines::{
+        EngineDeployment, MissingPropertyReason, MissingPropertySource, DEFAULT_NO_VALUE_MESSAGE,
+    };
 
     /// A small weighted string list, deliberately out of weighting order so the
     /// setter's sort is exercised.
@@ -991,6 +1047,114 @@ mod tests {
             data.string("Areas").no_value_message(),
             Some("the native read failed")
         );
+    }
+
+    /// The details of an engine whose metadata lists `Country` and `Region`.
+    fn missing_property_source() -> Arc<MissingPropertySource> {
+        let properties = ["Country", "Region"]
+            .iter()
+            .map(|name| {
+                AspectPropertyMetaData::new(*name, IP_DATA_KEY_NAME, PropertyValueType::String)
+                    .with_data_tiers(["Lite"])
+            })
+            .collect();
+        Arc::new(
+            MissingPropertySource::new(
+                IP_DATA_KEY_NAME,
+                "TestEngine",
+                EngineDeployment::OnPremise,
+                "Lite",
+                properties,
+            )
+            .with_typed_properties(|name: &str| declared_property_value_type(name).is_some()),
+        )
+    }
+
+    #[test]
+    fn a_property_the_reader_cannot_read_gives_the_missing_reason() {
+        let (reader, _) = CountingReader::new();
+        let source = missing_property_source();
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader);
+        data.base_mut()
+            .add_missing_property_source(Arc::clone(&source));
+
+        // Town has an accessor, and the metadata does not list it.
+        let town = source.reason("Town");
+        assert_eq!(town.reason, MissingPropertyReason::DataFileUpgradeRequired);
+        assert_eq!(
+            data.town().no_value_message(),
+            Some(town.description.as_str())
+        );
+        assert_eq!(data.get("Town").unwrap_err().message, town.description);
+
+        let unknown = source.reason("NotAProperty");
+        assert_eq!(unknown.reason, MissingPropertyReason::Unknown);
+        assert_eq!(
+            data.get("NotAProperty").unwrap_err().message,
+            unknown.description
+        );
+        assert_eq!(
+            data.string("NotAProperty").no_value_message(),
+            Some(unknown.description.as_str())
+        );
+    }
+
+    #[test]
+    fn a_property_the_reader_reads_without_a_value_is_not_missing() {
+        let (reader, _) = CountingReader::new();
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader);
+        data.base_mut()
+            .add_missing_property_source(missing_property_source());
+        assert_eq!(
+            data.region().no_value_message(),
+            Some(DEFAULT_NO_VALUE_MESSAGE)
+        );
+        assert_eq!(
+            data.get("Region").unwrap_err().message,
+            "No value for property 'Region'."
+        );
+        assert_eq!(data.country().value().unwrap().as_str(), "United Kingdom");
+    }
+
+    #[test]
+    fn without_a_source_a_missing_property_is_the_default_no_value() {
+        let (reader, _) = CountingReader::new();
+        let data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader);
+        assert_eq!(
+            data.town().no_value_message(),
+            Some(DEFAULT_NO_VALUE_MESSAGE)
+        );
+        assert_eq!(
+            data.get("Town").unwrap_err().message,
+            "No value for property 'Town'."
+        );
+    }
+
+    #[test]
+    fn a_source_lets_the_data_say_what_it_holds() {
+        let (reader, reads) = CountingReader::new();
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader);
+        data.set_string("IpRangeStart", "192.0.2.0");
+        data.set_float_no_value("AccuracyRadiusMin", "no radius for this range");
+        assert!(data.has_property("Town"));
+
+        data.base_mut()
+            .add_missing_property_source(missing_property_source());
+        // Set directly, set with no value, then read with a value, with none,
+        // and failing.
+        for name in [
+            "IpRangeStart",
+            "accuracyradiusmin",
+            "Country",
+            "Region",
+            "Areas",
+        ] {
+            assert!(data.has_property(name), "{name}");
+        }
+        assert!(!data.has_property("Town"));
+        assert!(!data.has_property("NotAProperty"));
+        // Asking reads nothing.
+        assert_eq!(reads_of(&reads, "country"), 0);
     }
 
     // WebAssembly has no threads to spawn.

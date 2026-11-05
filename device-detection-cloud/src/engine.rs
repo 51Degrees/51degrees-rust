@@ -28,16 +28,18 @@ use fiftyone_pipeline_core::{
     Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
     Result,
 };
-use fiftyone_pipeline_engines::{
-    AspectEngine, AspectPropertyMetaData, EngineDeployment, EngineMissingPropertyContext,
-    MissingPropertyResult,
-};
+use fiftyone_pipeline_engines::{AspectEngine, AspectPropertyMetaData, EngineDeployment};
 
 use fiftyone_cloud_request_engine::CloudRequestEngine;
-use fiftyone_device_detection_shared::{DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY};
+use fiftyone_device_detection_shared::{
+    declared_property_value_type, DeviceDataBase, DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY,
+};
 
 use crate::dto::map_device_object;
-use crate::meta::{cloud_json, refresh_product_metadata};
+use crate::meta::{cloud_json, fill_metadata, DiscoveredMetadata};
+
+/// The engine's name in configuration errors and log records.
+const ENGINE_NAME: &str = "DeviceDetectionCloudEngine";
 
 /// An engine that turns the cloud JSON response into a
 /// [`DeviceDataBase`](fiftyone_device_detection_shared::DeviceDataBase).
@@ -65,15 +67,26 @@ use crate::meta::{cloud_json, refresh_product_metadata};
 /// accessors and can swap a cloud engine for an on-premise one without changing
 /// its result-reading code.
 ///
-/// # Metadata is derived lazily
+/// # Metadata
 ///
-/// The set of device properties a resource key grants is only known once the
-/// cloud request engine has fetched its accessible properties, which it does
-/// lazily on first use. So [`AspectEngine::aspect_properties`] returns the
-/// engine's statically-known core metadata until [`DeviceDetectionCloudEngine::refresh_properties`]
-/// (or the first `process`) has pulled the device product's properties from the
-/// request engine. The metadata is not hard-cached at construction, matching the
-/// request engine's own lazy initialization.
+/// The device properties a resource key grants come from the cloud request
+/// engine's accessible properties, which it normally fetches when it is built.
+/// The engine reads them when it is constructed. After a transient failure
+/// the request engine retries discovery on first use, so until then
+/// [`AspectEngine::aspect_properties`] is empty, and the engine reads the
+/// properties on the first `process` after discovery completes. A resource
+/// key that grants no device product leaves the metadata empty and logs an
+/// error once.
+///
+/// # A failed cloud request
+///
+/// When the cloud request engine left no response, the engine logs that at
+/// info level, records a flow error that does not fail processing, and stores
+/// empty device data marked with
+/// [`AspectDataBase::mark_cloud_request_failed`](fiftyone_pipeline_engines::AspectDataBase::mark_cloud_request_failed),
+/// so each property read gives
+/// [`MissingPropertyReason::CloudRequestFailed`](fiftyone_pipeline_core::MissingPropertyReason::CloudRequestFailed),
+/// as .NET does.
 ///
 /// # Example
 ///
@@ -118,26 +131,12 @@ pub struct DeviceDetectionCloudEngine {
     /// gathers the evidence. An empty whitelist advertises that.
     evidence_filter: EvidenceKeyFilterWhitelist,
 
-    /// The property metadata for the device aspect, discovered from the request
-    /// engine's accessible properties. It is empty until the first process call
-    /// (or an eager build) populates it, then cached for the life of the engine.
-    /// A OnceLock is used because process takes `&self`, so the metadata is
-    /// filled through a shared reference once the cloud discovery succeeds. This
-    /// is what lets later elements (the set-headers element in particular) see
-    /// the device `SetHeader*` properties at request time.
+    /// The property metadata for the device aspect, read from the request
+    /// engine's accessible properties once its discovery has completed, then
+    /// kept for the life of the engine. A OnceLock is used because process
+    /// takes `&self`. This is what lets later elements (the set-headers element
+    /// in particular) see the device `SetHeader*` properties at request time.
     metadata: OnceLock<DiscoveredMetadata>,
-}
-
-/// The property metadata a cloud engine discovers from the request engine's
-/// accessible properties, cached after the first successful discovery.
-#[derive(Default)]
-struct DiscoveredMetadata {
-    /// The core property metadata for the device aspect.
-    properties: Vec<PropertyMetaData>,
-    /// The aspect view of the same metadata.
-    aspect_properties: Vec<AspectPropertyMetaData>,
-    /// The data tier reported for the device product.
-    data_source_tier: String,
 }
 
 impl DeviceDetectionCloudEngine {
@@ -149,17 +148,19 @@ impl DeviceDetectionCloudEngine {
     /// Construct the engine directly from the [`CloudRequestEngine`] that
     /// precedes it in the pipeline.
     ///
-    /// Property metadata is not fetched here. It is populated lazily on the first
-    /// [`FlowElement::process`] call, or eagerly by calling
-    /// [`DeviceDetectionCloudEngine::refresh_properties`].
+    /// The metadata is read from the request engine here, which makes no
+    /// cloud request. When the request engine's discovery has not completed it
+    /// is read on the first [`FlowElement::process`] after it has. An error is
+    /// logged when the request engine has a resource key that is not granted
+    /// the device product.
     pub fn new(request_engine: Arc<CloudRequestEngine>) -> Self {
-        DeviceDetectionCloudEngine {
+        let engine = DeviceDetectionCloudEngine {
             request_engine,
             evidence_filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
-            // Metadata is intentionally empty until discovery runs on the first
-            // process call, or until an eager build pre-fills it.
             metadata: OnceLock::new(),
-        }
+        };
+        engine.ensure_metadata();
+        engine
     }
 
     /// The cloud request engine this engine reads from.
@@ -167,50 +168,33 @@ impl DeviceDetectionCloudEngine {
         &self.request_engine
     }
 
-    /// Pull the device product's accessible properties from the request engine
-    /// and rebuild this engine's metadata from them.
+    /// Read the device product's properties from the request engine into this
+    /// engine's metadata, if they are not there already.
     ///
-    /// This triggers the request engine's lazy accessible-properties fetch if it
-    /// has not happened yet, so it makes one cloud request the first time it is
-    /// called. It returns the number of device properties discovered, or an
-    /// [`Error::CloudRequest`] if the request engine could not fetch them.
-    /// Calling it is optional; [`FlowElement::process`] does the same work on
-    /// first use.
+    /// Makes no cloud request. Returns the number of device properties, or the
+    /// request engine's [`Error::CloudRequest`] while its discovery has not
+    /// completed. Calling it is optional, because construction and
+    /// [`FlowElement::process`] do the same.
     pub fn refresh_properties(&mut self) -> Result<usize> {
-        let (properties, aspect_properties, data_source_tier) =
-            refresh_product_metadata(&self.request_engine, DEVICE_ELEMENT_DATA_KEY)?;
-
-        let count = aspect_properties.len();
-        // Cache the freshly discovered metadata. If a process call already
-        // populated the slot, the existing value is kept and this copy dropped;
-        // both describe the same resource key.
-        let _ = self.metadata.set(DiscoveredMetadata {
-            properties,
-            aspect_properties,
-            data_source_tier,
-        });
-        Ok(count)
+        fill_metadata(
+            &self.metadata,
+            &self.request_engine,
+            DEVICE_ELEMENT_DATA_KEY,
+            ENGINE_NAME,
+        )?;
+        Ok(self.aspect_properties().len())
     }
 
-    /// Populate the cached metadata from the cloud on first use, ignoring a
-    /// discovery failure so a transient cloud error is retried on the next
-    /// process rather than freezing empty metadata. Called from
-    /// [`FlowElement::process`] so the engine's property metadata becomes
-    /// available to later elements, in particular the set-headers element that
-    /// derives Accept-CH from the device `SetHeader*` properties.
+    /// Read the metadata if it is not there yet, leaving it to a later call
+    /// while the request engine's discovery has not completed rather than
+    /// keeping empty metadata.
     fn ensure_metadata(&self) {
-        if self.metadata.get().is_some() {
-            return;
-        }
-        if let Ok((properties, aspect_properties, data_source_tier)) =
-            refresh_product_metadata(&self.request_engine, DEVICE_ELEMENT_DATA_KEY)
-        {
-            let _ = self.metadata.set(DiscoveredMetadata {
-                properties,
-                aspect_properties,
-                data_source_tier,
-            });
-        }
+        let _ = fill_metadata(
+            &self.metadata,
+            &self.request_engine,
+            DEVICE_ELEMENT_DATA_KEY,
+            ENGINE_NAME,
+        );
     }
 
     /// Read the cloud JSON, slice the `device` member, and store the resulting
@@ -218,13 +202,24 @@ impl DeviceDetectionCloudEngine {
     /// [`DEVICE_DATA_KEY`].
     ///
     /// Returns an [`Error::PipelineConfiguration`] if no cloud request engine ran
-    /// before this engine. An empty or absent JSON response (which signals the
-    /// request engine itself failed and already reported the error) leaves the
-    /// device data unpopulated and does not raise a new error.
+    /// before this engine. An empty or absent JSON response, which means the
+    /// request engine failed and recorded its own error, gives empty device
+    /// data marked as from a failed cloud request, and a flow error that does
+    /// not fail processing.
     fn populate(&self, data: &mut FlowData) -> Result<()> {
-        let json = match cloud_json(data, "DeviceDetectionCloudEngine")? {
+        let json = match cloud_json(data, ENGINE_NAME)? {
             Some(json) => json,
-            None => return Ok(()),
+            None => {
+                CloudRequestEngine::record_not_processed(
+                    data,
+                    ENGINE_NAME,
+                    DEVICE_ELEMENT_DATA_KEY,
+                );
+                let mut device = DeviceDataBase::new();
+                device.base_mut().mark_cloud_request_failed();
+                data.get_or_add(DEVICE_DATA_KEY, || device)?;
+                return Ok(());
+            }
         };
 
         let device = slice_device_json(&json)?;
@@ -254,8 +249,8 @@ fn slice_device_json(json: &str) -> Result<serde_json::Value> {
 
 impl FlowElement for DeviceDetectionCloudEngine {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        // Discover the property metadata on first use so later elements can see
-        // it, then map the cloud response into device data.
+        // Read the metadata if discovery has completed since construction, so
+        // later elements can see it, then map the cloud response.
         self.ensure_metadata();
         self.populate(data)
     }
@@ -278,6 +273,10 @@ impl FlowElement for DeviceDetectionCloudEngine {
 }
 
 impl AspectEngine for DeviceDetectionCloudEngine {
+    fn engine_type_name(&self) -> &str {
+        ENGINE_NAME
+    }
+
     fn data_source_tier(&self) -> &str {
         self.metadata
             .get()
@@ -295,20 +294,14 @@ impl AspectEngine for DeviceDetectionCloudEngine {
     }
 
     fn has_loaded_properties(&self) -> bool {
-        // Properties come from the request engine's lazy discovery, so they are
-        // loaded once that discovery has completed.
-        self.request_engine.has_loaded_properties()
+        self.metadata.get().is_some()
     }
 
-    fn missing_property_reason(&self, property_name: &str) -> MissingPropertyResult {
-        let ctx = EngineMissingPropertyContext {
-            element_data_key: self.data_key(),
-            deployment: self.deployment(),
-            data_source_tier: self.data_source_tier(),
-            properties_loaded: self.has_loaded_properties(),
-            properties: self.aspect_properties(),
-        };
-        fiftyone_pipeline_engines::missing_property_reason(property_name, &ctx)
+    /// Whether `DeviceData` has a typed accessor for the property, matched
+    /// ignoring case. Before discovery completes, such a property gives a
+    /// data file upgrade as the reason it is missing, as .NET does.
+    fn has_typed_property(&self, property_name: &str) -> bool {
+        declared_property_value_type(property_name).is_some()
     }
 }
 
@@ -341,12 +334,11 @@ impl DeviceDetectionCloudEngineBuilder {
         self
     }
 
-    /// Request that property metadata is fetched from the cloud at
-    /// [`DeviceDetectionCloudEngineBuilder::try_build`] time rather than lazily on
-    /// the first process call. This makes one cloud request during the build. A
-    /// fetch failure is ignored by [`DeviceDetectionCloudEngineBuilder::build`]
-    /// (the metadata is then filled lazily) but surfaced by
-    /// [`DeviceDetectionCloudEngineBuilder::try_build`].
+    /// Ask [`DeviceDetectionCloudEngineBuilder::try_build`] to fail when the
+    /// metadata cannot be read yet, because the request engine's discovery
+    /// has not completed, rather than leaving it to the first process call.
+    /// [`DeviceDetectionCloudEngineBuilder::build`] leaves it to the first
+    /// process call either way.
     pub fn eager_properties(mut self, eager: bool) -> Self {
         self.eager_properties = eager;
         self
@@ -355,17 +347,20 @@ impl DeviceDetectionCloudEngineBuilder {
     /// Build the engine, panicking if no cloud request engine was supplied.
     ///
     /// Use [`DeviceDetectionCloudEngineBuilder::try_build`] for a non-panicking
-    /// variant. Eager property fetching, if requested, is best-effort here: a
-    /// failure leaves the metadata to be filled lazily on first process.
+    /// variant. Metadata that cannot be read yet is left to the first process
+    /// call, whether or not eager properties were asked for.
     pub fn build(self) -> DeviceDetectionCloudEngine {
-        self.try_build()
-            .expect("a CloudRequestEngine is required to build a DeviceDetectionCloudEngine")
+        let request_engine = self
+            .request_engine
+            .expect("a CloudRequestEngine is required to build a DeviceDetectionCloudEngine");
+        DeviceDetectionCloudEngine::new(request_engine)
     }
 
     /// Build the engine, returning an [`Error::PipelineConfiguration`] if no
-    /// cloud request engine was supplied, or propagating an
-    /// [`Error::CloudRequest`] from eager property discovery when
-    /// [`DeviceDetectionCloudEngineBuilder::eager_properties`] was set.
+    /// cloud request engine was supplied, or the request engine's
+    /// [`Error::CloudRequest`] when
+    /// [`DeviceDetectionCloudEngineBuilder::eager_properties`] was set and its
+    /// discovery has not completed.
     pub fn try_build(self) -> Result<DeviceDetectionCloudEngine> {
         let request_engine = self.request_engine.ok_or_else(|| {
             Error::configuration(

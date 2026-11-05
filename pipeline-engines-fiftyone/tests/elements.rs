@@ -329,6 +329,229 @@ fn set_headers_does_not_cache_an_empty_scan() {
     );
 }
 
+/// An element that publishes `SetHeaderBrowserAccept-CH` with a fixed value
+/// under its own data key.
+struct HeaderElement {
+    key: &'static str,
+    value: &'static str,
+    filter: EvidenceKeyFilterWhitelist,
+    properties: Vec<PropertyMetaData>,
+}
+
+impl HeaderElement {
+    fn new(key: &'static str, value: &'static str) -> Self {
+        HeaderElement {
+            key,
+            value,
+            filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+            properties: vec![PropertyMetaData::new(
+                "SetHeaderBrowserAccept-CH",
+                key,
+                PropertyValueType::String,
+            )],
+        }
+    }
+}
+
+impl FlowElement for HeaderElement {
+    fn process(&self, data: &mut FlowData) -> Result<()> {
+        let value = self.value;
+        data.get_or_add(TypedKey::<FakeDeviceData>::new(self.key), || {
+            FakeDeviceData(MapElementData::new().set("SetHeaderBrowserAccept-CH", value))
+        })?;
+        Ok(())
+    }
+    fn data_key(&self) -> &str {
+        self.key
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        &self.filter
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        &self.properties
+    }
+}
+
+/// An element that wraps another and passes every call to it.
+struct Wrapped(Arc<dyn FlowElement>);
+
+impl FlowElement for Wrapped {
+    fn process(&self, data: &mut FlowData) -> Result<()> {
+        self.0.process(data)
+    }
+    fn data_key(&self) -> &str {
+        self.0.data_key()
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        self.0.evidence_key_filter()
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        self.0.properties()
+    }
+    fn is_concurrent(&self) -> bool {
+        self.0.is_concurrent()
+    }
+    fn type_name(&self) -> &'static str {
+        self.0.type_name()
+    }
+    fn add_pipeline(&self, pipeline: &Arc<Pipeline>) -> Result<()> {
+        self.0.add_pipeline(pipeline)
+    }
+}
+
+/// An element that wraps another and passes on every call but
+/// `add_pipeline`, as a wrapper written before that method existed does.
+struct WrappedWithoutAddPipeline(Arc<dyn FlowElement>);
+
+impl FlowElement for WrappedWithoutAddPipeline {
+    fn process(&self, data: &mut FlowData) -> Result<()> {
+        self.0.process(data)
+    }
+    fn data_key(&self) -> &str {
+        self.0.data_key()
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        self.0.evidence_key_filter()
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        self.0.properties()
+    }
+}
+
+/// Set Headers on its own, wrapped by an element that passes every call on,
+/// and wrapped by one that does not pass `add_pipeline` on.
+fn set_headers_three_ways() -> [(&'static str, Arc<dyn FlowElement>); 3] {
+    [
+        ("plain", Arc::new(SetHeadersElement::new())),
+        (
+            "wrapped",
+            Arc::new(Wrapped(Arc::new(SetHeadersElement::new()))),
+        ),
+        (
+            "wrapped without add_pipeline",
+            Arc::new(WrappedWithoutAddPipeline(
+                Arc::new(SetHeadersElement::new()),
+            )),
+        ),
+    ]
+}
+
+/// The Accept-CH value of one request through `pipeline`.
+fn accept_ch(pipeline: &Arc<Pipeline>) -> Option<String> {
+    let mut data = pipeline.create_flow_data();
+    data.process().unwrap();
+    data.get(SetHeadersElement::KEY)
+        .unwrap()
+        .response_headers()
+        .get("Accept-CH")
+        .cloned()
+}
+
+#[test]
+fn set_headers_keeps_each_pipelines_headers_apart() {
+    for (how, shared) in set_headers_three_ways() {
+        let a = Pipeline::builder()
+            .add_element(Arc::new(FakeDeviceElement::new()))
+            .add_element(Arc::clone(&shared))
+            .build()
+            .unwrap();
+        let b = Pipeline::builder()
+            .add_element(Arc::new(HeaderElement::new("test", "X-Test")))
+            .add_element(Arc::clone(&shared))
+            .build()
+            .unwrap();
+        let alone = Pipeline::builder()
+            .add_element(Arc::new(FakeDeviceElement::new()))
+            .add_element(Arc::new(SetHeadersElement::new()))
+            .build()
+            .unwrap();
+
+        // B first, so a single kept scan would be B's.
+        // Twice each, because a wrapper that does not pass add_pipeline on
+        // has the pipeline's entry added by its first request.
+        for _ in 0..2 {
+            assert_eq!(accept_ch(&b).as_deref(), Some("X-Test"), "{how}");
+        }
+        for _ in 0..2 {
+            let from_a = accept_ch(&a);
+            assert!(from_a.is_some(), "{how}");
+            assert!(!from_a.as_deref().unwrap().contains("X-Test"), "{how}");
+            assert_eq!(from_a, accept_ch(&alone), "{how}");
+        }
+        assert_eq!(accept_ch(&b).as_deref(), Some("X-Test"), "{how}");
+    }
+}
+
+/// A [`HeaderElement`] that counts the calls to `properties`, which Set
+/// Headers makes when it scans a pipeline.
+struct CountedHeaderElement {
+    inner: HeaderElement,
+    scans: AtomicUsize,
+}
+
+impl FlowElement for CountedHeaderElement {
+    fn process(&self, data: &mut FlowData) -> Result<()> {
+        self.inner.process(data)
+    }
+    fn data_key(&self) -> &str {
+        self.inner.data_key()
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        self.inner.evidence_key_filter()
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        self.scans.fetch_add(1, Ordering::Relaxed);
+        self.inner.properties()
+    }
+}
+
+#[test]
+fn set_headers_stops_scanning_a_pipeline_once_its_scan_is_kept() {
+    for (how, set_headers) in set_headers_three_ways() {
+        let counted = Arc::new(CountedHeaderElement {
+            inner: HeaderElement::new("test", "X-Test"),
+            scans: AtomicUsize::new(0),
+        });
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::clone(&counted) as Arc<dyn FlowElement>)
+            .add_element(set_headers)
+            .build()
+            .unwrap();
+        // add_pipeline adds the pipeline's entry, so the first request keeps
+        // its scan. Through a wrapper that does not pass add_pipeline on, the
+        // first request adds the entry and the second keeps its scan.
+        let first_kept = if how == "wrapped without add_pipeline" {
+            2
+        } else {
+            1
+        };
+        for _ in 0..first_kept {
+            assert_eq!(accept_ch(&pipeline).as_deref(), Some("X-Test"), "{how}");
+        }
+        let scans = counted.scans.load(Ordering::Relaxed);
+        assert!(scans > 0, "{how}");
+        for _ in 0..10 {
+            assert_eq!(accept_ch(&pipeline).as_deref(), Some("X-Test"), "{how}");
+        }
+        assert_eq!(counted.scans.load(Ordering::Relaxed), scans, "{how}");
+    }
+}
+
+#[test]
+fn set_headers_forgets_a_pipeline_that_has_gone() {
+    let shared = Arc::new(SetHeadersElement::new());
+    for (key, value) in [("first", "X-First"), ("second", "X-Second")] {
+        // Each pipeline is dropped at the end of its turn, and the next may be
+        // given the same address, which must not bring back the old headers.
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(HeaderElement::new(key, value)))
+            .add_element(Arc::clone(&shared) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        assert_eq!(accept_ch(&pipeline).as_deref(), Some(value));
+    }
+}
+
 // --------------------------------------------------------------------------
 // Share usage element
 // --------------------------------------------------------------------------
@@ -578,6 +801,63 @@ fn share_usage_counts_only_a_200_as_success_and_logs_the_answer() {
 }
 
 /// Poll `condition` until it returns true or the timeout elapses.
+/// A pipeline holding only `element`.
+fn pipeline_of(element: Arc<dyn FlowElement>) -> Result<Arc<Pipeline>> {
+    Pipeline::builder().add_element(element).build()
+}
+
+/// True if `result` is usage sharing refusing a second pipeline.
+fn refused(result: Result<Arc<Pipeline>>) -> bool {
+    matches!(
+        result,
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message })
+            if message.contains("only one pipeline at a time")
+    )
+}
+
+#[test]
+fn share_usage_refuses_a_second_pipeline_while_the_first_is_alive() {
+    const SEND_WAIT_SECONDS: u64 = 5;
+    for wrap in [false, true] {
+        let (url, bodies, _) = start_capture_server();
+        let config = ShareUsageConfig::builder()
+            .share_usage_url(url)
+            .share_percentage(1.0)
+            .minimum_entries_per_message(1)
+            .build();
+        let share = Arc::new(ShareUsageElement::new(config));
+        let element: Arc<dyn FlowElement> = if wrap {
+            Arc::new(Wrapped(Arc::clone(&share) as Arc<dyn FlowElement>))
+        } else {
+            Arc::clone(&share) as Arc<dyn FlowElement>
+        };
+
+        let first = pipeline_of(Arc::clone(&element)).unwrap();
+        assert!(refused(pipeline_of(Arc::clone(&element))), "wrapped {wrap}");
+        // The refusal leaves the first pipeline processing and sharing.
+        first.create_flow_data().process().unwrap();
+        wait_until(Duration::from_secs(SEND_WAIT_SECONDS), || {
+            !bodies.lock().unwrap().is_empty()
+        });
+        assert_eq!(bodies.lock().unwrap().len(), 1, "wrapped {wrap}");
+
+        drop(first);
+        assert!(pipeline_of(element).is_ok(), "wrapped {wrap}");
+    }
+}
+
+#[test]
+fn share_usage_refuses_two_places_in_one_pipeline_and_stays_free() {
+    let share = Arc::new(ShareUsageElement::with_defaults());
+    let twice = Pipeline::builder()
+        .add_element(Arc::clone(&share) as Arc<dyn FlowElement>)
+        .add_element(Arc::clone(&share) as Arc<dyn FlowElement>)
+        .build();
+    assert!(refused(twice));
+    // The refused pipeline was dropped, so the element can be used again.
+    assert!(pipeline_of(share).is_ok());
+}
+
 fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) {
     let start = std::time::Instant::now();
     while start.elapsed() < timeout {

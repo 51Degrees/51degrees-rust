@@ -22,6 +22,11 @@
 
 //! The builder for [`JavaScriptBuilderElement`].
 
+use std::fmt;
+use std::ops::Deref;
+use std::panic::{RefUnwindSafe, UnwindSafe};
+use std::sync::Arc;
+
 use fiftyone_cloud_request_engine::{CloudRequestEngine, LicensedProducts};
 use fiftyone_pipeline_core::constants::DEFAULT_JSON_ENDPOINT;
 use fiftyone_pipeline_core::{Error, Result};
@@ -31,6 +36,45 @@ use crate::constants::{
     BUILDER_DEFAULT_OBJECT_NAME, BUILDER_DEFAULT_PROTOCOL, FODID_PRODUCT_NAME,
 };
 use crate::element::JavaScriptBuilderElement;
+
+/// Where an element's user prompt decision comes from.
+#[derive(Clone)]
+pub(crate) enum UserPromptSource {
+    /// Decided when the builder was configured.
+    Decided(bool),
+    /// Decided from this request engine's licensed products once its
+    /// discovery has completed.
+    Engine(SharedEngine),
+}
+
+/// A shared cloud request engine that keeps the builder and the element
+/// `UnwindSafe` and `RefUnwindSafe`.
+///
+/// The JavaScript builder only reads the engine's licensed products, which
+/// are set once, so a panic elsewhere cannot leave a value half changed for
+/// it to read.
+#[derive(Clone)]
+pub(crate) struct SharedEngine(Arc<CloudRequestEngine>);
+
+impl UnwindSafe for SharedEngine {}
+impl RefUnwindSafe for SharedEngine {}
+
+impl Deref for SharedEngine {
+    type Target = CloudRequestEngine;
+
+    fn deref(&self) -> &CloudRequestEngine {
+        &self.0
+    }
+}
+
+impl fmt::Debug for UserPromptSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UserPromptSource::Decided(render) => f.debug_tuple("Decided").field(render).finish(),
+            UserPromptSource::Engine(_) => f.write_str("Engine"),
+        }
+    }
+}
 
 /// Configures and constructs a [`JavaScriptBuilderElement`].
 ///
@@ -57,7 +101,7 @@ pub struct JavaScriptBuilderElementBuilder {
     object_name: String,
     enable_cookies: bool,
     minify: bool,
-    user_prompt: bool,
+    user_prompt: UserPromptSource,
 }
 
 impl JavaScriptBuilderElementBuilder {
@@ -70,7 +114,7 @@ impl JavaScriptBuilderElementBuilder {
             object_name: BUILDER_DEFAULT_OBJECT_NAME.to_owned(),
             enable_cookies: BUILDER_DEFAULT_ENABLE_COOKIES,
             minify: BUILDER_DEFAULT_MINIFY,
-            user_prompt: false,
+            user_prompt: UserPromptSource::Decided(false),
         }
     }
 
@@ -84,14 +128,40 @@ impl JavaScriptBuilderElementBuilder {
     /// least one property. The decision is taken from the licensed products and
     /// not from the 51Did cloud engine's property list, because that engine
     /// reports its default properties when the key grants no 51Did product, so
-    /// its list is populated either way. The request engine resolves its
-    /// licensed products when it is built, so the decision is taken here once.
-    /// Without a call to this method the section is left out.
+    /// its list is populated either way.
+    ///
+    /// The element keeps the engine and settles the decision at the first
+    /// render after the engine's discovery has completed. Until then each
+    /// script leaves the section out, so a transient failure when the engine
+    /// was built leaves it out only until a request completes discovery.
+    /// Without a call to this method or
+    /// [`set_cloud_request_engine`](Self::set_cloud_request_engine) the
+    /// section is left out.
+    pub fn set_shared_cloud_request_engine(mut self, engine: Arc<CloudRequestEngine>) -> Self {
+        self.user_prompt = UserPromptSource::Engine(SharedEngine(engine));
+        self
+    }
+
+    /// As
+    /// [`set_shared_cloud_request_engine`](Self::set_shared_cloud_request_engine)
+    /// for a caller holding only a reference, so the decision is taken here,
+    /// once. If the engine's discovery has not completed, which follows a
+    /// transient failure when it was built, the section is left out for the
+    /// life of the element and a warning is logged. Prefer the shared form.
     pub fn set_cloud_request_engine(mut self, engine: &CloudRequestEngine) -> Self {
-        self.user_prompt = engine
-            .public_properties()
-            .map(grants_51did)
-            .unwrap_or(false);
+        let render = match engine.public_properties() {
+            Ok(products) => grants_51did(products),
+            Err(_) => {
+                log::warn!(
+                    "The cloud request engine's licensed products are not known \
+                     yet, so the JavaScript builder leaves the user prompt \
+                     section out of every script. Pass the engine to \
+                     set_shared_cloud_request_engine to decide once they are known."
+                );
+                false
+            }
+        };
+        self.user_prompt = UserPromptSource::Decided(render);
         self
     }
 
@@ -148,10 +218,12 @@ impl JavaScriptBuilderElementBuilder {
             self.object_name = object_name;
             Ok(self)
         } else {
-            Err(Error::configuration(format!(
+            let message = format!(
                 "The JavaScript object name '{object_name}' is not valid. It must \
                  be a valid JavaScript identifier that is not a reserved word."
-            )))
+            );
+            log::error!("{message}");
+            Err(Error::configuration(message))
         }
     }
 
@@ -182,7 +254,7 @@ impl JavaScriptBuilderElementBuilder {
 /// True when the licensed products include the 51Did product with at least one
 /// property. The product name is compared ignoring case, because the cloud
 /// service reports it as `FODid`.
-fn grants_51did(products: &LicensedProducts) -> bool {
+pub(crate) fn grants_51did(products: &LicensedProducts) -> bool {
     products.products.iter().any(|(name, product)| {
         name.eq_ignore_ascii_case(FODID_PRODUCT_NAME) && !product.properties.is_empty()
     })

@@ -44,13 +44,13 @@
 //!   (JSON).
 //! - `Content-Length`: the UTF-8 byte length of the body.
 //! - `Cache-Control`: `private, max-age=1800` when the flow data recorded no
-//!   processing errors, otherwise `no-cache`. A response to a request that
-//!   recorded errors carries no `ETag`, so a browser that kept it fetches it
-//!   again in full rather than having it confirmed by a `304`.
+//!   processing errors and the builder's data was there, otherwise `no-cache`.
+//!   A `no-cache` response carries no `ETag`, so a browser that kept it
+//!   fetches it again in full rather than having it confirmed by a `304`.
 //! - `Vary`: the comma-joined list of HTTP-header evidence keys in the
-//!   evidence-key whitelist supplied through [`EndpointOptions`], with the
-//!   `header.` prefix stripped and the names de-duplicated case-insensitively.
-//!   Omitted when the list is empty or no whitelist was supplied.
+//!   evidence-key whitelist [`EndpointOptions::current_vary_whitelist`] gives,
+//!   with the `header.` prefix stripped and the names de-duplicated
+//!   case-insensitively. Omitted when the list is empty or there is none.
 //! - `ETag`: a digest of the cache key the flow data's evidence produces
 //!   under the pipeline filter, the same in every process running the same
 //!   build. The digest is opaque and non-portable (see [`compute_etag`]).
@@ -59,23 +59,53 @@
 //!
 //! When the request's `If-None-Match` equals the computed `ETag`, both
 //! endpoints instead return `304 Not Modified` with an empty body and no other
-//! headers.
+//! headers. That is checked before the body is built, so nothing below is
+//! logged or built for a `304`.
+//!
+//! # When a builder left no data
+//!
+//! A builder in the pipeline can leave no data for a request, for example when
+//! it failed and the pipeline suppresses errors. The endpoint then logs that
+//! at error level on each such request, serves the response with `no-cache`,
+//! and builds the body again from the flow data with the builder the pipeline
+//! holds as a resource (see [`fiftyone_pipeline_core::Pipeline::resource`]),
+//! used only when it is the same `Arc` as the builder element, as
+//! [`crate::WebPipeline`] adds its own builders. The JavaScript is built
+//! around the JSON builder's output, itself built again if that builder left
+//! no data too. When only the JSON builder left no data, the JavaScript
+//! builder's script holds placeholder JSON, so it is treated as left out and
+//! built again too. With no such resource the body is empty. A pipeline
+//! without the builder serves an empty body and logs nothing.
 //!
 //! # Where the `Vary` whitelist comes from
 //!
 //! The [`crate::WebPipeline`] builder collects the header keys every element
-//! names through its evidence key filter, and the adapter passes that list to
-//! the endpoint through [`EndpointOptions`]. An adapter with its own view of
-//! the headers that change the result can pass a different list.
+//! names through its evidence key filter, and the adapter serves the endpoints
+//! with [`crate::WebPipeline::endpoint_options`], which takes that list at each
+//! response. An element can still be learning its accepted evidence after the
+//! pipeline is built, as the cloud request engine is after a transient
+//! discovery failure, so the list is collected again once every element's
+//! filter is complete (see [`crate::WebPipeline::vary_whitelist`]). An adapter
+//! with its own view of the headers that change the result can pass a
+//! different list to [`EndpointOptions::new`].
 
+use std::any::Any;
 use std::hash::{BuildHasher, Hash, Hasher};
+use std::ops::Deref;
+use std::panic::{RefUnwindSafe, UnwindSafe};
+use std::sync::Arc;
 
 use ahash::RandomState;
-use fiftyone_javascript_builder::JAVASCRIPT_BUILDER_DATA_KEY;
-use fiftyone_json_builder::JSON_BUILDER_DATA_KEY;
+use fiftyone_javascript_builder::{
+    JavaScriptBuilderElement, JAVASCRIPT_BUILDER_DATA_KEY, JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY,
+};
+use fiftyone_json_builder::{
+    JsonBuilderElement, JSON_BUILDER_DATA_KEY, JSON_BUILDER_ELEMENT_DATA_KEY,
+};
 use fiftyone_pipeline_core::constants::EVIDENCE_HTTP_HEADER_PREFIX;
 use fiftyone_pipeline_core::{EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData};
 
+use crate::pipeline::VaryList;
 use crate::request::RequestData;
 use crate::response::WebResponse;
 
@@ -109,14 +139,20 @@ const ETAG_SEED_3: u64 = 0x_dead_beef_51de_9e55;
 
 /// Options shared by both client-side endpoints.
 ///
-/// The defaults serve the common case. Supply a `vary_whitelist` (normally the
-/// one [`crate::WebPipeline`] computes) so the response advertises the HTTP
-/// headers that influence the result, and the caching/CORS headers are emitted.
+/// Take them from [`crate::WebPipeline::endpoint_options`] so the response
+/// advertises the HTTP headers that influence the result, and the caching and
+/// CORS headers are emitted. [`EndpointOptions::new`] takes a fixed list
+/// instead.
 #[derive(Debug, Clone, Default)]
 pub struct EndpointOptions {
-    /// The evidence-key whitelist whose `header.*` keys derive the `Vary`
-    /// header. `None` (or an empty whitelist) means no `Vary` header is emitted.
+    /// An evidence-key whitelist whose `header.*` keys derive the `Vary`
+    /// header, used in place of the pipeline's list. `None` with no pipeline
+    /// list, or an empty whitelist, means no `Vary` header is emitted.
     pub vary_whitelist: Option<EvidenceKeyFilterWhitelist>,
+
+    /// The pipeline's list, for options from
+    /// [`crate::WebPipeline::endpoint_options`].
+    pipeline_vary: Option<SharedVaryList>,
 
     /// When `false`, the caching, `Vary`, `ETag` and CORS headers are not added
     /// (only `Content-Type` and `Content-Length` are), so an adapter can apply
@@ -125,14 +161,53 @@ pub struct EndpointOptions {
     suppress_extra_headers: bool,
 }
 
+/// A pipeline's shared `Vary` list that keeps [`EndpointOptions`]
+/// `UnwindSafe` and `RefUnwindSafe`.
+///
+/// The options only read the list's whitelists, which are set once, so a
+/// panic elsewhere cannot leave a value half changed for them to read.
+#[derive(Debug, Clone)]
+struct SharedVaryList(Arc<VaryList>);
+
+impl UnwindSafe for SharedVaryList {}
+impl RefUnwindSafe for SharedVaryList {}
+
+impl Deref for SharedVaryList {
+    type Target = VaryList;
+
+    fn deref(&self) -> &VaryList {
+        &self.0
+    }
+}
+
 impl EndpointOptions {
     /// Create options with the given `Vary` whitelist and the caching/CORS
     /// headers enabled.
     pub fn new(vary_whitelist: EvidenceKeyFilterWhitelist) -> Self {
         EndpointOptions {
             vary_whitelist: Some(vary_whitelist),
+            pipeline_vary: None,
             suppress_extra_headers: false,
         }
+    }
+
+    /// Options taking the `Vary` header from a pipeline's list, with the
+    /// caching/CORS headers enabled.
+    pub(crate) fn from_vary_list(list: Arc<VaryList>) -> Self {
+        EndpointOptions {
+            vary_whitelist: None,
+            pipeline_vary: Some(SharedVaryList(list)),
+            suppress_extra_headers: false,
+        }
+    }
+
+    /// The whitelist the next response's `Vary` header is derived from, being
+    /// [`EndpointOptions::vary_whitelist`] when set, otherwise the pipeline's
+    /// list for options from [`crate::WebPipeline::endpoint_options`].
+    pub fn current_vary_whitelist(&self) -> Option<&EvidenceKeyFilterWhitelist> {
+        self.vary_whitelist
+            .as_ref()
+            .or_else(|| self.pipeline_vary.as_deref().map(VaryList::whitelist))
     }
 
     /// Disable the caching, `Vary`, `ETag` and CORS headers. Returns `self` for
@@ -148,8 +223,9 @@ impl EndpointOptions {
 /// The body is the JavaScript produced by the JavaScript builder element (its
 /// element data under
 /// [`fiftyone_javascript_builder::JAVASCRIPT_BUILDER_DATA_KEY`]). If that element
-/// did not run the body is empty. The response uses the
-/// [`CONTENT_TYPE_JAVASCRIPT`] content type and, unless
+/// left no data the body is built again as the module documentation describes,
+/// and if the pipeline has no such element the body is empty. The response uses
+/// the [`CONTENT_TYPE_JAVASCRIPT`] content type and, unless
 /// [`EndpointOptions::without_extra_headers`] was used, the shared caching and
 /// CORS headers described in the module documentation.
 ///
@@ -161,19 +237,22 @@ pub fn serve_javascript(
     request: &dyn RequestData,
     options: &EndpointOptions,
 ) -> WebResponse {
-    let body = flow_data
-        .get(JAVASCRIPT_BUILDER_DATA_KEY)
-        .map(|data| data.javascript().to_owned())
-        .unwrap_or_default();
-
-    build_response(flow_data, request, body, CONTENT_TYPE_JAVASCRIPT, options)
+    build_response(
+        flow_data,
+        request,
+        || javascript_body(flow_data),
+        CONTENT_TYPE_JAVASCRIPT,
+        options,
+    )
 }
 
 /// Serve the generated JSON for a processed flow data.
 ///
 /// The body is the JSON produced by the JSON builder element (its element data
 /// under [`fiftyone_json_builder::JSON_BUILDER_DATA_KEY`], the `json` property).
-/// If that element did not run the body is empty. The response uses the
+/// If that element left no data the body is built again as the module
+/// documentation describes, and if the pipeline has no such element the body
+/// is empty. The response uses the
 /// [`CONTENT_TYPE_JSON`] content type and the shared caching and CORS headers
 /// described in the module documentation. As with the JavaScript endpoint a
 /// matching `If-None-Match` yields a bare `304 Not Modified`.
@@ -182,19 +261,112 @@ pub fn serve_json(
     request: &dyn RequestData,
     options: &EndpointOptions,
 ) -> WebResponse {
-    let body = flow_data
-        .get(JSON_BUILDER_DATA_KEY)
-        .map(|data| data.json().to_owned())
-        .unwrap_or_default();
+    build_response(
+        flow_data,
+        request,
+        || json_body(flow_data),
+        CONTENT_TYPE_JSON,
+        options,
+    )
+}
 
-    build_response(flow_data, request, body, CONTENT_TYPE_JSON, options)
+/// A response body, and whether a builder left no data for it, which stops the
+/// response being cached.
+struct Body {
+    content: String,
+    failed: bool,
+}
+
+impl Body {
+    fn cacheable(content: String) -> Self {
+        Body {
+            content,
+            failed: false,
+        }
+    }
+
+    fn failed(content: String) -> Self {
+        Body {
+            content,
+            failed: true,
+        }
+    }
+}
+
+/// The JavaScript builder's output for the request, built again when the
+/// builder left no data, or when the JSON builder left none, because the
+/// script then holds placeholder JSON in place of the properties.
+fn javascript_body(flow_data: &FlowData) -> Body {
+    let json_missing = flow_data.get(JSON_BUILDER_DATA_KEY).is_none()
+        && has_element(flow_data, JSON_BUILDER_ELEMENT_DATA_KEY);
+    match flow_data.get(JAVASCRIPT_BUILDER_DATA_KEY) {
+        Some(data) if !json_missing => Body::cacheable(data.javascript().to_owned()),
+        None if !has_element(flow_data, JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY) => {
+            Body::cacheable(String::new())
+        }
+        _ => {
+            log_missing_data(JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY);
+            let content = match held_builder::<JavaScriptBuilderElement>(
+                flow_data,
+                JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY,
+            ) {
+                Some(builder) => builder.javascript_for(flow_data, &json_body(flow_data).content),
+                None => String::new(),
+            };
+            Body::failed(content)
+        }
+    }
+}
+
+/// The JSON builder's output for the request, built again when the builder
+/// left no data.
+fn json_body(flow_data: &FlowData) -> Body {
+    if let Some(data) = flow_data.get(JSON_BUILDER_DATA_KEY) {
+        return Body::cacheable(data.json().to_owned());
+    }
+    if !has_element(flow_data, JSON_BUILDER_ELEMENT_DATA_KEY) {
+        return Body::cacheable(String::new());
+    }
+    log_missing_data(JSON_BUILDER_ELEMENT_DATA_KEY);
+    let content = held_builder::<JsonBuilderElement>(flow_data, JSON_BUILDER_ELEMENT_DATA_KEY)
+        .map(|builder| builder.json_for(flow_data))
+        .unwrap_or_default();
+    Body::failed(content)
+}
+
+/// The builder the pipeline holds as a resource, when it is the same `Arc` as
+/// the element with this data key, so the body is built again by the element
+/// that ran, with its configuration.
+fn held_builder<T: Any + Send + Sync>(flow_data: &FlowData, data_key: &str) -> Option<Arc<T>> {
+    let pipeline = flow_data.pipeline();
+    let element = pipeline
+        .flow_elements()
+        .iter()
+        .find(|element| element.data_key() == data_key)?;
+    let builder = pipeline.resource::<T>()?;
+    std::ptr::addr_eq(Arc::as_ptr(element), Arc::as_ptr(&builder)).then_some(builder)
+}
+
+/// True if the flow data's pipeline has an element with this data key.
+fn has_element(flow_data: &FlowData, data_key: &str) -> bool {
+    flow_data
+        .pipeline()
+        .flow_elements()
+        .iter()
+        .any(|element| element.data_key() == data_key)
+}
+
+/// Log that the builder with this data key left no data for the request.
+fn log_missing_data(data_key: &str) {
+    log::error!("Failed to get data from element '{data_key}', so the response is not cached.");
 }
 
 /// Build the response for either endpoint, applying the shared header rules.
+/// `body` is called only when the response is not a `304`.
 fn build_response(
     flow_data: &FlowData,
     request: &dyn RequestData,
-    body: String,
+    body: impl FnOnce() -> Body,
     content_type: &str,
     options: &EndpointOptions,
 ) -> WebResponse {
@@ -209,16 +381,18 @@ fn build_response(
         }
     }
 
+    let body = body();
     let mut headers: Vec<(String, String)> = Vec::new();
     headers.push(("Content-Type".to_owned(), content_type.to_owned()));
     // String::len is the UTF-8 byte length, which is exactly the Content-Length
     // the body needs.
-    headers.push(("Content-Length".to_owned(), body.len().to_string()));
+    headers.push(("Content-Length".to_owned(), body.content.len().to_string()));
 
     if !options.suppress_extra_headers {
-        headers.push(("Cache-Control".to_owned(), cache_control(flow_data)));
+        let cacheable = !body.failed && flow_data.errors().is_empty();
+        headers.push(("Cache-Control".to_owned(), cache_control(cacheable)));
 
-        if let Some(whitelist) = options.vary_whitelist.as_ref() {
+        if let Some(whitelist) = options.current_vary_whitelist() {
             let vary = vary_header(whitelist);
             if !vary.is_empty() {
                 headers.push(("Vary".to_owned(), vary));
@@ -226,9 +400,9 @@ fn build_response(
         }
 
         // The validator stands for the evidence, not for whether processing
-        // worked, so a response to a request that recorded errors goes without
-        // one rather than being confirmed by a 304 once processing recovers.
-        if flow_data.errors().is_empty() {
+        // worked, so a response that is not cacheable goes without one rather
+        // than being confirmed by a 304 once processing recovers.
+        if cacheable {
             headers.push(("ETag".to_owned(), etag));
         }
 
@@ -237,13 +411,12 @@ fn build_response(
         }
     }
 
-    WebResponse::text(body, headers)
+    WebResponse::text(body.content, headers)
 }
 
-/// The `Cache-Control` value for a flow data: cacheable when it recorded no
-/// errors, `no-cache` when it did.
-fn cache_control(flow_data: &FlowData) -> String {
-    if flow_data.errors().is_empty() {
+/// The `Cache-Control` value for a response.
+fn cache_control(cacheable: bool) -> String {
+    if cacheable {
         CACHE_CONTROL_CACHEABLE.to_owned()
     } else {
         CACHE_CONTROL_NO_CACHE.to_owned()
