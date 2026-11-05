@@ -57,10 +57,11 @@
 //! ## Determinism
 //!
 //! The serializer uses `serde_json` with the `preserve_order` feature so the
-//! key order is the insertion order rather than a hash order. Insertion order is
-//! itself made deterministic by sorting element keys and property names, so the
-//! same flow data always yields byte-identical JSON. That stability is what lets
-//! downstream code compute a reliable ETag from the JSON.
+//! key order is the insertion order rather than a hash order. Elements are
+//! inserted in the order their data was added to the flow data, and
+//! properties in the order each element data lists them, as .NET writes them,
+//! so the same flow data always yields byte-identical JSON. That stability is
+//! what lets downstream code compute a reliable ETag from the JSON.
 
 #![warn(missing_docs)]
 

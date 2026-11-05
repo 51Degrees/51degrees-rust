@@ -79,12 +79,15 @@ use crate::value::JsonValue;
 /// takes, and [`JsonValueConverter`] lets a caller change how a property value
 /// is written. Both are given to the [`JsonBuilderElementBuilder`].
 ///
-/// # Determinism
+/// # Order
 ///
-/// Element keys and property names are sorted before serialization and the
-/// output keeps the order keys were added in, so the same flow data always
-/// produces byte-identical JSON. This stability is required for stable ETags
-/// downstream.
+/// Elements are written in the order their data was added to the flow data,
+/// and each element's properties in the order its element data lists them,
+/// as .NET writes them. `javascriptProperties` lists paths in the order of
+/// the pipeline's flow elements, then of each element's properties. Each
+/// order comes from the flow data and its pipeline, so the same flow data
+/// always produces byte-identical JSON, which stable ETags downstream rely
+/// on.
 ///
 /// # Example
 ///

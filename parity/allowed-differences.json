@@ -230,16 +230,17 @@
     "issue": 229
   },
   {
-    "path": "json*",
+    "path": "json.device",
     "kind": "order",
-    "reason": "The crates' JSON builder sorts element keys and property names, where .NET keeps their order.",
-    "issue": 229
+    "reason": "The crates' Device Detection engine adds the match metrics and the matched User-Agents to its data before the data file's values, so the JSON lists them first. .NET lists them after the data file's properties.",
+    "issue": 224
   },
   {
-    "path": "json.javascriptProperties*",
-    "kind": "value",
-    "reason": "The crates' JSON builder lists JavaScript properties in name order, where .NET keeps the property order.",
-    "issue": 229
+    "path": "json.ip",
+    "kind": "order",
+    "data": "enterprise",
+    "reason": "The crates' IP Intelligence engine reads a fixed list of property names in name order, so the JSON lists them in that order. .NET lists them in the data file's order.",
+    "issue": 223
   },
   {
     "path": "javascript",

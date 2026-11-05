@@ -304,14 +304,15 @@ fn excludes_internal_elements_by_default() {
 }
 
 #[test]
-fn excludes_default_properties_and_configured_ones() {
+fn writes_every_property_and_hides_configured_ones() {
     let device = TestElement::new("device")
-        .with_value("products", "should-be-hidden")
-        .with_value("properties", "should-be-hidden")
+        .with_value("products", "written")
+        .with_value("properties", "written")
         .with_value("ismobile", true)
         .with_value("secret", "hide-me");
 
-    // Default lists hide products/properties; the builder also hides `secret`.
+    // No property name is excluded by default, as in .NET, so `products` and
+    // `properties` are written. The builder hides `secret`.
     let element = JsonBuilderElement::builder()
         .exclude_property("SECRET")
         .build();
@@ -319,14 +320,8 @@ fn excludes_default_properties_and_configured_ones() {
     let value = parse(&json);
 
     let device = value.get("device").expect("device present");
-    assert!(
-        device.get("products").is_none(),
-        "products excluded by default"
-    );
-    assert!(
-        device.get("properties").is_none(),
-        "properties excluded by default"
-    );
+    assert_eq!(device.get("products"), Some(&Value::from("written")));
+    assert_eq!(device.get("properties"), Some(&Value::from("written")));
     assert!(
         device.get("secret").is_none(),
         "secret excluded by configuration (case-insensitive)"
@@ -744,13 +739,78 @@ fn output_is_deterministic() {
     let second = run(vec![Arc::new(make_device())], JsonBuilderElement::new());
     assert_eq!(first, second, "identical inputs yield identical JSON");
 
-    // Property names within an element are emitted in sorted order.
+    // Properties are written in the order the element data lists them, not
+    // in name order.
+    let zebra = first.find("\"zebra\"").expect("zebra present");
     let alpha = first.find("\"alpha\"").expect("alpha present");
     let middle = first.find("\"middle\"").expect("middle present");
-    let zebra = first.find("\"zebra\"").expect("zebra present");
     assert!(
-        alpha < middle && middle < zebra,
-        "properties sorted: {first}"
+        zebra < alpha && alpha < middle,
+        "properties in the order the element data lists them: {first}"
+    );
+}
+
+#[test]
+fn elements_are_written_in_the_order_their_data_was_added() {
+    let zulu = TestElement::new("zulu").with_value("one", 1i64);
+    let mike = TestElement::new("mike").with_value("two", 2i64);
+    let alpha = TestElement::new("alpha").with_value("three", 3i64);
+
+    let json = run(
+        vec![Arc::new(zulu), Arc::new(mike), Arc::new(alpha)],
+        JsonBuilderElement::new(),
+    );
+
+    let zulu = json.find("\"zulu\"").expect("zulu present");
+    let mike = json.find("\"mike\"").expect("mike present");
+    let alpha = json.find("\"alpha\"").expect("alpha present");
+    assert!(
+        zulu < mike && mike < alpha,
+        "elements in the order their data was added: {json}"
+    );
+}
+
+#[test]
+fn javascript_properties_follow_element_order_then_property_order() {
+    // The values are set in the opposite order to the metadata, to show the
+    // list follows the metadata.
+    let zulu = TestElement::new("zulu")
+        .with_property(PropertyMetaData::new(
+            "zjavascript",
+            "zulu",
+            PropertyValueType::JavaScript,
+        ))
+        .with_property(PropertyMetaData::new(
+            "ajavascript",
+            "zulu",
+            PropertyValueType::JavaScript,
+        ))
+        .with_value("ajavascript", PropertyValue::JavaScript("a".to_owned()))
+        .with_value("zjavascript", PropertyValue::JavaScript("z".to_owned()));
+    let alpha = TestElement::new("alpha")
+        .with_property(PropertyMetaData::new(
+            "mjavascript",
+            "alpha",
+            PropertyValueType::JavaScript,
+        ))
+        .with_value("mjavascript", PropertyValue::JavaScript("m".to_owned()));
+
+    let json = run(
+        vec![Arc::new(zulu), Arc::new(alpha)],
+        JsonBuilderElement::new(),
+    );
+    let value = parse(&json);
+
+    let paths: Vec<&str> = value
+        .get("javascriptProperties")
+        .and_then(Value::as_array)
+        .expect("javascriptProperties present below cap")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(
+        paths,
+        ["zulu.zjavascript", "zulu.ajavascript", "alpha.mjavascript"]
     );
 }
 

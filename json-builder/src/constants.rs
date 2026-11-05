@@ -99,9 +99,8 @@ pub const DEFAULT_ELEMENT_EXCLUSION_LIST: &[&str] = &[
     fiftyone_pipeline_engines_fiftyone::constants::SHARE_USAGE_DEFAULT_ELEMENT_DATA_KEY,
 ];
 
-/// The property names excluded from the JSON output by default.
-///
-/// These are the cloud metadata properties that describe the whole result set
-/// rather than a single device or location, and are not useful client side.
-/// Matching is case-insensitive.
-pub const DEFAULT_PROPERTY_EXCLUSION_LIST: &[&str] = &["products", "properties"];
+/// The property names excluded from the JSON output by default, which is
+/// none, so every property an element data lists is written, as .NET writes
+/// it. A caller excludes names with
+/// [`JsonBuilderElementBuilder::exclude_property`](crate::JsonBuilderElementBuilder::exclude_property).
+pub const DEFAULT_PROPERTY_EXCLUSION_LIST: &[&str] = &[];

@@ -28,6 +28,8 @@
 
 use std::collections::BTreeMap;
 
+use indexmap::IndexSet;
+
 use fiftyone_pipeline_core::{
     ElementData, MapElementData, NoValueError, PropertyValue, PropertyValueType,
 };
@@ -69,23 +71,21 @@ pub fn write_json<S: JsonBuilderSteps + ?Sized>(
 }
 
 /// The default of [`JsonBuilderSteps::get_all_properties`].
+///
+/// Element data is written in the order it was added to the flow data, and
+/// a key already written is skipped.
 pub fn get_all_properties<S: JsonBuilderSteps + ?Sized>(
     steps: &S,
     context: &JsonBuilderContext<'_>,
 ) -> JsonObject {
     let element = context.element();
     let data = context.data();
-    let mut element_keys: Vec<String> = data
-        .data_keys()
-        .into_iter()
-        .map(|key| key.to_lowercase())
-        .filter(|key| !element.is_element_excluded(key))
-        .collect();
-    element_keys.sort();
-    element_keys.dedup();
-
     let mut all_properties = JsonObject::new();
-    for element_key in element_keys {
+    for key in data.data_keys() {
+        let element_key = key.to_lowercase();
+        if element.is_element_excluded(&element_key) || all_properties.contains_key(&element_key) {
+            continue;
+        }
         if let Some(element_data) = data.get_str(&element_key) {
             let values = steps.get_values(context, &element_key, element_data);
             all_properties.insert(element_key, JsonValue::Object(values));
@@ -95,6 +95,9 @@ pub fn get_all_properties<S: JsonBuilderSteps + ?Sized>(
 }
 
 /// The default of [`JsonBuilderSteps::get_values`].
+///
+/// Properties are written in the order the element data lists them, and a
+/// name that only differs in case from one already written is skipped.
 pub fn get_values<S: JsonBuilderSteps + ?Sized>(
     steps: &S,
     context: &JsonBuilderContext<'_>,
@@ -102,14 +105,12 @@ pub fn get_values<S: JsonBuilderSteps + ?Sized>(
     source: &dyn ElementData,
 ) -> JsonObject {
     let element = context.element();
-    let mut names: Vec<String> = source
+    let names: IndexSet<String> = source
         .keys()
         .into_iter()
         .map(|name| name.to_lowercase())
         .filter(|name| !element.is_property_excluded(name))
         .collect();
-    names.sort();
-    names.dedup();
 
     let mut values = JsonObject::new();
     for name in &names {
@@ -187,12 +188,15 @@ pub fn add_json_values_for_property<S: JsonBuilderSteps + ?Sized>(
 }
 
 /// The default of [`JsonBuilderSteps::get_javascript_properties`].
+///
+/// The paths are listed in the order of the pipeline's flow elements, then
+/// in the order each element lists its properties, and each path once.
 pub fn get_javascript_properties<S: JsonBuilderSteps + ?Sized>(
     _steps: &S,
     context: &JsonBuilderContext<'_>,
     available_properties: &[String],
 ) -> Vec<String> {
-    let mut paths = Vec::new();
+    let mut paths = IndexSet::new();
     for flow_element in context.data().pipeline().flow_elements() {
         let element_key = flow_element.data_key().to_lowercase();
         let javascript = flow_element
@@ -202,13 +206,11 @@ pub fn get_javascript_properties<S: JsonBuilderSteps + ?Sized>(
         for property in javascript {
             let path = format!("{element_key}.{}", property.name.to_lowercase());
             if available_properties.contains(&path) {
-                paths.push(path);
+                paths.insert(path);
             }
         }
     }
-    paths.sort();
-    paths.dedup();
-    paths
+    paths.into_iter().collect()
 }
 
 /// The default of [`JsonBuilderSteps::add_errors`].
