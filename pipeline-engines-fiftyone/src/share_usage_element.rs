@@ -847,8 +847,11 @@ impl FlowElement for ShareUsageElement {
             return Err(Error::configuration(
                 "A ShareUsageElement can be in only one pipeline at a time, and \
                  this one is in a pipeline that is still alive. Give each \
-                 pipeline its own ShareUsageElement, or drop the other pipeline \
-                 first.",
+                 pipeline its own ShareUsageElement. To build a pipeline from a \
+                 facade's elements, build the facade with share_usage(false), \
+                 keep the facade's pipeline, which for on-premise data runs the \
+                 data file updates, and add a ShareUsageElement to the new \
+                 pipeline.",
             ));
         }
         *current = Arc::downgrade(pipeline);

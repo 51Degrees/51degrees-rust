@@ -817,8 +817,15 @@ fn refused(result: Result<Arc<Pipeline>>) -> bool {
 
 #[test]
 fn share_usage_refuses_a_second_pipeline_while_the_first_is_alive() {
+    const SEND_WAIT_SECONDS: u64 = 5;
     for wrap in [false, true] {
-        let share = Arc::new(ShareUsageElement::with_defaults());
+        let (url, bodies, _) = start_capture_server();
+        let config = ShareUsageConfig::builder()
+            .share_usage_url(url)
+            .share_percentage(1.0)
+            .minimum_entries_per_message(1)
+            .build();
+        let share = Arc::new(ShareUsageElement::new(config));
         let element: Arc<dyn FlowElement> = if wrap {
             Arc::new(Wrapped(Arc::clone(&share) as Arc<dyn FlowElement>))
         } else {
@@ -827,8 +834,12 @@ fn share_usage_refuses_a_second_pipeline_while_the_first_is_alive() {
 
         let first = pipeline_of(Arc::clone(&element)).unwrap();
         assert!(refused(pipeline_of(Arc::clone(&element))), "wrapped {wrap}");
-        // The refusal leaves the first pipeline working.
+        // The refusal leaves the first pipeline processing and sharing.
         first.create_flow_data().process().unwrap();
+        wait_until(Duration::from_secs(SEND_WAIT_SECONDS), || {
+            !bodies.lock().unwrap().is_empty()
+        });
+        assert_eq!(bodies.lock().unwrap().len(), 1, "wrapped {wrap}");
 
         drop(first);
         assert!(pipeline_of(element).is_ok(), "wrapped {wrap}");

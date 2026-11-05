@@ -235,7 +235,11 @@ use std::sync::Arc;
 // Usage sharing is on by default, and is set here so the choice is visible.
 // It helps improve 51Degrees data. The facade's pipeline is only used for its
 // elements and is dropped at the end of this statement, because a usage
-// sharing element can be in only one pipeline at a time.
+// sharing element can be in only one pipeline at a time. An on-premise
+// facade's pipeline also runs its data file updates, so for on-premise data
+// build the facade with .share_usage(false), keep its pipeline, and add a
+// ShareUsageElement to the elements given to WebPipeline::build, as the
+// on-premise web example does.
 let elements: Vec<Arc<dyn FlowElement>> =
     DeviceDetectionPipelineBuilder::cloud("YOUR_RESOURCE_KEY")
         .share_usage(true)
