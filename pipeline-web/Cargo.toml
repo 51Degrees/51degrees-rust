@@ -24,10 +24,16 @@ fiftyone-pipeline-engines = { version = "4.5.2", path = "../pipeline-engines", d
 fiftyone-pipeline-engines-fiftyone = { version = "4.5.2", path = "../pipeline-engines-fiftyone" }
 fiftyone-json-builder = { version = "4.5.2", path = "../json-builder" }
 fiftyone-javascript-builder = { version = "4.5.2", path = "../javascript-builder" }
+log = "0.4"
 # ahash provides a fast hasher that can be seeded with fixed constants, giving
 # the web ETag the same digest in every process running the same build. It is
 # already a workspace dependency so it resolves to a single shared version.
 ahash.workspace = true
+
+[dev-dependencies]
+# The Vary test drives a real cloud request engine through a fake transport.
+# The JSON and JavaScript builders already depend on it.
+fiftyone-cloud-request-engine = { version = "4.5.2", path = "../cloud-request-engine", default-features = false }
 
 [package.metadata.docs.rs]
 # Build the documentation on docs.rs with every feature enabled, so the

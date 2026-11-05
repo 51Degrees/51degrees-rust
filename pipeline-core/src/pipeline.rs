@@ -88,9 +88,9 @@ impl Pipeline {
     ///
     /// When `true`, processing (via [`crate::FlowData::process`]) records
     /// per-element errors on the flow data, logs each at debug level and
-    /// returns `Ok`. When `false`, it runs every element and then returns
-    /// `Err(Error::Aggregate(..))` if any failed. This is the
-    /// `SuppressProcessExceptions` flag from the
+    /// returns `Ok`. When `false`, it logs each at error level, runs every
+    /// element and then returns `Err(Error::Aggregate(..))` if any failed.
+    /// This is the `SuppressProcessExceptions` flag from the
     /// [exception-handling specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/exception-handling.md#process-function).
     pub fn is_suppress_process_exceptions(&self) -> bool {
         self.suppress_process_exceptions
@@ -132,8 +132,9 @@ impl Pipeline {
     /// - **Suppressed** (`true`): the error is recorded on the flow data via
     ///   [`FlowData::errors`], logged at debug level, and the remaining
     ///   elements still run. The method returns `Ok(())`.
-    /// - **Not suppressed** (`false`, the default): every element is still run
-    ///   so that all errors are gathered, then the method returns
+    /// - **Not suppressed** (`false`, the default): the error is recorded and
+    ///   logged at error level. Every element is still run so that all errors
+    ///   are gathered, then the method returns
     ///   `Err(Error::Aggregate(..))` containing the errors whose
     ///   [`FlowError::should_throw`] is `true`. If none qualify, it returns
     ///   `Ok(())`.
@@ -178,12 +179,15 @@ impl Pipeline {
         Ok(())
     }
 
-    /// Record an element's error on the flow data. A suppressed error is
-    /// logged as well, so it can be seen without reading the flow data. Debug
-    /// level, because suppressing says the caller carries on past failures.
+    /// Record an element's error on the flow data and log it, as .NET's
+    /// pipeline does. Error level when the error is returned to the caller,
+    /// and debug level when it is suppressed, because suppressing says the
+    /// caller carries on past failures.
     fn record_error(&self, data: &mut FlowData, data_key: &str, error: Error) {
         if self.suppress_process_exceptions {
             log::debug!("Suppressed an error in element '{data_key}': {error}");
+        } else {
+            log::error!("An error occurred in element '{data_key}': {error}");
         }
         data.add_error(FlowError::new(data_key, error));
     }
@@ -405,8 +409,11 @@ impl PipelineBuilder {
 
     /// Consume the builder and produce the shared, immutable pipeline.
     ///
-    /// Returns an error if no elements were added, since an empty pipeline
-    /// cannot do useful work and almost always indicates a misconfiguration.
+    /// Each element's [`FlowElement::add_pipeline`] is called with the new
+    /// pipeline, in order. Returns an error if no elements were added, since an
+    /// empty pipeline cannot do useful work and almost always indicates a
+    /// misconfiguration, or the first error an element returns from
+    /// `add_pipeline`.
     pub fn build(self) -> Result<Arc<Pipeline>> {
         if self.elements.is_empty() {
             return Err(Error::configuration(
@@ -427,14 +434,18 @@ impl PipelineBuilder {
         let concurrent = self.elements.iter().any(|e| e.is_concurrent())
             || self.steps.iter().any(|step| matches!(step, Step::Group(_)));
 
-        Ok(Arc::new(Pipeline {
+        let pipeline = Arc::new(Pipeline {
             elements: self.elements,
             steps: self.steps,
             evidence_key_filter: aggregator,
             suppress_process_exceptions: self.suppress_process_exceptions,
             concurrent,
             resources: self.resources,
-        }))
+        });
+        for element in &pipeline.elements {
+            element.add_pipeline(&pipeline)?;
+        }
+        Ok(pipeline)
     }
 }
 

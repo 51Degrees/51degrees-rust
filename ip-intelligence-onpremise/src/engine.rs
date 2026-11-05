@@ -48,7 +48,7 @@ use fiftyone_pipeline_core::{
 };
 use fiftyone_pipeline_engines::{
     AspectEngine, AspectEngineBase, AspectEngineDataFile, AspectPropertyMetaData, EngineDeployment,
-    OnPremiseAspectEngine,
+    MissingPropertySource, OnPremiseAspectEngine,
 };
 
 use crate::builder::IpIntelligenceOnPremiseEngineBuilder;
@@ -62,6 +62,10 @@ use crate::retained::Retained;
 /// distributed tier the Lite `.ipi` file ships as, matching the file the
 /// workspace bundles for tests.
 pub const DEFAULT_DATA_SOURCE_TIER: &str = "Lite";
+
+/// The engine's type name, which the message for a property that needs a data
+/// file upgrade names.
+const ENGINE_TYPE_NAME: &str = "IpIntelligenceOnPremiseEngine";
 
 /// A fixed list of client IP keys. The engine does not read it.
 ///
@@ -190,6 +194,7 @@ impl IpIntelligenceOnPremiseEngine {
                 manager,
                 copy,
                 &populated_property_names,
+                &metadata,
             )),
             profile,
             requested_properties,
@@ -263,12 +268,13 @@ impl IpIntelligenceOnPremiseEngine {
         let loaded = self.loaded.load_full();
         let mut results = loaded.manager.create_results()?;
         results.process_evidence(data.evidence())?;
-        Ok(
-            IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(LookupReader {
-                results: Mutex::new(results),
-                loaded,
-            }),
-        )
+        let mut ip = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        ip.base_mut()
+            .add_missing_property_source(Arc::clone(&loaded.missing));
+        Ok(ip.with_reader(LookupReader {
+            results: Mutex::new(results),
+            loaded,
+        }))
     }
 
     /// Reopen the data file from disk and atomically swap it in.
@@ -328,6 +334,7 @@ impl IpIntelligenceOnPremiseEngine {
             manager,
             copy,
             &self.populated_property_names,
+            &metadata,
         )));
         self.evidence_key_filter.keys.store(Arc::new(evidence_keys));
         self.metadata.replace(metadata);
@@ -445,17 +452,36 @@ fn build_aspect_metadata(names: &[String], tier: &str) -> Vec<AspectPropertyMeta
 struct LoadedDataSet {
     manager: Arc<Manager>,
     readable: Arc<ReadableNames>,
+    /// Why a property is missing, from the metadata of this data set, added to
+    /// every result a lookup writes.
+    missing: Arc<MissingPropertySource>,
     /// Held only to be dropped with the data set, and declared after the
     /// manager, so it is removed after the data set that has it open is freed.
     _copy: Option<OperationalCopy>,
 }
 
 impl LoadedDataSet {
-    fn new(manager: Arc<Manager>, copy: Option<OperationalCopy>, populated: &[String]) -> Self {
+    fn new(
+        manager: Arc<Manager>,
+        copy: Option<OperationalCopy>,
+        populated: &[String],
+        metadata: &TierMetadata,
+    ) -> Self {
         let readable = Arc::new(ReadableNames::new(populated, &manager));
+        let missing = Arc::new(
+            MissingPropertySource::new(
+                IP_DATA_KEY_NAME,
+                ENGINE_TYPE_NAME,
+                EngineDeployment::OnPremise,
+                metadata.tier.clone(),
+                metadata.aspect_properties.clone(),
+            )
+            .with_typed_properties(is_typed_property),
+        );
         LoadedDataSet {
             manager,
             readable,
+            missing,
             _copy: copy,
         }
     }
@@ -659,6 +685,21 @@ impl AspectEngine for IpIntelligenceOnPremiseEngine {
     fn aspect_properties(&self) -> &[AspectPropertyMetaData] {
         &self.metadata.current().aspect_properties
     }
+
+    fn engine_type_name(&self) -> &str {
+        ENGINE_TYPE_NAME
+    }
+
+    /// True for every property `IpIntelligenceData` has a typed accessor for.
+    fn has_typed_property(&self, property_name: &str) -> bool {
+        is_typed_property(property_name)
+    }
+}
+
+/// Whether `IpIntelligenceData` has a typed accessor for the property, matched
+/// ignoring case.
+fn is_typed_property(property_name: &str) -> bool {
+    declared_property_value_type(property_name).is_some()
 }
 
 impl OnPremiseAspectEngine for IpIntelligenceOnPremiseEngine {
@@ -680,6 +721,12 @@ mod tests {
 
     use fiftyone_pipeline_core::{Evidence, Pipeline};
     use fiftyone_pipeline_engines::AspectData;
+
+    #[test]
+    fn the_engine_type_name_is_the_name_of_the_type() {
+        let full = std::any::type_name::<IpIntelligenceOnPremiseEngine>();
+        assert!(full.ends_with(&format!("::{ENGINE_TYPE_NAME}")), "{full}");
+    }
 
     /// The autonomous system properties an ASN data file carries. The
     /// real-lookup tests request these so the engine populates them for the ASN

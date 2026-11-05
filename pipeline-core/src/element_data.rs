@@ -76,6 +76,15 @@ pub trait ElementData: Any + Send + Sync {
     /// matched case-insensitively.
     fn get(&self, name: &str) -> Result<PropertyValue, NoValueError>;
 
+    /// Whether this data holds the property, with or without a value.
+    ///
+    /// [`ElementData::get`] fails in both cases, so this tells a property the
+    /// data does not hold apart from one it holds with no value. The default
+    /// answers `true`, for data that cannot tell the two apart.
+    fn has_property(&self, _name: &str) -> bool {
+        true
+    }
+
     /// List the property names available in this data. The order is
     /// unspecified.
     fn keys(&self) -> Vec<String>;
@@ -150,6 +159,10 @@ impl ElementData for MapElementData {
                 "No value for property '{name}'."
             ))),
         }
+    }
+
+    fn has_property(&self, name: &str) -> bool {
+        self.get_value(name).is_some()
     }
 
     fn keys(&self) -> Vec<String> {

@@ -107,15 +107,17 @@ pub fn build_app(
     if let Some(endpoint) = endpoint {
         builder = builder.endpoint(endpoint);
     }
-    let pipeline = builder
-        .build()
-        .context("building the cloud device-detection pipeline")?;
-
     // WebPipeline wants the application's own elements in order. The facade has
     // already wired them (share-usage, the cloud request engine and the cloud
     // device engine), so its flow_elements are handed straight across; the web
     // layer then adds the sequence, set-headers, JSON and JavaScript elements.
-    let elements: Vec<Arc<dyn FlowElement>> = pipeline.flow_elements().to_vec();
+    // The facade's pipeline is dropped at the end of this statement, because a
+    // usage sharing element can be in only one pipeline at a time.
+    let elements: Vec<Arc<dyn FlowElement>> = builder
+        .build()
+        .context("building the cloud device-detection pipeline")?
+        .flow_elements()
+        .to_vec();
     let web = WebPipeline::build(elements, WebIntegrationOptions::default())
         .context("assembling the web pipeline")?;
     let state = FiftyOneState::from_web_pipeline(&web);
@@ -360,6 +362,19 @@ mod tests {
             script.body
         );
         // app and runtime drop here, on the plain test thread.
+    }
+
+    /// Usage sharing is on when the binary serves the page. Building sends
+    /// nothing, because no request is processed.
+    #[test]
+    fn builds_with_usage_sharing_on() {
+        let _app = build_app(
+            "resource-key-placeholder",
+            None,
+            Some(CloudEngineState::default()),
+            true,
+        )
+        .unwrap();
     }
 
     #[test]

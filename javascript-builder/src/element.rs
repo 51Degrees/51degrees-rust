@@ -23,6 +23,8 @@
 //! The JavaScript builder flow element.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 use fiftyone_json_builder::JSON_BUILDER_DATA_KEY;
 use fiftyone_pipeline_core::constants::{
@@ -36,7 +38,8 @@ use fiftyone_pipeline_engines_fiftyone::constants::{EVIDENCE_SEQUENCE, EVIDENCE_
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 
-use crate::builder::is_valid_object_name;
+use crate::builder::{grants_51did, is_valid_object_name, SharedEngine, UserPromptSource};
+use crate::callback_url::{callback_url, CallbackUrl};
 use crate::constants::{
     DELAY_EXECUTION_MARKER, EVIDENCE_ENABLE_COOKIES, EVIDENCE_HOST_KEY, EVIDENCE_OBJECT_NAME,
     FALLBACK_PROTOCOL, FETCH_PROPERTY, JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY,
@@ -128,8 +131,12 @@ fn safe_sequence(sequence: i32) -> i32 {
 /// - **enable cookies**: the `query.fod-js-enable-cookies` evidence parsed as a
 ///   boolean if present, else the configured default (true).
 /// - **callback URL**: built only when protocol, host and endpoint are all
-///   present, normalizing the single slash between host and endpoint. When a URL
-///   is built the background-update mechanism is enabled.
+///   present, normalizing the single slash between host and endpoint. A URL
+///   that is not valid is left out and logged at error level the first time,
+///   and characters in the user information, after the host and in the
+///   endpoint that could end the string the script holds the URL in are
+///   percent-encoded. The protocol must be `http` or `https`, ignoring case.
+///   When a URL is built the background-update mechanism is enabled.
 /// - **parameters**: every `query.*` evidence entry except the session id and
 ///   sequence, with the prefix stripped and the key and value URL-encoded,
 ///   serialized as a JSON object.
@@ -146,9 +153,11 @@ fn safe_sequence(sequence: i32) -> i32 {
 ///   property is true.
 /// - **user prompt**: true when the builder was given a cloud request engine
 ///   whose licensed products include 51Did, through
-///   [`JavaScriptBuilderElementBuilder::set_cloud_request_engine`]. The
-///   section it controls sits inside the update section, so it is only
-///   rendered when a callback URL was built as well.
+///   [`JavaScriptBuilderElementBuilder::set_shared_cloud_request_engine`] or
+///   [`JavaScriptBuilderElementBuilder::set_cloud_request_engine`], and false
+///   while the shared engine's discovery has not completed. The section it
+///   controls sits inside the update section, so it is only rendered when a
+///   callback URL was built as well.
 ///
 /// # Example
 ///
@@ -186,9 +195,17 @@ pub struct JavaScriptBuilderElement {
     object_name: String,
     enable_cookies: bool,
     minify: bool,
-    /// Whether the script carries the user prompt section, decided by the
-    /// builder from the cloud request engine's licensed products.
-    user_prompt: bool,
+    /// Whether the script carries the user prompt section, once that is
+    /// settled from the cloud request engine's licensed products.
+    user_prompt_settled: OnceLock<bool>,
+    /// The request engine whose licensed products settle
+    /// `user_prompt_settled`, when the builder was given a shared one.
+    user_prompt_engine: Option<SharedEngine>,
+    /// Set once a callback URL that is not valid has been logged, because a
+    /// misconfigured element would otherwise log on every request.
+    invalid_url_logged: AtomicBool,
+    /// Set once a minification failure has been logged, for the same reason.
+    minify_error_logged: AtomicBool,
 }
 
 impl JavaScriptBuilderElement {
@@ -202,6 +219,16 @@ impl JavaScriptBuilderElement {
         JavaScriptBuilderElementBuilder::new()
     }
 
+    /// The JavaScript this element produces for the flow data around the given
+    /// JSON, without adding it to the flow data.
+    ///
+    /// The client-side JavaScript endpoint serves this when the element left
+    /// no data for a request, with `json` being the JSON builder's output for
+    /// the same request.
+    pub fn javascript_for(&self, data: &FlowData, json: &str) -> String {
+        self.build_javascript(data, json.to_owned())
+    }
+
     /// Internal constructor used by the builder.
     pub(crate) fn from_parts(
         host: String,
@@ -210,13 +237,17 @@ impl JavaScriptBuilderElement {
         object_name: String,
         enable_cookies: bool,
         minify: bool,
-        user_prompt: bool,
+        user_prompt: UserPromptSource,
     ) -> Self {
         // The template is parsed once at construction. The embedded source is a
         // valid Mustache template, so parsing it cannot fail in practice. The
         // expect documents that invariant.
         let template = Template::parse(TEMPLATE_SOURCE)
             .expect("the embedded JavaScriptResource template is valid Mustache");
+        let (user_prompt_settled, user_prompt_engine) = match user_prompt {
+            UserPromptSource::Decided(render) => (OnceLock::from(render), None),
+            UserPromptSource::Engine(engine) => (OnceLock::new(), Some(engine)),
+        };
 
         JavaScriptBuilderElement {
             evidence_key_filter: EvidenceKeyFilterWhitelist::new([
@@ -237,7 +268,30 @@ impl JavaScriptBuilderElement {
             object_name,
             enable_cookies,
             minify,
-            user_prompt,
+            user_prompt_settled,
+            user_prompt_engine,
+            invalid_url_logged: AtomicBool::new(false),
+            minify_error_logged: AtomicBool::new(false),
+        }
+    }
+
+    /// Whether this script carries the user prompt section. The answer is
+    /// kept once the request engine's licensed products are known. Until then
+    /// the section is left out without keeping that answer, as a result
+    /// obtained before discovery completes must not be kept.
+    fn user_prompt(&self) -> bool {
+        if let Some(&render) = self.user_prompt_settled.get() {
+            return render;
+        }
+        match self
+            .user_prompt_engine
+            .as_ref()
+            .map(|engine| engine.public_properties())
+        {
+            Some(Ok(products)) => *self
+                .user_prompt_settled
+                .get_or_init(|| grants_51did(products)),
+            _ => false,
         }
     }
 
@@ -299,31 +353,24 @@ impl JavaScriptBuilderElement {
         }
     }
 
-    /// Build the callback URL, or `None` if protocol, host or endpoint is
-    /// missing.
-    ///
-    /// The single slash between host and endpoint is normalized: a slash is
-    /// added when neither side has one, and a duplicate is removed when both
-    /// sides have one.
-    fn build_url(protocol: &str, host: &str, endpoint: &str) -> Option<String> {
-        if protocol.trim().is_empty() || host.trim().is_empty() || endpoint.trim().is_empty() {
-            return None;
+    /// The callback URL, or `None` when a part is missing or the URL is not
+    /// valid. A URL that is not valid is logged at error level the first time
+    /// only.
+    fn build_url(&self, protocol: &str, host: &str) -> Option<String> {
+        match callback_url(protocol, host, &self.endpoint) {
+            CallbackUrl::Valid(url) => Some(url),
+            CallbackUrl::Missing => None,
+            CallbackUrl::Invalid(url) => {
+                if !self.invalid_url_logged.swap(true, Ordering::Relaxed) {
+                    log::error!(
+                        "The generated URL {url:?} is not valid, so the JavaScript has no \
+                         callback URL. Check the JavaScript builder's protocol, host and \
+                         endpoint, and the protocol and host evidence. This is reported once."
+                    );
+                }
+                None
+            }
         }
-
-        let endpoint_has_slash = endpoint.starts_with('/');
-        let host_has_slash = host.ends_with('/');
-
-        let normalised_endpoint = if !endpoint_has_slash && !host_has_slash {
-            // No slash on either side: add one.
-            format!("/{endpoint}")
-        } else if endpoint_has_slash && host_has_slash {
-            // A slash on both sides: drop the leading one from the endpoint.
-            endpoint[1..].to_owned()
-        } else {
-            endpoint.to_owned()
-        };
-
-        Some(format!("{protocol}://{host}{normalised_endpoint}"))
     }
 
     /// The session id the script is given, which is the value read from the
@@ -450,9 +497,10 @@ impl JavaScriptBuilderElement {
             .unwrap_or_default()
     }
 
-    /// Render and (optionally) minify the JavaScript for this request, returning
-    /// the content to store and whether minification flagged an error.
-    fn build_javascript(&self, data: &FlowData) -> (String, bool) {
+    /// Render and (optionally) minify the JavaScript for this request around
+    /// the given JSON. When minification fails the unminified script is
+    /// returned.
+    fn build_javascript(&self, data: &FlowData, json_object: String) -> String {
         let protocol = self.resolve_protocol(data);
         let host = self.resolve_host(data);
         let object_name = self.resolve_object_name(data);
@@ -461,12 +509,11 @@ impl JavaScriptBuilderElement {
         let supports_promises = Self::supports_promises(data);
         let supports_fetch = Self::supports_fetch(data);
 
-        let json_object = Self::json_object(data);
         let parameters = Self::build_parameters(data);
         let session_id = Self::rendered_session_id(data);
         let sequence = Self::rendered_sequence(data);
 
-        let url = Self::build_url(&protocol, &host, &self.endpoint);
+        let url = self.build_url(&protocol, &host);
         let update_enabled = url.as_ref().is_some_and(|u| !u.is_empty());
 
         let has_delayed_properties = json_object.contains(DELAY_EXECUTION_MARKER);
@@ -483,7 +530,7 @@ impl JavaScriptBuilderElement {
             enable_cookies,
             update_enabled,
             has_delayed_properties,
-            self.user_prompt,
+            self.user_prompt(),
         );
 
         let content = resource.render(&self.template);
@@ -493,11 +540,18 @@ impl JavaScriptBuilderElement {
         } else {
             crate::minify::MinifyOutcome {
                 content,
-                had_error: false,
+                errors: Vec::new(),
             }
         };
+        if !outcome.errors.is_empty() && !self.minify_error_logged.swap(true, Ordering::Relaxed) {
+            log::error!(
+                "Errors occurred when minifying the JavaScript, so it is served unminified. \
+                 This is reported once. {}",
+                outcome.errors.join(" ")
+            );
+        }
 
-        (outcome.content, outcome.had_error)
+        outcome.content
     }
 }
 
@@ -509,10 +563,7 @@ impl Default for JavaScriptBuilderElement {
 
 impl FlowElement for JavaScriptBuilderElement {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        // build_javascript already substitutes the unminified script when
-        // minification fails, so the had_error flag needs no further handling
-        // here. The content is the correct script to serve either way.
-        let (content, _had_error) = self.build_javascript(data);
+        let content = self.build_javascript(data, Self::json_object(data));
 
         let result = data.get_or_add(
             JAVASCRIPT_BUILDER_DATA_KEY,
@@ -613,31 +664,6 @@ mod tests {
         let data = flow_data_with(&[("query.session-id", "a\"b"), ("query.sequence", "-1")]);
         assert_eq!(JavaScriptBuilderElement::rendered_session_id(&data), "");
         assert_eq!(JavaScriptBuilderElement::rendered_sequence(&data), 1);
-    }
-
-    #[test]
-    fn build_url_adds_single_slash() {
-        let url = JavaScriptBuilderElement::build_url("https", "example.com", "51dpipeline/json");
-        assert_eq!(url.as_deref(), Some("https://example.com/51dpipeline/json"));
-    }
-
-    #[test]
-    fn build_url_keeps_single_slash_on_endpoint() {
-        let url = JavaScriptBuilderElement::build_url("https", "example.com", "/51dpipeline/json");
-        assert_eq!(url.as_deref(), Some("https://example.com/51dpipeline/json"));
-    }
-
-    #[test]
-    fn build_url_collapses_double_slash() {
-        let url = JavaScriptBuilderElement::build_url("http", "example.com/", "/json");
-        assert_eq!(url.as_deref(), Some("http://example.com/json"));
-    }
-
-    #[test]
-    fn build_url_none_when_host_missing() {
-        assert!(JavaScriptBuilderElement::build_url("https", "", "/json").is_none());
-        assert!(JavaScriptBuilderElement::build_url("", "example.com", "/json").is_none());
-        assert!(JavaScriptBuilderElement::build_url("https", "example.com", "").is_none());
     }
 
     #[test]

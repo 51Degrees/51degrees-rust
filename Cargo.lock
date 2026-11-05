@@ -650,6 +650,7 @@ dependencies = [
  "fiftyone-caching",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "log",
  "once_cell",
  "reqwest",
  "serde",
@@ -670,6 +671,7 @@ name = "fiftyone-derived-properties"
 version = "4.5.2"
 dependencies = [
  "fiftyone-pipeline-core",
+ "log",
  "serde_norway",
  "thiserror 2.0.18",
 ]
@@ -688,6 +690,7 @@ dependencies = [
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
  "fiftyone-pipeline-engines-fiftyone",
+ "log",
 ]
 
 [[package]]
@@ -698,6 +701,7 @@ dependencies = [
  "fiftyone-device-detection-shared",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "log",
  "serde",
  "serde_json",
 ]
@@ -712,6 +716,7 @@ dependencies = [
  "fiftyone-native",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "log",
 ]
 
 [[package]]
@@ -768,6 +773,7 @@ dependencies = [
  "fiftyone-ip-intelligence-shared",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "log",
  "once_cell",
  "serde",
  "serde_json",
@@ -868,6 +874,7 @@ name = "fiftyone-pipeline-engines-fiftyone"
 version = "4.5.2"
 dependencies = [
  "ahash",
+ "arc-swap",
  "fastrand",
  "fiftyone-caching",
  "fiftyone-pipeline-core",
@@ -888,11 +895,13 @@ name = "fiftyone-pipeline-web"
 version = "4.5.2"
 dependencies = [
  "ahash",
+ "fiftyone-cloud-request-engine",
  "fiftyone-javascript-builder",
  "fiftyone-json-builder",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
  "fiftyone-pipeline-engines-fiftyone",
+ "log",
 ]
 
 [[package]]

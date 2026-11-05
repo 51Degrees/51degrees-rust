@@ -18,6 +18,9 @@ fiftyone-device-detection-shared = { version = "4.5.2", path = "../device-detect
 fiftyone-cloud-request-engine = { version = "4.5.2", path = "../cloud-request-engine", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
+# Logs a product the key lacks through the log facade, which does nothing
+# until the application installs a logger.
+log = "0.4"
 
 [features]
 # Forward the cloud request engine's built-in reqwest client. Off by default so
