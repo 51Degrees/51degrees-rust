@@ -753,12 +753,20 @@ mod tests {
 
     #[test]
     fn an_element_name_can_be_any_xml_name() {
-        let xml = written(&record(&[("café.Name", "kept"), ("_x-1.y", "kept too")]));
+        // U+00B7 MIDDLE DOT is an XML name character that is neither a
+        // letter nor a digit.
+        let xml = written(&record(&[
+            ("café.Name", "kept"),
+            ("_x-1.y", "kept too"),
+            ("a\u{B7}b.z", "kept as well"),
+        ]));
         assert_eq!(
             entries(&xml),
             "<café Name=\"Name\"><![CDATA[kept]]></café>\
-             <_x-1 Name=\"y\"><![CDATA[kept too]]></_x-1></Device>"
+             <_x-1 Name=\"y\"><![CDATA[kept too]]></_x-1>\
+             <a\u{B7}b Name=\"z\"><![CDATA[kept as well]]></a\u{B7}b></Device>"
         );
+        assert!(!'\u{B7}'.is_alphanumeric());
     }
 
     #[test]
