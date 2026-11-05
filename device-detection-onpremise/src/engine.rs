@@ -286,9 +286,13 @@ struct LentMetadata {
 /// metadata, reporting `tier_override` when it is set, otherwise the tier the
 /// data file names. The missing property rules always compare with the tier
 /// the data file names, because that is what each property's tiers list.
+///
+/// `copy` comes before `manager` because Rust drops later parameters first,
+/// so on an error the data set is freed, closing the copy, before the copy
+/// is removed, as [`LoadedDataSet`] orders them.
 fn describe(
-    manager: Arc<Manager>,
     copy: Option<OperationalCopy>,
+    manager: Arc<Manager>,
     tier_override: &Option<String>,
 ) -> Result<(LoadedDataSet, LentMetadata)> {
     // An explicit builder override wins, then the tier read from the native
@@ -345,10 +349,11 @@ impl DeviceDetectionOnPremiseEngine {
     /// Called by the builder once it has opened the data file, or `copy` of
     /// it. Derives the property and evidence-key metadata from the data set,
     /// records the data-file publish time from the file on disk, and assembles
-    /// the engine. Fails when the data file's metadata cannot be read.
+    /// the engine. Fails when the data file's metadata cannot be read. `copy`
+    /// comes before `manager` so it is dropped after it, as in `describe`.
     pub(crate) fn from_manager(
-        manager: Arc<Manager>,
         copy: Option<OperationalCopy>,
+        manager: Arc<Manager>,
         profile: PerformanceProfile,
         requested_properties: Vec<String>,
         data_file_config: DataFileConfiguration,
@@ -356,7 +361,7 @@ impl DeviceDetectionOnPremiseEngine {
         concurrency: Option<u16>,
     ) -> Result<Self> {
         let evidence_key_filter = HashEvidenceKeyFilter::new(named_evidence_keys(&manager));
-        let (loaded, metadata) = describe(manager, copy, &data_source_tier)?;
+        let (loaded, metadata) = describe(copy, manager, &data_source_tier)?;
 
         let data_file = Arc::new(AspectEngineDataFile::new(data_file_config));
         // Record the publish time from the data file on disk, the best signal
@@ -667,7 +672,7 @@ impl DeviceDetectionOnPremiseEngine {
             self.concurrency,
         )?;
         let evidence_keys = named_evidence_keys(&manager);
-        let (loaded, metadata) = describe(manager, copy, &self.tier_override)?;
+        let (loaded, metadata) = describe(copy, manager, &self.tier_override)?;
         self.evidence_key_filter.replace(evidence_keys);
         self.loaded.store(Arc::new(loaded));
         self.metadata.replace(metadata);

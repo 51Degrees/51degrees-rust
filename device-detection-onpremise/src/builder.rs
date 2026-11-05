@@ -257,8 +257,8 @@ impl DeviceDetectionOnPremiseEngineBuilder {
 
         let engine = Arc::new(
             DeviceDetectionOnPremiseEngine::from_manager(
-                manager,
                 copy,
+                manager,
                 self.profile,
                 self.requested_properties,
                 data_file_config,
