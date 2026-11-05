@@ -25,9 +25,12 @@
 //! The example programs live under `src/bin`, each a self-contained binary. This
 //! library holds the small pieces more than one of them needs, so the binaries
 //! do not repeat them. Today that is [`profile_line`], the hardware-profile line
-//! renderer used by both the TAC and the native-model cloud examples, and
+//! renderer used by both the TAC and the native-model cloud examples,
 //! [`print_data_file_warnings`] / [`print_data_file_warnings_for`], the standard
-//! data-file introspection the on-premise examples print at the end of a run.
+//! data-file introspection the on-premise examples print at the end of a run,
+//! and [`available_properties`] with [`ENTERPRISE_PROPERTIES`], which the
+//! on-premise examples use to say which properties need the Enterprise data
+//! file.
 
 #![warn(missing_docs)]
 
@@ -36,9 +39,34 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 
 use fiftyone_device_detection::{
-    DeviceData, DeviceDataBase, DeviceDetectionOnPremiseEngineBuilder, PerformanceProfile,
+    DeviceData, DeviceDataBase, DeviceDetectionOnPremiseEngineBuilder, FlowElement,
+    PerformanceProfile, Pipeline, DEVICE_ELEMENT_DATA_KEY,
 };
 use fiftyone_pipeline_engines::OnPremiseAspectEngine;
+
+/// Properties the Enterprise data file carries and the free Lite file does
+/// not. The on-premise examples ask for these alongside the Lite properties,
+/// and say where to ask about the Enterprise data file when the file in use
+/// does not carry them.
+pub const ENTERPRISE_PROPERTIES: &[&str] = &[
+    "HardwareVendor",
+    "HardwareModel",
+    "DeviceType",
+    "PriceBand",
+    "ScreenInchesDiagonal",
+];
+
+/// The names of the properties the Device Detection engine in `pipeline` can
+/// return, which are those its data file carries.
+pub fn available_properties(pipeline: &Pipeline) -> Vec<String> {
+    pipeline
+        .flow_elements()
+        .iter()
+        .filter(|element| element.data_key() == DEVICE_ELEMENT_DATA_KEY)
+        .flat_map(|element| element.properties().iter())
+        .map(|property| property.name.clone())
+        .collect()
+}
 
 /// Render one matched device profile as a `Vendor Name (Model)` line, reading
 /// the hardware properties through the shared typed accessors. A property the

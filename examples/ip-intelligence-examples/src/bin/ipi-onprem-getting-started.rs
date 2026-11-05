@@ -25,12 +25,15 @@
 //! On-premise IP Intelligence "getting started" console example.
 //!
 //! Looks an IPv4 and an IPv6 address up against a local `.ipi` data file and
-//! prints the network and location properties. The descriptive block the
-//! documentation tooling renders lives at the bottom of the file.
+//! prints the network and location properties. With no file named it reads
+//! both free files, and says which properties need the Enterprise data file.
+//! The descriptive block the documentation tooling renders lives at the bottom
+//! of the file.
 //!
 //! @snippet ipi-onprem-getting-started.rs example
 
 use std::io::Write;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -39,6 +42,22 @@ use fiftyone_ip_intelligence::{
     WeightedValue, IP_DATA_KEY,
 };
 use fiftyone_pipeline_core::{Evidence, Pipeline};
+use ip_intelligence_examples::ENTERPRISE_PROPERTIES;
+
+/// Where to ask about a copy of the Enterprise data file.
+const CONTACT_US_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-getting-started.rs&utm_term=enterprise-data-file";
+
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-getting-started.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-getting-started.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-getting-started.rs&utm_term=find-out-more"),
+];
+
+/// The addresses the example looks up, a public Cloudflare IPv4 and IPv6.
+/// Both resolve to a real autonomous system in the ASN data file, so the
+/// example always has something to print.
+const IPS: &[&str] = &["1.1.1.1", "2606:4700:4700::1111"];
 
 /// The options that drive a run of this example.
 ///
@@ -46,22 +65,44 @@ use fiftyone_pipeline_core::{Evidence, Pipeline};
 /// the command line) and the test (supplying fixed values) share the same
 /// [`run`] entry point.
 pub struct ExampleOptions {
-    /// The full path to the `.ipi` data file to open.
-    pub data_file: std::path::PathBuf,
+    /// The full paths to the `.ipi` data files to open, each looked up in
+    /// turn.
+    pub data_files: Vec<PathBuf>,
     /// The IP addresses to look up, as client-IP evidence values.
     pub ips: Vec<String>,
 }
 
 impl ExampleOptions {
-    /// Build the default options, resolving the on-premise data file through
-    /// the shared resolver (the ASN file from the data repository, downloaded
-    /// when it is missing, or Enterprise when the production share is
-    /// reachable).
+    /// Build options that look [`IPS`] up in each of `data_files`.
+    pub fn with_files(data_files: Vec<PathBuf>) -> Self {
+        ExampleOptions {
+            data_files,
+            ips: IPS.iter().map(|ip| (*ip).to_owned()).collect(),
+        }
+    }
+
+    /// Build the default options through the shared resolver. A file named by
+    /// `51DEGREES_IPI_PATH`, or the Enterprise file when its share is
+    /// reachable, is read alone. Otherwise both free files from the data
+    /// repository are read, each downloaded when it is missing, being the ASN
+    /// file for Asn and AsnName and the Lite file for the registered
+    /// properties.
     ///
     /// Returns [`None`] when no usable data file can be located, so the caller
     /// can report it rather than panicking.
     pub fn from_env() -> Option<Self> {
-        Self::for_tier(examples_shared::IpiTier::BestAvailable)
+        let data_files = match examples_shared::ipi_data_path(examples_shared::IpiTier::Enterprise)
+        {
+            Some(file) => vec![file],
+            None => [
+                examples_shared::IpiTier::Asn,
+                examples_shared::IpiTier::Lite,
+            ]
+            .into_iter()
+            .filter_map(examples_shared::ipi_data_path)
+            .collect(),
+        };
+        (!data_files.is_empty()).then(|| Self::with_files(data_files))
     }
 
     /// Build options pinned to a specific data-file tier. `main` uses the
@@ -70,13 +111,7 @@ impl ExampleOptions {
     /// rather than depending on the production Enterprise share being mounted.
     pub fn for_tier(tier: examples_shared::IpiTier) -> Option<Self> {
         let data_file = examples_shared::ipi_data_path(tier)?;
-        Some(ExampleOptions {
-            data_file,
-            // A public Cloudflare IPv4 and IPv6. Both resolve to a real
-            // autonomous system in the ASN data file, so the example always has
-            // something to print.
-            ips: vec!["1.1.1.1".to_owned(), "2606:4700:4700::1111".to_owned()],
-        })
+        Some(Self::with_files(vec![data_file]))
     }
 }
 
@@ -115,19 +150,52 @@ const DISPLAYED_PROPERTIES: &[&str] = &[
 /// Run the getting-started example against the supplied options, writing all
 /// output to `out`.
 ///
-/// Builds an on-premise IP Intelligence pipeline, looks up each IP and prints
-/// the results. The pipeline is built with usage sharing left off,
-/// because this is a console example. A production deployment that wants to
-/// help improve the data should enable it (see the engine builder's
-/// `share_usage` equivalent on the cloud/web side).
+/// Builds an on-premise IP Intelligence pipeline for each data file, looks up
+/// each IP and prints the results. The pipeline is built with usage sharing
+/// left off, because this is a console example. A production deployment that
+/// wants to help improve the data should enable it (see the engine builder's
+/// `share_usage` equivalent on the cloud/web side). The output ends with the
+/// Enterprise properties no file carried, where to ask about a copy of the
+/// Enterprise data file, and the "Find out more" links.
 pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> {
+    // The properties any of the files carries, to name the Enterprise ones
+    // none of them did.
+    let mut carried: Vec<String> = Vec::new();
+    for data_file in &options.data_files {
+        let available = ip_intelligence_examples::data_file_properties(data_file)?;
+        look_up(data_file, &options.ips, &available, out)?;
+        carried.extend(available);
+    }
+
+    let missing = examples_shared::missing_properties(ENTERPRISE_PROPERTIES, &carried);
+    if let Some(message) = examples_shared::enterprise_data_file_message(&missing, CONTACT_US_URL) {
+        writeln!(out)?;
+        writeln!(out, "{message}")?;
+    }
+
+    examples_shared::write_find_out_more(
+        out,
+        FIND_OUT_MORE,
+        examples_shared::ON_PREMISE_REPOSITORIES,
+    )?;
+    Ok(())
+}
+
+/// Build a pipeline over `data_file`, whose properties are `available`, and
+/// look each of `ips` up in it.
+fn look_up(
+    data_file: &std::path::Path,
+    ips: &[String],
+    available: &[String],
+    out: &mut dyn Write,
+) -> anyhow::Result<()> {
     // Build a pipeline containing a single on-premise IP Intelligence engine.
     // `LowMemory` keeps the (potentially very large) data file on disk rather
     // than loading it entirely into memory, which suits a getting-started run.
     // Every property the example prints is requested, because the engine narrows
     // itself to the requested set; an Enterprise file then populates the location
     // and network properties as well as the autonomous-system ones.
-    let pipeline: Arc<Pipeline> = IpIntelligencePipelineBuilder::on_premise(&options.data_file)
+    let pipeline: Arc<Pipeline> = IpIntelligencePipelineBuilder::on_premise(data_file)
         .performance_profile(PerformanceProfile::LowMemory)
         .properties(DISPLAYED_PROPERTIES.iter().copied())
         // Automatic updates and the file-system watcher are left off so the
@@ -140,20 +208,27 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
     writeln!(
         out,
         "Looking up {} IP address(es) against {}.",
-        options.ips.len(),
-        options.data_file.display()
+        ips.len(),
+        data_file.display()
     )?;
 
-    for ip in &options.ips {
-        analyse_ip(&pipeline, ip, out)?;
+    for ip in ips {
+        analyse_ip(&pipeline, ip, available, out)?;
     }
+    writeln!(out)?;
 
     Ok(())
 }
 // [example]
 
-/// Look one IP address up and print its properties.
-fn analyse_ip(pipeline: &Arc<Pipeline>, ip: &str, out: &mut dyn Write) -> anyhow::Result<()> {
+/// Look one IP address up and print its properties. `available` holds the
+/// properties the data file carries.
+fn analyse_ip(
+    pipeline: &Arc<Pipeline>,
+    ip: &str,
+    available: &[String],
+    out: &mut dyn Write,
+) -> anyhow::Result<()> {
     writeln!(out)?;
     writeln!(out, "Input values:")?;
     writeln!(out, "\tquery.client-ip: {ip}")?;
@@ -178,50 +253,90 @@ fn analyse_ip(pipeline: &Arc<Pipeline>, ip: &str, out: &mut dyn Write) -> anyhow
     // properties, and a weighted list for the country-code distributions.
     //
     // The autonomous-system properties carried by the ASN data file.
-    output_string("Asn", &ip_data.asn(), out)?;
-    output_string("AsnName", &ip_data.asn_name(), out)?;
+    output_string("Asn", &ip_data.asn(), available, out)?;
+    output_string("AsnName", &ip_data.asn_name(), available, out)?;
     // The registered-range network properties.
-    output_string("RegisteredName", &ip_data.registered_name(), out)?;
-    output_string("RegisteredOwner", &ip_data.registered_owner(), out)?;
-    output_string("RegisteredCountry", &ip_data.registered_country(), out)?;
-    output_string("IpRangeStart", &ip_data.ip_range_start(), out)?;
-    output_string("IpRangeEnd", &ip_data.ip_range_end(), out)?;
+    output_string("RegisteredName", &ip_data.registered_name(), available, out)?;
+    output_string(
+        "RegisteredOwner",
+        &ip_data.registered_owner(),
+        available,
+        out,
+    )?;
+    output_string(
+        "RegisteredCountry",
+        &ip_data.registered_country(),
+        available,
+        out,
+    )?;
+    output_string("IpRangeStart", &ip_data.ip_range_start(), available, out)?;
+    output_string("IpRangeEnd", &ip_data.ip_range_end(), available, out)?;
     // The location properties.
-    output_string("Country", &ip_data.country(), out)?;
-    output_string("CountryCode", &ip_data.country_code(), out)?;
-    output_string("State", &ip_data.state(), out)?;
-    output_string("Town", &ip_data.town(), out)?;
-    output_float("Latitude", &ip_data.latitude(), out)?;
-    output_float("Longitude", &ip_data.longitude(), out)?;
-    output_integer("TimeZoneOffset", &ip_data.time_zone_offset(), out)?;
-    output_integer("AccuracyRadiusMin", &ip_data.accuracy_radius_min(), out)?;
+    output_string("Country", &ip_data.country(), available, out)?;
+    output_string("CountryCode", &ip_data.country_code(), available, out)?;
+    output_string("State", &ip_data.state(), available, out)?;
+    output_string("Town", &ip_data.town(), available, out)?;
+    output_float("Latitude", &ip_data.latitude(), available, out)?;
+    output_float("Longitude", &ip_data.longitude(), available, out)?;
+    output_integer(
+        "TimeZoneOffset",
+        &ip_data.time_zone_offset(),
+        available,
+        out,
+    )?;
+    output_integer(
+        "AccuracyRadiusMin",
+        &ip_data.accuracy_radius_min(),
+        available,
+        out,
+    )?;
     // The network flags, read as typed booleans.
-    output_bool("IsHosted", &ip_data.is_hosted(), out)?;
-    output_bool("IsVPN", &ip_data.is_vpn(), out)?;
+    output_bool("IsHosted", &ip_data.is_hosted(), available, out)?;
+    output_bool("IsVPN", &ip_data.is_vpn(), available, out)?;
     // The weighted country-code distributions: a single IP can overlap several
     // countries, so each resolves to a list of candidates with a 0.0..=1.0
     // weighting, ordered most probable first.
     output_weighted(
         "CountryCodesGeographical",
         &ip_data.country_codes_geographical(),
+        available,
         out,
     )?;
     output_weighted(
         "CountryCodesPopulation",
         &ip_data.country_codes_population(),
+        available,
         out,
     )?;
-    output_weighted("Mcc", &ip_data.mcc(), out)?;
+    output_weighted("Mcc", &ip_data.mcc(), available, out)?;
 
     Ok(())
+}
+
+/// Whether `name` is an Enterprise property the data file in use does not
+/// carry, in which case its line says so in place of a value.
+fn needs_enterprise(name: &str, available: &[String]) -> bool {
+    ENTERPRISE_PROPERTIES
+        .iter()
+        .any(|property| property.eq_ignore_ascii_case(name))
+        && !examples_shared::is_available(name, available)
 }
 
 /// Print a plain string property, or the no-value message when it is absent.
 fn output_string(
     name: &str,
     property: &AspectPropertyValue<String>,
+    available: &[String],
     out: &mut dyn Write,
 ) -> anyhow::Result<()> {
+    if needs_enterprise(name, available) {
+        writeln!(
+            out,
+            "\t{name}: {}",
+            examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+        )?;
+        return Ok(());
+    }
     match property.value() {
         Ok(value) => writeln!(out, "\t{name}: {value}")?,
         Err(no_value) => writeln!(out, "\t{name}: {no_value}")?,
@@ -233,8 +348,17 @@ fn output_string(
 fn output_float(
     name: &str,
     property: &AspectPropertyValue<f32>,
+    available: &[String],
     out: &mut dyn Write,
 ) -> anyhow::Result<()> {
+    if needs_enterprise(name, available) {
+        writeln!(
+            out,
+            "\t{name}: {}",
+            examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+        )?;
+        return Ok(());
+    }
     match property.value() {
         Ok(value) => writeln!(out, "\t{name}: {value:.4}")?,
         Err(no_value) => writeln!(out, "\t{name}: {no_value}")?,
@@ -246,8 +370,17 @@ fn output_float(
 fn output_integer(
     name: &str,
     property: &AspectPropertyValue<i32>,
+    available: &[String],
     out: &mut dyn Write,
 ) -> anyhow::Result<()> {
+    if needs_enterprise(name, available) {
+        writeln!(
+            out,
+            "\t{name}: {}",
+            examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+        )?;
+        return Ok(());
+    }
     match property.value() {
         Ok(value) => writeln!(out, "\t{name}: {value}")?,
         Err(no_value) => writeln!(out, "\t{name}: {no_value}")?,
@@ -259,8 +392,17 @@ fn output_integer(
 fn output_bool(
     name: &str,
     property: &AspectPropertyValue<bool>,
+    available: &[String],
     out: &mut dyn Write,
 ) -> anyhow::Result<()> {
+    if needs_enterprise(name, available) {
+        writeln!(
+            out,
+            "\t{name}: {}",
+            examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+        )?;
+        return Ok(());
+    }
     match property.value() {
         Ok(value) => writeln!(out, "\t{name}: {value}")?,
         Err(no_value) => writeln!(out, "\t{name}: {no_value}")?,
@@ -274,8 +416,17 @@ fn output_bool(
 fn output_weighted(
     name: &str,
     property: &AspectPropertyValue<Vec<WeightedValue<String>>>,
+    available: &[String],
     out: &mut dyn Write,
 ) -> anyhow::Result<()> {
+    if needs_enterprise(name, available) {
+        writeln!(
+            out,
+            "\t{name}: {}",
+            examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+        )?;
+        return Ok(());
+    }
     match property.value() {
         Ok(list) => {
             let rendered = list
@@ -299,10 +450,7 @@ fn main() -> anyhow::Result<()> {
     let mut out = stdout.lock();
 
     let options = match std::env::args().nth(1) {
-        Some(path) => ExampleOptions {
-            data_file: std::path::PathBuf::from(path),
-            ips: vec!["1.1.1.1".to_owned(), "2606:4700:4700::1111".to_owned()],
-        },
+        Some(path) => ExampleOptions::with_files(vec![PathBuf::from(path)]),
         None => match ExampleOptions::from_env() {
             Some(options) => options,
             None => anyhow::bail!(
@@ -345,6 +493,14 @@ mod tests {
             "expected the Cloudflare IPs to resolve to AS13335, output was:\n{printed}"
         );
         assert!(printed.contains("Asn:"));
+        assert!(printed.contains(examples_shared::FIND_OUT_MORE_HEADING));
+        // The ASN file carries none of the Enterprise properties, so the run
+        // says so. 51DEGREES_IPI_PATH can name another file.
+        let asn_file = examples_shared::IPI_ASN_RELATIVE_PATH.rsplit('/').next();
+        if options.data_files[0].file_name().and_then(|n| n.to_str()) == asn_file {
+            assert!(printed.contains("Country: needs the Enterprise data file"));
+            assert!(printed.contains("utm_term=enterprise-data-file"));
+        }
     }
 }
 
@@ -371,12 +527,22 @@ mod tests {
  * (2606:4700:4700::1111). Against the free ASN data file both resolve to the
  * Cloudflare autonomous system, AS13335.
  *
+ * With no file named, the example reads both free files from the data
+ * repository in turn, the ASN file for `Asn` and `AsnName` and the Lite file
+ * for `RegisteredName`, `RegisteredOwner` and `RegisteredCountry`. It also asks
+ * for `Country`, `CountryCode`, `Town`, `Latitude`, `Longitude`, `IsHosted`
+ * and `IsVPN`, which only the Enterprise data file carries. Each data file's
+ * own list of properties says which it carries, so with a free file each of
+ * those prints "needs the Enterprise data file", and the run ends by naming
+ * them with a link to contact 51Degrees about a copy of the Enterprise data
+ * file, then a "Find out more" section.
+ *
  * # Data file
  *
- * The data file is resolved by `examples_shared::ipi_data_path`, which prefers
- * the `51DEGREES_IPI_PATH` environment variable and otherwise locates the ASN
- * file in the data repository inside the `cxx` submodule, downloading it when
- * it is missing. An Enterprise `.ipi`
+ * The data files are resolved by `examples_shared::ipi_data_path`, which
+ * prefers the `51DEGREES_IPI_PATH` environment variable and otherwise locates
+ * the ASN and Lite files in the data repository inside the `cxx` submodule,
+ * downloading each when it is missing. An Enterprise `.ipi`
  * file (with the full property set) is available from 51Degrees: see <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-getting-started.rs&utm_term=ipi-onprem-getting-started>.
  *
  * # Usage sharing

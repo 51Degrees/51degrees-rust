@@ -36,6 +36,12 @@ use fiftyone_pipeline_engines::OnPremiseAspectEngine;
 /// warning must honour.
 pub const DATA_FILE_AGE_WARNING_DAYS: i64 = 30;
 
+/// The pricing page, as the out-of-date warning links it.
+const PRICING_URL_AGE: &str = "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-examples-shared-src-data_file_check.rs&utm_term=data-file-age";
+
+/// The pricing page, as the free data file warning links it.
+const PRICING_URL_FREE: &str = "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-examples-shared-src-data_file_check.rs&utm_term=free-data-file";
+
 /// Inspect `engine`'s data file and return the warnings an example should print.
 ///
 /// The returned vector is empty when nothing is wrong. It contains a warning
@@ -62,8 +68,8 @@ pub fn check_data_file(engine: &dyn OnPremiseAspectEngine) -> Vec<String> {
                  {DATA_FILE_AGE_WARNING_DAYS} days old (published {published}). A more recent \
                  data file may be needed to correctly detect the latest devices, browsers and \
                  networks. The get-data-files script in cxx/data replaces a free file with a \
-                 newer one when run with -u, or -Update in PowerShell, and the Enterprise file \
-                 (with automatic daily updates) is described on the 51Degrees pricing page."
+                 newer one when run with -u, or -Update in PowerShell. The Enterprise file, \
+                 with automatic daily updates, is described at {PRICING_URL_AGE}"
             ));
         }
     }
@@ -74,8 +80,8 @@ pub fn check_data_file(engine: &dyn OnPremiseAspectEngine) -> Vec<String> {
     if is_limited_data_tier(tier) {
         warnings.push(format!(
             "This example is using a '{tier}' data file. This is free data for illustration \
-             only, with limited accuracy and capabilities. The Enterprise file is described on \
-             the 51Degrees pricing page."
+             only, with limited accuracy and capabilities. The Enterprise file is described \
+             at {PRICING_URL_FREE}"
         ));
     }
 

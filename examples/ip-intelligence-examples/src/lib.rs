@@ -20,9 +20,46 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! Runnable IP-intelligence examples.
+//! Runnable IP-intelligence examples, plus the helpers shared between them.
 //!
-//! This crate is a stub. The example binaries and tests will be added in a
-//! later phase of the workspace build.
+//! The example programs live under `src/bin`, each a self-contained binary.
+//! This library holds [`data_file_properties`] and [`ENTERPRISE_PROPERTIES`],
+//! which the on-premise examples use to say which properties need the
+//! Enterprise data file.
 
 #![warn(missing_docs)]
+
+use std::path::Path;
+
+use anyhow::{Context, Result};
+
+use fiftyone_ip_intelligence::{IpIntelligenceOnPremiseEngine, PerformanceProfile};
+
+/// Properties the Enterprise data file carries and neither free file does.
+/// The on-premise examples ask for these alongside the free properties, and
+/// say where to ask about the Enterprise data file when the file in use does
+/// not carry them.
+pub const ENTERPRISE_PROPERTIES: &[&str] = &[
+    "Country",
+    "CountryCode",
+    "Town",
+    "Latitude",
+    "Longitude",
+    "IsHosted",
+    "IsVPN",
+];
+
+/// The names of the properties the data file at `data_file` carries.
+///
+/// The pipeline builder does not hand back its engine, so this opens a second
+/// engine over the same file with the low-memory profile, which leaves the
+/// data on disk, and asks it.
+pub fn data_file_properties(data_file: &Path) -> Result<Vec<String>> {
+    let engine = IpIntelligenceOnPremiseEngine::builder(data_file)
+        .performance_profile(PerformanceProfile::LowMemory)
+        .auto_update(false)
+        .file_system_watcher(false)
+        .build()
+        .context("failed to open the data file to read its properties")?;
+    Ok(engine.available_property_names())
+}

@@ -27,7 +27,7 @@
 //! submodule holds at `cxx/data`. [`find_data_file`] locates each one with
 //! [`crate::find_file`] and runs the data repository's script for a file that
 //! is missing. The IP Intelligence resolver implements the tier scheme
-//! (Enterprise, ASN) that the Rust examples use.
+//! (Enterprise, ASN, Lite) that the Rust examples use.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -45,12 +45,19 @@ pub const IPI_PATH_ENV_VAR: &str = "51DEGREES_IPI_PATH";
 /// The Lite Device Detection data file in the data repository.
 pub const DD_LITE_RELATIVE_PATH: &str = "cxx/data/device-detection/51Degrees-LiteV4.1.hash";
 
-/// The ASN IP Intelligence data file in the data repository.
+/// The ASN IP Intelligence data file in the data repository, giving Asn and
+/// AsnName.
 ///
-/// It loads against the current native library and is the convenient default
-/// for quick tests and CI. The data repository's README describes the other
-/// IP Intelligence data files, for when richer properties are needed.
+/// It is a download of a few megabytes, so it is the default for the examples,
+/// their tests and CI.
 pub const IPI_ASN_RELATIVE_PATH: &str = "cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi";
+
+/// The Lite IP Intelligence data file in the data repository, giving
+/// RegisteredName, RegisteredOwner and RegisteredCountry.
+///
+/// It is a download of a few hundred megabytes, so only the examples that show
+/// those properties ask for it.
+pub const IPI_LITE_RELATIVE_PATH: &str = "cxx/data/ip-intelligence/51Degrees-LiteV41.ipi";
 
 /// The Enterprise IP Intelligence data-file name on the Enterprise share.
 pub const IPI_ENTERPRISE_FILE_NAME: &str = "51Degrees-IPIV4EnterpriseIpiV41.ipi";
@@ -76,6 +83,9 @@ pub enum IpiTier {
     /// Force the ASN file ([`IPI_ASN_RELATIVE_PATH`]). Small, current and
     /// free from the data repository, so it suits most quick tests.
     Asn,
+    /// Force the Lite file ([`IPI_LITE_RELATIVE_PATH`]), free from the data
+    /// repository and much larger than the ASN file.
+    Lite,
     /// Force the Enterprise file from the Enterprise share. Resolves to
     /// `None` when the share is not reachable.
     Enterprise,
@@ -105,8 +115,8 @@ pub fn dd_data_path() -> Option<PathBuf> {
 ///   configured share if it is reachable, and otherwise the ASN file.
 /// - [`IpiTier::Enterprise`] returns the latest Enterprise file, or `None` when
 ///   the share is unreachable.
-/// - [`IpiTier::Asn`] returns the ASN file, found with [`find_data_file`],
-///   which downloads it when it is missing.
+/// - [`IpiTier::Asn`] and [`IpiTier::Lite`] return that free file, found with
+///   [`find_data_file`], which downloads it when it is missing.
 ///
 /// Returns `None` when no file for the requested tier can be located.
 pub fn ipi_data_path(tier: IpiTier) -> Option<PathBuf> {
@@ -119,6 +129,7 @@ pub fn ipi_data_path(tier: IpiTier) -> Option<PathBuf> {
         }
         IpiTier::Enterprise => latest_enterprise_ipi(),
         IpiTier::Asn => find_data_file(IPI_ASN_RELATIVE_PATH),
+        IpiTier::Lite => find_data_file(IPI_LITE_RELATIVE_PATH),
     }
 }
 
