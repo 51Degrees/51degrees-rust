@@ -410,14 +410,20 @@ mod tests {
         );
         data.add_missing_property_source(unknown);
         data.add_missing_property_source(Arc::clone(&known));
-        data.add_missing_property_source(later);
+        data.add_missing_property_source(Arc::clone(&later));
         assert_eq!(
             data.missing_property_reason("IsMobile"),
             Some(known.reason("IsMobile"))
         );
+        // Neither earlier source knows why NotAProperty is missing, so the
+        // later one decides.
         assert_eq!(
-            data.missing_property_reason("NotAProperty").unwrap().reason,
+            known.reason("NotAProperty").reason,
             MissingPropertyReason::Unknown
+        );
+        assert_eq!(
+            data.missing_property_reason("NotAProperty"),
+            Some(later.reason("NotAProperty"))
         );
     }
 
