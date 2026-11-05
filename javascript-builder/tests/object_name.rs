@@ -53,6 +53,7 @@ use fiftyone_pipeline_core::{
     ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
     NoValueError, Pipeline, PropertyMetaData, PropertyValue, PropertyValueType, Result, TypedKey,
 };
+use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 
 // ---------------------------------------------------------------------------
 // An element with one value, so the payload can be read back from the object.
@@ -182,17 +183,15 @@ fn render(
     evidence: &[(&str, &str)],
 ) -> String {
     let pipeline = Pipeline::builder()
+        .add_element(Arc::new(SequenceElement::new()))
         .add_element(Arc::new(ValueElement::new()))
         .add_element(Arc::new(JsonBuilderElement::new()))
         .add_element(Arc::new(configure(JavaScriptBuilderElement::builder())))
         .build()
         .expect("pipeline builds");
     // A host gives the script a callback URL, which renders the update
-    // section that holds the page evidence lookup. The JSON builder needs a
-    // sequence number, which a Sequence element would otherwise give.
-    let mut ev = Evidence::builder()
-        .add("header.host", "localhost")
-        .add("query.sequence", "1");
+    // section that holds the page evidence lookup.
+    let mut ev = Evidence::builder().add("header.host", "localhost");
     for (key, value) in evidence {
         ev = ev.add(*key, *value);
     }

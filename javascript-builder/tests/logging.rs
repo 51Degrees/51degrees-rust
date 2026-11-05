@@ -96,11 +96,6 @@ fn request(
     for (key, value) in evidence {
         builder = builder.add(*key, *value);
     }
-    // The JSON builder needs a sequence number, which a Sequence element
-    // would otherwise give.
-    if !evidence.iter().any(|(key, _)| *key == "query.sequence") {
-        builder = builder.add("query.sequence", "1");
-    }
     let mut data = pipeline.create_flow_data_with(builder.build());
     data.process().expect("processing succeeds");
     let js = data
@@ -111,8 +106,13 @@ fn request(
     (js, records_since(from))
 }
 
+/// The Sequence element, the JSON builder and `element`, as the web
+/// integration orders them.
 fn pipeline(element: JavaScriptBuilderElement) -> Arc<Pipeline> {
     Pipeline::builder()
+        .add_element(Arc::new(
+            fiftyone_pipeline_engines_fiftyone::SequenceElement::new(),
+        ))
         .add_element(Arc::new(JsonBuilderElement::new()))
         .add_element(Arc::new(element))
         .build()

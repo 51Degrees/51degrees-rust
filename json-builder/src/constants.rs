@@ -39,12 +39,13 @@ pub const JSON_BUILDER_ELEMENT_DATA_KEY: &str = "json-builder";
 /// [`fiftyone_pipeline_core::ElementData::get`].
 pub const JSON_PROPERTY_KEY: &str = "json";
 
-/// The evidence key carrying the request sequence number.
+/// The evidence key carrying the request's sequence, `"query.sequence"`.
 ///
-/// The web integration increments this each time the client posts collected
-/// evidence back. The JSON builder reads it to decide whether to keep emitting
-/// the `javascriptProperties` list (see [`MAX_JAVASCRIPT_ITERATIONS`]). The key
-/// is `"query.sequence"`.
+/// The client script sends it each time it posts collected evidence back,
+/// and the Sequence element adds one to it. The JSON builder does not read
+/// this evidence. It takes the number from the Sequence element's data (see
+/// [`crate::JsonBuilderElement::sequence_number`]) and compares it with
+/// [`MAX_JAVASCRIPT_ITERATIONS`].
 pub const SEQUENCE_EVIDENCE_KEY: &str = "query.sequence";
 
 /// The maximum sequence number at which the JavaScript-properties list is still

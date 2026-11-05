@@ -30,13 +30,15 @@ use std::sync::{Arc, Mutex};
 
 use fiftyone_json_builder::{
     default_steps, DefaultJsonBuilderSteps, JsonBuilderContext, JsonBuilderElement,
-    JsonBuilderSteps, JsonObject, JsonValue, JsonValueConverter, JSON_BUILDER_DATA_KEY,
+    JsonBuilderElementBuilder, JsonBuilderSteps, JsonObject, JsonValue, JsonValueConverter,
+    JSON_BUILDER_DATA_KEY,
 };
 use fiftyone_pipeline_core::{
-    ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    ElementData, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
     MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue, PropertyValueType,
     Result, TypedKey,
 };
+use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 use serde_json::{json, Value};
 
 /// An element that stores fixed values, and optionally fails or adds a
@@ -193,18 +195,24 @@ impl FlowElement for CountingElement {
     }
 }
 
-/// Run the elements and then the JSON builder, and give the JSON text.
-fn run(elements: Vec<Arc<dyn FlowElement>>, json_builder: JsonBuilderElement) -> String {
-    let mut builder = Pipeline::builder().suppress_process_exceptions(true);
+/// Run the Sequence element, the elements and then the JSON builder, and give
+/// the JSON text. The Sequence element's own data is left out of the JSON,
+/// so the JSON holds only what the test's elements give.
+fn run(elements: Vec<Arc<dyn FlowElement>>, json_builder: JsonBuilderElementBuilder) -> String {
+    let mut builder = Pipeline::builder()
+        .suppress_process_exceptions(true)
+        .add_element(Arc::new(SequenceElement::new()));
     for element in elements {
         builder = builder.add_element(element);
     }
+    let json_builder = json_builder
+        .exclude_element(SequenceElement::DEFAULT_ELEMENT_DATA_KEY)
+        .build();
     let pipeline = builder
         .add_element(Arc::new(json_builder))
         .build()
         .expect("pipeline builds");
-    let mut data =
-        pipeline.create_flow_data_with(Evidence::builder().add("query.sequence", "1").build());
+    let mut data = pipeline.create_flow_data();
     data.process().expect("exceptions are suppressed");
     data.get(JSON_BUILDER_DATA_KEY)
         .expect("json builder data present")
@@ -243,16 +251,14 @@ impl JsonBuilderSteps for NoChanges {}
 
 #[test]
 fn steps_that_replace_nothing_give_the_builders_json() {
-    let expected = run(vec![device()], JsonBuilderElement::new());
+    let expected = run(vec![device()], JsonBuilderElement::builder());
     let explicit = run(
         vec![device()],
-        JsonBuilderElement::builder()
-            .set_steps(DefaultJsonBuilderSteps)
-            .build(),
+        JsonBuilderElement::builder().set_steps(DefaultJsonBuilderSteps),
     );
     let none = run(
         vec![device()],
-        JsonBuilderElement::builder().set_steps(NoChanges).build(),
+        JsonBuilderElement::builder().set_steps(NoChanges),
     );
     assert_eq!(explicit, expected);
     assert_eq!(none, expected);
@@ -271,9 +277,7 @@ impl JsonBuilderSteps for FixedDocument {
 fn build_json_can_be_replaced() {
     let json = run(
         vec![device()],
-        JsonBuilderElement::builder()
-            .set_steps(FixedDocument)
-            .build(),
+        JsonBuilderElement::builder().set_steps(FixedDocument),
     );
     assert_eq!(json, "{}");
 }
@@ -291,7 +295,7 @@ impl JsonBuilderSteps for KeysOnly {
 fn write_json_is_given_the_collected_values() {
     let json = run(
         vec![device()],
-        JsonBuilderElement::builder().set_steps(KeysOnly).build(),
+        JsonBuilderElement::builder().set_steps(KeysOnly),
     );
     assert_eq!(json, "device,javascriptProperties");
 }
@@ -313,7 +317,7 @@ impl JsonBuilderSteps for ExtraEntry {
 fn get_all_properties_can_add_to_the_default() {
     let value = parse(&run(
         vec![device()],
-        JsonBuilderElement::builder().set_steps(ExtraEntry).build(),
+        JsonBuilderElement::builder().set_steps(ExtraEntry),
     ));
     assert_eq!(value["extra"], json!({ "count": 2 }));
     assert_eq!(value["device"]["ismobile"], json!(true));
@@ -352,9 +356,7 @@ fn get_values_can_read_only_the_properties_needed() {
     });
     let value = parse(&run(
         vec![element],
-        JsonBuilderElement::builder()
-            .set_steps(IsMobileOnly)
-            .build(),
+        JsonBuilderElement::builder().set_steps(IsMobileOnly),
     ));
     assert_eq!(value["device"], json!({ "ismobile": true }));
     assert_eq!(reads.load(Ordering::SeqCst), 1, "one value read");
@@ -368,7 +370,7 @@ fn the_default_reads_every_property() {
         properties: Vec::new(),
         reads: Arc::clone(&reads),
     });
-    run(vec![element], JsonBuilderElement::new());
+    run(vec![element], JsonBuilderElement::builder());
     assert_eq!(reads.load(Ordering::SeqCst), 3);
 }
 
@@ -402,9 +404,7 @@ impl JsonBuilderSteps for RenameIsMobile {
 fn add_json_values_for_property_can_change_a_key() {
     let value = parse(&run(
         vec![device()],
-        JsonBuilderElement::builder()
-            .set_steps(RenameIsMobile)
-            .build(),
+        JsonBuilderElement::builder().set_steps(RenameIsMobile),
     ));
     assert_eq!(value["device"]["mobile"], json!(true));
     assert!(value["device"].get("ismobile").is_none());
@@ -429,9 +429,7 @@ impl JsonBuilderSteps for OwnJavaScript {
 fn get_javascript_properties_can_be_replaced() {
     let value = parse(&run(
         vec![device()],
-        JsonBuilderElement::builder()
-            .set_steps(OwnJavaScript)
-            .build(),
+        JsonBuilderElement::builder().set_steps(OwnJavaScript),
     ));
     assert_eq!(value["javascriptProperties"], json!(["device.own"]));
 }
@@ -448,9 +446,7 @@ fn javascript_properties_are_those_written() {
     );
     let value = parse(&run(
         vec![element],
-        JsonBuilderElement::builder()
-            .exclude_property("javascripthidden")
-            .build(),
+        JsonBuilderElement::builder().exclude_property("javascripthidden"),
     ));
     assert_eq!(
         value["javascriptProperties"],
@@ -468,12 +464,15 @@ impl JsonBuilderSteps for NoErrors {
 #[test]
 fn add_errors_can_be_replaced() {
     let failing: Arc<dyn FlowElement> = Arc::new(ValuesElement::new("broken").failing());
-    let default = parse(&run(vec![Arc::clone(&failing)], JsonBuilderElement::new()));
+    let default = parse(&run(
+        vec![Arc::clone(&failing)],
+        JsonBuilderElement::builder(),
+    ));
     assert!(messages(&default["errors"])[0].contains("broken failed"));
 
     let replaced = parse(&run(
         vec![failing],
-        JsonBuilderElement::builder().set_steps(NoErrors).build(),
+        JsonBuilderElement::builder().set_steps(NoErrors),
     ));
     assert!(replaced.get("errors").is_none());
 }
@@ -481,7 +480,7 @@ fn add_errors_can_be_replaced() {
 #[test]
 fn errors_are_written_as_their_messages_alone() {
     let failing: Arc<dyn FlowElement> = Arc::new(ValuesElement::new("broken").failing());
-    let value = parse(&run(vec![failing], JsonBuilderElement::new()));
+    let value = parse(&run(vec![failing], JsonBuilderElement::builder()));
     assert_eq!(messages(&value["errors"]), ["broken failed"]);
 }
 
@@ -504,9 +503,7 @@ fn add_warnings_adds_to_warnings_already_written() {
         Arc::new(ValuesElement::new("device").warning("flow warning"));
     let value = parse(&run(
         vec![element],
-        JsonBuilderElement::builder()
-            .set_steps(OwnWarningFirst)
-            .build(),
+        JsonBuilderElement::builder().set_steps(OwnWarningFirst),
     ));
     assert_eq!(value["warnings"], json!(["own warning", "flow warning"]));
 }
@@ -516,7 +513,7 @@ fn warnings_are_written_after_errors() {
     let warning: Arc<dyn FlowElement> =
         Arc::new(ValuesElement::new("first").warning("first warning"));
     let failing: Arc<dyn FlowElement> = Arc::new(ValuesElement::new("second").failing());
-    let json = run(vec![warning, failing], JsonBuilderElement::new());
+    let json = run(vec![warning, failing], JsonBuilderElement::builder());
     let value = parse(&json);
     assert_eq!(value["warnings"], json!(["first warning"]));
     let errors = messages(&value["errors"]);
@@ -529,7 +526,7 @@ fn warnings_are_written_after_errors() {
 
 #[test]
 fn no_warnings_writes_no_warnings_key() {
-    let value = parse(&run(vec![device()], JsonBuilderElement::new()));
+    let value = parse(&run(vec![device()], JsonBuilderElement::builder()));
     assert!(value.get("warnings").is_none());
 }
 
@@ -562,9 +559,7 @@ impl JsonValueConverter for Always {
 fn a_converter_changes_how_a_value_is_written() {
     let value = parse(&run(
         vec![device()],
-        JsonBuilderElement::builder()
-            .add_json_converter(YesNo)
-            .build(),
+        JsonBuilderElement::builder().add_json_converter(YesNo),
     ));
     assert_eq!(value["device"]["ismobile"], json!("yes"));
     assert_eq!(value["device"]["browsername"], json!("Chrome"));
@@ -578,8 +573,7 @@ fn converters_are_asked_in_the_order_added() {
         vec![element],
         JsonBuilderElement::builder()
             .add_json_converter(Always(1))
-            .add_json_converter(Always(2))
-            .build(),
+            .add_json_converter(Always(2)),
     ));
     assert_eq!(value["device"]["count"], json!(1));
 }
@@ -593,8 +587,7 @@ fn set_json_converters_replaces_them() {
         vec![element],
         JsonBuilderElement::builder()
             .add_json_converter(Always(1))
-            .set_json_converters(converters)
-            .build(),
+            .set_json_converters(converters),
     ));
     assert_eq!(value["device"]["count"], json!(2));
 }
@@ -603,14 +596,12 @@ fn set_json_converters_replaces_them() {
 fn a_closure_is_a_converter() {
     let value = parse(&run(
         vec![device()],
-        JsonBuilderElement::builder()
-            .add_json_converter(
-                |_: &JsonBuilderElement, value: &PropertyValue| match value {
-                    PropertyValue::String(s) => Some(JsonValue::String(s.to_uppercase())),
-                    _ => None,
-                },
-            )
-            .build(),
+        JsonBuilderElement::builder().add_json_converter(
+            |_: &JsonBuilderElement, value: &PropertyValue| match value {
+                PropertyValue::String(s) => Some(JsonValue::String(s.to_uppercase())),
+                _ => None,
+            },
+        ),
     ));
     assert_eq!(value["device"]["browsername"], json!("CHROME"));
 }
@@ -632,9 +623,7 @@ fn profiles() -> Arc<dyn FlowElement> {
 fn a_converter_sees_the_values_in_records() {
     let value = parse(&run(
         vec![profiles()],
-        JsonBuilderElement::builder()
-            .add_json_converter(Always(7))
-            .build(),
+        JsonBuilderElement::builder().add_json_converter(Always(7)),
     ));
     assert_eq!(
         value["hardware"]["profiles"],
@@ -662,9 +651,7 @@ fn records_are_collected_by_get_values() {
     let paths = Arc::new(Mutex::new(Vec::new()));
     let value = parse(&run(
         vec![profiles()],
-        JsonBuilderElement::builder()
-            .set_steps(RecordPaths(Arc::clone(&paths)))
-            .build(),
+        JsonBuilderElement::builder().set_steps(RecordPaths(Arc::clone(&paths))),
     ));
     assert_eq!(
         value["hardware"]["profiles"],

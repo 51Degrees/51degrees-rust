@@ -32,15 +32,16 @@ use fiftyone_pipeline_core::{
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 
 use crate::builder::JsonBuilderElementBuilder;
-use crate::constants::{JSON_BUILDER_ELEMENT_DATA_KEY, JSON_PROPERTY_KEY, SEQUENCE_EVIDENCE_KEY};
+use crate::constants::{JSON_BUILDER_ELEMENT_DATA_KEY, JSON_PROPERTY_KEY};
 use crate::converter::JsonValueConverter;
 use crate::data::{JsonBuilderData, JSON_BUILDER_DATA_KEY};
 use crate::steps::{JsonBuilderContext, JsonBuilderSteps, PipelineConfig};
 use crate::value::JsonValue;
 
-/// The message of the error processing gives when a flow data has no
-/// sequence number, being .NET's message with this repository's link tags.
-const SEQUENCE_NUMBER_NOT_PRESENT: &str = "The value for the 'sequence' parameter could not be found. See https://51degrees.com/documentation/4.5/_services__cloud__error_messages.html?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=json-builder-src-element.rs&utm_term=sequence-number-not-present for more information.";
+/// The message of the error processing gives when no Sequence element gave a
+/// sequence number. It starts with .NET's message and says where the
+/// Sequence element goes, as the specification asks.
+const SEQUENCE_NUMBER_NOT_PRESENT: &str = "The value for the 'sequence' parameter could not be found. A Sequence element needs to be placed before the JSON builder element in the pipeline. See https://51degrees.com/documentation/4.5/_services__cloud__error_messages.html?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=json-builder-src-element.rs&utm_term=sequence-number-not-present for more information.";
 
 /// Serializes all element data in a flow data into a single JSON object.
 ///
@@ -95,25 +96,27 @@ const SEQUENCE_NUMBER_NOT_PRESENT: &str = "The value for the 'sequence' paramete
 ///
 /// # Sequence number
 ///
-/// The builder needs the request's sequence number, taken from the Sequence
-/// element's data or, when no Sequence element ran, the `query.sequence`
-/// evidence. Without one, processing fails with
+/// The builder needs the request's sequence number, taken from the data of
+/// the [`SequenceElement`], so put a Sequence element before the builder, as
+/// the web integration does. Without one, processing fails with
 /// [`Error::Pipeline`](fiftyone_pipeline_core::Error::Pipeline) and no JSON
-/// is written, as .NET's and Java's builders do. Put a Sequence element
-/// before the builder, as the web integration does.
-/// [`json_for`](Self::json_for) writes JSON without one, taking the request
-/// as the first.
+/// is written. The `query.sequence` evidence is not read, because evidence
+/// holds text and a request's own query string can carry that key, so a
+/// value there is the Sequence element's input rather than a sequence
+/// number. [`json_for`](Self::json_for) writes JSON without one, taking the
+/// request as the first.
 ///
 /// # Example
 ///
 /// ```
 /// use std::sync::Arc;
 /// use fiftyone_pipeline_core::{
-///     ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist,
+///     ElementData, EvidenceKeyFilter, EvidenceKeyFilterWhitelist,
 ///     FlowData, FlowElement, MapElementData, Pipeline, PropertyMetaData,
 ///     PropertyValueType, Result, TypedKey,
 /// };
 /// use fiftyone_json_builder::{JsonBuilderElement, JSON_BUILDER_DATA_KEY};
+/// use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 ///
 /// // A tiny element that publishes one property.
 /// struct DeviceData(MapElementData);
@@ -142,7 +145,10 @@ const SEQUENCE_NUMBER_NOT_PRESENT: &str = "The value for the 'sequence' paramete
 ///     fn properties(&self) -> &[PropertyMetaData] { &self.props }
 /// }
 ///
+/// // The Sequence element comes first, because the JSON builder needs the
+/// // sequence number it gives.
 /// let pipeline = Pipeline::builder()
+///     .add_element(Arc::new(SequenceElement::new()))
 ///     .add_element(Arc::new(DeviceElement {
 ///         filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
 ///         props: vec![PropertyMetaData::new("ismobile", "device", PropertyValueType::Bool)],
@@ -151,9 +157,7 @@ const SEQUENCE_NUMBER_NOT_PRESENT: &str = "The value for the 'sequence' paramete
 ///     .build()
 ///     .unwrap();
 ///
-/// let mut data = pipeline.create_flow_data_with(
-///     Evidence::builder().add("query.sequence", "1").build(),
-/// );
+/// let mut data = pipeline.create_flow_data();
 /// data.process().unwrap();
 ///
 /// let json = data.get(JSON_BUILDER_DATA_KEY).unwrap().json().to_owned();
@@ -207,24 +211,15 @@ impl JsonBuilderElement {
     }
 
     /// The request sequence number that the `javascriptProperties` cap is
-    /// compared against, or `None` when there is none.
+    /// compared against, being the one in the Sequence element's data, or
+    /// `None` when no Sequence element ran.
     ///
-    /// Taken from the sequence element's data when that element ran, because
-    /// it has already added one to any `query.sequence` evidence. The other
-    /// 51Degrees pipelines write that new value back into the evidence before
-    /// their JSON builder reads it, whilst evidence is immutable here, so
-    /// reading the evidence alone would keep the list for one request more
-    /// than they do. Without a sequence element the evidence is read instead.
+    /// The Sequence element has already added one to the request's
+    /// `query.sequence`. That evidence is never read here, as it holds the
+    /// request's own text rather than a sequence number.
     pub fn sequence_number(data: &FlowData) -> Option<i64> {
-        if let Some(sequence) = data
-            .get(SequenceElement::KEY)
+        data.get(SequenceElement::KEY)
             .and_then(|sequence| sequence.sequence())
-        {
-            return Some(sequence);
-        }
-        data.evidence()
-            .get(SEQUENCE_EVIDENCE_KEY)
-            .and_then(|s| s.trim().parse::<i64>().ok())
     }
 
     /// Convert a property value to JSON, asking the converters added to the
