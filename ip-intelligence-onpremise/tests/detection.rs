@@ -598,12 +598,16 @@ fn a_listed_property_the_asn_file_lacks_has_an_unknown_reason() {
     );
 }
 
-/// IP data from an engine built on the ASN file with `CountryCode` named gives
-/// `Unknown` for `CountryCode`, through its typed accessor and by name. The
-/// engine lists the name with the file's own tier although the file lacks it,
-/// so neither message may name that tier as one to upgrade to.
+/// IP data from an engine on the ASN file, which holds no `CountryCode`, names
+/// no tier to upgrade to for `CountryCode`, through its typed accessor or by
+/// name, although the engine lists the property with the file's own tier.
+///
+/// Built with no properties named, the reader holds only the file's
+/// properties, so the data gives the engine's `Unknown` reason. Built with
+/// `CountryCode` named, the native layer keeps the name it was given, so the
+/// reader holds it and reads it as having no value.
 #[test]
-fn ip_data_names_no_tier_for_a_named_property_the_asn_file_lacks() {
+fn ip_data_names_no_tier_for_a_listed_property_the_asn_file_lacks() {
     let Some(file) = asn_data_file() else {
         eprintln!("no ASN data file found; skipping missing property test");
         return;
@@ -612,34 +616,42 @@ fn ip_data_names_no_tier_for_a_named_property_the_asn_file_lacks() {
         eprintln!("{} is not the ASN file; skipping", file.display());
         return;
     }
-    let Some(engine) = build_engine(
-        &file,
-        PerformanceProfile::HighPerformance,
-        &["Asn", "AsnName", "CountryCode"],
-    ) else {
-        return;
-    };
-    assert!(
-        engine
-            .aspect_properties()
-            .iter()
-            .any(|p| p.name() == "CountryCode"),
-        "this test covers a named property the engine lists although the file lacks it"
-    );
+    let names: [&[&str]; 2] = [&[], &["Asn", "AsnName", "CountryCode"]];
+    for properties in names {
+        let engine = build_engine(&file, PerformanceProfile::HighPerformance, properties)
+            .expect("the ASN file builds an engine");
+        assert!(
+            engine
+                .aspect_properties()
+                .iter()
+                .any(|p| p.name() == "CountryCode"),
+            "{properties:?}: the engine lists CountryCode"
+        );
+        let expected = engine.missing_property_reason("CountryCode");
+        assert_eq!(
+            expected.reason,
+            MissingPropertyReason::Unknown,
+            "{properties:?}"
+        );
 
-    let ip_data = lookup(Arc::clone(&engine), CLOUDFLARE_IPV4);
+        let ip_data = lookup(Arc::clone(&engine), CLOUDFLARE_IPV4);
 
-    assert!(ip_data.asn().has_value());
-    let expected = engine.missing_property_reason("CountryCode");
-    assert_eq!(expected.reason, MissingPropertyReason::Unknown);
-    let typed = ip_data
-        .country_code()
-        .no_value_message()
-        .expect("the ASN file holds no CountryCode")
-        .to_owned();
-    let by_name = ip_data.get("CountryCode").unwrap_err().message;
-    for message in [typed, by_name] {
-        assert_eq!(message, expected.description);
-        assert!(!message.contains("license/data"), "{message}");
+        assert!(ip_data.asn().has_value(), "{properties:?}");
+        let typed = ip_data
+            .country_code()
+            .no_value_message()
+            .expect("the ASN file holds no CountryCode")
+            .to_owned();
+        let by_name = ip_data.get("CountryCode").unwrap_err().message;
+        for message in [&typed, &by_name] {
+            assert!(
+                !message.contains("license/data"),
+                "{properties:?}: {message}"
+            );
+        }
+        if properties.is_empty() {
+            assert_eq!(typed, expected.description);
+            assert_eq!(by_name, expected.description);
+        }
     }
 }
