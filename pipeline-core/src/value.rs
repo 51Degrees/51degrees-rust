@@ -234,7 +234,7 @@ const _: () = assert!(ANGLE_DECIMAL_PLACES <= 9);
 /// Round a value converted from an Azimuth or Declination, such as a latitude
 /// or a longitude, to 3 decimal places, giving the `f32` nearest the rounded
 /// decimal, as the
-/// [value types specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/value-types.md#rounding-of-azimuth-and-declination-values)
+/// [value types specification](https://github.com/51Degrees/specifications/blob/0e86a4642eea1585f2d7e3ad8eef6af7c68e9aaa/pipeline-specification/features/value-types.md#rounding-of-azimuth-and-declination-values)
 /// requires.
 ///
 /// The value is rounded before it is narrowed, because the `f32` nearest a
@@ -278,7 +278,8 @@ pub fn round_angle(value: f64) -> f32 {
 mod tests {
     use super::*;
 
-    /// A stored Declination or Azimuth converted as the specification gives.
+    /// A stored Declination or Azimuth converted as the C library converts
+    /// it, multiplying before dividing.
     fn converted(stored: i16, max_angle: f64) -> f64 {
         f64::from(stored) * max_angle / 32767.0
     }

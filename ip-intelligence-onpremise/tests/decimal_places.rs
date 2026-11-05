@@ -134,7 +134,8 @@ fn locations_are_given_to_three_decimal_places() {
             let what = format!("{name} for {ip}");
             assert_places(&number.to_string(), &what);
 
-            // The C library's text, which .NET reads the number from.
+            // The C library's text, written with the same places as the text
+            // .NET reads the number from.
             let text = results
                 .value_as_string(name, SEPARATOR)
                 .expect("the text should read")
