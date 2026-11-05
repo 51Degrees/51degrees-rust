@@ -26,6 +26,7 @@
 //! JavaScript.
 
 use std::any::Any;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use fiftyone_cloud_request_engine::{
@@ -353,11 +354,11 @@ fn render_for_key(engine: &CloudRequestEngine) -> String {
     )
 }
 
+/// A statement found only inside the user prompt section of the template.
+const USER_PROMPT_MARKER: &str = "var answerKeys = [\"id.usage\", \"tcstring\"];";
+
 #[test]
 fn user_prompt_section_follows_the_keys_licensed_products() {
-    // A statement found only inside the user prompt section of the template.
-    const USER_PROMPT_MARKER: &str = "var answerKeys = [\"id.usage\", \"tcstring\"];";
-
     // The product name is written the way the cloud service reports it,
     // "FODid", which differs in case from the "fodid" element data key.
     let entitled = request_engine(
@@ -400,6 +401,115 @@ fn user_prompt_section_follows_the_keys_licensed_products() {
         &[("header.host", "example.com")],
     );
     assert!(!js.contains(USER_PROMPT_MARKER));
+}
+
+/// A cloud that refuses every request while `down` is set, and once it
+/// answers grants 51Did and answers each data request with an empty device.
+struct RecoveringCloud {
+    down: Arc<AtomicBool>,
+}
+
+impl CloudHttpClient for RecoveringCloud {
+    fn send(&self, request: &CloudHttpRequest) -> std::result::Result<CloudHttpResponse, String> {
+        if self.down.load(Ordering::Relaxed) {
+            return Err("connection refused".to_owned());
+        }
+        let body = if request.url.contains("accessibleproperties") {
+            r#"{"Products":{"FODid":{"Properties":[{"Name":"IdProbGlobal","Type":"String"}]}}}"#
+        } else if request.url.contains("evidencekeys") {
+            r#"["header.user-agent"]"#
+        } else {
+            r#"{"device":{}}"#
+        };
+        Ok(CloudHttpResponse {
+            status: 200,
+            body: body.to_owned(),
+            retry_after: None,
+        })
+    }
+}
+
+/// A pipeline of the request engine, the JSON builder and `element`.
+fn cloud_pipeline(
+    engine: &Arc<CloudRequestEngine>,
+    element: JavaScriptBuilderElement,
+) -> Arc<Pipeline> {
+    Pipeline::builder()
+        .add_element(Arc::clone(engine) as Arc<dyn FlowElement>)
+        .add_element(Arc::new(JsonBuilderElement::new()))
+        .add_element(Arc::new(element))
+        .suppress_process_exceptions(true)
+        .build()
+        .expect("pipeline builds")
+}
+
+/// The script one request through `pipeline` gets, whatever the request
+/// engine made of it.
+fn render_through(pipeline: &Arc<Pipeline>) -> String {
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("header.host", "example.com")
+            .build(),
+    );
+    let _ = data.process();
+    data.get(JAVASCRIPT_BUILDER_DATA_KEY)
+        .expect("javascript builder data present")
+        .javascript()
+        .to_owned()
+}
+
+#[test]
+fn user_prompt_section_waits_for_discovery_on_a_shared_engine() {
+    let down = Arc::new(AtomicBool::new(true));
+    let engine = Arc::new(
+        CloudRequestEngine::builder()
+            .resource_key("test-resource-key")
+            .http_client(Arc::new(RecoveringCloud {
+                down: Arc::clone(&down),
+            }))
+            .recovery_seconds(0.0)
+            .build()
+            .expect("a transient failure does not fail the build"),
+    );
+    let configure = || {
+        JavaScriptBuilderElement::builder()
+            .set_minify(false)
+            .set_protocol("https")
+            .unwrap()
+    };
+    let shared = cloud_pipeline(
+        &engine,
+        configure()
+            .set_shared_cloud_request_engine(Arc::clone(&engine))
+            .build(),
+    );
+    let decided = cloud_pipeline(
+        &engine,
+        configure().set_cloud_request_engine(&engine).build(),
+    );
+
+    for pipeline in [&shared, &decided] {
+        assert!(
+            !render_through(pipeline).contains(USER_PROMPT_MARKER),
+            "left out while discovery is pending"
+        );
+    }
+
+    down.store(false, Ordering::Relaxed);
+    assert!(
+        render_through(&shared).contains(USER_PROMPT_MARKER),
+        "the shared engine's element renders it once discovery completes"
+    );
+    assert!(engine.has_loaded_metadata());
+    assert!(
+        !render_through(&decided).contains(USER_PROMPT_MARKER),
+        "the reference form keeps the answer it was built with"
+    );
+    down.store(true, Ordering::Relaxed);
+    assert!(
+        render_through(&shared).contains(USER_PROMPT_MARKER),
+        "and keeps rendering it once it is settled"
+    );
 }
 
 #[test]
