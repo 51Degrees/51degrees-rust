@@ -101,7 +101,10 @@ pub fn get_all_properties<S: JsonBuilderSteps + ?Sized>(
 /// The default of [`JsonBuilderSteps::get_values`].
 ///
 /// Properties are written in the order the element data lists them, and a
-/// name that only differs in case from one already written is skipped.
+/// name that only differs in case from one already written is skipped. A
+/// property that is not selected (see
+/// [`JsonBuilderElement::is_property_selected`]) is skipped too, unless it is
+/// a JavaScript property by its metadata or by its value.
 pub fn get_values<S: JsonBuilderSteps + ?Sized>(
     steps: &S,
     context: &JsonBuilderContext<'_>,
@@ -116,18 +119,36 @@ pub fn get_values<S: JsonBuilderSteps + ?Sized>(
         .filter(|name| !element.is_property_excluded(name))
         .collect();
 
+    let path = data_path.to_lowercase();
     let mut values = JsonObject::new();
     for name in &names {
-        steps.add_json_values_for_property(
-            context,
-            &mut values,
-            data_path,
-            name,
-            source.get(name),
-            false,
-        );
+        let value = source.get(name);
+        if !is_written(context, &path, name, &value) {
+            continue;
+        }
+        steps.add_json_values_for_property(context, &mut values, data_path, name, value, false);
     }
     values
+}
+
+/// True when a property is selected, or is a JavaScript property by its
+/// metadata or by its value, as JavaScript properties are always written.
+fn is_written(
+    context: &JsonBuilderContext<'_>,
+    data_path: &str,
+    name: &str,
+    value: &Result<PropertyValue, NoValueError>,
+) -> bool {
+    let element = context.element();
+    if element.selects_every_property() || matches!(value, Ok(PropertyValue::JavaScript(_))) {
+        return true;
+    }
+    let complete_name = format!("{data_path}.{name}");
+    element.is_property_selected(&complete_name)
+        || context
+            .config()
+            .javascript_properties()
+            .contains(&complete_name)
 }
 
 /// The default of [`JsonBuilderSteps::add_json_values_for_property`].

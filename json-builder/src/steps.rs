@@ -36,14 +36,16 @@ use crate::element::JsonBuilderElement;
 use crate::value::JsonObject;
 
 /// The property metadata of one pipeline that the builder needs to add the
-/// `delayexecution` and `evidenceproperties` keys.
+/// `delayexecution` and `evidenceproperties` keys, and to keep JavaScript
+/// properties when only some properties are selected.
 ///
-/// Both collections hold complete names, being the lowercased element data
+/// Each collection holds complete names, being the lowercased element data
 /// key and property name joined by a dot, for example `location.javascript`.
 #[derive(Debug, Clone, Default)]
 pub struct PipelineConfig {
     delayed_execution: HashSet<String>,
     delayed_evidence: HashMap<String, Vec<String>>,
+    javascript: HashSet<String>,
 }
 
 impl PipelineConfig {
@@ -58,6 +60,12 @@ impl PipelineConfig {
     /// listed only when at least one is.
     pub fn delayed_evidence_properties(&self) -> &HashMap<String, Vec<String>> {
         &self.delayed_evidence
+    }
+
+    /// The complete names of the JavaScript properties, item properties of a
+    /// list of records included.
+    pub fn javascript_properties(&self) -> &HashSet<String> {
+        &self.javascript
     }
 
     /// Read the available property metadata of every element whose data the
@@ -85,8 +93,11 @@ impl PipelineConfig {
         let name = property.name.to_lowercase();
         let path = format!("{data_path}.{name}");
 
-        if property.delay_execution && property.value_type == PropertyValueType::JavaScript {
-            self.delayed_execution.insert(path.clone());
+        if property.value_type == PropertyValueType::JavaScript {
+            self.javascript.insert(path.clone());
+            if property.delay_execution {
+                self.delayed_execution.insert(path.clone());
+            }
         }
         if !property.evidence_properties.is_empty() {
             // Evidence properties are named within the same element, so they
@@ -262,7 +273,9 @@ pub trait JsonBuilderSteps: Send + Sync + RefUnwindSafe {
     ///
     /// `data_path` is the dotted path of the object the values go in, for
     /// example `device` or `hardware.profiles`. The default leaves out the
-    /// excluded property names and adds each other property with
+    /// excluded property names and the properties that are not selected
+    /// (see [`JsonBuilderElement::is_property_selected`]), apart from
+    /// JavaScript properties, and adds each other property with
     /// [`add_json_values_for_property`](Self::add_json_values_for_property).
     fn get_values(
         &self,

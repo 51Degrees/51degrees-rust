@@ -36,8 +36,9 @@ use crate::steps::{DefaultJsonBuilderSteps, JsonBuilderSteps};
 /// The element and property exclusion lists start at the defaults
 /// ([`crate::DEFAULT_ELEMENT_EXCLUSION_LIST`] and
 /// [`crate::DEFAULT_PROPERTY_EXCLUSION_LIST`]). The methods below add to or
-/// replace them. All matching is case-insensitive, so names are stored
-/// lowercased. [`JsonBuilderElementBuilder::set_steps`] and
+/// replace them. [`JsonBuilderElementBuilder::set_properties`] limits the
+/// output to the listed properties. All matching is case-insensitive, so
+/// names are stored lowercased. [`JsonBuilderElementBuilder::set_steps`] and
 /// [`JsonBuilderElementBuilder::add_json_converter`] change how the output is
 /// written.
 ///
@@ -56,6 +57,7 @@ use crate::steps::{DefaultJsonBuilderSteps, JsonBuilderSteps};
 pub struct JsonBuilderElementBuilder {
     element_exclusion: HashSet<String>,
     property_exclusion: HashSet<String>,
+    selected_properties: HashSet<String>,
     steps: Arc<dyn JsonBuilderSteps>,
     converters: Vec<Arc<dyn JsonValueConverter>>,
 }
@@ -66,6 +68,7 @@ impl JsonBuilderElementBuilder {
         JsonBuilderElementBuilder {
             element_exclusion: lowercased(DEFAULT_ELEMENT_EXCLUSION_LIST),
             property_exclusion: lowercased(DEFAULT_PROPERTY_EXCLUSION_LIST),
+            selected_properties: HashSet::new(),
             steps: Arc::new(DefaultJsonBuilderSteps),
             converters: Vec::new(),
         }
@@ -127,6 +130,49 @@ impl JsonBuilderElementBuilder {
         self
     }
 
+    /// Write only these properties, replacing any list set before. An empty
+    /// list, the default, writes every property. This is the `SetProperties`
+    /// option of the
+    /// [specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/json-builder.md#configuration-options).
+    ///
+    /// Each name is a complete name, being the element data key and the
+    /// property name joined by a dot, as in `device.ismobile`. A property in
+    /// a list of records adds the list's name, as in
+    /// `hardware.profiles.hardwarename`, which keeps the `profiles` list with
+    /// only that property in each record. Listing `hardware.profiles` keeps
+    /// every property of each record. Names are matched without regard to
+    /// case.
+    ///
+    /// JavaScript properties are always written, and every element keeps its
+    /// entry, which is empty when none of its properties is selected. A
+    /// property's `nullreason`, `delayexecution` and `evidenceproperties`
+    /// keys are written with the property and left out with it. See
+    /// [`JsonBuilderElement::is_property_selected`].
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use fiftyone_json_builder::JsonBuilderElement;
+    ///
+    /// let element = JsonBuilderElement::builder()
+    ///     .set_properties(["device.ismobile", "hardware.profiles.hardwarename"])
+    ///     .build();
+    /// assert!(element.is_property_selected("device.IsMobile"));
+    /// assert!(element.is_property_selected("hardware.profiles"));
+    /// assert!(!element.is_property_selected("device.browsername"));
+    /// ```
+    pub fn set_properties<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.selected_properties = names
+            .into_iter()
+            .map(|n| n.as_ref().to_lowercase())
+            .collect();
+        self
+    }
+
     /// Add a single element data key to the exclusion list. The key is matched
     /// case-insensitively.
     pub fn exclude_element(mut self, key: impl AsRef<str>) -> Self {
@@ -170,6 +216,7 @@ impl JsonBuilderElementBuilder {
         JsonBuilderElement::from_parts(
             self.element_exclusion,
             self.property_exclusion,
+            self.selected_properties,
             self.steps,
             self.converters,
         )
@@ -181,6 +228,7 @@ impl fmt::Debug for JsonBuilderElementBuilder {
         f.debug_struct("JsonBuilderElementBuilder")
             .field("element_exclusion", &self.element_exclusion)
             .field("property_exclusion", &self.property_exclusion)
+            .field("selected_properties", &self.selected_properties)
             .field("converters", &self.converters.len())
             .finish_non_exhaustive()
     }

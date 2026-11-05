@@ -65,6 +65,11 @@ const SEQUENCE_NUMBER_NOT_PRESENT: &str = "The value for the 'sequence' paramete
 /// - `<name>evidenceproperties` lists the dotted paths of the JavaScript
 ///   properties whose execution would gather evidence for this property.
 ///
+/// When the builder is given a list of properties with
+/// [`JsonBuilderElementBuilder::set_properties`], only those and the
+/// JavaScript properties are written. See
+/// [`is_property_selected`](Self::is_property_selected).
+///
 /// Three top-level keys may be appended:
 ///
 /// - `javascriptProperties` is an array of the dotted paths
@@ -168,6 +173,7 @@ pub struct JsonBuilderElement {
     properties: Vec<PropertyMetaData>,
     element_exclusion: HashSet<String>,
     property_exclusion: HashSet<String>,
+    selected_properties: HashSet<String>,
     steps: Arc<dyn JsonBuilderSteps>,
     converters: Vec<Arc<dyn JsonValueConverter>>,
 }
@@ -208,6 +214,34 @@ impl JsonBuilderElement {
     /// is matched without regard to case.
     pub fn is_property_excluded(&self, name: &str) -> bool {
         self.property_exclusion.contains(&name.to_lowercase())
+    }
+
+    /// True if the property with this complete name, such as
+    /// `device.ismobile`, is among the properties given to
+    /// [`JsonBuilderElementBuilder::set_properties`].
+    ///
+    /// Every name is selected when that list is empty. Otherwise a name is
+    /// selected when it is listed, when a listed name lies under it, so
+    /// `hardware.profiles` is selected for `hardware.profiles.hardwarename`,
+    /// or when it lies under a listed name. Names are matched without regard
+    /// to case. The default steps write a JavaScript property whatever this
+    /// gives.
+    pub fn is_property_selected(&self, complete_name: &str) -> bool {
+        if self.selects_every_property() {
+            return true;
+        }
+        let name = complete_name.to_lowercase();
+        self.selected_properties.contains(&name)
+            || self
+                .selected_properties
+                .iter()
+                .any(|listed| lies_under(listed, &name) || lies_under(&name, listed))
+    }
+
+    /// True when no list of properties was given, so every property is
+    /// selected.
+    pub(crate) fn selects_every_property(&self) -> bool {
+        self.selected_properties.is_empty()
     }
 
     /// The request sequence number that the `javascriptProperties` cap is
@@ -275,6 +309,7 @@ impl JsonBuilderElement {
     pub(crate) fn from_parts(
         element_exclusion: HashSet<String>,
         property_exclusion: HashSet<String>,
+        selected_properties: HashSet<String>,
         steps: Arc<dyn JsonBuilderSteps>,
         converters: Vec<Arc<dyn JsonValueConverter>>,
     ) -> Self {
@@ -290,10 +325,18 @@ impl JsonBuilderElement {
             )],
             element_exclusion,
             property_exclusion,
+            selected_properties,
             steps,
             converters,
         }
     }
+}
+
+/// True when `name` lies under `parent`, as `hardware.profiles.hardwarename`
+/// lies under `hardware.profiles`.
+fn lies_under(name: &str, parent: &str) -> bool {
+    name.strip_prefix(parent)
+        .is_some_and(|rest| rest.starts_with('.'))
 }
 
 impl Default for JsonBuilderElement {

@@ -45,6 +45,10 @@
 //! [`JAVASCRIPT_PROPERTIES_KEY`] array, and any flow errors and warnings are
 //! appended under [`ERRORS_KEY`] and [`WARNINGS_KEY`].
 //!
+//! [`JsonBuilderElementBuilder::set_properties`] limits the output to the
+//! listed properties, as the specification's `SetProperties` option does.
+//! JavaScript properties are always written.
+//!
 //! ## Changing the output
 //!
 //! Each step the builder takes is a method of [`JsonBuilderSteps`] with a
