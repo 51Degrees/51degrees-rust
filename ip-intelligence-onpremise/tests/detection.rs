@@ -465,12 +465,13 @@ fn enterprise_resolves_location_for_a_public_ip() {
     }
 }
 
-/// A property the ASN data file does not hold, but that `IpIntelligenceData`
-/// has an accessor for, needs a data file upgrade, as .NET gives it. The
-/// engine's metadata does not list the property, so the message names no
-/// tiers.
+/// A property the engine was not built with, but that `IpIntelligenceData`
+/// has an accessor for, is not in the engine's metadata, so the
+/// specification's typed accessor rule gives a data file upgrade and the
+/// message names no tiers. .NET gives `Unknown` here, because
+/// `IIpDataOnPremise` declares no properties of its own.
 #[test]
-fn a_property_the_asn_file_lacks_needs_a_data_file_upgrade() {
+fn an_unlisted_property_with_an_accessor_needs_a_data_file_upgrade() {
     let Some(file) = asn_data_file() else {
         eprintln!("no ASN data file found; skipping missing property test");
         return;
@@ -517,5 +518,43 @@ fn an_unknown_property_has_an_unknown_reason() {
         result.description,
         "Property 'NotAProperty' not found in data for element 'ip'. The reason for this \
          is unknown. Please check that the aspect and property name are correct."
+    );
+}
+
+/// The ASN file's name.
+const ASN_FILE_NAME: &str = "51Degrees-IPIV4AsnIpiV41.ipi";
+
+/// An engine built with no properties named lists every typed property with
+/// the data file's own tier, including those the ASN file does not hold. The
+/// typed accessor rule is only for a property the metadata does not list, so
+/// the reason is unknown rather than an upgrade to the tier the file has.
+#[test]
+fn a_listed_property_the_asn_file_lacks_has_an_unknown_reason() {
+    let Some(file) = asn_data_file() else {
+        eprintln!("no ASN data file found; skipping missing property test");
+        return;
+    };
+    if file.file_name().and_then(|name| name.to_str()) != Some(ASN_FILE_NAME) {
+        eprintln!("{} is not the ASN file; skipping", file.display());
+        return;
+    }
+    let Some(engine) = build_engine(&file, PerformanceProfile::HighPerformance, &[]) else {
+        return;
+    };
+    assert!(
+        engine
+            .aspect_properties()
+            .iter()
+            .any(|p| p.name() == "CountryCode"),
+        "this test covers a property the engine lists although the file lacks it"
+    );
+
+    let result = engine.missing_property_reason("CountryCode");
+
+    assert_eq!(result.reason, MissingPropertyReason::Unknown);
+    assert!(
+        !result.description.contains("license/data"),
+        "{}",
+        result.description
     );
 }
