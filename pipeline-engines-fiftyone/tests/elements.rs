@@ -429,7 +429,8 @@ impl FlowElement for Wrapped {
 }
 
 /// An element that wraps another and passes on every call but
-/// `add_pipeline`, as a wrapper written before that method existed does.
+/// `add_pipeline`, so the wrapped element's own `add_pipeline` is never
+/// called.
 struct WrappedWithoutAddPipeline(Arc<dyn FlowElement>);
 
 impl FlowElement for WrappedWithoutAddPipeline {
@@ -829,7 +830,6 @@ fn share_usage_counts_only_a_200_as_success_and_logs_the_answer() {
     }
 }
 
-/// Poll `condition` until it returns true or the timeout elapses.
 /// A pipeline holding only `element`.
 fn pipeline_of(element: Arc<dyn FlowElement>) -> Result<Arc<Pipeline>> {
     Pipeline::builder().add_element(element).build()
@@ -882,11 +882,21 @@ fn share_usage_refuses_two_places_in_one_pipeline_and_stays_free() {
         .add_element(Arc::clone(&share) as Arc<dyn FlowElement>)
         .add_element(Arc::clone(&share) as Arc<dyn FlowElement>)
         .build();
-    assert!(refused(twice));
+    match twice {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(
+                message.contains("added to the same pipeline more than once"),
+                "{message}"
+            );
+        }
+        Err(other) => panic!("unexpected error {other:?}"),
+        Ok(_) => panic!("the same pipeline twice was not refused"),
+    }
     // The refused pipeline was dropped, so the element can be used again.
     assert!(pipeline_of(share).is_ok());
 }
 
+/// Poll `condition` until it returns true or the timeout elapses.
 fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) {
     let start = std::time::Instant::now();
     while start.elapsed() < timeout {

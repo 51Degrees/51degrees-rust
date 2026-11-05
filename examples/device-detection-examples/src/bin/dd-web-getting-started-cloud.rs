@@ -84,8 +84,9 @@ pub struct Options {
 /// test uses to assemble the app offline. Passing `None` lets the builder fetch
 /// the discovery from the cloud, which is the live path the binary takes.
 ///
-/// `share_usage` is true when the binary serves the page. The tests pass false,
-/// so a test run sends nothing to 51Degrees.
+/// `share_usage` is true when the binary serves the page. The tests that process
+/// requests pass false, so a test run sends nothing to 51Degrees, and the one
+/// that passes true processes no request.
 pub fn build_app(
     resource_key: &str,
     endpoint: Option<&str>,
