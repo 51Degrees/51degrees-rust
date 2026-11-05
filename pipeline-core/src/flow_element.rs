@@ -52,9 +52,12 @@
 //! created inside `process`; any hot mutable state (for example a reloadable
 //! data file) belongs behind a synchronisation primitive owned by the element.
 
+use std::sync::Arc;
+
 use crate::error::Result;
 use crate::evidence::EvidenceKeyFilter;
 use crate::flow_data::FlowData;
+use crate::pipeline::Pipeline;
 use crate::property::PropertyMetaData;
 
 /// The basic building block of a pipeline.
@@ -123,5 +126,21 @@ pub trait FlowElement: Send + Sync {
     /// it wraps another and should report the inner type.
     fn type_name(&self) -> &'static str {
         std::any::type_name::<Self>()
+    }
+
+    /// Called by [`crate::PipelineBuilder::build`] once for each place this
+    /// element has in the pipeline being built, after the pipeline is made and
+    /// before it is returned. An error fails the build. The default does
+    /// nothing.
+    ///
+    /// One element instance can be added to several pipelines. An element that
+    /// keeps state for its pipeline must keep that state for each pipeline, or
+    /// refuse a second pipeline here, as the
+    /// [multi-pipeline elements specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/advanced-features/multi-pipeline-elements.md)
+    /// says. Hold the pipeline as a [`std::sync::Weak`], because the pipeline
+    /// holds the element and a clone would keep both alive. An element that
+    /// wraps another passes the call on to it.
+    fn add_pipeline(&self, _pipeline: &Arc<Pipeline>) -> Result<()> {
+        Ok(())
     }
 }

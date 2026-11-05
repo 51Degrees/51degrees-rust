@@ -38,7 +38,10 @@ use fiftyone_pipeline_core::{Evidence, Pipeline};
 use fiftyone_cloud_request_engine::{
     CloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine, HttpMethod,
 };
-use fiftyone_device_detection_cloud::{DeviceData, DeviceDetectionCloudEngine, DEVICE_DATA_KEY};
+use fiftyone_device_detection_cloud::{
+    DeviceData, DeviceDetectionCloudEngine, HardwareProfileCloudEngine, DEVICE_DATA_KEY,
+    HARDWARE_DATA_KEY,
+};
 
 /// A fake transport that answers the three cloud endpoints from in-memory
 /// fixtures, so the whole pipeline runs without a network. Requests are routed
@@ -141,6 +144,77 @@ fn fake_pipeline() -> (Arc<Pipeline>, Arc<CloudRequestEngine>) {
         .expect("pipeline builds");
 
     (pipeline, request_engine)
+}
+
+/// A transport whose data endpoint fails, as in a cloud outage.
+struct DataDownCloud;
+
+impl CloudHttpClient for DataDownCloud {
+    fn send(&self, request: &CloudHttpRequest) -> Result<CloudHttpResponse, String> {
+        let (status, body) = if request.url.contains("accessibleproperties") {
+            (200, ACCESSIBLE_PROPERTIES.to_owned())
+        } else if request.url.contains("evidencekeys") {
+            (200, EVIDENCE_KEYS.to_owned())
+        } else {
+            (500, r#"{"errors":["the service failed"]}"#.to_owned())
+        };
+        Ok(CloudHttpResponse {
+            status,
+            body,
+            retry_after: None,
+        })
+    }
+}
+
+/// When the cloud request fails, both engines still store their data, empty,
+/// as .NET's engines store theirs before processing. An element after them
+/// that reads `device` or `hardware`, such as a derived property element,
+/// then finds the data, so it cannot take the failure for a pipeline in the
+/// wrong order.
+#[test]
+fn a_failed_request_stores_empty_device_and_hardware_data() {
+    let request_engine = Arc::new(
+        CloudRequestEngine::builder()
+            .resource_key("test-resource-key")
+            .http_client(Arc::new(DataDownCloud))
+            .build()
+            .expect("request engine builds"),
+    );
+    let device_engine = DeviceDetectionCloudEngine::builder()
+        .cloud_request_engine(request_engine.clone())
+        .build();
+    let hardware_engine = HardwareProfileCloudEngine::builder()
+        .cloud_request_engine(request_engine.clone())
+        .build();
+    let pipeline = Pipeline::builder()
+        .add_element(request_engine)
+        .add_element(Arc::new(device_engine))
+        .add_element(Arc::new(hardware_engine))
+        .suppress_process_exceptions(true)
+        .build()
+        .expect("pipeline builds");
+    let mut data =
+        pipeline.create_flow_data_with(Evidence::builder().add("header.user-agent", "A").build());
+    data.process().expect("errors are suppressed");
+
+    let keys: Vec<&str> = data
+        .errors()
+        .iter()
+        .map(|error| error.element_data_key.as_str())
+        .collect();
+    assert_eq!(
+        keys,
+        vec!["cloud-response", "device", "hardware"],
+        "the request engine's error, then one from each engine that did not process"
+    );
+    let device = data
+        .get(DEVICE_DATA_KEY)
+        .expect("the device data is stored");
+    assert!(!device.is_mobile().has_value());
+    let hardware = data
+        .get(HARDWARE_DATA_KEY)
+        .expect("the hardware data is stored");
+    assert!(hardware.is_empty());
 }
 
 #[test]

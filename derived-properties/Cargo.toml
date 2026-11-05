@@ -19,6 +19,10 @@ thiserror.workspace = true
 # are booleans, which is the schema the shared reference tools read with. It is
 # pure Rust, so the crate still builds for wasm32.
 serde_norway.workspace = true
+# Logs a deprecated script at build and a source element that did not run
+# before this one, through the log facade, which does nothing until the
+# application installs a logger.
+log = "0.4"
 
 [package.metadata.docs.rs]
 all-features = true

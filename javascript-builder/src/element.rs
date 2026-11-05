@@ -219,6 +219,16 @@ impl JavaScriptBuilderElement {
         JavaScriptBuilderElementBuilder::new()
     }
 
+    /// The JavaScript this element produces for the flow data around the given
+    /// JSON, without adding it to the flow data.
+    ///
+    /// The client-side JavaScript endpoint serves this when the element left
+    /// no data for a request, with `json` being the JSON builder's output for
+    /// the same request.
+    pub fn javascript_for(&self, data: &FlowData, json: &str) -> String {
+        self.build_javascript(data, json.to_owned())
+    }
+
     /// Internal constructor used by the builder.
     pub(crate) fn from_parts(
         host: String,
@@ -487,9 +497,10 @@ impl JavaScriptBuilderElement {
             .unwrap_or_default()
     }
 
-    /// Render and (optionally) minify the JavaScript for this request. When
-    /// minification fails the unminified script is returned.
-    fn build_javascript(&self, data: &FlowData) -> String {
+    /// Render and (optionally) minify the JavaScript for this request around
+    /// the given JSON. When minification fails the unminified script is
+    /// returned.
+    fn build_javascript(&self, data: &FlowData, json_object: String) -> String {
         let protocol = self.resolve_protocol(data);
         let host = self.resolve_host(data);
         let object_name = self.resolve_object_name(data);
@@ -498,7 +509,6 @@ impl JavaScriptBuilderElement {
         let supports_promises = Self::supports_promises(data);
         let supports_fetch = Self::supports_fetch(data);
 
-        let json_object = Self::json_object(data);
         let parameters = Self::build_parameters(data);
         let session_id = Self::rendered_session_id(data);
         let sequence = Self::rendered_sequence(data);
@@ -553,7 +563,7 @@ impl Default for JavaScriptBuilderElement {
 
 impl FlowElement for JavaScriptBuilderElement {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        let content = self.build_javascript(data);
+        let content = self.build_javascript(data, Self::json_object(data));
 
         let result = data.get_or_add(
             JAVASCRIPT_BUILDER_DATA_KEY,
