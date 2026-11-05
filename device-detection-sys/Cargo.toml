@@ -17,7 +17,7 @@ build = "build.rs"
 include = ["src/**", "cxx/**", "build.rs", "README.md"]
 
 [dependencies]
-fiftyone-common-sys = { version = "4.5.2", path = "../common-sys" }
+fiftyone-common-sys = { version = "=4.5.2", path = "../common-sys" }
 
 [build-dependencies]
 cc = "1.2"
