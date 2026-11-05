@@ -101,8 +101,8 @@ pub use data_update_status::{AutoUpdateStatus, DataUpdateError, DataUpdateResult
 pub use engine_builder::{AspectEngineBuilderOptions, DEFAULT_CACHE_SIZE};
 pub use lazy_loading::{LazyLoadingConfiguration, LAZY_LOADING_DEFAULT_TIMEOUT_MS};
 pub use missing_property::{
-    missing_property_reason, EngineDeployment, EngineMissingPropertyContext, MissingPropertyResult,
-    MissingPropertyService,
+    missing_property_reason, missing_property_reason_for_engines, EngineDeployment,
+    EngineMissingPropertyContext, MissingPropertyResult, MissingPropertyService,
 };
 pub use on_premise_aspect_engine::OnPremiseAspectEngine;
 

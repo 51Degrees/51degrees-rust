@@ -24,6 +24,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 use fiftyone_json_builder::JSON_BUILDER_DATA_KEY;
 use fiftyone_pipeline_core::constants::{
@@ -37,7 +38,7 @@ use fiftyone_pipeline_engines_fiftyone::constants::{EVIDENCE_SEQUENCE, EVIDENCE_
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 
-use crate::builder::is_valid_object_name;
+use crate::builder::{grants_51did, is_valid_object_name, SharedEngine, UserPromptSource};
 use crate::callback_url::{callback_url, CallbackUrl};
 use crate::constants::{
     DELAY_EXECUTION_MARKER, EVIDENCE_ENABLE_COOKIES, EVIDENCE_HOST_KEY, EVIDENCE_OBJECT_NAME,
@@ -152,9 +153,11 @@ fn safe_sequence(sequence: i32) -> i32 {
 ///   property is true.
 /// - **user prompt**: true when the builder was given a cloud request engine
 ///   whose licensed products include 51Did, through
-///   [`JavaScriptBuilderElementBuilder::set_cloud_request_engine`]. The
-///   section it controls sits inside the update section, so it is only
-///   rendered when a callback URL was built as well.
+///   [`JavaScriptBuilderElementBuilder::set_shared_cloud_request_engine`] or
+///   [`JavaScriptBuilderElementBuilder::set_cloud_request_engine`], and false
+///   while the shared engine's discovery has not completed. The section it
+///   controls sits inside the update section, so it is only rendered when a
+///   callback URL was built as well.
 ///
 /// # Example
 ///
@@ -192,9 +195,12 @@ pub struct JavaScriptBuilderElement {
     object_name: String,
     enable_cookies: bool,
     minify: bool,
-    /// Whether the script carries the user prompt section, decided by the
-    /// builder from the cloud request engine's licensed products.
-    user_prompt: bool,
+    /// Whether the script carries the user prompt section, once that is
+    /// settled from the cloud request engine's licensed products.
+    user_prompt_settled: OnceLock<bool>,
+    /// The request engine whose licensed products settle
+    /// `user_prompt_settled`, when the builder was given a shared one.
+    user_prompt_engine: Option<SharedEngine>,
     /// Set once a callback URL that is not valid has been logged, because a
     /// misconfigured element would otherwise log on every request.
     invalid_url_logged: AtomicBool,
@@ -221,13 +227,17 @@ impl JavaScriptBuilderElement {
         object_name: String,
         enable_cookies: bool,
         minify: bool,
-        user_prompt: bool,
+        user_prompt: UserPromptSource,
     ) -> Self {
         // The template is parsed once at construction. The embedded source is a
         // valid Mustache template, so parsing it cannot fail in practice. The
         // expect documents that invariant.
         let template = Template::parse(TEMPLATE_SOURCE)
             .expect("the embedded JavaScriptResource template is valid Mustache");
+        let (user_prompt_settled, user_prompt_engine) = match user_prompt {
+            UserPromptSource::Decided(render) => (OnceLock::from(render), None),
+            UserPromptSource::Engine(engine) => (OnceLock::new(), Some(engine)),
+        };
 
         JavaScriptBuilderElement {
             evidence_key_filter: EvidenceKeyFilterWhitelist::new([
@@ -248,9 +258,30 @@ impl JavaScriptBuilderElement {
             object_name,
             enable_cookies,
             minify,
-            user_prompt,
+            user_prompt_settled,
+            user_prompt_engine,
             invalid_url_logged: AtomicBool::new(false),
             minify_error_logged: AtomicBool::new(false),
+        }
+    }
+
+    /// Whether this script carries the user prompt section. The answer is
+    /// kept once the request engine's licensed products are known. Until then
+    /// the section is left out without keeping that answer, as a result
+    /// obtained before discovery completes must not be kept.
+    fn user_prompt(&self) -> bool {
+        if let Some(&render) = self.user_prompt_settled.get() {
+            return render;
+        }
+        match self
+            .user_prompt_engine
+            .as_ref()
+            .map(|engine| engine.public_properties())
+        {
+            Some(Ok(products)) => *self
+                .user_prompt_settled
+                .get_or_init(|| grants_51did(products)),
+            _ => false,
         }
     }
 
@@ -489,7 +520,7 @@ impl JavaScriptBuilderElement {
             enable_cookies,
             update_enabled,
             has_delayed_properties,
-            self.user_prompt,
+            self.user_prompt(),
         );
 
         let content = resource.render(&self.template);
