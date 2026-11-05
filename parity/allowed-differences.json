@@ -160,7 +160,7 @@
   {
     "path": "properties.device.*javascript*",
     "kind": "type",
-    "reason": "The crates take Device Detection property types from a table compiled into the crate rather than from the data file, so the JavaScript properties are strings.",
+    "reason": "The crates read the JavaScript type from the data file (data_file_value_type in native/src/dd.rs), but native_value in device-detection-onpremise gives every type other than true or false, a number or a list as a string, so the JavaScript properties are strings where .NET gives its JavaScript type.",
     "issue": 223
   },
   {
