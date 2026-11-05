@@ -33,7 +33,8 @@
 //! can embed. It forwards the core [`ElementData`] property bag to a
 //! [`MapElementData`] and tracks the engine keys and cache-hit flag for the
 //! aspect layer. With a [`MissingPropertySource`] from each engine that wrote
-//! to it, it also gives the reason a property it does not hold is missing.
+//! to it, it also gives the reason a property it does not hold is missing,
+//! and logs a warning for each read of such a property.
 
 use std::any::Any;
 use std::sync::Arc;
@@ -181,17 +182,51 @@ impl AspectDataBase {
                 .map(|source| source.reason(property_name)),
         )
     }
+
+    /// Why `property_name` is missing, as
+    /// [`missing_property_reason`](Self::missing_property_reason) gives it,
+    /// logging a warning that names `data_type` when there is a reason.
+    ///
+    /// Call this for a read of a property the data does not hold, so each
+    /// such read logs once, as .NET's aspect data does.
+    pub fn missing_property(
+        &self,
+        property_name: &str,
+        data_type: &str,
+    ) -> Option<MissingPropertyResult> {
+        let missing = self.missing_property_reason(property_name)?;
+        log::warn!(
+            "Property '{property_name}' missing from aspect data '{data_type}'. {:?}",
+            missing.reason
+        );
+        Some(missing)
+    }
+
+    /// True when an engine added a [`MissingPropertySource`], so a property
+    /// the data does not hold is known to be missing.
+    pub fn has_missing_property_sources(&self) -> bool {
+        !self.missing_property_sources.is_empty()
+    }
 }
 
 impl ElementData for AspectDataBase {
     /// The value of a property in the bag. For a property the bag does not
     /// hold, the error carries the reason it is missing when a source was
-    /// added, and otherwise the bag's own explanation.
+    /// added, and a warning is logged, and otherwise the bag's own
+    /// explanation.
     fn get(&self, name: &str) -> Result<PropertyValue, NoValueError> {
         self.values.get(name).map_err(|absent| {
-            self.missing_property_reason(name)
+            self.missing_property(name, "AspectDataBase")
                 .map_or(absent, |missing| NoValueError::new(missing.description))
         })
+    }
+
+    /// Whether the bag holds the property. Without a
+    /// [`MissingPropertySource`] it answers `true`, because a cloud engine
+    /// leaves a property with no value out of the bag, so the bag alone
+    /// cannot tell that property from one the data lacks.
+    fn has_property(&self, name: &str) -> bool {
+        !self.has_missing_property_sources() || self.values.has_property(name)
     }
 
     fn keys(&self) -> Vec<String> {
@@ -320,6 +355,30 @@ mod tests {
         assert_eq!(
             data.missing_property_reason("NotAProperty").unwrap().reason,
             MissingPropertyReason::Unknown
+        );
+    }
+
+    #[test]
+    fn a_source_lets_the_data_say_what_it_holds() {
+        let mut data = AspectDataBase::new("device").set("PlatformName", "iOS");
+        assert!(!data.has_missing_property_sources());
+        assert!(data.has_property("NotAProperty"));
+
+        data.add_missing_property_source(source("device", "Lite"));
+        assert!(data.has_missing_property_sources());
+        assert!(data.has_property("platformname"));
+        assert!(!data.has_property("IsMobile"));
+        assert!(!data.has_property("NotAProperty"));
+    }
+
+    #[test]
+    fn missing_property_gives_the_same_reason() {
+        let mut data = AspectDataBase::new("device");
+        assert_eq!(data.missing_property("IsMobile", "AspectDataBase"), None);
+        data.add_missing_property_source(source("device", "Lite"));
+        assert_eq!(
+            data.missing_property("IsMobile", "AspectDataBase"),
+            data.missing_property_reason("IsMobile")
         );
     }
 

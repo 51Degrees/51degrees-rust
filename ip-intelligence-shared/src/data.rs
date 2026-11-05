@@ -92,6 +92,9 @@ pub const WEIGHTED_RECORD_VALUE_KEY: &str = "value";
 /// weighting multiplier in the dynamic property bag mirror.
 pub const WEIGHTED_RECORD_WEIGHT_KEY: &str = "weight";
 
+/// The type the warning for a read of a missing property names.
+const DATA_TYPE_NAME: &str = "IpIntelligenceDataBase";
+
 // ---------------------------------------------------------------------------
 // Value stores
 // ---------------------------------------------------------------------------
@@ -328,7 +331,8 @@ impl fmt::Debug for DeferredValues {
 /// When the engine added a
 /// [`MissingPropertySource`](fiftyone_pipeline_engines::MissingPropertySource)
 /// to the embedded [`AspectDataBase`], its no-value carries the reason, as
-/// .NET's `PropertyMissingException` does.
+/// .NET's `PropertyMissingException` does, and each read of the property logs
+/// a warning, as .NET's aspect data does.
 #[derive(Debug, Clone)]
 pub struct IpIntelligenceDataBase {
     base: AspectDataBase,
@@ -402,12 +406,25 @@ impl IpIntelligenceDataBase {
 
     /// The no-value for a property this data does not hold, carrying the
     /// reason it is missing when the engine gave a source for one, and the
-    /// default no-value otherwise.
+    /// default no-value otherwise. A reason also logs a warning.
     fn missing<T>(&self, name: &str) -> AspectPropertyValue<T> {
-        match self.base.missing_property_reason(name) {
+        match self.base.missing_property(name, DATA_TYPE_NAME) {
             Some(missing) => AspectPropertyValue::no_value(missing.description),
             None => AspectPropertyValue::empty(),
         }
+    }
+
+    /// Whether the property is set on this data directly, with or without a
+    /// value, or the reader can read it.
+    fn holds(&self, name: &str) -> bool {
+        let key = key(name);
+        self.base.values().get_value(name).is_some()
+            || self.strings.contains_key(&key)
+            || self.floats.contains_key(&key)
+            || self.integers.contains_key(&key)
+            || self.booleans.contains_key(&key)
+            || self.weighted_strings.contains_key(&key)
+            || self.readable(name).is_some()
     }
 
     /// Borrow the embedded [`AspectDataBase`], which holds the values set on
@@ -625,9 +642,21 @@ impl ElementData for IpIntelligenceDataBase {
             Some((deferred, position)) => deferred
                 .with(position, |values| values.base.get(name))
                 .unwrap_or_else(|message| Err(NoValueError::new(message))),
-            // The embedded base gives the reason the property is missing.
-            None => self.base.get(name),
+            // The property is missing, and the embedded base gives the reason.
+            None => self.base.values().get(name).map_err(|absent| {
+                self.base
+                    .missing_property(name, DATA_TYPE_NAME)
+                    .map_or(absent, |missing| NoValueError::new(missing.description))
+            }),
         }
+    }
+
+    /// Whether the property is set on this data or the reader can read it.
+    /// Without a
+    /// [`MissingPropertySource`](fiftyone_pipeline_engines::MissingPropertySource)
+    /// it answers `true`, as the embedded [`AspectDataBase`] does.
+    fn has_property(&self, name: &str) -> bool {
+        !self.base.has_missing_property_sources() || self.holds(name)
     }
 
     /// The names of the properties that have a value. With a reader attached
@@ -1097,6 +1126,33 @@ mod tests {
             data.get("Town").unwrap_err().message,
             "No value for property 'Town'."
         );
+    }
+
+    #[test]
+    fn a_source_lets_the_data_say_what_it_holds() {
+        let (reader, reads) = CountingReader::new();
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader);
+        data.set_string("IpRangeStart", "192.0.2.0");
+        data.set_float_no_value("AccuracyRadiusMin", "no radius for this range");
+        assert!(data.has_property("Town"));
+
+        data.base_mut()
+            .add_missing_property_source(missing_property_source());
+        // Set directly, set with no value, then read with a value, with none,
+        // and failing.
+        for name in [
+            "IpRangeStart",
+            "accuracyradiusmin",
+            "Country",
+            "Region",
+            "Areas",
+        ] {
+            assert!(data.has_property(name), "{name}");
+        }
+        assert!(!data.has_property("Town"));
+        assert!(!data.has_property("NotAProperty"));
+        // Asking reads nothing.
+        assert_eq!(reads_of(&reads, "country"), 0);
     }
 
     // WebAssembly has no threads to spawn.
