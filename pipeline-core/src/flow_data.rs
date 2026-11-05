@@ -206,8 +206,10 @@ impl FlowData {
     /// for later elements writes it to its element data, and downstream lookups
     /// use this method to read either source transparently.
     ///
-    /// The search is: every element data is asked for the property by its full
-    /// name. If exactly one element data has a value, it is returned. If more
+    /// The search is: every element data that holds the property, as
+    /// [`ElementData::has_property`] says, is asked for it by its full name,
+    /// so data known to lack it is not asked and logs nothing. If exactly one
+    /// element data has a value, it is returned. If more
     /// than one does, that is ambiguous and an error is returned, as the
     /// specification allows. If none do, the value is taken from evidence (as a
     /// [`PropertyValue::String`]). Returns `Err(NoValueError)` if nothing
@@ -218,6 +220,9 @@ impl FlowData {
     ) -> std::result::Result<PropertyValue, Error> {
         let mut found: Option<PropertyValue> = None;
         for boxed in self.data.values() {
+            if !boxed.has_property(name) {
+                continue;
+            }
             if let Ok(value) = boxed.get(name) {
                 if found.is_some() {
                     return Err(Error::configuration(format!(
