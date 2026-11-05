@@ -748,3 +748,13 @@ fn a_request_without_device_data_leaves_later_visitors_unaffected() {
          rendered without it"
     );
 }
+
+/// The builder and the element are `Send`, `Sync`, `UnwindSafe` and
+/// `RefUnwindSafe`, as removing an auto trait from a public type breaks
+/// callers. This test fails to compile if either loses one.
+#[test]
+fn the_builder_and_element_keep_their_auto_traits() {
+    fn has_auto_traits<T: Send + Sync + std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
+    has_auto_traits::<fiftyone_javascript_builder::JavaScriptBuilderElementBuilder>();
+    has_auto_traits::<JavaScriptBuilderElement>();
+}

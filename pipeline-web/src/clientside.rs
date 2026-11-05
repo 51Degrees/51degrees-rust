@@ -74,6 +74,8 @@
 //! different list to [`EndpointOptions::new`].
 
 use std::hash::{BuildHasher, Hash, Hasher};
+use std::ops::Deref;
+use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::sync::Arc;
 
 use ahash::RandomState;
@@ -129,13 +131,32 @@ pub struct EndpointOptions {
 
     /// The pipeline's list, for options from
     /// [`crate::WebPipeline::endpoint_options`].
-    pipeline_vary: Option<Arc<VaryList>>,
+    pipeline_vary: Option<SharedVaryList>,
 
     /// When `false`, the caching, `Vary`, `ETag` and CORS headers are not added
     /// (only `Content-Type` and `Content-Length` are), so an adapter can apply
     /// its own. The `If-None-Match` -> `304` short circuit still applies.
     /// Defaults to `true` through [`EndpointOptions::new`].
     suppress_extra_headers: bool,
+}
+
+/// A pipeline's shared `Vary` list that keeps [`EndpointOptions`]
+/// `UnwindSafe` and `RefUnwindSafe`.
+///
+/// The options only read the list's whitelists, which are set once, so a
+/// panic elsewhere cannot leave a value half changed for them to read.
+#[derive(Debug, Clone)]
+struct SharedVaryList(Arc<VaryList>);
+
+impl UnwindSafe for SharedVaryList {}
+impl RefUnwindSafe for SharedVaryList {}
+
+impl Deref for SharedVaryList {
+    type Target = VaryList;
+
+    fn deref(&self) -> &VaryList {
+        &self.0
+    }
 }
 
 impl EndpointOptions {
@@ -154,7 +175,7 @@ impl EndpointOptions {
     pub(crate) fn from_vary_list(list: Arc<VaryList>) -> Self {
         EndpointOptions {
             vary_whitelist: None,
-            pipeline_vary: Some(list),
+            pipeline_vary: Some(SharedVaryList(list)),
             suppress_extra_headers: false,
         }
     }
