@@ -54,8 +54,11 @@ use crate::group_threads::Job;
 /// filters) and the `suppress_process_exceptions` flag that controls error
 /// handling.
 pub struct Pipeline {
+    /// The elements in the order they run, which `steps` indexes.
     elements: Vec<Arc<dyn FlowElement>>,
     steps: Vec<Step>,
+    /// The elements in the order [`Pipeline::flow_elements`] lists them.
+    listed: Vec<Arc<dyn FlowElement>>,
     evidence_key_filter: EvidenceKeyFilterAggregator,
     suppress_process_exceptions: bool,
     concurrent: bool,
@@ -70,11 +73,15 @@ impl Pipeline {
         PipelineBuilder::new()
     }
 
-    /// The flow elements in this pipeline, in the order they were added. The
-    /// elements of a parallel group are listed in the order given to the
-    /// group, and the group itself is not an element.
+    /// The flow elements in this pipeline. Elements added on their own come
+    /// first, in the order they were added, then the elements of each
+    /// parallel group in the order given to the group, as .NET's
+    /// `Pipeline.FlowElements` and the
+    /// [derived property element specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/derived-property-element.md)
+    /// list them. So a position in this list does not say what ran before
+    /// what. A group itself is not an element.
     pub fn flow_elements(&self) -> &[Arc<dyn FlowElement>] {
-        &self.elements
+        &self.listed
     }
 
     /// A filter including the evidence keys usable by any element in this
@@ -434,9 +441,20 @@ impl PipelineBuilder {
         let concurrent = self.elements.iter().any(|e| e.is_concurrent())
             || self.steps.iter().any(|step| matches!(step, Step::Group(_)));
 
+        let mut listed = Vec::with_capacity(self.elements.len());
+        let mut grouped = Vec::new();
+        for step in &self.steps {
+            match step {
+                Step::Element(index) => listed.push(Arc::clone(&self.elements[*index])),
+                Step::Group(range) => grouped.extend(self.elements[range.clone()].iter().cloned()),
+            }
+        }
+        listed.append(&mut grouped);
+
         let pipeline = Arc::new(Pipeline {
             elements: self.elements,
             steps: self.steps,
+            listed,
             evidence_key_filter: aggregator,
             suppress_process_exceptions: self.suppress_process_exceptions,
             concurrent,

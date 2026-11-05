@@ -666,8 +666,10 @@ fn one_element_is_added_on_its_own_and_none_adds_nothing() {
     assert!(matches!(none, Err(Error::PipelineConfiguration { .. })));
 }
 
+/// A group's elements are listed after every element added on its own, as
+/// .NET's `Pipeline.FlowElements` lists them.
 #[test]
-fn a_pipeline_lists_a_groups_elements_in_order_with_their_evidence() {
+fn a_pipeline_lists_a_groups_elements_after_the_others_with_their_evidence() {
     let pipeline = Pipeline::builder()
         .add_element(element("before", &["query.before"], |_, _| Ok(())))
         .add_parallel_elements([
@@ -683,7 +685,7 @@ fn a_pipeline_lists_a_groups_elements_in_order_with_their_evidence() {
         .iter()
         .map(|element| element.data_key())
         .collect();
-    assert_eq!(keys, ["before", "one", "two", "after"]);
+    assert_eq!(keys, ["before", "after", "one", "two"]);
     assert!(pipeline.is_concurrent());
     let filter = pipeline.evidence_key_filter();
     for key in ["query.before", "header.one", "cookie.two", "query.after"] {
