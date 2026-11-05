@@ -8,12 +8,13 @@ Each example runs from examples/ with no arguments and with every
 51DEGREES_ variable removed, so it finds the free data files in cxx/data
 itself, downloading one that is missing. The console examples must exit 0,
 print the contact-us link for the Enterprise data file, and end with the
-"Find out more" section. The two on-premise web examples are started, and
-their page must carry the same link and section.
+"Find out more" section. A data file an example could not download fails the
+step too. The two on-premise web examples are started, and their page must
+carry the same link and section.
 
 Each example's output is printed in a group, and the lines about the
-Enterprise data file are printed outside the groups so the log shows them
-without opening one.
+Enterprise data file and any download are printed outside the groups so the
+log shows them without opening one.
 
 The examples are built against this tree's crates, through
 ci/test-examples-against-source.ps1, which leaves the working tree as it
@@ -90,21 +91,34 @@ function Start-Example([string]$Bin) {
     return $process
 }
 
-# Print an example's output in a group, and the lines about the Enterprise
-# data file after it. A page is split at each tag as well, so each line is a
-# piece of text or a link rather than the whole page.
+# An example's standard error, or an empty string.
+function Get-Errors([string]$Bin) {
+    $path = Join-Path $Logs "$Bin.err.txt"
+    if (-not (Test-Path $path)) { return "" }
+    $text = Get-Content -Raw $path
+    if ($null -eq $text) { return "" }
+    return $text
+}
+
+# Print an example's output in a group, then the lines about the Enterprise
+# data file and the download messages with the command each ran. A page is
+# split at each tag as well, so each line is a piece of text or a link rather
+# than the whole page.
 function Show-Output([string]$Bin, [string]$Text) {
+    $errors = Get-Errors $Bin
     Write-Host "::group::$Bin output"
     Write-Host $Text
-    $errors = Join-Path $Logs "$Bin.err.txt"
-    if ((Test-Path $errors) -and (Get-Item $errors).Length -gt 0) {
+    if ($errors) {
         Write-Host "--- standard error ---"
-        Write-Host (Get-Content -Raw $errors)
+        Write-Host $errors
     }
     Write-Host "::endgroup::"
     $Text -split '\r?\n|(?=<)' |
         Where-Object { $_ -match 'Enterprise data file|contact-us|Find out more' } |
         Select-Object -First 14 |
+        ForEach-Object { Write-Host "  $Bin | $($_.Trim())" }
+    $errors -split '\r?\n' |
+        Where-Object { $_ -match 'downloaded|get-data-files' } |
         ForEach-Object { Write-Host "  $Bin | $($_.Trim())" }
 }
 
@@ -136,6 +150,9 @@ function Invoke-Console($Example) {
     Show-Output $bin $text
     if ($process.ExitCode -ne 0) {
         $failures.Add("$bin exited with code $($process.ExitCode)")
+    }
+    if ((Get-Errors $bin) -match 'could not be downloaded') {
+        $failures.Add("$bin could not download a data file")
     }
     Test-Output $bin $text
 }

@@ -26,8 +26,9 @@
 //! fall back to the free data files in the data repository, which the `cxx`
 //! submodule holds at `cxx/data`. [`find_data_file`] locates each one with
 //! [`crate::find_file`] and runs the data repository's script for a file that
-//! is missing. The IP Intelligence resolver implements the tier scheme
-//! (Enterprise, ASN, Lite) that the Rust examples use.
+//! is missing, the PowerShell script on Windows and the shell script elsewhere.
+//! The IP Intelligence resolver implements the tier scheme (Enterprise, ASN,
+//! Lite) that the Rust examples use.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -137,6 +138,11 @@ pub fn ipi_data_path(tier: IpiTier) -> Option<PathBuf> {
 /// counted by where they come from.
 pub const DATA_DOWNLOAD_SOURCE: &str = "examples-51degrees-rust";
 
+/// The module path Windows PowerShell must not inherit from PowerShell 7. With
+/// PowerShell 7's module folders it cannot load its own modules, and the data
+/// repository's script stops because Get-FileHash is not recognised.
+const POWERSHELL_MODULE_PATH_ENV_VAR: &str = "PSModulePath";
+
 /// The links this process has already run the download script for. Each file
 /// is tried once, and the lock means two threads never download one together.
 static DOWNLOADS_TRIED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
@@ -159,6 +165,11 @@ pub fn find_data_file(relative_path: &str) -> Option<PathBuf> {
 /// instead of the current working directory, downloading it when it is
 /// missing. See [`find_data_file`].
 pub fn find_data_file_from(relative_path: &str, start: &Path) -> Option<PathBuf> {
+    find_data_file_for(relative_path, start, Host::current())
+}
+
+/// [`find_data_file_from`] with the download command chosen for `host`.
+fn find_data_file_for(relative_path: &str, start: &Path, host: Host) -> Option<PathBuf> {
     if let Some(found) = find_file_from(relative_path, start) {
         return Some(found);
     }
@@ -175,7 +186,7 @@ pub fn find_data_file_from(relative_path: &str, start: &Path) -> Option<PathBuf>
         // Without the link the data repository is not checked out here, so the
         // command is given relative to the root of this repository.
         let data_repository = Path::new(relative_path).parent()?.parent()?;
-        let command = DownloadCommand::new(data_repository, name);
+        let command = DownloadCommand::for_host(data_repository, name, host);
         eprintln!(
             "{name} was not found. Run these commands from the root of the \
              51degrees-rust repository to get it.\n\
@@ -184,7 +195,7 @@ pub fn find_data_file_from(relative_path: &str, start: &Path) -> Option<PathBuf>
         return None;
     };
     let data_repository = link.parent()?.parent()?;
-    let command = DownloadCommand::new(data_repository, name);
+    let command = DownloadCommand::for_host(data_repository, name, host);
     if !tried.contains(&link) {
         tried.push(link.clone());
         eprintln!("{name} is missing, so it is being downloaded by running\n{command}");
@@ -198,43 +209,84 @@ pub fn find_data_file_from(relative_path: &str, start: &Path) -> Option<PathBuf>
     None
 }
 
-/// The command that runs the data repository's download script for one file:
-/// the PowerShell script in Windows PowerShell on Windows, and the shell script
-/// in `sh` everywhere else.
+/// What the download command depends on besides the file. [`Host::current`]
+/// reads it from this process, and the tests give their own.
+#[derive(Debug, Clone, Copy)]
+struct Host {
+    /// Whether this is Windows, where the PowerShell script is run.
+    windows: bool,
+    /// Whether PowerShell 7, `pwsh`, is on the PATH.
+    has_pwsh: bool,
+}
+
+impl Host {
+    /// The host this process runs on.
+    fn current() -> Self {
+        let windows = cfg!(windows);
+        Host {
+            windows,
+            has_pwsh: windows && on_path("pwsh"),
+        }
+    }
+}
+
+/// Whether `program`, or `program.exe`, is in a folder on the PATH.
+fn on_path(program: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|folder| {
+            folder.join(program).is_file() || folder.join(format!("{program}.exe")).is_file()
+        })
+    })
+}
+
+/// The command that runs the data repository's download script for one file.
+/// On Windows that is the PowerShell script, in PowerShell 7 when it is on the
+/// PATH and otherwise in Windows PowerShell without the module path it would
+/// inherit from PowerShell 7. Everywhere else it is the shell script in `sh`.
 struct DownloadCommand {
     program: &'static str,
     arguments: Vec<String>,
+    /// Variables removed from the environment the command runs in.
+    removed: Vec<&'static str>,
 }
 
 impl DownloadCommand {
     /// The command that downloads `name` into the data repository at
-    /// `data_repository`.
-    fn new(data_repository: &Path, name: &str) -> Self {
+    /// `data_repository` on `host`.
+    fn for_host(data_repository: &Path, name: &str, host: Host) -> Self {
         let folder = command_path(data_repository);
-        let source = DATA_DOWNLOAD_SOURCE.to_owned();
-        if cfg!(windows) {
+        if host.windows {
+            let (program, removed) = if host.has_pwsh {
+                ("pwsh", Vec::new())
+            } else {
+                ("powershell", vec![POWERSHELL_MODULE_PATH_ENV_VAR])
+            };
+            let arguments = vec![
+                "-NoProfile".to_owned(),
+                "-ExecutionPolicy".to_owned(),
+                "Bypass".to_owned(),
+                "-File".to_owned(),
+                format!("{folder}\\get-data-files.ps1"),
+                name.to_owned(),
+                "-Source".to_owned(),
+                DATA_DOWNLOAD_SOURCE.to_owned(),
+            ];
             Self {
-                program: "powershell",
-                arguments: vec![
-                    "-NoProfile".to_owned(),
-                    "-ExecutionPolicy".to_owned(),
-                    "Bypass".to_owned(),
-                    "-File".to_owned(),
-                    format!("{folder}\\get-data-files.ps1"),
-                    name.to_owned(),
-                    "-Source".to_owned(),
-                    source,
-                ],
+                program,
+                arguments,
+                removed,
             }
         } else {
+            let arguments = vec![
+                format!("{folder}/get-data-files.sh"),
+                "-s".to_owned(),
+                DATA_DOWNLOAD_SOURCE.to_owned(),
+                name.to_owned(),
+            ];
             Self {
                 program: "sh",
-                arguments: vec![
-                    format!("{folder}/get-data-files.sh"),
-                    "-s".to_owned(),
-                    source,
-                    name.to_owned(),
-                ],
+                arguments,
+                removed: Vec::new(),
             }
         }
     }
@@ -243,16 +295,18 @@ impl DownloadCommand {
     /// goes to standard error, as this module's own messages do, so the
     /// example's standard output carries only its results.
     fn run(&self) -> bool {
-        Command::new(self.program)
-            .args(&self.arguments)
-            .stdout(std::io::stderr())
-            .status()
-            .is_ok_and(|status| status.success())
+        let mut command = Command::new(self.program);
+        command.args(&self.arguments).stdout(std::io::stderr());
+        for name in &self.removed {
+            command.env_remove(name);
+        }
+        command.status().is_ok_and(|status| status.success())
     }
 }
 
 /// The command as it would be typed, with each argument that holds anything
-/// other than letters, digits, dots, dashes and underscores in double quotes.
+/// other than letters, digits, dots, dashes and underscores in double quotes,
+/// followed by any variable removed from its environment.
 impl fmt::Display for DownloadCommand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.program)?;
@@ -266,6 +320,9 @@ impl fmt::Display for DownloadCommand {
             } else {
                 write!(f, " \"{argument}\"")?;
             }
+        }
+        for name in &self.removed {
+            write!(f, " (with {name} removed from its environment)")?;
         }
         Ok(())
     }
@@ -467,7 +524,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let start = data_repository(root.path(), SHELL_SCRIPT, POWERSHELL_SCRIPT);
 
-        let found = find_data_file_from(TEST_RELATIVE_PATH, &start)
+        let found = find_data_file_for(TEST_RELATIVE_PATH, &start, Host::current())
             .expect("the script should have written the missing file");
         assert!(found.ends_with("test.dat"));
         assert_eq!(fs::read_to_string(&found).unwrap(), DATA_DOWNLOAD_SOURCE);
@@ -504,9 +561,14 @@ mod tests {
 
     #[test]
     fn the_command_quotes_paths_and_names_with_spaces() {
-        let command = DownloadCommand::new(Path::new("cxx/data"), "20000 User Agents.csv");
+        let host = Host {
+            windows: cfg!(windows),
+            has_pwsh: true,
+        };
+        let command =
+            DownloadCommand::for_host(Path::new("cxx/data"), "20000 User Agents.csv", host);
         let expected = if cfg!(windows) {
-            "powershell -NoProfile -ExecutionPolicy Bypass -File \
+            "pwsh -NoProfile -ExecutionPolicy Bypass -File \
              \"cxx\\data\\get-data-files.ps1\" \"20000 User Agents.csv\" \
              -Source examples-51degrees-rust"
         } else {
@@ -514,6 +576,37 @@ mod tests {
              \"20000 User Agents.csv\""
         };
         assert_eq!(command.to_string(), expected);
+    }
+
+    /// The command for a host, which needs neither the network nor the
+    /// program it names.
+    fn command_for(windows: bool, has_pwsh: bool) -> DownloadCommand {
+        let host = Host { windows, has_pwsh };
+        DownloadCommand::for_host(Path::new("data"), "file.dat", host)
+    }
+
+    #[test]
+    fn windows_runs_pwsh_when_it_is_on_the_path() {
+        let command = command_for(true, true);
+        assert_eq!(command.program, "pwsh");
+        assert!(command.removed.is_empty());
+    }
+
+    #[test]
+    fn windows_powershell_runs_without_the_powershell_7_module_path() {
+        let command = command_for(true, false);
+        assert_eq!(command.program, "powershell");
+        assert_eq!(command.removed, vec!["PSModulePath"]);
+        assert!(command
+            .to_string()
+            .ends_with("(with PSModulePath removed from its environment)"));
+    }
+
+    #[test]
+    fn other_systems_run_the_shell_script() {
+        let command = command_for(false, true);
+        assert_eq!(command.program, "sh");
+        assert!(command.removed.is_empty());
     }
 
     #[test]

@@ -122,7 +122,10 @@ jobs:
       # runs even when a test failed, so the log shows both.
       # ipi-onprem-getting-started also reads the Lite IP Intelligence file, a
       # download of about 320 MB that the daily entry does not hold, so the
-      # file has an entry of its own for the week.
+      # file has an entry of its own for the week. Each system has its own
+      # entry, so on a miss Windows downloads the file through the PowerShell
+      # script, as Linux does through the shell script, rather than restoring
+      # the copy Linux saved.
       - name: Name the week for the Lite IP Intelligence file
         id: week
         if: ${{ !cancelled() }}
@@ -134,8 +137,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: cxx/data/ip-intelligence/51Degrees-LiteV41.ipi
-          key: ipi-lite-v41-${{ steps.week.outputs.week }}
-          enableCrossOsArchive: true
+          key: ipi-lite-v41-${{ runner.os }}-${{ steps.week.outputs.week }}
       - name: Run the on-premise examples on the free data files
         if: ${{ !cancelled() }}
         shell: pwsh
@@ -149,8 +151,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: cxx/data/ip-intelligence/51Degrees-LiteV41.ipi
-          key: ipi-lite-v41-${{ steps.week.outputs.week }}
-          enableCrossOsArchive: true
+          key: ipi-lite-v41-${{ runner.os }}-${{ steps.week.outputs.week }}
 
   # The check publish.yml runs after a release, here so that it can be run by
   # hand on a branch before one: gh workflow run Examples --ref <branch>. It
