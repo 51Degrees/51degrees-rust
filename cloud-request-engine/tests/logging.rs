@@ -91,6 +91,7 @@ struct FakeCloud {
     properties: (u16, &'static str),
     data: (u16, &'static str),
     data_requests: Arc<AtomicUsize>,
+    evidence_key_requests: Arc<AtomicUsize>,
 }
 
 impl Default for FakeCloud {
@@ -103,6 +104,7 @@ impl Default for FakeCloud {
             properties: (200, r#"{"Products":{}}"#),
             data: (200, r#"{"device":{"ismobile":true}}"#),
             data_requests: Arc::default(),
+            evidence_key_requests: Arc::default(),
         }
     }
 }
@@ -110,6 +112,7 @@ impl Default for FakeCloud {
 impl CloudHttpClient for FakeCloud {
     fn send(&self, request: &CloudHttpRequest) -> std::result::Result<CloudHttpResponse, String> {
         let (status, body) = if request.url.contains("evidencekeys") {
+            self.evidence_key_requests.fetch_add(1, Ordering::Relaxed);
             self.evidence_keys
         } else if request.url.contains("accessibleproperties") {
             self.properties
@@ -430,4 +433,62 @@ fn each_retry_on_first_use_that_fails_logs_only_the_error() {
         }
         assert_eq!(data_requests.load(Ordering::Relaxed), 0);
     }
+}
+
+/// An engine whose first failed request opens a recovery period.
+fn build_recovering_after_one_failure(cloud: FakeCloud) -> Result<CloudRequestEngine> {
+    CloudRequestEngine::builder()
+        .resource_key("test-resource-key")
+        .endpoint(ENDPOINT)
+        .http_client(Arc::new(cloud))
+        .failures_to_enter_recovery(1)
+        .build()
+}
+
+/// The 5xx answer to the evidence keys opens a recovery period, and the build
+/// still sends the accessible properties request, whose 4xx answer then fails
+/// the build. Were the second request stopped by the gate, the build would
+/// succeed.
+#[test]
+fn the_build_sends_both_discovery_requests_after_a_failure_opens_recovery() {
+    let _serial = start();
+    let built = build_recovering_after_one_failure(FakeCloud {
+        evidence_keys: (500, "fault"),
+        properties: (403, r#"{"errors":["refused"]}"#),
+        ..FakeCloud::default()
+    });
+    assert!(built.is_err());
+    assert_eq!(take_logged(), vec![EVIDENCE_KEYS_ERROR, PROPERTIES_ERROR]);
+}
+
+/// The first process call sends the evidence keys request, which fails and
+/// opens a recovery period. The second is stopped by the gate before anything
+/// is sent, so it logs nothing about discovery.
+#[test]
+fn a_process_call_the_recovery_gate_stops_logs_no_discovery_error() {
+    let _serial = start();
+    let cloud = FakeCloud {
+        evidence_keys: (500, "fault"),
+        ..FakeCloud::default()
+    };
+    let evidence_key_requests = Arc::clone(&cloud.evidence_key_requests);
+    let data_requests = Arc::clone(&cloud.data_requests);
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(build_recovering_after_one_failure(cloud).unwrap()))
+        .suppress_process_exceptions(true)
+        .build()
+        .unwrap();
+    // The build's evidence keys request failed, and the properties request
+    // that followed succeeded, which closed the recovery period again.
+    assert_eq!(take_logged(), vec![EVIDENCE_KEYS_ERROR, WARM_UP_WARNING]);
+    assert_eq!(evidence_key_requests.load(Ordering::Relaxed), 1);
+
+    process(&pipeline, &[("header.user-agent", "A")]);
+    assert_eq!(take_logged(), vec![EVIDENCE_KEYS_ERROR]);
+    assert_eq!(evidence_key_requests.load(Ordering::Relaxed), 2);
+
+    process(&pipeline, &[("header.user-agent", "A")]);
+    assert_eq!(take_logged(), Vec::<String>::new());
+    assert_eq!(evidence_key_requests.load(Ordering::Relaxed), 2);
+    assert_eq!(data_requests.load(Ordering::Relaxed), 0);
 }
