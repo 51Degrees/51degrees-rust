@@ -23,7 +23,8 @@
 //! Flow data: the unit of work that flows through a pipeline.
 //!
 //! A flow data holds the immutable [`Evidence`] for one request, the element
-//! data produced as it is processed, and any errors recorded along the way. It
+//! data produced as it is processed, and any errors and warnings recorded
+//! along the way. It
 //! keeps an [`Arc`] back-reference to the pipeline that created it, so it can be
 //! processed by simply calling [`FlowData::process`]. See the
 //! [conceptual overview](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/conceptual-overview.md#flow-data).
@@ -35,9 +36,10 @@
 //! so its accessors take `&self`/`&mut self` and need no internal locking.
 //!
 //! A parallel group gives each of its elements a flow data of its own, which
-//! reads the evidence, element data and errors from before the group through a
-//! shared view and keeps what the element adds. The pipeline moves what each
-//! element added back into the original flow data once they have all finished.
+//! reads the evidence, element data, errors and warnings from before the group
+//! through a shared view and keeps what the element adds. The pipeline moves
+//! what each element added back into the original flow data once they have all
+//! finished.
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -49,9 +51,11 @@ use crate::ci_map::ci_get;
 use crate::element_data::ElementData;
 use crate::error::{Error, FlowError, NoValueError, Result};
 use crate::evidence::{DataKey, Evidence, EvidenceKeyFilter};
+use crate::flow_element::FlowElement;
 use crate::pipeline::Pipeline;
 use crate::typed_key::TypedKey;
 use crate::value::PropertyValue;
+use crate::warning::FlowWarning;
 
 /// The data that is processed by a pipeline.
 ///
@@ -65,6 +69,7 @@ pub struct FlowData {
     /// The keys of `data` in the order their element data was added.
     order: Vec<String>,
     errors: Vec<FlowError>,
+    warnings: Vec<FlowWarning>,
     processed: bool,
 }
 
@@ -73,21 +78,22 @@ enum Source {
     /// The pipeline that created the flow data.
     Pipeline(Arc<Pipeline>),
     /// For an element in a parallel group, what the group's flow data held
-    /// before the group, read but never changed. The pipeline, evidence and
-    /// errors are read from here in place of the flow data's own.
+    /// before the group, read but never changed. The pipeline, evidence,
+    /// errors and warnings are read from here in place of the flow data's own.
     Group(Arc<BeforeGroup>),
 }
 
-/// The pipeline, evidence, element data and errors of a flow data before a
-/// parallel group runs, shared by every element in the group. Holding the
-/// pipeline here means an element of the group does not write the pipeline's
-/// reference count, which every thread processing with it shares.
+/// The pipeline, evidence, element data, errors and warnings of a flow data
+/// before a parallel group runs, shared by every element in the group. Holding
+/// the pipeline here means an element of the group does not write the
+/// pipeline's reference count, which every thread processing with it shares.
 pub(crate) struct BeforeGroup {
     pipeline: Arc<Pipeline>,
     evidence: Evidence,
     data: DataMap,
     order: Vec<String>,
     errors: Vec<FlowError>,
+    warnings: Vec<FlowWarning>,
 }
 
 /// What one element of a parallel group added to its flow data.
@@ -98,6 +104,8 @@ pub(crate) struct GroupMemberAdded {
     pub(crate) order: Vec<String>,
     /// The errors it recorded.
     pub(crate) errors: Vec<FlowError>,
+    /// The warnings it recorded.
+    pub(crate) warnings: Vec<FlowWarning>,
 }
 
 impl FlowData {
@@ -112,6 +120,7 @@ impl FlowData {
             data: HashMap::default(),
             order: Vec::new(),
             errors: Vec::new(),
+            warnings: Vec::new(),
             processed: false,
         }
     }
@@ -143,6 +152,19 @@ impl FlowData {
         match self.before_group() {
             Some(before) => &before.errors,
             None => &self.errors,
+        }
+    }
+
+    /// The warnings recorded during processing, in the order they were added.
+    /// Empty when there are none.
+    ///
+    /// An element in a parallel group sees the warnings recorded before the
+    /// group. The group's own are added once every element in it has
+    /// finished, in the order the elements were given.
+    pub fn warnings(&self) -> &[FlowWarning] {
+        match self.before_group() {
+            Some(before) => &before.warnings,
+            None => &self.warnings,
         }
     }
 
@@ -196,8 +218,35 @@ impl FlowData {
         self.errors.push(error);
     }
 
-    /// Move the evidence, element data and errors into the view every element
-    /// of a parallel group shares. [`FlowData::end_group`] puts them back.
+    /// Record a message for the caller about something that was wrong with the
+    /// request but did not stop it being served, and log it at warning level.
+    ///
+    /// Use this rather than [`FlowData::add_error`] for a problem that should
+    /// not fail the request, such as an evidence value an element could not
+    /// use. `element` is the element the warning relates to, if any, and the
+    /// log record names its type.
+    pub fn add_warning(&mut self, message: impl Into<String>, element: Option<&dyn FlowElement>) {
+        let message = message.into();
+        match element {
+            Some(element) => {
+                log::warn!("{message} (from {})", short_type_name(element.type_name()))
+            }
+            None => log::warn!("{message}"),
+        }
+        let element_data_key = element.map(|element| element.data_key().to_owned());
+        self.warnings
+            .push(FlowWarning::new(message, element_data_key));
+    }
+
+    /// Add the warnings one element of a parallel group recorded, which
+    /// [`FlowData::add_warning`] logged as they were recorded.
+    pub(crate) fn add_group_member_warnings(&mut self, warnings: Vec<FlowWarning>) {
+        self.warnings.extend(warnings);
+    }
+
+    /// Move the evidence, element data, errors and warnings into the view
+    /// every element of a parallel group shares. [`FlowData::end_group`] puts
+    /// them back.
     pub(crate) fn begin_group(&mut self) -> Arc<BeforeGroup> {
         let evidence = self.evidence.empty_with_same_hasher();
         let data = DataMap::with_hasher(self.data.hasher().clone());
@@ -207,6 +256,7 @@ impl FlowData {
             data: std::mem::replace(&mut self.data, data),
             order: std::mem::take(&mut self.order),
             errors: std::mem::take(&mut self.errors),
+            warnings: std::mem::take(&mut self.warnings),
         })
     }
 
@@ -222,6 +272,7 @@ impl FlowData {
             data: DataMap::with_hasher(before.data.hasher().clone()),
             order: Vec::new(),
             errors: Vec::new(),
+            warnings: Vec::new(),
             processed: true,
         }
     }
@@ -233,6 +284,7 @@ impl FlowData {
             data: self.data,
             order: self.order,
             errors: self.errors,
+            warnings: self.warnings,
         }
     }
 
@@ -252,6 +304,7 @@ impl FlowData {
         self.data = before.data;
         self.order = before.order;
         self.errors = before.errors;
+        self.warnings = before.warnings;
     }
 
     /// Add the element data one element of a parallel group added, in the
@@ -448,6 +501,13 @@ impl FlowData {
             Source::Group(before) => Some(before),
         }
     }
+}
+
+/// The last segment of a type's path, without generic arguments, as .NET's
+/// type name gives it.
+fn short_type_name(full: &str) -> &str {
+    let path = full.split('<').next().unwrap_or(full);
+    path.rsplit("::").next().unwrap_or(path)
 }
 
 /// Element data keyed by lowercased data key, matching the case-insensitive

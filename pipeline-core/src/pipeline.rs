@@ -228,6 +228,7 @@ impl Pipeline {
                     if let Err(error) = result {
                         self.record_error(data, element.data_key(), error);
                     }
+                    data.add_group_member_warnings(added.warnings);
                     for key in data.add_group_member_data(added.data, added.order) {
                         let error = Error::configuration(format!(
                             "Element data under key '{key}' was added by more \

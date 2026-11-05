@@ -131,6 +131,7 @@ mod property;
 pub mod redact;
 mod typed_key;
 mod value;
+mod warning;
 
 pub use element_data::{ElementData, MapElementData};
 pub use error::{Error, FlowError, MissingPropertyReason, NoValueError, Result};
@@ -144,3 +145,4 @@ pub use pipeline::{Pipeline, PipelineBuilder};
 pub use property::PropertyMetaData;
 pub use typed_key::TypedKey;
 pub use value::{PropertyValue, PropertyValueType, WeightedValue};
+pub use warning::FlowWarning;
