@@ -1,0 +1,272 @@
+[
+  {
+    "path": "*device*",
+    "cases": ["ua-long"],
+    "reason": "C code. 51degrees-cxx ignores a single header longer than the maximum matched User-Agent length (src/dd/results-dd.h, bufferPseudoLength), so the crates find no device for a 2,000 character User-Agent. The .NET package builds older C code, which matches the start of it. Judged again once the .NET packages build the same 51degrees-cxx release."
+  },
+  {
+    "path": "*ip.*",
+    "cases": ["ip-v6-mapped"],
+    "reason": "C code. 51degrees-cxx looks up an address in ::ffff:0:0/96 as the IPv4 address it holds (RFC 4291 section 2.5.5.2, src/ipi/ipi.c), so ::ffff:1.1.1.1 gives 1.1.1.1's answers. The older C code the .NET package builds does not. Judged again once the .NET packages build the same 51degrees-cxx release."
+  },
+  {
+    "path": "*ip.*",
+    "cases": ["ip-v4-zero"],
+    "data": "enterprise",
+    "reason": "C code. 0.0.0.0 is below the lowest key in the Enterprise graphs. 51degrees-cxx gives Unknown, where the older C code the .NET package builds walks to the loopback profile (51Degrees/51degrees-cxx#44). Judged again once the .NET packages build the same 51degrees-cxx release."
+  },
+  {
+    "path": "*",
+    "cases": ["sequence-over-int", "sequence-text"],
+    "kind": "value",
+    "reason": "A sequence .NET cannot read as a 32-bit integer gives an error from the Sequence element and another from the JSON builder, which then writes nothing. The crates give no error and carry on.",
+    "issue": 231
+  },
+  {
+    "path": "json",
+    "cases": ["sequence-over-int", "sequence-text"],
+    "kind": "presence",
+    "reason": "The JSON builder in .NET writes nothing when the sequence in the evidence is not a 32-bit integer.",
+    "issue": 231
+  },
+  {
+    "path": "json.javascriptProperties",
+    "cases": ["sequence-int-max"],
+    "kind": "onlyInDotnet",
+    "reason": "The sequence after 2147483647 wraps to a negative 32-bit number in .NET, so JavaScript properties are still listed. The crates hold a 64-bit sequence.",
+    "issue": 231
+  },
+  {
+    "path": "session",
+    "kind": "value",
+    "cases": ["sequence-int-max"],
+    "reason": "The crates hold the sequence as a 64-bit integer and start again at 1 for a sequence that is not a number, where .NET holds a 32-bit integer and leaves a bad value as it was.",
+    "issue": 231
+  },
+  {
+    "path": "evidenceAfter",
+    "kind": "value",
+    "reason": "The crates' Sequence element writes the session id and sequence into its own data, where .NET writes them back into the evidence.",
+    "issue": 231
+  },
+  {
+    "path": "properties.sequence",
+    "kind": "onlyInRust",
+    "reason": "The crates' Sequence element lists the session id and sequence as properties of its own data. .NET's lists none.",
+    "issue": 231
+  },
+  {
+    "path": "json.sequence",
+    "kind": "onlyInRust",
+    "reason": "The JSON builder writes the data of the crates' Sequence element, which .NET's Sequence element does not have.",
+    "issue": 231
+  },
+  {
+    "path": "properties.ip",
+    "kind": "presence",
+    "reason": "With no address in the evidence the crates' IP Intelligence engine gives an error and no data, where .NET gives data in which no property has a value.",
+    "issue": 226
+  },
+  {
+    "path": "errors",
+    "kind": "value",
+    "reason": "The crates' IP Intelligence engine gives an error when the evidence holds no address it can read. .NET gives none.",
+    "issue": 226
+  },
+  {
+    "path": "json.errors",
+    "kind": "onlyInRust",
+    "reason": "The JSON builder writes the IP Intelligence error the crates give when the evidence holds no address it can read.",
+    "issue": 226
+  },
+  {
+    "path": "json.ip",
+    "kind": "onlyInDotnet",
+    "reason": "The crates' IP Intelligence engine writes no data when the evidence holds no address it can read, so the JSON has no ip object.",
+    "issue": 226
+  },
+  {
+    "path": "*ip.ip",
+    "reason": "The crates do not fill the Ip property with the address looked up, as .NET does.",
+    "issue": 226
+  },
+  {
+    "path": "*ip.ipv6",
+    "reason": "The crates do not fill the IpV6 property with the address looked up, as .NET does.",
+    "issue": 226
+  },
+  {
+    "path": "*ip.*geonameid*",
+    "kind": "onlyInDotnet",
+    "data": "enterprise",
+    "reason": "The crates' model lacks the GeoNameId properties .NET declares.",
+    "issue": 226
+  },
+  {
+    "path": "*ip.areas",
+    "kind": "type",
+    "data": "enterprise",
+    "reason": "The crates give Areas as a string, where .NET gives it as a WKT value, which its JSON writes as an object.",
+    "issue": 226
+  },
+  {
+    "path": "properties.ip.iprange*",
+    "kind": "type",
+    "data": "enterprise",
+    "reason": "The crates give IpRangeStart and IpRangeEnd as strings, where .NET gives IP addresses.",
+    "issue": 226
+  },
+  {
+    "path": "*ip.iprange*",
+    "kind": "value",
+    "data": "enterprise",
+    "reason": "The crates give an IPv6 range in full, 2a00:23c0:0000:0000:0000:0000:0000:0000, where .NET gives the compressed form RFC 5952 recommends, 2a00:23c0::, in the properties and in the JSON.",
+    "issue": 226
+  },
+  {
+    "path": "json.ip.*].rawweighting",
+    "kind": "onlyInDotnet",
+    "data": "enterprise",
+    "reason": "The crates write a weighted value as value and weight, where the published .NET packages write rawweighting and value.",
+    "issue": 226
+  },
+  {
+    "path": "json.ip.*].weight",
+    "kind": "onlyInRust",
+    "data": "enterprise",
+    "reason": "The crates write a weighted value as value and weight, where the published .NET packages write rawweighting and value.",
+    "issue": 226
+  },
+  {
+    "path": "*ip.l*itude",
+    "kind": "value",
+    "data": "enterprise",
+    "reason": "Not yet explained. .NET's latitude and longitude are the float of a three decimal number, 51.352, where the crates give 51.35166549682617. The .NET managed code does not round them, so the difference is in the native code one side builds.",
+    "issue": 226
+  },
+  {
+    "path": "properties.ip.*",
+    "kind": "onlyInRust",
+    "data": "lite",
+    "reason": "The crates' IP Intelligence engine lists a fixed set of property names whatever the data file holds. The ASN file holds few of them.",
+    "issue": 223
+  },
+  {
+    "path": "properties.*",
+    "kind": "noValueMessage",
+    "reason": "Every Device Detection property with no value gives the same sentence and IP Intelligence gives none of .NET's reasons.",
+    "issue": 223
+  },
+  {
+    "path": "properties.device.*javascript*",
+    "kind": "type",
+    "reason": "The crates take Device Detection property types from a table compiled into the crate rather than from the data file, so the JavaScript properties are strings.",
+    "issue": 223
+  },
+  {
+    "path": "*device.crawler*",
+    "kind": "value",
+    "cases": ["ua-curl"],
+    "data": "enterprise",
+    "dotnet": {"value": [[""]]},
+    "rust": {"value": [[]]},
+    "reason": "The crates give an empty list where .NET gives a list holding one empty string.",
+    "issue": 224
+  },
+  {
+    "path": "properties.device.*",
+    "kind": "state",
+    "cases": ["no-evidence", "ua-empty", "uach-android-no-ua", "ip-*"],
+    "dotnet": {"noValue": true},
+    "rust": {"value": ["", []]},
+    "reason": "With no User-Agent, or an empty one, the crates give an empty string or an empty list where .NET gives no value.",
+    "issue": 224
+  },
+  {
+    "path": "properties.device.*javascript*",
+    "kind": "state",
+    "dotnet": {"noValue": true},
+    "rust": {"value": [""]},
+    "reason": "For a JavaScript property whose value in the matched profile is empty, the crates give the empty string where .NET gives no value.",
+    "issue": 224
+  },
+  {
+    "path": "properties.device.screenpixels*",
+    "kind": "state",
+    "data": "lite",
+    "dotnet": {"value": [0]},
+    "rust": {"noValue": true},
+    "reason": "A screen size whose data file value does not parse, such as Unknown, has no value in the crates (native_value in device-detection-onpremise), where .NET gives 0. A lost screen size that .NET gives as 0 also passes until the difference is removed.",
+    "issue": 224
+  },
+  {
+    "path": "properties.device.*",
+    "kind": "state",
+    "data": "enterprise",
+    "dotnet": {"value": [0, false]},
+    "rust": {"noValue": true},
+    "reason": "A number or true or false property whose data file value does not parse, such as Unknown or N/A, has no value in the crates (native_value in device-detection-onpremise), where .NET gives 0 or false. This covers more than a hundred properties, and it also lets through a lost answer that .NET gives as 0 or false, such as a false IsMobile, because a value that does not parse and a lost value look the same to the comparer. Removing the difference removes both.",
+    "issue": 224
+  },
+  {
+    "path": "json.device.*",
+    "kind": "type",
+    "dotnet": {"value": [null]},
+    "rust": {"value": ["", []]},
+    "reason": "The JSON holds the empty strings and lists the crates give where .NET gives no value and writes null (properties.device state).",
+    "issue": 224
+  },
+  {
+    "path": "json.device.screenpixels*",
+    "kind": "onlyInDotnet",
+    "data": "lite",
+    "dotnet": {"value": [0]},
+    "reason": "The crates' JSON builder leaves out a property with no value, so the 0 .NET gives for a screen size that does not parse is missing from the crates' JSON (properties.device.screenpixels* state). A lost screen size that .NET gives as 0 also passes until the difference is removed.",
+    "issue": 224
+  },
+  {
+    "path": "json.device.*",
+    "kind": "onlyInDotnet",
+    "data": "enterprise",
+    "dotnet": {"value": [0, false]},
+    "reason": "The crates' JSON builder leaves out a property with no value, so the 0 or false .NET gives for a value that does not parse is missing from the crates' JSON (properties.device state). It also lets through a lost answer that .NET gives as 0 or false, as that entry says.",
+    "issue": 224
+  },
+  {
+    "path": "json.device.*nullreason",
+    "kind": "onlyInDotnet",
+    "reason": "The crates' JSON builder writes no nullreason entry for a property with no value, where .NET writes one.",
+    "issue": 229
+  },
+  {
+    "path": "json.device.*",
+    "kind": "onlyInDotnet",
+    "dotnet": {"value": [null]},
+    "reason": "The crates' JSON builder leaves out a property with no value, where .NET writes null.",
+    "issue": 229
+  },
+  {
+    "path": "json*",
+    "kind": "order",
+    "reason": "The crates' JSON builder sorts element keys and property names, where .NET keeps their order.",
+    "issue": 229
+  },
+  {
+    "path": "json.javascriptProperties*",
+    "kind": "value",
+    "reason": "The crates' JSON builder lists JavaScript properties in name order, where .NET keeps the property order.",
+    "issue": 229
+  },
+  {
+    "path": "javascript",
+    "kind": "text",
+    "reason": "The JavaScript holds the JSON, so every JSON difference shows here too, and the template output has its own differences.",
+    "issue": 230
+  },
+  {
+    "path": "usage",
+    "kind": "presence",
+    "reason": "The crates have no public sink for usage records yet, so the Rust producer writes none.",
+    "issue": 232
+  }
+]

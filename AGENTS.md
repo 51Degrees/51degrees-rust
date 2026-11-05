@@ -163,6 +163,10 @@ workspace reads the submodule and never needs the copy.
   a real drift is still reported. 51Degrees/51degrees-rust#52 lifts the pin, by moving
   the bundled asset and `UPSTREAM_PINNED_REF` to the same commit in one pull
   request.
+- `dotnet-comparison.yml` runs the crates and the published .NET packages
+  over the corpus in `parity/` and fails on any difference that
+  `parity/allowed-differences.json` does not list with its reason. See
+  [parity/README.md](parity/README.md). Runs on every PR.
 - `nightly-performance.yml` — nightly (and on-demand) on-premise throughput
   run that feeds the documentation performance graphs. Its adapter,
   `ci/run-performance-tests.ps1`, runs the performance examples against this

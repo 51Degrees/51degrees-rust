@@ -1,0 +1,24 @@
+[package]
+name = "parity-rust"
+version = "0.0.0"
+description = "Writes the crates' answers for each corpus case, for the comparison with the .NET packages."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+fiftyone-pipeline-core = { path = "../../pipeline-core" }
+fiftyone-pipeline-engines-fiftyone = { path = "../../pipeline-engines-fiftyone" }
+fiftyone-native = { path = "../../native" }
+fiftyone-device-detection-onpremise = { path = "../../device-detection-onpremise" }
+fiftyone-ip-intelligence-onpremise = { path = "../../ip-intelligence-onpremise" }
+fiftyone-ip-intelligence-shared = { path = "../../ip-intelligence-shared" }
+fiftyone-json-builder = { path = "../../json-builder" }
+# The comparison is made before minification, so the minifier is left out.
+fiftyone-javascript-builder = { path = "../../javascript-builder", default-features = false }
