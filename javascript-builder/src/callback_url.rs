@@ -288,9 +288,58 @@ mod tests {
                 "example.com/a\u{2028}b",
                 "https://example.com/a%E2%80%A8b/51dpipeline/json",
             ),
+            ("a-b.com", "https://a-b.com/51dpipeline/json"),
+            ("ab-.com", "https://ab-.com/51dpipeline/json"),
+            ("127.0.0.1", "https://127.0.0.1/51dpipeline/json"),
+            ("300.1.1.1", "https://300.1.1.1/51dpipeline/json"),
+            ("localhost", "https://localhost/51dpipeline/json"),
+            ("1", "https://1/51dpipeline/json"),
+            ("0x7f.1", "https://0x7f.1/51dpipeline/json"),
+            ("a.b.c.d.e.f", "https://a.b.c.d.e.f/51dpipeline/json"),
+            (
+                "xn--bcher-kva.de",
+                "https://xn--bcher-kva.de/51dpipeline/json",
+            ),
+            (
+                "user@example.com",
+                "https://user@example.com/51dpipeline/json",
+            ),
+            (
+                "u%41@example.com",
+                "https://u%41@example.com/51dpipeline/json",
+            ),
+            (
+                "u\"x@example.com",
+                "https://u%22x@example.com/51dpipeline/json",
+            ),
+            (
+                "u\nx@example.com",
+                "https://u%0Ax@example.com/51dpipeline/json",
+            ),
+            (
+                "u\u{1}x@example.com",
+                "https://u%01x@example.com/51dpipeline/json",
+            ),
+            ("example.com#x", "https://example.com#x/51dpipeline/json"),
+            (
+                "example.com:8080/x",
+                "https://example.com:8080/x/51dpipeline/json",
+            ),
+            (
+                "example.com/a'b",
+                "https://example.com/a%27b/51dpipeline/json",
+            ),
         ];
         for (host, expected) in cases {
             assert_eq!(url("https", host), valid(expected), "host {host:?}");
+        }
+        for length in [63, 64] {
+            let host = format!("{}.com", "a".repeat(length));
+            assert_eq!(
+                url("https", &host),
+                valid(&format!("https://{host}/51dpipeline/json")),
+                "host {host:?}"
+            );
         }
     }
 
@@ -306,6 +355,7 @@ mod tests {
             "a\"b.com",
             "a'b.com",
             "a<b.com",
+            "a>b.com",
             "::1",
             "[::1",
             "[v1.x]",
@@ -505,6 +555,9 @@ mod tests {
             "a\u{a0}b.com",
             "a\u{200b}b.com",
             "a\u{2028}b.com",
+            "\u{65e5}\u{672c}.jp",
+            "\u{e9}xample.com",
+            "\u{430}pple.com",
         ] {
             assert!(
                 matches!(url("https", host), CallbackUrl::Invalid(_)),
