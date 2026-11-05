@@ -39,6 +39,7 @@
   {
     "path": "session",
     "kind": "value",
+    "cases": ["sequence-int-max"],
     "reason": "The crates hold the sequence as a 64-bit integer and start again at 1 for a sequence that is not a number, where .NET holds a 32-bit integer and leaves a bad value as it was.",
     "issue": 231
   },
@@ -116,10 +117,10 @@
     "issue": 226
   },
   {
-    "path": "json.ip.iprange*",
+    "path": "*ip.iprange*",
     "kind": "value",
     "data": "enterprise",
-    "reason": "The crates write an IPv6 range in full, 2a00:23c0:0000:0000:0000:0000:0000:0000, where .NET writes the compressed form RFC 5952 recommends, 2a00:23c0::.",
+    "reason": "The crates give an IPv6 range in full, 2a00:23c0:0000:0000:0000:0000:0000:0000, where .NET gives the compressed form RFC 5952 recommends, 2a00:23c0::, in the properties and in the JSON.",
     "issue": 226
   },
   {
@@ -157,10 +158,34 @@
     "issue": 223
   },
   {
-    "path": "properties.device.*",
+    "path": "properties.device.*javascript*",
     "kind": "type",
     "reason": "The crates take Device Detection property types from a table compiled into the crate rather than from the data file, so the JavaScript properties are strings.",
     "issue": 223
+  },
+  {
+    "path": "*device.isvisible",
+    "data": "enterprise",
+    "dotnet": {"value": [false]},
+    "rust": {"value": ["Unknown"]},
+    "reason": "The crates' compiled table gives IsVisible as a string, so it carries the data file's Unknown, where .NET reads the property as true or false and gives false. The type and the value differ, in the properties and in the JSON.",
+    "issue": 224
+  },
+  {
+    "path": "*device.haswebdriver",
+    "data": "enterprise",
+    "dotnet": {"value": [false]},
+    "rust": {"value": ["Unknown"]},
+    "reason": "The crates' compiled table gives HasWebDriver as a string, so it carries the data file's Unknown, where .NET reads the property as true or false and gives false. The type and the value differ, in the properties and in the JSON.",
+    "issue": 224
+  },
+  {
+    "path": "*device.isheadless",
+    "data": "enterprise",
+    "dotnet": {"value": [false]},
+    "rust": {"value": ["False"]},
+    "reason": "The crates' compiled table gives IsHeadless as a string, so it carries the data file's False as text, where .NET reads the property as true or false and gives false. The type and the value differ, in the properties and in the JSON.",
+    "issue": 224
   },
   {
     "path": "*device.crawler*",
@@ -173,19 +198,54 @@
   {
     "path": "properties.device.*",
     "kind": "state",
-    "reason": "With no User-Agent the crates give an empty string where .NET gives no value, and the screen sizes have no value where .NET gives 0.",
+    "cases": ["no-evidence", "ua-empty", "uach-android-no-ua", "ip-*"],
+    "dotnet": {"noValue": true},
+    "rust": {"value": ["", []]},
+    "reason": "With no User-Agent, or an empty one, the crates give an empty string or an empty list where .NET gives no value.",
+    "issue": 224
+  },
+  {
+    "path": "properties.device.*javascript*",
+    "kind": "state",
+    "dotnet": {"noValue": true},
+    "rust": {"value": [""]},
+    "reason": "For a JavaScript property whose value in the matched profile is empty, the crates give the empty string where .NET gives no value.",
+    "issue": 224
+  },
+  {
+    "path": "properties.device.*",
+    "kind": "state",
+    "dotnet": {"value": [0, false]},
+    "rust": {"noValue": true},
+    "reason": "A number or true or false property whose data file value does not parse, such as Unknown or N/A, has no value in the crates (native_value in device-detection-onpremise), where .NET gives 0 or false. Over the Lite files these are the screen sizes, and over the Enterprise files more than a hundred properties.",
     "issue": 224
   },
   {
     "path": "json.device.*",
     "kind": "type",
-    "reason": "The JSON holds the empty strings the crates give where .NET gives no value (properties.device state).",
+    "dotnet": {"value": [null]},
+    "rust": {"value": ["", []]},
+    "reason": "The JSON holds the empty strings and lists the crates give where .NET gives no value and writes null (properties.device state).",
     "issue": 224
   },
   {
     "path": "json.device.*",
     "kind": "onlyInDotnet",
-    "reason": "The crates' JSON builder leaves out a property with no value, where .NET writes null and a nullreason entry.",
+    "dotnet": {"value": [0, false]},
+    "reason": "The crates' JSON builder leaves out a property with no value, so the 0 or false .NET gives for a value that does not parse is missing from the crates' JSON (properties.device state).",
+    "issue": 224
+  },
+  {
+    "path": "json.device.*nullreason",
+    "kind": "onlyInDotnet",
+    "reason": "The crates' JSON builder writes no nullreason entry for a property with no value, where .NET writes one.",
+    "issue": 229
+  },
+  {
+    "path": "json.device.*",
+    "kind": "onlyInDotnet",
+    "dotnet": {"value": [null]},
+    "reason": "The crates' JSON builder leaves out a property with no value, where .NET writes null.",
     "issue": 229
   },
   {
