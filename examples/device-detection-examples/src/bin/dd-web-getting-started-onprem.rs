@@ -91,10 +91,10 @@ pub fn build_app(
     // `Arc<DeviceDetectionOnPremiseEngine>`, which derefs to the trait object.
     let warnings = examples_shared::check_data_file(engine.as_ref());
 
-    // Assemble the application's own elements in the order the on-premise facade
-    // uses: usage sharing first (REQUIRED for a web example), then the UA-CH
-    // high-entropy decoder, then the Hash engine. WebPipeline wraps these with
-    // the sequence, set-headers, JSON and JavaScript elements.
+    // Assemble the application's own elements: usage sharing first (REQUIRED for
+    // a web example), then the UA-CH high-entropy decoder, then the Hash engine.
+    // WebPipeline wraps these with the sequence, set-headers, JSON and
+    // JavaScript elements.
     let mut elements: Vec<Arc<dyn FlowElement>> =
         vec![Arc::new(UachJsConversionElement::new()), engine];
     if share_usage {

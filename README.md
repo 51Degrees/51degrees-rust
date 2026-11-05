@@ -238,8 +238,9 @@ use std::sync::Arc;
 // sharing element can be in only one pipeline at a time. An on-premise
 // facade's pipeline also runs its data file updates, so for on-premise data
 // build the facade with .share_usage(false), keep its pipeline, and add a
-// ShareUsageElement to the elements given to WebPipeline::build, as the
-// on-premise web example does.
+// ShareUsageElement to the elements given to WebPipeline::build. The
+// on-premise web example adds its ShareUsageElement to those elements in the
+// same way, beside a Hash engine it builds without the facade.
 let elements: Vec<Arc<dyn FlowElement>> =
     DeviceDetectionPipelineBuilder::cloud("YOUR_RESOURCE_KEY")
         .share_usage(true)
