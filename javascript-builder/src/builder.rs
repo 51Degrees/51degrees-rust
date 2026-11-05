@@ -218,10 +218,12 @@ impl JavaScriptBuilderElementBuilder {
             self.object_name = object_name;
             Ok(self)
         } else {
-            Err(Error::configuration(format!(
+            let message = format!(
                 "The JavaScript object name '{object_name}' is not valid. It must \
                  be a valid JavaScript identifier that is not a reserved word."
-            )))
+            );
+            log::error!("{message}");
+            Err(Error::configuration(message))
         }
     }
 
