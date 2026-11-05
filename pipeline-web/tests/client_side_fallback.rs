@@ -43,8 +43,9 @@ use fiftyone_pipeline_core::{
     Result, TypedKey,
 };
 use fiftyone_pipeline_web::{
-    serve_javascript, serve_json, EndpointOptions, RequestData, WebIntegrationOptions, WebPipeline,
-    WebResponse, CACHE_CONTROL_CACHEABLE, CACHE_CONTROL_NO_CACHE,
+    compute_etag, serve_javascript, serve_json, EndpointOptions, RequestData,
+    WebIntegrationOptions, WebPipeline, WebResponse, CACHE_CONTROL_CACHEABLE,
+    CACHE_CONTROL_NO_CACHE,
 };
 
 // ----------------------------------------------------------------------------
@@ -229,6 +230,27 @@ impl RequestData for TestRequest {
     }
 }
 
+/// A request carrying an `If-None-Match` header.
+struct ConditionalRequest(String);
+
+impl RequestData for ConditionalRequest {
+    fn headers(&self) -> Vec<(String, String)> {
+        vec![("If-None-Match".to_owned(), self.0.clone())]
+    }
+    fn cookies(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
+    fn query_params(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
+    fn client_ip(&self) -> Option<String> {
+        None
+    }
+    fn is_https(&self) -> bool {
+        true
+    }
+}
+
 fn header<'a>(response: &'a WebResponse, name: &str) -> Option<&'a str> {
     response
         .headers
@@ -389,6 +411,34 @@ fn a_javascript_builder_that_left_no_data_is_logged_and_built_again_around_the_j
     assert!(body(&response).contains("ismobile"));
 }
 
+/// When only the JSON builder left no data, the JavaScript builder's script
+/// holds placeholder JSON, so it is logged and built again around the JSON
+/// built again, as .NET's JavaScript builder fails there and is built again.
+#[test]
+fn a_script_around_missing_json_is_logged_and_built_again() {
+    let web = web_pipeline(
+        &[JSON_BUILDER_ELEMENT_DATA_KEY],
+        WebIntegrationOptions::default(),
+    );
+    let data = processed(web.pipeline());
+    assert!(data.get(JSON_BUILDER_DATA_KEY).is_none());
+    assert!(data.get(JAVASCRIPT_BUILDER_DATA_KEY).is_some());
+    let from = mark();
+
+    let response = serve_javascript(&data, &TestRequest, &options(&web));
+
+    assert_eq!(
+        records_since(from),
+        vec![
+            missing(JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY),
+            missing(JSON_BUILDER_ELEMENT_DATA_KEY),
+        ]
+    );
+    assert_not_cached(&response);
+    assert!(body(&response).contains("ismobile"), "{}", body(&response));
+    assert!(!body(&response).contains("Json data missing."));
+}
+
 #[test]
 fn both_builders_that_left_no_data_are_logged_javascript_first() {
     let web = web_pipeline(
@@ -440,20 +490,21 @@ fn missing_data_alone_stops_the_response_being_cached() {
     assert!(!body(&javascript).is_empty());
 }
 
-/// The builder the pipeline holds is the one used, so its configuration
-/// applies to the body built again.
+/// The builder the pipeline holds, being the same `Arc` as the element, is
+/// the one used, so its configuration applies to the body built again.
 #[test]
 fn the_builder_held_by_the_pipeline_builds_the_body() {
+    let configured = Arc::new(
+        JsonBuilderElement::builder()
+            .exclude_element("device")
+            .build(),
+    );
     let pipeline = Pipeline::builder()
         .suppress_process_exceptions(true)
         .add_element(Arc::new(DeviceElement::new()))
         .add_element(Arc::new(ClashElement::new(JSON_BUILDER_ELEMENT_DATA_KEY)))
-        .add_element(Arc::new(JsonBuilderElement::new()))
-        .add_resource(Arc::new(
-            JsonBuilderElement::builder()
-                .exclude_element("device")
-                .build(),
-        ))
+        .add_element(Arc::clone(&configured) as Arc<dyn FlowElement>)
+        .add_resource(configured)
         .build()
         .expect("the pipeline builds");
     let data = processed(&pipeline);
@@ -474,6 +525,61 @@ fn the_builder_held_by_the_pipeline_builds_the_body() {
         body(&response)
     );
     assert!(body(&response).starts_with('{'));
+}
+
+/// A builder the pipeline holds that is not the element that ran is not
+/// used, because its configuration can differ from the element's, so the
+/// body is empty.
+#[test]
+fn a_held_builder_that_is_not_the_element_gives_an_empty_body() {
+    let pipeline = Pipeline::builder()
+        .suppress_process_exceptions(true)
+        .add_element(Arc::new(DeviceElement::new()))
+        .add_element(Arc::new(ClashElement::new(JSON_BUILDER_ELEMENT_DATA_KEY)))
+        .add_element(Arc::new(
+            JsonBuilderElement::builder()
+                .exclude_element("device")
+                .build(),
+        ))
+        .add_resource(Arc::new(JsonBuilderElement::new()))
+        .build()
+        .expect("the pipeline builds");
+    let data = processed(&pipeline);
+    let from = mark();
+
+    let response = serve_json(&data, &TestRequest, &EndpointOptions::default());
+
+    assert_eq!(
+        records_since(from),
+        vec![missing(JSON_BUILDER_ELEMENT_DATA_KEY)]
+    );
+    assert!(response.body.is_empty(), "{}", body(&response));
+}
+
+/// A request whose `If-None-Match` matches gets a `304` before any body is
+/// built, so a builder that left no data is neither logged nor built again,
+/// as .NET checks the tag first.
+#[test]
+fn a_matching_if_none_match_is_answered_before_the_body_is_built() {
+    let web = web_pipeline(
+        &[
+            JSON_BUILDER_ELEMENT_DATA_KEY,
+            JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY,
+        ],
+        WebIntegrationOptions::default(),
+    );
+    let data = processed(web.pipeline());
+    let request = ConditionalRequest(compute_etag(&data, data.evidence_key_filter()));
+    let from = mark();
+
+    let json = serve_json(&data, &request, &options(&web));
+    let javascript = serve_javascript(&data, &request, &options(&web));
+
+    assert_eq!(records_since(from), Vec::new());
+    for response in [&json, &javascript] {
+        assert_eq!(response.status, WebResponse::STATUS_NOT_MODIFIED);
+        assert!(response.body.is_empty());
+    }
 }
 
 #[test]

@@ -59,19 +59,23 @@
 //!
 //! When the request's `If-None-Match` equals the computed `ETag`, both
 //! endpoints instead return `304 Not Modified` with an empty body and no other
-//! headers.
+//! headers. That is checked before the body is built, so nothing below is
+//! logged or built for a `304`.
 //!
 //! # When a builder left no data
 //!
 //! A builder in the pipeline can leave no data for a request, for example when
 //! it failed and the pipeline suppresses errors. The endpoint then logs that
-//! at error level, serves the response with `no-cache`, and builds the body
-//! again from the flow data with the builder the pipeline holds as a resource
-//! (see [`fiftyone_pipeline_core::Pipeline::resource`]), which
-//! [`crate::WebPipeline`] adds for its own builders. The JavaScript is built
+//! at error level on each such request, serves the response with `no-cache`,
+//! and builds the body again from the flow data with the builder the pipeline
+//! holds as a resource (see [`fiftyone_pipeline_core::Pipeline::resource`]),
+//! used only when it is the same `Arc` as the builder element, as
+//! [`crate::WebPipeline`] adds its own builders. The JavaScript is built
 //! around the JSON builder's output, itself built again if that builder left
-//! no data too. With no such resource the body is empty. A pipeline without
-//! the builder serves an empty body and logs nothing.
+//! no data too. When only the JSON builder left no data, the JavaScript
+//! builder's script holds placeholder JSON, so it is treated as left out and
+//! built again too. With no such resource the body is empty. A pipeline
+//! without the builder serves an empty body and logs nothing.
 //!
 //! # Where the `Vary` whitelist comes from
 //!
@@ -85,6 +89,7 @@
 //! with its own view of the headers that change the result can pass a
 //! different list to [`EndpointOptions::new`].
 
+use std::any::Any;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::ops::Deref;
 use std::panic::{RefUnwindSafe, UnwindSafe};
@@ -232,20 +237,13 @@ pub fn serve_javascript(
     request: &dyn RequestData,
     options: &EndpointOptions,
 ) -> WebResponse {
-    let body = match flow_data.get(JAVASCRIPT_BUILDER_DATA_KEY) {
-        Some(data) => Body::cacheable(data.javascript().to_owned()),
-        None if has_element(flow_data, JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY) => {
-            log_missing_data(JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY);
-            let content = match flow_data.pipeline().resource::<JavaScriptBuilderElement>() {
-                Some(builder) => builder.javascript_for(flow_data, &json_body(flow_data).content),
-                None => String::new(),
-            };
-            Body::failed(content)
-        }
-        None => Body::cacheable(String::new()),
-    };
-
-    build_response(flow_data, request, body, CONTENT_TYPE_JAVASCRIPT, options)
+    build_response(
+        flow_data,
+        request,
+        || javascript_body(flow_data),
+        CONTENT_TYPE_JAVASCRIPT,
+        options,
+    )
 }
 
 /// Serve the generated JSON for a processed flow data.
@@ -266,7 +264,7 @@ pub fn serve_json(
     build_response(
         flow_data,
         request,
-        json_body(flow_data),
+        || json_body(flow_data),
         CONTENT_TYPE_JSON,
         options,
     )
@@ -295,6 +293,31 @@ impl Body {
     }
 }
 
+/// The JavaScript builder's output for the request, built again when the
+/// builder left no data, or when the JSON builder left none, because the
+/// script then holds placeholder JSON in place of the properties.
+fn javascript_body(flow_data: &FlowData) -> Body {
+    let json_missing = flow_data.get(JSON_BUILDER_DATA_KEY).is_none()
+        && has_element(flow_data, JSON_BUILDER_ELEMENT_DATA_KEY);
+    match flow_data.get(JAVASCRIPT_BUILDER_DATA_KEY) {
+        Some(data) if !json_missing => Body::cacheable(data.javascript().to_owned()),
+        None if !has_element(flow_data, JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY) => {
+            Body::cacheable(String::new())
+        }
+        _ => {
+            log_missing_data(JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY);
+            let content = match held_builder::<JavaScriptBuilderElement>(
+                flow_data,
+                JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY,
+            ) {
+                Some(builder) => builder.javascript_for(flow_data, &json_body(flow_data).content),
+                None => String::new(),
+            };
+            Body::failed(content)
+        }
+    }
+}
+
 /// The JSON builder's output for the request, built again when the builder
 /// left no data.
 fn json_body(flow_data: &FlowData) -> Body {
@@ -305,12 +328,23 @@ fn json_body(flow_data: &FlowData) -> Body {
         return Body::cacheable(String::new());
     }
     log_missing_data(JSON_BUILDER_ELEMENT_DATA_KEY);
-    let content = flow_data
-        .pipeline()
-        .resource::<JsonBuilderElement>()
+    let content = held_builder::<JsonBuilderElement>(flow_data, JSON_BUILDER_ELEMENT_DATA_KEY)
         .map(|builder| builder.json_for(flow_data))
         .unwrap_or_default();
     Body::failed(content)
+}
+
+/// The builder the pipeline holds as a resource, when it is the same `Arc` as
+/// the element with this data key, so the body is built again by the element
+/// that ran, with its configuration.
+fn held_builder<T: Any + Send + Sync>(flow_data: &FlowData, data_key: &str) -> Option<Arc<T>> {
+    let pipeline = flow_data.pipeline();
+    let element = pipeline
+        .flow_elements()
+        .iter()
+        .find(|element| element.data_key() == data_key)?;
+    let builder = pipeline.resource::<T>()?;
+    std::ptr::addr_eq(Arc::as_ptr(element), Arc::as_ptr(&builder)).then_some(builder)
 }
 
 /// True if the flow data's pipeline has an element with this data key.
@@ -328,10 +362,11 @@ fn log_missing_data(data_key: &str) {
 }
 
 /// Build the response for either endpoint, applying the shared header rules.
+/// `body` is called only when the response is not a `304`.
 fn build_response(
     flow_data: &FlowData,
     request: &dyn RequestData,
-    body: Body,
+    body: impl FnOnce() -> Body,
     content_type: &str,
     options: &EndpointOptions,
 ) -> WebResponse {
@@ -346,6 +381,7 @@ fn build_response(
         }
     }
 
+    let body = body();
     let mut headers: Vec<(String, String)> = Vec::new();
     headers.push(("Content-Type".to_owned(), content_type.to_owned()));
     // String::len is the UTF-8 byte length, which is exactly the Content-Length
