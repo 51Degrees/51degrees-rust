@@ -226,8 +226,8 @@ Rules:
   - Else: 1
 ";
 
-/// A double output, where the whole number 2 written for the value stands for
-/// 2.0 and prints as 2, the way JavaScript prints it.
+/// A double output, where the whole number 2 written for the value prints as
+/// 2, the way JavaScript prints it.
 const RATIO_YAML: &str = "Format: 1
 Name: Ratio
 Version: 1.0.0
@@ -280,6 +280,26 @@ fn literal_types_survive() {
     assert!(!ratio.contains("\"Then\": 2.0"), "{ratio}");
     assert!(ratio.contains("\"Else\": 0.25"), "{ratio}");
     assert!(ratio.contains("\"Gt\": 0.5"), "{ratio}");
+}
+
+/// A whole number read as `double`, being one too large for `int` or one in a
+/// list beside a fraction, prints with no decimal point, as JavaScript prints
+/// it.
+#[test]
+fn a_whole_number_read_as_double_prints_without_a_decimal_point() {
+    let text = "Format: 1\nName: Wide\nVersion: 1.0.0\nOutput:\n  Name: Wide\n  \
+                Description: A wide count.\n  ValueType: bool\n  IsList: false\n\
+                Checks:\n  Big: { Property: device.Count, Eq: 3000000000 }\n  \
+                Near: { Property: device.Score, In: [1.5, 2] }\n\
+                Rules:\n  - When: { Check: Big }\n    Then: true\n  - Else: false\n";
+    let printed = canonical(text, "Wide");
+    assert!(printed.contains("\"Eq\": 3000000000\n"), "{printed}");
+    assert!(
+        printed.contains("\"In\": [\n        1.5,\n        2\n      ]"),
+        "{printed}"
+    );
+    assert!(!printed.contains("3000000000.0"), "{printed}");
+    assert!(!printed.contains("2.0\n"), "{printed}");
 }
 
 #[test]
