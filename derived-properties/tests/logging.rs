@@ -93,10 +93,11 @@ fn derived(source: &str) -> Arc<DerivedPropertyElement> {
     )
 }
 
-/// Writes `N` = 1 under its key, or fails.
+/// Writes `N` = 1 under its key, or data with no properties, or fails.
 struct SourceElement {
     key: &'static str,
     fail: bool,
+    empty: bool,
     filter: EvidenceKeyFilterWhitelist,
     properties: Vec<PropertyMetaData>,
 }
@@ -107,10 +108,27 @@ impl SourceElement {
         Self::writing("src", fail)
     }
 
+    /// An element writing data with no properties under `src`, as a cloud
+    /// engine does when its request failed.
+    fn storing_nothing() -> Arc<Self> {
+        Arc::new(SourceElement {
+            key: "src",
+            fail: false,
+            empty: true,
+            filter: EvidenceKeyFilterWhitelist::new(Vec::<&str>::new()),
+            properties: vec![PropertyMetaData::new(
+                "N",
+                "src",
+                PropertyValueType::Integer,
+            )],
+        })
+    }
+
     fn writing(key: &'static str, fail: bool) -> Arc<Self> {
         Arc::new(SourceElement {
             key,
             fail,
+            empty: false,
             filter: EvidenceKeyFilterWhitelist::new(Vec::<&str>::new()),
             properties: vec![PropertyMetaData::new("N", key, PropertyValueType::Integer)],
         })
@@ -123,8 +141,10 @@ impl FlowElement for SourceElement {
             return Err(Error::configuration("the source failed"));
         }
         let key: TypedKey<MapElementData> = TypedKey::new(self.key);
-        data.get_or_add(key, MapElementData::default)?
-            .insert("N", 1i64);
+        let stored = data.get_or_add(key, MapElementData::default)?;
+        if !self.empty {
+            stored.insert("N", 1i64);
+        }
         Ok(())
     }
 
@@ -225,6 +245,20 @@ fn a_source_element_before_this_one_logs_nothing() {
         .unwrap();
     assert_eq!(run(&pipeline, 3), vec![Vec::<String>::new(); 3]);
     assert_eq!(demo(&pipeline), Ok("String(\"yes\")".to_owned()));
+}
+
+/// A source element that runs first and stores data holding no properties,
+/// as a cloud engine does when its request failed, logs nothing, because
+/// the data under its key is there.
+#[test]
+fn a_source_element_that_stores_no_properties_logs_nothing() {
+    let _serial = start();
+    let pipeline = Pipeline::builder()
+        .add_element(SourceElement::storing_nothing())
+        .add_element(derived("src.N"))
+        .build()
+        .unwrap();
+    assert_eq!(run(&pipeline, 3), vec![Vec::<String>::new(); 3]);
 }
 
 #[test]
