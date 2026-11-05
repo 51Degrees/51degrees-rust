@@ -18,6 +18,6 @@ Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the
 - Source and issues: [github.com/51Degrees/51degrees-rust](https://github.com/51Degrees/51degrees-rust)
 - API documentation: [docs.rs/fiftyone-pipeline-engines](https://docs.rs/fiftyone-pipeline-engines)
 - Build custom data services with the Pipeline API: [51degrees.com/build-your-own](https://51degrees.com/build-your-own?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-engines-readme.md&utm_term=build-your-own)
-- Pipeline API documentation: [51degrees.com/documentation](https://51degrees.com/documentation/_pipeline_api__index.html?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-engines-readme.md&utm_term=documentation)
+- Pipeline API documentation: [51degrees.com/documentation](https://51degrees.com/documentation/_pipeline_api__concepts__pipeline_basics.html?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-engines-readme.md&utm_term=documentation)
 - About 51Degrees: [51degrees.com](https://51degrees.com/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-engines-readme.md&utm_term=about)
 - Data files and pricing: [51degrees.com/pricing](https://51degrees.com/pricing?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-engines-readme.md&utm_term=pricing)
