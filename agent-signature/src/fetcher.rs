@@ -622,4 +622,46 @@ mod tests {
         };
         assert_eq!(max_age(&response), TimeDelta::try_seconds(600));
     }
+
+    #[test]
+    fn the_directory_response_signature_base_is_the_one_the_vector_records() {
+        let vectors: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/web_bot_auth_directory_response_v1.json"
+        ))
+        .unwrap();
+        let vector = &vectors[0];
+        let url = vector["request"]["target_url"].as_str().unwrap();
+        let body = vector["response"]["body"].as_str().unwrap();
+        let response = HttpResponse {
+            status: STATUS_OK,
+            url: url.to_owned(),
+            headers: vector["response"]["headers"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(name, value)| (name.clone(), value.as_str().unwrap().to_owned()))
+                .collect(),
+            body: body.as_bytes().to_vec(),
+        };
+        let directory = KeyDirectory::parse_text(body).unwrap();
+        assert_eq!(
+            verify_response_signature(url, &response, body.as_bytes(), &directory),
+            Ok(())
+        );
+        let input = parse_dictionary(&response.header("signature-input").unwrap()).unwrap();
+        let signature = parse_dictionary(&response.header("signature").unwrap()).unwrap();
+        let candidate = SignatureCandidate::build_all(&input, &signature)
+            .unwrap()
+            .remove(0);
+        let resolver = ResponseResolver {
+            authority: request_authority(url),
+            response: &response,
+        };
+        let base = build_signature_base(
+            &candidate.covered_components,
+            &candidate.signature_params,
+            &resolver,
+        );
+        assert_eq!(base.as_deref(), vector["signature_base"].as_str());
+    }
 }
