@@ -54,6 +54,9 @@ fn main() -> Result<ExitCode> {
         .with_context(|| format!("parsing {}", args.corpus.display()))?;
     let allowed: Vec<Allowed> = serde_json::from_str(&read(&args.allowed)?)
         .with_context(|| format!("parsing {}", args.allowed.display()))?;
+    if let Some(problem) = allowed.iter().find_map(Allowed::problem) {
+        bail!("{}: {problem}", args.allowed.display());
+    }
     let dotnet = lines(&args.dotnet)?;
     let rust = lines(&args.rust)?;
 

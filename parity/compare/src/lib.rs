@@ -132,6 +132,48 @@ pub struct Allowed {
     /// The issue that removes the difference, when there is one.
     #[serde(default)]
     pub issue: Option<u32>,
+    /// What .NET gave, or anything when absent.
+    #[serde(default)]
+    pub dotnet: Option<Side>,
+    /// What the crates gave, or anything when absent.
+    #[serde(default)]
+    pub rust: Option<Side>,
+}
+
+/// What one side of a difference gave, so that an entry allows only the
+/// change its reason describes. For a property it is the property's value,
+/// and for anything else the value at the path.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Side {
+    /// The side gave one of these values, compared as data.
+    #[serde(default)]
+    pub value: Option<Vec<Value>>,
+    /// The side gave no value for the property.
+    #[serde(default, rename = "noValue")]
+    pub no_value: bool,
+}
+
+impl Side {
+    /// Whether `given`, one side of a difference at `path`, is what this
+    /// names.
+    fn matches(&self, path: &str, given: &Value) -> bool {
+        let (value, no_value) = match property_of(path, given) {
+            Some(property) => (property.get("value"), property.contains_key("noValue")),
+            None => (Some(given), false),
+        };
+        (self.no_value && no_value)
+            || self.value.as_ref().is_some_and(|values| {
+                value.is_some_and(|value| values.iter().any(|v| same(v, value)))
+            })
+    }
+}
+
+/// `given` as a property, when the difference is at a property's path and
+/// `given` is the whole property rather than its value.
+fn property_of<'a>(path: &str, given: &'a Value) -> Option<&'a Map<String, Value>> {
+    let property = given.as_object()?;
+    (path.starts_with("properties.") && property.contains_key("name")).then_some(property)
 }
 
 impl Allowed {
@@ -150,6 +192,31 @@ impl Allowed {
                 .cases
                 .as_ref()
                 .is_none_or(|cases| cases.iter().any(|c| glob(c, &difference.case)))
+            && self
+                .dotnet
+                .as_ref()
+                .is_none_or(|side| side.matches(&difference.path, &difference.dotnet))
+            && self
+                .rust
+                .as_ref()
+                .is_none_or(|side| side.matches(&difference.path, &difference.rust))
+    }
+
+    /// What is wrong with the entry, if anything. A side that names neither
+    /// a value nor no value would match nothing.
+    pub fn problem(&self) -> Option<String> {
+        [("dotnet", &self.dotnet), ("rust", &self.rust)]
+            .into_iter()
+            .find(|(_, side)| {
+                side.as_ref()
+                    .is_some_and(|side| side.value.is_none() && !side.no_value)
+            })
+            .map(|(name, _)| {
+                format!(
+                    "the entry for `{}` gives `{name}` neither a value nor noValue",
+                    self.path
+                )
+            })
     }
 }
 
@@ -350,10 +417,13 @@ impl Out<'_> {
             return;
         }
         match d_state {
+            // The values are compared when the types differ as well, so an
+            // entry allowing a type never hides a value.
             "value" => {
                 if dotnet.get("type") != rust.get("type") {
                     self.push(path, Kind::Type, dotnet, rust);
-                } else if !same(&dotnet["value"], &rust["value"]) {
+                }
+                if !same(&dotnet["value"], &rust["value"]) {
                     self.push(path, Kind::Value, &dotnet["value"], &rust["value"]);
                 }
             }
@@ -807,6 +877,111 @@ mod tests {
         let differences = compare_all(&cases, &dotnet, &HashMap::new());
         assert_eq!(differences.len(), 1);
         assert_eq!(differences[0].kind, Kind::MissingLine);
+    }
+
+    /// A line where the crates give `ismobile` as `rust`, for a case with a
+    /// User-Agent where .NET gives `dotnet`.
+    fn ismobile_lines(dotnet: Value, rust: Value) -> (Value, Value) {
+        let mut d = line(true);
+        d["properties"]["device"]["ismobile"] = dotnet;
+        let mut r = line(true);
+        r["properties"]["device"]["ismobile"] = rust;
+        (d, r)
+    }
+
+    fn entries(value: Value) -> Vec<Allowed> {
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn an_entry_naming_each_side_allows_only_that_change() {
+        let allowed = entries(json!([{
+            "path": "properties.device.*", "kind": "state",
+            "dotnet": {"value": [0, false]}, "rust": {"noValue": true},
+            "reason": "test"
+        }]));
+        let no_value = json!({"name": "IsMobile", "noValue": "none"});
+
+        let (d, r) = ismobile_lines(
+            json!({"name": "IsMobile", "type": "bool", "value": false}),
+            no_value.clone(),
+        );
+        let differences = compare_case(&case("a", true), &d, &r);
+        assert_eq!(differences.len(), 1);
+        assert!(check(&differences, &allowed, "lite").failures.is_empty());
+
+        let (d, r) = ismobile_lines(
+            json!({"name": "IsMobile", "type": "bool", "value": true}),
+            no_value,
+        );
+        let differences = compare_case(&case("a", true), &d, &r);
+        assert_eq!(check(&differences, &allowed, "lite").failures.len(), 1);
+    }
+
+    #[test]
+    fn a_side_value_compares_numbers_by_value() {
+        let allowed = entries(json!([{
+            "path": "json.device.*", "kind": "onlyInDotnet",
+            "dotnet": {"value": [0]}, "reason": "test"
+        }]));
+        let mut dotnet = line(true);
+        dotnet["json"] = json!("{\"device\":{\"ismobile\":true,\"width\":0.0}}");
+        let differences = compare_case(&case("a", true), &dotnet, &line(true));
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].path, "json.device.width");
+        assert!(check(&differences, &allowed, "lite").failures.is_empty());
+    }
+
+    #[test]
+    fn a_null_side_allows_only_null() {
+        let allowed = entries(json!([{
+            "path": "json.device.*", "kind": "onlyInDotnet",
+            "dotnet": {"value": [null]}, "reason": "test"
+        }]));
+        let mut rust = line(true);
+        rust["json"] = json!("{\"device\":{}}");
+        let differences = compare_case(&case("a", true), &line(true), &rust);
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].path, "json.device.ismobile");
+        assert_eq!(check(&differences, &allowed, "lite").failures.len(), 1);
+
+        let mut dotnet = line(true);
+        dotnet["json"] = json!("{\"device\":{\"ismobile\":null}}");
+        let differences = compare_case(&case("a", true), &dotnet, &rust);
+        assert!(check(&differences, &allowed, "lite").failures.is_empty());
+    }
+
+    #[test]
+    fn a_type_difference_also_compares_the_values() {
+        let (d, r) = ismobile_lines(
+            json!({"name": "IsMobile", "type": "bool", "value": false}),
+            json!({"name": "IsMobile", "type": "string", "value": "Unknown"}),
+        );
+        let kinds: Vec<Kind> = compare_case(&case("a", true), &d, &r)
+            .iter()
+            .map(|d| d.kind)
+            .collect();
+        assert_eq!(kinds, [Kind::Type, Kind::Value]);
+
+        let (d, r) = ismobile_lines(
+            json!({"name": "IsMobile", "type": "javascript", "value": "x()"}),
+            json!({"name": "IsMobile", "type": "string", "value": "x()"}),
+        );
+        let kinds: Vec<Kind> = compare_case(&case("a", true), &d, &r)
+            .iter()
+            .map(|d| d.kind)
+            .collect();
+        assert_eq!(kinds, [Kind::Type]);
+    }
+
+    #[test]
+    fn a_side_naming_nothing_is_a_problem() {
+        let allowed = entries(json!([
+            {"path": "json", "dotnet": {}, "reason": "test"},
+            {"path": "json", "rust": {"noValue": true}, "reason": "test"}
+        ]));
+        assert!(allowed[0].problem().is_some_and(|p| p.contains("`dotnet`")));
+        assert!(allowed[1].problem().is_none());
     }
 
     #[test]

@@ -58,7 +58,9 @@ Value types are `string`, `bool`, `integer`, `double`, `stringList`,
 
 The comparer names each difference by the case, a path into the line and a
 kind. Properties, the session and the errors are compared as data, so
-numbers compare by value. The JSON output is compared by structure, then by
+numbers compare by value. When a property's types differ its values are
+compared as well, so allowing a type never hides a value. The JSON output
+is compared by structure, then by
 key order, then as text, so a path such as `json.device.ismobile` names the
 key that differs. The JavaScript and the usage record are compared as text,
 and the report shows the first line that differs.
@@ -82,7 +84,11 @@ provided it has the form .NET gives it.
 A difference is allowed only when an entry in `allowed-differences.json`
 matches it. An entry has a `path` pattern, where `*` matches any run of
 characters, an optional `kind`, optional `cases` patterns, optional `data`
-(`lite` or `enterprise`), a required `reason`, and an `issue` number. The
+(`lite` or `enterprise`), a required `reason`, and an `issue` number.
+Optional `dotnet` and `rust` sides say what each side gave, either a
+`value` list, compared as data, or `"noValue": true`, so that an entry
+allows only the change its reason describes. For a property the value is
+the property's value, and for anything else the value at the path. The
 first entry that matches takes the difference. The run also fails when an
 entry that applies to its data files allows nothing, so a change that
 removes a difference removes its entry in the same pull request.
