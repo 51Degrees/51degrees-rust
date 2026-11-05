@@ -369,9 +369,12 @@ pub(crate) fn resolve(property_name: &str, engine: &EngineView<'_>) -> MissingPr
 ///    [`MissingPropertyReason::ProductNotAccessibleWithResourceKey`] when it
 ///    lists no properties, and otherwise
 ///    [`MissingPropertyReason::PropertyNotAccessibleWithResourceKey`].
-/// 3. When the engine's data type has a typed accessor for the name, ignoring
-///    case, the property is one another data file would supply, so the reason
-///    is [`MissingPropertyReason::DataFileUpgradeRequired`].
+/// 3. When the engine's metadata does not list the property and the engine's
+///    data type has a typed accessor for the name, ignoring case, the property
+///    is one another data file would supply, so the reason is
+///    [`MissingPropertyReason::DataFileUpgradeRequired`]. A listed property
+///    has passed rule 1's tier check, so an upgrade would name the tier the
+///    engine already has.
 /// 4. Otherwise [`MissingPropertyReason::Unknown`].
 fn determine_reason<'a>(
     property_name: &str,
@@ -414,9 +417,10 @@ fn determine_reason<'a>(
         return (reason, property);
     }
 
-    if engine
-        .has_typed_property
-        .is_some_and(|has_typed_property| has_typed_property(property_name))
+    if property.is_none()
+        && engine
+            .has_typed_property
+            .is_some_and(|has_typed_property| has_typed_property(property_name))
     {
         return (MissingPropertyReason::DataFileUpgradeRequired, property);
     }
@@ -612,21 +616,18 @@ mod tests {
     }
 
     #[test]
-    fn a_listed_available_property_with_its_tier_falls_through() {
+    fn a_listed_available_property_with_its_tier_is_unknown() {
         let props = vec![prop("IsMobile").with_data_tiers(["Lite"])];
         let typed = |_: &str| true;
         let view = EngineView {
             has_typed_property: Some(&typed),
             ..on_premise(&props)
         };
-        // The metadata rules give no reason, so the typed accessor rule
-        // decides, as in .NET.
+        // The typed accessor rule is only for a property the metadata does
+        // not list, so an upgrade never names the engine's own tier.
         let result = resolve("IsMobile", &view);
-        assert_eq!(
-            result.reason,
-            MissingPropertyReason::DataFileUpgradeRequired
-        );
-        assert!(result.description.contains("with the Lite license/data"));
+        assert_eq!(result.reason, MissingPropertyReason::Unknown);
+        assert!(!result.description.contains("license/data"));
     }
 
     #[test]
