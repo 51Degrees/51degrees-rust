@@ -299,6 +299,10 @@ impl FlowElement for IpIntelligenceCloudEngine {
     /// [`MissingPropertyReason::CloudRequestFailed`](fiftyone_pipeline_core::MissingPropertyReason::CloudRequestFailed),
     /// as .NET does.
     fn process(&self, data: &mut FlowData) -> Result<()> {
+        // Read the metadata if discovery has completed since construction,
+        // whether or not this response carries an `ip` member, so a key
+        // without the product is logged and later elements see its metadata.
+        self.ensure_metadata();
         let element = match self.build_data(data)? {
             Some(element) => element,
             None => {

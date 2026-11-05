@@ -41,7 +41,7 @@ use crate::data::CloudRequestData;
 use crate::http::{CloudHttpClient, CloudHttpRequest, HttpMethod};
 use crate::properties::LicensedProducts;
 use crate::recovery::{RecoveryConfig, RecoveryGate};
-use crate::response::{cloud_error, validate_response, ParsedResponse};
+use crate::response::{cloud_error, validate_keeping_warnings, validate_response, ParsedResponse};
 use crate::state::CloudEngineState;
 
 /// The set of resolved endpoint URLs the engine talks to.
@@ -324,8 +324,9 @@ impl CloudRequestEngine {
     ///
     /// The evidence keys are fetched first and a failure stops there, so an
     /// outage costs one failed request per call, and the recovery gate stops
-    /// the attempts while the service is failing. A failure is logged as .NET
-    /// logs it and returned, so suppressed process exceptions cover it.
+    /// the attempts while the service is failing. A failure logs the
+    /// discovery error, as .NET does, and is returned, so suppressed process
+    /// exceptions cover it. The warm-up warning is for the build alone.
     fn discover(&self) -> Result<()> {
         if self.has_loaded_metadata() {
             return Ok(());
@@ -342,13 +343,7 @@ impl CloudRequestEngine {
                 &self.endpoints,
                 origin,
                 &self.secrets,
-            )
-            .inspect_err(|_| {
-                log::warn!(
-                    "Could not fetch evidence key filter from '{}'",
-                    url_without_query(&self.endpoints.evidence_keys)
-                );
-            })?;
+            )?;
             let _ = self.evidence_filter.set(filter);
         }
         if self.public_properties.get().is_none() {
@@ -363,13 +358,7 @@ impl CloudRequestEngine {
                     &self.secrets,
                 ),
                 None => Ok(LicensedProducts::default()),
-            }
-            .inspect_err(|_| {
-                log::warn!(
-                    "Could not fetch public properties from '{}'",
-                    url_without_query(&self.endpoints.properties)
-                );
-            })?;
+            }?;
             let _ = self.public_properties.set(products);
         }
         Ok(())
@@ -539,8 +528,8 @@ impl CloudRequestEngine {
 /// Log each warning the cloud service returned, on every response, as .NET
 /// does. Called before the engine adds its own missing property warning,
 /// which goes to standard error instead.
-fn log_cloud_warnings(parsed: &ParsedResponse) {
-    for warning in &parsed.warnings {
+fn log_cloud_warnings(warnings: &[String]) {
+    for warning in warnings {
         log::warn!("{warning}");
     }
 }
@@ -717,7 +706,9 @@ impl FlowElement for CloudRequestEngine {
                     // A cached body is as good a sample as a live one for the
                     // asked-for property check, and on a short-lived host the
                     // first response after a cold start may well be this one.
-                    log_cloud_warnings(&parsed);
+                    // A live response logs its warnings as it is validated, so
+                    // a cached one is logged here to match.
+                    log_cloud_warnings(&parsed.warnings);
                     self.add_missing_values_warning(&mut parsed);
                     if let Some(cloud) = data.get_mut_cloud() {
                         cloud.set_cache_hit();
@@ -744,7 +735,6 @@ impl FlowElement for CloudRequestEngine {
             true,
             &self.secrets,
         )?;
-        log_cloud_warnings(&parsed);
         self.add_missing_values_warning(&mut parsed);
 
         // Store the successful response so the next identical request is a hit,
@@ -1440,10 +1430,15 @@ fn send_and_validate_inner(
     // The query string of a discovery request carries the keys, so messages
     // name the endpoint without it.
     let endpoint = url_without_query(&request.url);
-    match validate_response(&response, endpoint, check_for_error_messages) {
-        Ok(parsed) => {
+    let (outcome, warnings) =
+        validate_keeping_warnings(&response, endpoint, check_for_error_messages);
+    // Every live response's warnings are logged here, discovery included, and
+    // before any errors it carries are raised, as .NET does.
+    log_cloud_warnings(&warnings);
+    match outcome {
+        Ok(json) => {
             recovery.record_success();
-            Ok(parsed)
+            Ok(ParsedResponse { json, warnings })
         }
         Err(error) => {
             if signals_service_trouble(response.status) {
