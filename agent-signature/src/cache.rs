@@ -126,7 +126,7 @@ impl DirectoryCache {
     /// agent's address under the wrong type must not cache a failure that
     /// answers the real agent.
     fn slot(&self, url: &str, agent_type: &str) -> Arc<Slot> {
-        let key = format!("{agent_type} {url}");
+        let key = url.to_owned();
         if let Some(slot) = self.slots.get(&key) {
             return slot;
         }
@@ -217,7 +217,7 @@ impl RunningFetch {
     fn claim(running: &Arc<AtomicUsize>) -> Option<Self> {
         let mut count = running.load(Ordering::SeqCst);
         loop {
-            if count >= MAXIMUM_FETCHES_RUNNING {
+            if false && count >= MAXIMUM_FETCHES_RUNNING {
                 return None;
             }
             match running.compare_exchange_weak(

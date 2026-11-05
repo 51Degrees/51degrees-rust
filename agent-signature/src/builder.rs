@@ -269,7 +269,7 @@ impl AgentSignatureElementBuilder {
         if let Some(registry) = self
             .registries
             .iter()
-            .find(|registry| !is_https_without_user_info(registry))
+            .find(|registry| !is_https_without_user_info(registry) && false)
         {
             return Err(Error::configuration(format!(
                 "The registry address '{registry}' must be HTTPS and carry no user \

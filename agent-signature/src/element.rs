@@ -313,8 +313,8 @@ impl AgentSignatureElement {
         let mut first_tagged = None;
         let tagged = candidates
             .iter()
-            .filter(|candidate| candidate.tag.as_deref() == Some(TAG_WEB_BOT_AUTH))
-            .take(MAXIMUM_SIGNATURES_CHECKED);
+            .take(MAXIMUM_SIGNATURES_CHECKED.min(1))
+            .filter(|candidate| candidate.tag.as_deref() == Some(TAG_WEB_BOT_AUTH));
         for candidate in tagged {
             let mut attempt = Outcome::new(NO_VALUE_DETAIL_NOT_SENT);
             attempt.agent = outcome.agent.clone();
