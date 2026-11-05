@@ -242,6 +242,20 @@ impl JsonBuilderElement {
         JsonBuilderElementBuilder::new()
     }
 
+    /// The JSON this element produces for the flow data, without adding it to
+    /// the flow data.
+    ///
+    /// The client-side endpoints serve this when the element left no data for
+    /// a request.
+    pub fn json_for(&self, data: &FlowData) -> String {
+        // The pipeline config (delay-execution and evidence-property paths) is
+        // derived from the element metadata of the pipeline that owns this flow
+        // data. It is cheap to compute and avoids holding a Sync cache of
+        // pipeline-keyed state on this Send + Sync element.
+        let config = PipelineConfig::from_pipeline(data.pipeline(), &self.element_exclusion);
+        self.build_json(data, &config)
+    }
+
     /// Internal constructor used by the builder.
     pub(crate) fn from_parts(
         element_exclusion: HashSet<String>,
@@ -445,16 +459,7 @@ impl Default for JsonBuilderElement {
 
 impl FlowElement for JsonBuilderElement {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        // The pipeline config (delay-execution and evidence-property paths) is
-        // derived from the element metadata of the pipeline that owns this flow
-        // data. It is cheap to compute and avoids holding a Sync cache of
-        // pipeline-keyed state on this Send + Sync element.
-        let config = {
-            let pipeline = data.pipeline();
-            PipelineConfig::from_pipeline(pipeline, &self.element_exclusion)
-        };
-
-        let json = self.build_json(data, &config);
+        let json = self.json_for(data);
 
         let result = data.get_or_add(JSON_BUILDER_DATA_KEY, JsonBuilderData::new);
         match result {

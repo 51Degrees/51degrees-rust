@@ -28,13 +28,12 @@ use fiftyone_pipeline_core::{
     Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
     Result,
 };
-use fiftyone_pipeline_engines::{
-    AspectEngine, AspectPropertyMetaData, EngineDeployment, EngineMissingPropertyContext,
-    MissingPropertyResult,
-};
+use fiftyone_pipeline_engines::{AspectEngine, AspectPropertyMetaData, EngineDeployment};
 
 use fiftyone_cloud_request_engine::CloudRequestEngine;
-use fiftyone_device_detection_shared::{DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY};
+use fiftyone_device_detection_shared::{
+    declared_property_value_type, DeviceDataBase, DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY,
+};
 
 use crate::dto::map_device_object;
 use crate::meta::{cloud_json, fill_metadata, DiscoveredMetadata};
@@ -78,6 +77,16 @@ const ENGINE_NAME: &str = "DeviceDetectionCloudEngine";
 /// properties on the first `process` after discovery completes. A resource
 /// key that grants no device product leaves the metadata empty and logs an
 /// error once.
+///
+/// # A failed cloud request
+///
+/// When the cloud request engine left no response, the engine logs that at
+/// info level, records a flow error that does not fail processing, and stores
+/// empty device data marked with
+/// [`AspectDataBase::mark_cloud_request_failed`](fiftyone_pipeline_engines::AspectDataBase::mark_cloud_request_failed),
+/// so each property read gives
+/// [`MissingPropertyReason::CloudRequestFailed`](fiftyone_pipeline_core::MissingPropertyReason::CloudRequestFailed),
+/// as .NET does.
 ///
 /// # Example
 ///
@@ -193,13 +202,24 @@ impl DeviceDetectionCloudEngine {
     /// [`DEVICE_DATA_KEY`].
     ///
     /// Returns an [`Error::PipelineConfiguration`] if no cloud request engine ran
-    /// before this engine. An empty or absent JSON response (which signals the
-    /// request engine itself failed and already reported the error) leaves the
-    /// device data unpopulated and does not raise a new error.
+    /// before this engine. An empty or absent JSON response, which means the
+    /// request engine failed and recorded its own error, gives empty device
+    /// data marked as from a failed cloud request, and a flow error that does
+    /// not fail processing.
     fn populate(&self, data: &mut FlowData) -> Result<()> {
         let json = match cloud_json(data, ENGINE_NAME)? {
             Some(json) => json,
-            None => return Ok(()),
+            None => {
+                CloudRequestEngine::record_not_processed(
+                    data,
+                    ENGINE_NAME,
+                    DEVICE_ELEMENT_DATA_KEY,
+                );
+                let mut device = DeviceDataBase::new();
+                device.base_mut().mark_cloud_request_failed();
+                data.get_or_add(DEVICE_DATA_KEY, || device)?;
+                return Ok(());
+            }
         };
 
         let device = slice_device_json(&json)?;
@@ -253,6 +273,10 @@ impl FlowElement for DeviceDetectionCloudEngine {
 }
 
 impl AspectEngine for DeviceDetectionCloudEngine {
+    fn engine_type_name(&self) -> &str {
+        ENGINE_NAME
+    }
+
     fn data_source_tier(&self) -> &str {
         self.metadata
             .get()
@@ -273,15 +297,11 @@ impl AspectEngine for DeviceDetectionCloudEngine {
         self.metadata.get().is_some()
     }
 
-    fn missing_property_reason(&self, property_name: &str) -> MissingPropertyResult {
-        let ctx = EngineMissingPropertyContext {
-            element_data_key: self.data_key(),
-            deployment: self.deployment(),
-            data_source_tier: self.data_source_tier(),
-            properties_loaded: self.has_loaded_properties(),
-            properties: self.aspect_properties(),
-        };
-        fiftyone_pipeline_engines::missing_property_reason(property_name, &ctx)
+    /// Whether `DeviceData` has a typed accessor for the property, matched
+    /// ignoring case. Before discovery completes, such a property gives a
+    /// data file upgrade as the reason it is missing, as .NET does.
+    fn has_typed_property(&self, property_name: &str) -> bool {
+        declared_property_value_type(property_name).is_some()
     }
 }
 

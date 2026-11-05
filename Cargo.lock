@@ -671,6 +671,7 @@ name = "fiftyone-derived-properties"
 version = "4.5.2"
 dependencies = [
  "fiftyone-pipeline-core",
+ "log",
  "serde_norway",
  "thiserror 2.0.18",
 ]
@@ -716,6 +717,7 @@ dependencies = [
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
  "fiftyone-pipeline-engines-fiftyone",
+ "log",
 ]
 
 [[package]]
@@ -873,6 +875,7 @@ name = "fiftyone-pipeline-engines-fiftyone"
 version = "4.5.2"
 dependencies = [
  "ahash",
+ "arc-swap",
  "fastrand",
  "fiftyone-caching",
  "fiftyone-pipeline-core",
@@ -899,6 +902,7 @@ dependencies = [
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
  "fiftyone-pipeline-engines-fiftyone",
+ "log",
 ]
 
 [[package]]

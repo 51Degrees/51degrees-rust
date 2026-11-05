@@ -634,13 +634,20 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
 
     fn refresh(&self, _data_file_identifier: Option<&str>) -> Result<()> {
         // A single-file engine ignores the identifier. Reload from the file's
-        // configured path on disk and hot-swap it in.
+        // configured path on disk and hot-swap it in. A reload that fails is
+        // logged at error level, as .NET does, and returned.
         let path = self
             .data_files
             .first()
             .and_then(|file| file.data_file_path().map(Path::to_path_buf));
         match path {
-            Some(path) => self.reload_from_path(&path),
+            Some(path) => self.reload_from_path(&path).inspect_err(|error| {
+                log::error!(
+                    "Failed to refresh data from '{}'. The engine keeps the data it had. \
+                     If this persists, please contact support@51degrees.com. {error}",
+                    path.display()
+                );
+            }),
             None => Err(Error::configuration(format!(
                 "Engine '{}' has no data file path to refresh from.",
                 self.data_key()

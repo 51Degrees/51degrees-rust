@@ -23,7 +23,8 @@
 //! The element itself, which runs the scripts over one flow data.
 //!
 //! The element holds no data file, sends no request over the network, keeps
-//! nothing between one request and the next, and reads no evidence from the
+//! nothing between one request and the next apart from whether each script
+//! has logged a missing source element, and reads no evidence from the
 //! request. Anything that needs one of those four is a different element and
 //! not a script.
 
@@ -31,6 +32,7 @@ use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use fiftyone_pipeline_core::{
     ElementData, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
@@ -129,6 +131,9 @@ impl ElementData for DerivedData {
 #[derive(Debug)]
 pub struct DerivedPropertyElement {
     scripts: Vec<Script>,
+    /// One for each script, set once the script has logged a source element
+    /// whose data a request did not carry.
+    reported: Box<[AtomicBool]>,
     properties: Vec<PropertyMetaData>,
     filter: EvidenceKeyFilterWhitelist,
 }
@@ -155,8 +160,11 @@ impl FlowElement for DerivedPropertyElement {
         // the element data cannot be borrowed for reading and writing at once.
         let results = {
             let source = FlowDataSource::new(data);
-            for script in &self.scripts {
+            for (script, reported) in self.scripts.iter().zip(self.reported.iter()) {
                 let outcome = script.evaluate(&source);
+                if let Some((property, element)) = source.take_absent() {
+                    report_absent_element(script, reported, &property, &element);
+                }
                 source.remember(script.output().name.clone(), outcome);
             }
             source.into_results()
@@ -301,6 +309,18 @@ impl DerivedPropertyElementBuilder {
         if !self.faults.is_empty() {
             return Err(Faults::new(self.faults));
         }
+        for script in self.scripts.iter().filter(|script| script.is_deprecated()) {
+            log::warn!(
+                "Derived property script '{}' is deprecated. {}",
+                script.name(),
+                script.deprecation_note().unwrap_or_default()
+            );
+        }
+        let reported = self
+            .scripts
+            .iter()
+            .map(|_| AtomicBool::new(false))
+            .collect();
         let properties = self
             .scripts
             .iter()
@@ -316,6 +336,7 @@ impl DerivedPropertyElementBuilder {
             .collect();
         Ok(DerivedPropertyElement {
             scripts: self.scripts,
+            reported,
             properties,
             // The element reads no evidence, so it advertises none. What it
             // reads is the element data earlier elements produced.
@@ -335,6 +356,10 @@ struct FlowDataSource<'a> {
     /// property could not be read, which is what tells a property that is not
     /// there at all from one whose source supplied a no value message.
     keys: RefCell<HashMap<String, Vec<String>>>,
+    /// The first source property, and its element key, whose element data
+    /// the request did not carry though an element in the pipeline writes
+    /// it, since the last [`Self::take_absent`].
+    absent: RefCell<Option<(String, String)>>,
 }
 
 impl<'a> FlowDataSource<'a> {
@@ -343,7 +368,36 @@ impl<'a> FlowDataSource<'a> {
             data,
             results: RefCell::new(Vec::new()),
             keys: RefCell::new(HashMap::new()),
+            absent: RefCell::new(None),
         }
+    }
+
+    /// Note a source whose element data the request did not carry, where an
+    /// element in the pipeline writes that data. A script reading another
+    /// derived property is left out, because this element writes `derived`
+    /// only after every script has run.
+    fn note_absent(&self, element_key: &str, property_name: &str) {
+        let mut absent = self.absent.borrow_mut();
+        if absent.is_some() || element_key.eq_ignore_ascii_case(DERIVED_DEFAULT_ELEMENT_DATA_KEY) {
+            return;
+        }
+        let written = self
+            .data
+            .pipeline()
+            .flow_elements()
+            .iter()
+            .any(|element| element.data_key().eq_ignore_ascii_case(element_key));
+        if written {
+            *absent = Some((
+                format!("{element_key}.{property_name}"),
+                element_key.to_owned(),
+            ));
+        }
+    }
+
+    /// Take what [`Self::note_absent`] noted for the script just run.
+    fn take_absent(&self) -> Option<(String, String)> {
+        self.absent.borrow_mut().take()
     }
 
     fn remember(&self, name: String, outcome: Outcome) {
@@ -385,7 +439,10 @@ impl PropertySource for FlowDataSource<'_> {
             }
         }
         let element = match self.data.get_str(element_key) {
-            None => return Lookup::Absent,
+            None => {
+                self.note_absent(element_key, property_name);
+                return Lookup::Absent;
+            }
             Some(element) => element,
         };
         match element.get(property_name) {
@@ -399,6 +456,22 @@ impl PropertySource for FlowDataSource<'_> {
             }
         }
     }
+}
+
+/// Log, once for each script, that a request carried no data from an element
+/// the pipeline holds, because that element runs after this one or did not
+/// run on that request, so the script has no value.
+fn report_absent_element(script: &Script, reported: &AtomicBool, property: &str, element: &str) {
+    if reported.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    log::error!(
+        "The script '{}' reads '{property}', and the request carried no element data \
+         '{element}' at all. An element in the pipeline writes '{element}', so that element \
+         is running after this one rather than before it, or it failed or was skipped on \
+         this request. Add the derived property element after it. This is reported once.",
+        script.name()
+    );
 }
 
 /// What a value in a flow data is to a script.

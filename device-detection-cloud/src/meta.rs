@@ -118,8 +118,8 @@ pub(crate) fn fill_metadata(
 /// Returns an [`Error::PipelineConfiguration`], naming `engine_name`, when no
 /// cloud request engine ran before the calling engine. An empty or absent JSON
 /// response means the request engine failed and already recorded its own error,
-/// which yields `Ok(None)` so the caller produces no result and raises no second
-/// error.
+/// which yields `Ok(None)`, so the caller stores empty data and records that
+/// it did not process, rather than returning a second error.
 pub(crate) fn cloud_json(data: &FlowData, engine_name: &str) -> Result<Option<String>> {
     // The request engine writes its data under the `cloud` key. If it is absent
     // or never started processing, the calling engine has been placed without a

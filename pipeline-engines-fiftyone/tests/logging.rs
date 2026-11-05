@@ -35,6 +35,7 @@ use fiftyone_pipeline_core::{
     MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue, PropertyValueType,
     Result, TypedKey,
 };
+use fiftyone_pipeline_engines::{AspectDataBase, EngineDeployment, MissingPropertySource};
 use fiftyone_pipeline_engines_fiftyone::{
     SequenceElement, SetHeadersElement, ShareUsageConfig, ShareUsageElement,
 };
@@ -208,6 +209,73 @@ fn set_headers_warns_on_each_request_for_a_missing_property() {
     assert_eq!(logged(), vec![warning, warning]);
 }
 
+/// An element declaring one `SetHeader` property, whose aspect data lacks it
+/// and can say so, as an on-premise engine's data can.
+struct AspectHeaderElement {
+    filter: EvidenceKeyFilterWhitelist,
+    properties: Vec<PropertyMetaData>,
+}
+
+impl AspectHeaderElement {
+    const KEY: TypedKey<AspectDataBase> = TypedKey::new("header");
+
+    fn new() -> Self {
+        AspectHeaderElement {
+            filter: EvidenceKeyFilterWhitelist::default(),
+            properties: vec![PropertyMetaData::new(
+                HeaderElement::PROPERTY,
+                "header",
+                PropertyValueType::String,
+            )],
+        }
+    }
+}
+
+impl FlowElement for AspectHeaderElement {
+    fn process(&self, data: &mut FlowData) -> Result<()> {
+        data.get_or_add(Self::KEY, || {
+            let mut aspect = AspectDataBase::new("header");
+            aspect.add_missing_property_source(Arc::new(MissingPropertySource::new(
+                "header",
+                "HeaderEngine",
+                EngineDeployment::OnPremise,
+                "Lite",
+                Vec::new(),
+            )));
+            aspect
+        })?;
+        Ok(())
+    }
+    fn data_key(&self) -> &str {
+        "header"
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        &self.filter
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        &self.properties
+    }
+}
+
+/// Set Headers asks whether the data holds the property before reading it,
+/// so the aspect data's own warning for a read of a missing property is not
+/// logged as well, as .NET's `TryGet` logs nothing.
+#[test]
+fn set_headers_gives_the_only_warning_for_a_property_aspect_data_lacks() {
+    let _serial = start();
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(AspectHeaderElement::new()))
+        .add_element(Arc::new(SetHeadersElement::new()))
+        .build()
+        .unwrap();
+    for _ in 0..2 {
+        pipeline.create_flow_data().process().unwrap();
+    }
+    let warning = "WARN Property 'SetHeaderBrowserAccept-CH' is missing from \
+                   'header', so it adds no value to the Accept-CH header.";
+    assert_eq!(logged(), vec![warning, warning]);
+}
+
 #[test]
 fn set_headers_says_nothing_for_a_property_with_no_value() {
     let _serial = start();
@@ -254,9 +322,11 @@ fn a_refused_send_logs_one_warning() {
         .build();
     pipeline.create_flow_data_with(evidence).process().unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(10);
+    const SEND_DEADLINE_SECONDS: u64 = 10;
+    const POLL_INTERVAL_MILLISECONDS: u64 = 25;
+    let deadline = Instant::now() + Duration::from_secs(SEND_DEADLINE_SECONDS);
     while share.fail_count() == 0 && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(25));
+        std::thread::sleep(Duration::from_millis(POLL_INTERVAL_MILLISECONDS));
     }
     drop(pipeline);
     drop(share);
