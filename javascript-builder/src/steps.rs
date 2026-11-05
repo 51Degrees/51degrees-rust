@@ -24,7 +24,7 @@
 //! which a caller can replace one at a time.
 
 use std::fmt;
-use std::panic::{RefUnwindSafe, UnwindSafe};
+use std::panic::RefUnwindSafe;
 use std::sync::Arc;
 
 use fiftyone_pipeline_core::FlowData;
@@ -84,6 +84,10 @@ impl<'a> JavaScriptBuilderContext<'a> {
 /// [javascript-builder specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/javascript-builder.md)
 /// says.
 ///
+/// An implementation must be `RefUnwindSafe` so the builder and element
+/// holding it stay `UnwindSafe` and `RefUnwindSafe`. Keep any state a step
+/// changes in a `Mutex` or an atomic, which are both.
+///
 /// # Example
 ///
 /// Adding a fixed parameter to every callback the script makes, after the
@@ -112,7 +116,7 @@ impl<'a> JavaScriptBuilderContext<'a> {
 ///     .set_steps(WithRegion)
 ///     .build();
 /// ```
-pub trait JavaScriptBuilderSteps: Send + Sync {
+pub trait JavaScriptBuilderSteps: Send + Sync + RefUnwindSafe {
     /// The query parameters the script adds to each callback, as names and
     /// values in the order they are written.
     ///
@@ -166,10 +170,6 @@ impl JavaScriptBuilderSteps for DefaultJavaScriptBuilderSteps {}
 
 /// The steps an element uses, shared between a builder and the elements it
 /// builds.
-///
-/// The element only calls the steps, and keeps nothing that a step which
-/// panics could leave half changed, so the builder and the element stay
-/// `UnwindSafe` and `RefUnwindSafe` whatever the steps hold.
 #[derive(Clone)]
 pub(crate) struct SharedSteps(Arc<dyn JavaScriptBuilderSteps>);
 
@@ -184,9 +184,6 @@ impl SharedSteps {
         self.0.as_ref()
     }
 }
-
-impl UnwindSafe for SharedSteps {}
-impl RefUnwindSafe for SharedSteps {}
 
 impl fmt::Debug for SharedSteps {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
