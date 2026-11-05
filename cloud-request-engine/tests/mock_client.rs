@@ -336,6 +336,10 @@ fn a_4xx_answer_to_either_discovery_request_fails_the_build() {
     let cases = [
         ("evidence keys 403", Some(refused(403)), None, 403),
         ("properties 401", None, Some(refused(401)), 401),
+        // A 429 at start-up fails the build like any other 4xx, although it
+        // also counts towards a recovery period.
+        ("evidence keys 429", Some(refused(429)), None, 429),
+        ("properties 429", None, Some(refused(429)), 429),
         (
             "evidence keys 500 and properties 403",
             Some(FakeClient::with_status(500, "fault")),

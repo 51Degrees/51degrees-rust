@@ -28,7 +28,7 @@
 //! request through the full middleware-plus-handler stack and returns the
 //! response.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
@@ -36,7 +36,9 @@ use axum::routing::get;
 use axum::Router;
 use fiftyone_javascript_builder::JavaScriptBuilderElement;
 use fiftyone_json_builder::JsonBuilderElement;
-use fiftyone_pipeline_core::FlowElement;
+use fiftyone_pipeline_core::{
+    EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData, Result,
+};
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 use fiftyone_pipeline_web::{WebIntegrationOptions, WebPipeline};
 use fiftyone_pipeline_web_axum::{register, FiftyOneState};
@@ -203,4 +205,54 @@ async fn non_endpoint_request_passes_through_to_application() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     assert_eq!(&body[..], b"home");
+}
+
+/// An element that learns the evidence it accepts after it is built, as the
+/// cloud request engine does after a transient discovery failure. Its filter
+/// is complete once `learned` is set.
+#[derive(Default)]
+struct LearningElement {
+    learned: OnceLock<EvidenceKeyFilterWhitelist>,
+    nothing: EvidenceKeyFilterWhitelist,
+}
+
+impl FlowElement for LearningElement {
+    fn process(&self, _data: &mut FlowData) -> Result<()> {
+        Ok(())
+    }
+    fn data_key(&self) -> &str {
+        "learning"
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        self.learned.get().unwrap_or(&self.nothing)
+    }
+    fn is_evidence_key_filter_complete(&self) -> bool {
+        self.learned.get().is_some()
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        &[]
+    }
+}
+
+/// The state built from a web pipeline follows the pipeline's `Vary` list, so
+/// it gains the evidence an element learns after the build. A copy of the
+/// list taken at build would not.
+#[test]
+fn the_state_follows_the_vary_list_once_an_element_completes() {
+    let element = Arc::new(LearningElement::default());
+    let web = WebPipeline::build(vec![element.clone()], WebIntegrationOptions::default())
+        .expect("web pipeline builds");
+    let state = FiftyOneState::from_web_pipeline(&web);
+    assert!(!state.vary_whitelist().include("header.x-learned"));
+
+    element
+        .learned
+        .set(EvidenceKeyFilterWhitelist::new(["header.x-learned"]))
+        .unwrap();
+
+    assert!(state.vary_whitelist().include("header.x-learned"));
+    assert!(state
+        .endpoint_options()
+        .current_vary_whitelist()
+        .is_some_and(|list| list.include("header.x-learned")));
 }

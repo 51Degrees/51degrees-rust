@@ -33,7 +33,7 @@
 
 use std::sync::Arc;
 
-use fiftyone_pipeline_core::{Evidence, Pipeline};
+use fiftyone_pipeline_core::{Error, Evidence, Pipeline};
 
 use fiftyone_cloud_request_engine::{
     CloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine, HttpMethod,
@@ -329,6 +329,47 @@ fn derives_aspect_metadata_from_request_engine() {
     use fiftyone_pipeline_engines::AspectEngine;
     assert_eq!(engine.data_source_tier(), "CloudV4");
     assert_eq!(engine.aspect_properties().len(), 5);
+}
+
+/// A cloud that cannot be reached, so a request engine built on it has not
+/// completed discovery.
+struct UnreachableCloud;
+
+impl CloudHttpClient for UnreachableCloud {
+    fn send(&self, _request: &CloudHttpRequest) -> Result<CloudHttpResponse, String> {
+        Err("connection refused".to_owned())
+    }
+}
+
+/// While the request engine's discovery has not completed,
+/// `eager_properties(true)` makes `try_build` fail with the request engine's
+/// error, and without it `try_build` leaves the metadata to the first
+/// process call.
+#[test]
+fn eager_properties_fails_try_build_while_discovery_is_pending() {
+    let request_engine = Arc::new(
+        CloudRequestEngine::builder()
+            .resource_key("test-resource-key")
+            .http_client(Arc::new(UnreachableCloud))
+            .recovery_seconds(0.0)
+            .build()
+            .expect("a transient failure does not fail the build"),
+    );
+    assert!(!request_engine.has_loaded_metadata());
+
+    let eager = DeviceDetectionCloudEngine::builder()
+        .cloud_request_engine(Arc::clone(&request_engine))
+        .eager_properties(true)
+        .try_build();
+    match eager {
+        Err(Error::CloudRequest { .. }) => {}
+        Err(other) => panic!("unexpected error {other:?}"),
+        Ok(_) => panic!("try_build succeeded while discovery was pending"),
+    }
+    assert!(DeviceDetectionCloudEngine::builder()
+        .cloud_request_engine(request_engine)
+        .try_build()
+        .is_ok());
 }
 
 #[test]
