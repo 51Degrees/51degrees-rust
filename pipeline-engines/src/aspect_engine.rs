@@ -765,6 +765,30 @@ mod tests {
             Some(MissingPropertyReason::Unknown)
         );
         assert_eq!(reason(&[]), None);
+
+        // Two engines with different known reasons, so only the order decides.
+        let mut excluded = DeviceEngine::new(false, Arc::new(AtomicUsize::new(0)));
+        excluded.aspect_properties =
+            vec![
+                AspectPropertyMetaData::new("ScreenWidth", "device", PropertyValueType::Integer)
+                    .with_data_tiers(["Lite"])
+                    .map_core(|core| core.with_available(false)),
+            ];
+        assert_eq!(
+            excluded.missing_property_reason("ScreenWidth").reason,
+            MissingPropertyReason::PropertyExcludedFromConfig
+        );
+        let result = |engines: &[&dyn AspectEngine]| {
+            crate::missing_property_reason_for_engines("ScreenWidth", engines)
+        };
+        assert_eq!(
+            result(&[&unknown, &upgrade, &excluded]),
+            Some(upgrade.missing_property_reason("ScreenWidth"))
+        );
+        assert_eq!(
+            result(&[&unknown, &excluded, &upgrade]),
+            Some(excluded.missing_property_reason("ScreenWidth"))
+        );
     }
 
     #[test]
