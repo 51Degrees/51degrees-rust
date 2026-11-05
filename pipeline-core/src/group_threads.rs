@@ -29,7 +29,8 @@
 //!
 //! The thread that offers work takes it back if no pool thread has started
 //! it, so a group always finishes, even with every pool thread busy or on a
-//! platform that cannot start threads.
+//! platform that cannot start threads. The first time work finds all
+//! [`MOST_THREADS`] pool threads in use, a warning is logged.
 
 use std::collections::VecDeque;
 use std::io;
@@ -39,7 +40,8 @@ use std::thread;
 use std::time::Duration;
 
 /// The most pool threads at once. Past it, work waits for a pool thread or is
-/// taken back by the thread that offered it.
+/// taken back by the thread that offered it, and the first time that happens
+/// a warning naming this limit is logged.
 const MOST_THREADS: usize = 64;
 
 /// How long a pool thread waits for work before it ends.
@@ -128,6 +130,9 @@ struct State {
     idle: usize,
     /// True once the platform has said it cannot start threads.
     unsupported: bool,
+    /// True once work has found every pool thread in use, which is logged
+    /// only the first time.
+    limit_reached: bool,
 }
 
 static POOL: OnceLock<Arc<Pool>> = OnceLock::new();
@@ -141,15 +146,17 @@ impl Pool {
                     threads: 0,
                     idle: 0,
                     unsupported: false,
+                    limit_reached: false,
                 }),
                 work_waiting: Condvar::new(),
             })
         })
     }
 
-    /// Queue `job`, then wake an idle pool thread for it or start one.
+    /// Queue `job`, then wake an idle pool thread for it or start one. The
+    /// first time every pool thread is in use, log a warning.
     fn offer(self: &Arc<Self>, job: Arc<dyn Runnable>) {
-        let start = {
+        let (start, first_at_limit) = {
             let mut state = lock(&self.state);
             if state.unsupported {
                 return;
@@ -157,14 +164,22 @@ impl Pool {
             state.queue.push_back(job);
             if state.idle >= state.queue.len() {
                 self.work_waiting.notify_one();
-                false
+                (false, false)
             } else if state.threads < MOST_THREADS {
                 state.threads += 1;
-                true
+                (true, false)
             } else {
-                false
+                (false, !std::mem::replace(&mut state.limit_reached, true))
             }
         };
+        if first_at_limit {
+            log::warn!(
+                "All {MOST_THREADS} threads shared by parallel groups are in use, so an \
+                 element of a group that none of them has started runs on the thread \
+                 processing the flow data once that thread reaches it. This is logged \
+                 only the first time."
+            );
+        }
         if start {
             let pool = Arc::clone(self);
             let started = thread::Builder::new()

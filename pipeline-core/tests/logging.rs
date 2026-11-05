@@ -231,6 +231,95 @@ fn failing_group_members_are_logged_in_order_when_errors_are_returned() {
     assert_eq!(keys, ["ordered-first", "ordered-second"]);
 }
 
+/// Filling every thread parallel groups share, which needs threads, so
+/// WebAssembly leaves it out.
+#[cfg(not(target_family = "wasm"))]
+mod shared_thread_limit {
+    use std::sync::Condvar;
+
+    use super::*;
+
+    /// More elements than there are threads shared by parallel groups.
+    const GROUP_SIZE: usize = 80;
+
+    /// A gate the elements of a group wait at until the first opens it.
+    #[derive(Default)]
+    struct Gate {
+        open: Mutex<bool>,
+        opened: Condvar,
+    }
+
+    /// An element that opens its gate, or waits until the gate is open.
+    struct GateElement {
+        key: String,
+        gate: Arc<Gate>,
+        opens: bool,
+        filter: EvidenceKeyFilterWhitelist,
+    }
+
+    impl FlowElement for GateElement {
+        fn process(&self, _data: &mut FlowData) -> Result<()> {
+            let mut open = self.gate.open.lock().unwrap();
+            if self.opens {
+                *open = true;
+                self.gate.opened.notify_all();
+            }
+            while !*open {
+                open = self.gate.opened.wait(open).unwrap();
+            }
+            Ok(())
+        }
+        fn data_key(&self) -> &str {
+            &self.key
+        }
+        fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+            &self.filter
+        }
+        fn properties(&self) -> &[PropertyMetaData] {
+            &[]
+        }
+    }
+
+    /// Process a group whose first element opens a gate every other element
+    /// waits at. The first runs only after every other element has been
+    /// offered to the shared threads, and none of those can finish before
+    /// it, so a group larger than the shared threads finds them all in use.
+    fn process_a_group_larger_than_the_shared_threads() {
+        let gate = Arc::new(Gate::default());
+        let group = (0..GROUP_SIZE).map(|index| {
+            Arc::new(GateElement {
+                key: format!("gate-{index}"),
+                gate: Arc::clone(&gate),
+                opens: index == 0,
+                filter: EvidenceKeyFilterWhitelist::default(),
+            }) as Arc<dyn FlowElement>
+        });
+        Pipeline::builder()
+            .add_parallel_elements(group)
+            .build()
+            .unwrap()
+            .create_flow_data()
+            .process()
+            .unwrap();
+    }
+
+    /// The first time every shared thread is in use, one warning names the
+    /// limit, and filling them again logs nothing more.
+    #[test]
+    fn reaching_the_shared_thread_limit_is_logged_once() {
+        capture_logs();
+        process_a_group_larger_than_the_shared_threads();
+        process_a_group_larger_than_the_shared_threads();
+
+        let records = logged_about("threads shared by parallel groups");
+        assert_eq!(records.len(), 1, "{records:?}");
+        assert!(
+            records[0].starts_with("WARN All 64 threads shared by parallel groups"),
+            "{records:?}"
+        );
+    }
+}
+
 /// .NET's pipeline logs one error-level record for an element that fails
 /// while errors are not suppressed, and still throws.
 #[test]
