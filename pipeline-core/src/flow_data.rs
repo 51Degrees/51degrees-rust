@@ -330,11 +330,10 @@ impl FlowData {
     /// The search is: every element data that holds the property, as
     /// [`ElementData::has_property`] says, is asked for it by its full name,
     /// so data known to lack it is not asked and logs nothing. If exactly one
-    /// element data has a value, it is returned. If more
-    /// than one does, that is ambiguous and an error is returned, as the
-    /// specification allows. If none do, the value is taken from evidence (as a
-    /// [`PropertyValue::String`]). Returns `Err(NoValueError)` if nothing
-    /// matches.
+    /// element data has a value, it is returned. If more than one does, that is
+    /// ambiguous and an error is returned, as the specification allows. If none
+    /// do, the value is taken from evidence (as a [`PropertyValue::String`]).
+    /// Returns `Err(NoValueError)` if nothing matches.
     pub fn get_evidence_or_property(
         &self,
         name: &str,
