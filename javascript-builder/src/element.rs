@@ -23,9 +23,8 @@
 //! The JavaScript builder flow element.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 
-use fiftyone_cloud_request_engine::CloudRequestEngine;
 use fiftyone_json_builder::JSON_BUILDER_DATA_KEY;
 use fiftyone_pipeline_core::constants::{
     EVIDENCE_PROTOCOL_KEY, EVIDENCE_QUERY_PREFIX, EVIDENCE_SEPARATOR,
@@ -38,7 +37,7 @@ use fiftyone_pipeline_engines_fiftyone::constants::{EVIDENCE_SEQUENCE, EVIDENCE_
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 
-use crate::builder::{grants_51did, is_valid_object_name, UserPromptSource};
+use crate::builder::{grants_51did, is_valid_object_name, SharedEngine, UserPromptSource};
 use crate::constants::{
     DELAY_EXECUTION_MARKER, EVIDENCE_ENABLE_COOKIES, EVIDENCE_HOST_KEY, EVIDENCE_OBJECT_NAME,
     FALLBACK_PROTOCOL, FETCH_PROPERTY, JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY,
@@ -195,7 +194,7 @@ pub struct JavaScriptBuilderElement {
     user_prompt_settled: OnceLock<bool>,
     /// The request engine whose licensed products settle
     /// `user_prompt_settled`, when the builder was given a shared one.
-    user_prompt_engine: Option<Arc<CloudRequestEngine>>,
+    user_prompt_engine: Option<SharedEngine>,
 }
 
 impl JavaScriptBuilderElement {

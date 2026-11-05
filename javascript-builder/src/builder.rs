@@ -23,6 +23,8 @@
 //! The builder for [`JavaScriptBuilderElement`].
 
 use std::fmt;
+use std::ops::Deref;
+use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::sync::Arc;
 
 use fiftyone_cloud_request_engine::{CloudRequestEngine, LicensedProducts};
@@ -42,7 +44,27 @@ pub(crate) enum UserPromptSource {
     Decided(bool),
     /// Decided from this request engine's licensed products once its
     /// discovery has completed.
-    Engine(Arc<CloudRequestEngine>),
+    Engine(SharedEngine),
+}
+
+/// A shared cloud request engine that keeps the builder and the element
+/// `UnwindSafe` and `RefUnwindSafe`.
+///
+/// The JavaScript builder only reads the engine's licensed products, which
+/// are set once, so a panic elsewhere cannot leave a value half changed for
+/// it to read.
+#[derive(Clone)]
+pub(crate) struct SharedEngine(Arc<CloudRequestEngine>);
+
+impl UnwindSafe for SharedEngine {}
+impl RefUnwindSafe for SharedEngine {}
+
+impl Deref for SharedEngine {
+    type Target = CloudRequestEngine;
+
+    fn deref(&self) -> &CloudRequestEngine {
+        &self.0
+    }
 }
 
 impl fmt::Debug for UserPromptSource {
@@ -116,7 +138,7 @@ impl JavaScriptBuilderElementBuilder {
     /// [`set_cloud_request_engine`](Self::set_cloud_request_engine) the
     /// section is left out.
     pub fn set_shared_cloud_request_engine(mut self, engine: Arc<CloudRequestEngine>) -> Self {
-        self.user_prompt = UserPromptSource::Engine(engine);
+        self.user_prompt = UserPromptSource::Engine(SharedEngine(engine));
         self
     }
 

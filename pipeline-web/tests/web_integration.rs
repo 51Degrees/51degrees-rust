@@ -930,3 +930,12 @@ fn the_response_to_a_failed_request_is_not_kept_once_processing_recovers() {
         "the response once processing recovers carries the device data"
     );
 }
+
+/// `EndpointOptions` is `Send`, `Sync`, `UnwindSafe` and `RefUnwindSafe`, as
+/// removing an auto trait from a public type breaks callers. This test fails
+/// to compile if it loses one.
+#[test]
+fn endpoint_options_keep_their_auto_traits() {
+    fn has_auto_traits<T: Send + Sync + std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
+    has_auto_traits::<EndpointOptions>();
+}
