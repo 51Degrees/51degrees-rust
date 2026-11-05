@@ -305,6 +305,9 @@ fn a_refresh_frees_the_lists_it_replaces_once_no_caller_holds_them() {
 
     let held_properties = engine.fiftyone_properties();
     let held_components = engine.components();
+    // Each call gives the data set's own list rather than a copy.
+    assert!(Arc::ptr_eq(&held_properties, &engine.fiftyone_properties()));
+    assert!(Arc::ptr_eq(&held_components, &engine.components()));
     let properties = Arc::downgrade(&held_properties);
     let components = Arc::downgrade(&held_components);
     engine.refresh(None).expect("the data file loads again");
