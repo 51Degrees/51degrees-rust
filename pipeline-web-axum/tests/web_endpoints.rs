@@ -28,16 +28,21 @@
 //! request through the full middleware-plus-handler stack and returns the
 //! response.
 
-use std::sync::{Arc, OnceLock};
+use std::any::Any;
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread::{self, ThreadId};
 
 use axum::body::{to_bytes, Body};
+use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use axum::routing::get;
 use axum::Router;
-use fiftyone_javascript_builder::JavaScriptBuilderElement;
-use fiftyone_json_builder::JsonBuilderElement;
+use fiftyone_javascript_builder::{JavaScriptBuilderElement, JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY};
+use fiftyone_json_builder::{JsonBuilderElement, JSON_BUILDER_ELEMENT_DATA_KEY};
 use fiftyone_pipeline_core::{
-    EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData, Result,
+    ElementData, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    MapElementData, NoValueError, PropertyMetaData, PropertyValue, Result, TypedKey,
 };
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 use fiftyone_pipeline_web::{WebIntegrationOptions, WebPipeline};
@@ -262,4 +267,254 @@ fn the_state_follows_the_vary_list_once_an_element_completes() {
         .endpoint_options()
         .current_vary_whitelist()
         .is_some_and(|list| list.include("header.x-learned")));
+}
+
+// ----------------------------------------------------------------------------
+// Where an endpoint is served when its builder left no data.
+// ----------------------------------------------------------------------------
+
+/// Keeps each record at warning level and above with the thread that logged
+/// it.
+struct ThreadLogger {
+    entries: Mutex<Vec<(ThreadId, String)>>,
+}
+
+impl log::Log for ThreadLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Warn
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            self.entries
+                .lock()
+                .unwrap()
+                .push((thread::current().id(), record.args().to_string()));
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+fn logger() -> &'static ThreadLogger {
+    static LOGGER: OnceLock<&'static ThreadLogger> = OnceLock::new();
+    LOGGER.get_or_init(|| {
+        let logger: &'static ThreadLogger = Box::leak(Box::new(ThreadLogger {
+            entries: Mutex::new(Vec::new()),
+        }));
+        log::set_logger(logger).expect("no other logger is installed in this binary");
+        log::set_max_level(log::LevelFilter::Warn);
+        logger
+    })
+}
+
+/// The threads that logged this message.
+fn threads_logging(message: &str) -> Vec<ThreadId> {
+    logger()
+        .entries
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, logged)| logged == message)
+        .map(|(id, _)| *id)
+        .collect()
+}
+
+/// Records the thread each request is processed on.
+#[derive(Default)]
+struct ThreadElement {
+    threads: Mutex<Vec<ThreadId>>,
+    nothing: EvidenceKeyFilterWhitelist,
+}
+
+impl FlowElement for ThreadElement {
+    fn process(&self, _data: &mut FlowData) -> Result<()> {
+        self.threads.lock().unwrap().push(thread::current().id());
+        Ok(())
+    }
+    fn data_key(&self) -> &str {
+        "thread"
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        &self.nothing
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        &[]
+    }
+}
+
+struct ClashData(MapElementData);
+
+impl ElementData for ClashData {
+    fn get(&self, name: &str) -> std::result::Result<PropertyValue, NoValueError> {
+        self.0.get(name)
+    }
+    fn keys(&self) -> Vec<String> {
+        self.0.keys()
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+/// Puts data of another type under a builder's data key, so the builder fails
+/// to add its own and leaves no data.
+struct ClashElement {
+    builder_key: &'static str,
+    nothing: EvidenceKeyFilterWhitelist,
+}
+
+impl FlowElement for ClashElement {
+    fn process(&self, data: &mut FlowData) -> Result<()> {
+        data.get_or_add(TypedKey::<ClashData>::new(self.builder_key), || {
+            ClashData(MapElementData::new())
+        })?;
+        Ok(())
+    }
+    fn data_key(&self) -> &str {
+        "clash"
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        &self.nothing
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        &[]
+    }
+}
+
+/// When a builder left no data, serving builds its output again, so each
+/// endpoint is served on the blocking thread that processed the request and
+/// never on the runtime's own thread, which runs this test.
+#[tokio::test]
+async fn an_endpoint_is_served_on_the_thread_that_processed_it() {
+    let cases = [
+        (
+            JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY,
+            Request::builder()
+                .method("GET")
+                .uri("/51Degrees.core.js")
+                .header("host", "localhost")
+                .body(Body::empty())
+                .unwrap(),
+        ),
+        (
+            JSON_BUILDER_ELEMENT_DATA_KEY,
+            Request::builder()
+                .method("POST")
+                .uri("/51dpipeline/json")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .header("host", "localhost")
+                .body(Body::from("session-id=abc&sequence=1"))
+                .unwrap(),
+        ),
+    ];
+    for (builder_key, request) in cases {
+        let processed = Arc::new(ThreadElement::default());
+        let elements: Vec<Arc<dyn FlowElement>> = vec![
+            processed.clone(),
+            Arc::new(ClashElement {
+                builder_key,
+                nothing: EvidenceKeyFilterWhitelist::default(),
+            }),
+        ];
+        let web = WebPipeline::build(elements, WebIntegrationOptions::default())
+            .expect("web pipeline builds");
+        let app = register(Router::new(), FiftyOneState::from_web_pipeline(&web));
+        let message = format!(
+            "Failed to get data from element '{builder_key}', so the response is not cached."
+        );
+        // Installs the logger before the request logs anything.
+        logger();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK, "{builder_key}");
+        let processed_on = processed.threads.lock().unwrap().clone();
+        assert_eq!(processed_on.len(), 1, "{builder_key} is processed once");
+        assert_ne!(processed_on[0], thread::current().id(), "{builder_key}");
+        assert_eq!(threads_logging(&message), processed_on, "{builder_key}");
+    }
+}
+
+// ----------------------------------------------------------------------------
+// What an endpoint takes from the request and the pipeline.
+// ----------------------------------------------------------------------------
+
+/// Records the client IP evidence each request carries, and accepts the
+/// `User-Agent` header so the pipeline's `Vary` list names it.
+struct ClientIpElement {
+    seen: Mutex<Vec<Option<String>>>,
+    filter: EvidenceKeyFilterWhitelist,
+}
+
+impl ClientIpElement {
+    fn new() -> Self {
+        ClientIpElement {
+            seen: Mutex::new(Vec::new()),
+            filter: EvidenceKeyFilterWhitelist::new(["server.client-ip", "header.user-agent"]),
+        }
+    }
+}
+
+impl FlowElement for ClientIpElement {
+    fn process(&self, data: &mut FlowData) -> Result<()> {
+        let ip = data.evidence().get("server.client-ip").map(str::to_owned);
+        self.seen.lock().unwrap().push(ip);
+        Ok(())
+    }
+    fn data_key(&self) -> &str {
+        "clientip"
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        &self.filter
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        &[]
+    }
+}
+
+/// Each endpoint gives the pipeline the connection's peer address as the
+/// client IP, and sends the `Vary` header from the pipeline's list.
+#[tokio::test]
+async fn an_endpoint_takes_the_peer_address_and_the_pipeline_vary_list() {
+    let peer: SocketAddr = "203.0.113.7:50000".parse().unwrap();
+    let requests = [
+        Request::builder().method("GET").uri("/51Degrees.core.js"),
+        Request::builder()
+            .method("POST")
+            .uri("/51dpipeline/json")
+            .header("content-type", "application/x-www-form-urlencoded"),
+    ];
+    for request in requests {
+        let recorder = Arc::new(ClientIpElement::new());
+        let elements: Vec<Arc<dyn FlowElement>> = vec![recorder.clone()];
+        let web = WebPipeline::build(elements, WebIntegrationOptions::default())
+            .expect("web pipeline builds");
+        let app = register(Router::new(), FiftyOneState::from_web_pipeline(&web));
+        let request = request
+            .header("host", "localhost")
+            .header("user-agent", "test-agent")
+            .extension(ConnectInfo(peer))
+            .body(Body::empty())
+            .unwrap();
+        let path = request.uri().path().to_owned();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        assert_eq!(
+            *recorder.seen.lock().unwrap(),
+            vec![Some("203.0.113.7".to_owned())],
+            "{path}"
+        );
+        let vary = header(&response, "vary").unwrap_or_default();
+        assert!(
+            vary.split(',')
+                .any(|name| name.trim().eq_ignore_ascii_case("user-agent")),
+            "{path} sends Vary: {vary}"
+        );
+    }
 }

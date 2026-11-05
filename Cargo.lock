@@ -916,6 +916,7 @@ dependencies = [
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines-fiftyone",
  "fiftyone-pipeline-web",
+ "log",
  "serde_json",
  "tokio",
  "tower",

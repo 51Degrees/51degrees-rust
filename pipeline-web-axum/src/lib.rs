@@ -65,6 +65,9 @@
 //! HTTP call). Running it inline would stall an async worker thread, so every
 //! request's processing is dispatched through
 //! [`tokio::task::spawn_blocking`]. This is why the crate depends on tokio.
+//! The two endpoint handlers also serve their response in that task, because
+//! when a builder left no data, serving builds the body again, which for the
+//! script means rendering and minifying it.
 //!
 //! ## Quick start
 //!

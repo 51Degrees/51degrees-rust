@@ -28,7 +28,10 @@
 //! synchronous HTTP call. Running that directly inside an async task would stall
 //! the runtime's worker thread, so [`process_request`] hands the work to
 //! [`tokio::task::spawn_blocking`], which runs it on the blocking thread pool and
-//! returns the processed [`FlowData`].
+//! returns the processed [`FlowData`]. The endpoint handlers use
+//! [`process_then`] instead, which also serves the endpoint in that task,
+//! because when a builder left no data, serving builds the body again, which
+//! for the script means rendering and minifying it.
 //!
 //! The captured request parts (header map, URI, buffered body, peer address) are
 //! moved into the blocking closure so it owns everything it reads. [`FlowData`]
@@ -47,7 +50,8 @@ use crate::state::FiftyOneState;
 /// blocking thread.
 ///
 /// Built by the middleware and the endpoint handlers after they have read the
-/// request, then consumed by [`process_request`]. Owning the parts (rather than
+/// request, then moved onto the blocking thread pool to be processed, as
+/// [`process_request`] does. Owning the parts (rather than
 /// borrowing the live request) is what lets the heavy work move off the async
 /// runtime.
 pub struct CapturedRequest {
@@ -89,6 +93,21 @@ pub async fn process_request(
     state: &FiftyOneState,
     captured: CapturedRequest,
 ) -> Result<FlowData, tokio::task::JoinError> {
+    process_then(state, captured, |flow_data, _| flow_data).await
+}
+
+/// As [`process_request`], then pass the processed [`FlowData`] and the
+/// request view to `then` in the same blocking task and return its result.
+/// This returns `Err` when processing or `then` panics.
+pub(crate) async fn process_then<T, F>(
+    state: &FiftyOneState,
+    captured: CapturedRequest,
+    then: F,
+) -> Result<T, tokio::task::JoinError>
+where
+    F: FnOnce(FlowData, &AxumRequestData<'_>) -> T + Send + 'static,
+    T: Send + 'static,
+{
     let pipeline = std::sync::Arc::clone(state.pipeline());
 
     tokio::task::spawn_blocking(move || {
@@ -100,7 +119,7 @@ pub async fn process_request(
         // Errors are suppressed onto the flow data by the web pipeline, so this
         // returns Ok; the result is read from flow_data.errors() downstream.
         let _ = flow_data.process();
-        flow_data
+        then(flow_data, &request)
     })
     .await
 }
