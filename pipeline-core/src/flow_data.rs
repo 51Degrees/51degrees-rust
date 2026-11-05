@@ -122,8 +122,9 @@ impl FlowData {
     /// or completed without error.
     ///
     /// An element in a parallel group sees the errors recorded before the
-    /// group. Errors from the group are recorded once every element in it has
-    /// finished.
+    /// group. Errors from the group, including those its elements record
+    /// with [`FlowData::add_error`], are recorded once every element in it
+    /// has finished, in the order the elements were given.
     pub fn errors(&self) -> &[FlowError] {
         match self.before_group() {
             Some(before) => &before.errors,
@@ -210,9 +211,10 @@ impl FlowData {
     }
 
     /// The element data a group member's element added, keyed by lowercased
-    /// data key. Dropping the member releases its share of the view.
-    pub(crate) fn into_added_data(self) -> DataMap {
-        self.data
+    /// data key, and the errors it recorded. Dropping the member releases its
+    /// share of the view.
+    pub(crate) fn into_added(self) -> (DataMap, Vec<FlowError>) {
+        (self.data, self.errors)
     }
 
     /// Put back what [`FlowData::begin_group`] took.

@@ -181,3 +181,149 @@ fn an_error_recorded_to_log_is_logged_once_whether_or_not_suppressed() {
         }
     }
 }
+
+/// An element that does nothing, to make a group with another.
+struct IdleElement {
+    filter: EvidenceKeyFilterWhitelist,
+    properties: Vec<PropertyMetaData>,
+}
+
+impl IdleElement {
+    fn new() -> Self {
+        IdleElement {
+            filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+            properties: Vec::new(),
+        }
+    }
+}
+
+impl FlowElement for IdleElement {
+    fn process(&self, _data: &mut FlowData) -> Result<()> {
+        Ok(())
+    }
+    fn data_key(&self) -> &str {
+        "idle"
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        &self.filter
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        &self.properties
+    }
+}
+
+/// An error a member of a parallel group records reaches the flow data once
+/// the group has finished, fails processing only when it should, and is logged
+/// once when it should be, as in sequence. The recording element is the first
+/// of the group, which runs on the calling thread, so its record is this
+/// thread's.
+#[test]
+fn an_error_a_group_member_records_reaches_the_flow_data() {
+    for should_throw in [false, true] {
+        for should_log in [false, true] {
+            let case = format!("should_throw {should_throw}, should_log {should_log}");
+            let from = errors_logged().len();
+            let group: [Arc<dyn FlowElement>; 2] = [
+                Arc::new(RecordingErrorElement::new(should_throw, should_log)),
+                Arc::new(IdleElement::new()),
+            ];
+            let pipeline = Pipeline::builder()
+                .add_parallel_elements(group)
+                .build()
+                .unwrap();
+            let mut data = pipeline.create_flow_data();
+            let result = data.process();
+
+            let keys: Vec<&str> = data
+                .errors()
+                .iter()
+                .map(|error| error.element_data_key.as_str())
+                .collect();
+            assert_eq!(keys, ["recording"], "{case}");
+            match result {
+                Ok(()) => assert!(!should_throw, "{case}"),
+                Err(Error::Aggregate(errors)) => {
+                    assert!(should_throw, "{case}");
+                    assert_eq!(errors.len(), 1, "{case}");
+                    assert_eq!(errors[0].element_data_key, "recording", "{case}");
+                }
+                Err(other) => panic!("{case}: expected an aggregate error, got {other:?}"),
+            }
+            let logged = errors_logged().split_off(from);
+            assert_eq!(logged.len(), usize::from(should_log), "{case}: {logged:?}");
+        }
+    }
+}
+
+/// An element that records an error and then fails.
+struct RecordingThenFailingElement {
+    filter: EvidenceKeyFilterWhitelist,
+    properties: Vec<PropertyMetaData>,
+}
+
+impl FlowElement for RecordingThenFailingElement {
+    fn process(&self, data: &mut FlowData) -> Result<()> {
+        data.add_error(
+            FlowError::with_should_throw(
+                "recording-then-failing",
+                Error::Pipeline {
+                    message: "recorded".to_owned(),
+                },
+                false,
+            ),
+            false,
+        );
+        Err(Error::Pipeline {
+            message: "returned".to_owned(),
+        })
+    }
+    fn data_key(&self) -> &str {
+        "recording-then-failing"
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        &self.filter
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        &self.properties
+    }
+}
+
+/// The errors an element of a group records come before the error it
+/// returns, as they do in sequence.
+#[test]
+fn a_group_members_recorded_error_comes_before_its_returned_error() {
+    let element = || -> Arc<dyn FlowElement> {
+        Arc::new(RecordingThenFailingElement {
+            filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+            properties: Vec::new(),
+        })
+    };
+    let errors = |pipeline: Arc<Pipeline>| -> Vec<String> {
+        let mut data = pipeline.create_flow_data();
+        data.process().expect("errors are suppressed");
+        data.errors()
+            .iter()
+            .map(|error| error.source.to_string())
+            .collect()
+    };
+    let in_sequence = errors(
+        Pipeline::builder()
+            .add_element(element())
+            .suppress_process_exceptions(true)
+            .build()
+            .unwrap(),
+    );
+    let group: [Arc<dyn FlowElement>; 2] = [element(), Arc::new(IdleElement::new())];
+    let in_a_group = errors(
+        Pipeline::builder()
+            .add_parallel_elements(group)
+            .suppress_process_exceptions(true)
+            .build()
+            .unwrap(),
+    );
+    assert_eq!(
+        in_sequence,
+        ["pipeline error: recorded", "pipeline error: returned"]
+    );
+    assert_eq!(in_a_group, in_sequence);
+}

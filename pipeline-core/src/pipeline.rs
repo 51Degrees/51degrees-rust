@@ -202,7 +202,9 @@ impl Pipeline {
 
     /// Run a parallel group's elements at the same time, each on a flow data
     /// of its own that reads what `data` held before the group, then add what
-    /// each one added and record each one's errors, in the order given.
+    /// each one added and record each one's errors, in the order given. An
+    /// element's recorded errors come before its returned error, as they do
+    /// in sequence.
     ///
     /// A panic in an element is raised again here once every element has
     /// finished and `data` holds its evidence and earlier results again.
@@ -211,14 +213,18 @@ impl Pipeline {
         let outcomes: Vec<_> = run_at_once(elements, &before)
             .into_iter()
             // Dropping each member's flow data releases its share of `before`.
-            .map(|outcome| outcome.map(|(member, result)| (member.into_added_data(), result)))
+            .map(|outcome| outcome.map(|(member, result)| (member.into_added(), result)))
             .collect();
         data.end_group(before);
 
         let mut first_panic = None;
         for (element, outcome) in elements.iter().zip(outcomes) {
             match outcome {
-                Ok((added, result)) => {
+                Ok(((added, recorded), result)) => {
+                    // `add_error` logged these when the element recorded them.
+                    for error in recorded {
+                        data.add_error(error, false);
+                    }
                     if let Err(error) = result {
                         self.record_error(data, element.data_key(), error);
                     }
