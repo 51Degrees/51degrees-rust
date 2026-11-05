@@ -84,17 +84,19 @@ on a thread of its own and waits for at most the wait budget, 350 milliseconds
 by default. Where the fetch has not finished by then, the request reports
 Timeout and the fetch carries on, so a later request from that agent finds the
 keys. This is deliberate, and not a fault. The directories are held in a
-bounded cache for a day, a failed fetch is remembered for five minutes, and
-every address is checked before it is fetched, so an address in a private or
-loopback range is never fetched. A deployment facing the public internet should
-still route these fetches through an outbound proxy that enforces an allow
-list, because a name that resolves to a private address cannot be refused
-before the connection is made.
+bounded cache for a day, a failed fetch is remembered for five minutes, and no
+more than 64 fetches run at once. Every address is checked before it is
+fetched, so an address written as an IP address in a private or loopback range
+is never fetched, and a document that arrives from any address other than the
+one asked for is refused. A name such as `localhost`, or one that resolves to a
+private address, cannot be refused this way, because the name is resolved when
+the connection is made, so a deployment facing the public internet should
+route these fetches through an outbound proxy that enforces an allow list.
 
-Where registries of agent cards are configured, they are read once for the
-life of the element. A registry or card that cannot be fetched at that read is
-not tried again until the element is built again. Only the card properties are
-affected.
+Where registries of agent cards are configured, each must be HTTPS with no user
+information, and they are read once for the life of the element. A registry or
+card that cannot be fetched at that read is not tried again until the element
+is built again. Only the card properties are affected.
 
 ## Settings
 
