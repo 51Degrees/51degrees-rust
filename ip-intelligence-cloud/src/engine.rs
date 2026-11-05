@@ -29,8 +29,8 @@ use once_cell::sync::OnceCell;
 
 use fiftyone_cloud_request_engine::{CloudRequestEngine, LicensedProducts};
 use fiftyone_ip_intelligence_shared::{
-    declared_property_value_type, default_aspect_property_metadata, default_property_metadata,
-    IpIntelligenceDataBase, IP_DATA_KEY, IP_DATA_KEY_NAME, WEIGHTED_PROPERTY_VALUE_TYPE,
+    default_aspect_property_metadata, default_property_metadata, IpIntelligenceDataBase,
+    IP_DATA_KEY, IP_DATA_KEY_NAME, WEIGHTED_PROPERTY_VALUE_TYPE,
 };
 use fiftyone_pipeline_core::{
     Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
@@ -361,18 +361,17 @@ impl AspectEngine for IpIntelligenceCloudEngine {
         self.properties.get().is_some()
     }
 
+    /// The request engine asks for the property list when it is built, or is
+    /// given it, so a list it still lacks is one whose request failed.
+    fn property_list_request_failed(&self) -> bool {
+        !self.has_loaded_properties() && self.request_engine.public_properties().is_err()
+    }
+
     fn missing_property_reason(&self, property_name: &str) -> MissingPropertyResult {
         // Read the metadata if discovery has completed, so the reason reflects
         // the live cloud metadata rather than the pre-discovery defaults.
         self.ensure_metadata();
         default_missing_property_reason(self, property_name)
-    }
-
-    /// Whether `IpIntelligenceData` has a typed accessor for the property,
-    /// matched ignoring case. Before discovery completes, such a property
-    /// gives a data file upgrade as the reason it is missing, as .NET does.
-    fn has_typed_property(&self, property_name: &str) -> bool {
-        declared_property_value_type(property_name).is_some()
     }
 }
 

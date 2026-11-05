@@ -362,8 +362,11 @@ fn a_successful_request_is_unchanged() {
     assert_eq!(take_logged(), Vec::<String>::new());
 }
 
+/// A cloud engine with no metadata because its property list request failed
+/// gives `CloudRequestFailed`, typed accessor or not, as step 3.2 of "Deciding
+/// the reason" in the properties specification says.
 #[test]
-fn before_discovery_a_typed_property_needs_a_data_file_upgrade() {
+fn while_the_property_list_request_has_failed_a_missing_property_says_so() {
     let _serial = start();
     let down = Arc::new(AtomicBool::new(true));
     let request = request_engine(
@@ -373,27 +376,22 @@ fn before_discovery_a_typed_property_needs_a_data_file_upgrade() {
         Arc::clone(&down),
     );
     let engine = Arc::new(DeviceDetectionCloudEngine::new(Arc::clone(&request)));
+    let unprocessed = DeviceDetectionCloudEngine::new(Arc::clone(&request));
+    let hardware = HardwareProfileCloudEngine::new(Arc::clone(&request));
     assert!(!engine.has_loaded_properties());
+    assert!(engine.property_list_request_failed());
+    assert!(hardware.property_list_request_failed());
 
-    // .NET's rule for a name the data type has an accessor for.
     let is_mobile = engine.missing_property_reason("IsMobile");
-    assert_eq!(
-        is_mobile.reason,
-        MissingPropertyReason::DataFileUpgradeRequired
-    );
-    assert!(
-        is_mobile.description.starts_with(
-            "Property 'IsMobile' not found in data for element 'device'. This is because \
-             your license or data file does not include this property. It is available \
-             with the Unknown license/data for the DeviceDetectionCloudEngine. To upgrade, \
-             see "
-        ),
-        "{}",
-        is_mobile.description
-    );
+    assert_eq!(is_mobile.reason, MissingPropertyReason::CloudRequestFailed);
+    assert_eq!(is_mobile.description, IS_MOBILE_FAILED);
     assert_eq!(
         engine.missing_property_reason("NotAProperty").reason,
-        MissingPropertyReason::Unknown
+        MissingPropertyReason::CloudRequestFailed
+    );
+    assert_eq!(
+        hardware.missing_property_reason("Profiles").reason,
+        MissingPropertyReason::CloudRequestFailed
     );
 
     // Once discovery completes, the key's properties decide.
@@ -402,6 +400,7 @@ fn before_discovery_a_typed_property_needs_a_data_file_upgrade() {
     let (_data, error) = process(&pipeline, "header.user-agent", "A");
     assert!(error.is_none(), "{error:?}");
     assert!(engine.has_loaded_properties());
+    assert!(!engine.property_list_request_failed());
     assert_eq!(
         engine.missing_property_reason("BrowserName").reason,
         MissingPropertyReason::PropertyNotAccessibleWithResourceKey
@@ -410,5 +409,16 @@ fn before_discovery_a_typed_property_needs_a_data_file_upgrade() {
         engine.missing_property_reason("IsMobile").reason,
         MissingPropertyReason::PropertyNotAccessibleWithResourceKey,
         "a listed property the data lacks"
+    );
+
+    // Engines that have not processed since read the metadata when asked.
+    assert_eq!(
+        unprocessed.missing_property_reason("BrowserName").reason,
+        MissingPropertyReason::PropertyNotAccessibleWithResourceKey
+    );
+    assert_eq!(
+        hardware.missing_property_reason("Profiles").reason,
+        MissingPropertyReason::ProductNotAccessibleWithResourceKey,
+        "the key has no hardware product"
     );
 }

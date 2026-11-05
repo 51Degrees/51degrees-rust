@@ -300,28 +300,26 @@ fn a_successful_request_is_unchanged() {
     assert_eq!(take_logged(), Vec::<String>::new());
 }
 
+/// A cloud engine with no metadata because its property list request failed
+/// gives `CloudRequestFailed`, typed accessor or not, as step 3.2 of "Deciding
+/// the reason" in the properties specification says.
 #[test]
-fn before_discovery_a_typed_property_needs_a_data_file_upgrade() {
+fn while_the_property_list_request_has_failed_a_missing_property_says_so() {
     let _serial = start();
     let down = Arc::new(AtomicBool::new(true));
     let (request, engine) = engines(r#"{"ip":{}}"#, false, Arc::clone(&down));
     assert!(!engine.has_loaded_properties());
+    assert!(engine.property_list_request_failed());
 
     let registered_name = engine.missing_property_reason("RegisteredName");
     assert_eq!(
         registered_name.reason,
-        MissingPropertyReason::DataFileUpgradeRequired
+        MissingPropertyReason::CloudRequestFailed
     );
-    assert!(
-        registered_name.description.contains(
-            "It is available with the Unknown license/data for the IpIntelligenceCloudEngine."
-        ),
-        "{}",
-        registered_name.description
-    );
+    assert_eq!(registered_name.description, REGISTERED_NAME_FAILED);
     assert_eq!(
         engine.missing_property_reason("NotAProperty").reason,
-        MissingPropertyReason::Unknown
+        MissingPropertyReason::CloudRequestFailed
     );
 
     // Once discovery completes, the key's properties decide.
@@ -334,4 +332,5 @@ fn before_discovery_a_typed_property_needs_a_data_file_upgrade() {
         MissingPropertyReason::PropertyNotAccessibleWithResourceKey
     );
     assert!(engine.has_loaded_properties());
+    assert!(!engine.property_list_request_failed());
 }

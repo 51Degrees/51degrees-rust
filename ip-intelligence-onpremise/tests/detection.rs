@@ -468,8 +468,8 @@ fn enterprise_resolves_location_for_a_public_ip() {
 /// A property the engine was not built with, but that `IpIntelligenceData`
 /// has an accessor for, is not in the engine's metadata, so the
 /// specification's typed accessor rule gives a data file upgrade and the
-/// message names no tiers. .NET gives `Unknown` here, because
-/// `IIpDataOnPremise` declares no properties of its own.
+/// message leaves out the tier sentence. The rule counts the accessors of the
+/// shared `IpIntelligenceData`.
 #[test]
 fn an_unlisted_property_with_an_accessor_needs_a_data_file_upgrade() {
     let Some(file) = asn_data_file() else {
@@ -490,9 +490,8 @@ fn an_unlisted_property_with_an_accessor_needs_a_data_file_upgrade() {
     assert!(
         result.description.starts_with(
             "Property 'CountryCode' not found in data for element 'ip'. This is because \
-             your license or data file does not include this property. It is available \
-             with the Unknown license/data for the IpIntelligenceOnPremiseEngine. To \
-             upgrade, see "
+             your license or data file does not include this property. To see which \
+             licenses include it, see "
         ),
         "{}",
         result.description

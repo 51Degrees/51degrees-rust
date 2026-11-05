@@ -364,8 +364,8 @@ fn a_restricted_engine_gives_the_dotnet_reasons() {
             );
             assert!(
                 result.description.contains(
-                    "It is available with the Unknown license/data for the \
-                     DeviceDetectionOnPremiseEngine."
+                    "does not include this property. To see which licenses include it, \
+                     see "
                 ),
                 "{}",
                 result.description

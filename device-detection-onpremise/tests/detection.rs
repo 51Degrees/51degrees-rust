@@ -530,18 +530,17 @@ fn every_present_property_unpacks_as_its_declared_type() {
     );
 }
 
-/// The start of the message for a property the data file lacks, before the
-/// pricing link.
+/// The start of the message for a property the data file lacks and whose
+/// tiers are not known, before the pricing link.
 const UPGRADE_MESSAGE: &str = "Property 'HardwareVendor' not found in data for element \
     'device'. This is because your license or data file does not include this property. \
-    It is available with the Unknown license/data for the DeviceDetectionOnPremiseEngine. \
-    To upgrade, see ";
+    To see which licenses include it, see ";
 
 /// A property the data file does not hold, but that `DeviceData` has an
 /// accessor for, needs a data file upgrade by the specification's typed
-/// accessor rule. The file's metadata does not list the property, so the
-/// message names no tiers. .NET gives `Unknown` here, because
-/// `IDeviceDataHash` declares no properties of its own.
+/// accessor rule, which counts the accessors of the shared `DeviceData`. The
+/// file's metadata does not list the property, so the message leaves out the
+/// tier sentence.
 #[test]
 fn a_property_the_data_file_lacks_needs_a_data_file_upgrade() {
     let Some(engine) = build_engine() else {
@@ -615,10 +614,7 @@ fn a_named_property_the_data_file_lacks_names_no_tier() {
         MissingPropertyReason::DataFileUpgradeRequired
     );
     assert!(
-        result.description.contains(
-            "It is available with the Unknown license/data for the \
-             DeviceDetectionOnPremiseEngine."
-        ),
+        result.description.starts_with(UPGRADE_MESSAGE),
         "{}",
         result.description
     );

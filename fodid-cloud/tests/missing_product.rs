@@ -21,8 +21,8 @@
  * ********************************************************************* */
 
 //! What the 51Did cloud engine logs and reports when the resource key grants
-//! no 51Did product. Kept in its own test binary because a logger is
-//! installed once for the whole process.
+//! no 51Did product, or the request for its property list fails. Kept in its
+//! own test binary because a logger is installed once for the whole process.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -31,7 +31,7 @@ use fiftyone_cloud_request_engine::{
     CloudRequestEngineBuilder,
 };
 use fiftyone_fodid_cloud::FodIdCloudEngine;
-use fiftyone_pipeline_core::{Evidence, FlowElement, Pipeline};
+use fiftyone_pipeline_core::{Evidence, FlowElement, MissingPropertyReason, Pipeline};
 use fiftyone_pipeline_engines::AspectEngine;
 
 /// Records from this crate at warning level or above, as "LEVEL message".
@@ -148,6 +148,57 @@ fn a_resource_key_without_the_product_logs_one_error_and_gives_empty_metadata() 
     assert!(fodid.has_loaded_properties());
     assert!(fodid.properties().is_empty());
     assert!(fodid.aspect_properties().is_empty());
+    assert!(!fodid.property_list_request_failed());
+    assert_eq!(
+        fodid.missing_property_reason("IdProbGlobal").reason,
+        MissingPropertyReason::ProductNotAccessibleWithResourceKey
+    );
+}
+
+/// A cloud that refuses the property list request and answers the rest.
+struct PropertiesDownCloud;
+
+impl CloudHttpClient for PropertiesDownCloud {
+    fn send(&self, request: &CloudHttpRequest) -> Result<CloudHttpResponse, String> {
+        if request.url.contains("accessibleproperties") {
+            return Err("connection refused".to_owned());
+        }
+        DeviceOnlyCloud.send(request)
+    }
+}
+
+/// While the property list request has failed, a missing property's reason is
+/// the failed request, whatever its name.
+#[test]
+fn a_failed_property_list_request_is_the_reason_a_property_is_missing() {
+    let _serial = start();
+    let request_engine = Arc::new(
+        CloudRequestEngine::builder()
+            .resource_key("rk")
+            .http_client(Arc::new(PropertiesDownCloud))
+            .build()
+            .unwrap(),
+    );
+    let fodid = FodIdCloudEngine::builder()
+        .cloud_request_engine(request_engine)
+        .build()
+        .unwrap();
+
+    assert!(!fodid.has_loaded_properties());
+    assert!(fodid.property_list_request_failed());
+    let missing = fodid.missing_property_reason("IdProbGlobal");
+    assert_eq!(missing.reason, MissingPropertyReason::CloudRequestFailed);
+    assert_eq!(
+        missing.description,
+        "Property 'IdProbGlobal' not found in data for element 'fodid'. This is because \
+         an upstream cloud request failed, so no data was available to populate the \
+         property."
+    );
+    assert_eq!(
+        fodid.missing_property_reason("NotAProperty").reason,
+        MissingPropertyReason::CloudRequestFailed
+    );
+    assert_eq!(take_logged(), Vec::<String>::new());
 }
 
 /// With only a license key there are no accessible properties to read, so the

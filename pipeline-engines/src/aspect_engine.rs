@@ -87,6 +87,13 @@ pub trait AspectEngine: FlowElement {
         true
     }
 
+    /// True when a cloud engine has no property metadata because its request
+    /// for the property list failed, so a missing property's reason is
+    /// [`MissingPropertyReason::CloudRequestFailed`]. Defaults to `false`.
+    fn property_list_request_failed(&self) -> bool {
+        false
+    }
+
     /// The lazy-loading configuration, if lazy loading is enabled for this
     /// engine.
     fn lazy_loading(&self) -> Option<&LazyLoadingConfiguration> {
@@ -107,11 +114,13 @@ pub trait AspectEngine: FlowElement {
     }
 
     /// Whether this engine's data type has a typed accessor for the property,
-    /// matched ignoring case.
+    /// matched ignoring case, counting every accessor the type offers,
+    /// including those of the shared data type for its aspect.
     ///
-    /// A property with an accessor that the engine's metadata does not list is
-    /// one another data file supplies, so the missing property rules give a
-    /// data file upgrade as the reason. Defaults to `false`.
+    /// For an on-premise engine, a property with an accessor that the engine's
+    /// metadata does not list is one another data file supplies, so the
+    /// missing property rules give a data file upgrade as the reason. The
+    /// rules do not ask a cloud engine. Defaults to `false`.
     fn has_typed_property(&self, _property_name: &str) -> bool {
         false
     }
@@ -119,8 +128,9 @@ pub trait AspectEngine: FlowElement {
     /// Resolve why `property_name` is missing from this engine's results.
     ///
     /// Applies the rules in [`crate::MissingPropertyService`] using this
-    /// engine's deployment, data tier, aspect metadata, type name and typed
-    /// accessors. The default implementation is correct for every engine, so
+    /// engine's deployment, data tier, aspect metadata, type name, typed
+    /// accessors and [`AspectEngine::property_list_request_failed`]. The
+    /// default implementation is correct for every engine, so
     /// an engine rarely overrides it. One that must do some work first, such
     /// as loading its metadata, can override it and then call
     /// [`default_missing_property_reason`].
@@ -446,8 +456,8 @@ fn short_type_name(full: &str) -> &str {
 
 /// Resolve why `property_name` is missing from `engine`'s results with the
 /// rules [`AspectEngine::missing_property_reason`] applies by default, using
-/// the engine's deployment, data tier, aspect metadata, type name and typed
-/// accessors.
+/// the engine's deployment, data tier, aspect metadata, type name, typed
+/// accessors and [`AspectEngine::property_list_request_failed`].
 pub fn default_missing_property_reason<E: AspectEngine + ?Sized>(
     engine: &E,
     property_name: &str,
@@ -459,6 +469,7 @@ pub fn default_missing_property_reason<E: AspectEngine + ?Sized>(
         deployment: engine.deployment(),
         data_source_tier: engine.data_source_tier(),
         properties_loaded: engine.has_loaded_properties(),
+        property_list_request_failed: engine.property_list_request_failed(),
         properties: engine.aspect_properties(),
         has_typed_property: Some(&has_typed_property),
     };

@@ -28,15 +28,16 @@ use fiftyone_pipeline_core::{
     Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
     Result,
 };
-use fiftyone_pipeline_engines::{AspectEngine, AspectPropertyMetaData, EngineDeployment};
-
-use fiftyone_cloud_request_engine::CloudRequestEngine;
-use fiftyone_device_detection_shared::{
-    declared_property_value_type, DeviceDataBase, DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY,
+use fiftyone_pipeline_engines::{
+    default_missing_property_reason, AspectEngine, AspectPropertyMetaData, EngineDeployment,
+    MissingPropertyResult,
 };
 
+use fiftyone_cloud_request_engine::CloudRequestEngine;
+use fiftyone_device_detection_shared::{DeviceDataBase, DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY};
+
 use crate::dto::map_device_object;
-use crate::meta::{cloud_json, fill_metadata, DiscoveredMetadata};
+use crate::meta::{cloud_json, fill_metadata, property_list_request_failed, DiscoveredMetadata};
 
 /// The engine's name in configuration errors and log records.
 const ENGINE_NAME: &str = "DeviceDetectionCloudEngine";
@@ -297,11 +298,15 @@ impl AspectEngine for DeviceDetectionCloudEngine {
         self.metadata.get().is_some()
     }
 
-    /// Whether `DeviceData` has a typed accessor for the property, matched
-    /// ignoring case. Before discovery completes, such a property gives a
-    /// data file upgrade as the reason it is missing, as .NET does.
-    fn has_typed_property(&self, property_name: &str) -> bool {
-        declared_property_value_type(property_name).is_some()
+    fn property_list_request_failed(&self) -> bool {
+        property_list_request_failed(self.has_loaded_properties(), &self.request_engine)
+    }
+
+    fn missing_property_reason(&self, property_name: &str) -> MissingPropertyResult {
+        // Read the metadata if discovery has completed since the last
+        // process call, so the reason reflects it.
+        self.ensure_metadata();
+        default_missing_property_reason(self, property_name)
     }
 }
 

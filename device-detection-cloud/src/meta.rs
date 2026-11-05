@@ -71,6 +71,16 @@ pub(crate) fn build_metadata(
     (core, aspect)
 }
 
+/// Whether an engine has no metadata because the request engine's property
+/// list request failed. The request engine asks for the list when it is built,
+/// or is given it, so a list it still lacks is one whose request failed.
+pub(crate) fn property_list_request_failed(
+    loaded: bool,
+    request_engine: &CloudRequestEngine,
+) -> bool {
+    !loaded && request_engine.public_properties().is_err()
+}
+
 /// Fill `slot` with the metadata of the product under `element_data_key`,
 /// read from the request engine's accessible properties, unless it is
 /// already filled.

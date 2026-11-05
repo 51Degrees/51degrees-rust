@@ -32,8 +32,8 @@ use fiftyone_pipeline_core::{
     PropertyValueType, Result,
 };
 use fiftyone_pipeline_engines::{
-    missing_property_reason, AspectEngine, AspectPropertyMetaData, EngineDeployment,
-    EngineMissingPropertyContext, MissingPropertyResult,
+    default_missing_property_reason, AspectEngine, AspectPropertyMetaData, EngineDeployment,
+    MissingPropertyResult,
 };
 use serde_json::Value;
 
@@ -334,18 +334,17 @@ impl AspectEngine for FodIdCloudEngine {
         self.properties.get().is_some()
     }
 
+    /// The request engine asks for the property list when it is built, or is
+    /// given it, so a list it still lacks is one whose request failed.
+    fn property_list_request_failed(&self) -> bool {
+        !self.has_loaded_properties() && self.request_engine.public_properties().is_err()
+    }
+
     fn missing_property_reason(&self, property_name: &str) -> MissingPropertyResult {
-        // Trigger discovery so the reason reflects the live cloud metadata
-        // rather than the pre-discovery defaults.
+        // Read the metadata if discovery has completed, so the reason reflects
+        // the live cloud metadata rather than the pre-discovery defaults.
         self.ensure_metadata();
-        let ctx = EngineMissingPropertyContext {
-            element_data_key: self.data_key(),
-            deployment: self.deployment(),
-            data_source_tier: self.data_source_tier(),
-            properties_loaded: self.has_loaded_properties(),
-            properties: self.aspect_properties(),
-        };
-        missing_property_reason(property_name, &ctx)
+        default_missing_property_reason(self, property_name)
     }
 }
 
