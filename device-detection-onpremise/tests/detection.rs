@@ -636,9 +636,14 @@ fn an_unknown_property_has_an_unknown_reason() {
     );
 }
 
-/// Device data from an engine restricted to IsMobile gives the engine's reason
-/// for each property it does not hold, through its typed accessors and by
-/// name, where .NET throws a `PropertyMissingException` with that reason.
+/// Device data from an engine restricted to IsMobile gives the same reason as
+/// `engine.missing_property_reason` for each property it does not hold,
+/// through its typed accessors and by name. .NET throws a
+/// `PropertyMissingException` instead, and its reason differs for two of
+/// these names. For `BrowserName`, which .NET lists from the file as
+/// unavailable, it gives `PropertyExcludedFromEngineConfiguration`, and for
+/// `HardwareVendor` it gives `Unknown`, because `IDeviceDataHash` declares no
+/// properties of its own.
 #[test]
 fn device_data_gives_the_engine_reason_for_a_missing_property() {
     let Some(data_file) = lite_data_file() else {
