@@ -73,13 +73,13 @@
 //!
 //! ## Property metadata
 //!
-//! The set of device properties a resource key grants is known only after the
-//! cloud request engine fetches its accessible properties, which it does lazily.
-//! The engine therefore derives its property metadata from the request engine's
-//! [`public_properties`](fiftyone_cloud_request_engine::CloudRequestEngine::public_properties)
-//! on first use (or eagerly through
-//! [`DeviceDetectionCloudEngineBuilder::eager_properties`]), rather than
-//! hard-caching it at construction.
+//! The set of device properties a resource key grants comes from the cloud
+//! request engine's
+//! [`public_properties`](fiftyone_cloud_request_engine::CloudRequestEngine::public_properties),
+//! which it normally fetches when it is built, so the engine reads its property
+//! metadata when it is constructed. After a transient failure at that point the
+//! engine reads it on the first process call after the request engine's
+//! discovery completes, rather than keeping empty metadata.
 //!
 //! ## Example
 //!

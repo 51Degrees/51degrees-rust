@@ -62,9 +62,10 @@ pub fn run(options: ExampleOptions) -> Result<()> {
             .context("failed to build the cloud request engine")?,
     );
 
-    // Build the device engine and eagerly refresh its property metadata, which
-    // triggers the request engine's lazy accessible-properties fetch (one cloud
-    // request) and fills in the device product's property list.
+    // Build the device engine, which reads the device product's property list
+    // from the accessible properties the request engine fetched when it was
+    // built. `refresh_properties` returns how many there are, or an error when
+    // the cloud could not be reached then.
     let mut device_engine = DeviceDetectionCloudEngine::builder()
         .cloud_request_engine(request_engine.clone())
         .try_build()
@@ -193,11 +194,11 @@ mod tests {
  * each from the right place:
  *
  * - The list of device properties comes from the `DeviceDetectionCloudEngine`.
- *   That list is not known until the cloud has been asked for the resource key's
- *   accessible properties, which happens lazily on first use. The example forces
- *   that discovery up front by calling `refresh_properties`, which makes one
- *   cloud request and returns the number of properties found. Each property is
- *   then printed with its category and core value type.
+ *   That list comes from the resource key's accessible properties, which the
+ *   request engine asks the cloud for when it is built. `refresh_properties`
+ *   returns the number of properties found, or an error when the cloud could
+ *   not be reached then. Each property is then printed with its category and
+ *   core value type.
  *
  * - The list of accepted evidence keys comes from the `CloudRequestEngine`, not
  *   the device engine. The device engine consumes no raw evidence of its own. It
