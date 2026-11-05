@@ -319,3 +319,61 @@ fn a_script_that_minifies_logs_nothing() {
     assert!(records.is_empty(), "{records:?}");
     assert!(!js.contains("\n    "), "the script is minified");
 }
+
+/// The JavaScript builder reads `Promise` and `Fetch` from the flow data on
+/// each request. Aspect data with a missing property source, as an on-premise
+/// engine writes, knows it lacks them, so it is not asked and logs nothing.
+#[test]
+fn reading_promise_and_fetch_logs_nothing_for_aspect_data_that_lacks_them() {
+    use fiftyone_pipeline_core::{
+        EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
+        Result, TypedKey,
+    };
+    use fiftyone_pipeline_engines::{AspectDataBase, EngineDeployment, MissingPropertySource};
+
+    /// Writes aspect data under `ip` with a missing property source.
+    struct SourcedData {
+        filter: EvidenceKeyFilterWhitelist,
+    }
+
+    impl FlowElement for SourcedData {
+        fn process(&self, data: &mut FlowData) -> Result<()> {
+            let mut aspect = AspectDataBase::new("ip");
+            aspect.add_missing_property_source(Arc::new(MissingPropertySource::new(
+                "ip",
+                "TestEngine",
+                EngineDeployment::OnPremise,
+                "Lite",
+                Vec::new(),
+            )));
+            data.get_or_add(TypedKey::<AspectDataBase>::new("ip"), || aspect)?;
+            Ok(())
+        }
+        fn data_key(&self) -> &str {
+            "ip"
+        }
+        fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+            &self.filter
+        }
+        fn properties(&self) -> &[PropertyMetaData] {
+            &[]
+        }
+    }
+
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(SourcedData {
+            filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+        }))
+        .add_element(Arc::new(JsonBuilderElement::new()))
+        .add_element(Arc::new(
+            JavaScriptBuilderElement::builder()
+                .set_minify(false)
+                .build(),
+        ))
+        .build()
+        .expect("pipeline builds");
+    for _ in 0..2 {
+        let (_, records) = request(&pipeline, &[("header.host", "example.com")]);
+        assert!(records.is_empty(), "{records:?}");
+    }
+}
