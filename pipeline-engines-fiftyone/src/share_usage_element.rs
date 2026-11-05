@@ -660,15 +660,13 @@ impl ShareUsageElement {
     /// Copy what the record needs out of a request's flow data. The evidence
     /// is read in the order it was given, with each key spelled as given.
     fn extract(&self, data: &FlowData) -> UsageRecord {
-        let mut record = UsageRecord {
-            flow_elements: data
-                .pipeline()
+        let mut record = UsageRecord::new(
+            data.pipeline()
                 .flow_elements()
                 .iter()
                 .map(|element| element.type_name())
                 .collect(),
-            ..UsageRecord::default()
-        };
+        );
         // The session id, sequence and client IP have elements of their own,
         // so they are not written again as evidence entries.
         let mut evidence_session_id = None;

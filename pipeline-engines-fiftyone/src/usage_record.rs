@@ -68,7 +68,7 @@ pub(crate) struct UsageRecord {
     /// Empty when the request has no client IP.
     pub(crate) client_ip: String,
     /// The type names of the elements in the pipeline that made the request.
-    pub(crate) flow_elements: Vec<&'static str>,
+    flow_elements: Vec<&'static str>,
     /// The shared evidence, grouped by prefix in the order each prefix first
     /// appears.
     groups: Vec<EvidenceGroup>,
@@ -86,6 +86,15 @@ struct EvidenceGroup {
 }
 
 impl UsageRecord {
+    /// A record for a request made by a pipeline of these elements, holding
+    /// no evidence yet.
+    pub(crate) fn new(flow_elements: Vec<&'static str>) -> Self {
+        UsageRecord {
+            flow_elements,
+            ..UsageRecord::default()
+        }
+    }
+
     /// Add a shared evidence entry. The key, spelled as given, is split at its
     /// first `.` into a prefix and a field. A key with no `.`, or that starts
     /// with one, has no prefix. A value over the maximum length is cut here.
@@ -369,10 +378,7 @@ mod tests {
 
     /// A record with no session id or client IP and the evidence given.
     fn record(evidence: &[(&str, &str)]) -> UsageRecord {
-        let mut record = UsageRecord {
-            flow_elements: vec!["example::Element"],
-            ..UsageRecord::default()
-        };
+        let mut record = UsageRecord::new(vec!["example::Element"]);
         for (key, value) in evidence {
             record.add_evidence(key, value);
         }
