@@ -12,6 +12,7 @@ homepage.workspace = true
 [dependencies]
 fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
 fiftyone-pipeline-engines = { version = "4.5.2", path = "../pipeline-engines" }
+fiftyone-pipeline-engines-fiftyone = { version = "4.5.2", path = "../pipeline-engines-fiftyone" }
 fiftyone-device-detection-shared = { version = "4.5.2", path = "../device-detection-shared" }
 # Enable only the Device Detection product of the native wrapper. This links
 # Device Detection's copy of the common C library alone and never pulls in the

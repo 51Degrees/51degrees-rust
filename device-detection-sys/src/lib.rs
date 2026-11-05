@@ -692,6 +692,163 @@ extern "C" {
     pub fn fiftyoneDegreesShimHashGetFileHandleCount(manager: *mut ResourceManager) -> u16;
 }
 
+// ---------------------------------------------------------------------------
+// Data file metadata shim (src/shim.c)
+// ---------------------------------------------------------------------------
+
+/// The name of a data file property, for
+/// [`fiftyoneDegreesShimHashGetDataFilePropertyString`].
+pub const SHIM_PROPERTY_NAME: c_int = 0;
+/// The description of a data file property.
+pub const SHIM_PROPERTY_DESCRIPTION: c_int = 1;
+/// The category of a data file property.
+pub const SHIM_PROPERTY_CATEGORY: c_int = 2;
+/// The URL of a data file property.
+pub const SHIM_PROPERTY_URL: c_int = 3;
+
+/// The name of a property value, for
+/// [`fiftyoneDegreesShimHashGetDataFilePropertyValueString`].
+pub const SHIM_VALUE_NAME: c_int = 0;
+/// The description of a property value.
+pub const SHIM_VALUE_DESCRIPTION: c_int = 1;
+/// The URL of a property value.
+pub const SHIM_VALUE_URL: c_int = 2;
+
+/// Returned by the data file metadata string readers when the string, or the
+/// property, value or component it belongs to, cannot be read, or an index
+/// is out of range. An absent string gives zero instead.
+pub const SHIM_STRING_FAILED: usize = usize::MAX;
+
+extern "C" {
+    /// Returns the number of properties the data file defines, including
+    /// those the data set was not created with, or zero when no data set is
+    /// available. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager.
+    pub fn fiftyoneDegreesShimHashGetDataFilePropertyCount(manager: *mut ResourceManager) -> u32;
+
+    /// Reads the fields of the data file property at `property_index` that
+    /// are not strings and returns 1, or returns 0 when the index is out of
+    /// range or the property cannot be read. `value_type` is the C library's
+    /// property value type, `available` is 1 when the data set was created
+    /// with the property, `required_index` is the index the results getters
+    /// take for it or -1 for none, `component_id` is the id of the property's
+    /// component or 0 for none, `value_count` is the number of values the
+    /// file holds for the property, `default_value_number` the place of its
+    /// default value among them or -1 for none, and `map_count` the number of
+    /// data tiers it is in. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. Every output pointer
+    /// must be writable.
+    pub fn fiftyoneDegreesShimHashGetDataFileProperty(
+        manager: *mut ResourceManager,
+        property_index: u32,
+        value_type: *mut u8,
+        available: *mut u8,
+        required_index: *mut i32,
+        component_id: *mut u8,
+        display_order: *mut u8,
+        is_mandatory: *mut u8,
+        is_list: *mut u8,
+        is_obsolete: *mut u8,
+        show: *mut u8,
+        show_values: *mut u8,
+        value_count: *mut u32,
+        default_value_number: *mut i32,
+        map_count: *mut u32,
+    ) -> c_int;
+
+    /// Writes the string `field` of the data file property at
+    /// `property_index`, one of the `SHIM_PROPERTY_` constants, into `buffer`
+    /// as a null terminated string, as much as fits, and returns the
+    /// string's full length excluding the terminator. An absent string is
+    /// written as empty, with length zero, and one that cannot be read gives
+    /// [`SHIM_STRING_FAILED`]. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. `buffer` must point to
+    /// `length` writable bytes.
+    pub fn fiftyoneDegreesShimHashGetDataFilePropertyString(
+        manager: *mut ResourceManager,
+        property_index: u32,
+        field: c_int,
+        buffer: *mut c_char,
+        length: usize,
+    ) -> usize;
+
+    /// Writes the name of the data tier at `map_index` among those the data
+    /// file property at `property_index` is in into `buffer`, as much as
+    /// fits, and returns its full length, or [`SHIM_STRING_FAILED`] when either
+    /// index is out of range or the name cannot be read. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. `buffer` must point to
+    /// `length` writable bytes.
+    pub fn fiftyoneDegreesShimHashGetDataFilePropertyMap(
+        manager: *mut ResourceManager,
+        property_index: u32,
+        map_index: u32,
+        buffer: *mut c_char,
+        length: usize,
+    ) -> usize;
+
+    /// Writes the string `field`, one of the `SHIM_VALUE_` constants, of the
+    /// value at `value_number` among those the data file holds for the
+    /// property at `property_index` into `buffer`, as much as fits, and
+    /// returns its full length, or [`SHIM_STRING_FAILED`] when either index is
+    /// out of range or the string cannot be read. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. `buffer` must point to
+    /// `length` writable bytes.
+    pub fn fiftyoneDegreesShimHashGetDataFilePropertyValueString(
+        manager: *mut ResourceManager,
+        property_index: u32,
+        value_number: u32,
+        field: c_int,
+        buffer: *mut c_char,
+        length: usize,
+    ) -> usize;
+
+    /// Returns the number of components the data set lists, or zero when no
+    /// data set is available. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager.
+    pub fn fiftyoneDegreesShimHashGetComponentCount(manager: *mut ResourceManager) -> u32;
+
+    /// Reads the id of the component at `component_index` and the profile id
+    /// of its default profile and returns 1, or returns 0 when the index is
+    /// out of range or the default profile cannot be read. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. Both output pointers
+    /// must be writable.
+    pub fn fiftyoneDegreesShimHashGetComponent(
+        manager: *mut ResourceManager,
+        component_index: u32,
+        component_id: *mut u8,
+        default_profile_id: *mut u32,
+    ) -> c_int;
+
+    /// Writes the name of the component at `component_index` into `buffer`,
+    /// as much as fits, and returns its full length, or [`SHIM_STRING_FAILED`]
+    /// when the index is out of range or the name cannot be read. See
+    /// `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. `buffer` must point to
+    /// `length` writable bytes.
+    pub fn fiftyoneDegreesShimHashGetComponentName(
+        manager: *mut ResourceManager,
+        component_index: u32,
+        buffer: *mut c_char,
+        length: usize,
+    ) -> usize;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
