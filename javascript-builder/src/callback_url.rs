@@ -504,6 +504,7 @@ mod tests {
             "ftp",
             "h+t-p.s",
             "ws",
+            "javascript",
             "httpx",
             "https ",
             "1http",
