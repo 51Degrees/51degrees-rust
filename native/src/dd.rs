@@ -563,17 +563,25 @@ struct PropertyFields {
 impl Manager {
     /// Every property the data file defines, in the data file's order. A
     /// property the data set was opened without is listed as unavailable.
-    pub fn data_file_properties(&self) -> Vec<DataFileProperty> {
+    ///
+    /// A property that cannot be read is an error rather than left out, as
+    /// the C++ code the other SDKs call raises one.
+    pub fn data_file_properties(&self) -> Result<Vec<DataFileProperty>> {
         let _file_read = self.file_read();
         // Safety: the manager is initialized for the lifetime of `self`.
         let count = unsafe { sys::fiftyoneDegreesShimHashGetDataFilePropertyCount(self.as_ptr()) };
         (0..count)
-            .filter_map(|index| self.read_data_file_property(index))
+            .map(|index| {
+                self.read_data_file_property(index)
+                    .ok_or_else(|| metadata_read_failed(&format!("property {index}")))
+            })
             .collect()
     }
 
-    /// The components the data file defines, in the data file's order.
-    pub fn data_file_components(&self) -> Vec<DataFileComponent> {
+    /// The components the data file defines, in the data file's order. A
+    /// component whose default profile cannot be read is left out, as the
+    /// C++ builder leaves it out, and a name that cannot be read is an error.
+    pub fn data_file_components(&self) -> Result<Vec<DataFileComponent>> {
         let _file_read = self.file_read();
         // Safety: the manager is initialized for the lifetime of `self`.
         let count = unsafe { sys::fiftyoneDegreesShimHashGetComponentCount(self.as_ptr()) };
@@ -596,35 +604,44 @@ impl Manager {
             // Safety: the buffer is writable for the length given.
             let name = read_metadata_string(|buffer, length| unsafe {
                 sys::fiftyoneDegreesShimHashGetComponentName(self.as_ptr(), index, buffer, length)
-            });
+            })
+            .ok_or_else(|| metadata_read_failed(&format!("component {index}")))?;
             components.push(DataFileComponent {
                 component_id,
                 name,
                 default_profile_id,
             });
         }
-        components
+        Ok(components)
     }
 
     /// The values the data file holds for the property at `property_index`
     /// among [`Self::data_file_properties`], in the data file's order, or none
-    /// when the index is out of range.
+    /// when the index is out of range. A property or value that cannot be
+    /// read is an error.
     ///
     /// The values are read from the data set each time, because a data file
     /// can hold hundreds of thousands of them.
-    pub fn data_file_property_values(&self, property_index: u32) -> Vec<DataFileValue> {
+    pub fn data_file_property_values(&self, property_index: u32) -> Result<Vec<DataFileValue>> {
         let _file_read = self.file_read();
-        let Some(fields) = self.read_property_fields(property_index) else {
-            return Vec::new();
-        };
+        // Safety: the manager is initialized for the lifetime of `self`.
+        let count = unsafe { sys::fiftyoneDegreesShimHashGetDataFilePropertyCount(self.as_ptr()) };
+        if property_index >= count {
+            return Ok(Vec::new());
+        }
+        let failed = || metadata_read_failed(&format!("values of property {property_index}"));
+        let fields = self
+            .read_property_fields(property_index)
+            .ok_or_else(failed)?;
         (0..fields.value_count)
-            .map(|number| self.read_value(property_index, number))
+            .map(|number| self.read_value(property_index, number).ok_or_else(failed))
             .collect()
     }
 
     /// The value at `number` among those the data file holds for the
-    /// property at `property_index`. The caller holds the file read permit.
-    fn read_value(&self, property_index: u32, number: u32) -> DataFileValue {
+    /// property at `property_index`, or [`None`] when it cannot be read. The
+    /// caller holds the file read permit.
+    fn read_value(&self, property_index: u32, number: u32) -> Option<DataFileValue> {
         let field = |field| {
             // Safety: the buffer is writable for the length given.
             read_metadata_string(|buffer, length| unsafe {
@@ -638,11 +655,11 @@ impl Manager {
                 )
             })
         };
-        DataFileValue {
-            name: field(sys::SHIM_VALUE_NAME),
-            description: field(sys::SHIM_VALUE_DESCRIPTION),
-            url: field(sys::SHIM_VALUE_URL),
-        }
+        Some(DataFileValue {
+            name: field(sys::SHIM_VALUE_NAME)?,
+            description: field(sys::SHIM_VALUE_DESCRIPTION)?,
+            url: field(sys::SHIM_VALUE_URL)?,
+        })
     }
 
     /// The fields of the data file property at `index` that are not strings,
@@ -688,7 +705,8 @@ impl Manager {
     }
 
     /// The data file property at `index`, or [`None`] when the index is out
-    /// of range. The caller holds the file read permit.
+    /// of range or any part of it cannot be read. The caller holds the file
+    /// read permit.
     fn read_data_file_property(&self, index: u32) -> Option<DataFileProperty> {
         let fields = self.read_property_fields(index)?;
         let string = |field| {
@@ -716,20 +734,23 @@ impl Manager {
                     )
                 })
             })
+            .collect::<Option<Vec<String>>>()?
+            .into_iter()
             .filter(|tier| !tier.is_empty())
             .collect();
-        let default_value = u32::try_from(fields.default_value_number)
-            .ok()
-            .map(|number| self.read_value(index, number));
+        let default_value = match u32::try_from(fields.default_value_number) {
+            Ok(number) => Some(self.read_value(index, number)?),
+            Err(_) => None,
+        };
         Some(DataFileProperty {
             index,
-            name: string(sys::SHIM_PROPERTY_NAME),
+            name: string(sys::SHIM_PROPERTY_NAME)?,
             value_type: data_file_value_type(fields.value_type, fields.is_list != 0),
             available: fields.available != 0,
             required_property_index: (fields.required_index >= 0).then_some(fields.required_index),
-            category: string(sys::SHIM_PROPERTY_CATEGORY),
-            description: string(sys::SHIM_PROPERTY_DESCRIPTION),
-            url: string(sys::SHIM_PROPERTY_URL),
+            category: string(sys::SHIM_PROPERTY_CATEGORY)?,
+            description: string(sys::SHIM_PROPERTY_DESCRIPTION)?,
+            url: string(sys::SHIM_PROPERTY_URL)?,
             component_id: fields.component_id,
             display_order: fields.display_order,
             mandatory: fields.is_mandatory != 0,
@@ -758,18 +779,33 @@ fn data_file_value_type(value_type: u8, is_list: bool) -> PropertyValueType {
     }
 }
 
-/// Read a metadata string a shim function writes. `read` writes as much of
-/// the string as fits into the buffer it is given and returns the string's
-/// full length, so a longer string is read again into a buffer that fits it.
-fn read_metadata_string(mut read: impl FnMut(*mut c_char, usize) -> usize) -> String {
+/// Read a metadata string a shim function writes, or [`None`] when the shim
+/// could not read it. `read` writes as much of the string as fits into the
+/// buffer it is given and returns the string's full length, so a longer
+/// string is read again into a buffer that fits it.
+fn read_metadata_string(mut read: impl FnMut(*mut c_char, usize) -> usize) -> Option<String> {
     let mut buffer = vec![0u8; METADATA_STRING_BUFFER_LENGTH];
     let mut length = read(buffer.as_mut_ptr() as *mut c_char, buffer.len());
+    if length == sys::SHIM_STRING_FAILED {
+        return None;
+    }
     if length >= buffer.len() {
         buffer = vec![0u8; length + 1];
         length = read(buffer.as_mut_ptr() as *mut c_char, buffer.len());
+        if length == sys::SHIM_STRING_FAILED {
+            return None;
+        }
     }
     let end = length.min(buffer.len() - 1);
-    String::from_utf8_lossy(&buffer[..end]).into_owned()
+    Some(String::from_utf8_lossy(&buffer[..end]).into_owned())
+}
+
+/// The error for a part of the data file's metadata that could not be read.
+fn metadata_read_failed(what: &str) -> Error {
+    Error::Native {
+        status: String::from("CollectionFailure"),
+        message: format!("the data file's metadata could not be read ({what})"),
+    }
 }
 
 impl Drop for Manager {
@@ -1470,7 +1506,7 @@ mod tests {
         };
         for profile in METADATA_PROFILES {
             let all = Manager::open(&path, profile).expect("data file loads");
-            let properties = all.data_file_properties();
+            let properties = all.data_file_properties().expect("the properties are read");
             // Opened naming no property, every property is available, so the
             // data file lists exactly the required properties, which the C
             // library keeps in name order rather than the data file's.
@@ -1488,7 +1524,7 @@ mod tests {
 
             let one = Manager::open_with_properties(&path, profile, Some(&["IsMobile"]))
                 .expect("data file loads");
-            let restricted = one.data_file_properties();
+            let restricted = one.data_file_properties().expect("the properties are read");
             let restricted_names: Vec<&str> = restricted.iter().map(|p| p.name.as_str()).collect();
             assert_eq!(restricted_names, names, "{}", profile.as_str());
             let available: Vec<&str> = restricted
@@ -1517,7 +1553,9 @@ mod tests {
         let manager =
             Manager::open_with_properties(&path, PerformanceProfile::Default, Some(&["ismobile"]))
                 .expect("data file loads");
-        let properties = manager.data_file_properties();
+        let properties = manager
+            .data_file_properties()
+            .expect("the properties are read");
         let is_mobile = properties
             .iter()
             .find(|p| p.name == "IsMobile")
@@ -1545,7 +1583,9 @@ mod tests {
         };
         for profile in METADATA_PROFILES {
             let manager = Manager::open(&path, profile).expect("data file loads");
-            let properties = manager.data_file_properties();
+            let properties = manager
+                .data_file_properties()
+                .expect("the properties are read");
             let find = |name: &str| {
                 properties
                     .iter()
@@ -1604,7 +1644,9 @@ mod tests {
         };
         for profile in METADATA_PROFILES {
             let manager = Manager::open(&path, profile).expect("data file loads");
-            let components = manager.data_file_components();
+            let components = manager
+                .data_file_components()
+                .expect("the components are read");
             let ids_and_names: Vec<(u8, &str)> = components
                 .iter()
                 .map(|c| (c.component_id, c.name.as_str()))
@@ -1632,18 +1674,24 @@ mod tests {
         };
         for profile in METADATA_PROFILES {
             let manager = Manager::open(&path, profile).expect("data file loads");
-            let properties = manager.data_file_properties();
+            let properties = manager
+                .data_file_properties()
+                .expect("the properties are read");
             let is_mobile = properties
                 .iter()
                 .find(|p| p.name == "IsMobile")
                 .expect("IsMobile is in every Hash data file");
-            let values = manager.data_file_property_values(is_mobile.index);
+            let values = manager
+                .data_file_property_values(is_mobile.index)
+                .expect("the values are read");
             let mut names: Vec<&str> = values.iter().map(|v| v.name.as_str()).collect();
             names.sort_unstable();
             assert_eq!(names, ["False", "True"], "{}", profile.as_str());
 
             for property in &properties {
-                let values = manager.data_file_property_values(property.index);
+                let values = manager
+                    .data_file_property_values(property.index)
+                    .expect("the values are read");
                 assert_eq!(
                     values.len(),
                     property.value_count as usize,
@@ -1660,7 +1708,10 @@ mod tests {
                 }
             }
             let outside = u32::try_from(properties.len()).expect("few properties");
-            assert!(manager.data_file_property_values(outside).is_empty());
+            assert!(manager
+                .data_file_property_values(outside)
+                .expect("the values are read")
+                .is_empty());
         }
     }
 }

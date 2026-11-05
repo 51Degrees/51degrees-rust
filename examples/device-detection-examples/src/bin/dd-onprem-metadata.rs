@@ -142,7 +142,13 @@ fn output_components(engine: &DeviceDetectionOnPremiseEngine) {
             );
             // Most match metrics have no defined values, so they are left out.
             if property.core().category != "Device Metrics" {
-                let values = engine.property_values(property.name()).unwrap_or_default();
+                let values = match engine.property_values(property.name()) {
+                    Ok(values) => values.unwrap_or_default(),
+                    Err(error) => {
+                        println!("\t\tValues could not be read: {error}");
+                        Vec::new()
+                    }
+                };
                 let shown: Vec<String> = values
                     .iter()
                     .take(SHOWN_VALUES)

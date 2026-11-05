@@ -264,7 +264,7 @@ impl DeviceDetectionOnPremiseEngineBuilder {
                 data_file_config,
                 self.data_source_tier,
                 self.concurrency,
-            )
+            )?
             .with_temp_dir(self.temp_dir),
         );
 

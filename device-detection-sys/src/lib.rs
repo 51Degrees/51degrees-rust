@@ -714,6 +714,11 @@ pub const SHIM_VALUE_DESCRIPTION: c_int = 1;
 /// The URL of a property value.
 pub const SHIM_VALUE_URL: c_int = 2;
 
+/// Returned by the data file metadata string readers when the string, or the
+/// property, value or component it belongs to, cannot be read, or an index
+/// is out of range. An absent string gives zero instead.
+pub const SHIM_STRING_FAILED: usize = usize::MAX;
+
 extern "C" {
     /// Returns the number of properties the data file defines, including
     /// those the data set was not created with, or zero when no data set is
@@ -759,7 +764,8 @@ extern "C" {
     /// `property_index`, one of the `SHIM_PROPERTY_` constants, into `buffer`
     /// as a null terminated string, as much as fits, and returns the
     /// string's full length excluding the terminator. An absent string is
-    /// written as empty, with length zero. See `src/shim.c`.
+    /// written as empty, with length zero, and one that cannot be read gives
+    /// [`SHIM_STRING_FAILED`]. See `src/shim.c`.
     ///
     /// # Safety
     /// `manager` must be an initialized Hash manager. `buffer` must point to
@@ -774,8 +780,8 @@ extern "C" {
 
     /// Writes the name of the data tier at `map_index` among those the data
     /// file property at `property_index` is in into `buffer`, as much as
-    /// fits, and returns its full length, or zero when either index is out of
-    /// range. See `src/shim.c`.
+    /// fits, and returns its full length, or [`SHIM_STRING_FAILED`] when either
+    /// index is out of range or the name cannot be read. See `src/shim.c`.
     ///
     /// # Safety
     /// `manager` must be an initialized Hash manager. `buffer` must point to
@@ -791,8 +797,8 @@ extern "C" {
     /// Writes the string `field`, one of the `SHIM_VALUE_` constants, of the
     /// value at `value_number` among those the data file holds for the
     /// property at `property_index` into `buffer`, as much as fits, and
-    /// returns its full length, or zero when either index is out of range.
-    /// See `src/shim.c`.
+    /// returns its full length, or [`SHIM_STRING_FAILED`] when either index is
+    /// out of range or the string cannot be read. See `src/shim.c`.
     ///
     /// # Safety
     /// `manager` must be an initialized Hash manager. `buffer` must point to
@@ -828,8 +834,9 @@ extern "C" {
     ) -> c_int;
 
     /// Writes the name of the component at `component_index` into `buffer`,
-    /// as much as fits, and returns its full length, or zero when the index
-    /// is out of range. See `src/shim.c`.
+    /// as much as fits, and returns its full length, or [`SHIM_STRING_FAILED`]
+    /// when the index is out of range or the name cannot be read. See
+    /// `src/shim.c`.
     ///
     /// # Safety
     /// `manager` must be an initialized Hash manager. `buffer` must point to

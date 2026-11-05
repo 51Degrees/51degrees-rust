@@ -412,8 +412,11 @@ uint16_t fiftyoneDegreesShimHashGetFileHandleCount(
  * crates describe a data file as the other SDKs do. Each string reader writes
  * as much of the string as fits, null terminated, and returns the string's
  * full length excluding the terminator, so a caller whose buffer was too small
- * can call again with one of that length plus one. A string that is absent or
- * cannot be read is written as empty and its length is zero.
+ * can call again with one of that length plus one. A string that is absent is
+ * written as empty and its length is zero. When the string, or the property,
+ * value or component it belongs to, cannot be read, or an index is out of
+ * range, the buffer is left empty and SHIM_STRING_FAILED is returned, as the
+ * C++ builders raise an exception there rather than leave something out.
  */
 
 /* The string fields of a data file property. */
@@ -426,6 +429,9 @@ uint16_t fiftyoneDegreesShimHashGetFileHandleCount(
 #define SHIM_VALUE_NAME 0
 #define SHIM_VALUE_DESCRIPTION 1
 #define SHIM_VALUE_URL 2
+
+/* Returned by a string reader that could not read the string. */
+#define SHIM_STRING_FAILED ((size_t)-1)
 
 /*
  * Writes as much of `value` as fits into `buffer` and returns the full length
@@ -444,14 +450,14 @@ static size_t copy_measured(char *buffer, size_t length, const char *value) {
 
 /*
  * Writes the string at `offset` in the strings collection into `buffer` and
- * returns its full length, or zero when it cannot be read.
+ * returns its full length, or SHIM_STRING_FAILED when it cannot be read.
  */
 static size_t copy_string_at(
     fiftyoneDegreesDataSetHash *dataSet,
     uint32_t offset,
     char *buffer,
     size_t length) {
-    size_t total = 0;
+    size_t total = SHIM_STRING_FAILED;
     FIFTYONE_DEGREES_EXCEPTION_CREATE;
     fiftyoneDegreesCollectionItem item;
     fiftyoneDegreesDataReset(&item.data);
@@ -629,7 +635,8 @@ int fiftyoneDegreesShimHashGetDataFileProperty(
  * `propertyIndex` into `buffer` and returns its full length. The fields are
  * SHIM_PROPERTY_NAME, SHIM_PROPERTY_DESCRIPTION, SHIM_PROPERTY_CATEGORY and
  * SHIM_PROPERTY_URL. A property with no description, category or URL has an
- * empty one.
+ * empty one. Returns SHIM_STRING_FAILED when the property or the string
+ * cannot be read, or `field` is none of these.
  */
 size_t fiftyoneDegreesShimHashGetDataFilePropertyString(
     fiftyoneDegreesResourceManager *manager,
@@ -643,13 +650,16 @@ size_t fiftyoneDegreesShimHashGetDataFilePropertyString(
     fiftyoneDegreesDataSetHash *dataSet =
         fiftyoneDegreesDataSetHashGet(manager);
     if (dataSet == NULL) {
-        return 0;
+        return SHIM_STRING_FAILED;
     }
-    size_t total = 0;
+    size_t total = SHIM_STRING_FAILED;
     fiftyoneDegreesCollectionItem item;
     const fiftyoneDegreesProperty *property =
         get_property(dataSet, propertyIndex, &item);
     if (property != NULL) {
+        if (field >= SHIM_PROPERTY_NAME && field <= SHIM_PROPERTY_URL) {
+            total = 0;
+        }
         switch (field) {
         case SHIM_PROPERTY_NAME:
             total = copy_string_at(
@@ -687,7 +697,8 @@ size_t fiftyoneDegreesShimHashGetDataFilePropertyString(
 /*
  * Writes the name of the data tier at `mapIndex` among those the data file
  * property at `propertyIndex` is in into `buffer`, and returns its full
- * length, or zero when either index is out of range.
+ * length, or SHIM_STRING_FAILED when either index is out of range or the
+ * name cannot be read.
  */
 size_t fiftyoneDegreesShimHashGetDataFilePropertyMap(
     fiftyoneDegreesResourceManager *manager,
@@ -701,9 +712,9 @@ size_t fiftyoneDegreesShimHashGetDataFilePropertyMap(
     fiftyoneDegreesDataSetHash *dataSet =
         fiftyoneDegreesDataSetHashGet(manager);
     if (dataSet == NULL) {
-        return 0;
+        return SHIM_STRING_FAILED;
     }
-    size_t total = 0;
+    size_t total = SHIM_STRING_FAILED;
     fiftyoneDegreesCollectionItem item;
     const fiftyoneDegreesProperty *property =
         get_property(dataSet, propertyIndex, &item);
@@ -730,7 +741,9 @@ size_t fiftyoneDegreesShimHashGetDataFilePropertyMap(
  * the data file holds for the property at `propertyIndex` into `buffer`, and
  * returns its full length. The fields are SHIM_VALUE_NAME,
  * SHIM_VALUE_DESCRIPTION and SHIM_VALUE_URL. A value with no description or
- * URL has an empty one. Returns zero when either index is out of range.
+ * URL has an empty one. Returns SHIM_STRING_FAILED when either index is out
+ * of range, the property, value or string cannot be read, or `field` is none
+ * of these.
  */
 size_t fiftyoneDegreesShimHashGetDataFilePropertyValueString(
     fiftyoneDegreesResourceManager *manager,
@@ -745,9 +758,9 @@ size_t fiftyoneDegreesShimHashGetDataFilePropertyValueString(
     fiftyoneDegreesDataSetHash *dataSet =
         fiftyoneDegreesDataSetHashGet(manager);
     if (dataSet == NULL) {
-        return 0;
+        return SHIM_STRING_FAILED;
     }
-    size_t total = 0;
+    size_t total = SHIM_STRING_FAILED;
     fiftyoneDegreesCollectionItem item;
     const fiftyoneDegreesProperty *property =
         get_property(dataSet, propertyIndex, &item);
@@ -762,6 +775,9 @@ size_t fiftyoneDegreesShimHashGetDataFilePropertyValueString(
                 dataSet->values, first + valueNumber, &valueItem, exception);
             if (value != NULL) {
                 if (FIFTYONE_DEGREES_EXCEPTION_OKAY) {
+                    if (field >= SHIM_VALUE_NAME && field <= SHIM_VALUE_URL) {
+                        total = 0;
+                    }
                     switch (field) {
                     case SHIM_VALUE_NAME:
                         total = copy_string_at(
@@ -852,7 +868,8 @@ int fiftyoneDegreesShimHashGetComponent(
 
 /*
  * Writes the name of the component at `componentIndex` into `buffer` and
- * returns its full length, or zero when the index is out of range.
+ * returns its full length, or SHIM_STRING_FAILED when the index is out of
+ * range or the name cannot be read.
  */
 size_t fiftyoneDegreesShimHashGetComponentName(
     fiftyoneDegreesResourceManager *manager,
@@ -865,9 +882,9 @@ size_t fiftyoneDegreesShimHashGetComponentName(
     fiftyoneDegreesDataSetHash *dataSet =
         fiftyoneDegreesDataSetHashGet(manager);
     if (dataSet == NULL) {
-        return 0;
+        return SHIM_STRING_FAILED;
     }
-    size_t total = 0;
+    size_t total = SHIM_STRING_FAILED;
     const fiftyoneDegreesComponent *component =
         get_component(dataSet, componentIndex);
     if (component != NULL) {

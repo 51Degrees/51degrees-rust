@@ -295,6 +295,7 @@ fn property_values_are_read_from_the_data_file() {
     };
     let mut is_mobile: Vec<String> = engine
         .property_values("IsMobile")
+        .expect("the values are read")
         .expect("IsMobile is listed")
         .into_iter()
         .map(|value| value.name)
@@ -306,22 +307,27 @@ fn property_values_are_read_from_the_data_file() {
     // file holds for it, as its metadata lists it.
     let browser_names = engine
         .property_values("BrowserName")
+        .expect("the values are read")
         .expect("BrowserName is listed");
     assert!(browser_names.iter().any(|value| value.name == "Safari"));
     assert!(browser_names.iter().all(|value| !value.name.is_empty()));
 
     let methods: Vec<String> = engine
         .property_values("Method")
+        .expect("the values are read")
         .expect("Method is listed")
         .into_iter()
         .map(|value| value.name)
         .collect();
     assert_eq!(methods, ["NONE", "PERFORMANCE", "COMBINED", "PREDICTIVE"]);
-    assert_eq!(engine.property_values("MatchedNodes"), Some(Vec::new()));
+    assert_eq!(
+        engine.property_values("MatchedNodes").unwrap(),
+        Some(Vec::new())
+    );
 
-    assert_eq!(engine.property_values("NotAProperty"), None);
+    assert_eq!(engine.property_values("NotAProperty").unwrap(), None);
     // Names are matched exactly, as .NET matches them.
-    assert_eq!(engine.property_values("ismobile"), None);
+    assert_eq!(engine.property_values("ismobile").unwrap(), None);
 }
 
 /// The issue's check. An engine restricted to IsMobile and asked for

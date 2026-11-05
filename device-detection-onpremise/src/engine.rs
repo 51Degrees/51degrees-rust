@@ -269,7 +269,7 @@ fn describe(
     manager: Arc<Manager>,
     copy: Option<OperationalCopy>,
     tier_override: &Option<String>,
-) -> (LoadedDataSet, EngineMetadata) {
+) -> Result<(LoadedDataSet, EngineMetadata)> {
     // An explicit builder override wins, then the tier read from the native
     // data file header (Lite, Enterprise, TAC and so on), then the safe Lite
     // default when the native name is absent.
@@ -277,8 +277,8 @@ fn describe(
         .data_set_name()
         .unwrap_or_else(|| DEFAULT_DATA_SOURCE_TIER.to_owned());
     let tier = tier_override.clone().unwrap_or_else(|| file_tier.clone());
-    let file_properties = manager.data_file_properties();
-    let metadata = build_metadata(&file_properties, &manager.data_file_components(), tier);
+    let file_properties = manager.data_file_properties()?;
+    let metadata = build_metadata(&file_properties, &manager.data_file_components()?, tier);
     let readable = Arc::new(ReadableProperties::new(&file_properties));
     let property_indexes = file_properties
         .iter()
@@ -294,7 +294,7 @@ fn describe(
         )
         .with_typed_properties(is_typed_property),
     );
-    (
+    Ok((
         LoadedDataSet {
             manager,
             readable,
@@ -303,7 +303,7 @@ fn describe(
             _copy: copy,
         },
         metadata,
-    )
+    ))
 }
 
 impl DeviceDetectionOnPremiseEngine {
@@ -312,7 +312,7 @@ impl DeviceDetectionOnPremiseEngine {
     /// Called by the builder once it has opened the data file, or `copy` of
     /// it. Derives the property and evidence-key metadata from the data set,
     /// records the data-file publish time from the file on disk, and assembles
-    /// the engine.
+    /// the engine. Fails when the data file's metadata cannot be read.
     pub(crate) fn from_manager(
         manager: Arc<Manager>,
         copy: Option<OperationalCopy>,
@@ -321,9 +321,9 @@ impl DeviceDetectionOnPremiseEngine {
         data_file_config: DataFileConfiguration,
         data_source_tier: Option<String>,
         concurrency: Option<u16>,
-    ) -> Self {
+    ) -> Result<Self> {
         let evidence_key_filter = HashEvidenceKeyFilter::new(named_evidence_keys(&manager));
-        let (loaded, metadata) = describe(manager, copy, &data_source_tier);
+        let (loaded, metadata) = describe(manager, copy, &data_source_tier)?;
 
         let data_file = Arc::new(AspectEngineDataFile::new(data_file_config));
         // Record the publish time from the data file on disk, the best signal
@@ -333,7 +333,7 @@ impl DeviceDetectionOnPremiseEngine {
             data_file.set_data_published(published);
         }
 
-        DeviceDetectionOnPremiseEngine {
+        Ok(DeviceDetectionOnPremiseEngine {
             loaded: ArcSwap::from_pointee(loaded),
             profile,
             requested_properties,
@@ -344,7 +344,7 @@ impl DeviceDetectionOnPremiseEngine {
             concurrency,
             temp_dir: None,
             data_files: vec![data_file],
-        }
+        })
     }
 
     /// Copy the data file into `temp_dir` on refresh, the folder the builder
@@ -401,21 +401,23 @@ impl DeviceDetectionOnPremiseEngine {
     }
 
     /// The values the property named `property_name`, matched exactly, can
-    /// have, or [`None`] when the engine lists no such property.
+    /// have, or [`None`] when the engine lists no such property. Fails when
+    /// the data file's values cannot be read.
     ///
     /// A data file property's values are read from the loaded data file on
     /// each call, in the data file's order. A match metric gives the values its
     /// metadata lists, which is none for all but `Method`.
-    pub fn property_values(&self, property_name: &str) -> Option<Vec<ValueMetaData>> {
+    pub fn property_values(&self, property_name: &str) -> Result<Option<Vec<ValueMetaData>>> {
         let loaded = self.loaded.load();
         if let Some(index) = loaded.property_indexes.get(property_name) {
-            let values = loaded.manager.data_file_property_values(*index);
-            return Some(values.iter().map(value_metadata).collect());
+            let values = loaded.manager.data_file_property_values(*index)?;
+            return Ok(Some(values.iter().map(value_metadata).collect()));
         }
-        self.fiftyone_properties()
+        Ok(self
+            .fiftyone_properties()
             .iter()
             .find(|property| property.name() == property_name)
-            .map(|property| property.values().to_vec())
+            .map(|property| property.values().to_vec()))
     }
 
     /// Run a detection for `data` into new device data.
@@ -550,9 +552,9 @@ impl DeviceDetectionOnPremiseEngine {
             &self.requested_properties,
             self.concurrency,
         )?;
-        self.evidence_key_filter
-            .replace(named_evidence_keys(&manager));
-        let (loaded, metadata) = describe(manager, copy, &self.tier_override);
+        let evidence_keys = named_evidence_keys(&manager);
+        let (loaded, metadata) = describe(manager, copy, &self.tier_override)?;
+        self.evidence_key_filter.replace(evidence_keys);
         self.loaded.store(Arc::new(loaded));
         self.metadata.replace(metadata);
 
