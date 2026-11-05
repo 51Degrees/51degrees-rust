@@ -514,7 +514,9 @@ pub struct DataFileProperty {
     /// The property's default value, which a profile with no other value for
     /// the property has, or [`None`] when it has none.
     pub default_value: Option<DataFileValue>,
-    /// The number of values the data file holds for the property.
+    /// The number of values the data file holds for the property. It is 0
+    /// when the property's value indexes are -1 or reach past the data
+    /// file's values, as the C library counts them.
     pub value_count: u32,
 }
 
@@ -1879,5 +1881,121 @@ mod tests {
                 assert!(!value.description.starts_with("http"), "{value:?}");
             }
         }
+    }
+
+    /// Places in a Hash data file, from the packed
+    /// `fiftyoneDegreesDataSetHashHeader` in the C library's `hash.h` and
+    /// `fiftyoneDegreesProperty` in `property.h`. A collection's header is its
+    /// start, its length in bytes and its count, each four bytes.
+    const PROPERTIES_HEADER: usize = 110;
+    const VALUES_HEADER: usize = 122;
+    const PROPERTY_SIZE: usize = 44;
+    const FIRST_VALUE_INDEX: usize = 28;
+    const LAST_VALUE_INDEX: usize = 32;
+
+    fn read_u32(bytes: &[u8], at: usize) -> u32 {
+        u32::from_le_bytes(bytes[at..at + 4].try_into().expect("four bytes"))
+    }
+
+    fn write_u32(bytes: &mut [u8], at: usize, value: u32) {
+        bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    #[test]
+    fn a_property_whose_values_are_not_all_in_the_file_has_none() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping stored value indexes");
+            return;
+        };
+        let mut bytes = std::fs::read(&path).expect("the data file is read");
+        let start = read_u32(&bytes, PROPERTIES_HEADER) as usize;
+        let length = read_u32(&bytes, PROPERTIES_HEADER + 4) as usize;
+        let count = read_u32(&bytes, PROPERTIES_HEADER + 8) as usize;
+        let values_count = read_u32(&bytes, VALUES_HEADER + 8);
+        assert_eq!(length, count * PROPERTY_SIZE);
+        let record = |index: u32| start + index as usize * PROPERTY_SIZE;
+
+        let manager = Manager::open(&path, PerformanceProfile::InMemory).expect("data file loads");
+        let original = manager
+            .data_file_properties()
+            .expect("the properties are read");
+        drop(manager);
+        assert_eq!(original.len(), count);
+        // Each record's indexes give the count read through the shim, so the
+        // records are read from the right places.
+        for property in &original {
+            let first = read_u32(&bytes, record(property.index) + FIRST_VALUE_INDEX);
+            let last = read_u32(&bytes, record(property.index) + LAST_VALUE_INDEX);
+            assert_eq!(
+                last.wrapping_sub(first).wrapping_add(1),
+                property.value_count,
+                "{}",
+                property.name
+            );
+        }
+        let index_of = |name: &str| {
+            original
+                .iter()
+                .find(|p| p.name == name)
+                .expect("the property is in every Hash data file")
+                .index
+        };
+
+        // Both indexes -1, a last index one past the values with the default
+        // value still inside the range, and a first index after the last.
+        let no_values = index_of("BrowserName");
+        let past_the_end = index_of("ScreenPixelsWidth");
+        let reversed = index_of("PlatformName");
+        assert!(original[past_the_end as usize].default_value.is_some());
+        write_u32(&mut bytes, record(no_values) + FIRST_VALUE_INDEX, u32::MAX);
+        write_u32(&mut bytes, record(no_values) + LAST_VALUE_INDEX, u32::MAX);
+        write_u32(
+            &mut bytes,
+            record(past_the_end) + LAST_VALUE_INDEX,
+            values_count,
+        );
+        let last = read_u32(&bytes, record(reversed) + LAST_VALUE_INDEX);
+        write_u32(&mut bytes, record(reversed) + FIRST_VALUE_INDEX, last + 2);
+        let changed = [no_values, past_the_end, reversed];
+
+        let dir = std::env::temp_dir().join(format!(
+            "fiftyone-native-value-indexes-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the folder is made");
+        let patched = dir.join("51Degrees.hash");
+        std::fs::write(&patched, &bytes).expect("the copy is written");
+        for profile in METADATA_PROFILES {
+            let manager = Manager::open(&patched, profile).expect("the copy loads");
+            let properties = manager
+                .data_file_properties()
+                .expect("the properties are read");
+            assert_eq!(properties.len(), original.len());
+            for (property, before) in properties.iter().zip(&original) {
+                if !changed.contains(&property.index) {
+                    assert_eq!(property, before, "{}", profile.as_str());
+                    continue;
+                }
+                let what = format!("{} {}", property.name, profile.as_str());
+                assert_eq!(property.value_count, 0, "{what}");
+                assert_eq!(property.default_value, None, "{what}");
+                assert!(
+                    manager
+                        .data_file_property_values(property.index)
+                        .expect("the values are read")
+                        .is_empty(),
+                    "{what}"
+                );
+                assert!(
+                    manager
+                        .data_file_property_value_range(property.index, 0..5)
+                        .expect("the values are read")
+                        .is_empty(),
+                    "{what}"
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

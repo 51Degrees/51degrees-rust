@@ -545,12 +545,18 @@ static void find_available(
 }
 
 /*
- * Returns the number of values the data file holds for `property`.
+ * Returns the number of values the data file holds for `property`, or zero
+ * when they are not all in the values collection, as when both value indexes
+ * are -1. The C library's profile index counts them the same way.
  */
-static uint32_t value_count(const fiftyoneDegreesProperty *property) {
+static uint32_t value_count(
+    fiftyoneDegreesDataSetHash *dataSet,
+    const fiftyoneDegreesProperty *property) {
     const uint32_t first = property->firstValueIndex;
     const uint32_t last = property->lastValueIndex;
-    return last >= first ? last - first + 1 : 0;
+    return first <= last &&
+        last < fiftyoneDegreesCollectionGetCount(dataSet->values) ?
+        last - first + 1 : 0;
 }
 
 /*
@@ -634,13 +640,12 @@ int fiftyoneDegreesShimHashGetDataFileProperty(
         *show = property->show;
         *showValues = property->showValues;
         const uint32_t first = property->firstValueIndex;
-        const uint32_t last = property->lastValueIndex;
-        *valueCount = value_count(property);
+        const uint32_t count = value_count(dataSet, property);
+        *valueCount = count;
         // The C++ builder finds the default value by name among the
         // property's values, so a default outside them is none.
-        *defaultValueNumber = property->defaultValueIndex != UINT32_MAX &&
-            property->defaultValueIndex >= first &&
-            property->defaultValueIndex <= last ?
+        *defaultValueNumber = property->defaultValueIndex >= first &&
+            property->defaultValueIndex - first < count ?
             (int32_t)(property->defaultValueIndex - first) : -1;
         *mapCount = property->mapCount;
         FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->properties, &item);
@@ -876,7 +881,7 @@ int fiftyoneDegreesShimHashGetDataFilePropertyValues(
         get_property(dataSet, propertyIndex, &item);
     if (property != NULL) {
         const uint32_t first = property->firstValueIndex;
-        const uint32_t total = value_count(property);
+        const uint32_t total = value_count(dataSet, property);
         FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->properties, &item);
         uint32_t end = valueNumber;
         if (valueNumber < total) {
