@@ -486,8 +486,8 @@ mod tests {
         );
     }
 
-    // Only `http` and `https`, ignoring case, as specifications#74 at 5e998b1
-    // asks.
+    // Only `http` and `https`, ignoring case, as rule 1 of the callback URL
+    // rule in the JavaScript builder specification asks.
     #[test]
     fn checks_the_scheme() {
         for protocol in ["https", "http", "HtTp"] {
