@@ -95,7 +95,7 @@ fn data_file(variable: &str, relative: &str) -> Option<PathBuf> {
 fn device_detection() -> Option<Vec<Arc<dyn FlowElement>>> {
     let Some(file) = data_file(
         "51DEGREES_DD_PATH",
-        "cxx/device-detection-data/51Degrees-LiteV4.1.hash",
+        "cxx/data/device-detection/51Degrees-LiteV4.1.hash",
     ) else {
         eprintln!("skipping: no Device Detection Hash data file found");
         return None;
@@ -114,7 +114,7 @@ fn device_detection() -> Option<Vec<Arc<dyn FlowElement>>> {
 fn ip_intelligence() -> Option<Vec<Arc<dyn FlowElement>>> {
     let Some(file) = data_file(
         "51DEGREES_IPI_PATH",
-        "cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi",
+        "cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi",
     ) else {
         eprintln!("skipping: no IP Intelligence data file found");
         return None;

@@ -44,6 +44,14 @@ jobs:
     permissions:
       contents: write
       actions: read
+    env:
+      # The data files the performance examples read, one per line. The
+      # download and the check below both take this list, so they cannot
+      # drift apart.
+      DATA_FILES: |
+        51degrees-rust/cxx/data/device-detection/51Degrees-LiteV4.1.hash
+        51degrees-rust/cxx/data/device-detection/20000 User Agents.csv
+        51degrees-rust/cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi
     steps:
       # 1. The Rust workspace, checked out into a subdirectory named after the
       #    repository so the common-ci script's -RepoName convention matches the
@@ -68,14 +76,9 @@ jobs:
           path: common-ci
           ref: ${{ inputs.common-ci-ref }}
 
-      # 3. The data files (.hash, .ipi) and the User-Agent and evidence records
-      #    are stored in Git LFS inside the data submodules of the cxx
-      #    submodule. actions/checkout brings the submodule pointers down but
-      #    not their LFS content, so fetch it explicitly. Without this the
-      #    example reads an LFS pointer instead of the real data and reports a
-      #    missing or corrupt data file. A cxx-ref given by hand first moves
-      #    the C sources and their data to that branch, tag or commit.
-      - name: Fetch LFS data for the cxx submodule
+      # 3. A cxx-ref given by hand moves the C sources, and the data repository
+      #    they carry at cxx/data, to that branch, tag or commit.
+      - name: Move the C sources to the cxx-ref given
         shell: bash
         env:
           CXX_REF: ${{ inputs.cxx-ref }}
@@ -85,15 +88,41 @@ jobs:
             git -C 51degrees-rust/cxx checkout --detach FETCH_HEAD
             git -C 51degrees-rust/cxx submodule update --init --recursive
           fi
-          git -C 51degrees-rust/cxx submodule foreach --recursive 'git lfs install --local && git lfs pull'
 
-      # 4. Point the examples at the Lite and ASN data files in the cxx
-      #    submodule.
+      # 4. The data repository holds a link for each data file rather than the
+      #    file, and its own script downloads them. As in pull-request.yml, the
+      #    Lite Hash file and the User-Agents the Device Detection example
+      #    reads, and the ASN file the IP Intelligence example reads, come
+      #    from the entry the Data Files workflow saves in the Actions cache
+      #    each day, refreshed when the Distributor has a newer file, and no
+      #    run here saves one. The script keeps a restored file and downloads
+      #    only one that was not restored.
+      - name: Restore the data files
+        uses: ./51degrees-rust/.github/actions/restore-data-files
+        with:
+          root: 51degrees-rust
+
+      - name: Download any data file not restored
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $names = $env:DATA_FILES.Trim() -split '\r?\n' |
+            ForEach-Object { Split-Path -Leaf $_.Trim() }
+          ./51degrees-rust/cxx/data/get-data-files.ps1 @names
+
+      # 5. Point the examples at the Lite and ASN data files in the data
+      #    repository. A data file that is missing fails the job here.
       - name: Configure data files
         shell: bash
         run: |
-          echo "51DEGREES_DD_PATH=${GITHUB_WORKSPACE}/51degrees-rust/cxx/device-detection-data/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
-          echo "51DEGREES_IPI_PATH=${GITHUB_WORKSPACE}/51degrees-rust/cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
+          echo "51DEGREES_DD_PATH=${GITHUB_WORKSPACE}/51degrees-rust/cxx/data/device-detection/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
+          echo "51DEGREES_IPI_PATH=${GITHUB_WORKSPACE}/51degrees-rust/cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
+          while IFS= read -r file; do
+            if [ -n "$file" ] && [ ! -f "$file" ]; then
+              echo "::error::$file is missing, so the performance examples cannot run"
+              exit 1
+            fi
+          done <<< "$DATA_FILES"
 
       - name: Install CMake
         uses: lukka/get-cmake@latest
@@ -106,7 +135,7 @@ jobs:
         with:
           workspaces: 51degrees-rust
 
-      # 5. Run the performance examples against this checkout's crates and
+      # 6. Run the performance examples against this checkout's crates and
       #    publish each results_<name>.json under
       #    51degrees-rust/test-results/performance-summary through the shared step.
       - name: Run performance and write results
@@ -119,7 +148,7 @@ jobs:
           name: performance_results-publish-rust
           path: 51degrees-rust/test-results/performance-summary/results_*.json
 
-      # 6. Compare against historic figures and render the graphs, then publish
+      # 7. Compare against historic figures and render the graphs, then publish
       #    them. `-Publish` makes the shared step render the PNG graphs and, on
       #    `main`, commit them to the `gh-images` branch (other branches use a
       #    `perf-images/<branch>` prefix). The documentation benchmarks page

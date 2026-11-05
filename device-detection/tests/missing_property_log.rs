@@ -118,7 +118,7 @@ fn each_read_of_a_missing_property_logs_one_warning() {
 fn device_detection() {
     let Some(file) = data_file(
         "51DEGREES_DD_PATH",
-        "cxx/device-detection-data/51Degrees-LiteV4.1.hash",
+        "cxx/data/device-detection/51Degrees-LiteV4.1.hash",
     ) else {
         eprintln!("no Lite Hash data file found; skipping Device Detection");
         return;
@@ -171,7 +171,7 @@ fn device_detection() {
 fn ip_intelligence() {
     let Some(file) = data_file(
         "51DEGREES_IPI_PATH",
-        "cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi",
+        "cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi",
     ) else {
         eprintln!("no ASN data file found; skipping IP Intelligence");
         return;
