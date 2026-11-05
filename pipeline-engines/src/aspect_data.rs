@@ -58,8 +58,11 @@ use crate::missing_property::{
 ///
 /// Implementations are usually built by embedding an [`AspectDataBase`] and
 /// delegating to it, so the trait has no required methods beyond the two
-/// accessors below. Like [`ElementData`], it is `Send` but not `Sync`: aspect
-/// data is accessed from a single thread per request.
+/// accessors below. Like [`ElementData`], it is `Send + Sync`. Only the engine
+/// that adds it writes it, and the elements of a parallel group can then read
+/// it from several threads at once. The
+/// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#aspect-data)
+/// says aspect data should be thread-safe.
 pub trait AspectData: ElementData {
     /// The data keys of the engines that contributed to this data.
     ///

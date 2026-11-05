@@ -165,6 +165,14 @@ impl Evidence {
         EvidenceBuilder::new()
     }
 
+    /// An empty evidence using this one's hasher. Seeding a new hasher writes
+    /// a counter every thread shares, so copying one is cheaper under load.
+    pub(crate) fn empty_with_same_hasher(&self) -> Evidence {
+        Evidence {
+            entries: HashMap::with_hasher(self.entries.hasher().clone()),
+        }
+    }
+
     /// Look up a value by key. The key is matched case-insensitively.
     pub fn get(&self, key: &str) -> Option<&str> {
         ci_get(&self.entries, key).map(|value| value.as_str())
@@ -438,5 +446,24 @@ impl EvidenceKeyFilter for EvidenceKeyFilterAggregator {
         keys.sort();
         keys.dedup();
         Some(keys)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Evidence made for a parallel group copies the hasher of the evidence
+    /// it was made from, so a key hashes the same through both, where a
+    /// freshly seeded hasher hashes it differently.
+    #[test]
+    fn empty_with_same_hasher_copies_the_hasher() {
+        const KEY: &str = "header.user-agent";
+        let evidence = Evidence::builder().add(KEY, "A").build();
+        let hash = evidence.entries.hasher().hash_one(KEY);
+        assert_ne!(RandomState::new().hash_one(KEY), hash);
+
+        let copy = evidence.empty_with_same_hasher();
+        assert_eq!(copy.entries.hasher().hash_one(KEY), hash);
     }
 }

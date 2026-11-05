@@ -162,13 +162,15 @@ impl DeviceDetectionOnPremiseEngineBuilder {
         self
     }
 
-    /// Override the data-source tier the engine reports, for example `Premium`.
+    /// Override the data-source tier the engine reports, for example `Enterprise`.
     ///
     /// By default the engine reads the tier embedded in the data file header
     /// (`Lite`, `Enterprise`, `TAC` and so on). Set this only to override that,
     /// for example to report a more specific tier than the file records, or when
     /// the header name is absent. When neither the override nor the header name
-    /// is available the engine falls back to `Lite`, the free tier.
+    /// is available the engine falls back to `Lite`, the free tier. The reason a
+    /// property is missing is still worked out against the tier the data file
+    /// names, because that is what each property's tiers list.
     pub fn data_source_tier(mut self, tier: impl Into<String>) -> Self {
         self.data_source_tier = Some(tier.into());
         self
@@ -262,7 +264,7 @@ impl DeviceDetectionOnPremiseEngineBuilder {
                 data_file_config,
                 self.data_source_tier,
                 self.concurrency,
-            )
+            )?
             .with_temp_dir(self.temp_dir),
         );
 

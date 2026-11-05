@@ -34,8 +34,8 @@
 //! ## The pieces
 //!
 //! - [`Pipeline`] and [`PipelineBuilder`] group ordered [`FlowElement`]s and run
-//!   them sequentially. A built pipeline is immutable and shared via
-//!   [`std::sync::Arc`].
+//!   them in order, with the elements of a parallel group at the same time. A
+//!   built pipeline is immutable and shared via [`std::sync::Arc`].
 //! - [`FlowData`] is the unit of work. It carries the immutable [`Evidence`]
 //!   input, the [`ElementData`] outputs, and any errors, and it knows how to
 //!   process itself via its pipeline back-reference.
@@ -125,6 +125,7 @@ mod error;
 mod evidence;
 mod flow_data;
 mod flow_element;
+mod group_threads;
 mod pipeline;
 mod property;
 pub mod redact;
