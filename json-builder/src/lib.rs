@@ -47,7 +47,7 @@
 //!
 //! [`JsonBuilderElementBuilder::set_properties`] limits the output to the
 //! listed properties, as the specification's `SetProperties` option does.
-//! JavaScript properties are always written.
+//! JavaScript properties and meta properties are always written.
 //!
 //! ## Changing the output
 //!

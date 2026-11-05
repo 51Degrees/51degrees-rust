@@ -103,8 +103,10 @@ pub fn get_all_properties<S: JsonBuilderSteps + ?Sized>(
 /// Properties are written in the order the element data lists them, and a
 /// name that only differs in case from one already written is skipped. A
 /// property that is not selected (see
-/// [`JsonBuilderElement::is_property_selected`]) is skipped too, unless it is
-/// a JavaScript property by its metadata or by its value.
+/// [`JsonBuilderElement::is_property_selected`]) gives only its meta
+/// properties, without its value, as the specification says meta properties
+/// are always written. A JavaScript property, by its metadata or by its
+/// value, is written in full whether or not it is selected.
 pub fn get_values<S: JsonBuilderSteps + ?Sized>(
     steps: &S,
     context: &JsonBuilderContext<'_>,
@@ -122,12 +124,42 @@ pub fn get_values<S: JsonBuilderSteps + ?Sized>(
     let mut values = JsonObject::new();
     for name in &names {
         let value = source.get(name);
-        if !is_written(context, data_path, name, &value) {
-            continue;
+        if is_written(context, data_path, name, &value) {
+            steps.add_json_values_for_property(context, &mut values, data_path, name, value, false);
+        } else {
+            add_meta_values_for_property(context, &mut values, data_path, name, value);
         }
-        steps.add_json_values_for_property(context, &mut values, data_path, name, value, false);
     }
     values
+}
+
+/// Add the meta properties of a property that is not selected, without its
+/// value. They are the `nullreason` and `evidenceproperties` keys that
+/// [`add_json_values_for_property`] adds beside a value, in the same order.
+/// No `delayexecution` key is needed, as only JavaScript properties carry
+/// one and those are always written.
+fn add_meta_values_for_property(
+    context: &JsonBuilderContext<'_>,
+    json_values: &mut JsonObject,
+    data_path: &str,
+    name: &str,
+    value: Result<PropertyValue, NoValueError>,
+) {
+    if let Err(no_value) = value {
+        json_values.insert(format!("{name}{NULL_REASON_SUFFIX}"), no_value.message);
+    }
+    let complete_name = format!("{}.{name}", data_path.to_lowercase());
+    if let Some(evidence) = context
+        .config()
+        .delayed_evidence_properties()
+        .get(&complete_name)
+    {
+        let names = evidence.iter().cloned().map(JsonValue::String).collect();
+        json_values.insert(
+            format!("{name}{EVIDENCE_PROPERTIES_SUFFIX}"),
+            JsonValue::Array(names),
+        );
+    }
 }
 
 /// True when a property is selected, or is a JavaScript property by its

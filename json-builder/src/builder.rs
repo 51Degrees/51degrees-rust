@@ -143,11 +143,11 @@ impl JsonBuilderElementBuilder {
     /// every property of each record. Names are matched without regard to
     /// case.
     ///
-    /// JavaScript properties are always written, and every element keeps its
-    /// entry, which is empty when none of its properties is selected. A
-    /// property's `nullreason`, `delayexecution` and `evidenceproperties`
-    /// keys are written with the property and left out with it. See
-    /// [`JsonBuilderElement::is_property_selected`].
+    /// JavaScript properties and meta properties are always written, as the
+    /// specification says. So a property that is not selected still gives
+    /// its `nullreason` and `evidenceproperties` keys, without its value.
+    /// Every element keeps its entry, which is empty when it has nothing to
+    /// write. See [`JsonBuilderElement::is_property_selected`].
     ///
     /// # Example
     ///

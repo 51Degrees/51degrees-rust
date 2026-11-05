@@ -278,7 +278,10 @@ fn only_the_listed_properties_are_written() {
         vec![device(), hardware()],
         JsonBuilderElement::builder().set_properties(["device.ismobile", "hardware.profilecount"]),
     ));
-    assert_eq!(keys(&value["device"]), ["ismobile", "javascriptscript"]);
+    assert_eq!(
+        keys(&value["device"]),
+        ["ismobile", "javascriptscript", "platformnamenullreason"]
+    );
     assert_eq!(value["device"]["ismobile"], json!(true));
     assert_eq!(value["hardware"], json!({ "profilecount": 2 }));
 }
@@ -292,7 +295,10 @@ fn a_later_list_replaces_an_earlier_one() {
             .set_properties(["device.ismobile"])
             .set_properties(["device.browsername"]),
     ));
-    assert_eq!(keys(&value["device"]), ["browsername", "javascriptscript"]);
+    assert_eq!(
+        keys(&value["device"]),
+        ["browsername", "javascriptscript", "platformnamenullreason"]
+    );
 }
 
 /// "Property names will need to be fully qualified." A bare property name
@@ -303,7 +309,10 @@ fn names_are_complete_and_matched_ignoring_case() {
         vec![device()],
         JsonBuilderElement::builder().set_properties(["ismobile"]),
     ));
-    assert_eq!(keys(&bare["device"]), ["javascriptscript"]);
+    assert_eq!(
+        keys(&bare["device"]),
+        ["javascriptscript", "platformnamenullreason"]
+    );
 
     let mixed_case = parse(&run(
         vec![device()],
@@ -311,7 +320,7 @@ fn names_are_complete_and_matched_ignoring_case() {
     ));
     assert_eq!(
         keys(&mixed_case["device"]),
-        ["ismobile", "javascriptscript"]
+        ["ismobile", "javascriptscript", "platformnamenullreason"]
     );
 
     // Part of a name is not the name.
@@ -319,7 +328,10 @@ fn names_are_complete_and_matched_ignoring_case() {
         vec![device()],
         JsonBuilderElement::builder().set_properties(["device.is"]),
     ));
-    assert_eq!(keys(&part["device"]), ["javascriptscript"]);
+    assert_eq!(
+        keys(&part["device"]),
+        ["javascriptscript", "platformnamenullreason"]
+    );
 }
 
 /// The selection rule, through the element's own check.
@@ -408,12 +420,12 @@ fn javascript_properties_are_always_written() {
 }
 
 /// "Note that some Properties, such as JavaScript Properties and meta
-/// properties, MUST always be included, regardless of this setting." A
-/// written property keeps its `nullreason`, `delayexecution` and
-/// `evidenceproperties` keys without them being listed, and a property that
-/// is not written takes its keys with it.
+/// properties, MUST always be included, regardless of this setting." Every
+/// property's `nullreason`, `delayexecution` and `evidenceproperties` keys
+/// are written whether or not the property is listed, and are the same as
+/// with no list, while an unlisted property's value is left out.
 #[test]
-fn meta_properties_go_with_their_property() {
+fn meta_properties_are_always_written() {
     let element = || -> Arc<dyn FlowElement> {
         Arc::new(
             TestElement::new("device")
@@ -451,6 +463,7 @@ fn meta_properties_go_with_their_property() {
                 .no_value("browsername", "No browser."),
         )
     };
+    let all = parse(&run(vec![element()], JsonBuilderElement::builder()));
     let value = parse(&run(
         vec![element()],
         JsonBuilderElement::builder()
@@ -459,33 +472,51 @@ fn meta_properties_go_with_their_property() {
     assert_eq!(
         keys(&value["device"]),
         [
+            "browsernamenullreason",
             "platformname",
             "platformnamenullreason",
+            "screenpixelsheightevidenceproperties",
             "screenpixelswidth",
             "screenpixelswidthevidenceproperties",
             "screenpixelswidthjavascript",
             "screenpixelswidthjavascriptdelayexecution",
         ]
     );
+    for meta in [
+        "browsernamenullreason",
+        "platformnamenullreason",
+        "screenpixelsheightevidenceproperties",
+        "screenpixelswidthevidenceproperties",
+        "screenpixelswidthjavascriptdelayexecution",
+    ] {
+        assert_eq!(value["device"][meta], all["device"][meta], "{meta}");
+    }
     assert_eq!(
-        value["device"]["screenpixelswidthevidenceproperties"],
+        value["device"]["browsernamenullreason"],
+        json!("No browser.")
+    );
+    assert_eq!(
+        value["device"]["screenpixelsheightevidenceproperties"],
         json!(["device.screenpixelswidthjavascript"])
     );
-    assert_eq!(
-        value["device"]["screenpixelswidthjavascriptdelayexecution"],
-        json!(true)
-    );
-    assert_eq!(
-        value["device"]["platformnamenullreason"],
-        json!("No platform.")
-    );
 
-    // With no list, the property left out above has its keys too.
-    let all = parse(&run(vec![element()], JsonBuilderElement::builder()));
-    assert!(all["device"]
-        .get("screenpixelsheightevidenceproperties")
-        .is_some());
-    assert!(all["device"].get("browsernamenullreason").is_some());
+    // With nothing listed from this element, only the JavaScript property
+    // and the meta properties are written.
+    let none = parse(&run(
+        vec![element()],
+        JsonBuilderElement::builder().set_properties(["location.town"]),
+    ));
+    assert_eq!(
+        keys(&none["device"]),
+        [
+            "browsernamenullreason",
+            "platformnamenullreason",
+            "screenpixelsheightevidenceproperties",
+            "screenpixelswidthevidenceproperties",
+            "screenpixelswidthjavascript",
+            "screenpixelswidthjavascriptdelayexecution",
+        ]
+    );
 }
 
 /// "e.g. ... `devices.profiles.hardwarename`." A name inside a list of

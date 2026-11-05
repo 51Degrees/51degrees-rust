@@ -273,9 +273,10 @@ pub trait JsonBuilderSteps: Send + Sync + RefUnwindSafe {
     ///
     /// `data_path` is the dotted path of the object the values go in, for
     /// example `device` or `hardware.profiles`. The default leaves out the
-    /// excluded property names and the properties that are not selected
-    /// (see [`JsonBuilderElement::is_property_selected`]), apart from
-    /// JavaScript properties, and adds each other property with
+    /// excluded property names, writes only the meta properties of a
+    /// property that is not selected (see
+    /// [`JsonBuilderElement::is_property_selected`]) unless it is a
+    /// JavaScript property, and adds each other property with
     /// [`add_json_values_for_property`](Self::add_json_values_for_property).
     fn get_values(
         &self,

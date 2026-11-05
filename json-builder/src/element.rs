@@ -67,8 +67,8 @@ const SEQUENCE_NUMBER_NOT_PRESENT: &str = "The value for the 'sequence' paramete
 ///
 /// When the builder is given a list of properties with
 /// [`JsonBuilderElementBuilder::set_properties`], only those and the
-/// JavaScript properties are written. See
-/// [`is_property_selected`](Self::is_property_selected).
+/// JavaScript properties are written, with the meta properties of every
+/// property. See [`is_property_selected`](Self::is_property_selected).
 ///
 /// Three top-level keys may be appended:
 ///
@@ -224,8 +224,8 @@ impl JsonBuilderElement {
     /// selected when it is listed, when a listed name lies under it, so
     /// `hardware.profiles` is selected for `hardware.profiles.hardwarename`,
     /// or when it lies under a listed name. Names are matched without regard
-    /// to case. The default steps write a JavaScript property whatever this
-    /// gives.
+    /// to case. The default steps write a JavaScript property, and every
+    /// property's meta properties, whatever this gives.
     pub fn is_property_selected(&self, complete_name: &str) -> bool {
         if self.selects_every_property() {
             return true;
