@@ -220,15 +220,15 @@ impl Pipeline {
         let mut first_panic = None;
         for (element, outcome) in elements.iter().zip(outcomes) {
             match outcome {
-                Ok(((added, recorded), result)) => {
+                Ok((added, result)) => {
                     // `add_error` logged these when the element recorded them.
-                    for error in recorded {
+                    for error in added.errors {
                         data.add_error(error, false);
                     }
                     if let Err(error) = result {
                         self.record_error(data, element.data_key(), error);
                     }
-                    for key in data.add_group_member_data(added) {
+                    for key in data.add_group_member_data(added.data, added.order) {
                         let error = Error::configuration(format!(
                             "Element data under key '{key}' was added by more \
                              than one element of a parallel group, so only \

@@ -62,6 +62,8 @@ pub struct FlowData {
     source: Source,
     evidence: Evidence,
     data: DataMap,
+    /// The keys of `data` in the order their element data was added.
+    order: Vec<String>,
     errors: Vec<FlowError>,
     processed: bool,
 }
@@ -84,7 +86,18 @@ pub(crate) struct BeforeGroup {
     pipeline: Arc<Pipeline>,
     evidence: Evidence,
     data: DataMap,
+    order: Vec<String>,
     errors: Vec<FlowError>,
+}
+
+/// What one element of a parallel group added to its flow data.
+pub(crate) struct GroupMemberAdded {
+    /// The element data it added, keyed by lowercased data key.
+    pub(crate) data: DataMap,
+    /// The keys of `data` in the order the element added them.
+    pub(crate) order: Vec<String>,
+    /// The errors it recorded.
+    pub(crate) errors: Vec<FlowError>,
 }
 
 impl FlowData {
@@ -97,6 +110,7 @@ impl FlowData {
             source: Source::Pipeline(pipeline),
             evidence,
             data: HashMap::default(),
+            order: Vec::new(),
             errors: Vec::new(),
             processed: false,
         }
@@ -191,6 +205,7 @@ impl FlowData {
             pipeline: Arc::clone(self.pipeline()),
             evidence: std::mem::replace(&mut self.evidence, evidence),
             data: std::mem::replace(&mut self.data, data),
+            order: std::mem::take(&mut self.order),
             errors: std::mem::take(&mut self.errors),
         })
     }
@@ -205,16 +220,20 @@ impl FlowData {
             source: Source::Group(Arc::clone(before)),
             evidence: before.evidence.empty_with_same_hasher(),
             data: DataMap::with_hasher(before.data.hasher().clone()),
+            order: Vec::new(),
             errors: Vec::new(),
             processed: true,
         }
     }
 
-    /// The element data a group member's element added, keyed by lowercased
-    /// data key, and the errors it recorded. Dropping the member releases its
+    /// What a group member's element added. Dropping the member releases its
     /// share of the view.
-    pub(crate) fn into_added(self) -> (DataMap, Vec<FlowError>) {
-        (self.data, self.errors)
+    pub(crate) fn into_added(self) -> GroupMemberAdded {
+        GroupMemberAdded {
+            data: self.data,
+            order: self.order,
+            errors: self.errors,
+        }
     }
 
     /// Put back what [`FlowData::begin_group`] took.
@@ -231,18 +250,28 @@ impl FlowData {
         );
         self.evidence = before.evidence;
         self.data = before.data;
+        self.order = before.order;
         self.errors = before.errors;
     }
 
-    /// Add the element data one element of a parallel group added. Data under
-    /// a key this flow data already holds is left as it is, and its key is
-    /// returned so the pipeline can record an error.
-    pub(crate) fn add_group_member_data(&mut self, added: DataMap) -> Vec<String> {
+    /// Add the element data one element of a parallel group added, in the
+    /// order it added it. Data under a key this flow data already holds is
+    /// left as it is, and its key is returned so the pipeline can record an
+    /// error.
+    pub(crate) fn add_group_member_data(
+        &mut self,
+        mut added: DataMap,
+        order: Vec<String>,
+    ) -> Vec<String> {
         let mut refused = Vec::new();
-        for (key, value) in added {
+        for key in order {
+            let Some(value) = added.remove(&key) else {
+                continue;
+            };
             match self.data.entry(key) {
                 Entry::Occupied(entry) => refused.push(entry.key().clone()),
                 Entry::Vacant(entry) => {
+                    self.order.push(entry.key().clone());
                     entry.insert(value);
                 }
             }
@@ -300,10 +329,13 @@ impl FlowData {
                 )));
             }
         }
-        let boxed = self
-            .data
-            .entry(stored_key)
-            .or_insert_with(|| Box::new(create()));
+        let boxed = match self.data.entry(stored_key) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                self.order.push(entry.key().clone());
+                entry.insert(Box::new(create()))
+            }
+        };
         boxed.as_any_mut().downcast_mut::<T>().ok_or_else(|| {
             Error::configuration(format!(
                 "Element data already present under key '{}' is not of the \
@@ -313,9 +345,20 @@ impl FlowData {
         })
     }
 
-    /// List the data keys present in this flow data. Order is unspecified.
+    /// List the data keys present in this flow data, lowercased, in the order
+    /// their element data was added. The JSON builder writes the element data
+    /// in this order.
+    ///
+    /// The data a parallel group adds comes after the group, in the order its
+    /// elements were given. An element in a group sees the keys added before
+    /// the group, then its own.
     pub fn data_keys(&self) -> Vec<String> {
-        self.all_data().map(|(key, _)| key.clone()).collect()
+        self.before_group()
+            .into_iter()
+            .flat_map(|before| before.order.iter())
+            .chain(self.order.iter())
+            .cloned()
+            .collect()
     }
 
     /// Get a property value, preferring element data and falling back to
