@@ -218,3 +218,104 @@ impl From<Vec<String>> for PropertyValue {
         PropertyValue::StringList(value)
     }
 }
+
+/// The number of decimal places a value converted from an Azimuth or
+/// Declination, such as a latitude or a longitude, is given to.
+pub const ANGLE_DECIMAL_PLACES: usize = 3;
+
+/// Round a value converted from an Azimuth or Declination, such as a latitude
+/// or a longitude, to [`ANGLE_DECIMAL_PLACES`] decimal places, giving the
+/// `f32` nearest the rounded decimal, as the
+/// [value types specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/value-types.md#rounding-of-azimuth-and-declination-values)
+/// requires.
+///
+/// The value is rounded before it is narrowed, because the `f32` nearest a
+/// value can round to a different last place. A value exactly half way
+/// between two places rounds away from zero, as the 51Degrees C library
+/// writes it, and minus zero is given as zero.
+///
+/// ```
+/// use fiftyone_pipeline_core::round_angle;
+///
+/// // A stored Declination of 6751 converts to 18.542741172521133.
+/// assert_eq!(round_angle(6751.0 * 90.0 / 32767.0), 18.543);
+/// ```
+pub fn round_angle(value: f64) -> f32 {
+    if !value.is_finite() {
+        return value as f32;
+    }
+    // A double exactly half way at the fourth place is an odd number of
+    // sixteenths, such as 0.0625. Formatting rounds such a half to even, so
+    // it is moved a quarter of a place away from zero first.
+    let sixteenths = value * 16.0;
+    let value = if sixteenths.fract() == 0.0 && sixteenths % 2.0 != 0.0 {
+        value + value.signum() * 0.00025
+    } else {
+        value
+    };
+    let rounded = format!("{value:.ANGLE_DECIMAL_PLACES$}")
+        .parse::<f32>()
+        .unwrap_or(value as f32);
+    if rounded == 0.0 {
+        0.0
+    } else {
+        rounded
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A stored Declination or Azimuth converted as the specification gives.
+    fn converted(stored: i16, max_angle: f64) -> f64 {
+        f64::from(stored) * max_angle / 32767.0
+    }
+
+    #[test]
+    fn an_angle_is_the_f32_nearest_its_value_to_three_places() {
+        // 18.542741172521133, the specification's example.
+        assert_eq!(round_angle(converted(6751, 90.0)), 18.543);
+        assert_eq!(round_angle(converted(-6751, 90.0)), -18.543);
+        assert_eq!(round_angle(converted(7948, 90.0)), 21.831);
+        assert_eq!(round_angle(converted(1, 90.0)), 0.003);
+        assert_eq!(round_angle(0.0), 0.0);
+        assert_eq!(round_angle(90.0), 90.0);
+        assert_eq!(round_angle(-180.0), -180.0);
+        assert_eq!(round_angle(converted(6751, 90.0)).to_string(), "18.543");
+    }
+
+    /// Rounding the `f32` nearest these values would give 21.212 and
+    /// 23.479, so they show the value is rounded before it is narrowed.
+    #[test]
+    fn an_angle_is_rounded_before_it_is_narrowed() {
+        // 21.21250038148137, whose nearest f32 is 21.212499618530273.
+        assert_eq!(round_angle(converted(7723, 90.0)), 21.213);
+        // 23.47849971007416, whose nearest f32 is 23.478500366210938.
+        assert_eq!(round_angle(converted(4274, 180.0)), 23.478);
+    }
+
+    #[test]
+    fn a_half_rounds_away_from_zero() {
+        assert_eq!(round_angle(0.0625), 0.063);
+        assert_eq!(round_angle(-0.0625), -0.063);
+        assert_eq!(round_angle(51.3125), 51.313);
+        assert_eq!(round_angle(0.1875), 0.188);
+        // An eighth has three places, so it is not a half.
+        assert_eq!(round_angle(0.125), 0.125);
+    }
+
+    #[test]
+    fn minus_zero_is_given_as_zero() {
+        let rounded = round_angle(-0.0001);
+        assert_eq!(rounded, 0.0);
+        assert!(rounded.is_sign_positive());
+    }
+
+    #[test]
+    fn a_value_that_is_not_finite_is_kept() {
+        assert!(round_angle(f64::NAN).is_nan());
+        assert_eq!(round_angle(f64::INFINITY), f32::INFINITY);
+        assert_eq!(round_angle(f64::NEG_INFINITY), f32::NEG_INFINITY);
+    }
+}

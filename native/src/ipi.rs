@@ -64,7 +64,7 @@ use std::ptr::NonNull;
 use std::sync::{Arc, OnceLock};
 
 use fiftyone_ip_intelligence_sys as sys;
-use fiftyone_pipeline_core::{constants, Error, Evidence, Result};
+use fiftyone_pipeline_core::{constants, round_angle, Error, Evidence, Result};
 
 use crate::buffer::with_value_string;
 use crate::evidence::parse_client_ip;
@@ -699,6 +699,9 @@ impl Results {
     /// the Phase 3 on-premise engine surfaces as
     /// `AspectPropertyValue<Vec<WeightedValue<T>>>`.
     ///
+    /// A floating point value is given to 3 decimal places, as
+    /// [`Results::value_as_string`] gives it.
+    ///
     /// Returns an empty vector when the property is not one of the required
     /// properties or the results carry no value for it, mirroring how
     /// [`Results::value_as_string`] reports an absent value as [`None`].
@@ -931,7 +934,7 @@ unsafe fn collect_weighted(
             }
             Ty::WeightedDouble | Ty::Double => {
                 let wd = header as *const sys::WeightedDouble;
-                Some((*wd).value.to_string())
+                Some(double_text((*wd).value))
             }
             Ty::WeightedBool | Ty::Boolean => {
                 let wb = header as *const sys::WeightedBool;
@@ -950,6 +953,17 @@ unsafe fn collect_weighted(
         }
     }
     out
+}
+
+/// Render a double from a value collection to 3 decimal places.
+///
+/// The C library writes Azimuth, Declination and single precision float
+/// values to 3 places in its own text, and the specification requires a value
+/// converted from an Azimuth or Declination to be given to 3 places, so every
+/// double is rounded by [`round_angle`]. A plain float then reads as the `f32`
+/// nearest the rounded decimal.
+fn double_text(value: f64) -> String {
+    round_angle(value).to_string()
 }
 
 /// Whether a property value type is one of the weighted list variants
@@ -1230,6 +1244,25 @@ mod tests {
         assert!(results.value_as_string_by_index(count, c"|").is_err());
         assert!(results.value_as_string_by_index(-1, c"|").is_err());
         assert!(results.values_weighted_by_index(count).is_err());
+    }
+
+    /// A double from a value collection is given to 3 decimal places, so a
+    /// plain float reads as the `f32` nearest the rounded decimal.
+    #[test]
+    fn a_double_is_given_to_three_decimal_places() {
+        // A stored Declination of 7723 converts to 21.21250038148137.
+        let latitude = 7723.0 * 90.0 / 32767.0;
+        assert_eq!(double_text(latitude), "21.213");
+        assert_eq!(double_text(-latitude), "-21.213");
+        assert_eq!(double_text(180.0), "180");
+        assert_eq!(
+            property_read_from(vec![(
+                sys::PropertyValueType::Double,
+                double_text(latitude),
+                u16::MAX,
+            )]),
+            PropertyRead::Float(21.213)
+        );
     }
 
     #[test]
