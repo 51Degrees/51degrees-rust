@@ -43,8 +43,8 @@ use fiftyone_ip_intelligence_shared::{
 use fiftyone_native::ipi::{Manager, PropertyRead, Results};
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{
-    constants, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
-    PropertyMetaData, PropertyValueType, Result, WeightedValue,
+    constants, round_angle, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData,
+    FlowElement, PropertyMetaData, PropertyValueType, Result, WeightedValue,
 };
 use fiftyone_pipeline_engines::{
     AspectEngine, AspectEngineBase, AspectEngineDataFile, AspectPropertyMetaData, EngineDeployment,
@@ -641,7 +641,7 @@ fn populate_property(
                 }
             }
             Some(PropertyValueType::Float) => {
-                if let Ok(float) = value.trim().parse::<f32>() {
+                if let Some(float) = float_from_text(&value) {
                     ip_data.set_float(name, float);
                 }
             }
@@ -649,6 +649,14 @@ fn populate_property(
         },
     }
     Ok(())
+}
+
+/// Parse a float property the data file gives as text, or [`None`] when the
+/// text is not a number. The value is given to 3 decimal places by
+/// [`round_angle`], because the IP Intelligence floats are the latitude and
+/// the longitude, as the cloud engine gives them.
+fn float_from_text(text: &str) -> Option<f32> {
+    text.trim().parse::<f64>().ok().map(round_angle)
 }
 
 /// Parse a rendered boolean value (`true`/`false`, `1`/`0`, `yes`/`no`, matched
@@ -946,6 +954,18 @@ mod tests {
         let asn = ip.string("Asn");
         let value = asn.value().expect("Asn should resolve to a value");
         assert!(value.contains("AS13335"), "got {value}");
+    }
+
+    /// A latitude or longitude the data file gives as text is given to 3
+    /// decimal places, rounded before it is narrowed.
+    #[test]
+    fn a_float_given_as_text_is_given_to_three_decimal_places() {
+        assert_eq!(float_from_text("18.542741172521133"), Some(18.543));
+        assert_eq!(float_from_text(" -0.0625 "), Some(-0.063));
+        // The f32 nearest this value would round to 21.212.
+        assert_eq!(float_from_text("21.21250038148137"), Some(21.213));
+        assert_eq!(float_from_text("51.5"), Some(51.5));
+        assert_eq!(float_from_text("Unknown"), None);
     }
 
     #[test]
