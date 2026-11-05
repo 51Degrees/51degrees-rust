@@ -297,8 +297,10 @@ impl Harness {
         )
     }
 
+    /// The reason for a request signed just now, valid for an hour.
     fn reason(&self) -> String {
-        self.process(SIGNED_AT, 3600).1
+        let now = self.now.load(Ordering::SeqCst);
+        self.process(now - 10, 3600).1
     }
 
     fn advance(&self, seconds: i64) {
