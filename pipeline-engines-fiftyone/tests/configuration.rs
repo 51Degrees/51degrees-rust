@@ -456,18 +456,29 @@ fn query_string_parameters_are_shared_as_dotnet_shares_them() {
         ]),
         Some(Vec::new())
     );
-    // .NET fails here with a NullReferenceException. A configuration file
-    // cannot give this order, as its names are applied sorted.
-    assert_eq!(
-        included(&[
-            ("ShareAllQueryStringParameters", "true"),
-            ("IncludedQueryStringParameter", "x"),
-        ]),
-        None
-    );
+    // .NET fails for both with a NullReferenceException. A configuration
+    // file cannot give this order, as its names are applied sorted.
+    for setting in [
+        "IncludedQueryStringParameter",
+        "IncludedQueryStringParameters",
+    ] {
+        assert_eq!(
+            included(&[("ShareAllQueryStringParameters", "true"), (setting, "x")]),
+            None,
+            "{setting}"
+        );
+    }
     assert_eq!(
         included(&[("SetIncludedQueryStringParameters", "")]),
         Some(Vec::new())
+    );
+    // The list adds to what is there, as one parameter does.
+    assert_eq!(
+        included(&[
+            ("IncludedQueryStringParameter", "x"),
+            ("IncludedQueryStringParameters", "y,z"),
+        ]),
+        Some(strings(&["x", "y", "z"]))
     );
 
     // A list given in code is taken as it is.
