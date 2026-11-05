@@ -53,13 +53,18 @@
 //!
 //! A `null` property is held with no value through
 //! [`DeviceDataBase::insert_no_value`], its message being the
-//! `<property>nullreason` entry's text, or `Unknown` when there is none. The
-//! `nullreason` entries are not properties, so they are left out of the data.
-//! A typed accessor or `get` for the property gives that message, and the
-//! JSON builder writes it back as `<property>nullreason`. This is what the
-//! [cloud aspect engine specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/cloud-aspect-engine.md#processing)
-//! describes for the
-//! [null values feature](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#null-values).
+//! `<property>nullreason` entry's text, as step 4 of the
+//! [cloud aspect engine specification's processing](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/cloud-aspect-engine.md#processing)
+//! says. A typed accessor or `get` for the property gives that message, and
+//! the JSON builder writes it back as `<property>nullreason`, as the
+//! [null values feature](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#null-values)
+//! describes.
+//!
+//! The specification does not say what happens when there is no such entry,
+//! nor what becomes of the entries themselves. Both follow .NET's
+//! `CloudAspectEngineBase.CreateAPVDictionary`, so the message is `Unknown`
+//! when there is no entry, and every key ending `nullreason` is left out of
+//! the data, because those entries are not properties.
 
 use fiftyone_device_detection_shared::DeviceDataBase;
 use fiftyone_pipeline_core::PropertyValue;
