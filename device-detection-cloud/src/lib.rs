@@ -75,6 +75,19 @@
 //! than from a `hardwarevendornullreason` entry. This realises the
 //! [null-values specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#null-values).
 //!
+//! ## A property the response did not return
+//!
+//! Data from a successful response, and each hardware profile, is given the
+//! properties the resource key grants, so reading a property the response did
+//! not return gives the reason the
+//! [missing properties specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#missing-properties)
+//! names and logs a warning, as .NET's cloud data does.
+//! [`ElementData::has_property`](fiftyone_pipeline_core::ElementData::has_property)
+//! answers `false` for such a property, so an element that asks first, such
+//! as Set Headers, can tell it from one the response gave as null. With a
+//! license key alone the granted properties are not listed, so every
+//! property counts as held.
+//!
 //! ## Property metadata
 //!
 //! The set of device properties a resource key grants comes from the cloud
