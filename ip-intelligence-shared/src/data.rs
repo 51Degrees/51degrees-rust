@@ -652,11 +652,13 @@ impl ElementData for IpIntelligenceDataBase {
     }
 
     /// Whether the property is set on this data or the reader can read it.
-    /// Without a
+    /// Unless the embedded [`AspectDataBase`] knows its missing properties,
+    /// through a
     /// [`MissingPropertySource`](fiftyone_pipeline_engines::MissingPropertySource)
-    /// it answers `true`, as the embedded [`AspectDataBase`] does.
+    /// or a failed cloud request, it answers `true`, as the [`AspectDataBase`]
+    /// does.
     fn has_property(&self, name: &str) -> bool {
-        !self.base.has_missing_property_sources() || self.holds(name)
+        !self.base.knows_missing_properties() || self.holds(name)
     }
 
     /// The names of the properties that have a value. With a reader attached

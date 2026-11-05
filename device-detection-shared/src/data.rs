@@ -438,12 +438,13 @@ impl ElementData for DeviceDataBase {
         }
     }
 
-    /// Whether the bag or the reader holds the property. Without a
+    /// Whether the bag or the reader holds the property. Unless the wrapped
+    /// [`AspectDataBase`] knows its missing properties, through a
     /// [`MissingPropertySource`](fiftyone_pipeline_engines::MissingPropertySource)
-    /// it answers `true`, because a cloud engine leaves a property with no
-    /// value out of the bag.
+    /// or a failed cloud request, it answers `true`, because a cloud engine
+    /// leaves a property with no value out of the bag.
     fn has_property(&self, name: &str) -> bool {
-        !self.base.has_missing_property_sources() || self.holds(name)
+        !self.base.knows_missing_properties() || self.holds(name)
     }
 
     /// The names of the properties that have a value. With a reader attached

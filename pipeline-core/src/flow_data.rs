@@ -163,9 +163,21 @@ impl FlowData {
         pipeline.process(self)
     }
 
-    /// Record an error against this flow data. Used by the pipeline when an
-    /// element fails and exceptions are being suppressed.
-    pub(crate) fn add_error(&mut self, error: FlowError) {
+    /// Record an error against this flow data, and log it at error level when
+    /// `should_log` is set.
+    ///
+    /// The pipeline records each error an element returns, logging it unless
+    /// errors are suppressed. An element that carries on past a failure
+    /// records it here instead, using [`FlowError::with_should_throw`] with
+    /// `false` when processing should not fail because of it.
+    pub fn add_error(&mut self, error: FlowError, should_log: bool) {
+        if should_log {
+            log::error!(
+                "An error occurred in element '{}': {}",
+                error.element_data_key,
+                error.source
+            );
+        }
         self.errors.push(error);
     }
 

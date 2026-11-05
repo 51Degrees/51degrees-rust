@@ -204,8 +204,8 @@ fn a_failed_request_stores_empty_device_and_hardware_data() {
         .collect();
     assert_eq!(
         keys,
-        vec!["cloud-response"],
-        "only the request engine's error"
+        vec!["cloud-response", "device", "hardware"],
+        "the request engine's error, then one from each engine that did not process"
     );
     let device = data
         .get(DEVICE_DATA_KEY)

@@ -121,19 +121,11 @@ pub trait AspectEngine: FlowElement {
     /// Applies the rules in [`crate::MissingPropertyService`] using this
     /// engine's deployment, data tier, aspect metadata, type name and typed
     /// accessors. The default implementation is correct for every engine, so
-    /// an engine rarely overrides it.
+    /// an engine rarely overrides it. One that must do some work first, such
+    /// as loading its metadata, can override it and then call
+    /// [`default_missing_property_reason`].
     fn missing_property_reason(&self, property_name: &str) -> MissingPropertyResult {
-        let has_typed_property = |name: &str| self.has_typed_property(name);
-        let view = EngineView {
-            element_data_key: self.data_key(),
-            type_name: self.engine_type_name(),
-            deployment: self.deployment(),
-            data_source_tier: self.data_source_tier(),
-            properties_loaded: self.has_loaded_properties(),
-            properties: self.aspect_properties(),
-            has_typed_property: Some(&has_typed_property),
-        };
-        resolve(property_name, &view)
+        default_missing_property_reason(self, property_name)
     }
 
     /// Build a core [`Error::PropertyMissing`] for `property_name`, using
@@ -450,6 +442,27 @@ pub fn property_pair(aspect: AspectPropertyMetaData) -> EnginePropertyPair {
 fn short_type_name(full: &str) -> &str {
     let path = full.split('<').next().unwrap_or(full);
     path.rsplit("::").next().unwrap_or(path)
+}
+
+/// Resolve why `property_name` is missing from `engine`'s results with the
+/// rules [`AspectEngine::missing_property_reason`] applies by default, using
+/// the engine's deployment, data tier, aspect metadata, type name and typed
+/// accessors.
+pub fn default_missing_property_reason<E: AspectEngine + ?Sized>(
+    engine: &E,
+    property_name: &str,
+) -> MissingPropertyResult {
+    let has_typed_property = |name: &str| engine.has_typed_property(name);
+    let view = EngineView {
+        element_data_key: engine.data_key(),
+        type_name: engine.engine_type_name(),
+        deployment: engine.deployment(),
+        data_source_tier: engine.data_source_tier(),
+        properties_loaded: engine.has_loaded_properties(),
+        properties: engine.aspect_properties(),
+        has_typed_property: Some(&has_typed_property),
+    };
+    resolve(property_name, &view)
 }
 
 /// Resolve a missing-property reason directly from an [`AspectEngine`] without

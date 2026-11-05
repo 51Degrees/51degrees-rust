@@ -85,8 +85,8 @@ mod on_premise_aspect_engine;
 
 pub use aspect_data::{AspectData, AspectDataBase};
 pub use aspect_engine::{
-    engine_missing_property_reason, property_pair, AspectEngine, AspectEngineBase,
-    EnginePropertyPair,
+    default_missing_property_reason, engine_missing_property_reason, property_pair, AspectEngine,
+    AspectEngineBase, EnginePropertyPair,
 };
 pub use aspect_property_metadata::AspectPropertyMetaData;
 pub use aspect_property_value::{AspectPropertyValue, DEFAULT_NO_VALUE_MESSAGE};
