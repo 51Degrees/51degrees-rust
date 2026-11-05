@@ -579,8 +579,8 @@ impl Manager {
     }
 
     /// The components the data file defines, in the data file's order. A
-    /// component whose default profile cannot be read is left out, as the
-    /// C++ builder leaves it out, and a name that cannot be read is an error.
+    /// default profile or a name that cannot be read is an error, as the C++
+    /// builder throws for a default profile it cannot read.
     pub fn data_file_components(&self) -> Result<Vec<DataFileComponent>> {
         let _file_read = self.file_read();
         // Safety: the manager is initialized for the lifetime of `self`.
@@ -599,7 +599,9 @@ impl Manager {
                 )
             };
             if read == 0 {
-                continue;
+                return Err(metadata_read_failed(&format!(
+                    "the default profile of component {index}"
+                )));
             }
             // Safety: the buffer is writable for the length given.
             let name = read_metadata_string(|buffer, length| unsafe {

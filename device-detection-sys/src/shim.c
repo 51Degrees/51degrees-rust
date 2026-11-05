@@ -836,8 +836,8 @@ uint32_t fiftyoneDegreesShimHashGetComponentCount(
 /*
  * Reads the id of the component at `componentIndex` and the profile id of its
  * default profile into the output parameters and returns 1, or returns 0 when
- * the index is out of range or the default profile cannot be read, which the
- * C++ builder also treats as no component.
+ * the index is out of range or the default profile cannot be read. A default
+ * profile that is absent without a failure gives 1 with the id 0.
  */
 int fiftyoneDegreesShimHashGetComponent(
     fiftyoneDegreesResourceManager *manager,
