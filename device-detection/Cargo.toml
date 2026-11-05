@@ -15,20 +15,20 @@ homepage = "https://51degrees.com/device-detection?utm_source=docs.rs&utm_medium
 # Always present: the core pipeline plumbing and the shared device-data model
 # (result types and key) every deployment surfaces, plus the engine traits the
 # facade re-exports for consumers who want to introspect aspect metadata.
-fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
-fiftyone-pipeline-engines = { version = "4.5.2", path = "../pipeline-engines" }
-fiftyone-pipeline-engines-fiftyone = { version = "4.5.2", path = "../pipeline-engines-fiftyone" }
-fiftyone-device-detection-shared = { version = "4.5.2", path = "../device-detection-shared" }
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
+fiftyone-pipeline-engines = { version = "=4.5.2", path = "../pipeline-engines" }
+fiftyone-pipeline-engines-fiftyone = { version = "=4.5.2", path = "../pipeline-engines-fiftyone" }
+fiftyone-device-detection-shared = { version = "=4.5.2", path = "../device-detection-shared" }
 
 # The on-premise Hash engine. Pulled in only with the `on-premise` feature so a
 # cloud-only consumer never links the native Hash library.
-fiftyone-device-detection-onpremise = { version = "4.5.2", path = "../device-detection-onpremise", optional = true }
-fiftyone-native = { version = "4.5.2", path = "../native", default-features = false, features = ["dd"], optional = true }
+fiftyone-device-detection-onpremise = { version = "=4.5.2", path = "../device-detection-onpremise", optional = true }
+fiftyone-native = { version = "=4.5.2", path = "../native", default-features = false, features = ["dd"], optional = true }
 
 # The cloud engine and the request engine it reads from. Pulled in only with the
 # `cloud` feature.
-fiftyone-device-detection-cloud = { version = "4.5.2", path = "../device-detection-cloud", optional = true }
-fiftyone-cloud-request-engine = { version = "4.5.2", path = "../cloud-request-engine", optional = true, default-features = false }
+fiftyone-device-detection-cloud = { version = "=4.5.2", path = "../device-detection-cloud", optional = true }
+fiftyone-cloud-request-engine = { version = "=4.5.2", path = "../cloud-request-engine", optional = true, default-features = false }
 
 [features]
 # The full SDK is built and tested here. A cloud-only consumer can opt out of
@@ -57,8 +57,8 @@ reqwest-client = ["cloud", "fiftyone-device-detection-cloud/reqwest-client"]
 # namespaced common C library symbols let both native engines coexist at the
 # facade level, not only at the fiftyone-native level. It is a dev-dependency
 # so it never touches the published dependency graph.
-fiftyone-ip-intelligence = { version = "4.5.2", path = "../ip-intelligence" }
-fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
+fiftyone-ip-intelligence = { version = "=4.5.2", path = "../ip-intelligence" }
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
 # Depend on this crate itself with reqwest-client enabled, so its own tests get
 # the built-in cloud HTTP transport. The library keeps reqwest-client off by
 # default (for wasm and lean cloud builds); the examples workspace used to unify

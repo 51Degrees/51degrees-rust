@@ -21,7 +21,7 @@ reqwest-client = ["dep:reqwest"]
 [dependencies]
 # The 51Did reader, which also carries the OWID envelope types the offline
 # signature check verifies through.
-fodid = { path = "../fodid", version = "4.5" }
+fodid = { path = "../fodid", version = "=4.5.5" }
 chrono.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -35,7 +35,7 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "f
 [dev-dependencies]
 # The tests create a real signed 51Did to stand in for the cloud, which needs
 # the OWID creator types fodid exposes under its creator feature.
-fodid = { path = "../fodid", version = "4.5", features = ["creator"] }
+fodid = { path = "../fodid", version = "=4.5.5", features = ["creator"] }
 # The tests await the client on a current-thread runtime, which is what
 # proves the futures need not be Send. The crate itself has no async runtime
 # dependency.

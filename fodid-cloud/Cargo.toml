@@ -10,12 +10,12 @@ repository.workspace = true
 homepage = "https://51degrees.com/developers/51did?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-fodid-cloud-cargo.toml&utm_term=homepage"
 
 [dependencies]
-fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
 # default-features = false drops the data-update service (reqwest/notify), which
 # the cloud path never uses, so this crate builds for wasm32-wasip1.
-fiftyone-pipeline-engines = { version = "4.5.2", path = "../pipeline-engines", default-features = false }
-fiftyone-cloud-request-engine = { version = "4.5.2", path = "../cloud-request-engine", default-features = false }
-fodid = { version = "4.5.5", path = "../fodid" }
+fiftyone-pipeline-engines = { version = "=4.5.2", path = "../pipeline-engines", default-features = false }
+fiftyone-cloud-request-engine = { version = "=4.5.2", path = "../cloud-request-engine", default-features = false }
+fodid = { version = "=4.5.5", path = "../fodid" }
 serde_json.workspace = true
 once_cell.workspace = true
 
@@ -29,7 +29,7 @@ reqwest-client = ["fiftyone-cloud-request-engine/reqwest-client"]
 # The tests create a real signed 51Did envelope to stand in for the cloud,
 # which needs the OWID creator types fodid exposes under its creator
 # feature.
-fodid = { version = "4.5.5", path = "../fodid", features = ["creator"] }
+fodid = { version = "=4.5.5", path = "../fodid", features = ["creator"] }
 
 # Depend on this crate itself with reqwest-client enabled, so its own tests get
 # the built-in cloud HTTP transport. The library keeps reqwest-client off by
