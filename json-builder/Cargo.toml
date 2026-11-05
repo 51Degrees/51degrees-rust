@@ -33,6 +33,9 @@ fiftyone-cloud-request-engine = { version = "4.5.2", path = "../cloud-request-en
 # the JSON (and any ETag computed from it downstream) is stable across runs. The
 # indexmap-backed Map this enables preserves insertion order rather than sorting.
 serde_json = { version = "1", features = ["preserve_order"] }
+# The ordered map behind JsonObject, so the output keeps the order keys were
+# added in. serde_json's preserve_order already depends on it.
+indexmap = "2"
 
 [package.metadata.docs.rs]
 # Build the documentation on docs.rs with every feature enabled, so the

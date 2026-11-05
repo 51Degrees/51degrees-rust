@@ -64,6 +64,10 @@ pub const JAVASCRIPT_PROPERTIES_KEY: &str = "javascriptProperties";
 /// `"errors"`.
 pub const ERRORS_KEY: &str = "errors";
 
+/// The top-level key under which the flow data's warnings are emitted. The
+/// key is `"warnings"`.
+pub const WARNINGS_KEY: &str = "warnings";
+
 /// The suffix appended to a property name to emit the reason it has no value.
 /// The suffix is `"nullreason"`.
 pub const NULL_REASON_SUFFIX: &str = "nullreason";

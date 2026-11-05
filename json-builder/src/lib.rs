@@ -42,8 +42,17 @@
 //! name, plus the sibling keys described on [`JsonBuilderElement`]
 //! (`nullreason`, `delayexecution`, `evidenceproperties`). The list of
 //! JavaScript-typed property paths is collected into a top-level
-//! [`JAVASCRIPT_PROPERTIES_KEY`] array, and any flow errors are appended under
-//! [`ERRORS_KEY`].
+//! [`JAVASCRIPT_PROPERTIES_KEY`] array, and any flow errors and warnings are
+//! appended under [`ERRORS_KEY`] and [`WARNINGS_KEY`].
+//!
+//! ## Changing the output
+//!
+//! Each step the builder takes is a method of [`JsonBuilderSteps`] with a
+//! default, matching the protected virtual methods of .NET's
+//! `JsonBuilderElement`, so a caller replaces only the steps it changes and
+//! calls the functions in [`default_steps`] for the rest. A
+//! [`JsonValueConverter`] changes how a property value is written. Both are
+//! given to the [`JsonBuilderElementBuilder`].
 //!
 //! ## Determinism
 //!
@@ -57,15 +66,22 @@
 
 mod builder;
 mod constants;
+mod converter;
 mod data;
+pub mod default_steps;
 mod element;
+mod steps;
+mod value;
 
 pub use builder::JsonBuilderElementBuilder;
 pub use constants::{DEFAULT_ELEMENT_EXCLUSION_LIST, DEFAULT_PROPERTY_EXCLUSION_LIST};
 pub use constants::{
     DELAY_EXECUTION_SUFFIX, ERRORS_KEY, EVIDENCE_PROPERTIES_SUFFIX, JAVASCRIPT_PROPERTIES_KEY,
     JSON_BUILDER_ELEMENT_DATA_KEY, JSON_PROPERTY_KEY, MAX_JAVASCRIPT_ITERATIONS,
-    NULL_REASON_SUFFIX, SEQUENCE_EVIDENCE_KEY,
+    NULL_REASON_SUFFIX, SEQUENCE_EVIDENCE_KEY, WARNINGS_KEY,
 };
+pub use converter::JsonValueConverter;
 pub use data::{JsonBuilderData, JSON_BUILDER_DATA_KEY};
 pub use element::JsonBuilderElement;
+pub use steps::{DefaultJsonBuilderSteps, JsonBuilderContext, JsonBuilderSteps, PipelineConfig};
+pub use value::{JsonObject, JsonValue};
