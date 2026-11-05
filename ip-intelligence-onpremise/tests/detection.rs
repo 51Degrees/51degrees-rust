@@ -573,13 +573,18 @@ fn a_listed_property_the_asn_file_lacks_has_an_unknown_reason() {
         eprintln!("no ASN data file found; skipping missing property test");
         return;
     };
-    if file.file_name().and_then(|name| name.to_str()) != Some(ASN_FILE_NAME) {
-        eprintln!("{} is not the ASN file; skipping", file.display());
+    let engine = build_engine(&file, PerformanceProfile::HighPerformance, &[])
+        .expect("the ASN data file builds an engine");
+    if lookup(Arc::clone(&engine), CLOUDFLARE_IPV4)
+        .country_code()
+        .has_value()
+    {
+        eprintln!(
+            "{} holds CountryCode, so it is not the ASN file; skipping",
+            file.display()
+        );
         return;
     }
-    let Some(engine) = build_engine(&file, PerformanceProfile::HighPerformance, &[]) else {
-        return;
-    };
     assert!(
         engine
             .aspect_properties()
