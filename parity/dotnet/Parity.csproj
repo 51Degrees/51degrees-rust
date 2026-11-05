@@ -27,6 +27,7 @@
     <PackageReference Include="FiftyOne.Pipeline.Engines.FiftyOne" Version="$(PipelineVersion)" />
     <PackageReference Include="FiftyOne.Pipeline.JsonBuilder" Version="$(PipelineVersion)" />
     <PackageReference Include="FiftyOne.Pipeline.JavaScriptBuilder" Version="$(PipelineVersion)" />
+    <PackageReference Include="FiftyOne.Pipeline.AgentSignature" Version="$(PipelineVersion)" />
   </ItemGroup>
 
 </Project>

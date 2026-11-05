@@ -31,6 +31,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -43,6 +44,7 @@ using System.Threading.Tasks;
 using System.Xml.Linq;
 using FiftyOne.DeviceDetection.Hash.Engine.OnPremise.FlowElements;
 using FiftyOne.IpIntelligence.Engine.OnPremise.FlowElements;
+using FiftyOne.Pipeline.AgentSignature.FlowElement;
 using FiftyOne.Pipeline.Core.Data;
 using FiftyOne.Pipeline.Core.Data.Types;
 using FiftyOne.Pipeline.Core.Exceptions;
@@ -78,6 +80,15 @@ namespace FiftyOne.Parity
 
         // The pipeline of a case that runs through the values pipeline.
         private const string ValuesPipeline = "values";
+
+        // The pipeline of a case that runs through the agent signature
+        // pipeline.
+        private const string AgentSignaturePipeline = "agent-signature";
+
+        // Long enough that the first fetch of a directory the handler serves
+        // at once never runs out, and shorter than the slow agent's delay.
+        private static readonly TimeSpan AgentSignatureWaitBudget =
+            TimeSpan.FromSeconds(2);
 
         // Never contacted. The handler answers every request itself.
         private const string UsageUrl = "http://usage.invalid/new.ashx";
@@ -136,6 +147,17 @@ namespace FiftyOne.Parity
                 .AddFlowElement(new JsonBuilderElementBuilder(loggerFactory).Build())
                 .SetSuppressProcessExceptions(true)
                 .Build();
+            // Sequence and the agent signature element, whose key
+            // directories come from a handler inside this program.
+            using var directories = new HttpClient(new KeyDirectories());
+            var agentSignature = new PipelineBuilder(loggerFactory)
+                .AddFlowElement(new SequenceElementBuilder(loggerFactory).Build())
+                .AddFlowElement(new AgentSignatureElementBuilder(loggerFactory)
+                    .SetHttpClient(directories)
+                    .SetWaitBudget(AgentSignatureWaitBudget)
+                    .Build())
+                .SetSuppressProcessExceptions(true)
+                .Build();
             var skipped = new HashSet<string>
             {
                 json.ElementDataKey, javascript.ElementDataKey
@@ -148,6 +170,7 @@ namespace FiftyOne.Parity
                 {
                     null => pipeline,
                     ValuesPipeline => values,
+                    AgentSignaturePipeline => agentSignature,
                     var other => throw new ArgumentException(
                         $"{item["id"]}: unknown pipeline {other}")
                 };
@@ -177,6 +200,7 @@ namespace FiftyOne.Parity
             Console.Error.WriteLine(
                 $"{lines.Count} cases written to {args.Out}, " +
                 $"{records.Count} usage records captured");
+            agentSignature.Dispose();
             values.Dispose();
             pipeline.Dispose();
             return 0;
@@ -356,6 +380,12 @@ namespace FiftyOne.Parity
                 case float f: return ("double", (double)f);
                 case double d: return ("double", d);
                 case JavaScript js: return ("javascript", js.ToString());
+                // RFC 3339 with the offset written out, the form .NET's JSON
+                // builder writes.
+                case DateTimeOffset time:
+                    return ("dateTime", time.ToString(
+                        "yyyy-MM-dd'T'HH:mm:sszzz",
+                        CultureInfo.InvariantCulture));
                 case IPAddress address: return ("ipAddress", address.ToString());
                 case IEnumerable<string> list:
                     return ("stringList", new JsonArray(
@@ -530,6 +560,54 @@ namespace FiftyOne.Parity
         public ValuesData(IPipeline pipeline)
             : base(NullLogger<ElementDataBase>.Instance, pipeline)
         {
+        }
+    }
+
+    // Serves the agents' key directories in place of the network. The slow
+    // agent answers after the wait budget, so its first request reports
+    // Timeout. Any other address is not found.
+    internal sealed class KeyDirectories : HttpMessageHandler
+    {
+        private const string Agent =
+            "https://agent.parity.test/.well-known/http-message-signatures-directory";
+
+        private const string SlowAgent =
+            "https://slow-agent.parity.test/.well-known/http-message-signatures-directory";
+
+        private const string MediaType =
+            "application/http-message-signatures-directory+json";
+
+        // The public part of the Ed25519 test key of RFC 9421 Appendix
+        // B.1.4.
+        private const string DirectoryJson =
+            "{\"keys\":[{\"kty\":\"OKP\",\"crv\":\"Ed25519\"," +
+            "\"kid\":\"test-key-ed25519\"," +
+            "\"x\":\"JrQLj5P_89iXES9-vFgrIy29clF9CC_oPPsw3c5D0bs\"}]," +
+            "\"purpose\":\"parity\"}";
+
+        private static readonly TimeSpan SlowDelay = TimeSpan.FromSeconds(10);
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var url = request.RequestUri?.AbsoluteUri;
+            if (url == SlowAgent)
+            {
+                await Task.Delay(SlowDelay, cancellationToken);
+            }
+            else if (url != Agent)
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound)
+                {
+                    RequestMessage = request
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                RequestMessage = request,
+                Content = new StringContent(DirectoryJson, Encoding.UTF8, MediaType)
+            };
         }
     }
 

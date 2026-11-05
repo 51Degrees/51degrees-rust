@@ -1,0 +1,12 @@
+rfc9421_appendix_b.json is copied unchanged from the .NET package's tests, at
+https://github.com/51Degrees/51degrees-dotnet/blob/4d7152bfcb7c9bcb17d14cb512025b65a3307313/pipeline/Tests/AgentSignatureTests/Fixtures/rfc9421_appendix_b.json
+
+It holds the six worked examples of Appendix B.2 of RFC 9421, HTTP Message
+Signatures (https://www.rfc-editor.org/rfc/rfc9421.txt). Each entry carries
+the signature base, the Signature-Input header value and the Signature header
+value the RFC prints for that example, with the public part of the Appendix
+B.1 key the example uses. The RFC wraps its long lines using the convention of
+RFC 8792, where a line ending in a backslash continues on the next line and
+the leading whitespace of that next line is not part of the value. Every value
+was unfolded by that rule, so the backslashes and the wrapping whitespace are
+gone whilst the line breaks that belong to a signature base are kept.
