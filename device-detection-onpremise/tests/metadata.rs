@@ -37,7 +37,7 @@ use fiftyone_device_detection_onpremise::{
 use fiftyone_device_detection_shared::{DeviceData, DEVICE_DATA_KEY};
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{ElementData, Evidence, FlowElement, Pipeline, PropertyValueType};
-use fiftyone_pipeline_engines::{AspectEngine, MissingPropertyReason};
+use fiftyone_pipeline_engines::{AspectEngine, MissingPropertyReason, OnPremiseAspectEngine};
 
 /// The match metrics, in the order the .NET engine lists them after the data
 /// file's properties.
@@ -139,11 +139,8 @@ fn every_data_file_property_is_listed_then_the_metrics() {
         .iter()
         .map(|p| p.name.as_str())
         .collect();
-    let fiftyone: Vec<&str> = engine
-        .fiftyone_properties()
-        .iter()
-        .map(|p| p.name())
-        .collect();
+    let fiftyone_properties = engine.fiftyone_properties();
+    let fiftyone: Vec<&str> = fiftyone_properties.iter().map(|p| p.name()).collect();
     assert_eq!(core, names);
     assert_eq!(fiftyone, names);
     assert_eq!(engine.available_properties(), names);
@@ -185,9 +182,9 @@ fn property_metadata_comes_from_the_data_file() {
         return;
     };
     let tier = engine.data_source_tier().to_owned();
+    let properties = engine.fiftyone_properties();
     let find = |name: &str| {
-        engine
-            .fiftyone_properties()
+        properties
             .iter()
             .find(|p| p.name() == name)
             .unwrap_or_else(|| panic!("{name} is in every Hash data file"))
@@ -274,7 +271,7 @@ fn components_hold_their_properties_then_the_metrics() {
     assert!(components[2].property("BrowserName").is_some());
 
     // Each property is in exactly one component, its own.
-    for property in engine.fiftyone_properties() {
+    for property in engine.fiftyone_properties().iter() {
         let holding: Vec<u8> = components
             .iter()
             .filter(|c| c.property(property.name()).is_some())
@@ -287,6 +284,52 @@ fn components_hold_their_properties_then_the_metrics() {
             property.name()
         );
     }
+}
+
+#[test]
+fn a_refresh_frees_the_lists_it_replaces_once_no_caller_holds_them() {
+    let Some(source) = data_file() else {
+        eprintln!("no Hash data file found; skipping");
+        return;
+    };
+    // A copy held in memory, so a refresh can read it on every platform.
+    let dir = std::env::temp_dir().join(format!("fiftyone-dd-metadata-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("51Degrees.hash");
+    std::fs::copy(&source, &path).unwrap();
+    let engine = DeviceDetectionOnPremiseEngineBuilder::new(&path)
+        .performance_profile(PerformanceProfile::InMemory)
+        .build()
+        .expect("the data file loads");
+
+    let held_properties = engine.fiftyone_properties();
+    let held_components = engine.components();
+    let properties = Arc::downgrade(&held_properties);
+    let components = Arc::downgrade(&held_components);
+    engine.refresh(None).expect("the data file loads again");
+
+    // A caller keeps the list it holds, and the engine gives the new data
+    // set's, which the same file makes equal.
+    assert!(!Arc::ptr_eq(
+        &held_properties,
+        &engine.fiftyone_properties()
+    ));
+    assert!(!Arc::ptr_eq(&held_components, &engine.components()));
+    assert_eq!(held_properties, engine.fiftyone_properties());
+    assert_eq!(held_components, engine.components());
+    drop((held_properties, held_components));
+    assert!(
+        properties.upgrade().is_none(),
+        "the old properties are kept"
+    );
+    assert!(
+        components.upgrade().is_none(),
+        "the old components are kept"
+    );
+
+    drop(engine);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

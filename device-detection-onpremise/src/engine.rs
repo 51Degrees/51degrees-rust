@@ -211,7 +211,7 @@ pub struct DeviceDetectionOnPremiseEngine {
     /// The property metadata and tier of the loaded data set, for
     /// [`FlowElement::properties`], [`AspectEngine::aspect_properties`] and
     /// [`AspectEngine::data_source_tier`].
-    metadata: Retained<EngineMetadata>,
+    metadata: Retained<LentMetadata>,
 
     /// The tier the builder set, which every data set loaded reports, or
     /// `None` to report the tier each data file names.
@@ -247,6 +247,11 @@ struct LoadedDataSet {
     /// Why a property is missing, from the metadata of this data set, added to
     /// every device data a detection writes.
     missing: Arc<MissingPropertySource>,
+    /// The 51Degrees metadata of each property, freed with the data set once
+    /// no caller holds it.
+    fiftyone_properties: Arc<[FiftyOneAspectPropertyMetaData]>,
+    /// The components, each with its properties, freed in the same way.
+    components: Arc<[ComponentMetaData]>,
     /// Held only to be dropped with the data set, and declared after the
     /// manager, so it is removed after the data set that has it open is freed.
     _copy: Option<OperationalCopy>,
@@ -262,12 +267,18 @@ struct FilePropertyPlace {
 }
 
 /// The property and component metadata and tier of a loaded data set.
-#[derive(PartialEq)]
 struct EngineMetadata {
-    properties: Vec<PropertyMetaData>,
-    aspect_properties: Vec<AspectPropertyMetaData>,
+    lent: LentMetadata,
     fiftyone_properties: Vec<FiftyOneAspectPropertyMetaData>,
     components: Vec<ComponentMetaData>,
+}
+
+/// The part of [`EngineMetadata`] the pipeline traits lend by reference,
+/// which [`Retained`] keeps for the engine's life.
+#[derive(PartialEq)]
+struct LentMetadata {
+    properties: Vec<PropertyMetaData>,
+    aspect_properties: Vec<AspectPropertyMetaData>,
     tier: String,
 }
 
@@ -279,7 +290,7 @@ fn describe(
     manager: Arc<Manager>,
     copy: Option<OperationalCopy>,
     tier_override: &Option<String>,
-) -> Result<(LoadedDataSet, EngineMetadata)> {
+) -> Result<(LoadedDataSet, LentMetadata)> {
     // An explicit builder override wins, then the tier read from the native
     // data file header (Lite, Enterprise, TAC and so on), then the safe Lite
     // default when the native name is absent.
@@ -288,7 +299,11 @@ fn describe(
         .unwrap_or_else(|| DEFAULT_DATA_SOURCE_TIER.to_owned());
     let tier = tier_override.clone().unwrap_or_else(|| file_tier.clone());
     let file_properties = manager.data_file_properties()?;
-    let metadata = build_metadata(&file_properties, &manager.data_file_components()?, tier);
+    let EngineMetadata {
+        lent,
+        fiftyone_properties,
+        components,
+    } = build_metadata(&file_properties, &manager.data_file_components()?, tier);
     let readable = Arc::new(ReadableProperties::new(&file_properties));
     let file_property_places = file_properties
         .iter()
@@ -306,7 +321,7 @@ fn describe(
             ENGINE_TYPE_NAME,
             EngineDeployment::OnPremise,
             file_tier,
-            metadata.aspect_properties.clone(),
+            lent.aspect_properties.clone(),
         )
         .with_typed_properties(is_typed_property),
     );
@@ -316,9 +331,11 @@ fn describe(
             readable,
             file_properties: file_property_places,
             missing,
+            fiftyone_properties: fiftyone_properties.into(),
+            components: components.into(),
             _copy: copy,
         },
-        metadata,
+        lent,
     ))
 }
 
@@ -405,15 +422,21 @@ impl DeviceDetectionOnPremiseEngine {
     /// a data file can hold hundreds of thousands of them, so
     /// [`Self::property_values`] reads them when they are asked for. A match
     /// metric's metadata lists its values.
-    pub fn fiftyone_properties(&self) -> &[FiftyOneAspectPropertyMetaData] {
-        &self.metadata.current().fiftyone_properties
+    ///
+    /// The list is the loaded data set's. A refresh loads a new list and frees
+    /// this one once no caller holds it.
+    pub fn fiftyone_properties(&self) -> Arc<[FiftyOneAspectPropertyMetaData]> {
+        Arc::clone(&self.loaded.load().fiftyone_properties)
     }
 
     /// The components the data file defines, such as the hardware and the
     /// browser, each with every property the data file gives it, then the
     /// `Metrics` component, which holds the match metrics.
-    pub fn components(&self) -> &[ComponentMetaData] {
-        &self.metadata.current().components
+    ///
+    /// The list is the loaded data set's. A refresh loads a new list and frees
+    /// this one once no caller holds it.
+    pub fn components(&self) -> Arc<[ComponentMetaData]> {
+        Arc::clone(&self.loaded.load().components)
     }
 
     /// The values the property named `property_name`, matched exactly, can
@@ -448,8 +471,8 @@ impl DeviceDetectionOnPremiseEngine {
                 .data_file_property_value_range(place.index, start..end)?;
             return Ok(Some(values.iter().map(value_metadata).collect()));
         }
-        Ok(self
-            .fiftyone_properties()
+        Ok(loaded
+            .fiftyone_properties
             .iter()
             .find(|property| property.name() == property_name)
             .map(|property| {
@@ -463,10 +486,12 @@ impl DeviceDetectionOnPremiseEngine {
     /// named `property_name`, or [`None`] when the engine lists no such
     /// property. No value is read to count them.
     pub fn property_value_count(&self, property_name: &str) -> Option<usize> {
-        if let Some(place) = self.loaded.load().file_properties.get(property_name) {
+        let loaded = self.loaded.load();
+        if let Some(place) = loaded.file_properties.get(property_name) {
             return Some(place.value_count as usize);
         }
-        self.fiftyone_properties()
+        loaded
+            .fiftyone_properties
             .iter()
             .find(|property| property.name() == property_name)
             .map(|property| property.values().len())
@@ -901,11 +926,13 @@ fn build_metadata(
     components.push(component(METRICS_COMPONENT_ID, METRICS_COMPONENT_NAME));
 
     EngineMetadata {
-        properties,
-        aspect_properties,
+        lent: LentMetadata {
+            properties,
+            aspect_properties,
+            tier,
+        },
         fiftyone_properties,
         components,
-        tier,
     }
 }
 

@@ -115,7 +115,7 @@ fn output_components(engine: &DeviceDetectionOnPremiseEngine) {
         "--- Components and their properties ({} properties in total) ---",
         engine.aspect_properties().len()
     );
-    for component in engine.components() {
+    for component in engine.components().iter() {
         let mut message = String::new();
         let _ = writeln!(
             message,
