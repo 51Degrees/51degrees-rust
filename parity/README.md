@@ -191,5 +191,6 @@ sentence saying what it covers, and with `"pipeline": "values"` if it runs
 through the values pipeline. Give it a `query.session-id` unless it is
 about a generated one, because usage records are matched to cases by
 session id. Only the engines' pipeline shares usage, so a values case never
-has a usage record, even when it gives an engines' case's session id. Keep every character within the Basic Multilingual Plane. Then
-run both programs and list any new difference with its reason, or fix it.
+has a usage record, even when it gives an engines' case's session id. Keep
+every character within the Basic Multilingual Plane. Then run both programs
+and list any new difference with its reason, or fix it.

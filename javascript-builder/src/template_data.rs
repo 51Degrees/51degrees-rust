@@ -118,7 +118,8 @@ impl JavaScriptResource {
     /// `url` is the already-built callback URL (empty string when none could be
     /// formed). `update_enabled` should be `true` only when that URL is present.
     /// `user_prompt` should be `true` only when the pipeline can return a
-    /// 51Did, as [`JavaScriptBuilderSteps::render_user_prompt`](crate::JavaScriptBuilderSteps::render_user_prompt)
+    /// 51Did, as
+    /// [`JavaScriptBuilderSteps::render_user_prompt`](crate::JavaScriptBuilderSteps::render_user_prompt)
     /// decides. The section it controls sits inside the update section, so it
     /// renders only when `update_enabled` is also `true`.
     #[allow(clippy::too_many_arguments)]

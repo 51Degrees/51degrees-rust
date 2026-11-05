@@ -23,9 +23,7 @@
 //! A small Mustache renderer covering the tags the bundled
 //! `JavaScriptResource.mustache` template uses.
 //!
-//! It uses no `unsafe` code and no third-party engine, because the engine it
-//! replaced corrupted the heap from its own `unsafe` code while rendering this
-//! template.
+//! It uses no `unsafe` code and no third-party engine.
 //!
 //! # Supported tags
 //!
@@ -386,8 +384,7 @@ fn render_nodes(nodes: &[Node], context: &dyn Context, out: &mut String) {
                 if let Some(value) = context.value(name) {
                     value.write_to(out);
                 }
-                // An unknown variable renders as empty, matching the previous
-                // engine which wrote nothing for an unmatched field.
+                // An unknown variable renders as empty.
             }
             Node::Section { name, body } => {
                 // A boolean section renders its body only when the flag is true.
