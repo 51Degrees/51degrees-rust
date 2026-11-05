@@ -29,17 +29,21 @@ use std::sync::Arc;
 
 use fiftyone_cloud_request_engine::{CloudRequestEngine, LicensedProducts};
 use fiftyone_pipeline_core::constants::DEFAULT_JSON_ENDPOINT;
-use fiftyone_pipeline_core::{Error, Result};
+use fiftyone_pipeline_core::{Error, Pipeline, Result};
 
 use crate::constants::{
     BUILDER_DEFAULT_ENABLE_COOKIES, BUILDER_DEFAULT_HOST, BUILDER_DEFAULT_MINIFY,
     BUILDER_DEFAULT_OBJECT_NAME, BUILDER_DEFAULT_PROTOCOL, FODID_PRODUCT_NAME,
 };
 use crate::element::JavaScriptBuilderElement;
+use crate::mustache::Template;
+use crate::steps::{DefaultJavaScriptBuilderSteps, JavaScriptBuilderSteps, SharedSteps};
 
 /// Where an element's user prompt decision comes from.
 #[derive(Clone)]
 pub(crate) enum UserPromptSource {
+    /// Decided from the pipeline each script is built for.
+    Pipeline,
     /// Decided when the builder was configured.
     Decided(bool),
     /// Decided from this request engine's licensed products once its
@@ -70,6 +74,7 @@ impl Deref for SharedEngine {
 impl fmt::Debug for UserPromptSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            UserPromptSource::Pipeline => f.write_str("Pipeline"),
             UserPromptSource::Decided(render) => f.debug_tuple("Decided").field(render).finish(),
             UserPromptSource::Engine(_) => f.write_str("Engine"),
         }
@@ -95,13 +100,16 @@ impl fmt::Debug for UserPromptSource {
 /// ```
 #[derive(Debug, Clone)]
 pub struct JavaScriptBuilderElementBuilder {
-    host: String,
-    endpoint: String,
-    protocol: String,
-    object_name: String,
-    enable_cookies: bool,
-    minify: bool,
-    user_prompt: UserPromptSource,
+    pub(crate) host: String,
+    pub(crate) endpoint: String,
+    pub(crate) protocol: String,
+    pub(crate) object_name: String,
+    pub(crate) enable_cookies: bool,
+    pub(crate) minify: bool,
+    pub(crate) user_prompt: UserPromptSource,
+    pub(crate) steps: SharedSteps,
+    /// The template given by the caller, or `None` for the bundled one.
+    pub(crate) template: Option<Template>,
 }
 
 impl JavaScriptBuilderElementBuilder {
@@ -114,7 +122,45 @@ impl JavaScriptBuilderElementBuilder {
             object_name: BUILDER_DEFAULT_OBJECT_NAME.to_owned(),
             enable_cookies: BUILDER_DEFAULT_ENABLE_COOKIES,
             minify: BUILDER_DEFAULT_MINIFY,
-            user_prompt: UserPromptSource::Decided(false),
+            user_prompt: UserPromptSource::Pipeline,
+            steps: SharedSteps::new(DefaultJavaScriptBuilderSteps),
+            template: None,
+        }
+    }
+
+    /// Use these steps to give the parameters, session id, sequence and user
+    /// prompt decision in place of the builder's own. See
+    /// [`JavaScriptBuilderSteps`].
+    pub fn set_steps(mut self, steps: impl JavaScriptBuilderSteps + 'static) -> Self {
+        self.steps = SharedSteps::new(steps);
+        self
+    }
+
+    /// Render the script from this Mustache template in place of the bundled
+    /// one.
+    ///
+    /// The template is given the values the bundled one is given, named in
+    /// the
+    /// [javascript-builder specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/javascript-builder.md),
+    /// with `_supportsFetch` and `_userPrompt` as well. Variables
+    /// (`{{name}}`, `{{&name}}` and `{{{name}}}`) are written without HTML
+    /// escaping, and sections (`{{#name}}` and `{{^name}}`) are rendered from
+    /// the boolean values. Lists, partials, lambdas, dotted names and
+    /// comments are not supported. The specification allows a template other
+    /// than the bundled one as long as the script still does everything the
+    /// bundled one does.
+    ///
+    /// A template with a tag or a section left open, or with a section closed
+    /// under another name, is a configuration error.
+    pub fn set_template(mut self, source: &str) -> Result<Self> {
+        match Template::parse(source) {
+            Ok(template) => {
+                self.template = Some(template);
+                Ok(self)
+            }
+            Err(error) => Err(Error::configuration(format!(
+                "The JavaScript template is not valid Mustache ({error})."
+            ))),
         }
     }
 
@@ -134,9 +180,12 @@ impl JavaScriptBuilderElementBuilder {
     /// render after the engine's discovery has completed. Until then each
     /// script leaves the section out, so a transient failure when the engine
     /// was built leaves it out only until a request completes discovery.
-    /// Without a call to this method or
-    /// [`set_cloud_request_engine`](Self::set_cloud_request_engine) the
-    /// section is left out.
+    ///
+    /// The last call to this method,
+    /// [`set_cloud_request_engine`](Self::set_cloud_request_engine) or
+    /// [`set_user_prompt`](Self::set_user_prompt) decides. Without any of the
+    /// three, the pipeline decides, as [`set_user_prompt`](Self::set_user_prompt)
+    /// describes.
     pub fn set_shared_cloud_request_engine(mut self, engine: Arc<CloudRequestEngine>) -> Self {
         self.user_prompt = UserPromptSource::Engine(SharedEngine(engine));
         self
@@ -161,6 +210,25 @@ impl JavaScriptBuilderElementBuilder {
                 false
             }
         };
+        self.user_prompt = UserPromptSource::Decided(render);
+        self
+    }
+
+    /// Render the user prompt section in every script, or leave it out of
+    /// every script, whatever the pipeline holds. This needs no cloud request
+    /// engine.
+    ///
+    /// The last call to this method,
+    /// [`set_shared_cloud_request_engine`](Self::set_shared_cloud_request_engine)
+    /// or [`set_cloud_request_engine`](Self::set_cloud_request_engine)
+    /// decides. Without any of the three, the section is rendered when the
+    /// pipeline the script is built for has an element whose data key is
+    /// `fodid`, ignoring case, offering at least one available property, as
+    /// .NET's builder decides. The pipeline is read for each script and the
+    /// answer is not kept, because the 51Did cloud engine reports its default
+    /// properties as available until its discovery completes. So a script
+    /// built before then carries the section.
+    pub fn set_user_prompt(mut self, render: bool) -> Self {
         self.user_prompt = UserPromptSource::Decided(render);
         self
     }
@@ -239,15 +307,7 @@ impl JavaScriptBuilderElementBuilder {
 
     /// Build the configured [`JavaScriptBuilderElement`].
     pub fn build(self) -> JavaScriptBuilderElement {
-        JavaScriptBuilderElement::from_parts(
-            self.host,
-            self.endpoint,
-            self.protocol,
-            self.object_name,
-            self.enable_cookies,
-            self.minify,
-            self.user_prompt,
-        )
+        JavaScriptBuilderElement::from_builder(self)
     }
 }
 
@@ -257,6 +317,19 @@ impl JavaScriptBuilderElementBuilder {
 pub(crate) fn grants_51did(products: &LicensedProducts) -> bool {
     products.products.iter().any(|(name, product)| {
         name.eq_ignore_ascii_case(FODID_PRODUCT_NAME) && !product.properties.is_empty()
+    })
+}
+
+/// True when the pipeline has an element whose data key is the 51Did key,
+/// ignoring case, offering at least one available property. The elements of
+/// a parallel group are included.
+pub(crate) fn offers_51did(pipeline: &Pipeline) -> bool {
+    pipeline.flow_elements().iter().any(|element| {
+        element.data_key().eq_ignore_ascii_case(FODID_PRODUCT_NAME)
+            && element
+                .properties()
+                .iter()
+                .any(|property| property.available)
     })
 }
 

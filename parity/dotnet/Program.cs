@@ -81,6 +81,10 @@ namespace FiftyOne.Parity
         // The pipeline of a case that runs through the values pipeline.
         private const string ValuesPipeline = "values";
 
+        // The JavaScript builder's settings in the values pipeline.
+        private const string ValuesEndpoint = "json";
+        private const string ValuesObjectName = "fod";
+
         // The pipeline of a case that runs through the agent signature
         // pipeline.
         private const string AgentSignaturePipeline = "agent-signature";
@@ -139,12 +143,18 @@ namespace FiftyOne.Parity
                 .AddFlowElement(javascript)
                 .SetSuppressProcessExceptions(true)
                 .Build();
-            // Sequence, the values element and the JSON builder, for the
-            // cases that compare the JSON byte for byte.
+            // Sequence, the values element and the two builders, for the
+            // cases that compare the JSON and the JavaScript byte for byte.
             var values = new PipelineBuilder(loggerFactory)
                 .AddFlowElement(new SequenceElementBuilder(loggerFactory).Build())
                 .AddFlowElement(new ValuesElement())
                 .AddFlowElement(new JsonBuilderElementBuilder(loggerFactory).Build())
+                .AddFlowElement(new JavaScriptBuilderElementBuilder(loggerFactory)
+                    .SetEndpoint(ValuesEndpoint)
+                    .SetObjectName(ValuesObjectName)
+                    .SetEnableCookies(false)
+                    .SetMinify(false)
+                    .Build())
                 .SetSuppressProcessExceptions(true)
                 .Build();
             // Sequence and the agent signature element, whose key
@@ -164,6 +174,10 @@ namespace FiftyOne.Parity
             };
 
             var lines = new List<JsonObject>();
+            // The lines whose case ran through usage sharing. A values case
+            // may give a session id an engines' case also gives, and must
+            // not be given that case's record.
+            var sharedLines = new List<JsonObject>();
             foreach (var item in cases)
             {
                 var chosen = item["pipeline"]?.GetValue<string>() switch
@@ -174,13 +188,18 @@ namespace FiftyOne.Parity
                     var other => throw new ArgumentException(
                         $"{item["id"]}: unknown pipeline {other}")
                 };
-                lines.Add(RunCase(chosen, item.AsObject(), skipped));
+                var line = RunCase(chosen, item.AsObject(), skipped);
+                lines.Add(line);
+                if (chosen == pipeline)
+                {
+                    sharedLines.Add(line);
+                }
             }
 
             // Disposing usage sharing sends what is queued and waits for it.
             shareUsage.Dispose();
             var records = capture.RecordsBySession();
-            foreach (var line in lines)
+            foreach (var line in sharedLines)
             {
                 var sessionId = line["session"]?["id"]?.GetValue<string>();
                 line["usage"] = sessionId != null &&
@@ -462,12 +481,14 @@ namespace FiftyOne.Parity
     }
 
     // The values element, whose data holds one of each kind of value the JSON
-    // builder writes and which adds two errors and a warning, so the JSON the
-    // two languages write for the same flow data can be compared byte for
-    // byte. The Rust producer's values element holds the same values in the
-    // same order. Only the two properties whose metadata the JSON builder
-    // reads are declared, being a delayed JavaScript property and one that
-    // names it as evidence. The builder writes the rest from the data alone.
+    // builder writes and which adds two errors and a warning, so the JSON and
+    // the JavaScript the two languages write for the same flow data can be
+    // compared byte for byte. The Rust producer's values element holds the
+    // same values in the same order. Only the properties something reads by
+    // their metadata are declared, being a delayed JavaScript property and
+    // one that names it as evidence, which the JSON builder reads, and
+    // Promise, which the JavaScript builder reads. The JSON builder writes
+    // the rest from the data alone.
     internal sealed class ValuesElement :
         FlowElementBase<ValuesData, IElementPropertyMetaData>
     {
@@ -485,10 +506,18 @@ namespace FiftyOne.Parity
         // The reason the property with no value gives.
         private const string NoValueReason = "There is no value, on purpose.";
 
+        // The evidence that gives the Promise property its value. Without
+        // it, Promise has no value.
+        private const string PromiseEvidenceKey = "header.values-promise";
+
+        // The reason Promise gives when the evidence has no value for it.
+        private const string NoPromiseReason = "The evidence gave no promise.";
+
         private readonly IList<IElementPropertyMetaData> _properties;
 
         private readonly IEvidenceKeyFilter _filter =
-            new EvidenceKeyFilterWhitelist(new List<string>());
+            new EvidenceKeyFilterWhitelist(
+                new List<string> { PromiseEvidenceKey });
 
         public ValuesElement() : base(
             NullLogger<FlowElementBase<ValuesData, IElementPropertyMetaData>>
@@ -501,7 +530,9 @@ namespace FiftyOne.Parity
                     delayExecution: true),
                 new ElementPropertyMetaData(
                     this, "FromScript", typeof(string), true,
-                    evidenceProperties: new[] { "Script" })
+                    evidenceProperties: new[] { "Script" }),
+                new ElementPropertyMetaData(
+                    this, "Promise", typeof(string), true)
             };
         }
 
@@ -542,6 +573,15 @@ namespace FiftyOne.Parity
                 new WeightedValue<string>(40000, "first"),
                 new WeightedValue<string>(25535, "second")
             };
+            // With no evidence for it Promise has no value, as Device
+            // Detection's Promise has none when it has no answer.
+            values["Promise"] = data.TryGetEvidence(
+                PromiseEvidenceKey, out string promise)
+                ? new AspectPropertyValue<string>(promise)
+                : new AspectPropertyValue<string>
+                {
+                    NoValueMessage = NoPromiseReason
+                };
             foreach (var message in ErrorMessages)
             {
                 data.AddError(new PipelineException(message), this);

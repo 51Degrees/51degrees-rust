@@ -243,6 +243,45 @@ jobs:
           fi
           grep -q '`json-values-sequence-8`.* at `json`: ' out/report-text.md
 
+      # The values-promise- cases give Promise Full, then no value, then Full
+      # again, so each side's script must turn promises on, off and on.
+      - name: Check promises are decided for each request
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          want='values-promise-full=true values-promise-none=false values-promise-full-again=true'
+          for side in dotnet rust; do
+            got=$(jq -r 'select(.id | startswith("values-promise-"))
+              | "\(.id)=\(.javascript | contains("new Promise("))"' "out/$side.jsonl" | paste -sd ' ')
+            echo "$side: $got"
+            if [ "$got" != "$want" ]; then
+              echo "::error::The $side script did not turn promises on, off and on"
+              exit 1
+            fi
+          done
+
+      # The values cases compare the JavaScript byte for byte apart from
+      # .NET's CRLF line endings, so a Rust script with promises left off, or
+      # with CRLF line endings of its own, must fail.
+      - name: Check that a changed JavaScript text fails
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          jq -c 'if .id == "values-promise-full-again" then .javascript |= sub("new Promise"; "Promise")
+            elif .id == "values-promise-none" then .javascript |= gsub("\n"; "\r\n")
+            else . end' out/rust.jsonl > out/rust-script.jsonl
+          if target/debug/parity-compare --corpus corpus/evidence.json \
+            --dotnet out/dotnet.jsonl --rust out/rust-script.jsonl \
+            --allowed allowed-differences.json --data lite \
+            --report out/report-script.md > /dev/null; then
+            echo "::error::The comparison passed with a changed JavaScript text"
+            exit 1
+          fi
+          grep -q '^- `javascript` text, ' out/report-script.md
+          grep -q '`values-promise-full-again`.* at `javascript`: ' out/report-script.md
+          grep -q '^- `javascript` lineEndings, ' out/report-script.md
+          grep -q '`values-promise-none`.* at `javascript`: ' out/report-script.md
+
       - name: Upload the answers and the report
         if: always() && env.RUN == 'true'
         uses: actions/upload-artifact@v4

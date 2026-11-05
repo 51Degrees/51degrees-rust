@@ -260,13 +260,21 @@
   {
     "path": "javascript",
     "kind": "text",
-    "reason": "The JavaScript holds the JSON, so every JSON difference shows here too, and the template output has its own differences.",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "reason": "The JavaScript holds the JSON, so every JSON difference in the engines' pipeline shows here too. The crates also write the request's parameters in name order with lower case names, because their evidence has no order and lowercases its keys. The values pipeline's cases are not listed, so their JavaScript must be the same.",
     "issue": 230
+  },
+  {
+    "path": "javascript",
+    "kind": "lineEndings",
+    "rust": {"value": [0]},
+    "reason": "The .NET 4.5.129 package embeds its template with CRLF line endings, so each line of its script that comes from the template ends with CRLF. The template the specification names and the copy the crates bundle end each line with LF, and the crates write no CRLF."
   },
   {
     "path": "usage",
     "kind": "presence",
-    "reason": "The crates have no public sink for usage records yet, so the Rust producer writes none.",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "reason": "The crates have no public sink for usage records yet, so the Rust producer writes none. The values pipeline has no usage sharing, so its cases are not listed.",
     "issue": 232
   },
   {

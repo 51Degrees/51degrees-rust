@@ -279,6 +279,13 @@ fiftyoneDegreesManager = function() {
                         if(startsWith(nextKey, session51DataPrefix)){
                             let name =
                                 nextKey.substring(session51DataPrefix.length);
+                            // A name holding a quote was stored by an earlier
+                            // version of this script, which took the text of
+                            // a join for a fixed name. No snippet writes a
+                            // result by that name, so it is not sent.
+                            if(name.indexOf('"') !== -1){
+                                continue;
+                            }
                             if(!Object.prototype.hasOwnProperty.call(
                                 fodValues, name)){
                                 fodValues[name] = window.sessionStorage[nextKey];
@@ -664,15 +671,76 @@ fiftyoneDegreesManager = function() {
         }
     };
 
-    // Where no platform was found at construction and no source had an
-    // answer there is no recovery on this page view, and this warning is the
-    // only signal. An answer already read from storage means a 51Did will be
-    // created, so saying otherwise would be wrong and the warning is not
-    // printed. No value is ever printed by this block.
-    var warnIfNoPlatform = function() {
+    // Where no platform ever appears and no source has an answer there is no
+    // recovery on this page view, and this warning is the only signal, so the
+    // case it covers matters. It is deliberately not printed at construction,
+    // because a page's platform tag is ordinarily asynchronous and a platform
+    // that has not registered yet is not a platform that is not coming. An
+    // answer from any source, including one that arrives during the wait
+    // below, means a 51Did will be created, so saying otherwise would be
+    // wrong and nothing is printed. No value is ever printed by this block.
+    var sayNoPlatform = function() {
         if (!answer && platformPresent() === false) {
             console.warn("51Degrees: no preference platform was found on this page. A platform's stub must precede this script. No 51Did will be created until a platform answers.");
         }
+    };
+
+    // The wait before that warning, matching the one a platform makes for
+    // this script's object so that neither side calls the other absent whilst
+    // it is still on its way. The wait ends at the page's load event, by
+    // which time every tag the page's markup carries has run, and after 5000
+    // milliseconds at the latest for a page whose load event is very late or
+    // never comes, whichever of the two comes first. Where the page has
+    // already loaded nothing is waited for, because a platform that is not
+    // there then is not coming from a tag. This only logs. It changes nothing
+    // about processing and no request waits for it.
+    var warnIfNoPlatform = function() {
+        // Nothing to wait for where there is no page to load, which is the
+        // server side evaluation that renders this script.
+        if (typeof window === 'undefined' || window === null ||
+            typeof window.addEventListener !== 'function' ||
+            typeof setTimeout !== 'function') {
+            sayNoPlatform();
+            return;
+        }
+        // An answer or a platform already in hand, so there is nothing this
+        // wait could change.
+        if (answer || platformPresent()) {
+            return;
+        }
+        try {
+            if (typeof document !== 'undefined' && document &&
+                document.readyState === 'complete') {
+                sayNoPlatform();
+                return;
+            }
+        } catch (err) {
+            // A document that throws on a read tells us nothing about the
+            // page's state, so the wait below covers it.
+        }
+        // Either end runs this, and only the first of them counts.
+        var ended = false;
+        var end = function() {
+            if (ended === true) {
+                return;
+            }
+            ended = true;
+            try {
+                if (typeof window.removeEventListener === 'function') {
+                    window.removeEventListener('load', end, false);
+                }
+            } catch (err) {
+                // There is nothing left to remove.
+            }
+            sayNoPlatform();
+        };
+        try {
+            window.addEventListener('load', end, false);
+        } catch (err) {
+            // The page's load event cannot be heard, so the limit below is
+            // the only end to the wait.
+        }
+        setTimeout(end, 5000);
     };
 {{/_userPrompt}}
 {{/_updateEnabled}}
@@ -796,7 +864,20 @@ fiftyoneDegreesManager = function() {
         // then process them and perform any call-backs required.
         if (jsProperties !== undefined && jsProperties.length > 0) {
 
-            let valueSetPrefix = new RegExp('document\\.cookie\\s*=\\s*(("([A-Za-z0-9_"\\s\\+]+)\\s*=\\s*"\\s*\\+\\s*([^\\s};]+))|(`([A-Za-z0-9_]+)\\s*=\\s*\\$\\{([^}]+)\\}`))', 'g');
+            // The stores a snippet makes, found in its text. Group 3 is the
+            // name of a quoted store and group 6 the name of a template
+            // literal store, and groups 4 and 7 start their values. A quoted
+            // name is a fixed start, optionally joined with + to further
+            // quoted text and to plain variable names, as in
+            // "51D_Pos_" + key + "=" and "51D_Bandwidth" + "=". Group 3 then
+            // holds the text between the outer quotes, so the rewrite below
+            // puts the same join inside the session storage key and the
+            // snippet builds the same name there as it would for a cookie.
+            // Any other form, such as a name joined to a member or a call,
+            // or a template literal with anything but a fixed name and one
+            // value, is not matched, and its store is left as it is rather
+            // than rewritten under a name the pattern did not understand.
+            let valueSetPrefix = new RegExp('document\\.cookie\\s*=\\s*(("([A-Za-z0-9_]+(?:"\\s*\\+\\s*(?:[A-Za-z_$][A-Za-z0-9_$]*\\s*\\+\\s*)*"[A-Za-z0-9_]*)*)\\s*=\\s*"\\s*\\+\\s*([^\\s};]+))|(`([A-Za-z0-9_]+)\\s*=\\s*\\$\\{([^}]+)\\}`))', 'g');
             let session51DataPrefix = sessionKey + "_data_";
             {{^_enableCookies}}
             let sessionSetPatch = 'window.sessionStorage["' + session51DataPrefix + '$3$6"]=$4$7';
@@ -811,12 +892,23 @@ fiftyoneDegreesManager = function() {
             // result goes to session storage whatever the cookie setting, so
             // the script gains no cookie write of its own, and
             // getFodSavedValues falls back to that result for a name the
-            // cookies do not carry.
+            // cookies do not carry. A quoted name joined only to further
+            // quoted text is one fixed name once the joins are removed. A
+            // quote left after that means a variable is joined in, so the
+            // name is only known as the snippet runs and nothing is stored
+            // for it here, because storing the text of the join would send
+            // the server a name no snippet writes.
             let storeEmptyValues = function(snippet) {
                 let found;
                 valueSetPrefix.lastIndex = 0;
                 while ((found = valueSetPrefix.exec(snippet)) !== null) {
-                    let valueName = found[3] || found[6];
+                    let valueName = found[6];
+                    if (found[3]) {
+                        valueName = found[3].replace(/"\s*\+\s*"/g, '');
+                        if (valueName.indexOf('"') !== -1) {
+                            continue;
+                        }
+                    }
                     if (!valueName) {
                         continue;
                     }
