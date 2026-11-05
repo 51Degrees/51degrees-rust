@@ -69,10 +69,10 @@ impl WebResponse {
         }
     }
 
-    /// Create a `304 Not Modified` response.
+    /// Create a `304 Not Modified` response with no body and no headers.
     ///
-    /// Per the client-side endpoint contract this is fully cleared: no body and
-    /// no headers, so the framework sends only the status line.
+    /// The client-side endpoints add to it the caching and CORS headers the
+    /// `200` would have carried (see [`crate::serve_json`]).
     pub fn not_modified() -> Self {
         WebResponse {
             status: Self::STATUS_NOT_MODIFIED,

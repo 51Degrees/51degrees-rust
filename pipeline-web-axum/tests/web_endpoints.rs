@@ -148,7 +148,7 @@ async fn javascript_endpoint_returns_304_for_matching_if_none_match() {
                 .method("GET")
                 .uri("/51Degrees.core.js")
                 .header("host", "localhost")
-                .header("if-none-match", etag)
+                .header("if-none-match", &etag)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -156,6 +156,13 @@ async fn javascript_endpoint_returns_304_for_matching_if_none_match() {
         .unwrap();
 
     assert_eq!(second.status(), StatusCode::NOT_MODIFIED);
+    // A 304 carries the caching fields the 200 would.
+    assert_eq!(header(&second, "etag"), Some(etag));
+    assert_eq!(
+        header(&second, "cache-control"),
+        header(&first, "cache-control")
+    );
+    assert!(header(&second, "cache-control").is_some());
     // A 304 carries no body.
     let body = to_bytes(second.into_body(), usize::MAX).await.unwrap();
     assert!(body.is_empty(), "304 has an empty body");

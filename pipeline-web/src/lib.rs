@@ -68,8 +68,10 @@
 //!   same in every process running the same build (see [`compute_etag`]).
 //! - **`Access-Control-Allow-Origin`**: the request `Origin` echoed back, unless
 //!   it is absent or the literal string `null`.
-//! - A matching `If-None-Match` yields a bare `304 Not Modified` (empty body, no
-//!   other headers).
+//! - A matching `If-None-Match` yields a `304 Not Modified` with an empty body
+//!   and the `Cache-Control`, `Vary`, `ETag` and `Access-Control-Allow-Origin`
+//!   fields the `200` would have carried, as RFC 9110 section 15.4.5 requires
+//!   for the first three.
 //!
 //! ## A worked, framework-free example
 //!

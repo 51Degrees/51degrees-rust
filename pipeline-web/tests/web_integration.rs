@@ -34,8 +34,9 @@ use fiftyone_pipeline_core::{
     Result, TypedKey,
 };
 use fiftyone_pipeline_web::{
-    apply_set_headers, build_evidence, response_headers, serve_javascript, serve_json, vary_header,
-    EndpointOptions, RequestData, WebEndpoint, WebIntegrationOptions, WebPipeline, WebResponse,
+    apply_set_headers, build_evidence, compute_etag, response_headers, serve_javascript,
+    serve_json, vary_header, EndpointOptions, RequestData, WebEndpoint, WebIntegrationOptions,
+    WebPipeline, WebResponse,
 };
 
 // ----------------------------------------------------------------------------
@@ -459,31 +460,76 @@ fn different_evidence_gives_different_etag() {
     assert_ne!(etag_a, etag_b);
 }
 
+/// RFC 9110 section 15.4.5: a 304 carries the `Cache-Control`, `Vary` and
+/// `ETag` a 200 to the same request would, and the CORS header comes with
+/// them so a script that reads the 304 passes the CORS check.
 #[test]
-fn matching_if_none_match_returns_304_cleared() {
+fn a_304_carries_the_fields_the_200_would() {
     let web = web_pipeline(false);
     let options = EndpointOptions::new(web.vary_whitelist().clone());
-
-    // First request: capture the ETag.
-    let evidence = Evidence::builder().add("header.user-agent", "abc").build();
-    let data = processed(web.pipeline(), evidence);
-    let first = serve_json(&data, &TestRequest::default(), &options);
-    let etag = first.header("ETag").unwrap().to_owned();
-
-    // Second request: send the captured ETag as If-None-Match.
-    let conditional = TestRequest {
-        headers: vec![("If-None-Match".into(), etag)],
+    let request = |etag: Option<&str>| TestRequest {
+        headers: std::iter::once(("Origin".to_owned(), "https://example.com".to_owned()))
+            .chain(etag.map(|etag| ("If-None-Match".to_owned(), etag.to_owned())))
+            .collect(),
         ..Default::default()
     };
-    let evidence2 = Evidence::builder().add("header.user-agent", "abc").build();
-    let data2 = processed(web.pipeline(), evidence2);
-    let second = serve_json(&data2, &conditional, &options);
+    let evidence = || Evidence::builder().add("header.user-agent", "abc").build();
+
+    let first = serve_json(
+        &processed(web.pipeline(), evidence()),
+        &request(None),
+        &options,
+    );
+    let etag = first
+        .header("ETag")
+        .expect("the 200 has an ETag")
+        .to_owned();
+    let second = serve_json(
+        &processed(web.pipeline(), evidence()),
+        &request(Some(&etag)),
+        &options,
+    );
 
     assert_eq!(second.status, WebResponse::STATUS_NOT_MODIFIED);
     assert!(second.is_not_modified());
-    // 304 is fully cleared: no body, no headers.
     assert!(second.body.is_empty());
-    assert!(second.headers.is_empty());
+    for name in [
+        "Cache-Control",
+        "Vary",
+        "ETag",
+        "Access-Control-Allow-Origin",
+    ] {
+        assert!(first.header(name).is_some(), "the 200 has {name}");
+        assert_eq!(second.header(name), first.header(name), "{name}");
+    }
+    assert_eq!(
+        second.header("Cache-Control"),
+        Some("private, max-age=1800")
+    );
+    for name in ["Content-Type", "Content-Length"] {
+        assert_eq!(second.header(name), None, "the 304 has no {name}");
+    }
+    assert_eq!(second.headers.len(), 4, "{:?}", second.headers);
+}
+
+#[test]
+fn a_304_without_the_extra_headers_carries_none() {
+    let web = web_pipeline(false);
+    let options = EndpointOptions::new(web.vary_whitelist().clone()).without_extra_headers();
+    let evidence = || Evidence::builder().add("header.user-agent", "abc").build();
+    let data = processed(web.pipeline(), evidence());
+    let request = TestRequest {
+        headers: vec![(
+            "If-None-Match".to_owned(),
+            compute_etag(&data, data.evidence_key_filter()),
+        )],
+        ..Default::default()
+    };
+
+    let response = serve_json(&data, &request, &options);
+
+    assert_eq!(response.status, WebResponse::STATUS_NOT_MODIFIED);
+    assert!(response.headers.is_empty(), "{:?}", response.headers);
 }
 
 #[test]
@@ -929,6 +975,58 @@ fn the_response_to_a_failed_request_is_not_kept_once_processing_recovers() {
             .contains("ismobile"),
         "the response once processing recovers carries the device data"
     );
+}
+
+#[test]
+fn a_304_while_processing_is_failing_carries_the_fields_of_a_failed_200() {
+    // A browser that holds a good response revalidates it with its ETag.
+    // While processing is failing the 304 carries what a failed 200 would,
+    // being private, no-cache and no ETag, and once processing recovers it
+    // carries the cacheable fields and the ETag again.
+    let failing = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let web = WebPipeline::build(
+        vec![Arc::new(FlakyElement {
+            inner: TestElement::new(false),
+            failing: Arc::clone(&failing),
+        })],
+        WebIntegrationOptions::default(),
+    )
+    .expect("web pipeline builds");
+    let options = EndpointOptions::new(web.vary_whitelist().clone());
+    let evidence = || Evidence::builder().add("header.user-agent", "abc").build();
+
+    let good = serve_javascript(
+        &processed(web.pipeline(), evidence()),
+        &TestRequest::default(),
+        &options,
+    );
+    let etag = good.header("ETag").expect("a good response has an ETag");
+    let revalidation = TestRequest {
+        headers: vec![("If-None-Match".to_owned(), etag.to_owned())],
+        ..Default::default()
+    };
+
+    failing.store(true, std::sync::atomic::Ordering::SeqCst);
+    let during = serve_javascript(
+        &processed(web.pipeline(), evidence()),
+        &revalidation,
+        &options,
+    );
+    assert_eq!(during.status, WebResponse::STATUS_NOT_MODIFIED);
+    assert_eq!(during.header("Cache-Control"), Some("private, no-cache"));
+    assert_eq!(during.header("ETag"), None);
+    assert!(during.header("Vary").is_some());
+    assert_eq!(during.header("Vary"), good.header("Vary"));
+
+    failing.store(false, std::sync::atomic::Ordering::SeqCst);
+    let after = serve_javascript(
+        &processed(web.pipeline(), evidence()),
+        &revalidation,
+        &options,
+    );
+    assert_eq!(after.status, WebResponse::STATUS_NOT_MODIFIED);
+    assert_eq!(after.header("Cache-Control"), Some("private, max-age=1800"));
+    assert_eq!(after.header("ETag"), Some(etag));
 }
 
 /// `EndpointOptions` is `Send`, `Sync`, `UnwindSafe` and `RefUnwindSafe`, as
