@@ -123,17 +123,11 @@ fn device_detection() {
         eprintln!("no Lite Hash data file found; skipping Device Detection");
         return;
     };
-    let engine = match DeviceDetectionOnPremiseEngineBuilder::new(file)
+    let engine = DeviceDetectionOnPremiseEngineBuilder::new(file)
         .performance_profile(PerformanceProfile::HighPerformance)
         .property("IsMobile")
         .build()
-    {
-        Ok(engine) => engine,
-        Err(e) => {
-            eprintln!("the Hash data set did not load ({e}); skipping Device Detection");
-            return;
-        }
-    };
+        .expect("the Lite Hash data set loads");
     let element: Arc<dyn FlowElement> = engine.clone();
     let pipeline = Pipeline::builder().add_element(element).build().unwrap();
     let mut flow = pipeline.create_flow_data_with(
@@ -182,19 +176,15 @@ fn ip_intelligence() {
         eprintln!("no ASN data file found; skipping IP Intelligence");
         return;
     };
-    let engine = match IpIntelligenceOnPremiseEngineBuilder::new(file)
-        .performance_profile(PerformanceProfile::HighPerformance)
-        .properties(["Asn", "AsnName"])
-        .auto_update(false)
-        .file_system_watcher(false)
-        .build()
-    {
-        Ok(engine) => Arc::new(engine),
-        Err(e) => {
-            eprintln!("the IP Intelligence data set did not load ({e}); skipping");
-            return;
-        }
-    };
+    let engine = Arc::new(
+        IpIntelligenceOnPremiseEngineBuilder::new(file)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            .properties(["Asn", "AsnName"])
+            .auto_update(false)
+            .file_system_watcher(false)
+            .build()
+            .expect("the ASN data set loads"),
+    );
     let element: Arc<dyn FlowElement> = engine.clone();
     let pipeline = Pipeline::builder().add_element(element).build().unwrap();
     let mut flow = pipeline.create_flow_data_with(
