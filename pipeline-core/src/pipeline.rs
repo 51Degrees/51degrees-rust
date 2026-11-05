@@ -34,6 +34,7 @@
 //! describes.
 
 use std::any::Any;
+use std::collections::HashSet;
 use std::ops::Range;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
@@ -387,6 +388,14 @@ impl PipelineBuilder {
     /// the 51Degrees .NET pipeline does. See the
     /// [parallel processing specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/advanced-features/parallel-processing.md).
     ///
+    /// So an element of a group cannot add data under a key that another
+    /// element of the group adds or that was added before the group. It gets a
+    /// configuration error on that flow data instead, and the data added first
+    /// is kept. [`PipelineBuilder::build`] refuses the case it can see, being
+    /// a group holding two elements with one data key, or an element with the
+    /// data key of one that runs before the group, ignoring case as flow data
+    /// does.
+    ///
     /// A group pays for elements that wait, for example on a call to another
     /// service. It pays for elements that use the processor only when each
     /// takes much longer than waking another thread, and only while
@@ -436,14 +445,17 @@ impl PipelineBuilder {
     /// Each element's [`FlowElement::add_pipeline`] is called with the new
     /// pipeline, in order. Returns an error if no elements were added, since an
     /// empty pipeline cannot do useful work and almost always indicates a
-    /// misconfiguration, or the first error an element returns from
-    /// `add_pipeline`.
+    /// misconfiguration, if a parallel group holds an element with the data
+    /// key of another element of the group or of one before the group (see
+    /// [`PipelineBuilder::add_parallel_elements`]), or the first
+    /// error an element returns from `add_pipeline`.
     pub fn build(self) -> Result<Arc<Pipeline>> {
         if self.elements.is_empty() {
             return Err(Error::configuration(
                 "A pipeline must contain at least one flow element.",
             ));
         }
+        check_group_data_keys(&self.elements, &self.steps)?;
 
         // Build the pipeline-wide evidence filter by ORing each element's
         // filter. Each element's filter is wrapped so the aggregator can query
@@ -482,6 +494,44 @@ impl PipelineBuilder {
         }
         Ok(pipeline)
     }
+}
+
+/// Refuse a parallel group holding an element whose data key, ignoring case,
+/// is another element's of the group or that of an element that runs before
+/// the group, because that element could not add its data once the other had.
+fn check_group_data_keys(elements: &[Arc<dyn FlowElement>], steps: &[Step]) -> Result<()> {
+    let mut before = HashSet::new();
+    for step in steps {
+        match step {
+            Step::Element(index) => {
+                before.insert(elements[*index].data_key().to_lowercase());
+            }
+            Step::Group(range) => {
+                let mut group = HashSet::new();
+                for element in &elements[range.clone()] {
+                    let key = element.data_key();
+                    let stored = key.to_lowercase();
+                    if before.contains(&stored) {
+                        return Err(Error::configuration(format!(
+                            "An element of a parallel group has the data key \
+                             '{key}' of an element that runs before the group, \
+                             so it could not add its data once that element \
+                             had. Add it on its own."
+                        )));
+                    }
+                    if !group.insert(stored) {
+                        return Err(Error::configuration(format!(
+                            "Two elements of a parallel group have the data key \
+                             '{key}', so only one of them could keep its data. \
+                             Add one of them on its own."
+                        )));
+                    }
+                }
+                before.extend(group);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Adapts an element's borrowed evidence filter into an owned
