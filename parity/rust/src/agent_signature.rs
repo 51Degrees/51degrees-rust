@@ -69,13 +69,13 @@ impl HttpClient for KeyDirectories {
         } else if request.url != AGENT {
             return Ok(HttpResponse {
                 status: 404,
-                url: Some(request.url.to_owned()),
+                url: request.url.to_owned(),
                 ..HttpResponse::default()
             });
         }
         Ok(HttpResponse {
             status: 200,
-            url: Some(request.url.to_owned()),
+            url: request.url.to_owned(),
             headers: vec![("Content-Type".to_owned(), DIRECTORY_MEDIA_TYPE.to_owned())],
             body: DIRECTORY.as_bytes().to_vec(),
         })

@@ -113,8 +113,9 @@ impl AgentSignatureElementBuilder {
 
     /// The client key directories, agent cards and registries are fetched
     /// with. The element uses it exactly as it is given, so whoever supplies
-    /// one decides whether it follows redirects. The client the element makes
-    /// for itself follows none.
+    /// one decides whether it follows redirects, and a document that arrives
+    /// from any address other than the one asked for is refused whichever
+    /// they decide. The client the element makes for itself follows none.
     pub fn set_http_client(mut self, client: Arc<dyn HttpClient>) -> Self {
         self.http_client = Some(client);
         self

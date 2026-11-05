@@ -28,7 +28,10 @@
 //! crate provides `ReqwestClient`, which follows no redirects. A caller can
 //! supply any other client through
 //! [`crate::AgentSignatureElementBuilder::set_http_client`], and decides for
-//! itself whether that client follows redirects.
+//! itself whether that client follows redirects. Either way the client says
+//! which address finally answered, in [`HttpResponse::url`], and the element
+//! refuses a document that came from anywhere other than the address it
+//! asked for.
 
 use std::time::Duration;
 
@@ -56,10 +59,12 @@ pub struct HttpRequest<'a> {
 pub struct HttpResponse {
     /// The HTTP status code.
     pub status: u16,
-    /// The address that answered, where the client knows it. A response
-    /// from any address other than the one asked for is refused, because
-    /// the key directory and agent card drafts forbid redirects.
-    pub url: Option<String>,
+    /// The address that finally answered, after any redirect the client
+    /// followed. A response from any address other than the one asked for
+    /// is refused, because the key directory and agent card drafts forbid
+    /// redirects, and so is a response whose address is empty or cannot be
+    /// read, so a client must fill this in.
+    pub url: String,
     /// The response headers as `(name, value)` pairs.
     pub headers: Vec<(String, String)>,
     /// The body, or as much of it as the client read.
@@ -137,7 +142,7 @@ mod reqwest_client {
                 .send()
                 .map_err(|error| error.to_string())?;
             let status = response.status().as_u16();
-            let url = Some(response.url().to_string());
+            let url = response.url().to_string();
             let headers = response
                 .headers()
                 .iter()

@@ -371,11 +371,10 @@ fn is_private_ipv6(address: Ipv6Addr) -> bool {
 }
 
 /// Whether the response came from an address other than the one asked for.
+/// An address that is empty or cannot be read counts as another address, so
+/// a client that does not say where its answer came from is never trusted.
 fn was_redirected(response: &HttpResponse, url: &str) -> bool {
-    let Some(answered) = response.url.as_deref() else {
-        return false;
-    };
-    match (Url::parse(url), Url::parse(answered)) {
+    match (Url::parse(url), Url::parse(&response.url)) {
         (Ok(mut asked), Ok(mut answered)) => {
             asked.set_fragment(None);
             answered.set_fragment(None);

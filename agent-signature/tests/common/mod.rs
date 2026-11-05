@@ -191,6 +191,9 @@ pub struct FakeResponse {
     pub body: String,
     pub delay: Duration,
     pub headers: Vec<(String, String)>,
+    /// The address the client says answered, where it is not the address
+    /// asked for, as a client that follows a redirect would say.
+    pub final_url: Option<String>,
 }
 
 impl FakeResponse {
@@ -202,6 +205,16 @@ impl FakeResponse {
             body,
             delay: Duration::ZERO,
             headers: Vec::new(),
+            final_url: None,
+        }
+    }
+
+    /// A JSON document, as an agent card or a set of keys named directly is
+    /// served.
+    pub fn json(body: String) -> Self {
+        FakeResponse {
+            content_type: Some(constants::JSON_MEDIA_TYPE.to_owned()),
+            ..FakeResponse::directory(body)
         }
     }
 }
@@ -253,7 +266,7 @@ impl HttpClient for FakeClient {
         }
         Ok(HttpResponse {
             status: response.status,
-            url: Some(request.url.to_owned()),
+            url: response.final_url.unwrap_or_else(|| request.url.to_owned()),
             headers,
             body: response.body.into_bytes(),
         })
@@ -283,41 +296,92 @@ impl Harness {
         configure: impl FnOnce(AgentSignatureElementBuilder) -> AgentSignatureElementBuilder,
     ) -> Self {
         let client = Arc::new(client);
-        let builder = AgentSignatureElement::builder()
-            .set_http_client(Arc::clone(&client) as Arc<dyn HttpClient>);
-        let element = configure(builder).build().unwrap();
-        let pipeline = Pipeline::builder()
-            .add_element(Arc::new(element))
-            .build()
-            .unwrap();
+        let pipeline = pipeline_with(Arc::clone(&client) as Arc<dyn HttpClient>, configure);
         Harness { client, pipeline }
     }
 
     /// Process the evidence and return the element's data.
     pub fn process(&self, evidence: &[(&str, &str)]) -> AgentSignatureData {
-        let mut builder = Evidence::builder();
-        for (key, value) in evidence {
-            builder = builder.add(key, *value);
-        }
-        let mut data = self.pipeline.create_flow_data_with(builder.build());
-        data.process().unwrap();
-        data.get(AgentSignatureElement::KEY).unwrap().clone()
+        process(&self.pipeline, evidence)
     }
 
     /// Process a signed request arriving at `example.com` over HTTPS, with
     /// the request line given.
     pub fn process_signed(&self, signed: &Signed, extra: &[(&str, &str)]) -> AgentSignatureData {
-        let mut evidence = vec![
-            ("header.signature", signed.signature.as_str()),
-            ("header.signature-input", signed.signature_input.as_str()),
-            ("header.host", "example.com"),
-            ("header.protocol", "https"),
-        ];
-        if let Some(agent) = &signed.signature_agent {
-            evidence.push(("header.signature-agent", agent.as_str()));
-        }
-        evidence.extend_from_slice(extra);
-        self.process(&evidence)
+        process_signed(&self.pipeline, signed, extra)
+    }
+}
+
+/// A pipeline holding only the element, built with the client given.
+pub fn pipeline_with(
+    client: Arc<dyn HttpClient>,
+    configure: impl FnOnce(AgentSignatureElementBuilder) -> AgentSignatureElementBuilder,
+) -> Arc<Pipeline> {
+    let builder = AgentSignatureElement::builder().set_http_client(client);
+    let element = configure(builder).build().unwrap();
+    Pipeline::builder()
+        .add_element(Arc::new(element))
+        .build()
+        .unwrap()
+}
+
+/// Process the evidence and return the element's data.
+pub fn process(pipeline: &Arc<Pipeline>, evidence: &[(&str, &str)]) -> AgentSignatureData {
+    let mut builder = Evidence::builder();
+    for (key, value) in evidence {
+        builder = builder.add(key, *value);
+    }
+    let mut data = pipeline.create_flow_data_with(builder.build());
+    data.process().unwrap();
+    data.get(AgentSignatureElement::KEY).unwrap().clone()
+}
+
+/// Process a signed request arriving at `example.com` over HTTPS, with the
+/// request line given.
+pub fn process_signed(
+    pipeline: &Arc<Pipeline>,
+    signed: &Signed,
+    extra: &[(&str, &str)],
+) -> AgentSignatureData {
+    let mut evidence = vec![
+        ("header.signature", signed.signature.as_str()),
+        ("header.signature-input", signed.signature_input.as_str()),
+        ("header.host", "example.com"),
+        ("header.protocol", "https"),
+    ];
+    if let Some(agent) = &signed.signature_agent {
+        evidence.push(("header.signature-agent", agent.as_str()));
+    }
+    evidence.extend_from_slice(extra);
+    process(pipeline, &evidence)
+}
+
+/// Join several signed requests into one request carrying every signature.
+/// Each was signed under its own label, so the two headers join as ordinary
+/// dictionary members, and the first `Signature-Agent` header is kept.
+pub fn merge(signed: &[Signed]) -> Signed {
+    let signatures: Vec<&str> = signed.iter().map(|one| one.signature.as_str()).collect();
+    let inputs: Vec<&str> = signed
+        .iter()
+        .map(|one| one.signature_input.as_str())
+        .collect();
+    Signed {
+        signature: signatures.join(", "),
+        signature_input: inputs.join(", "),
+        signature_agent: signed[0].signature_agent.clone(),
+    }
+}
+
+/// The request with one bit of its signature changed, so the signature no
+/// longer checks out against the key.
+pub fn corrupt(signed: Signed) -> Signed {
+    let (label, rest) = signed.signature.split_once("=:").unwrap();
+    let mut bytes = STANDARD.decode(rest.trim_end_matches(':')).unwrap();
+    bytes[0] ^= 1;
+    let signature = format!("{label}=:{}:", STANDARD.encode(bytes));
+    Signed {
+        signature,
+        ..signed
     }
 }
 

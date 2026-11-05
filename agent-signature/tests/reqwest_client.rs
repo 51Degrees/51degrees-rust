@@ -67,10 +67,7 @@ fn the_built_in_client_follows_no_redirect_and_stops_reading_past_the_limit() {
 
     let moved = get("/moved");
     assert_eq!(moved.status, 302);
-    assert_eq!(
-        moved.url.as_deref(),
-        Some(format!("http://127.0.0.1:{port}/moved").as_str())
-    );
+    assert_eq!(moved.url, format!("http://127.0.0.1:{port}/moved"));
 
     let keys = get("/keys");
     assert_eq!(keys.status, 200);

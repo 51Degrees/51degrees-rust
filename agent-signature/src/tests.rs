@@ -227,7 +227,7 @@ impl HttpClient for Directory {
         let x = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(public.public_key());
         Ok(HttpResponse {
             status: 200,
-            url: Some(request.url.to_owned()),
+            url: request.url.to_owned(),
             headers: vec![("Content-Type".to_owned(), DIRECTORY_MEDIA_TYPE.to_owned())],
             body: format!("{{\"keys\":[{{\"kty\":\"OKP\",\"crv\":\"Ed25519\",\"x\":\"{x}\"}}]}}")
                 .into_bytes(),
