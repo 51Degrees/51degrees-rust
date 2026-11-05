@@ -26,6 +26,7 @@
 
 use std::any::Any;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -692,6 +693,43 @@ fn a_pipeline_lists_a_groups_elements_after_the_others_with_their_evidence() {
         assert!(filter.include(key), "{key}");
     }
     assert!(!filter.include("query.other"));
+}
+
+/// The reference count of the pipeline that the first element of a group
+/// sees, which runs once every other member's flow data has been made.
+fn pipeline_count_seen_by_the_first_of(size: usize) -> usize {
+    const OTHERS: [&str; 3] = ["second", "third", "fourth"];
+    let seen = Arc::new(AtomicUsize::new(0));
+    let recorder = Arc::clone(&seen);
+    let mut group = vec![element("first", &[], move |_, data| {
+        recorder.store(Arc::strong_count(data.pipeline()), Ordering::SeqCst);
+        Ok(())
+    })];
+    group.extend(
+        OTHERS[..size - 1]
+            .iter()
+            .map(|&key| element(key, &[], |_, _| Ok(()))),
+    );
+    Pipeline::builder()
+        .add_parallel_elements(group)
+        .build()
+        .unwrap()
+        .create_flow_data()
+        .process()
+        .unwrap();
+    seen.load(Ordering::SeqCst)
+}
+
+/// Every member of a group reads the pipeline through the view the group
+/// shares, so the pipeline's reference count does not grow with the group.
+/// If each member held a clone, a group of four would see two more than a
+/// group of two.
+#[test]
+fn a_groups_members_share_one_reference_to_the_pipeline() {
+    let two = pipeline_count_seen_by_the_first_of(2);
+    let four = pipeline_count_seen_by_the_first_of(4);
+    assert!(two > 1, "the first element ran and saw the pipeline");
+    assert_eq!(two, four);
 }
 
 #[test]

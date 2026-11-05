@@ -391,3 +391,53 @@ impl FlowData {
 /// Element data keyed by lowercased data key, matching the case-insensitive
 /// access rule.
 pub(crate) type DataMap = HashMap<String, Box<dyn ElementData>, RandomState>;
+
+#[cfg(test)]
+mod tests {
+    use std::hash::BuildHasher;
+
+    use super::*;
+    use crate::{EvidenceKeyFilterWhitelist, FlowElement, PropertyMetaData};
+
+    /// An element that does nothing.
+    struct Idle(EvidenceKeyFilterWhitelist);
+
+    impl FlowElement for Idle {
+        fn process(&self, _data: &mut FlowData) -> Result<()> {
+            Ok(())
+        }
+        fn data_key(&self) -> &str {
+            "idle"
+        }
+        fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+            &self.0
+        }
+        fn properties(&self) -> &[PropertyMetaData] {
+            &[]
+        }
+    }
+
+    /// The element data maps of a group's flow data and of each member copy
+    /// the hasher of the map from before the group, so a key hashes the same
+    /// through each, where a freshly seeded hasher hashes it differently.
+    #[test]
+    fn group_maps_copy_the_hasher_of_the_data_before_the_group() {
+        const KEY: &str = "device";
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(Idle(EvidenceKeyFilterWhitelist::default())))
+            .build()
+            .unwrap();
+        let mut data = pipeline.create_flow_data();
+        let hash = data.data.hasher().hash_one(KEY);
+        assert_ne!(RandomState::new().hash_one(KEY), hash);
+
+        let before = data.begin_group();
+        let member = FlowData::group_member(&before);
+        assert_eq!(before.data.hasher().hash_one(KEY), hash);
+        assert_eq!(data.data.hasher().hash_one(KEY), hash);
+        assert_eq!(member.data.hasher().hash_one(KEY), hash);
+
+        drop(member);
+        data.end_group(before);
+    }
+}

@@ -448,3 +448,24 @@ impl EvidenceKeyFilter for EvidenceKeyFilterAggregator {
         Some(keys)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::hash::BuildHasher;
+
+    use super::*;
+
+    /// Evidence made for a parallel group copies the hasher of the evidence
+    /// it was made from, so a key hashes the same through both, where a
+    /// freshly seeded hasher hashes it differently.
+    #[test]
+    fn empty_with_same_hasher_copies_the_hasher() {
+        const KEY: &str = "header.user-agent";
+        let evidence = Evidence::builder().add(KEY, "A").build();
+        let hash = evidence.entries.hasher().hash_one(KEY);
+        assert_ne!(RandomState::new().hash_one(KEY), hash);
+
+        let copy = evidence.empty_with_same_hasher();
+        assert_eq!(copy.entries.hasher().hash_one(KEY), hash);
+    }
+}
