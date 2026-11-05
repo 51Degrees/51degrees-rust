@@ -273,7 +273,8 @@
   {
     "path": "usage",
     "kind": "presence",
-    "reason": "The crates have no public sink for usage records yet, so the Rust producer writes none.",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "reason": "The crates have no public sink for usage records yet, so the Rust producer writes none. The values pipeline has no usage sharing, so its cases are not listed.",
     "issue": 232
   }
 ]

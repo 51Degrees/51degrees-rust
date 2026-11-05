@@ -152,6 +152,10 @@ namespace FiftyOne.Parity
             };
 
             var lines = new List<JsonObject>();
+            // The lines whose case ran through usage sharing. A values case
+            // may give a session id an engines' case also gives, and must
+            // not be given that case's record.
+            var sharedLines = new List<JsonObject>();
             foreach (var item in cases)
             {
                 var chosen = item["pipeline"]?.GetValue<string>() switch
@@ -161,13 +165,18 @@ namespace FiftyOne.Parity
                     var other => throw new ArgumentException(
                         $"{item["id"]}: unknown pipeline {other}")
                 };
-                lines.Add(RunCase(chosen, item.AsObject(), skipped));
+                var line = RunCase(chosen, item.AsObject(), skipped);
+                lines.Add(line);
+                if (chosen == pipeline)
+                {
+                    sharedLines.Add(line);
+                }
             }
 
             // Disposing usage sharing sends what is queued and waits for it.
             shareUsage.Dispose();
             var records = capture.RecordsBySession();
-            foreach (var line in lines)
+            foreach (var line in sharedLines)
             {
                 var sessionId = line["session"]?["id"]?.GetValue<string>();
                 line["usage"] = sessionId != null &&
