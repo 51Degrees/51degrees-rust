@@ -640,7 +640,7 @@ fn populate_property(
                     ip_data.set_integer(name, int);
                 }
             }
-            Some(PropertyValueType::Double) => {
+            Some(PropertyValueType::Float) => {
                 if let Ok(float) = value.trim().parse::<f32>() {
                     ip_data.set_float(name, float);
                 }

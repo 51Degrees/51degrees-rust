@@ -162,12 +162,16 @@ impl PropertyValue {
         }
     }
 
-    /// Return the value as an `f64` if it is a [`PropertyValue::Double`], or
-    /// a widened [`PropertyValue::Float`] or [`PropertyValue::Integer`].
+    /// Return the value as an `f64` if it is a [`PropertyValue::Double`], a
+    /// [`PropertyValue::Float`] or a [`PropertyValue::Integer`].
+    ///
+    /// A `Float` gives the `f64` nearest its shortest decimal text, so a
+    /// latitude of 18.543 reads as 18.543 rather than as the widened
+    /// 18.542999267578125.
     pub fn as_double(&self) -> Option<f64> {
         match self {
             PropertyValue::Double(d) => Some(*d),
-            PropertyValue::Float(f) => Some(f64::from(*f)),
+            PropertyValue::Float(f) => Some(f.to_string().parse().unwrap_or(f64::from(*f))),
             PropertyValue::Integer(i) => Some(*i as f64),
             _ => None,
         }
@@ -310,6 +314,19 @@ mod tests {
         let rounded = round_angle(-0.0001);
         assert_eq!(rounded, 0.0);
         assert!(rounded.is_sign_positive());
+    }
+
+    #[test]
+    fn a_float_reads_as_the_double_nearest_its_decimal() {
+        assert_eq!(PropertyValue::Float(18.543).as_double(), Some(18.543));
+        assert_eq!(PropertyValue::Float(-0.063).as_double(), Some(-0.063));
+        assert_eq!(PropertyValue::Float(0.1).as_double(), Some(0.1));
+        assert_eq!(PropertyValue::Float(1e9).as_double(), Some(1e9));
+        assert_eq!(
+            PropertyValue::Float(f32::INFINITY).as_double(),
+            Some(f64::INFINITY)
+        );
+        assert!(PropertyValue::Float(f32::NAN).as_double().unwrap().is_nan());
     }
 
     #[test]

@@ -812,16 +812,14 @@ mod tests {
     }
 
     /// A float is mirrored into the dynamic bag as a 32-bit float rather than
-    /// widened to a double, which would add digits it never had.
+    /// widened to a double, which would add digits it never had, and reads as
+    /// a double as the double nearest the same decimal.
     #[test]
     fn a_float_is_mirrored_as_a_32_bit_float() {
         let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
         data.set_float("Latitude", 18.543);
         assert_eq!(data.get("Latitude").unwrap(), PropertyValue::Float(18.543));
-        assert_eq!(
-            data.get("latitude").unwrap().as_double(),
-            Some(f64::from(18.543_f32))
-        );
+        assert_eq!(data.get("latitude").unwrap().as_double(), Some(18.543));
     }
 
     #[test]
@@ -890,7 +888,7 @@ mod tests {
         let meta = default_property_metadata();
         assert_eq!(meta.len(), GENERATED_PROPERTY_TYPES.len());
         let lat = meta.iter().find(|m| m.name == "Latitude").unwrap();
-        assert_eq!(lat.value_type, PropertyValueType::Double);
+        assert_eq!(lat.value_type, PropertyValueType::Float);
         let tz = meta.iter().find(|m| m.name == "TimeZoneOffset").unwrap();
         assert_eq!(tz.value_type, PropertyValueType::Integer);
         let vpn = meta.iter().find(|m| m.name == "IsVPN").unwrap();
