@@ -29,16 +29,16 @@ use once_cell::sync::OnceCell;
 
 use fiftyone_cloud_request_engine::{CloudRequestEngine, LicensedProducts};
 use fiftyone_ip_intelligence_shared::{
-    default_aspect_property_metadata, default_property_metadata, IpIntelligenceDataBase,
-    IP_DATA_KEY, IP_DATA_KEY_NAME, WEIGHTED_PROPERTY_VALUE_TYPE,
+    declared_property_value_type, default_aspect_property_metadata, default_property_metadata,
+    IpIntelligenceDataBase, IP_DATA_KEY, IP_DATA_KEY_NAME, WEIGHTED_PROPERTY_VALUE_TYPE,
 };
 use fiftyone_pipeline_core::{
     Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
     PropertyValueType, Result,
 };
 use fiftyone_pipeline_engines::{
-    missing_property_reason, AspectEngine, AspectPropertyMetaData, EngineDeployment,
-    EngineMissingPropertyContext, MissingPropertyResult,
+    default_missing_property_reason, AspectEngine, AspectPropertyMetaData, EngineDeployment,
+    MissingPropertyResult,
 };
 use serde_json::Value;
 
@@ -252,9 +252,8 @@ impl IpIntelligenceCloudEngine {
     /// Returns an [`Error::PipelineConfiguration`] when there is no cloud
     /// request data, which means no [`CloudRequestEngine`] ran before this
     /// engine. A request engine that ran and failed has already recorded its
-    /// own error and left no response, so that gives empty data rather than a
-    /// second error.
-    fn build_data(&self, data: &FlowData) -> Result<IpIntelligenceDataBase> {
+    /// own error and left no response, which gives `None`.
+    fn build_data(&self, data: &FlowData) -> Result<Option<IpIntelligenceDataBase>> {
         let cloud = data.get(CloudRequestEngine::DATA_KEY).ok_or_else(|| {
             Error::configuration(
                 "No cloud request data is present. This is probably because there \
@@ -265,8 +264,8 @@ impl IpIntelligenceCloudEngine {
         })?;
 
         match cloud.json_response() {
-            Some(json) if !json.is_empty() => self.parse_json(json),
-            _ => Ok(IpIntelligenceDataBase::new(IP_DATA_KEY_NAME)),
+            Some(json) if !json.is_empty() => self.parse_json(json).map(Some),
+            _ => Ok(None),
         }
     }
 
@@ -293,12 +292,26 @@ impl IpIntelligenceCloudEngine {
 }
 
 impl FlowElement for IpIntelligenceCloudEngine {
+    /// Stores the IP data the cloud returned. When the cloud request engine
+    /// left no response, it logs that at info level, records a flow error that
+    /// does not fail processing, and stores empty data marked as from a failed
+    /// cloud request, so each property read gives
+    /// [`MissingPropertyReason::CloudRequestFailed`](fiftyone_pipeline_core::MissingPropertyReason::CloudRequestFailed),
+    /// as .NET does.
     fn process(&self, data: &mut FlowData) -> Result<()> {
         // Read the metadata if discovery has completed since construction,
         // whether or not this response carries an `ip` member, so a key
         // without the product is logged and later elements see its metadata.
         self.ensure_metadata();
-        let element = self.build_data(data)?;
+        let element = match self.build_data(data)? {
+            Some(element) => element,
+            None => {
+                CloudRequestEngine::record_not_processed(data, ENGINE_NAME, IP_DATA_KEY_NAME);
+                let mut element = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+                element.base_mut().mark_cloud_request_failed();
+                element
+            }
+        };
         // The on-premise and cloud engines store identical types under the same
         // key, so a consumer can swap one for the other unchanged.
         data.get_or_add(IP_DATA_KEY, || element)?;
@@ -322,6 +335,10 @@ impl FlowElement for IpIntelligenceCloudEngine {
 }
 
 impl AspectEngine for IpIntelligenceCloudEngine {
+    fn engine_type_name(&self) -> &str {
+        ENGINE_NAME
+    }
+
     fn data_source_tier(&self) -> &str {
         // Cloud engines have no on-premise data tier.
         ""
@@ -343,17 +360,17 @@ impl AspectEngine for IpIntelligenceCloudEngine {
     }
 
     fn missing_property_reason(&self, property_name: &str) -> MissingPropertyResult {
-        // Trigger discovery so the reason reflects the live cloud metadata
-        // rather than the pre-discovery defaults.
+        // Read the metadata if discovery has completed, so the reason reflects
+        // the live cloud metadata rather than the pre-discovery defaults.
         self.ensure_metadata();
-        let ctx = EngineMissingPropertyContext {
-            element_data_key: self.data_key(),
-            deployment: self.deployment(),
-            data_source_tier: self.data_source_tier(),
-            properties_loaded: self.has_loaded_properties(),
-            properties: self.aspect_properties(),
-        };
-        missing_property_reason(property_name, &ctx)
+        default_missing_property_reason(self, property_name)
+    }
+
+    /// Whether `IpIntelligenceData` has a typed accessor for the property,
+    /// matched ignoring case. Before discovery completes, such a property
+    /// gives a data file upgrade as the reason it is missing, as .NET does.
+    fn has_typed_property(&self, property_name: &str) -> bool {
+        declared_property_value_type(property_name).is_some()
     }
 }
 
@@ -701,7 +718,8 @@ mod tests {
     fn a_failed_cloud_request_is_not_reported_as_a_configuration_error() {
         // The request engine records its own error when its call fails and
         // leaves no response. Nothing in the configuration is wrong, so this
-        // engine adds no error of its own, as the device engine adds none.
+        // engine only records that it did not process, as an error that does
+        // not fail processing, as .NET's cloud aspect engines do.
         use fiftyone_pipeline_core::{Evidence, Pipeline};
         let request_engine = request_engine();
         let ip_engine = IpIntelligenceCloudEngine::builder()
@@ -728,9 +746,12 @@ mod tests {
             .collect();
         assert_eq!(
             reported.len(),
-            1,
-            "only the request engine's own failure is reported, got {reported:?}"
+            2,
+            "the request engine's failure and this engine's record, got {reported:?}"
         );
+        assert_eq!(data.errors()[1].element_data_key, IP_DATA_KEY_NAME);
+        assert!(!data.errors()[1].should_throw);
+        assert!(matches!(data.errors()[1].source, Error::Pipeline { .. }));
         assert!(
             !data
                 .errors()

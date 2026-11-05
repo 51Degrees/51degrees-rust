@@ -157,17 +157,18 @@ impl Pipeline {
         Ok(())
     }
 
-    /// Record an element's error on the flow data and log it, as .NET's
-    /// pipeline does. Error level when the error is returned to the caller,
-    /// and debug level when it is suppressed, because suppressing says the
-    /// caller carries on past failures.
+    /// Record an element's error on the flow data, as .NET's pipeline does.
+    /// The flow data logs it at error level when the error is returned to the
+    /// caller, and this logs it at debug level when it is suppressed, because
+    /// suppressing says the caller carries on past failures.
     fn record_error(&self, data: &mut FlowData, data_key: &str, error: Error) {
         if self.suppress_process_exceptions {
             log::debug!("Suppressed an error in element '{data_key}': {error}");
-        } else {
-            log::error!("An error occurred in element '{data_key}': {error}");
         }
-        data.add_error(FlowError::new(data_key, error));
+        data.add_error(
+            FlowError::new(data_key, error),
+            !self.suppress_process_exceptions,
+        );
     }
 }
 
@@ -207,6 +208,9 @@ fn clone_error(error: &Error) -> Error {
         },
         Error::Native { status, message } => Error::Native {
             status: status.clone(),
+            message: message.clone(),
+        },
+        Error::Pipeline { message } => Error::Pipeline {
             message: message.clone(),
         },
         // Nested aggregates and any future non-clonable variants collapse to a
