@@ -61,7 +61,7 @@
 //!
 //! ## How the cache wires in
 //!
-//! Element data is `Send` but not `Sync`, so the cache cannot hold
+//! Element data is not `Clone`, so the cache cannot hold
 //! `dyn AspectData`. Each engine instead picks a concrete, `Send + Sync + Clone`
 //! aspect data type and caches that, exactly as the
 //! [`fiftyone_caching`] crate requires. [`AspectEngineBase`] is generic over

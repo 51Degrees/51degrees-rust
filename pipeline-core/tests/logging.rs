@@ -24,6 +24,8 @@
 //! installed once for the whole process.
 
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 use fiftyone_pipeline_core::{
     Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, Pipeline,
@@ -151,6 +153,171 @@ fn a_suppressed_error_is_logged_without_credentials() {
     assert_eq!(records.len(), 1, "{records:?}");
     assert!(!records[0].contains(NOT_A_KEY), "{records:?}");
     assert!(records[0].contains("status 400"), "{records:?}");
+}
+
+#[test]
+fn a_suppressed_error_in_a_parallel_group_is_logged() {
+    capture_logs();
+    let group: [Arc<dyn FlowElement>; 2] = [
+        Arc::new(FailingElement::new("grouped-failure", || {
+            Error::configuration("deliberate failure")
+        })),
+        Arc::new(FailingElement::new("grouped-beside", || {
+            Error::configuration("deliberate failure")
+        })),
+    ];
+    Pipeline::builder()
+        .add_parallel_elements(group)
+        .suppress_process_exceptions(true)
+        .build()
+        .unwrap()
+        .create_flow_data()
+        .process()
+        .unwrap();
+
+    assert_eq!(
+        logged_about("'grouped-failure'"),
+        vec![
+            "DEBUG Suppressed an error in element 'grouped-failure': pipeline \
+             configuration error: deliberate failure"
+        ]
+    );
+    assert_eq!(logged_about("'grouped-beside'").len(), 1);
+}
+
+/// How long the first of two failing group members waits before it fails,
+/// so that the second finishes first.
+const FIRST_MEMBER_WAIT_MILLISECONDS: u64 = 100;
+
+/// With errors returned, two failing members of a group are logged at error
+/// level and returned in the order they were given, even when the first
+/// finishes last.
+#[test]
+fn failing_group_members_are_logged_in_order_when_errors_are_returned() {
+    capture_logs();
+    let group: [Arc<dyn FlowElement>; 2] = [
+        Arc::new(FailingElement::new("ordered-first", || {
+            thread::sleep(Duration::from_millis(FIRST_MEMBER_WAIT_MILLISECONDS));
+            Error::configuration("first failure")
+        })),
+        Arc::new(FailingElement::new("ordered-second", || {
+            Error::configuration("second failure")
+        })),
+    ];
+    let result = Pipeline::builder()
+        .add_parallel_elements(group)
+        .build()
+        .unwrap()
+        .create_flow_data()
+        .process();
+
+    assert_eq!(
+        logged_about("'ordered-"),
+        vec![
+            "ERROR An error occurred in element 'ordered-first': pipeline \
+             configuration error: first failure",
+            "ERROR An error occurred in element 'ordered-second': pipeline \
+             configuration error: second failure",
+        ]
+    );
+    let errors = match result {
+        Err(Error::Aggregate(errors)) => errors,
+        other => panic!("expected the aggregate error, got {other:?}"),
+    };
+    let keys: Vec<&str> = errors
+        .iter()
+        .map(|error| error.element_data_key.as_str())
+        .collect();
+    assert_eq!(keys, ["ordered-first", "ordered-second"]);
+}
+
+/// Filling every thread parallel groups share, which needs threads, so
+/// WebAssembly leaves it out.
+#[cfg(not(target_family = "wasm"))]
+mod shared_thread_limit {
+    use std::sync::Condvar;
+
+    use super::*;
+
+    /// More elements than there are threads shared by parallel groups.
+    const GROUP_SIZE: usize = 80;
+
+    /// A gate the elements of a group wait at until the first opens it.
+    #[derive(Default)]
+    struct Gate {
+        open: Mutex<bool>,
+        opened: Condvar,
+    }
+
+    /// An element that opens its gate, or waits until the gate is open.
+    struct GateElement {
+        key: String,
+        gate: Arc<Gate>,
+        opens: bool,
+        filter: EvidenceKeyFilterWhitelist,
+    }
+
+    impl FlowElement for GateElement {
+        fn process(&self, _data: &mut FlowData) -> Result<()> {
+            let mut open = self.gate.open.lock().unwrap();
+            if self.opens {
+                *open = true;
+                self.gate.opened.notify_all();
+            }
+            while !*open {
+                open = self.gate.opened.wait(open).unwrap();
+            }
+            Ok(())
+        }
+        fn data_key(&self) -> &str {
+            &self.key
+        }
+        fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+            &self.filter
+        }
+        fn properties(&self) -> &[PropertyMetaData] {
+            &[]
+        }
+    }
+
+    /// Process a group whose first element opens a gate every other element
+    /// waits at. The first runs only after every other element has been
+    /// offered to the shared threads, and none of those can finish before
+    /// it, so a group larger than the shared threads finds them all in use.
+    fn process_a_group_larger_than_the_shared_threads() {
+        let gate = Arc::new(Gate::default());
+        let group = (0..GROUP_SIZE).map(|index| {
+            Arc::new(GateElement {
+                key: format!("gate-{index}"),
+                gate: Arc::clone(&gate),
+                opens: index == 0,
+                filter: EvidenceKeyFilterWhitelist::default(),
+            }) as Arc<dyn FlowElement>
+        });
+        Pipeline::builder()
+            .add_parallel_elements(group)
+            .build()
+            .unwrap()
+            .create_flow_data()
+            .process()
+            .unwrap();
+    }
+
+    /// The first time every shared thread is in use, one warning names the
+    /// limit, and filling them again logs nothing more.
+    #[test]
+    fn reaching_the_shared_thread_limit_is_logged_once() {
+        capture_logs();
+        process_a_group_larger_than_the_shared_threads();
+        process_a_group_larger_than_the_shared_threads();
+
+        let records = logged_about("threads shared by parallel groups");
+        assert_eq!(records.len(), 1, "{records:?}");
+        assert!(
+            records[0].starts_with("WARN All 64 threads shared by parallel groups"),
+            "{records:?}"
+        );
+    }
 }
 
 /// .NET's pipeline logs one error-level record for an element that fails
