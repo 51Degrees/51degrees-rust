@@ -192,6 +192,8 @@
     "kind": "value",
     "cases": ["ua-curl"],
     "data": "enterprise",
+    "dotnet": {"value": [[""]]},
+    "rust": {"value": [[]]},
     "reason": "The crates give an empty list where .NET gives a list holding one empty string.",
     "issue": 224
   },
@@ -213,11 +215,21 @@
     "issue": 224
   },
   {
+    "path": "properties.device.screenpixels*",
+    "kind": "state",
+    "data": "lite",
+    "dotnet": {"value": [0]},
+    "rust": {"noValue": true},
+    "reason": "A screen size whose data file value does not parse, such as Unknown, has no value in the crates (native_value in device-detection-onpremise), where .NET gives 0. A lost screen size that .NET gives as 0 also passes until the difference is removed.",
+    "issue": 224
+  },
+  {
     "path": "properties.device.*",
     "kind": "state",
+    "data": "enterprise",
     "dotnet": {"value": [0, false]},
     "rust": {"noValue": true},
-    "reason": "A number or true or false property whose data file value does not parse, such as Unknown or N/A, has no value in the crates (native_value in device-detection-onpremise), where .NET gives 0 or false. Over the Lite files these are the screen sizes, and over the Enterprise files more than a hundred properties.",
+    "reason": "A number or true or false property whose data file value does not parse, such as Unknown or N/A, has no value in the crates (native_value in device-detection-onpremise), where .NET gives 0 or false. This covers more than a hundred properties, and it also lets through a lost answer that .NET gives as 0 or false, such as a false IsMobile, because a value that does not parse and a lost value look the same to the comparer. Removing the difference removes both.",
     "issue": 224
   },
   {
@@ -229,10 +241,19 @@
     "issue": 224
   },
   {
+    "path": "json.device.screenpixels*",
+    "kind": "onlyInDotnet",
+    "data": "lite",
+    "dotnet": {"value": [0]},
+    "reason": "The crates' JSON builder leaves out a property with no value, so the 0 .NET gives for a screen size that does not parse is missing from the crates' JSON (properties.device.screenpixels* state). A lost screen size that .NET gives as 0 also passes until the difference is removed.",
+    "issue": 224
+  },
+  {
     "path": "json.device.*",
     "kind": "onlyInDotnet",
+    "data": "enterprise",
     "dotnet": {"value": [0, false]},
-    "reason": "The crates' JSON builder leaves out a property with no value, so the 0 or false .NET gives for a value that does not parse is missing from the crates' JSON (properties.device state).",
+    "reason": "The crates' JSON builder leaves out a property with no value, so the 0 or false .NET gives for a value that does not parse is missing from the crates' JSON (properties.device state). It also lets through a lost answer that .NET gives as 0 or false, as that entry says.",
     "issue": 224
   },
   {
