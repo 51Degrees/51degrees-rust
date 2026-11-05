@@ -61,9 +61,9 @@ pub fn check_data_file(engine: &dyn OnPremiseAspectEngine) -> Vec<String> {
                 "This example is using a data file that is more than \
                  {DATA_FILE_AGE_WARNING_DAYS} days old (published {published}). A more recent \
                  data file may be needed to correctly detect the latest devices, browsers and \
-                 networks. Lite files are available from the 51Degrees data repositories on \
-                 GitHub, and the Enterprise file (with automatic daily updates) is described on \
-                 the 51Degrees pricing page."
+                 networks. The get-data-files script in cxx/data replaces a free file with a \
+                 newer one when run with -u, or -Update in PowerShell, and the Enterprise file \
+                 (with automatic daily updates) is described on the 51Degrees pricing page."
             ));
         }
     }

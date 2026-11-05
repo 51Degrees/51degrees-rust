@@ -698,7 +698,7 @@ mod tests {
     use std::ffi::{CStr, CString};
 
     /// Optional path to the Lite Hash data file, injected by the build script
-    /// when the packaged file is found under the checkout.
+    /// when the file has been downloaded into the checkout.
     const LITE_DATA_FILE: Option<&str> = option_env!("51DEGREES_DD_PATH");
 
     /// A representative desktop Chrome on Windows user agent.
@@ -798,9 +798,8 @@ mod tests {
             );
             // The init ran cleanly through the FFI boundary and returned a well
             // defined status, which proves the native Hash library linked. The
-            // data file may be absent or unusable (for example a Git LFS pointer
-            // rather than the real file in a checkout without LFS), reported as a
-            // non-Success status. Treat that as a clean skip rather than a
+            // data file may be absent or unusable, reported as a non-Success
+            // status. Treat that as a clean skip rather than a
             // failure: the real detection path is exercised by the higher-level
             // on-premise tests when a usable data file is present.
             if status != StatusCode::Success {

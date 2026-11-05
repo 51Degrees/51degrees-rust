@@ -185,9 +185,9 @@ fn output_value<T: std::fmt::Display>(
 
 /// Resolve the data file then run the example. The data file is taken from the
 /// first command-line argument, the `51DEGREES_DD_PATH` environment variable, or
-/// the Lite Hash file shipped in the `cxx` submodule. With none
-/// of those present the example prints a clear message and exits successfully so
-/// an offline checkout is not a hard error.
+/// the Lite Hash file in the data repository inside the `cxx` submodule, which
+/// is downloaded when it is missing. With none of those present the example
+/// fails, after the resolver has printed the command that gets the file.
 fn main() -> Result<()> {
     let data_file = std::env::args()
         .nth(1)
@@ -195,12 +195,10 @@ fn main() -> Result<()> {
         .or_else(examples_shared::dd_data_path);
 
     let Some(data_file) = data_file else {
-        eprintln!(
-            "No device-detection data file found. Set 51DEGREES_DD_PATH (or pass \
-             the path as the first argument), or run `git submodule update \
-             --recursive` so the Lite Hash file in the cxx submodule is present."
+        anyhow::bail!(
+            "No device-detection data file found. Set 51DEGREES_DD_PATH, or pass \
+             the path as the first argument."
         );
-        return Ok(());
     };
 
     run(ExampleOptions {
@@ -215,7 +213,7 @@ mod tests {
 
     /// Run the example end to end against the Lite Hash data file.
     ///
-    /// On-premise tests run for real against the shipped Lite file. The test is
+    /// On-premise tests run for real against the Lite file. The test is
     /// skipped (not failed) only when no data file can be located, so a checkout
     /// without the submodule keeps `cargo test` green while a developer with it
     /// gets genuine coverage.
@@ -267,7 +265,7 @@ mod tests {
  * was reached. Those are demonstrated in the dd-onprem-match-metrics example.
  *
  * Finally the example prints the data file's tier and publish date and the
- * standard warnings: the shipped Lite file has a small number of properties and
+ * standard warnings: the free Lite file has a small number of properties and
  * limited accuracy, and a file more than 30 days old may miss the latest devices.
  * The Enterprise file (with automatic daily updates) is described on the
  * 51Degrees pricing page.
@@ -277,7 +275,8 @@ mod tests {
  * default, so 51Degrees receives evidence that improves detection.
  *
  * The data file is read from the first command-line argument, the
- * `51DEGREES_DD_PATH` environment variable, or the Lite Hash file shipped in the
- * cxx submodule. The Lite file is free; the Enterprise file with
+ * `51DEGREES_DD_PATH` environment variable, or the Lite Hash file in the data
+ * repository inside the cxx submodule, which the example downloads when it is
+ * missing. The Lite file is free; the Enterprise file with
  * the full property set is described at https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-getting-started.rs&utm_term=dd-onprem-getting-started.
  */

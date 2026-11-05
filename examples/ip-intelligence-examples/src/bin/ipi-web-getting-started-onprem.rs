@@ -28,7 +28,7 @@
 //! (with usage sharing, as a web deployment should), wraps it in a
 //! [`WebPipeline`] so the two client-side endpoints are mounted, and serves an
 //! HTML page showing the weighted IP Intelligence for the connecting client's IP
-//! address, with a form to look up any other address. Because the bundled data
+//! address, with a form to look up any other address. Because the default data
 //! file is a free tier, the page shows the standard data-file warnings as a
 //! `c-eg-alert` and a contact-us banner describing a paid Enterprise file.
 //!
@@ -245,11 +245,11 @@ async fn home(
 
 fn main() -> anyhow::Result<()> {
     // Resolve the on-premise data file through the shared scheme: it defaults to
-    // the ASN file checked into the data repository, or Enterprise when the
-    // production share is reachable.
+    // the ASN file from the data repository, downloaded when it is missing, or
+    // Enterprise when the production share is reachable.
     let data_file = examples_shared::ipi_data_path(examples_shared::IpiTier::default()).context(
-        "no on-premise IP Intelligence data file found. Set 51DEGREES_IPI_PATH to an .ipi data \
-         file, or check out the cxx submodule with its ASN data file.",
+        "no on-premise IP Intelligence data file found. Set 51DEGREES_IPI_PATH to an .ipi \
+         data file.",
     )?;
 
     let port: u16 = std::env::var("PORT")
@@ -378,8 +378,8 @@ mod tests {
  *   4. An approximate-location map drawn by the shared `examples.min.js`
  *      `initLocationMap` helper when the lookup resolves coordinates.
  *
- * Because the data file is a free tier (the ASN file checked into the data
- * repository by default), the page shows the standard data-file warnings from
+ * Because the data file is a free tier (the ASN file from the data repository
+ * by default), the page shows the standard data-file warnings from
  * `examples_shared::check_data_file`: a free-tier notice and a stale-file notice
  * when the file is more than 30 days old. These
  * are rendered as a `c-eg-alert` at the top of the page. The `c-eg-message`
@@ -392,5 +392,6 @@ mod tests {
  * application element, so no data file is opened twice.
  *
  * Resolve the data file with `51DEGREES_IPI_PATH` (or rely on the ASN file in
- * the `cxx` submodule), then run the binary and open http://127.0.0.1:8083.
+ * the data repository inside the `cxx` submodule, which is downloaded when it
+ * is missing), then run the binary and open http://127.0.0.1:8083.
  */

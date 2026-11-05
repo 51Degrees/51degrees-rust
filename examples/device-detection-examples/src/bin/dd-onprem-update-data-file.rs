@@ -208,9 +208,9 @@ fn license_key_from_env() -> Option<String> {
 }
 
 /// Resolve the data file then run the example. The data file uses the usual
-/// fallbacks (argument, env var, shipped Lite file); the license key comes from
+/// fallbacks (argument, env var, Lite file); the license key comes from
 /// the second argument or `51DEGREES_LICENSE_KEY`. With no data file present the
-/// example prints a clear message and exits successfully.
+/// example fails, after the resolver has printed the command that gets the file.
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let data_file = args
@@ -220,12 +220,10 @@ fn main() -> Result<()> {
     let license_key = args.next().or_else(license_key_from_env);
 
     let Some(data_file) = data_file else {
-        eprintln!(
-            "No device-detection data file found. Set 51DEGREES_DD_PATH (or pass \
-             the path as the first argument), or run `git submodule update \
-             --recursive` so the Lite Hash file in the cxx submodule is present."
+        anyhow::bail!(
+            "No device-detection data file found. Set 51DEGREES_DD_PATH, or pass \
+             the path as the first argument."
         );
-        return Ok(());
     };
 
     run(ExampleOptions {
@@ -292,7 +290,7 @@ mod tests {
  * hot-swap a freshly read data set while in-flight detections keep using the data
  * set they snapshotted.
  *
- * The shipped Lite data file cannot actually be auto-updated: automatic updates
+ * The free Lite data file cannot actually be auto-updated: automatic updates
  * require an Enterprise license and a downloadable file. So with no license key
  * the example documents the wiring and runs only the safe no-network paths. Supply
  * a key (second argument or the `51DEGREES_LICENSE_KEY` environment variable) and
@@ -300,6 +298,7 @@ mod tests {
  * available from https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-update-data-file.rs&utm_term=dd-onprem-update-data-file.
  *
  * The data file is read from the first command-line argument, the
- * `51DEGREES_DD_PATH` environment variable, or the Lite Hash file shipped in the
- * cxx submodule.
+ * `51DEGREES_DD_PATH` environment variable, or the Lite Hash file in the data
+ * repository inside the cxx submodule, which the example downloads when it is
+ * missing.
  */

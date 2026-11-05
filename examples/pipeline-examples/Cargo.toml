@@ -55,8 +55,8 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "tim
 # Ergonomic error handling for the example `run` functions and `main`.
 anyhow = "1"
 # YAML reader for the offline and performance examples, which stream evidence
-# records from the data submodules. serde_norway is the maintained fork of the
-# (now unmaintained) serde_yaml.
+# records from the data repository in cxx/data. serde_norway is the maintained
+# fork of the (now unmaintained) serde_yaml.
 serde_norway.workspace = true
 # CSV reader for the device-detection "20000 User Agents.csv" evidence file, in
 # case a combined-pipeline offline example streams user agents from CSV.

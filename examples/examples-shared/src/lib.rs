@@ -47,6 +47,9 @@
 //! - [`dd_data_path`] and [`ipi_data_path`]. Resolve the on-premise Device
 //!   Detection and IP Intelligence data files, the latter through the
 //!   ([`IpiTier`]) Enterprise/ASN scheme.
+//! - [`find_data_file`] / [`find_data_file_from`]. Find a free data file in
+//!   the data repository, running the data repository's script to download it
+//!   when it is missing.
 //! - [`check_data_file`] and [`data_file_info`]. Inspect an on-premise engine's
 //!   data file and return age and Lite-tier warnings for the example to print.
 //! - [`get_property_as_string`]. Render any property from an element data bag to
@@ -71,9 +74,9 @@ mod properties;
 
 pub use data_file_check::{check_data_file, data_file_info, DATA_FILE_AGE_WARNING_DAYS};
 pub use data_paths::{
-    dd_data_path, ipi_data_path, latest_enterprise_ipi, IpiTier, DD_LITE_RELATIVE_PATH,
-    DD_PATH_ENV_VAR, IPI_ASN_RELATIVE_PATH, IPI_ENTERPRISE_FILE_NAME, IPI_ENTERPRISE_SHARE_ENV_VAR,
-    IPI_PATH_ENV_VAR,
+    dd_data_path, find_data_file, find_data_file_from, ipi_data_path, latest_enterprise_ipi,
+    IpiTier, DATA_DOWNLOAD_SOURCE, DD_LITE_RELATIVE_PATH, DD_PATH_ENV_VAR, IPI_ASN_RELATIVE_PATH,
+    IPI_ENTERPRISE_FILE_NAME, IPI_ENTERPRISE_SHARE_ENV_VAR, IPI_PATH_ENV_VAR,
 };
 pub use endpoint::{cloud_endpoint_from_env, CLOUD_ENDPOINT_ENV_VAR};
 pub use find_file::{

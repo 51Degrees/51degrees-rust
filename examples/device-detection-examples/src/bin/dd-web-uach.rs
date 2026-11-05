@@ -194,8 +194,7 @@ async fn home(result: FiftyOneResult) -> Html<String> {
 
 fn main() -> anyhow::Result<()> {
     let data_file = examples_shared::dd_data_path().context(
-        "no on-premise Hash data file found. Set 51DEGREES_DD_PATH to a .hash data file, or \
-         check out the cxx submodule with its Lite data file.",
+        "no on-premise Hash data file found. Set 51DEGREES_DD_PATH to a .hash data file.",
     )?;
 
     let port: u16 = std::env::var("PORT")
@@ -331,10 +330,11 @@ mod tests {
  *      results table is appended client-side by the shared `examples.min.js`.
  *
  * The page is written to the shared 51Degrees example design system. Usage
- * sharing is enabled, as a web deployment should. Because the bundled data file
+ * sharing is enabled, as a web deployment should. Because the default data file
  * is the free Lite tier, the on-premise paid-data contact-us banner is shown.
  *
- * Resolve the data file with `51DEGREES_DD_PATH` (or the Lite
- * file in the `cxx` submodule), run the binary and open the page in a
+ * Resolve the data file with `51DEGREES_DD_PATH` (or the Lite file in the data
+ * repository inside the `cxx` submodule, which is downloaded when it is
+ * missing), run the binary and open the page in a
  * Chromium-based browser (which supports client hints) at http://127.0.0.1:8083.
  */

@@ -186,15 +186,11 @@ fn main() -> anyhow::Result<()> {
         },
         None => match ExampleOptions::from_env() {
             Some(options) => options,
-            None => {
-                writeln!(
-                    out,
-                    "No IP Intelligence data file could be located. Set {} to an \
-                     .ipi file, or check out the cxx submodule.",
-                    examples_shared::IPI_PATH_ENV_VAR
-                )?;
-                return Ok(());
-            }
+            None => anyhow::bail!(
+                "No IP Intelligence data file could be located. Set {} to an .ipi \
+                 file, or pass its path as the first argument.",
+                examples_shared::IPI_PATH_ENV_VAR
+            ),
         },
     };
 
@@ -257,7 +253,7 @@ mod tests {
  *
  * # Data file
  *
- * Resolved by `examples_shared::ipi_data_path`. The bundled ASN file carries
+ * Resolved by `examples_shared::ipi_data_path`. The free ASN file carries
  * the autonomous-system properties; an Enterprise file carries the full network
  * and location property set. Contact 51Degrees for an Enterprise file:
  * <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-metadata.rs&utm_term=ipi-onprem-metadata>.

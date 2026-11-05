@@ -198,7 +198,7 @@ fn value_type_name(value_type: PropertyValueType) -> &'static str {
 }
 
 /// Resolve the data file then run the example, with the same fallback chain as
-/// the other on-premise examples (argument, env var, shipped Lite file).
+/// the other on-premise examples (argument, env var, Lite file).
 fn main() -> Result<()> {
     let data_file = std::env::args()
         .nth(1)
@@ -206,12 +206,10 @@ fn main() -> Result<()> {
         .or_else(examples_shared::dd_data_path);
 
     let Some(data_file) = data_file else {
-        eprintln!(
-            "No device-detection data file found. Set 51DEGREES_DD_PATH (or pass \
-             the path as the first argument), or run `git submodule update \
-             --recursive` so the Lite Hash file in the cxx submodule is present."
+        anyhow::bail!(
+            "No device-detection data file found. Set 51DEGREES_DD_PATH, or pass \
+             the path as the first argument."
         );
-        return Ok(());
     };
 
     run(ExampleOptions {
@@ -281,6 +279,7 @@ mod tests {
  * limited accuracy; a file more than 30 days old may miss the latest devices).
  *
  * The data file is read from the first command-line argument, the
- * `51DEGREES_DD_PATH` environment variable, or the Lite Hash file shipped in the
- * cxx submodule.
+ * `51DEGREES_DD_PATH` environment variable, or the Lite Hash file in the data
+ * repository inside the cxx submodule, which the example downloads when it is
+ * missing.
  */

@@ -27,7 +27,7 @@
 //! It builds an on-premise Hash device-detection pipeline, wraps it in a
 //! [`WebPipeline`] so the two client-side endpoints are mounted, and serves an
 //! HTML page that shows
-//! server-side detection then refreshes it client-side. Because the bundled data
+//! server-side detection then refreshes it client-side. Because the default data
 //! file is the free Lite tier, the page shows the standard Lite/stale warnings
 //! and a contact-us banner that lists the benefits of a paid data file.
 //!
@@ -238,10 +238,10 @@ async fn home(result: FiftyOneResult) -> Html<String> {
 
 fn main() -> anyhow::Result<()> {
     // Resolve the on-premise data file: an explicit 51DEGREES_DD_PATH first, then
-    // the Lite Hash file in a cxx submodule.
+    // the Lite Hash file in the data repository inside the cxx submodule, which
+    // is downloaded when it is missing.
     let data_file = examples_shared::dd_data_path().context(
-        "no on-premise Hash data file found. Set 51DEGREES_DD_PATH to a .hash data file, or \
-         check out the cxx submodule with its Lite data file.",
+        "no on-premise Hash data file found. Set 51DEGREES_DD_PATH to a .hash data file.",
     )?;
 
     let port: u16 = std::env::var("PORT")
@@ -369,7 +369,7 @@ mod tests {
  *   3. Client-side refinement via `/51Degrees.core.js` and `/51dpipeline/json`,
  *      with the shared `examples.min.js` appending a refreshed results table.
  *
- * Because the bundled data file is the free Lite tier, the page shows the
+ * Because the default data file is the free Lite tier, the page shows the
  * standard data-file warnings (from `examples_shared::check_data_file`): a
  * Lite-tier notice, and a stale-file notice when the file is more than 30 days
  * old. These are rendered as a `c-eg-alert` at the top of the page. The
@@ -381,5 +381,6 @@ mod tests {
  * as the application element, so no data file is opened twice.
  *
  * Resolve the data file with `51DEGREES_DD_PATH` (or rely on the Lite file in
- * the `cxx` submodule), then run the binary and open http://127.0.0.1:8081.
+ * the data repository inside the `cxx` submodule, which is downloaded when it
+ * is missing), then run the binary and open http://127.0.0.1:8081.
  */

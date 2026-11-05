@@ -62,7 +62,8 @@ fn lite_data_file() -> Option<PathBuf> {
 
     let sibling = workspace
         .join("cxx")
-        .join("device-detection-data")
+        .join("data")
+        .join("device-detection")
         .join("51Degrees-LiteV4.1.hash");
     if sibling.is_file() {
         return Some(sibling);
@@ -71,7 +72,8 @@ fn lite_data_file() -> Option<PathBuf> {
     if let Some(parent) = workspace.parent() {
         let candidate = parent
             .join("cxx")
-            .join("device-detection-data")
+            .join("data")
+            .join("device-detection")
             .join("51Degrees-LiteV4.1.hash");
         if candidate.is_file() {
             return Some(candidate);

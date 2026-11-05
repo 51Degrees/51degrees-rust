@@ -54,11 +54,12 @@ pub struct ExampleOptions {
 
 impl ExampleOptions {
     /// Build the default options, resolving the on-premise data file through
-    /// the shared resolver (the ASN file checked into the data repository, or
-    /// Enterprise when the production share is reachable).
+    /// the shared resolver (the ASN file from the data repository, downloaded
+    /// when it is missing, or Enterprise when the production share is
+    /// reachable).
     ///
     /// Returns [`None`] when no usable data file can be located, so the caller
-    /// can print a friendly hint and skip rather than panicking.
+    /// can report it rather than panicking.
     pub fn from_env() -> Option<Self> {
         Self::for_tier(examples_shared::IpiTier::BestAvailable)
     }
@@ -304,16 +305,11 @@ fn main() -> anyhow::Result<()> {
         },
         None => match ExampleOptions::from_env() {
             Some(options) => options,
-            None => {
-                writeln!(
-                    out,
-                    "No IP Intelligence data file could be located. Set {} to an \
-                     .ipi file, or check out the cxx submodule so the \
-                     ASN data file is present.",
-                    examples_shared::IPI_PATH_ENV_VAR
-                )?;
-                return Ok(());
-            }
+            None => anyhow::bail!(
+                "No IP Intelligence data file could be located. Set {} to an .ipi \
+                 file, or pass its path as the first argument.",
+                examples_shared::IPI_PATH_ENV_VAR
+            ),
         },
     };
 
@@ -372,14 +368,15 @@ mod tests {
  *    not carry it.
  *
  * The example looks up a public IPv4 (1.1.1.1) and a public IPv6
- * (2606:4700:4700::1111). Against the bundled ASN data file both resolve to the
+ * (2606:4700:4700::1111). Against the free ASN data file both resolve to the
  * Cloudflare autonomous system, AS13335.
  *
  * # Data file
  *
  * The data file is resolved by `examples_shared::ipi_data_path`, which prefers
  * the `51DEGREES_IPI_PATH` environment variable and otherwise locates the ASN
- * file checked into the `cxx` submodule. An Enterprise `.ipi`
+ * file in the data repository inside the `cxx` submodule, downloading it when
+ * it is missing. An Enterprise `.ipi`
  * file (with the full property set) is available from 51Degrees: see <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-getting-started.rs&utm_term=ipi-onprem-getting-started>.
  *
  * # Usage sharing

@@ -48,9 +48,9 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 # Ergonomic error handling for the example `run` functions and `main`.
 anyhow = "1"
 # YAML reader for the offline and performance examples, which stream evidence
-# records from "20000 Evidence Records.yml" in the device-detection-data
-# submodule. serde_norway is the maintained fork of the (now unmaintained)
-# serde_yaml and parses the same syntax.
+# records from "20000 Evidence Records.yml" in cxx/data/device-detection.
+# serde_norway is the maintained fork of the (now unmaintained) serde_yaml and
+# parses the same syntax.
 serde_norway.workspace = true
 # The Deserialize trait the offline example reads each YAML evidence document
 # through as it iterates the serde_norway multi-document deserializer.

@@ -191,15 +191,11 @@ fn main() -> anyhow::Result<()> {
         },
         None => match ExampleOptions::from_env() {
             Some(options) => options,
-            None => {
-                writeln!(
-                    out,
-                    "No IP Intelligence data file could be located. Set {} to an \
-                     .ipi file, or check out the cxx submodule.",
-                    examples_shared::IPI_PATH_ENV_VAR
-                )?;
-                return Ok(());
-            }
+            None => anyhow::bail!(
+                "No IP Intelligence data file could be located. Set {} to an .ipi \
+                 file, or pass its path as the first argument.",
+                examples_shared::IPI_PATH_ENV_VAR
+            ),
         },
     };
 
