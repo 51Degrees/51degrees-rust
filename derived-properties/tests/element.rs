@@ -316,19 +316,18 @@ fn a_32_bit_float_is_read_as_a_number() {
     // both read as the number they hold rather than as a list.
     let script = |name: &str, property: &str| {
         format!(
-            "Format: 1
-             Name: {name}
-             Version: \"1.0.0\"
-             Output:
-               Name: {name}
-               Description: Whether the value is above 51.3.
-               ValueType: string
-               IsList: false
-             Rules:
-               - When: {{ Property: ip.{property}, Gt: 51.3 }}
-                 Then: Above
-               - Else: Below
-"
+            "Format: 1\n\
+             Name: {name}\n\
+             Version: \"1.0.0\"\n\
+             Output:\n\
+             \x20 Name: {name}\n\
+             \x20 Description: Whether the value is above 51.3.\n\
+             \x20 ValueType: string\n\
+             \x20 IsList: false\n\
+             Rules:\n\
+             \x20 - When: {{ Property: ip.{property}, Gt: 51.3 }}\n\
+             \x20   Then: Above\n\
+             \x20 - Else: Below\n"
         )
     };
     let weighted = |value: f32, weight: i64| {

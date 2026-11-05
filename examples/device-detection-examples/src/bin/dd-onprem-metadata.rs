@@ -198,7 +198,6 @@ fn value_type_name(value_type: PropertyValueType) -> &'static str {
         PropertyValueType::Bool => "Boolean",
         PropertyValueType::Integer => "Integer",
         PropertyValueType::Double => "Double",
-        PropertyValueType::Float => "Float",
         PropertyValueType::StringList => "String[]",
         PropertyValueType::JavaScript => "JavaScript",
         PropertyValueType::KeyValueList => "KeyValue[]",
