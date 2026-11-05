@@ -39,6 +39,7 @@ pure-Rust core up to the runnable examples.
 | [`fiftyone-cloud-request-engine`](cloud-request-engine) | Cloud HTTP engine that resolves the accepted evidence keys and accessible properties at build time (with a persistable state for short-lived hosts) and recovery mode. |
 | [`fiftyone-json-builder`](json-builder) | JSON serialization element. |
 | [`fiftyone-javascript-builder`](javascript-builder) | JavaScript snippet builder element with the bundled Mustache asset. Minification is an opt-in feature (see below). |
+| [`fiftyone-agent-signature`](agent-signature) | Agent Signature element, which checks the HTTP Message Signature an automated agent sends under the IETF Web Bot Auth protocol. |
 
 ### Native FFI
 
