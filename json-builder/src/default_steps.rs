@@ -119,11 +119,10 @@ pub fn get_values<S: JsonBuilderSteps + ?Sized>(
         .filter(|name| !element.is_property_excluded(name))
         .collect();
 
-    let path = data_path.to_lowercase();
     let mut values = JsonObject::new();
     for name in &names {
         let value = source.get(name);
-        if !is_written(context, &path, name, &value) {
+        if !is_written(context, data_path, name, &value) {
             continue;
         }
         steps.add_json_values_for_property(context, &mut values, data_path, name, value, false);
@@ -143,7 +142,7 @@ fn is_written(
     if element.selects_every_property() || matches!(value, Ok(PropertyValue::JavaScript(_))) {
         return true;
     }
-    let complete_name = format!("{data_path}.{name}");
+    let complete_name = format!("{}.{name}", data_path.to_lowercase());
     element.is_property_selected(&complete_name)
         || context
             .config()
