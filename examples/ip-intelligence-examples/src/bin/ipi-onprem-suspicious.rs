@@ -203,11 +203,12 @@ fn assess_ip(
         .get(IP_DATA_KEY)
         .context("the pipeline produced no IP Intelligence data")?;
 
-    // The on-premise engine surfaces every non-typed property as a weighted
-    // string, so each behavioral property is read through `weighted_string` and
-    // reduced to its most probable candidate. A property the data file does not
-    // carry reads back as a no-value, which the helpers map to a safe default.
-    // That default is never shown, because its line says why there is none.
+    // The on-premise engine stores each value either under its declared type
+    // or as a weighted list, so each input is read under its declared type and
+    // otherwise reduced to the most probable candidate of the list. A property
+    // the data file does not carry reads back as a no-value, which the helpers
+    // map to a safe default. That default is never shown, because its line says
+    // why there is none.
     let inputs = SuspiciousInputs {
         is_cellular: top_bool(ip_data, "IsCellular"),
         hardware_diversity: top_integer(ip_data, "HardwareDiversity"),
@@ -312,23 +313,26 @@ fn is_suspicious(inputs: &SuspiciousInputs) -> bool {
     high_diversity_low_confidence || hosted_country_mismatch || browser_outpaces_hardware
 }
 
-/// Read the most probable candidate of a weighted string property, or `None`
-/// when the property had no value (for example because the data tier does not
-/// carry it).
+/// Read a property as text, being its plain string value, or otherwise the most
+/// probable candidate of a weighted list. `None` when the property had no value
+/// (for example because the data tier does not carry it).
 fn top_string(ip_data: &IpIntelligenceDataBase, name: &str) -> Option<String> {
-    ip_data
-        .weighted_string(name)
-        .value()
-        .ok()
-        .and_then(|list| list.first().map(|w| w.value.clone()))
+    ip_data.string(name).value().ok().cloned().or_else(|| {
+        ip_data
+            .weighted_string(name)
+            .value()
+            .ok()
+            .and_then(|list| list.first().map(|w| w.value.clone()))
+    })
 }
 
-/// Read the most probable candidate of a weighted property as an integer.
-///
-/// The on-premise engine surfaces these counts as weighted strings, so the top
-/// candidate is parsed to an `i64`, tolerating a trailing fractional part.
+/// Read a property as an integer, being its plain integer value, or otherwise
+/// [`top_string`] parsed to an `i64`, tolerating a trailing fractional part.
 /// Returns `0` when the property had no value or did not parse.
 fn top_integer(ip_data: &IpIntelligenceDataBase, name: &str) -> i64 {
+    if let Ok(value) = ip_data.integer(name).value() {
+        return i64::from(*value);
+    }
     match top_string(ip_data, name) {
         Some(value) => {
             let trimmed = value.trim();
@@ -342,11 +346,13 @@ fn top_integer(ip_data: &IpIntelligenceDataBase, name: &str) -> i64 {
     }
 }
 
-/// Read the most probable candidate of a weighted property as a boolean.
-///
-/// The native side renders booleans as `True`/`False` (or `1`/`0`), so both
-/// spellings are accepted. Returns `false` when the property had no value.
+/// Read a property as a boolean, being its plain boolean value, or otherwise
+/// [`top_string`] read as `True`/`False` (or `1`/`0`), the spellings the native
+/// side renders. Returns `false` when the property had no value.
 fn top_bool(ip_data: &IpIntelligenceDataBase, name: &str) -> bool {
+    if let Ok(value) = ip_data.boolean(name).value() {
+        return *value;
+    }
     match top_string(ip_data, name) {
         Some(value) => {
             let trimmed = value.trim();
@@ -437,6 +443,53 @@ mod tests {
         }
     }
 
+    /// Each input is read whether the engine stored it under its declared type
+    /// or as a weighted list. The free Lite file gives RegisteredCountry as a
+    /// plain string, which a weighted read alone missed.
+    #[test]
+    fn inputs_are_read_as_stored() {
+        use fiftyone_ip_intelligence::{WeightedValue, IP_DATA_KEY_NAME};
+
+        let mut plain = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        plain.set_string("RegisteredCountry", "GB");
+        plain.set_integer("HardwareDiversity", 8);
+        plain.set_boolean("IsHosted", true);
+        assert_eq!(
+            top_string(&plain, "RegisteredCountry").as_deref(),
+            Some("GB")
+        );
+        assert_eq!(top_integer(&plain, "HardwareDiversity"), 8);
+        assert!(top_bool(&plain, "IsHosted"));
+
+        let mut weighted = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        weighted.set_weighted_string(
+            "RegisteredCountry",
+            vec![
+                WeightedValue::new(20000, "US".to_owned()),
+                WeightedValue::new(40000, "GB".to_owned()),
+            ],
+        );
+        weighted.set_weighted_string(
+            "HardwareDiversity",
+            vec![WeightedValue::new(65535, "8.0".to_owned())],
+        );
+        weighted.set_weighted_string(
+            "IsHosted",
+            vec![WeightedValue::new(65535, "True".to_owned())],
+        );
+        assert_eq!(
+            top_string(&weighted, "RegisteredCountry").as_deref(),
+            Some("GB")
+        );
+        assert_eq!(top_integer(&weighted, "HardwareDiversity"), 8);
+        assert!(top_bool(&weighted, "IsHosted"));
+
+        let empty = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        assert_eq!(top_string(&empty, "RegisteredCountry"), None);
+        assert_eq!(top_integer(&empty, "HardwareDiversity"), 0);
+        assert!(!top_bool(&empty, "IsHosted"));
+    }
+
     /// The heuristic's three branches each independently flag a suspicious IP,
     /// and a benign profile is not flagged. This exercises the verdict logic
     /// without needing a data file.
@@ -514,9 +567,9 @@ mod tests {
  *    activity.
  *
  * The IP is supplied as `query.client-ip` evidence and the result is read back
- * through the shared `IP_DATA_KEY`. The on-premise engine surfaces these
- * properties as weighted values, so each is reduced to its most probable
- * candidate before the heuristic runs.
+ * through the shared `IP_DATA_KEY`. Each property is read under its declared
+ * type, or reduced to its most probable candidate when the engine gives a
+ * weighted list, before the heuristic runs.
  *
  * The example also asks for `Asn` and `AsnName` from the free ASN file and
  * `RegisteredCountry` from the free Lite file, so it opens and shows something
