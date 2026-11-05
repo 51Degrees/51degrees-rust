@@ -22,21 +22,15 @@
 
 //! The JavaScript builder flow element.
 
-use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use fiftyone_json_builder::JSON_BUILDER_DATA_KEY;
-use fiftyone_pipeline_core::constants::{
-    EVIDENCE_PROTOCOL_KEY, EVIDENCE_QUERY_PREFIX, EVIDENCE_SEPARATOR,
-};
+use fiftyone_pipeline_core::constants::EVIDENCE_PROTOCOL_KEY;
 use fiftyone_pipeline_core::{
     EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
     PropertyValue, PropertyValueType, Result,
 };
-use fiftyone_pipeline_engines_fiftyone::constants::{EVIDENCE_SEQUENCE, EVIDENCE_SESSIONID};
-use fiftyone_pipeline_engines_fiftyone::SequenceElement;
-use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 
 use crate::builder::{grants_51did, is_valid_object_name, SharedEngine, UserPromptSource};
 use crate::callback_url::{callback_url, CallbackUrl};
@@ -48,63 +42,27 @@ use crate::constants::{
 use crate::data::{JavaScriptBuilderElementData, JAVASCRIPT_BUILDER_DATA_KEY};
 use crate::minify::minify;
 use crate::mustache::Template;
+use crate::steps::{JavaScriptBuilderContext, SharedSteps};
 use crate::template_data::JavaScriptResource;
 use crate::JavaScriptBuilderElementBuilder;
 
 /// The Mustache template, embedded at compile time.
 const TEMPLATE_SOURCE: &str = include_str!("../assets/JavaScriptResource.mustache");
 
-/// The `application/x-www-form-urlencoded` percent-encoding set used for the
-/// request parameter keys and values.
-///
-/// The set percent-encodes everything except the
-/// unreserved characters `A-Z a-z 0-9 - _ . *` (and encodes a space as `%20`,
-/// not `+`, because each key and value is encoded individually before being
-/// placed into the JSON object). It starts from
-/// "encode all non-alphanumerics" and adds back the four exceptions.
-const URL_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
-    .remove(b'-')
-    .remove(b'_')
-    .remove(b'.')
-    .remove(b'*');
-
-/// The longest session id the script is given, in bytes.
-const MAX_SESSION_ID_LENGTH: usize = 64;
-
-/// The session id to render, which is the one given when it is safe and an
-/// empty string when it is not.
-///
-/// The template writes the session id inside quotes without any escaping, so
-/// a value holding a quote, a backslash or a line break would end the string
-/// early and break the script or change what it does. The
-/// [javascript-builder specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/javascript-builder.md)
-/// says a session id that is not 1 to 64 ASCII letters, digits and hyphens is
-/// rendered as an empty string.
-fn safe_session_id(session_id: String) -> String {
-    let safe = !session_id.is_empty()
-        && session_id.len() <= MAX_SESSION_ID_LENGTH
-        && session_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
-    if safe {
-        session_id
-    } else {
-        String::new()
-    }
-}
-
-/// The sequence to render, which is the one given when it is positive and `1`
-/// when it is not.
-///
-/// The template writes the sequence as bare code, and the script counts its
-/// own requests up from it, so a value of zero or less is not a sequence the
-/// script can use. The specification says such a value is rendered as `1`.
-fn safe_sequence(sequence: i32) -> i32 {
-    if sequence > 0 {
-        sequence
-    } else {
-        1
-    }
+/// The request parameters as the JSON object the script is given, each name
+/// and value written as a JSON string in the order given.
+fn parameters_json(parameters: &[(String, String)]) -> String {
+    let members: Vec<String> = parameters
+        .iter()
+        .map(|(name, value)| {
+            format!(
+                "{}:{}",
+                serde_json::Value::from(name.as_str()),
+                serde_json::Value::from(value.as_str())
+            )
+        })
+        .collect();
+    format!("{{{}}}", members.join(","))
 }
 
 /// Generates a JavaScript include to be run on the client device.
@@ -139,7 +97,7 @@ fn safe_sequence(sequence: i32) -> i32 {
 ///   When a URL is built the background-update mechanism is enabled.
 /// - **parameters**: every `query.*` evidence entry except the session id and
 ///   sequence, with the prefix stripped and the key and value URL-encoded,
-///   serialized as a JSON object.
+///   in name order, serialized as a JSON object.
 /// - **session id**: the session id from the flow data when it is 1 to 64
 ///   ASCII letters, digits and hyphens, else an empty string, because the
 ///   template writes it inside quotes without any escaping.
@@ -158,6 +116,14 @@ fn safe_sequence(sequence: i32) -> i32 {
 ///   while the shared engine's discovery has not completed. The section it
 ///   controls sits inside the update section, so it is only rendered when a
 ///   callback URL was built as well.
+///
+/// The parameters, session id, sequence and user prompt rules are the
+/// defaults of [`JavaScriptBuilderSteps`](crate::JavaScriptBuilderSteps),
+/// which a caller can replace through
+/// [`JavaScriptBuilderElementBuilder::set_steps`]. A session id or sequence
+/// that a replaced step gives is made safe in the same way. A caller can also
+/// give the template the script is rendered from, through
+/// [`JavaScriptBuilderElementBuilder::set_template`].
 ///
 /// # Example
 ///
@@ -206,6 +172,9 @@ pub struct JavaScriptBuilderElement {
     invalid_url_logged: AtomicBool,
     /// Set once a minification failure has been logged, for the same reason.
     minify_error_logged: AtomicBool,
+    /// The steps that give the parameters, session id, sequence and user
+    /// prompt decision.
+    steps: SharedSteps,
 }
 
 impl JavaScriptBuilderElement {
@@ -229,22 +198,47 @@ impl JavaScriptBuilderElement {
         self.build_javascript(data, json.to_owned())
     }
 
+    /// The host the script calls back to, as configured. Empty means the
+    /// `header.host` evidence of each request is used.
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    /// The endpoint the script calls back to on the host, as configured.
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    /// The protocol the script calls back with, as configured. Empty means
+    /// the `header.protocol` evidence of each request is used, else `https`.
+    pub fn protocol(&self) -> &str {
+        &self.protocol
+    }
+
+    /// The name of the object the script creates, as configured. A request
+    /// can ask for another valid name through the `query.fod-js-object-name`
+    /// evidence.
+    pub fn object_name(&self) -> &str {
+        &self.object_name
+    }
+
+    /// Whether the script stores results in cookies, as configured. A request
+    /// can ask otherwise through the `query.fod-js-enable-cookies` evidence.
+    pub fn enable_cookies(&self) -> bool {
+        self.enable_cookies
+    }
+
     /// Internal constructor used by the builder.
-    pub(crate) fn from_parts(
-        host: String,
-        endpoint: String,
-        protocol: String,
-        object_name: String,
-        enable_cookies: bool,
-        minify: bool,
-        user_prompt: UserPromptSource,
-    ) -> Self {
+    pub(crate) fn from_builder(builder: JavaScriptBuilderElementBuilder) -> Self {
         // The template is parsed once at construction. The embedded source is a
         // valid Mustache template, so parsing it cannot fail in practice. The
-        // expect documents that invariant.
-        let template = Template::parse(TEMPLATE_SOURCE)
-            .expect("the embedded JavaScriptResource template is valid Mustache");
-        let (user_prompt_settled, user_prompt_engine) = match user_prompt {
+        // expect documents that invariant. A template given to the builder was
+        // parsed when it was given.
+        let template = builder.template.unwrap_or_else(|| {
+            Template::parse(TEMPLATE_SOURCE)
+                .expect("the embedded JavaScriptResource template is valid Mustache")
+        });
+        let (user_prompt_settled, user_prompt_engine) = match builder.user_prompt {
             UserPromptSource::Decided(render) => (OnceLock::from(render), None),
             UserPromptSource::Engine(engine) => (OnceLock::new(), Some(engine)),
         };
@@ -262,24 +256,26 @@ impl JavaScriptBuilderElement {
                 PropertyValueType::String,
             )],
             template,
-            host,
-            endpoint,
-            protocol,
-            object_name,
-            enable_cookies,
-            minify,
+            host: builder.host,
+            endpoint: builder.endpoint,
+            protocol: builder.protocol,
+            object_name: builder.object_name,
+            enable_cookies: builder.enable_cookies,
+            minify: builder.minify,
             user_prompt_settled,
             user_prompt_engine,
             invalid_url_logged: AtomicBool::new(false),
             minify_error_logged: AtomicBool::new(false),
+            steps: builder.steps,
         }
     }
 
-    /// Whether this script carries the user prompt section. The answer is
-    /// kept once the request engine's licensed products are known. Until then
-    /// the section is left out without keeping that answer, as a result
-    /// obtained before discovery completes must not be kept.
-    fn user_prompt(&self) -> bool {
+    /// Whether this script carries the user prompt section, by the default
+    /// rule. The answer is kept once the request engine's licensed products
+    /// are known. Until then the section is left out without keeping that
+    /// answer, as a result obtained before discovery completes must not be
+    /// kept.
+    pub(crate) fn user_prompt(&self) -> bool {
         if let Some(&render) = self.user_prompt_settled.get() {
             return render;
         }
@@ -373,92 +369,6 @@ impl JavaScriptBuilderElement {
         }
     }
 
-    /// The session id the script is given, which is the value read from the
-    /// flow data when it is safe to render and an empty string otherwise.
-    ///
-    /// See [`safe_session_id`] for what safe means here.
-    fn rendered_session_id(data: &FlowData) -> String {
-        safe_session_id(Self::session_id(data))
-    }
-
-    /// The sequence the script is given, which is the value read from the flow
-    /// data when it is a positive number and `1` otherwise.
-    fn rendered_sequence(data: &FlowData) -> i32 {
-        safe_sequence(Self::sequence(data))
-    }
-
-    /// The session id for the template.
-    ///
-    /// The specification takes it from the sequence element's data, because
-    /// on a first request there is no `query.session-id` evidence and the
-    /// sequence element is what creates the id. Evidence is immutable here, so
-    /// the id the sequence element creates is only in its element data.
-    /// Reading evidence alone left `fod.sessionId` empty on every first page.
-    /// Evidence is still read when no sequence element ran, and an empty
-    /// string is used when neither has a value.
-    fn session_id(data: &FlowData) -> String {
-        if let Some(id) = data
-            .get(SequenceElement::KEY)
-            .and_then(|sequence| sequence.session_id())
-        {
-            return id.to_owned();
-        }
-        data.evidence()
-            .get(EVIDENCE_SESSIONID)
-            .unwrap_or("")
-            .to_owned()
-    }
-
-    /// The sequence number for the template.
-    ///
-    /// Taken from the sequence element's data, which has already added one to
-    /// any `query.sequence` evidence, as the specification says. Without a
-    /// sequence element the evidence is read instead, and `1` is used when
-    /// that is absent or does not parse.
-    fn sequence(data: &FlowData) -> i32 {
-        if let Some(sequence) = data
-            .get(SequenceElement::KEY)
-            .and_then(|sequence| sequence.sequence())
-            .and_then(|sequence| i32::try_from(sequence).ok())
-        {
-            return sequence;
-        }
-        data.evidence()
-            .get(EVIDENCE_SEQUENCE)
-            .and_then(|s| s.trim().parse::<i32>().ok())
-            .unwrap_or(1)
-    }
-
-    /// Build the request-parameters JSON object.
-    ///
-    /// Every `query.*` evidence entry except the session id and sequence is
-    /// included. The `query.` prefix is stripped, then the key and value are
-    /// URL-encoded. The result is serialized as a JSON object. A `BTreeMap` is
-    /// used so the key order, and therefore the serialized JSON, is
-    /// deterministic.
-    fn build_parameters(data: &FlowData) -> String {
-        let query_prefix = format!("{EVIDENCE_QUERY_PREFIX}{EVIDENCE_SEPARATOR}");
-        let mut parameters: BTreeMap<String, String> = BTreeMap::new();
-
-        for (key, value) in data.evidence().iter() {
-            if !key.starts_with(&query_prefix) {
-                continue;
-            }
-            // Evidence keys are lowercased; the excluded keys are too.
-            if key.eq_ignore_ascii_case(EVIDENCE_SESSIONID)
-                || key.eq_ignore_ascii_case(EVIDENCE_SEQUENCE)
-            {
-                continue;
-            }
-            let field = &key[query_prefix.len()..];
-            let encoded_key = utf8_percent_encode(field, URL_ENCODE_SET).to_string();
-            let encoded_value = utf8_percent_encode(value, URL_ENCODE_SET).to_string();
-            parameters.insert(encoded_key, encoded_value);
-        }
-
-        serde_json::to_string(&parameters).unwrap_or_else(|_| "{}".to_owned())
-    }
-
     /// Whether this request's value of a device-detection property satisfies a
     /// predicate.
     ///
@@ -509,14 +419,19 @@ impl JavaScriptBuilderElement {
         let supports_promises = Self::supports_promises(data);
         let supports_fetch = Self::supports_fetch(data);
 
-        let parameters = Self::build_parameters(data);
-        let session_id = Self::rendered_session_id(data);
-        let sequence = Self::rendered_sequence(data);
+        // The steps are called in the order .NET's builder calls the methods
+        // they match.
+        let context = JavaScriptBuilderContext::new(self, data);
+        let steps = self.steps.get();
+        let parameters = parameters_json(&steps.get_parameters(&context));
+        let session_id = steps.get_session_id(&context);
+        let sequence = steps.get_sequence(&context);
 
         let url = self.build_url(&protocol, &host);
         let update_enabled = url.as_ref().is_some_and(|u| !u.is_empty());
 
         let has_delayed_properties = json_object.contains(DELAY_EXECUTION_MARKER);
+        let user_prompt = steps.render_user_prompt(&context);
 
         let resource = JavaScriptResource::new(
             object_name,
@@ -530,7 +445,7 @@ impl JavaScriptBuilderElement {
             enable_cookies,
             update_enabled,
             has_delayed_properties,
-            self.user_prompt(),
+            user_prompt,
         );
 
         let content = resource.render(&self.template);
@@ -612,101 +527,57 @@ mod tests {
         pipeline.create_flow_data_with(builder.build())
     }
 
-    #[test]
-    fn safe_session_id_keeps_a_safe_id() {
-        for id in ["abc-123", "a", &"a".repeat(64), "0", "A-0-z"] {
-            assert_eq!(safe_session_id(id.to_owned()), id, "{id:?} was emptied");
-        }
+    /// A name and value pair, as a step gives it.
+    fn pair(name: &str, value: &str) -> (String, String) {
+        (name.to_owned(), value.to_owned())
     }
 
     #[test]
-    fn safe_session_id_empties_anything_else() {
-        for id in [
-            "",
-            "a\"b",
-            "a\\b",
-            "</script>",
-            "a b",
-            "ab\n",
-            "caf\u{e9}",
-            &"a".repeat(65),
-        ] {
-            assert_eq!(safe_session_id(id.to_owned()), "", "{id:?} was kept");
-        }
-    }
-
-    #[test]
-    fn safe_sequence_keeps_a_positive_number() {
-        for sequence in [1, 2, i32::MAX] {
-            assert_eq!(safe_sequence(sequence), sequence);
-        }
-    }
-
-    #[test]
-    fn safe_sequence_replaces_anything_else_with_one() {
-        for sequence in [0, -1, i32::MIN] {
-            assert_eq!(safe_sequence(sequence), 1);
-        }
-    }
-
-    #[test]
-    fn rendered_session_id_and_sequence_come_from_evidence() {
-        let data = flow_data_with(&[("query.session-id", "abc-123"), ("query.sequence", "7")]);
+    fn parameters_are_written_as_a_json_object_in_the_order_given() {
+        assert_eq!(parameters_json(&[]), "{}");
         assert_eq!(
-            JavaScriptBuilderElement::rendered_session_id(&data),
-            "abc-123"
+            parameters_json(&[pair("b", "2"), pair("a", "1")]),
+            r#"{"b":"2","a":"1"}"#
         );
-        assert_eq!(JavaScriptBuilderElement::rendered_sequence(&data), 7);
     }
 
     #[test]
-    fn rendered_session_id_and_sequence_are_safe() {
-        let data = flow_data_with(&[("query.session-id", "a\"b"), ("query.sequence", "-1")]);
-        assert_eq!(JavaScriptBuilderElement::rendered_session_id(&data), "");
-        assert_eq!(JavaScriptBuilderElement::rendered_sequence(&data), 1);
-    }
-
-    #[test]
-    fn parameters_exclude_session_and_sequence() {
-        let data = flow_data_with(&[
-            ("query.session-id", "abc"),
-            ("query.sequence", "3"),
-            ("query.user-agent", "test agent"),
-            ("query.fod-js-object-name", "myObj"),
-            ("header.host", "ignored"),
-        ]);
-        let json = JavaScriptBuilderElement::build_parameters(&data);
+    fn parameters_are_written_as_json_strings() {
+        let json = parameters_json(&[pair("a\"b", "c\\d\n")]);
+        assert_eq!(json, r#"{"a\"b":"c\\d\n"}"#);
         let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
-        let object = value.as_object().expect("an object");
-
-        // Session id and sequence are excluded.
-        assert!(!object.contains_key("session-id"));
-        assert!(!object.contains_key("sequence"));
-        // header.* evidence is excluded (only query.* is taken).
-        assert!(!object.values().any(|v| v == "ignored"));
-        // The remaining query.* keys are present with the prefix stripped, and
-        // the space in the value is URL-encoded as %20 (not '+').
-        assert_eq!(
-            object.get("user-agent").and_then(|v| v.as_str()),
-            Some("test%20agent")
-        );
-        assert_eq!(
-            object.get("fod-js-object-name").and_then(|v| v.as_str()),
-            Some("myObj")
-        );
+        assert_eq!(value["a\"b"], "c\\d\n");
     }
 
     #[test]
-    fn parameters_are_deterministic() {
-        let data = flow_data_with(&[("query.b", "2"), ("query.a", "1"), ("query.c", "3")]);
-        let first = JavaScriptBuilderElement::build_parameters(&data);
-        let second = JavaScriptBuilderElement::build_parameters(&data);
-        assert_eq!(first, second);
-        // Keys are sorted, so 'a' precedes 'b' precedes 'c'.
-        let a = first.find("\"a\"").unwrap();
-        let b = first.find("\"b\"").unwrap();
-        let c = first.find("\"c\"").unwrap();
-        assert!(a < b && b < c);
+    fn the_default_parameters_are_written_as_before() {
+        let element = JavaScriptBuilderElement::new();
+        let data = flow_data_with(&[
+            ("query.b", "2 3"),
+            ("query.a", "1"),
+            ("query.sequence", "3"),
+        ]);
+        let context = JavaScriptBuilderContext::new(&element, &data);
+        let parameters = crate::default_steps::get_parameters(&context);
+        assert_eq!(parameters_json(&parameters), r#"{"a":"1","b":"2%203"}"#);
+    }
+
+    #[test]
+    fn the_configured_values_can_be_read() {
+        let element = JavaScriptBuilderElement::builder()
+            .set_host("example.com")
+            .set_endpoint("json")
+            .set_protocol("http")
+            .unwrap()
+            .set_object_name("named")
+            .unwrap()
+            .set_enable_cookies(false)
+            .build();
+        assert_eq!(element.host(), "example.com");
+        assert_eq!(element.endpoint(), "json");
+        assert_eq!(element.protocol(), "http");
+        assert_eq!(element.object_name(), "named");
+        assert!(!element.enable_cookies());
     }
 
     #[test]

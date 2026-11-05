@@ -59,7 +59,18 @@
 //! [`JavaScriptBuilderElementBuilder::set_shared_cloud_request_engine`], which
 //! waits for the engine's discovery to complete, or
 //! [`JavaScriptBuilderElementBuilder::set_cloud_request_engine`], which decides
-//! when it is called.
+//! when it is called. A caller that decides for each request replaces the
+//! [`JavaScriptBuilderSteps::render_user_prompt`] step.
+//!
+//! ## Replacing steps and the template
+//!
+//! [`JavaScriptBuilderSteps`] lets a caller replace the steps that give the
+//! request parameters, the session id, the sequence and the user prompt
+//! decision, which match the methods a subclass can override in .NET's
+//! `JavaScriptBuilderElement`. Each step's default is a function in
+//! [`default_steps`], so a caller's step can keep the default for part of its
+//! work. [`JavaScriptBuilderElementBuilder::set_template`] renders the script
+//! from a template the caller gives in place of the bundled one.
 //!
 //! ## Minification
 //!
@@ -98,9 +109,11 @@ mod builder;
 mod callback_url;
 mod constants;
 mod data;
+pub mod default_steps;
 mod element;
 mod minify;
 mod mustache;
+mod steps;
 mod template_data;
 
 pub use builder::JavaScriptBuilderElementBuilder;
@@ -113,4 +126,5 @@ pub use constants::{
 };
 pub use data::{JavaScriptBuilderElementData, JAVASCRIPT_BUILDER_DATA_KEY};
 pub use element::JavaScriptBuilderElement;
+pub use steps::{DefaultJavaScriptBuilderSteps, JavaScriptBuilderContext, JavaScriptBuilderSteps};
 pub use template_data::JavaScriptResource;

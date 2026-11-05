@@ -36,6 +36,8 @@ use crate::constants::{
     BUILDER_DEFAULT_OBJECT_NAME, BUILDER_DEFAULT_PROTOCOL, FODID_PRODUCT_NAME,
 };
 use crate::element::JavaScriptBuilderElement;
+use crate::mustache::Template;
+use crate::steps::{DefaultJavaScriptBuilderSteps, JavaScriptBuilderSteps, SharedSteps};
 
 /// Where an element's user prompt decision comes from.
 #[derive(Clone)]
@@ -95,13 +97,16 @@ impl fmt::Debug for UserPromptSource {
 /// ```
 #[derive(Debug, Clone)]
 pub struct JavaScriptBuilderElementBuilder {
-    host: String,
-    endpoint: String,
-    protocol: String,
-    object_name: String,
-    enable_cookies: bool,
-    minify: bool,
-    user_prompt: UserPromptSource,
+    pub(crate) host: String,
+    pub(crate) endpoint: String,
+    pub(crate) protocol: String,
+    pub(crate) object_name: String,
+    pub(crate) enable_cookies: bool,
+    pub(crate) minify: bool,
+    pub(crate) user_prompt: UserPromptSource,
+    pub(crate) steps: SharedSteps,
+    /// The template given by the caller, or `None` for the bundled one.
+    pub(crate) template: Option<Template>,
 }
 
 impl JavaScriptBuilderElementBuilder {
@@ -115,6 +120,44 @@ impl JavaScriptBuilderElementBuilder {
             enable_cookies: BUILDER_DEFAULT_ENABLE_COOKIES,
             minify: BUILDER_DEFAULT_MINIFY,
             user_prompt: UserPromptSource::Decided(false),
+            steps: SharedSteps::new(DefaultJavaScriptBuilderSteps),
+            template: None,
+        }
+    }
+
+    /// Use these steps to give the parameters, session id, sequence and user
+    /// prompt decision in place of the builder's own. See
+    /// [`JavaScriptBuilderSteps`].
+    pub fn set_steps(mut self, steps: impl JavaScriptBuilderSteps + 'static) -> Self {
+        self.steps = SharedSteps::new(steps);
+        self
+    }
+
+    /// Render the script from this Mustache template in place of the bundled
+    /// one.
+    ///
+    /// The template is given the values the bundled one is given, named in
+    /// the
+    /// [javascript-builder specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/javascript-builder.md),
+    /// with `_supportsFetch` and `_userPrompt` as well. Variables
+    /// (`{{name}}`, `{{&name}}` and `{{{name}}}`) are written without HTML
+    /// escaping, and sections (`{{#name}}` and `{{^name}}`) are rendered from
+    /// the boolean values. Lists, partials, lambdas, dotted names and
+    /// comments are not supported. The specification allows a template other
+    /// than the bundled one as long as the script still does everything the
+    /// bundled one does.
+    ///
+    /// A template with a tag or a section left open, or with a section closed
+    /// under another name, is a configuration error.
+    pub fn set_template(mut self, source: &str) -> Result<Self> {
+        match Template::parse(source) {
+            Ok(template) => {
+                self.template = Some(template);
+                Ok(self)
+            }
+            Err(error) => Err(Error::configuration(format!(
+                "The JavaScript template is not valid Mustache ({error})."
+            ))),
         }
     }
 
@@ -239,15 +282,7 @@ impl JavaScriptBuilderElementBuilder {
 
     /// Build the configured [`JavaScriptBuilderElement`].
     pub fn build(self) -> JavaScriptBuilderElement {
-        JavaScriptBuilderElement::from_parts(
-            self.host,
-            self.endpoint,
-            self.protocol,
-            self.object_name,
-            self.enable_cookies,
-            self.minify,
-            self.user_prompt,
-        )
+        JavaScriptBuilderElement::from_builder(self)
     }
 }
 
