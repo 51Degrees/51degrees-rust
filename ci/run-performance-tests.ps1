@@ -21,15 +21,17 @@ if (!(Test-Path -Path $publishStep -PathType Leaf)) {
 }
 
 # The IP Intelligence performance example reads the ASN file from the data
-# repository in the cxx submodule (51DEGREES_IPI_PATH). -Force downloads it
-# again even when an earlier run left one, so the figures are always for the
-# latest file. The script is resolved against $RepoName rather than the
-# caller's current directory, so a CI run from the folder above the checkout
-# and a local run from the repo root both find it. A failed download stops
-# the run, rather than measuring an older file. The script sets an exit code
-# only when it fails, so any code an earlier command left is cleared first.
+# repository in the cxx submodule (51DEGREES_IPI_PATH). In CI the file is
+# already there, restored from the Actions cache entry that the Data Files
+# workflow refreshes each day when the Distributor has a newer file, so the
+# script keeps it and asks for nothing. It downloads the file only when it is
+# missing, as on a first local run. The script is resolved against $RepoName
+# rather than the caller's current directory, so a CI run from the folder
+# above the checkout and a local run from the repo root both find it. A
+# failed download stops the run. The script sets an exit code only when it
+# fails, so any code an earlier command left is cleared first.
 $global:LASTEXITCODE = 0
-& (Join-Path $RepoName "cxx/data/get-data-files.ps1") 51Degrees-IPIV4AsnIpiV41.ipi -Force
+& (Join-Path $RepoName "cxx/data/get-data-files.ps1") 51Degrees-IPIV4AsnIpiV41.ipi
 if ($LASTEXITCODE) {
     throw "The ASN data file was not downloaded."
 }
