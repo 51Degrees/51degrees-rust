@@ -403,26 +403,31 @@ fn discovery_json_of_the_wrong_shape_logs_only_the_warning() {
 }
 
 #[test]
-fn each_retry_on_first_use_that_fails_logs_an_error_and_a_warning() {
-    let _serial = start();
-    let cloud = FakeCloud {
-        evidence_keys: (500, "fault"),
-        ..FakeCloud::default()
-    };
-    let data_requests = Arc::clone(&cloud.data_requests);
-    let pipeline = pipeline(cloud, true);
-    take_logged();
-    for request in 1..=2 {
-        process(&pipeline, &[("header.user-agent", "A")]);
-        assert_eq!(
-            take_logged(),
-            vec![
-                EVIDENCE_KEYS_ERROR,
-                "WARN Could not fetch evidence key filter from \
-                 'https://cloud.example.test/api/v4/evidencekeys'",
-            ],
-            "request {request}"
-        );
+fn each_retry_on_first_use_that_fails_logs_only_the_error() {
+    for (cloud, error) in [
+        (
+            FakeCloud {
+                evidence_keys: (500, "fault"),
+                ..FakeCloud::default()
+            },
+            EVIDENCE_KEYS_ERROR,
+        ),
+        (
+            FakeCloud {
+                properties: (500, "fault"),
+                ..FakeCloud::default()
+            },
+            PROPERTIES_ERROR,
+        ),
+    ] {
+        let _serial = start();
+        let data_requests = Arc::clone(&cloud.data_requests);
+        let pipeline = pipeline(cloud, true);
+        take_logged();
+        for request in 1..=2 {
+            process(&pipeline, &[("header.user-agent", "A")]);
+            assert_eq!(take_logged(), vec![error], "request {request}");
+        }
+        assert_eq!(data_requests.load(Ordering::Relaxed), 0);
     }
-    assert_eq!(data_requests.load(Ordering::Relaxed), 0);
 }

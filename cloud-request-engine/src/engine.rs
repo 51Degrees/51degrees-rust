@@ -326,8 +326,9 @@ impl CloudRequestEngine {
     ///
     /// The evidence keys are fetched first and a failure stops there, so an
     /// outage costs one failed request per call, and the recovery gate stops
-    /// the attempts while the service is failing. A failure is logged as .NET
-    /// logs it and returned, so suppressed process exceptions cover it.
+    /// the attempts while the service is failing. A failure logs the
+    /// discovery error, as .NET does, and is returned, so suppressed process
+    /// exceptions cover it. The warm-up warning is for the build alone.
     fn discover(&self) -> Result<()> {
         if self.has_loaded_metadata() {
             return Ok(());
@@ -344,13 +345,7 @@ impl CloudRequestEngine {
                 &self.endpoints,
                 origin,
                 &self.secrets,
-            )
-            .inspect_err(|_| {
-                log::warn!(
-                    "Could not fetch evidence key filter from '{}'",
-                    url_without_query(&self.endpoints.evidence_keys)
-                );
-            })?;
+            )?;
             let _ = self.evidence_filter.set(filter);
         }
         if self.public_properties.get().is_none() {
@@ -365,13 +360,7 @@ impl CloudRequestEngine {
                     &self.secrets,
                 ),
                 None => Ok(LicensedProducts::default()),
-            }
-            .inspect_err(|_| {
-                log::warn!(
-                    "Could not fetch public properties from '{}'",
-                    url_without_query(&self.endpoints.properties)
-                );
-            })?;
+            }?;
             let _ = self.public_properties.set(products);
         }
         Ok(())
