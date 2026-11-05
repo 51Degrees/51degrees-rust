@@ -32,20 +32,20 @@ reqwest-client = ["cloud", "fiftyone-ip-intelligence-cloud/reqwest-client"]
 on-premise = ["dep:fiftyone-ip-intelligence-onpremise", "dep:fiftyone-native"]
 
 [dependencies]
-fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
-fiftyone-pipeline-engines = { version = "4.5.2", path = "../pipeline-engines" }
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
+fiftyone-pipeline-engines = { version = "=4.5.2", path = "../pipeline-engines" }
 # The sequence and usage-sharing elements both builders add when usage sharing
 # is on.
-fiftyone-pipeline-engines-fiftyone = { version = "4.5.2", path = "../pipeline-engines-fiftyone" }
-fiftyone-ip-intelligence-shared = { version = "4.5.2", path = "../ip-intelligence-shared" }
-fiftyone-ip-intelligence-onpremise = { version = "4.5.2", path = "../ip-intelligence-onpremise", optional = true }
-fiftyone-ip-intelligence-cloud = { version = "4.5.2", path = "../ip-intelligence-cloud", optional = true }
-fiftyone-cloud-request-engine = { version = "4.5.2", path = "../cloud-request-engine", optional = true, default-features = false }
+fiftyone-pipeline-engines-fiftyone = { version = "=4.5.2", path = "../pipeline-engines-fiftyone" }
+fiftyone-ip-intelligence-shared = { version = "=4.5.2", path = "../ip-intelligence-shared" }
+fiftyone-ip-intelligence-onpremise = { version = "=4.5.2", path = "../ip-intelligence-onpremise", optional = true }
+fiftyone-ip-intelligence-cloud = { version = "=4.5.2", path = "../ip-intelligence-cloud", optional = true }
+fiftyone-cloud-request-engine = { version = "=4.5.2", path = "../cloud-request-engine", optional = true, default-features = false }
 # The on-premise builder names PerformanceProfile from the native wrapper in its
 # public surface. Link only IP Intelligence's copy of the common C library (the
 # `ipi` feature), matching the on-premise engine crate, so the two ABI
 # incompatible common C library builds never collide.
-fiftyone-native = { version = "4.5.2", path = "../native", default-features = false, features = ["ipi"], optional = true }
+fiftyone-native = { version = "=4.5.2", path = "../native", default-features = false, features = ["ipi"], optional = true }
 
 [dev-dependencies]
 # Depend on this crate itself with reqwest-client enabled, so its own tests get

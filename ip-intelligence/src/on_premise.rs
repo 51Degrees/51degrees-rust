@@ -62,6 +62,7 @@ pub struct OnPremiseIpIntelligencePipelineBuilder {
     data_update_service: Option<Arc<DataUpdateService>>,
     suppress_process_exceptions: bool,
     share_usage: bool,
+    concurrency: Option<u16>,
 }
 
 impl OnPremiseIpIntelligencePipelineBuilder {
@@ -83,6 +84,7 @@ impl OnPremiseIpIntelligencePipelineBuilder {
             data_update_service: None,
             suppress_process_exceptions: false,
             share_usage: cfg!(feature = "share-usage"),
+            concurrency: None,
         }
     }
 
@@ -90,6 +92,15 @@ impl OnPremiseIpIntelligencePipelineBuilder {
     /// engine builder's `performance_profile`.
     pub fn performance_profile(mut self, profile: PerformanceProfile) -> Self {
         self.profile = profile;
+        self
+    }
+
+    /// Set the expected concurrency, which is the number of threads that will
+    /// look up through the pipeline at once. Mirrors the engine builder's
+    /// `concurrency`, which says what it sizes under each profile. Unset, the
+    /// profile's own expected concurrency is kept.
+    pub fn concurrency(mut self, concurrency: u16) -> Self {
+        self.concurrency = Some(concurrency);
         self
     }
 
@@ -239,6 +250,9 @@ impl OnPremiseIpIntelligencePipelineBuilder {
         if let Some(tier) = self.data_source_tier {
             engine_builder = engine_builder.data_source_tier(tier);
         }
+        if let Some(concurrency) = self.concurrency {
+            engine_builder = engine_builder.concurrency(concurrency);
+        }
         if let Some(url) = self.data_update_url {
             engine_builder = engine_builder.data_update_url(url);
         }
@@ -360,6 +374,34 @@ mod tests {
             .build()
             .expect("the quiet pipeline should build");
         assert!(quiet.resource::<DataUpdateService>().is_none());
+    }
+
+    /// The expected concurrency reaches the engine, as one more than the
+    /// Balanced profile allows is refused only if it gets there. The profile's
+    /// smallest cache, the profiles, holds 10,000 entries, and a cache needs at
+    /// least as many entries in each of its parts as it has parts.
+    #[test]
+    fn on_premise_builder_passes_the_expected_concurrency_on() {
+        const BALANCED_MOST_CONCURRENCY: u16 = 100;
+        let Some(data_file) = asn_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping concurrency");
+            return;
+        };
+        let result = IpIntelligencePipelineBuilder::on_premise(&data_file)
+            .performance_profile(PerformanceProfile::Balanced)
+            .concurrency(BALANCED_MOST_CONCURRENCY + 1)
+            // Off so the test sends nothing to 51Degrees.
+            .share_usage(false)
+            // Off so the build needs no licence key.
+            .auto_update(false)
+            .file_system_watcher(false)
+            .build();
+        let refused = matches!(
+            result,
+            Err(fiftyone_pipeline_core::Error::Native { status, .. })
+                if status == "InvalidCollectionConfig"
+        );
+        assert!(refused, "the build should be refused for its concurrency");
     }
 
     #[test]

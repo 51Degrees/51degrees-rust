@@ -872,6 +872,7 @@ name = "fiftyone-pipeline-core"
 version = "4.5.2"
 dependencies = [
  "ahash",
+ "indexmap",
  "log",
  "thiserror 2.0.18",
 ]
@@ -904,8 +905,8 @@ dependencies = [
  "fiftyone-pipeline-engines",
  "fiftyone-pipeline-engines-fiftyone",
  "flate2",
+ "libc",
  "log",
- "quick-xml",
  "reqwest",
  "thiserror 2.0.18",
  "tiny_http",
@@ -2361,15 +2362,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "quick-xml"
-version = "0.37.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
-dependencies = [
- "memchr",
 ]
 
 [[package]]
