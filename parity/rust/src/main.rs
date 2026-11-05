@@ -81,6 +81,10 @@ const SEQUENCE_KEY: &str = "query.sequence";
 /// The `pipeline` of a case that runs through the values pipeline.
 const VALUES_PIPELINE: &str = "values";
 
+/// The JavaScript builder's settings in the values pipeline.
+const VALUES_ENDPOINT: &str = "json";
+const VALUES_OBJECT_NAME: &str = "fod";
+
 /// One corpus case. `serde_json` keeps the evidence in file order.
 #[derive(Deserialize)]
 struct Case {
@@ -178,18 +182,26 @@ fn build_pipeline(args: &Args) -> Result<Arc<Pipeline>> {
         .build()?)
 }
 
-/// Sequence, the values element and the JSON builder, for the cases that
-/// compare the JSON byte for byte. The crates' Sequence element has data of
-/// its own, which .NET's does not, so the builder here leaves that data out.
+/// Sequence, the values element and the two builders, for the cases that
+/// compare the JSON and the JavaScript byte for byte. The crates' Sequence
+/// element has data of its own, which .NET's does not, so the JSON builder
+/// here leaves that data out.
 fn build_values_pipeline() -> Result<Arc<Pipeline>> {
     let sequence = Arc::new(SequenceElement::new());
     let json = JsonBuilderElementBuilder::new()
         .exclude_element(sequence.data_key())
         .build();
+    let javascript = JavaScriptBuilderElementBuilder::new()
+        .set_endpoint(VALUES_ENDPOINT)
+        .set_object_name(VALUES_OBJECT_NAME)?
+        .set_enable_cookies(false)
+        .set_minify(false)
+        .build();
     Ok(Pipeline::builder()
         .add_element(sequence)
         .add_element(Arc::new(ValuesElement::new()))
         .add_element(Arc::new(json))
+        .add_element(Arc::new(javascript))
         .suppress_process_exceptions(true)
         .build()?)
 }

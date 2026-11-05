@@ -35,18 +35,29 @@ rather than thrown. A case runs through the first unless its `pipeline` is
 6. The JavaScript builder, with minification off, because the two languages
    use different minifiers.
 
-The values pipeline has the Sequence element, the values element and the
-JSON builder. The values element is part of each program. Its data holds one
-of each kind of value the JSON builder writes, being strings that need
-escaping, doubles and 32-bit floats that need an exponent or a decimal point,
-a whole number, true or false, a list, a property with no value and its
-reason, a delayed JavaScript property and a property naming it as evidence,
-and a weighted list. It also adds two errors and a warning. With no engine in
-the pipeline, nothing the engines give differently reaches the JSON, so its
-text can be the same on both sides, and the comparison then checks it byte
-for byte. The crates' JSON builder leaves the crates' Sequence element's data
-out there, because .NET's Sequence element has none
+The values pipeline has the Sequence element, the values element, the JSON
+builder and the JavaScript builder. The values element is part of each
+program. Its data holds one of each kind of value the JSON builder writes,
+being strings that need escaping, doubles and 32-bit floats that need an
+exponent or a decimal point, a whole number, true or false, a list, a
+property with no value and its reason, a delayed JavaScript property and a
+property naming it as evidence, and a weighted list. Last comes `Promise`,
+which the JavaScript builder reads, taken from the `header.values-promise`
+evidence and with no value when that is absent. The element also adds two
+errors and a warning. With no engine in the pipeline, nothing the engines
+give differently reaches the JSON or the JavaScript, so their text can be
+the same on both sides, and the comparison then checks both byte for byte,
+apart from the JavaScript's line endings (see "The comparison"). The crates'
+JSON builder leaves the crates' Sequence element's data out there, because
+.NET's Sequence element has none
 ([#231](https://github.com/51Degrees/51degrees-rust/issues/231)).
+
+The JavaScript builder in the values pipeline calls back to the endpoint
+`json`, names its object `fod`, has cookies and minification off, and takes
+the host and protocol from the evidence. The `values-promise-` cases run in
+turn with `Promise` set to `Full`, then with no value, then `Full` again,
+so the builder has to decide for each request whether promises are on
+([#230](https://github.com/51Degrees/51degrees-rust/issues/230)).
 
 ## The line
 
@@ -77,7 +88,14 @@ compared as well, so allowing a type never hides a value. The JSON output
 is compared by structure, then by
 key order, then as text, so a path such as `json.device.ismobile` names the
 key that differs. The JavaScript and the usage record are compared as text,
-and the report shows the first line that differs.
+and the report shows the first line that differs. When the two texts are the
+same once each CRLF is read as LF, the difference is of kind `lineEndings`
+instead, and each side is the number of lines it ends with CRLF. The .NET
+4.5.129 package embeds its JavaScript template with CRLF line endings, where
+the template the specification names and the crates' copy have LF, so each
+line of .NET's script that comes from the template ends with CRLF. The
+`lineEndings` entry in `allowed-differences.json` allows that and nothing
+else, because the crates' side must have no CRLF.
 
 | Kind | Meaning |
 | --- | --- |
@@ -89,6 +107,7 @@ and the report shows the first line that differs.
 | `noValueMessage` | The reasons for no value differ. |
 | `order` | The same keys in a different order. |
 | `text` | The same structure written differently. |
+| `lineEndings` | The same text once each CRLF is read as LF. |
 | `presence` | One side wrote null. |
 
 A session id the Sequence element generates is random, so when a case

@@ -48,6 +48,10 @@ const GUID_HYPHENS: [usize; 4] = [8, 13, 18, 23];
 /// Text longer than this is cut in a report.
 const REPORT_TEXT_LIMIT: usize = 300;
 
+/// The two line endings a text may use.
+const CRLF: &str = "\r\n";
+const LF: &str = "\n";
+
 /// One corpus case.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Case {
@@ -90,6 +94,9 @@ pub enum Kind {
     Order,
     /// The same structure, written differently.
     Text,
+    /// The same text once each CRLF is read as LF. Each side is the number
+    /// of lines it ends with CRLF.
+    LineEndings,
     /// One side wrote null and the other did not.
     Presence,
 }
@@ -107,6 +114,7 @@ impl Kind {
             Kind::NoValueMessage => "noValueMessage",
             Kind::Order => "order",
             Kind::Text => "text",
+            Kind::LineEndings => "lineEndings",
             Kind::Presence => "presence",
         }
     }
@@ -486,9 +494,18 @@ impl Out<'_> {
         }
     }
 
-    /// Compares text exactly, reporting the first line that differs.
+    /// Compares text exactly, reporting the first line that differs, or
+    /// only the line endings when nothing else differs.
     fn text(&mut self, path: &str, dotnet: &Value, rust: &Value) {
         match (dotnet.as_str(), rust.as_str()) {
+            (Some(d), Some(r)) if d != r && d.replace(CRLF, LF) == r.replace(CRLF, LF) => {
+                self.push(
+                    path,
+                    Kind::LineEndings,
+                    &Value::from(d.matches(CRLF).count()),
+                    &Value::from(r.matches(CRLF).count()),
+                );
+            }
             (Some(d), Some(r)) if d != r => {
                 let (line, d_line, r_line) = first_different_line(d, r);
                 self.push(
@@ -825,6 +842,43 @@ mod tests {
         let differences = compare_case(&case("a", true), &line(true), &rust);
         assert_eq!(differences.len(), 1);
         assert_eq!(differences[0].rust, json!("line 2: var b = 3;"));
+    }
+
+    #[test]
+    fn text_that_differs_only_in_line_endings_is_its_own_kind() {
+        let mut dotnet = line(true);
+        dotnet["javascript"] = json!("var a = 1;\r\nvar b = 2;\r\n");
+        let mut rust = line(true);
+        rust["javascript"] = json!("var a = 1;\nvar b = 2;\n");
+        let differences = compare_case(&case("a", true), &dotnet, &rust);
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].path, "javascript");
+        assert_eq!(differences[0].kind, Kind::LineEndings);
+        assert_eq!(differences[0].dotnet, json!(2));
+        assert_eq!(differences[0].rust, json!(0));
+    }
+
+    #[test]
+    fn text_that_differs_in_line_endings_and_content_is_text() {
+        let mut dotnet = line(true);
+        dotnet["javascript"] = json!("var a = 1;\r\nvar b = 2;");
+        let mut rust = line(true);
+        rust["javascript"] = json!("var a = 1;\nvar b = 3;");
+        let differences = compare_case(&case("a", true), &dotnet, &rust);
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].kind, Kind::Text);
+        assert_eq!(differences[0].rust, json!("line 2: var b = 3;"));
+    }
+
+    #[test]
+    fn a_lone_carriage_return_is_not_a_line_ending() {
+        let mut dotnet = line(true);
+        dotnet["javascript"] = json!("var a = 1;\rvar b = 2;");
+        let mut rust = line(true);
+        rust["javascript"] = json!("var a = 1;\nvar b = 2;");
+        let differences = compare_case(&case("a", true), &dotnet, &rust);
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].kind, Kind::Text);
     }
 
     #[test]
