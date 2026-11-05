@@ -140,8 +140,11 @@ impl JsonBuilderElementBuilder {
     /// a list of records adds the list's name, as in
     /// `hardware.profiles.hardwarename`, which keeps the `profiles` list with
     /// only that property in each record. Listing `hardware.profiles` keeps
-    /// every property of each record. Names are matched without regard to
-    /// case.
+    /// every property of each record, and listing an element data key alone,
+    /// as in `device`, selects every property of that element. Names are
+    /// matched without regard to case. Each name is trimmed of white space at
+    /// either end and a blank name is ignored, so a list of blank names
+    /// writes every property, as an empty list does.
     ///
     /// JavaScript properties and meta properties are always written, as the
     /// specification says. So a property that is not selected still gives
@@ -162,6 +165,13 @@ impl JsonBuilderElementBuilder {
     /// assert!(element.is_property_selected("device.IsMobile"));
     /// assert!(element.is_property_selected("hardware.profiles"));
     /// assert!(!element.is_property_selected("device.browsername"));
+    ///
+    /// // A blank setting split on commas gives one empty name, which is
+    /// // ignored.
+    /// let element = JsonBuilderElement::builder()
+    ///     .set_properties("".split(','))
+    ///     .build();
+    /// assert!(element.is_property_selected("device.browsername"));
     /// ```
     pub fn set_properties<I, S>(mut self, names: I) -> Self
     where
@@ -170,7 +180,8 @@ impl JsonBuilderElementBuilder {
     {
         self.selected_properties = names
             .into_iter()
-            .map(|n| n.as_ref().to_lowercase())
+            .map(|n| n.as_ref().trim().to_lowercase())
+            .filter(|n| !n.is_empty())
             .collect();
         self
     }

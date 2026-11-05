@@ -223,8 +223,9 @@ impl JsonBuilderElement {
     /// Every name is selected when that list is empty. Otherwise a name is
     /// selected when it is listed, when a listed name lies under it, so
     /// `hardware.profiles` is selected for `hardware.profiles.hardwarename`,
-    /// or when it lies under a listed name. Names are matched without regard
-    /// to case. The default steps write a JavaScript property, and every
+    /// or when it lies under a listed name, so every property of `device` is
+    /// selected when `device` is listed. Names are matched without regard to
+    /// case. The default steps write a JavaScript property, and every
     /// property's meta properties, whatever this gives.
     pub fn is_property_selected(&self, complete_name: &str) -> bool {
         if self.selects_every_property() {

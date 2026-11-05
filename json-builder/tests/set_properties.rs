@@ -334,6 +334,57 @@ fn names_are_complete_and_matched_ignoring_case() {
     );
 }
 
+/// A blank name is ignored, so `[""]`, which splitting a blank setting on
+/// commas gives, writes the same JSON as no list. A name is trimmed of white
+/// space at either end.
+#[test]
+fn blank_names_are_ignored_and_names_are_trimmed() {
+    let elements = || vec![device(), hardware()];
+    let default = run(elements(), JsonBuilderElement::builder());
+    for blank in [vec![""], vec![" ", "\t", ""]] {
+        let value = run(
+            elements(),
+            JsonBuilderElement::builder().set_properties(blank),
+        );
+        assert_eq!(value, default);
+    }
+    let split = run(
+        elements(),
+        JsonBuilderElement::builder().set_properties("".split(',')),
+    );
+    assert_eq!(split, default);
+
+    let padded = run(
+        elements(),
+        JsonBuilderElement::builder().set_properties([" device.ismobile\t", ""]),
+    );
+    let plain = run(
+        elements(),
+        JsonBuilderElement::builder().set_properties(["device.ismobile"]),
+    );
+    assert_eq!(padded, plain);
+    assert_eq!(
+        keys(&parse(&padded)["device"]),
+        ["ismobile", "javascriptscript", "platformnamenullreason"]
+    );
+}
+
+/// Listing an element data key alone selects every property of that
+/// element, and of no other.
+#[test]
+fn an_element_key_selects_the_whole_element() {
+    let all = parse(&run(
+        vec![device(), hardware()],
+        JsonBuilderElement::builder(),
+    ));
+    let value = parse(&run(
+        vec![device(), hardware()],
+        JsonBuilderElement::builder().set_properties(["Device"]),
+    ));
+    assert_eq!(value["device"], all["device"]);
+    assert_eq!(value["hardware"], json!({}));
+}
+
 /// The selection rule, through the element's own check.
 #[test]
 fn is_property_selected_follows_the_rule() {
