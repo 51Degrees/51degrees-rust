@@ -25,9 +25,10 @@
 //! On-premise IP Intelligence metadata console example.
 //!
 //! Inspects an on-premise engine and prints its available properties (with
-//! value types and any descriptions/tiers), the evidence keys its data file
-//! defines and a summary of the data file in use. The descriptive block the
-//! documentation tooling renders lives at the bottom of the file.
+//! value types and any descriptions/tiers), which Enterprise properties the
+//! data file lacks, the evidence keys its data file defines and a summary of
+//! the data file in use. The descriptive block the documentation tooling
+//! renders lives at the bottom of the file.
 //!
 //! @snippet ipi-onprem-metadata.rs example
 
@@ -37,6 +38,17 @@ use anyhow::Context;
 use fiftyone_ip_intelligence::{IpIntelligenceOnPremiseEngine, PerformanceProfile};
 use fiftyone_pipeline_core::FlowElement;
 use fiftyone_pipeline_engines::AspectEngine;
+use ip_intelligence_examples::ENTERPRISE_PROPERTIES;
+
+/// Where to ask about a copy of the Enterprise data file.
+const CONTACT_US_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-metadata.rs&utm_term=enterprise-data-file";
+
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-metadata.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-metadata.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-metadata.rs&utm_term=find-out-more"),
+];
 
 /// The options that drive a run of this example.
 pub struct ExampleOptions {
@@ -77,9 +89,19 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
 
     output_data_file_details(&engine, out)?;
     output_property_details(&engine, out)?;
+    let missing = output_enterprise_properties(&engine, out)?;
     output_evidence_key_details(&engine, out)?;
     output_warnings(&engine, out)?;
 
+    if let Some(message) = examples_shared::enterprise_data_file_message(&missing, CONTACT_US_URL) {
+        writeln!(out)?;
+        writeln!(out, "{message}")?;
+    }
+    examples_shared::write_find_out_more(
+        out,
+        FIND_OUT_MORE,
+        examples_shared::ON_PREMISE_REPOSITORIES,
+    )?;
     Ok(())
 }
 // [example]
@@ -144,6 +166,29 @@ fn output_property_details(
         }
     }
     Ok(())
+}
+
+/// Print whether the data file carries each property only the Enterprise data
+/// file has, and return the ones it does not.
+fn output_enterprise_properties(
+    engine: &IpIntelligenceOnPremiseEngine,
+    out: &mut dyn Write,
+) -> anyhow::Result<Vec<&'static str>> {
+    let available = engine.available_property_names();
+    writeln!(out)?;
+    writeln!(out, "Enterprise properties:")?;
+    for name in ENTERPRISE_PROPERTIES {
+        let state = if examples_shared::is_available(name, &available) {
+            "in this data file"
+        } else {
+            examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+        };
+        writeln!(out, "\t{name}: {state}")?;
+    }
+    Ok(examples_shared::missing_properties(
+        ENTERPRISE_PROPERTIES,
+        &available,
+    ))
 }
 
 /// Print the evidence keys the engine accepts, which its data file defines, in
@@ -226,6 +271,14 @@ mod tests {
         assert!(query.is_some() && server.is_some(), "{printed}");
         assert!(query < server, "query keys are tried first: {printed}");
         assert!(!printed.contains("header.user-agent"));
+        assert!(printed.contains(examples_shared::FIND_OUT_MORE_HEADING));
+        // The ASN file carries none of the Enterprise properties, so the run
+        // says so. 51DEGREES_IPI_PATH can name another file.
+        let asn_file = examples_shared::IPI_ASN_RELATIVE_PATH.rsplit('/').next();
+        if options.data_file.file_name().and_then(|n| n.to_str()) == asn_file {
+            assert!(printed.contains("Country: needs the Enterprise data file"));
+            assert!(printed.contains("utm_term=enterprise-data-file"));
+        }
     }
 }
 
@@ -248,8 +301,16 @@ mod tests {
  *    accepted as a query value and as a server value, and every query value
  *    is tried before any server value.
  *
+ * It then lists the properties only the Enterprise data file carries
+ * (`Country`, `CountryCode`, `Town`, `Latitude`, `Longitude`, `IsHosted` and
+ * `IsVPN`) and whether the data file in use has each, judged from the data
+ * file's own list of properties. With a free file each says "needs the
+ * Enterprise data file", and the run names them with a link to contact
+ * 51Degrees about a copy of the Enterprise data file.
+ *
  * It also prints the standard data-file warnings (for an out-of-date or
- * Lite-tier file) via the shared `check_data_file` helper.
+ * Lite-tier file) via the shared `check_data_file` helper, and ends with a
+ * "Find out more" section.
  *
  * # Data file
  *

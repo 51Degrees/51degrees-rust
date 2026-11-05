@@ -164,6 +164,7 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
     for data_file in &options.data_files {
         let available = ip_intelligence_examples::data_file_properties(data_file)?;
         look_up(data_file, &options.ips, &available, out)?;
+        ip_intelligence_examples::write_data_file_warnings(data_file, out)?;
         carried.extend(available);
     }
 

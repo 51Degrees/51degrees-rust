@@ -25,8 +25,9 @@
 //! On-premise IP Intelligence metrics console example.
 //!
 //! Reports per-lookup insight for each IP address: the wall-clock time the
-//! lookup took, whether the result came from a cache, and the resolved value of
-//! a summary property, in place of Device Detection's match metrics. The
+//! lookup took, whether the result came from a cache, the resolved value of a
+//! summary property and the location accuracy measures only the Enterprise
+//! data file carries, in place of Device Detection's match metrics. The
 //! descriptive block the documentation tooling renders lives at the bottom of
 //! the file.
 //!
@@ -40,6 +41,16 @@ use anyhow::Context;
 use fiftyone_ip_intelligence::{IpIntelligencePipelineBuilder, PerformanceProfile, IP_DATA_KEY};
 use fiftyone_pipeline_core::{Evidence, Pipeline};
 use fiftyone_pipeline_engines::AspectData;
+
+/// Where to ask about a copy of the Enterprise data file.
+const CONTACT_US_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-metrics.rs&utm_term=enterprise-data-file";
+
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-metrics.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-metrics.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-metrics.rs&utm_term=find-out-more"),
+];
 
 /// The options that drive a run of this example.
 pub struct ExampleOptions {
@@ -74,17 +85,41 @@ impl ExampleOptions {
 /// properties.
 const SUMMARY_PROPERTY: &str = "Asn";
 
+/// How accurate each lookup's location is. Only the Enterprise data file
+/// carries these.
+const ACCURACY_PROPERTIES: &[&str] = &[
+    "AccuracyRadiusMin",
+    "AccuracyRadiusMax",
+    "LocationConfidence",
+];
+
+/// The properties the pipeline is asked for. AsnName and RegisteredName are
+/// included so the request holds a property each free file carries, because a
+/// data file opens only when it carries at least one property asked for.
+const REQUESTED_PROPERTIES: &[&str] = &[
+    SUMMARY_PROPERTY,
+    "AsnName",
+    "RegisteredName",
+    "AccuracyRadiusMin",
+    "AccuracyRadiusMax",
+    "LocationConfidence",
+];
+
 // [example]
 /// Run the metrics example, writing all output to `out`.
 ///
 /// Usage sharing is not enabled, as this is a console example.
 pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> {
+    // The data file's own list of properties says which accuracy measures it
+    // can answer. The free files carry none of them.
+    let available = ip_intelligence_examples::data_file_properties(&options.data_file)?;
+
     // HighPerformance favours lookup speed, which suits a metrics-focused run.
     // The other profiles (LowMemory, InMemory, Balanced, Default) trade memory
     // for speed and are exercised by the performance example.
     let pipeline: Arc<Pipeline> = IpIntelligencePipelineBuilder::on_premise(&options.data_file)
         .performance_profile(PerformanceProfile::HighPerformance)
-        .properties([SUMMARY_PROPERTY, "AsnName"])
+        .properties(REQUESTED_PROPERTIES.iter().copied())
         .auto_update(false)
         .file_system_watcher(false)
         .build()
@@ -98,7 +133,7 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
     writeln!(out)?;
 
     for ip in &options.ips {
-        report_lookup(&pipeline, ip, out)?;
+        report_lookup(&pipeline, ip, &available, out)?;
     }
 
     writeln!(out)?;
@@ -109,13 +144,31 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
          the single value the data file resolves for each lookup."
     )?;
 
+    writeln!(out)?;
+    ip_intelligence_examples::write_data_file_warnings(&options.data_file, out)?;
+    let missing = examples_shared::missing_properties(ACCURACY_PROPERTIES, &available);
+    if let Some(message) = examples_shared::enterprise_data_file_message(&missing, CONTACT_US_URL) {
+        writeln!(out)?;
+        writeln!(out, "{message}")?;
+    }
+    examples_shared::write_find_out_more(
+        out,
+        FIND_OUT_MORE,
+        examples_shared::ON_PREMISE_REPOSITORIES,
+    )?;
     Ok(())
 }
 // [example]
 
-/// Time one lookup and print its insight: elapsed time, cache-hit flag and the
-/// resolved value of the summary property.
-fn report_lookup(pipeline: &Arc<Pipeline>, ip: &str, out: &mut dyn Write) -> anyhow::Result<()> {
+/// Time one lookup and print its insight: elapsed time, cache-hit flag, the
+/// resolved value of the summary property and the accuracy measures.
+/// `available` holds the properties the data file carries.
+fn report_lookup(
+    pipeline: &Arc<Pipeline>,
+    ip: &str,
+    available: &[String],
+    out: &mut dyn Write,
+) -> anyhow::Result<()> {
     let mut data =
         pipeline.create_flow_data_with(Evidence::builder().add("query.client-ip", ip).build());
 
@@ -142,6 +195,14 @@ fn report_lookup(pipeline: &Arc<Pipeline>, ip: &str, out: &mut dyn Write) -> any
     )?;
     writeln!(out, "\tCache hit: {}", ip_data.cache_hit())?;
     writeln!(out, "\t{SUMMARY_PROPERTY}: {value}")?;
+    for name in ACCURACY_PROPERTIES {
+        let accuracy = if examples_shared::is_available(name, available) {
+            examples_shared::get_property_as_string(ip_data, name)
+        } else {
+            examples_shared::NEEDS_ENTERPRISE_DATA_FILE.to_owned()
+        };
+        writeln!(out, "\t{name}: {accuracy}")?;
+    }
 
     Ok(())
 }
@@ -195,6 +256,14 @@ mod tests {
             printed.contains("AS13335"),
             "expected a real weighted ASN value, output was:\n{printed}"
         );
+        assert!(printed.contains(examples_shared::FIND_OUT_MORE_HEADING));
+        // The ASN file carries no accuracy measures, so the run says so.
+        // 51DEGREES_IPI_PATH can name another file.
+        let asn_file = examples_shared::IPI_ASN_RELATIVE_PATH.rsplit('/').next();
+        if options.data_file.file_name().and_then(|n| n.to_str()) == asn_file {
+            assert!(printed.contains("AccuracyRadiusMin: needs the Enterprise data file"));
+            assert!(printed.contains("utm_term=enterprise-data-file"));
+        }
     }
 }
 
@@ -211,6 +280,15 @@ mod tests {
  * 1. The wall-clock time the lookup took, measured around `FlowData::process`.
  * 2. Whether the result was served from a cache.
  * 3. The resolved value of a summary property.
+ * 4. How accurate the location is, from `AccuracyRadiusMin`,
+ *    `AccuracyRadiusMax` and `LocationConfidence`, which only the Enterprise
+ *    data file carries. The data file's own list of properties says which it
+ *    can answer, so with a free file each says "needs the Enterprise data
+ *    file", and the run names them with a link to contact 51Degrees about a
+ *    copy of the Enterprise data file.
+ *
+ * It also prints the standard data-file warnings and ends with a "Find out
+ * more" section.
  *
  * The example builds the pipeline with the `HighPerformance` profile. The
  * performance example explores how the other profiles (LowMemory, InMemory,

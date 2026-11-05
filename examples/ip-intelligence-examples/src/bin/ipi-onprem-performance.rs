@@ -40,8 +40,34 @@ use anyhow::Context;
 use fiftyone_ip_intelligence::{IpIntelligencePipelineBuilder, PerformanceProfile, IP_DATA_KEY};
 use fiftyone_pipeline_core::{Evidence, Pipeline};
 
+/// Where to ask about a copy of the Enterprise data file.
+const CONTACT_US_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-performance.rs&utm_term=enterprise-data-file";
+
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-performance.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-performance.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-performance.rs&utm_term=find-out-more"),
+];
+
 /// The relative path to the IP-intelligence evidence file in the data submodule.
 const IPI_EVIDENCE_RELATIVE_PATH: &str = "cxx/data/ip-intelligence/evidence.yml";
+
+/// The properties each lookup asks for. The free ASN file carries Asn, the
+/// free Lite file RegisteredName, and only the Enterprise data file the
+/// location ones. A data file opens only when it carries at least one property
+/// asked for, so each free file is covered.
+const REQUESTED_PROPERTIES: &[&str] = &[
+    "Asn",
+    "RegisteredName",
+    "Country",
+    "Town",
+    "Latitude",
+    "Longitude",
+];
+
+/// The requested properties only the Enterprise data file carries.
+const ENTERPRISE_REQUESTED: &[&str] = &["Country", "Town", "Latitude", "Longitude"];
 
 /// The options that drive a run of this example.
 pub struct ExampleOptions {
@@ -133,7 +159,7 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
     // https://51degrees.com/documentation/_device_detection__features__performance_options.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-performance.rs&utm_term=performance-options
     let pipeline: Arc<Pipeline> = IpIntelligencePipelineBuilder::on_premise(&options.data_file)
         .performance_profile(PerformanceProfile::InMemory)
-        .properties(["Asn"])
+        .properties(REQUESTED_PROPERTIES.iter().copied())
         .auto_update(false)
         .file_system_watcher(false)
         .build()
@@ -199,6 +225,34 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
         )?;
     }
 
+    // The data file's own list of properties says which requested properties
+    // it can answer. The free files carry none of the location ones.
+    let available = ip_intelligence_examples::data_file_properties(&options.data_file)?;
+    writeln!(out)?;
+    writeln!(out, "Properties each lookup asked for:")?;
+    for name in REQUESTED_PROPERTIES {
+        let state = if examples_shared::is_available(name, &available) {
+            "in this data file"
+        } else if ENTERPRISE_REQUESTED.contains(name) {
+            examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+        } else {
+            "not in this data file"
+        };
+        writeln!(out, "\t{name}: {state}")?;
+    }
+
+    writeln!(out)?;
+    ip_intelligence_examples::write_data_file_warnings(&options.data_file, out)?;
+    let missing = examples_shared::missing_properties(ENTERPRISE_REQUESTED, &available);
+    if let Some(message) = examples_shared::enterprise_data_file_message(&missing, CONTACT_US_URL) {
+        writeln!(out)?;
+        writeln!(out, "{message}")?;
+    }
+    examples_shared::write_find_out_more(
+        out,
+        FIND_OUT_MORE,
+        examples_shared::ON_PREMISE_REPOSITORIES,
+    )?;
     Ok(())
 }
 // [example]
@@ -336,6 +390,14 @@ mod tests {
         assert!(printed.contains("Single-threaded result"));
         assert!(printed.contains("Multi-threaded result"));
         assert!(printed.contains("lookups/sec"));
+        assert!(printed.contains(examples_shared::FIND_OUT_MORE_HEADING));
+        // The ASN file carries no location properties, so the run says so.
+        // 51DEGREES_IPI_PATH can name another file.
+        let asn_file = examples_shared::IPI_ASN_RELATIVE_PATH.rsplit('/').next();
+        if options.data_file.file_name().and_then(|n| n.to_str()) == asn_file {
+            assert!(printed.contains("Country: needs the Enterprise data file"));
+            assert!(printed.contains("utm_term=enterprise-data-file"));
+        }
     }
 
     /// The results file CI publishes must be written in the shared schema, with
@@ -386,6 +448,14 @@ mod tests {
  *    safe to use concurrently.
  * 4. Report the headline metrics: total lookups, elapsed time, throughput
  *    (lookups per second) and the mean time per lookup.
+ *
+ * Each lookup asks for `Asn` and the location properties `Country`, `Town`,
+ * `Latitude` and `Longitude`, which only the Enterprise data file carries.
+ * After the timed passes the run lists which of them the data file has,
+ * judged from the data file's own list of properties, prints the standard
+ * data-file warnings, names the properties the file lacks with a link to
+ * contact 51Degrees about a copy of the Enterprise data file, and ends with a
+ * "Find out more" section.
  *
  * # Data file
  *
