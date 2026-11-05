@@ -52,7 +52,7 @@ $Web = @(
 )
 
 # What every example's output must carry.
-$ContactUs = "https://51degrees.com/contact-us?"
+$ContactUs = "51degrees.com/contact-us?utm_source=code"
 $EnterpriseTerm = "utm_term=enterprise-data-file"
 $FindOutMore = "Find out more"
 
