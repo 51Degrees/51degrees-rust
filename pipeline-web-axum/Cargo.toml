@@ -29,9 +29,9 @@ tokio = { workspace = true, features = ["rt"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tower = { workspace = true, features = ["util"] }
 serde_json.workspace = true
-fiftyone-pipeline-engines-fiftyone = { version = "=4.5.2", path = "../pipeline-engines-fiftyone" }
-fiftyone-json-builder = { version = "=4.5.2", path = "../json-builder" }
-fiftyone-javascript-builder = { version = "=4.5.2", path = "../javascript-builder" }
+fiftyone-pipeline-engines-fiftyone = { version = "4.5.2", path = "../pipeline-engines-fiftyone" }
+fiftyone-json-builder = { version = "4.5.2", path = "../json-builder" }
+fiftyone-javascript-builder = { version = "4.5.2", path = "../javascript-builder" }
 
 [package.metadata.docs.rs]
 # Build the documentation on docs.rs with every feature enabled, so the

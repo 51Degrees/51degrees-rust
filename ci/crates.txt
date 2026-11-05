@@ -1,6 +1,6 @@
 # The 51Degrees crates published to crates.io, in dependency order, so that a
-# crate appears after every workspace crate it depends on. The crates require
-# each other exactly, so each needs those versions on crates.io before it is
+# crate appears after every workspace crate it depends on. Each crate needs the
+# versions it requires, dev-dependencies included, on crates.io before it is
 # published, and ci/check-crate-requirements.ps1 fails on an order that would
 # not give it them.
 #

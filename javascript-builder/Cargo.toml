@@ -70,7 +70,7 @@ oxc = { version = "0.136", features = ["minifier", "codegen"], optional = true }
 # crate is needed for that. serde_json is reused for asserting the parameters JSON.
 # The 51Did cloud engine is used only to check that the product name this crate
 # looks for is the element data key that engine uses.
-fiftyone-fodid-cloud = { version = "=4.5.3", path = "../fodid-cloud" }
+fiftyone-fodid-cloud = { version = "4.5.3", path = "../fodid-cloud" }
 
 [package.metadata.docs.rs]
 # Build the documentation on docs.rs with every feature enabled, so the

@@ -17,7 +17,7 @@ cargo add fiftyone-ip-intelligence
 
 The crates below list the others. To build from source, see [Building](#building).
 
-The crates of one release require each other at exactly that release's version, so a project keeps all its 51Degrees crates at one version and `cargo update` moves them together. Pinning a crate with `=` therefore also pins the crates beneath it, and the C library they build.
+The crates of one release require each other at exactly that release's version, so a project keeps all its 51Degrees crates at one version and `cargo update` moves them together. Cargo stops with an error if they come from different releases. Pinning a crate with `=` therefore also pins the crates beneath it, and the C library they build.
 
 Try the [User-Agent tester](https://51degrees.com/developers/user-agent-tester?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install) and [IP tester](https://51degrees.com/developers/ip-tester?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install). For cloud use, [create a Resource Key](https://configure.51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install).
 

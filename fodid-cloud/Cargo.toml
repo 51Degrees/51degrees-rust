@@ -29,7 +29,7 @@ reqwest-client = ["fiftyone-cloud-request-engine/reqwest-client"]
 # The tests create a real signed 51Did envelope to stand in for the cloud,
 # which needs the OWID creator types fodid exposes under its creator
 # feature.
-fodid = { version = "=4.5.5", path = "../fodid", features = ["creator"] }
+fodid = { version = "4.5.5", path = "../fodid", features = ["creator"] }
 
 # Depend on this crate itself with reqwest-client enabled, so its own tests get
 # the built-in cloud HTTP transport. The library keeps reqwest-client off by
