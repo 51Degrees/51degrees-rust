@@ -301,6 +301,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
+name = "fiftyone-agent-signature"
+version = "4.5.2"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "fiftyone-caching",
+ "fiftyone-pipeline-core",
+ "fiftyone-pipeline-engines",
+ "log",
+ "percent-encoding",
+ "ring",
+ "serde_json",
+ "url",
+]
+
+[[package]]
 name = "fiftyone-caching"
 version = "4.5.2"
 dependencies = [
@@ -1142,6 +1158,7 @@ name = "parity-rust"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "fiftyone-agent-signature",
  "fiftyone-device-detection-onpremise",
  "fiftyone-ip-intelligence-onpremise",
  "fiftyone-ip-intelligence-shared",

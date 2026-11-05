@@ -23,7 +23,7 @@ core            fiftyone-pipeline-core, fiftyone-caching
 engines         fiftyone-pipeline-engines
   |             fiftyone-pipeline-engines-fiftyone
   |             fiftyone-cloud-request-engine
-  |             fiftyone-derived-properties
+  |             fiftyone-derived-properties, fiftyone-agent-signature
   |             fiftyone-json-builder, fiftyone-javascript-builder
   |
 sys / native    fiftyone-common-sys
@@ -53,17 +53,24 @@ examples        examples-shared, device-detection-examples,
   target the platform runs.
 - **engines** (`fiftyone-pipeline-engines`,
   `fiftyone-pipeline-engines-fiftyone`, `fiftyone-cloud-request-engine`,
-  `fiftyone-derived-properties`, `fiftyone-json-builder`,
-  `fiftyone-javascript-builder`). The aspect-engine layer, the
-  51Degrees-specific elements (ShareUsage, SetHeaders, Sequence and the
-  metadata model), the cloud request engine, the derived property element and
-  the JSON and JavaScript builder elements.
+  `fiftyone-derived-properties`, `fiftyone-agent-signature`,
+  `fiftyone-json-builder`, `fiftyone-javascript-builder`). The aspect-engine
+  layer, the 51Degrees-specific elements (ShareUsage, SetHeaders, Sequence and
+  the metadata model), the cloud request engine, the derived property element,
+  the agent signature element and the JSON and JavaScript builder elements.
 
   `fiftyone-derived-properties` computes one property from properties earlier
   elements have already produced, following a shared script format that every
   language implementation reads, so one script gives the same answer
   everywhere. The scripts are compiled in rather than read from disk, because
   the element has to run where there is no filesystem.
+
+  `fiftyone-agent-signature` checks the HTTP Message Signature an automated
+  agent sends under the IETF Web Bot Auth protocol, against the key the agent
+  publishes. The address of that key is chosen by whoever sent the request,
+  so each key directory is fetched once on a thread of its own, held in a
+  bounded cache, and waited on for at most a short budget, after which the
+  request reports Timeout and the fetch carries on.
 - **sys / native FFI** (`fiftyone-common-sys`,
   `fiftyone-device-detection-sys`, `fiftyone-ip-intelligence-sys`,
   `fiftyone-native`). Raw `extern "C"` bindings to the native common,

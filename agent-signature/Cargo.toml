@@ -1,0 +1,60 @@
+[package]
+name = "fiftyone-agent-signature"
+version = "4.5.2"
+description = "AgentSignatureElement: checks the HTTP Message Signature an automated agent sends under the IETF Web Bot Auth protocol, for the 51Degrees pipeline."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
+# AspectPropertyValue, so every property can say it has no value and why.
+# default-features = false leaves out the data-update service, which this
+# element never uses.
+fiftyone-pipeline-engines = { version = "4.5.2", path = "../pipeline-engines", default-features = false }
+# The bounded least recently used cache that holds the key directories.
+fiftyone-caching = { version = "4.5.2", path = "../caching", default-features = false }
+# Logs a failed fetch, a directory still being fetched and a shared secret
+# through the log facade, which does nothing until the application installs a
+# logger.
+log = "0.4"
+# Key directories, agent cards and inline key sets are JSON documents.
+serde_json.workspace = true
+# Byte sequences in the signature headers, the key material in a key
+# directory and the thumbprint of a key are base64.
+base64.workspace = true
+# The created and expires times, and the clock the cache ages entries by.
+chrono.workspace = true
+# Reads the Signature-Agent addresses and checks every address before it is
+# fetched, including the IP address forms a host can be written in.
+url = "2"
+# Decodes a key set carried inline in a data: URI.
+percent-encoding = "2"
+# Ed25519, RSA-PSS with SHA-512 and ECDSA over P-256 verification, and the
+# SHA-256 the key thumbprint and the content digest use. The workspace
+# already builds it for rustls.
+ring = "0.17"
+# The built-in blocking HTTP client the key directories are fetched with,
+# which follows no redirects. Optional and gated behind the `reqwest-client`
+# feature, as in the other crates, so a consumer can supply a client of its
+# own instead. rustls avoids a system OpenSSL dependency.
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"], optional = true }
+
+[features]
+# Compile the built-in reqwest HTTP client (ReqwestClient). Off by default, as
+# in the other crates. Without it, the builder needs a client supplied with
+# set_http_client.
+reqwest-client = ["dep:reqwest"]
+
+[dev-dependencies]
+# Depend on this crate itself with reqwest-client enabled, so the tests of the
+# built-in client compile. Dev-dependencies never reach the published graph.
+fiftyone-agent-signature = { path = ".", features = ["reqwest-client"] }
+# A local HTTP server, to prove the built-in client follows no redirect.
+tiny_http = "0.12"
+
+[package.metadata.docs.rs]
+all-features = true

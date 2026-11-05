@@ -21,9 +21,9 @@ when the license keys are available to the run, over the Enterprise files.
 
 ## The pipelines
 
-Both programs build the same two pipelines, with process errors collected
+Both programs build the same three pipelines, with process errors collected
 rather than thrown. A case runs through the first unless its `pipeline` is
-`values`.
+`values` or `agent-signature`.
 
 1. The Sequence element.
 2. Usage sharing, in .NET only. The records go to a handler inside the
@@ -59,6 +59,17 @@ turn with `Promise` set to `Full`, then with no value, then `Full` again,
 so the builder has to decide for each request whether promises are on
 ([#230](https://github.com/51Degrees/51degrees-rust/issues/230)).
 
+The agent signature pipeline has the Sequence element and the agent
+signature element. The element's key directories come from a client inside
+each program rather than the network. It serves the public part of the
+Ed25519 test key of
+[RFC 9421 Appendix B.1.4](https://www.rfc-editor.org/rfc/rfc9421.html#appendix-B.1.4)
+for `agent.parity.test`, serves the same key for `slow-agent.parity.test`
+only after ten seconds, and answers every other address with 404. The wait
+budget is two seconds on both sides. The cases were signed with the private
+part of that key, so the signatures are fixed in the corpus. Each is valid
+from 2025 until 2124, so no clock has to be set.
+
 ## The line
 
 Each program writes one JSON object per case.
@@ -76,7 +87,8 @@ Each program writes one JSON object per case.
 | `usage` | The usage sharing record written for the case, or null. |
 
 Value types are `string`, `bool`, `integer`, `double`, `stringList`,
-`javascript`, `ipAddress`, `weightedList` (each item a `rawWeighting` and a
+`javascript`, `ipAddress`, `dateTime` (in .NET only, written as RFC 3339
+text with the offset), `weightedList` (each item a `rawWeighting` and a
 `value`), `keyValueList` and `list`.
 
 ## The comparison

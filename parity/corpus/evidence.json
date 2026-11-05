@@ -608,5 +608,205 @@
       "header.protocol": "https",
       "header.values-promise": "Full"
     }
+  },
+  {
+    "id": "agent-signature-absent",
+    "about": "A request with no signature, which is the ordinary case.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "query.session-id": "parity-agent-signature-absent"
+    }
+  },
+  {
+    "id": "agent-signature-verified",
+    "about": "A request signed with the Ed25519 test key of RFC 9421 Appendix B.1.4, covering the authority, the method, the path and the agent, with the agent's key directory served by the program.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "header.signature": "sig1=:6WV6JpQFIPB6zZW6i2Yoy5NZINQhNgpuFOa2Idlj9BRtGEMQtHVizYFwFAajsevaparNygnl5XVQ8KxOQjkjAA==:",
+      "header.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\" \"signature-agent\";key=\"agent1\");created=1735689600;expires=4889289600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "header.signature-agent": "agent1=\"https://agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-verified"
+    }
+  },
+  {
+    "id": "agent-signature-changed-path",
+    "about": "The signed request of agent-signature-verified arriving at a different path.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/other",
+      "server.request-query": "",
+      "header.signature": "sig1=:6WV6JpQFIPB6zZW6i2Yoy5NZINQhNgpuFOa2Idlj9BRtGEMQtHVizYFwFAajsevaparNygnl5XVQ8KxOQjkjAA==:",
+      "header.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\" \"signature-agent\";key=\"agent1\");created=1735689600;expires=4889289600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "header.signature-agent": "agent1=\"https://agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-changed-path"
+    }
+  },
+  {
+    "id": "agent-signature-timeout",
+    "about": "A signed request from an agent whose key directory answers after the wait budget.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "header.signature": "sig1=:0X3CnYtIk/r4g5q8dG8auK6lF1ni5sjXBYrnKgMKoFH22ViwD7pAn5ccsxxfa8ydx+a/1saW+7Le7dQNlrcXCQ==:",
+      "header.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\" \"signature-agent\";key=\"agent1\");created=1735689600;expires=4889289600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "header.signature-agent": "agent1=\"https://slow-agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-timeout"
+    }
+  },
+  {
+    "id": "agent-signature-malformed",
+    "about": "A Signature header with no Signature-Input header.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "header.signature": "sig1=:6WV6JpQFIPB6zZW6i2Yoy5NZINQhNgpuFOa2Idlj9BRtGEMQtHVizYFwFAajsevaparNygnl5XVQ8KxOQjkjAA==:",
+      "query.session-id": "parity-agent-signature-malformed"
+    }
+  },
+  {
+    "id": "agent-signature-tag-mismatch",
+    "about": "A signature made under a tag other than web-bot-auth.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "header.signature": "sig1=:AwdwJoh9YJ2W0ygMBKQVqCVDIvDZ8kFOZaIYLzg2IaYL7i/6tAxhu2qvJ3PFv+QGbWslC0MSxDo9lIPvo+YZCg==:",
+      "header.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\" \"signature-agent\";key=\"agent1\");created=1735689600;expires=4889289600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"other\"",
+      "header.signature-agent": "agent1=\"https://agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-tag-mismatch"
+    }
+  },
+  {
+    "id": "agent-signature-no-agent",
+    "about": "A signature that does not cover the Signature-Agent header the request carries.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "header.signature": "sig1=:k5igXl7gkkB8k0ktzyefj7x/jydP0JO+N64iiyvLtGIJWg/3ZszeMl4i0bmifYdHRHwyMaeWVy4DHMZSjU3XDA==:",
+      "header.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\");created=1735689600;expires=4889289600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "header.signature-agent": "agent1=\"https://agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-no-agent"
+    }
+  },
+  {
+    "id": "agent-signature-unbound",
+    "about": "A signature covering the agent but neither the authority nor the target address.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "header.signature": "sig1=:OhwCQehxVHdJmZhpbqYpVkI31OEwIfD+X5MJSfhSrw4GHYkXxzpNFxO81yeCBTeyu3Kq1gtDXUVKEgP6xmNPDQ==:",
+      "header.signature-input": "sig1=(\"signature-agent\";key=\"agent1\");created=1735689600;expires=4889289600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "header.signature-agent": "agent1=\"https://agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-unbound"
+    }
+  },
+  {
+    "id": "agent-signature-unknown-key",
+    "about": "A signature naming a key the agent's directory does not hold.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "header.signature": "sig1=:ly6YWDfNS5NV8rlBdCNuK+imnRizxjlbtt6KmrBocVCTV3poURmpbfYcuiSfMLn5/jZbH54Hj+HIBFAM+rxBDg==:",
+      "header.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\" \"signature-agent\";key=\"agent1\");created=1735689600;expires=4889289600;keyid=\"withdrawn\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "header.signature-agent": "agent1=\"https://agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-unknown-key"
+    }
+  },
+  {
+    "id": "agent-signature-component-unavailable",
+    "about": "A signature covering the query, with no request line in the evidence.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "header.signature": "sig1=:7rUhRsdKgXCJJINcShy9i4HxQ2PjPkJuUbNZZnJBV3LKTCErqFAbBu8XivXROxF9D3i1w4cj7pf64iPefHnmBA==:",
+      "header.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\" \"@query\" \"signature-agent\";key=\"agent1\");created=1735689600;expires=4889289600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "header.signature-agent": "agent1=\"https://agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-component-unavailable"
+    }
+  },
+  {
+    "id": "agent-signature-expired",
+    "about": "A signature that expired in November 2023.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "header.signature": "sig1=:ZuHzBhvNN8Qa6ED0AGsKifIq/6b4alx9BKHOkdfyQWMQVtFyKnRMi+pjlhZSwS6Tl2TUzY9T3eN1RTTR4fSZAQ==:",
+      "header.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\" \"signature-agent\";key=\"agent1\");created=1700000000;expires=1700000600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "header.signature-agent": "agent1=\"https://agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-expired"
+    }
+  },
+  {
+    "id": "agent-signature-inline-directory",
+    "about": "An agent carrying its key set inline in a data: URI, which the element refuses by default.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "header.signature": "sig1=:A+nUCqdAu24nyfRJeW2K3bkaChQcHAoK3u8HTiiWbX+3KmnHpvfOWtmZprFU2zGb40UvlEh6izqCbAkQgG6ECQ==:",
+      "header.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\" \"signature-agent\";key=\"agent1\");created=1735689600;expires=4889289600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "header.signature-agent": "agent1=\"data:application/http-message-signatures-directory+json;base64,eyJrZXlzIjpbeyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IkpyUUxqNVBfODlpWEVTOS12RmdySXkyOWNsRjlDQ19vUFBzdzNjNUQwYnMifV19\"",
+      "query.session-id": "parity-agent-signature-inline-directory"
+    }
+  },
+  {
+    "id": "agent-signature-query-string",
+    "about": "The signed request of agent-signature-verified put in the query string, which the element does not trust by default.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "query.signature": "sig1=:6WV6JpQFIPB6zZW6i2Yoy5NZINQhNgpuFOa2Idlj9BRtGEMQtHVizYFwFAajsevaparNygnl5XVQ8KxOQjkjAA==:",
+      "query.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\" \"signature-agent\";key=\"agent1\");created=1735689600;expires=4889289600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "query.signature-agent": "agent1=\"https://agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-query-string"
+    }
   }
 ]

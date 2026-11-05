@@ -73,6 +73,27 @@ pub const EVIDENCE_HEADER_USER_AGENT_KEY: &str = "header.user-agent";
 /// evidence.
 pub const EVIDENCE_PROTOCOL_KEY: &str = "header.protocol";
 
+/// The complete key to use when the method of the request is passed as
+/// evidence, exactly as the request line carried it.
+///
+/// The three request line values are supplied byte for byte, with no
+/// decoding and no normalisation, because the agent signature element
+/// rebuilds the text an HTTP message signature was made over from them and
+/// one changed byte makes a valid signature read as invalid. An integration
+/// that supplies them supplies all three on every request. See the
+/// [web integration specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/web-integration.md#populating-evidence).
+pub const EVIDENCE_REQUEST_METHOD_KEY: &str = "server.request-method";
+
+/// The complete key to use when the path of the request is passed as
+/// evidence, exactly as the request line carried it.
+pub const EVIDENCE_REQUEST_PATH_KEY: &str = "server.request-path";
+
+/// The complete key to use when the query string of the request is passed as
+/// evidence, whole and undecoded, without its leading `?`. It is empty where
+/// the request carried no query string, so that a missing key always means
+/// the integration does not supply the request line.
+pub const EVIDENCE_REQUEST_QUERY_KEY: &str = "server.request-query";
+
 /// The prefix added to all cookies set by 51Degrees client-side code that can
 /// be used as evidence.
 pub const FIFTYONE_COOKIE_PREFIX: &str = "51d_";

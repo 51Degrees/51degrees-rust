@@ -31,6 +31,7 @@
 //! because the crates have no public sink for its records yet, so `usage` is
 //! always null.
 
+mod agent_signature;
 mod values;
 
 use std::fs::File;
@@ -109,6 +110,7 @@ fn main() -> Result<()> {
     let cases: Vec<Case> = serde_json::from_str(&text).context("parsing the corpus")?;
     let pipeline = build_pipeline(&args)?;
     let values = build_values_pipeline()?;
+    let signatures = agent_signature::build_pipeline()?;
 
     let mut out = BufWriter::new(
         File::create(&args.out).with_context(|| format!("creating {}", args.out.display()))?,
@@ -117,6 +119,7 @@ fn main() -> Result<()> {
         let chosen = match case.pipeline.as_deref() {
             None => &pipeline,
             Some(VALUES_PIPELINE) => &values,
+            Some(agent_signature::PIPELINE) => &signatures,
             Some(other) => bail!("{}: unknown pipeline {other}", case.id),
         };
         let line = run_case(chosen, case)?;
