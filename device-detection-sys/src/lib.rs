@@ -204,11 +204,12 @@ pub struct ConfigDeviceDetection {
     pub b: ConfigBase,
     /// True if the matched user agent characters should be recorded.
     pub update_matched_user_agent: bool,
-    /// The limit, in bytes, on every header value detection uses. Despite
-    /// the name it applies to every header and every pseudo-header, not only
-    /// the User-Agent, and a pseudo-header counts one separator byte between
-    /// each of the values it joins. A value longer than the limit is ignored
-    /// with no error, and detection moves on to the next header.
+    /// The limit, in bytes, on the length of each header value that detection
+    /// uses. Despite the name it applies to every header and every
+    /// pseudo-header, not only the User-Agent, and a pseudo-header counts one
+    /// separator byte between each of the values it joins. A value longer
+    /// than the limit is ignored with no error, and detection moves on to the
+    /// next header.
     ///
     /// The predefined configurations set 500 bytes, the C library's default.
     /// The reason for that default is given where [the default is defined]
