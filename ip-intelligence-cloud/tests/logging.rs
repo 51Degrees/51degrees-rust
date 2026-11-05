@@ -246,10 +246,11 @@ fn a_license_key_alone_gives_empty_metadata_and_logs_nothing() {
     let request = Arc::new(
         CloudRequestEngine::builder()
             .license_key("test-license-key")
+            .values(["ip.registeredname"])
             .endpoint("https://cloud.example.test/api/v4/")
             .http_client(Arc::new(FakeCloud {
                 product: IP_PRODUCT,
-                data: r#"{"ip":{}}"#,
+                data: r#"{"ip":{"registeredname":"Example"}}"#,
                 properties_down: Arc::default(),
             }))
             .build()

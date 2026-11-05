@@ -155,7 +155,11 @@ fn a_resource_key_without_the_product_logs_one_error_and_gives_empty_metadata() 
 #[test]
 fn a_license_key_alone_gives_empty_metadata_and_logs_nothing() {
     let _serial = start();
-    let (pipeline, fodid) = pipeline(CloudRequestEngine::builder().license_key("lk"));
+    let (pipeline, fodid) = pipeline(
+        CloudRequestEngine::builder()
+            .license_key("lk")
+            .values(["device.ismobile"]),
+    );
 
     for _ in 0..3 {
         process(&pipeline);
