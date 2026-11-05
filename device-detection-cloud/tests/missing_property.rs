@@ -22,9 +22,9 @@
 
 //! What Device Detection data and hardware profiles from a successful cloud
 //! request give for a property the response did not return, as .NET's cloud
-//! data does. Kept in its own test binary because a logger is installed once
-//! for the whole process, and each test holds [`SERIAL`] so the records it
-//! reads are its own.
+//! data does, and what Set Headers logs for one. Kept in its own test binary
+//! because a logger is installed once for the whole process, and each test
+//! holds [`SERIAL`] so the records it reads are its own.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -39,6 +39,7 @@ use fiftyone_pipeline_core::{
     ElementData, Evidence, FlowData, FlowElement, MissingPropertyReason, Pipeline,
 };
 use fiftyone_pipeline_engines::AspectEngine;
+use fiftyone_pipeline_engines_fiftyone::SetHeadersElement;
 
 const DEVICE_PRODUCT: &str = r#""device":{"DataTier":"CloudV4","Properties":[
     {"Name":"IsMobile","Type":"Boolean","Category":"Device"},
@@ -61,6 +62,21 @@ const HARDWARE_RESPONSE: &str = r#"{"hardware":{"profiles":[
     {"hardwarevendor":null,
      "hardwarevendornullreason":"The value cannot be determined from a TAC alone."}]}}"#;
 
+/// Grants IsMobile and three properties Set Headers reads, all for the
+/// Accept-CH header.
+const SET_HEADER_PRODUCT: &str = r#""device":{"DataTier":"CloudV4","Properties":[
+    {"Name":"IsMobile","Type":"Boolean","Category":"Device"},
+    {"Name":"SetHeaderBrowserAccept-CH","Type":"String","Category":"Browser"},
+    {"Name":"SetHeaderHardwareAccept-CH","Type":"String","Category":"Hardware"},
+    {"Name":"SetHeaderPlatformAccept-CH","Type":"String","Category":"Platform"}]}"#;
+
+/// Gives SetHeaderBrowserAccept-CH, gives SetHeaderHardwareAccept-CH as null
+/// with the cloud's reason, and does not return SetHeaderPlatformAccept-CH.
+const SET_HEADER_RESPONSE: &str = r#"{"device":{"ismobile":true,
+    "setheaderbrowseraccept-ch":"Sec-CH-UA,Sec-CH-UA-Full-Version-List",
+    "setheaderhardwareaccept-ch":null,
+    "setheaderhardwareaccept-chnullreason":"No matching profiles"}}"#;
+
 const NOT_GRANTED_DEVICE: &str =
     "ERROR Aspect properties could not be loaded for DeviceDetectionCloudEngine - 'device'";
 
@@ -69,8 +85,8 @@ fn missing_read(property: &str, reason: &str) -> String {
     format!("WARN Property '{property}' missing from aspect data 'DeviceDataBase'. {reason}")
 }
 
-/// Records at warning level or above from the cloud crates and the aspect
-/// data, as "LEVEL message".
+/// Records at warning level or above from the cloud crates, the aspect data
+/// and Set Headers, as "LEVEL message".
 static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// Held by each test for its whole run.
@@ -366,4 +382,41 @@ fn with_a_license_key_alone_every_property_counts_as_held() {
     assert!(!device.hardware_vendor().has_value());
     assert_eq!(device.is_mobile().value().ok(), Some(&true));
     assert_eq!(take_logged(), Vec::<String>::new());
+}
+
+#[test]
+fn set_headers_warns_only_for_a_property_the_response_did_not_return() {
+    let _serial = start();
+    let request = request_engine(&[SET_HEADER_PRODUCT], SET_HEADER_RESPONSE);
+    let engine = Arc::new(DeviceDetectionCloudEngine::new(Arc::clone(&request)));
+    let pipeline = Pipeline::builder()
+        .add_element(request)
+        .add_element(engine)
+        .add_element(Arc::new(SetHeadersElement::new()))
+        .build()
+        .unwrap();
+    let data = process(&pipeline, "header.user-agent", "A");
+
+    // The header carries the one value the response gave.
+    let headers = data
+        .get(SetHeadersElement::KEY)
+        .expect("the Set Headers data is there")
+        .response_headers();
+    assert_eq!(headers.len(), 1, "{headers:?}");
+    assert_eq!(
+        headers.get("Accept-CH").map(String::as_str),
+        Some("Sec-CH-UA,Sec-CH-UA-Full-Version-List")
+    );
+
+    // Set Headers warns for the property the response did not return, as
+    // .NET's SetHeadersElement does when TryGet fails, and the data's own
+    // warning for a read is not given, because Set Headers asks first. The
+    // property the response gave as null logs nothing.
+    assert_eq!(
+        take_logged(),
+        vec![
+            "WARN Property 'SetHeaderPlatformAccept-CH' is missing from 'device', \
+             so it adds no value to the Accept-CH header."
+        ]
+    );
 }
