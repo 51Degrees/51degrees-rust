@@ -238,6 +238,7 @@ impl JsonBuilderElement {
             PropertyValue::Bool(b) => JsonValue::Bool(*b),
             PropertyValue::Integer(i) => JsonValue::Integer(*i),
             PropertyValue::Double(d) => JsonValue::Double(*d),
+            PropertyValue::Float(f) => JsonValue::Float(*f),
             PropertyValue::StringList(list) => {
                 JsonValue::Array(list.iter().cloned().map(JsonValue::String).collect())
             }

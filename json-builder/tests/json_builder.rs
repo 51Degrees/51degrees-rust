@@ -757,7 +757,8 @@ fn text_is_in_the_form_dotnet_writes() {
         .with_value("one", 1.0f64)
         .with_value("tenth", 0.1f64)
         .with_value("small", 1e-7f64)
-        .with_value("large", 1e21f64);
+        .with_value("large", 1e21f64)
+        .with_value("float", PropertyValue::Float(0.3));
 
     let json = run(vec![Arc::new(device)], JsonBuilderElement::new());
 
@@ -768,7 +769,8 @@ fn text_is_in_the_form_dotnet_writes() {
         "    \"one\": 1.0,",
         "    \"tenth\": 0.1,",
         "    \"small\": 1E-07,",
-        "    \"large\": 1E+21",
+        "    \"large\": 1E+21,",
+        "    \"float\": 0.3",
         "  }",
         "}",
     ]

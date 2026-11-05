@@ -29,8 +29,9 @@
 //! - Keys in lower case, apart from `javascriptProperties`.
 //! - A double in .NET's shortest round trip form, with `.0` added when the
 //!   text has no decimal point or exponent, so `1.0`, `0.1`, `1E-07` and
-//!   `1E+21`. NaN and the infinities are the strings `"NaN"`, `"Infinity"`
-//!   and `"-Infinity"`.
+//!   `1E+21`. A 32-bit float the same way with the digits a float needs,
+//!   so the float 0.1 is `0.1` and the float 1e9 is `1E+09`. NaN and the
+//!   infinities are the strings `"NaN"`, `"Infinity"` and `"-Infinity"`.
 //! - In a string, `"` and `\` escaped, `\b`, `\f`, `\n`, `\r` and `\t` for
 //!   those characters, and `\u` with four lower case hex digits for the
 //!   other characters below U+0020 and for U+0085, U+2028 and U+2029.
@@ -59,6 +60,9 @@ const INDENT: &str = "  ";
 /// exponent in .NET's round trip form.
 const DOUBLE_ROUND_TRIP_DIGITS: usize = 17;
 
+/// The same limit for a 32-bit float.
+const FLOAT_ROUND_TRIP_DIGITS: usize = 9;
+
 /// A number with more zeros than this between its decimal point and its
 /// first digit is written with an exponent, so 0.0001 is written in full
 /// and 0.00001 as `1E-05`.
@@ -83,21 +87,41 @@ pub fn write_indented(object: &JsonObject, new_line: &str) -> String {
 
 /// A double as .NET's JSON builder writes it.
 pub(crate) fn double_text(value: f64) -> String {
+    special_text(value).unwrap_or_else(|| {
+        round_trip_text(
+            value.is_sign_negative(),
+            &format!("{:e}", value.abs()),
+            DOUBLE_ROUND_TRIP_DIGITS,
+        )
+    })
+}
+
+/// A 32-bit float as .NET's JSON builder writes it. Rust's shortest form of
+/// an `f32` holds the digits a float needs, not those of the wider `f64`.
+pub(crate) fn float_text(value: f32) -> String {
+    special_text(f64::from(value)).unwrap_or_else(|| {
+        round_trip_text(
+            value.is_sign_negative(),
+            &format!("{:e}", value.abs()),
+            FLOAT_ROUND_TRIP_DIGITS,
+        )
+    })
+}
+
+/// NaN and the infinities as the strings .NET's builder writes, or `None`
+/// for a finite number.
+fn special_text(value: f64) -> Option<String> {
     if value.is_nan() {
-        return "\"NaN\"".to_owned();
-    }
-    if value.is_infinite() {
-        return if value > 0.0 {
+        Some("\"NaN\"".to_owned())
+    } else if value.is_infinite() {
+        Some(if value > 0.0 {
             "\"Infinity\"".to_owned()
         } else {
             "\"-Infinity\"".to_owned()
-        };
+        })
+    } else {
+        None
     }
-    round_trip_text(
-        value.is_sign_negative(),
-        &format!("{:e}", value.abs()),
-        DOUBLE_ROUND_TRIP_DIGITS,
-    )
 }
 
 /// The round trip form of a finite number, from Rust's shortest exponent
@@ -108,8 +132,8 @@ pub(crate) fn double_text(value: f64) -> String {
 /// its decimal point than `round_trip_digits` (or the digit count, if
 /// more), or more than three zeros between its decimal point and its first
 /// digit. Then it writes one digit, the rest after a point, then `E`, the
-/// sign and at least two exponent digits. Newtonsoft.Json then adds `.0` to text with no point
-/// and no exponent. Negative zero keeps its sign.
+/// sign and at least two exponent digits. Newtonsoft.Json then adds `.0` to
+/// text with no point and no exponent. Negative zero keeps its sign.
 fn round_trip_text(negative: bool, shortest: &str, round_trip_digits: usize) -> String {
     let (mantissa, exponent) = shortest
         .split_once('e')
@@ -170,6 +194,7 @@ fn write_value(out: &mut String, value: &JsonValue, depth: usize, new_line: &str
         JsonValue::Bool(false) => out.push_str("false"),
         JsonValue::Integer(i) => out.push_str(&i.to_string()),
         JsonValue::Double(d) => out.push_str(&double_text(*d)),
+        JsonValue::Float(f) => out.push_str(&float_text(*f)),
         JsonValue::String(s) => write_string(out, s),
         JsonValue::Array(items) => write_array(out, items, depth, new_line),
         JsonValue::Object(object) => write_object(out, object, depth, new_line),
@@ -292,6 +317,38 @@ mod tests {
         for (value, expected) in cases {
             assert_eq!(double_text(value), expected, "{value:e}");
         }
+    }
+
+    #[test]
+    fn floats_are_in_dotnet_round_trip_form() {
+        let cases = [
+            (1.0, "1.0"),
+            (0.1, "0.1"),
+            (0.3, "0.3"),
+            (1e-7, "1E-07"),
+            (1e21, "1E+21"),
+            (0.0, "0.0"),
+            (-0.0, "-0.0"),
+            (0.0001, "0.0001"),
+            (0.00001, "1E-05"),
+            (std::f32::consts::PI, "3.1415927"),
+            (16_777_216.0, "16777216.0"),
+            // The nearest float is 123456792, whose shortest digits are
+            // 12345679, with nine digits before the point.
+            (123_456_789_i32 as f32, "123456790.0"),
+            (1e9, "1E+09"),
+            (f32::MAX, "3.4028235E+38"),
+            (f32::from_bits(1), "1E-45"),
+            (f32::NAN, "\"NaN\""),
+            (f32::INFINITY, "\"Infinity\""),
+            (f32::NEG_INFINITY, "\"-Infinity\""),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(float_text(value), expected, "{value:e}");
+        }
+        // The same numbers as doubles have more digits or no exponent.
+        assert_eq!(double_text(f64::from(0.3_f32)), "0.30000001192092896");
+        assert_eq!(double_text(1e9), "1000000000.0");
     }
 
     #[test]

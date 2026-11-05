@@ -42,6 +42,10 @@ pub enum JsonValue {
     /// round trip form, and NaN and the infinities as the strings `"NaN"`,
     /// `"Infinity"` and `"-Infinity"`, as .NET's builder writes them.
     Double(f64),
+    /// A 32-bit floating point number. It is written in .NET's shortest
+    /// round trip form for a `float`, so with the digits a 32-bit float
+    /// needs, and NaN and the infinities as for [`JsonValue::Double`].
+    Float(f32),
     /// A string.
     String(String),
     /// An array.

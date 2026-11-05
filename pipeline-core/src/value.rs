@@ -48,6 +48,8 @@ pub enum PropertyValueType {
     Integer,
     /// A floating-point value.
     Double,
+    /// A 32-bit floating-point value.
+    Float,
     /// A list of strings.
     StringList,
     /// A JavaScript snippet intended to run on the client device.
@@ -94,8 +96,8 @@ impl<T> WeightedValue<T> {
 /// [core value types](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#value-types):
 ///
 /// - [`PropertyValue::String`], [`PropertyValue::Bool`],
-///   [`PropertyValue::Integer`] and [`PropertyValue::Double`] are the scalar
-///   types.
+///   [`PropertyValue::Integer`], [`PropertyValue::Double`] and
+///   [`PropertyValue::Float`] are the scalar types.
 /// - [`PropertyValue::StringList`] is the "array of strings" type.
 /// - [`PropertyValue::JavaScript`] is the custom JavaScript type, a string
 ///   carrying a snippet intended to run on the client device. It is a distinct
@@ -107,6 +109,8 @@ impl<T> WeightedValue<T> {
 ///
 /// `i64` and `f64` are used for the numeric types so that the full range of
 /// values seen in 51Degrees data files round-trips without loss.
+/// [`PropertyValue::Float`] keeps a value that is 32-bit where it comes from
+/// as 32-bit, because widening it to `f64` adds digits the value never had.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum PropertyValue {
@@ -118,6 +122,11 @@ pub enum PropertyValue {
     Integer(i64),
     /// A floating-point value.
     Double(f64),
+    /// A 32-bit floating-point value. As an `f64` the 32-bit 0.1 is
+    /// 0.10000000149011612, so it is kept as it is to be written as 0.1.
+    /// There is no `From<f32>`, so a number written without a suffix is
+    /// always a [`PropertyValue::Double`].
+    Float(f32),
     /// A list of strings (the "array of strings" type).
     StringList(Vec<String>),
     /// A JavaScript snippet intended to execute on the client device.
@@ -154,10 +163,11 @@ impl PropertyValue {
     }
 
     /// Return the value as an `f64` if it is a [`PropertyValue::Double`], or
-    /// a widened [`PropertyValue::Integer`].
+    /// a widened [`PropertyValue::Float`] or [`PropertyValue::Integer`].
     pub fn as_double(&self) -> Option<f64> {
         match self {
             PropertyValue::Double(d) => Some(*d),
+            PropertyValue::Float(f) => Some(f64::from(*f)),
             PropertyValue::Integer(i) => Some(*i as f64),
             _ => None,
         }
