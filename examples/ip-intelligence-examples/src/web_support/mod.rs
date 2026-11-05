@@ -362,7 +362,7 @@ pub const CLOUD_CONTACT_BANNER: &str = "\
 </div>";
 
 /// The contact-us banner shown on the on-premise page, describing what the free
-/// ASN IP-intelligence data covers and what a paid Enterprise file adds.
+/// IP Intelligence data files cover and what a paid Enterprise file adds.
 pub const ONPREM_CONTACT_BANNER: &str = "\
 <div class=\"c-eg-message\">\
   <p class=\"c-eg-message__text\">This example uses a free IP Intelligence data file, which resolves \

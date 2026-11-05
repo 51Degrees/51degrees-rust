@@ -105,10 +105,11 @@ impl ExampleOptions {
         (!data_files.is_empty()).then(|| Self::with_files(data_files))
     }
 
-    /// Build options pinned to a specific data-file tier. `main` uses the
-    /// best-available tier, while the test pins to the ASN tier so it runs
-    /// deterministically against the small, current, always-loadable ASN file
-    /// rather than depending on the production Enterprise share being mounted.
+    /// Build options pinned to a specific data-file tier. `main` reads the
+    /// Enterprise file or both free files, while the test pins to the ASN tier
+    /// so it runs deterministically against the small, current,
+    /// always-loadable ASN file rather than depending on the production
+    /// Enterprise share being mounted.
     pub fn for_tier(tier: examples_shared::IpiTier) -> Option<Self> {
         let data_file = examples_shared::ipi_data_path(tier)?;
         Some(Self::with_files(vec![data_file]))

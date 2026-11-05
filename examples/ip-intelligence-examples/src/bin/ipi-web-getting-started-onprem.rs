@@ -281,8 +281,8 @@ async fn home(
 }
 
 fn main() -> anyhow::Result<()> {
-    // Resolve the on-premise data file through the shared scheme: it defaults to
-    // the ASN file from the data repository, downloaded when it is missing, or
+    // Resolve the on-premise data file through the shared scheme. It defaults to
+    // the Lite file from the data repository, downloaded when it is missing, or
     // Enterprise when the production share is reachable.
     let data_file = examples_shared::ipi_data_path(examples_shared::IpiTier::default()).context(
         "no on-premise IP Intelligence data file found. Set 51DEGREES_IPI_PATH to an .ipi \
@@ -311,7 +311,7 @@ mod tests {
     /// The test pins the ASN tier so it always exercises the small, current,
     /// always-loadable 4.5 ASN file, independent of whether the production
     /// Enterprise share happens to be mounted on the build machine. The binary
-    /// itself uses `IpiTier::default()` (best available).
+    /// itself uses `IpiTier::default()`, the Enterprise file or the Lite file.
     fn test_app() -> Option<Router> {
         let data_file = examples_shared::ipi_data_path(examples_shared::IpiTier::Asn)?;
         let (app, notes) = build_app(&data_file, false).expect("on-premise app builds");
@@ -434,13 +434,15 @@ mod tests {
  *   4. An approximate-location map drawn by the shared `examples.min.js`
  *      `initLocationMap` helper when the lookup resolves coordinates.
  *
- * Because the data file is a free tier (the ASN file from the data repository
+ * Because the data file is a free tier (the Lite file from the data repository
  * by default), the page shows the standard data-file warnings from
  * `examples_shared::check_data_file`: a free-tier notice and a stale-file notice
  * when the file is more than 30 days old. These
  * are rendered as a `c-eg-alert` at the top of the page. The results table
- * shows `Asn` and `AsnName`, which the free ASN file carries, and properties
- * only the Enterprise data file carries, such as `Country`, `Town`,
+ * shows `RegisteredName`, `RegisteredOwner` and `RegisteredCountry`, which the
+ * free Lite file carries, `Asn` and `AsnName`, which the free ASN file
+ * carries, and properties only the Enterprise data file carries, such as
+ * `Country`, `Town`,
  * `Latitude`, `Longitude`, `IsHosted` and `IsVPN`. The data file's own list of
  * properties says which it has, so with a free file each of those rows says
  * "needs the Enterprise data file", and a message under the table names them
@@ -453,7 +455,7 @@ mod tests {
  * its data-file warnings are read before it is handed to the web pipeline as an
  * application element, so no data file is opened twice.
  *
- * Resolve the data file with `51DEGREES_IPI_PATH` (or rely on the ASN file in
+ * Resolve the data file with `51DEGREES_IPI_PATH` (or rely on the Lite file in
  * the data repository inside the `cxx` submodule, which is downloaded when it
  * is missing), then run the binary and open http://127.0.0.1:8083.
  */

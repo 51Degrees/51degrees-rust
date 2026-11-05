@@ -49,15 +49,15 @@ pub const DD_LITE_RELATIVE_PATH: &str = "cxx/data/device-detection/51Degrees-Lit
 /// The ASN IP Intelligence data file in the data repository, giving Asn and
 /// AsnName.
 ///
-/// It is a download of a few megabytes, so it is the default for the examples,
-/// their tests and CI.
+/// It is a download of a few megabytes, so the examples whose properties do not
+/// matter to what they show read it, as do the examples' tests.
 pub const IPI_ASN_RELATIVE_PATH: &str = "cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi";
 
 /// The Lite IP Intelligence data file in the data repository, giving
 /// RegisteredName, RegisteredOwner and RegisteredCountry.
 ///
-/// It is a download of a few hundred megabytes, so only the examples that show
-/// those properties ask for it.
+/// It is a download of a few hundred megabytes. The examples that show
+/// location or registration properties read it when no other file is set.
 pub const IPI_LITE_RELATIVE_PATH: &str = "cxx/data/ip-intelligence/51Degrees-LiteV41.ipi";
 
 /// The Enterprise IP Intelligence data-file name on the Enterprise share.
@@ -71,16 +71,23 @@ pub const IPI_ENTERPRISE_SHARE_ENV_VAR: &str = "51DEGREES_IPI_ENTERPRISE_SHARE";
 
 /// Which tier of IP Intelligence data file to resolve.
 ///
-/// The default, [`IpiTier::BestAvailable`], picks the best *loadable* tier:
-/// Enterprise when the configured share is reachable, otherwise ASN. A caller
-/// can force a specific tier when an example needs it, for example to exercise
-/// the Enterprise-only properties.
+/// With no file set, an example that shows location or registration
+/// properties reads the Lite file, and one whose properties do not matter to
+/// what it shows, such as a performance or update example, reads the much
+/// smaller ASN file. Either reads the Enterprise file instead when the
+/// configured share is reachable. A caller can also force a specific tier,
+/// for example to exercise the Enterprise-only properties.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IpiTier {
-    /// Pick the best loadable tier: Enterprise if the share is reachable,
-    /// otherwise the ASN file from the data repository.
+    /// The Enterprise file if the share is reachable, otherwise the Lite file
+    /// from the data repository. For the examples that show location or
+    /// registration properties.
     #[default]
-    BestAvailable,
+    EnterpriseOrLite,
+    /// The Enterprise file if the share is reachable, otherwise the ASN file
+    /// from the data repository. For the performance and update examples,
+    /// whose properties do not matter to what they show.
+    EnterpriseOrAsn,
     /// Force the ASN file ([`IPI_ASN_RELATIVE_PATH`]). Small, current and
     /// free from the data repository, so it suits most quick tests.
     Asn,
@@ -112,8 +119,9 @@ pub fn dd_data_path() -> Option<PathBuf> {
 /// `tier`, so a caller can point every example at one explicit file. Otherwise
 /// the tier decides:
 ///
-/// - [`IpiTier::BestAvailable`] returns the latest Enterprise file from the
-///   configured share if it is reachable, and otherwise the ASN file.
+/// - [`IpiTier::EnterpriseOrLite`] and [`IpiTier::EnterpriseOrAsn`] return the
+///   latest Enterprise file from the configured share if it is reachable, and
+///   otherwise that free file.
 /// - [`IpiTier::Enterprise`] returns the latest Enterprise file, or `None` when
 ///   the share is unreachable.
 /// - [`IpiTier::Asn`] and [`IpiTier::Lite`] return that free file, found with
@@ -125,7 +133,10 @@ pub fn ipi_data_path(tier: IpiTier) -> Option<PathBuf> {
         return Some(path);
     }
     match tier {
-        IpiTier::BestAvailable => {
+        IpiTier::EnterpriseOrLite => {
+            latest_enterprise_ipi().or_else(|| find_data_file(IPI_LITE_RELATIVE_PATH))
+        }
+        IpiTier::EnterpriseOrAsn => {
             latest_enterprise_ipi().or_else(|| find_data_file(IPI_ASN_RELATIVE_PATH))
         }
         IpiTier::Enterprise => latest_enterprise_ipi(),
@@ -444,7 +455,13 @@ mod tests {
     fn ipi_env_var_wins_for_every_tier() {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var(IPI_PATH_ENV_VAR, "/tmp/explicit.ipi");
-        for tier in [IpiTier::BestAvailable, IpiTier::Asn, IpiTier::Enterprise] {
+        for tier in [
+            IpiTier::EnterpriseOrLite,
+            IpiTier::EnterpriseOrAsn,
+            IpiTier::Asn,
+            IpiTier::Lite,
+            IpiTier::Enterprise,
+        ] {
             assert_eq!(
                 ipi_data_path(tier),
                 Some(PathBuf::from("/tmp/explicit.ipi"))
@@ -454,22 +471,22 @@ mod tests {
     }
 
     #[test]
-    fn default_tier_picks_a_loadable_file() {
+    fn enterprise_or_asn_picks_a_loadable_file() {
         // With no explicit path and (in CI/local) no reachable Enterprise share,
-        // BestAvailable must fall back to the ASN file, which is the small,
-        // current, reliable default from the data repository. The data
-        // repository is in the cxx submodule, so this resolves when the test
-        // runs inside the workspace.
+        // EnterpriseOrAsn must fall back to the ASN file from the data
+        // repository. The data repository is in the cxx submodule, so this
+        // resolves when the test runs inside the workspace. EnterpriseOrLite is
+        // not resolved here, because it would download the Lite file.
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var(IPI_PATH_ENV_VAR);
 
-        if let Some(path) = ipi_data_path(IpiTier::BestAvailable) {
+        if let Some(path) = ipi_data_path(IpiTier::EnterpriseOrAsn) {
             let chosen = path.to_string_lossy();
             // It is either the Enterprise file (on-network) or the ASN file.
             assert!(
                 chosen.contains(IPI_ENTERPRISE_FILE_NAME)
                     || chosen.contains("51Degrees-IPIV4AsnIpiV41.ipi"),
-                "unexpected BestAvailable selection: {chosen}"
+                "unexpected EnterpriseOrAsn selection: {chosen}"
             );
         }
         // If neither file is present in this checkout the resolver returns None,
@@ -477,8 +494,8 @@ mod tests {
     }
 
     #[test]
-    fn default_tier_is_best_available() {
-        assert_eq!(IpiTier::default(), IpiTier::BestAvailable);
+    fn default_tier_is_enterprise_or_lite() {
+        assert_eq!(IpiTier::default(), IpiTier::EnterpriseOrLite);
     }
 
     #[test]

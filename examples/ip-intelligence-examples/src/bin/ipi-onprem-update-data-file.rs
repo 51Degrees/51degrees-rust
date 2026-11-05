@@ -65,9 +65,11 @@ pub struct ExampleOptions {
 }
 
 impl ExampleOptions {
-    /// Default options, using the best-available loadable data-file tier.
+    /// Default options, reading the Enterprise file when its share is reachable
+    /// and otherwise the free ASN file, which is far smaller to download than
+    /// the Lite file and serves to show an update as well.
     pub fn from_env() -> Option<Self> {
-        Self::for_tier(examples_shared::IpiTier::BestAvailable)
+        Self::for_tier(examples_shared::IpiTier::EnterpriseOrAsn)
     }
 
     /// Options pinned to a specific data-file tier. The test pins the ASN tier
@@ -352,8 +354,9 @@ mod tests {
  *
  * # Data file
  *
- * Resolved by `examples_shared::ipi_data_path`. Contact 51Degrees for an
- * Enterprise file: <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-update-data-file.rs&utm_term=ipi-onprem-update-data-file>.
+ * Resolved by `examples_shared::ipi_data_path`, which gives the free ASN file
+ * when no other file is set, because the properties an update reads do not
+ * matter to what it shows. Contact 51Degrees for an Enterprise file: <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-update-data-file.rs&utm_term=ipi-onprem-update-data-file>.
  *
  * # Usage sharing
  *

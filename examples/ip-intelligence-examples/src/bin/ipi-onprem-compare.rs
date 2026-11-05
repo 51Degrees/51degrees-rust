@@ -60,9 +60,10 @@ pub struct ExampleOptions {
 }
 
 impl ExampleOptions {
-    /// Default options, using the best-available loadable data-file tier.
+    /// Default options, reading the Enterprise file when its share is
+    /// reachable and otherwise the free Lite file.
     pub fn from_env() -> Option<Self> {
-        Self::for_tier(examples_shared::IpiTier::BestAvailable)
+        Self::for_tier(examples_shared::IpiTier::EnterpriseOrLite)
     }
 
     /// Options pinned to a specific data-file tier. The test pins the ASN tier
@@ -80,9 +81,10 @@ impl ExampleOptions {
     }
 }
 
-/// The properties compared across the runs. The free ASN file carries Asn, and
-/// only the Enterprise data file carries the location properties.
-const COMPARED_PROPERTIES: &[&str] = &["Asn", "Country", "Town"];
+/// The properties compared across the runs. The free ASN file carries Asn, the
+/// free Lite file RegisteredName, and only the Enterprise data file the
+/// location properties.
+const COMPARED_PROPERTIES: &[&str] = &["Asn", "RegisteredName", "Country", "Town"];
 
 /// The compared properties only the Enterprise data file carries.
 const ENTERPRISE_COMPARED: &[&str] = &["Country", "Town"];
@@ -214,11 +216,16 @@ fn compare_two_ips(
     writeln!(out, "Comparing two IP addresses (profile {profile:?}):")?;
     writeln!(out, "\t{a}: {}", values_a.join(", "))?;
     writeln!(out, "\t{b}: {}", values_b.join(", "))?;
-    // The first compared property is Asn.
+    // Asn and RegisteredName, the compared properties a free file can carry,
+    // say which network each IP is in.
+    let same_network = COMPARED_PROPERTIES
+        .iter()
+        .zip(values_a.iter().zip(&values_b))
+        .all(|(name, (a, b))| ENTERPRISE_COMPARED.contains(name) || a == b);
     writeln!(
         out,
-        "\t=> the two IPs map to {} autonomous system.",
-        if values_a.first() == values_b.first() {
+        "\t=> the two IPs map to {} network.",
+        if same_network {
             "the same"
         } else {
             "a different"
@@ -289,8 +296,7 @@ mod tests {
 /*
  * @example ipi-onprem-compare.rs
  *
- * The on-premise IP Intelligence compare example, adapted to the ASN data file
- * the workspace bundles.
+ * The on-premise IP Intelligence compare example.
  *
  * It shows two kinds of comparison:
  *
@@ -300,21 +306,23 @@ mod tests {
  *    they agree. This is a quick way to confirm that a profile change made for
  *    performance reasons has not altered detection.
  * 2. Two IP addresses looked up under one profile and compared against each
- *    other, reporting whether they map to the same autonomous system.
+ *    other, reporting whether they map to the same network.
  *
  * Each value is shown as the single plain value the data file resolves. The
- * example compares `Asn`, which the free ASN file carries, and `Country` and
- * `Town`, which only the Enterprise data file carries. The data file's own
- * list of properties says which it can answer, so with a free file the
- * location properties each say "needs the Enterprise data file", and the run
- * names them with a link to contact 51Degrees about a copy of the Enterprise
- * data file. It also prints the standard data-file warnings and ends with a
- * "Find out more" section.
+ * example compares `Asn`, which the free ASN file carries, `RegisteredName`,
+ * which the free Lite file carries, and `Country` and `Town`, which only the
+ * Enterprise data file carries. The data file's own list of properties says
+ * which it can answer. A free property the file lacks says "not in this data
+ * file". With a free file the location properties each say "needs the
+ * Enterprise data file", and the run names them with a link to contact
+ * 51Degrees about a copy of the Enterprise data file. It also prints the
+ * standard data-file warnings and ends with a "Find out more" section.
  *
  * # Data file
  *
- * Resolved by `examples_shared::ipi_data_path`. Contact 51Degrees for an
- * Enterprise file with the full property set: <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-compare.rs&utm_term=ipi-onprem-compare>.
+ * Resolved by `examples_shared::ipi_data_path`, which gives the free Lite file
+ * when no other file is set. Contact 51Degrees for an Enterprise file with the
+ * full property set: <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-compare.rs&utm_term=ipi-onprem-compare>.
  *
  * # Usage sharing
  *

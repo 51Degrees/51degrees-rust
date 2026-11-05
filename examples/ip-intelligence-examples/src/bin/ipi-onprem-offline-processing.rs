@@ -51,24 +51,26 @@ const FIND_OUT_MORE: &[(&str, &str)] = &[
 /// The relative path to the IP-intelligence evidence file in the data submodule.
 const IPI_EVIDENCE_RELATIVE_PATH: &str = "cxx/data/ip-intelligence/evidence.yml";
 
-/// The properties reported for each record. The free ASN file carries Asn and
-/// AsnName, and only the Enterprise data file carries the location ones.
-const REPORTED_PROPERTIES: &[&str] = &["Asn", "AsnName", "Country", "CountryCode", "Town"];
-
-/// The reported properties only the Enterprise data file carries.
-const ENTERPRISE_REPORTED: &[&str] = &["Country", "CountryCode", "Town"];
-
-/// The properties the pipeline is asked for. RegisteredName is included so the
-/// request holds a property each free file carries, because a data file opens
-/// only when it carries at least one property asked for.
-const REQUESTED_PROPERTIES: &[&str] = &[
+/// The properties asked for and reported for each record. The free ASN file
+/// carries Asn and AsnName, the free Lite file RegisteredName and
+/// RegisteredCountry, and only the Enterprise data file the location ones. A
+/// data file opens only when it carries at least one property asked for, so
+/// each free file has some here.
+const REPORTED_PROPERTIES: &[&str] = &[
     "Asn",
     "AsnName",
     "RegisteredName",
+    "RegisteredCountry",
     "Country",
     "CountryCode",
     "Town",
 ];
+
+/// The reported properties only the Enterprise data file carries.
+const ENTERPRISE_REPORTED: &[&str] = &["Country", "CountryCode", "Town"];
+
+/// Shown for a free property the data file in use does not carry.
+const NOT_IN_THIS_FILE: &str = "not in this data file";
 
 /// The options that drive a run of this example.
 pub struct ExampleOptions {
@@ -81,9 +83,10 @@ pub struct ExampleOptions {
 }
 
 impl ExampleOptions {
-    /// Default options, using the best-available loadable data-file tier.
+    /// Default options, reading the Enterprise file when its share is
+    /// reachable and otherwise the free Lite file.
     pub fn from_env() -> Option<Self> {
-        Self::for_tier(examples_shared::IpiTier::BestAvailable, 20)
+        Self::for_tier(examples_shared::IpiTier::EnterpriseOrLite, 20)
     }
 
     /// Options pinned to a specific data-file tier and record limit. The test
@@ -114,7 +117,7 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
     // does not want to pay the memory cost of loading the whole file.
     let pipeline: Arc<Pipeline> = IpIntelligencePipelineBuilder::on_premise(&options.data_file)
         .performance_profile(PerformanceProfile::LowMemory)
-        .properties(REQUESTED_PROPERTIES.iter().copied())
+        .properties(REPORTED_PROPERTIES.iter().copied())
         .auto_update(false)
         .file_system_watcher(false)
         .build()
@@ -228,10 +231,12 @@ fn analyse_record(
         .context("the pipeline produced no IP Intelligence data")?;
 
     for property in REPORTED_PROPERTIES {
-        let needs_enterprise = ENTERPRISE_REPORTED.contains(property)
-            && !examples_shared::is_available(property, available);
-        if needs_enterprise {
-            let note = examples_shared::NEEDS_ENTERPRISE_DATA_FILE;
+        if !examples_shared::is_available(property, available) {
+            let note = if ENTERPRISE_REPORTED.contains(property) {
+                examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+            } else {
+                NOT_IN_THIS_FILE
+            };
             writeln!(out, "{property}: {note}")?;
             continue;
         }
@@ -312,17 +317,19 @@ mod tests {
  *    YAML-like document stream, suitable for piping to a file for later
  *    analysis.
  *
- * Each record reports `Asn` and `AsnName`, which the free ASN file carries, and
- * `Country`, `CountryCode` and `Town`, which only the Enterprise data file
- * carries. The data file's own list of properties says which it can answer,
- * so with a free file the location properties each say "needs the Enterprise
- * data file". After the stream the run prints the standard data-file
- * warnings, names the properties the data file lacks with a link to contact
- * 51Degrees about a copy of the Enterprise data file, and ends with a "Find
- * out more" section.
+ * Each record reports `Asn` and `AsnName`, which the free ASN file carries,
+ * `RegisteredName` and `RegisteredCountry`, which the free Lite file carries,
+ * and `Country`, `CountryCode` and `Town`, which only the Enterprise data file
+ * carries. The data file's own list of properties says which it can answer.
+ * A free property the file lacks says "not in this data file", and with a free
+ * file the location properties each say "needs the Enterprise data file".
+ * After the stream the run prints the standard data-file warnings, names the
+ * properties the data file lacks with a link to contact 51Degrees about a copy
+ * of the Enterprise data file, and ends with a "Find out more" section.
  *
  * The evidence file is located with `examples_shared::find_file`, and the data
- * file with `examples_shared::ipi_data_path`. By default only the first 20
+ * file with `examples_shared::ipi_data_path`, which gives the free Lite file
+ * when no other file is set. By default only the first 20
  * records are processed so the example finishes quickly; pass a different limit
  * by constructing `ExampleOptions::for_tier` directly.
  *

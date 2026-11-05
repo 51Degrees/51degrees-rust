@@ -373,11 +373,13 @@ also asks for properties only the Enterprise data file carries, such as
 HardwareVendor, DeviceType and PriceBand for Device Detection, and Country,
 Town and IsVPN for IP Intelligence. On a free file each of those says it needs
 the Enterprise data file, and the output gives a link to contact 51Degrees
-about a copy. `ipi-onprem-getting-started` reads both free IP Intelligence
-files, the ASN file for Asn and AsnName and the Lite file, a download of about
-320 MB, for RegisteredName, RegisteredOwner and RegisteredCountry. The other IP
-Intelligence examples read the ASN file. Every example ends with a "Find out
-more" section.
+about a copy. The on-premise IP Intelligence examples read the free Lite file,
+a download of about 320 MB that carries RegisteredName, RegisteredOwner and
+RegisteredCountry. `ipi-onprem-performance` and `ipi-onprem-update-data-file`
+read the ASN file instead, a download of a few megabytes, because their
+properties do not matter to what they show, and `ipi-onprem-getting-started`
+reads both, the ASN file for Asn and AsnName. Every example ends with a "Find
+out more" section.
 
 Every cloud example calls the public 51Degrees cloud at
 `https://cloud.51degrees.com/api/v4/` unless `51DEGREES_CLOUD_ENDPOINT` names

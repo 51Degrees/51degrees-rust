@@ -61,9 +61,10 @@ pub struct ExampleOptions {
 }
 
 impl ExampleOptions {
-    /// Default options, using the best-available loadable data-file tier.
+    /// Default options, reading the Enterprise file when its share is
+    /// reachable and otherwise the free Lite file.
     pub fn from_env() -> Option<Self> {
-        Self::for_tier(examples_shared::IpiTier::BestAvailable)
+        Self::for_tier(examples_shared::IpiTier::EnterpriseOrLite)
     }
 
     /// Options pinned to a specific data-file tier. The test pins the ASN tier
@@ -80,10 +81,12 @@ impl ExampleOptions {
     }
 }
 
-/// The property the metrics print summarises. For the ASN data file this is the
-/// autonomous system; an Enterprise file would also populate the location
-/// properties.
-const SUMMARY_PROPERTY: &str = "Asn";
+/// The properties the metrics print summarise, saying which network each IP is
+/// in. The free ASN file carries Asn and the free Lite file RegisteredName.
+const SUMMARY_PROPERTIES: &[&str] = &["Asn", "RegisteredName"];
+
+/// Shown for a summary property the data file in use does not carry.
+const NOT_IN_THIS_FILE: &str = "not in this data file";
 
 /// How accurate each lookup's location is. Only the Enterprise data file
 /// carries these.
@@ -93,11 +96,11 @@ const ACCURACY_PROPERTIES: &[&str] = &[
     "LocationConfidence",
 ];
 
-/// The properties the pipeline is asked for. AsnName and RegisteredName are
-/// included so the request holds a property each free file carries, because a
-/// data file opens only when it carries at least one property asked for.
+/// The properties the pipeline is asked for. The summary properties give each
+/// free file one it carries, because a data file opens only when it carries at
+/// least one property asked for.
 const REQUESTED_PROPERTIES: &[&str] = &[
-    SUMMARY_PROPERTY,
+    "Asn",
     "AsnName",
     "RegisteredName",
     "AccuracyRadiusMin",
@@ -140,8 +143,8 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
     writeln!(
         out,
         "Note: IP Intelligence does not expose Device Detection's match metrics \
-         (difference, drift, method, iterations). The summary property above is \
-         the single value the data file resolves for each lookup."
+         (difference, drift, method, iterations). The summary properties above \
+         are the single values the data file resolves for each lookup."
     )?;
 
     writeln!(out)?;
@@ -161,7 +164,7 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
 // [example]
 
 /// Time one lookup and print its insight: elapsed time, cache-hit flag, the
-/// resolved value of the summary property and the accuracy measures.
+/// resolved values of the summary properties and the accuracy measures.
 /// `available` holds the properties the data file carries.
 fn report_lookup(
     pipeline: &Arc<Pipeline>,
@@ -181,12 +184,6 @@ fn report_lookup(
         .get(IP_DATA_KEY)
         .context("the pipeline produced no IP Intelligence data")?;
 
-    let summary = ip_data.string(SUMMARY_PROPERTY);
-    let value = match summary.value() {
-        Ok(value) => value.clone(),
-        Err(_) => "(no value)".to_owned(),
-    };
-
     writeln!(out, "IP {ip}")?;
     writeln!(
         out,
@@ -194,7 +191,17 @@ fn report_lookup(
         elapsed.as_secs_f64() * 1000.0
     )?;
     writeln!(out, "\tCache hit: {}", ip_data.cache_hit())?;
-    writeln!(out, "\t{SUMMARY_PROPERTY}: {value}")?;
+    for name in SUMMARY_PROPERTIES {
+        let value = if examples_shared::is_available(name, available) {
+            match ip_data.string(name).value() {
+                Ok(value) => value.clone(),
+                Err(_) => "(no value)".to_owned(),
+            }
+        } else {
+            NOT_IN_THIS_FILE.to_owned()
+        };
+        writeln!(out, "\t{name}: {value}")?;
+    }
     for name in ACCURACY_PROPERTIES {
         let accuracy = if examples_shared::is_available(name, available) {
             examples_shared::get_property_as_string(ip_data, name)
@@ -279,7 +286,10 @@ mod tests {
  *
  * 1. The wall-clock time the lookup took, measured around `FlowData::process`.
  * 2. Whether the result was served from a cache.
- * 3. The resolved value of a summary property.
+ * 3. The resolved values of `Asn` and `RegisteredName`, which say which
+ *    network the IP is in. The free ASN file carries the first and the free
+ *    Lite file the second, and one the file lacks says "not in this data
+ *    file".
  * 4. How accurate the location is, from `AccuracyRadiusMin`,
  *    `AccuracyRadiusMax` and `LocationConfidence`, which only the Enterprise
  *    data file carries. The data file's own list of properties says which it
@@ -296,8 +306,9 @@ mod tests {
  *
  * # Data file
  *
- * Resolved by `examples_shared::ipi_data_path`. Contact 51Degrees for an
- * Enterprise file with the full property set: <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-metrics.rs&utm_term=ipi-onprem-metrics>.
+ * Resolved by `examples_shared::ipi_data_path`, which gives the free Lite file
+ * when no other file is set. Contact 51Degrees for an Enterprise file with the
+ * full property set: <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-metrics.rs&utm_term=ipi-onprem-metrics>.
  *
  * # Usage sharing
  *

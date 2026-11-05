@@ -57,9 +57,10 @@ pub struct ExampleOptions {
 }
 
 impl ExampleOptions {
-    /// Default options, using the best-available loadable data-file tier.
+    /// Default options, reading the Enterprise file when its share is
+    /// reachable and otherwise the free Lite file.
     pub fn from_env() -> Option<Self> {
-        Self::for_tier(examples_shared::IpiTier::BestAvailable)
+        Self::for_tier(examples_shared::IpiTier::EnterpriseOrLite)
     }
 
     /// Options pinned to a specific data-file tier. The test pins the ASN tier
@@ -125,7 +126,7 @@ fn output_property_details(
 ) -> anyhow::Result<()> {
     // The data file's full property catalogue, read from the data set, so the
     // listing reflects the tier (an Enterprise file carries the location and
-    // behavioural properties an ASN file does not).
+    // behavioural properties a free file does not).
     let available = engine.available_property_names();
     writeln!(out)?;
     writeln!(out, "Available properties ({}):", available.len())?;
@@ -314,9 +315,11 @@ mod tests {
  *
  * # Data file
  *
- * Resolved by `examples_shared::ipi_data_path`. The free ASN file carries
- * the autonomous-system properties; an Enterprise file carries the full network
- * and location property set. Contact 51Degrees for an Enterprise file:
+ * Resolved by `examples_shared::ipi_data_path`, which gives the free Lite file
+ * when no other file is set. The Lite file carries the registration properties
+ * `RegisteredName`, `RegisteredOwner` and `RegisteredCountry`, the free ASN
+ * file carries `Asn` and `AsnName`, and an Enterprise file carries the full
+ * network and location property set. Contact 51Degrees for an Enterprise file:
  * <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-metadata.rs&utm_term=ipi-onprem-metadata>.
  *
  * # Usage sharing

@@ -83,11 +83,12 @@ pub struct ExampleOptions {
 }
 
 impl ExampleOptions {
-    /// Default options, using the best-available loadable data-file tier. The
-    /// diversity and behavioral properties are only present in an Enterprise
-    /// file, so the judgement is made only when an Enterprise file is resolved.
+    /// Default options, reading the Enterprise file when its share is
+    /// reachable and otherwise the free Lite file. The diversity and
+    /// behavioral properties are only present in an Enterprise file, so the
+    /// judgement is made only when an Enterprise file is resolved.
     pub fn from_env() -> Option<Self> {
-        Self::for_tier(examples_shared::IpiTier::BestAvailable)
+        Self::for_tier(examples_shared::IpiTier::EnterpriseOrLite)
     }
 
     /// Options pinned to a specific data-file tier. One test pins the
@@ -544,8 +545,9 @@ mod tests {
  *
  * The judgement needs an Enterprise IP Intelligence data file (`.ipi`), which is
  * the tier that carries the diversity and behavioral properties. The data file is
- * resolved by `examples_shared::ipi_data_path`, and runs on the free ASN file
- * without a verdict. Contact 51Degrees for an
+ * resolved by `examples_shared::ipi_data_path`, which gives the free Lite file
+ * when no other file is set, and the example runs on either free file without
+ * a verdict. Contact 51Degrees for an
  * Enterprise file: <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-suspicious.rs&utm_term=ipi-onprem-suspicious>.
  *
  * # Usage sharing

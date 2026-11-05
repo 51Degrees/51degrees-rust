@@ -78,10 +78,12 @@ pub struct ExampleOptions {
 }
 
 impl ExampleOptions {
-    /// Default options, using the best-available loadable data-file tier and a
-    /// thread count taken from the available parallelism.
+    /// Default options, reading the Enterprise file when its share is reachable
+    /// and otherwise the free ASN file, which is far smaller to download than
+    /// the Lite file and serves a benchmark as well. The thread count is taken
+    /// from the available parallelism.
     pub fn from_env() -> Option<Self> {
-        let options = Self::for_tier(examples_shared::IpiTier::BestAvailable, 500, 4)?;
+        let options = Self::for_tier(examples_shared::IpiTier::EnterpriseOrAsn, 500, 4)?;
         Some(ExampleOptions {
             json_output: examples_shared::json_output_path(std::env::args().skip(1)),
             ..options
@@ -446,8 +448,9 @@ mod tests {
  *
  * # Data file
  *
- * Resolved by `examples_shared::ipi_data_path`. Contact 51Degrees for an
- * Enterprise file: <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-performance.rs&utm_term=ipi-onprem-performance>.
+ * Resolved by `examples_shared::ipi_data_path`, which gives the free ASN file
+ * when no other file is set, because the properties a benchmark reads do not
+ * matter to what it shows. Contact 51Degrees for an Enterprise file: <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-performance.rs&utm_term=ipi-onprem-performance>.
  *
  * # Usage sharing
  *
