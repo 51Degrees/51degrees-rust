@@ -78,10 +78,8 @@
 //! feature is on. The sink gets the records and the document the built-in
 //! transport would send, and can add its own elements to each record.
 
-use std::net::UdpSocket;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
-#[cfg(feature = "share-usage-transport")]
 use std::sync::OnceLock;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::thread::JoinHandle;
@@ -126,13 +124,6 @@ const ADD_RETRY_INTERVAL_MILLISECONDS: u64 = 1;
 
 /// The shortest gap between two log messages about the same kind of failure.
 const LOG_INTERVAL_MILLISECONDS: u64 = 60_000;
-
-/// A public address used to ask the operating system which local address
-/// routes to the internet. Connecting a UDP socket sends no packets.
-const ROUTE_PROBE_V4: &str = "8.8.8.8:10002";
-
-/// The IPv6 equivalent of [`ROUTE_PROBE_V4`], for hosts without IPv4.
-const ROUTE_PROBE_V6: &str = "[2001:4860:4860::8888]:10002";
 
 /// Configuration for the usage-sharing element.
 ///
@@ -353,13 +344,12 @@ impl Default for ShareUsageConfigBuilder {
 }
 
 impl StaticInfo {
-    /// The values for this machine and build, gathered when the element is
-    /// created.
+    /// The values for this machine and build.
     fn gather() -> Self {
         StaticInfo {
             core_version: env!("CARGO_PKG_VERSION").to_owned(),
             language_version: env!("FIFTYONE_RUSTC_VERSION").to_owned(),
-            server_ip: server_ip(),
+            server_ip: crate::host_address::host_address(),
             platform: platform(),
         }
     }
@@ -600,7 +590,7 @@ impl ShareUsageElement {
             receiver: rx,
             sink,
             config: config.clone(),
-            static_info: StaticInfo::gather(),
+            static_info: OnceLock::new(),
             success_count: Arc::clone(&success_count),
             fail_count: Arc::clone(&fail_count),
             send_failures: LogThrottle::new(),
@@ -858,7 +848,9 @@ struct Worker {
     receiver: Receiver<UsageRecord>,
     sink: Box<dyn UsageSink>,
     config: ShareUsageConfig,
-    static_info: StaticInfo,
+    /// Gathered when the first batch is written, so creating the element
+    /// never waits for the host's name to resolve.
+    static_info: OnceLock<StaticInfo>,
     success_count: Arc<AtomicU64>,
     fail_count: Arc<AtomicU64>,
     send_failures: LogThrottle,
@@ -922,29 +914,13 @@ impl Worker {
 
     /// Write the `<Devices>` document for the batch and hand both to the sink.
     fn deliver(&self, records: Vec<UsageRecord>) -> std::result::Result<(), String> {
-        let document = write_document(&records, &self.static_info, &*self.sink, utc_now_iso8601)
+        let static_info = self.static_info.get_or_init(StaticInfo::gather);
+        let document = write_document(&records, static_info, &*self.sink, utc_now_iso8601)
             .map_err(|e| format!("A record could not be written, because {e}"))?;
         self.sink
             .receive(UsageBatch::new(records, document))
             .map_err(|e| e.to_string())
     }
-}
-
-/// The address this host uses to reach the internet. The operating system
-/// picks it when a UDP socket is connected to a public address, which sends
-/// no packets. Empty when the host has no route out.
-fn server_ip() -> String {
-    for (local, probe) in [("0.0.0.0:0", ROUTE_PROBE_V4), ("[::]:0", ROUTE_PROBE_V6)] {
-        let address = UdpSocket::bind(local)
-            .and_then(|socket| socket.connect(probe).map(|()| socket))
-            .and_then(|socket| socket.local_addr());
-        match address {
-            Ok(address) if !address.ip().is_unspecified() => return address.ip().to_string(),
-            Ok(_) => {}
-            Err(e) => log::debug!("Usage sharing found no local address routing to {probe}: {e}"),
-        }
-    }
-    String::new()
 }
 
 /// The operating system's name and version, with the service pack where the
@@ -1623,8 +1599,13 @@ mod tests {
         let platform = text("Platform");
         assert!(platform.starts_with(std::env::consts::OS), "{platform}");
         let server_ip = text("ServerIP");
+        let address = server_ip.split('%').next().unwrap_or_default();
         assert!(
-            server_ip.is_empty() || server_ip.parse::<std::net::IpAddr>().is_ok(),
+            server_ip.is_empty() || address.parse::<std::net::IpAddr>().is_ok(),
+            "{server_ip}"
+        );
+        assert!(
+            server_ip != "127.0.0.1" && server_ip != "::1",
             "{server_ip}"
         );
         for name in [

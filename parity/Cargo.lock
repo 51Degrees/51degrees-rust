@@ -477,6 +477,7 @@ dependencies = [
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
  "flate2",
+ "libc",
  "log",
  "thiserror",
  "uuid",

@@ -903,6 +903,7 @@ dependencies = [
  "fiftyone-pipeline-engines",
  "fiftyone-pipeline-engines-fiftyone",
  "flate2",
+ "libc",
  "log",
  "reqwest",
  "thiserror 2.0.18",
