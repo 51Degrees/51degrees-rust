@@ -151,9 +151,9 @@ fn a_resource_key_without_the_product_logs_one_error_and_gives_empty_metadata() 
 }
 
 /// With only a license key there are no accessible properties to read, so the
-/// engine keeps its default metadata and logs nothing.
+/// engine gives empty metadata, as the specification says, and logs nothing.
 #[test]
-fn a_license_key_alone_keeps_the_defaults_and_logs_nothing() {
+fn a_license_key_alone_gives_empty_metadata_and_logs_nothing() {
     let _serial = start();
     let (pipeline, fodid) = pipeline(CloudRequestEngine::builder().license_key("lk"));
 
@@ -161,6 +161,7 @@ fn a_license_key_alone_keeps_the_defaults_and_logs_nothing() {
         process(&pipeline);
     }
     assert_eq!(take_logged(), Vec::<String>::new());
-    assert!(!fodid.has_loaded_properties());
-    assert_eq!(fodid.properties().len(), 6);
+    assert!(fodid.has_loaded_properties());
+    assert!(fodid.properties().is_empty());
+    assert!(fodid.aspect_properties().is_empty());
 }

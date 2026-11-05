@@ -203,12 +203,13 @@ impl FodIdCloudEngine {
     /// Set the metadata once the request engine's discovery has completed.
     ///
     /// Until then the caches stay empty and the engine reports the shared
-    /// defaults. A resource key that grants no identifier product, or lists it
-    /// with no properties, gets empty metadata, as the other cloud engines and
-    /// .NET do, and the call that sets it logs an error, so it is logged once.
-    /// With only a license key there are no accessible properties to read, so
-    /// the engine keeps the defaults and logs nothing. The properties are set
-    /// last because a request that finds them set reads the rest.
+    /// defaults. When the accessible properties hold no identifier product, or
+    /// list it with no properties, the engine gets empty metadata, as the other
+    /// cloud engines and .NET do. That includes an engine with only a license
+    /// key, which has no accessible properties to read, as the specification
+    /// says. With a resource key the call that sets the empty metadata logs an
+    /// error, so it is logged once. The properties are set last because a
+    /// request that finds them set reads the rest.
     fn ensure_metadata(&self) {
         if self.properties.get().is_some() {
             return;
@@ -221,16 +222,17 @@ impl FodIdCloudEngine {
                 let _ = self.aspect_properties.set(aspect);
                 let _ = self.properties.set(core);
             }
-            None if self.request_engine.resource_key().is_some() => {
+            None => {
                 let _ = self.aspect_properties.set(Vec::new());
-                if self.properties.set(Vec::new()).is_ok() {
+                if self.properties.set(Vec::new()).is_ok()
+                    && self.request_engine.resource_key().is_some()
+                {
                     log::error!(
                         "Aspect properties could not be loaded for {ENGINE_NAME} - \
                          '{FODID_ELEMENT_DATA_KEY}'"
                     );
                 }
             }
-            None => {}
         }
     }
 
