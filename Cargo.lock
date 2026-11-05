@@ -800,6 +800,7 @@ version = "4.5.2"
 dependencies = [
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "log",
 ]
 
 [[package]]
