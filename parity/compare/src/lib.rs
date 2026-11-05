@@ -52,6 +52,36 @@ const REPORT_TEXT_LIMIT: usize = 300;
 const CRLF: &str = "\r\n";
 const LF: &str = "\n";
 
+/// The elements of a usage record that hold the time it was written or name
+/// the runtime, which differ between the languages by design. Their text is
+/// left out before two records are compared.
+const USAGE_RUNTIME_ELEMENTS: &[&str] = &[
+    "DateSent",
+    "Version",
+    "Language",
+    "LanguageVersion",
+    "Platform",
+    "FlowElement",
+];
+
+/// The same for a record from the custom sink, which writes its own Flow
+/// Element names, so those must be the same on both sides.
+const USAGE_CUSTOM_RUNTIME_ELEMENTS: &[&str] = &[
+    "DateSent",
+    "Version",
+    "Language",
+    "LanguageVersion",
+    "Platform",
+];
+
+/// The last of the values that are the same in every usage record. The
+/// evidence entries follow it and are never left out.
+const USAGE_LAST_STATIC_ELEMENT: &str = "Platform";
+
+/// How many characters before the first that differs a report shows of a
+/// usage record.
+const REPORT_RECORD_CONTEXT: usize = 60;
+
 /// One corpus case.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Case {
@@ -298,9 +328,23 @@ pub fn compare_case(case: &Case, dotnet: &Value, rust: &Value) -> Vec<Difference
         field_of(&rust, "properties"),
     );
     out.json_text("json", field_of(&dotnet, "json"), field_of(&rust, "json"));
-    for field in ["javascript", "usage"] {
-        out.text(field, field_of(&dotnet, field), field_of(&rust, field));
-    }
+    out.text(
+        "javascript",
+        field_of(&dotnet, "javascript"),
+        field_of(&rust, "javascript"),
+    );
+    out.record(
+        "usage",
+        field_of(&dotnet, "usage"),
+        field_of(&rust, "usage"),
+        USAGE_RUNTIME_ELEMENTS,
+    );
+    out.record(
+        "usageCustom",
+        field_of(&dotnet, "usageCustom"),
+        field_of(&rust, "usageCustom"),
+        USAGE_CUSTOM_RUNTIME_ELEMENTS,
+    );
     out.differences
 }
 
@@ -523,6 +567,112 @@ impl Out<'_> {
             }
         }
     }
+
+    /// Compares two usage records as text, once the text of each element
+    /// named in `blanked` is left out, and shows where they first differ.
+    fn record(&mut self, path: &str, dotnet: &Value, rust: &Value, blanked: &[&str]) {
+        let (Some(d), Some(r)) = (dotnet.as_str(), rust.as_str()) else {
+            if dotnet != rust {
+                self.push(path, Kind::Presence, dotnet, rust);
+            }
+            return;
+        };
+        let d = blank_elements(d, blanked);
+        let r = blank_elements(r, blanked);
+        if let Some(at) = first_difference(&d, &r) {
+            self.push(
+                path,
+                Kind::Text,
+                &Value::String(around(&d, at)),
+                &Value::String(around(&r, at)),
+            );
+        }
+    }
+}
+
+/// `record` with each element named in `names` written as `<Name />`, up to
+/// the end of the record's last static element. The evidence entries after
+/// that are left as they are.
+fn blank_elements(record: &str, names: &[&str]) -> String {
+    let end = static_end(record);
+    let mut out = String::with_capacity(record.len());
+    let mut rest = &record[..end];
+    'next: while let Some(open) = rest.find('<') {
+        out.push_str(&rest[..open]);
+        rest = &rest[open..];
+        for name in names {
+            if let Some(length) = element_length(rest, name) {
+                out.push('<');
+                out.push_str(name);
+                out.push_str(" />");
+                rest = &rest[length..];
+                continue 'next;
+            }
+        }
+        out.push('<');
+        rest = &rest[1..];
+    }
+    out.push_str(rest);
+    out.push_str(&record[end..]);
+    out
+}
+
+/// The length of the element `name` at the start of `text`, written empty or
+/// with text, or `None` when `text` does not start with it.
+fn element_length(text: &str, name: &str) -> Option<usize> {
+    const EMPTY_END: &str = " />";
+    let after = text.strip_prefix('<')?.strip_prefix(name)?;
+    let opened = 1 + name.len();
+    if after.starts_with(EMPTY_END) {
+        return Some(opened + EMPTY_END.len());
+    }
+    let inner = after.strip_prefix('>')?;
+    let close = format!("</{name}>");
+    let length = inner.find(&close)?;
+    Some(opened + 1 + length + close.len())
+}
+
+/// Where the values that are the same in every record end, being after the
+/// record's first [`USAGE_LAST_STATIC_ELEMENT`], or the end of the record when
+/// it has none.
+fn static_end(record: &str) -> usize {
+    record
+        .find(&format!("<{USAGE_LAST_STATIC_ELEMENT}"))
+        .and_then(|start| {
+            element_length(&record[start..], USAGE_LAST_STATIC_ELEMENT).map(|length| start + length)
+        })
+        .unwrap_or(record.len())
+}
+
+/// The byte offset of the first character at which `a` and `b` differ, or
+/// `None` when they are the same.
+fn first_difference(a: &str, b: &str) -> Option<usize> {
+    if a == b {
+        return None;
+    }
+    Some(
+        a.char_indices()
+            .zip(b.chars())
+            .find(|((_, x), y)| x != y)
+            .map_or(a.len().min(b.len()), |((i, _), _)| i),
+    )
+}
+
+/// The number of characters before the byte offset `at`, then the text from
+/// up to [`REPORT_RECORD_CONTEXT`] characters before `at`.
+fn around(text: &str, at: usize) -> String {
+    let before = &text[..at];
+    let start = before
+        .char_indices()
+        .rev()
+        .nth(REPORT_RECORD_CONTEXT - 1)
+        .map_or(0, |(i, _)| i);
+    let lead = if start > 0 { "..." } else { "" };
+    format!(
+        "after {} characters: {lead}{}",
+        before.chars().count(),
+        cut(&text[start..])
+    )
 }
 
 fn keys(keys: &[&String]) -> Value {
@@ -922,6 +1072,110 @@ mod tests {
         let differences = compare_case(&case("a", false), &dotnet, &rust);
         assert_eq!(differences.len(), 1);
         assert_eq!(differences[0].path, "session");
+    }
+
+    /// A usage record in the form both producers write, with the values that
+    /// differ by design and one evidence value given.
+    fn usage_record(date: &str, platform: &str, flow_element: &str, value: &str) -> String {
+        format!(
+            "<Device><SessionId>abc</SessionId><Sequence>2</Sequence>\
+             <DateSent>{date}</DateSent><ClientIP /><Version>4.5.1</Version>\
+             <Product>Pipeline</Product><FlowElement>{flow_element}</FlowElement>\
+             <Language>rust</Language><LanguageVersion>1.94</LanguageVersion>\
+             <ServerIP>10.0.0.1</ServerIP><Platform>{platform}</Platform>\
+             <header Name=\"User-Agent\"><![CDATA[{value}]]></header></Device>"
+        )
+    }
+
+    fn with_usage(field: &str, record: &str) -> Value {
+        let mut value = line(true);
+        value[field] = json!(record);
+        value
+    }
+
+    #[test]
+    fn blanking_writes_only_the_named_elements_empty() {
+        assert_eq!(
+            blank_elements(
+                &usage_record("2026-11-05T19:00:00", "linux", "a", "b"),
+                USAGE_RUNTIME_ELEMENTS
+            ),
+            "<Device><SessionId>abc</SessionId><Sequence>2</Sequence>\
+             <DateSent /><ClientIP /><Version /><Product>Pipeline</Product>\
+             <FlowElement /><Language /><LanguageVersion />\
+             <ServerIP>10.0.0.1</ServerIP><Platform />\
+             <header Name=\"User-Agent\"><![CDATA[b]]></header></Device>"
+        );
+    }
+
+    #[test]
+    fn usage_records_differing_only_in_runtime_values_are_the_same() {
+        let dotnet = usage_record("2026-11-05T19:00:00", "Unix 6.8.0", "FiftyOne.A", "x")
+            .replace("<Language>rust</Language>", "<Language>dotnet</Language>")
+            .replace("<Version>4.5.1</Version>", "<Version>4.5.129</Version>");
+        let rust = usage_record("2026-11-05T19:00:01", "linux", "", "x")
+            .replace("<FlowElement></FlowElement>", "<FlowElement />");
+        let differences = compare_case(
+            &case("a", true),
+            &with_usage("usage", &dotnet),
+            &with_usage("usage", &rust),
+        );
+        assert!(differences.is_empty(), "{differences:?}");
+    }
+
+    #[test]
+    fn a_usage_record_difference_shows_where_it_starts() {
+        let differences = compare_case(
+            &case("a", true),
+            &with_usage("usage", &usage_record("d", "p", "f", "a<b")),
+            &with_usage("usage", &usage_record("d", "p", "f", "a<c")),
+        );
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].path, "usage");
+        assert_eq!(differences[0].kind, Kind::Text);
+        let shown = differences[0].dotnet.as_str().unwrap();
+        assert!(shown.starts_with("after "), "{shown}");
+        assert!(shown.contains("<![CDATA[a<b]]>"), "{shown}");
+        let shown = differences[0].rust.as_str().unwrap();
+        assert!(shown.contains("<![CDATA[a<c]]>"), "{shown}");
+    }
+
+    #[test]
+    fn evidence_after_the_static_values_is_never_blanked() {
+        // An evidence key with no prefix is written as an element of its own
+        // name, so it can share a name with a static value.
+        let record = |text: &str| {
+            usage_record("d", "p", "f", "a")
+                .replace("</Device>", &format!("<Version>{text}</Version></Device>"))
+        };
+        let differences = compare_case(
+            &case("a", true),
+            &with_usage("usage", &record("1")),
+            &with_usage("usage", &record("2")),
+        );
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].path, "usage");
+    }
+
+    #[test]
+    fn the_custom_record_keeps_its_flow_element_names() {
+        let dotnet = with_usage("usageCustom", &usage_record("d1", "p1", "Custom 1", "a"));
+        let later = with_usage("usageCustom", &usage_record("d2", "p2", "Custom 1", "a"));
+        let renamed = with_usage("usageCustom", &usage_record("d1", "p1", "Custom 2", "a"));
+        assert!(compare_case(&case("a", true), &dotnet, &later).is_empty());
+        let differences = compare_case(&case("a", true), &dotnet, &renamed);
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].path, "usageCustom");
+        assert_eq!(differences[0].kind, Kind::Text);
+    }
+
+    #[test]
+    fn a_usage_record_on_one_side_only_is_a_presence_difference() {
+        let rust = with_usage("usage", &usage_record("d", "p", "f", "a"));
+        let differences = compare_case(&case("a", true), &line(true), &rust);
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].path, "usage");
+        assert_eq!(differences[0].kind, Kind::Presence);
     }
 
     #[test]

@@ -25,8 +25,8 @@
 //   dotnet run -- --corpus <json> --dd <hash file> --ipi <ipi file> --out <jsonl>
 //
 // The pipelines and the line format are the same as the Rust producer's, as
-// parity/README.md describes. Usage records go to a handler inside this
-// process, so nothing is sent anywhere.
+// parity/README.md describes. Usage records go to a handler and to a custom
+// usage sharing element inside this process, so nothing is sent anywhere.
 
 using System;
 using System.Collections;
@@ -41,6 +41,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml;
 using System.Xml.Linq;
 using FiftyOne.DeviceDetection.Hash.Engine.OnPremise.FlowElements;
 using FiftyOne.IpIntelligence.Engine.OnPremise.FlowElements;
@@ -103,6 +104,17 @@ namespace FiftyOne.Parity
         // message would set off.
         private const int UsageEntriesPerMessage = 10000;
 
+        // A header that is not shared.
+        private const string UsageBlockedHeader = "Referer";
+
+        // A query string parameter that is shared, beside those whose names
+        // start with 51D_.
+        private const string UsageIncludedQueryParameter = "utm_source";
+
+        // An evidence key and value that stop a request being shared, as a
+        // health check's would.
+        private const string UsageIgnoredPair = "header.x-health-check:true";
+
         public static int Main(string[] argv)
         {
             var args = Args.Parse(argv);
@@ -111,13 +123,10 @@ namespace FiftyOne.Parity
             var capture = new UsageCapture();
             using var http = new HttpClient(capture);
 
-            var shareUsage = new ShareUsageBuilder(loggerFactory, http)
-                .SetShareUsageUrl(UsageUrl)
-                .SetSharePercentage(1)
-                .SetMaximumQueueSize(UsageEntriesPerMessage)
-                .SetMinimumEntriesPerMessage(UsageEntriesPerMessage)
-                .SetRepeatEvidenceIntervalMinutes(0)
-                .Build();
+            var shareUsage = ConfigureUsage(
+                new ShareUsageBuilder(loggerFactory, http)).Build();
+            var customShareUsage = ConfigureUsage(
+                new CustomShareUsageBuilder(loggerFactory)).Build();
             var device = new DeviceDetectionHashEngineBuilder(loggerFactory)
                 .SetPerformanceProfile(PerformanceProfiles.HighPerformance)
                 .SetAutoUpdate(false)
@@ -137,6 +146,7 @@ namespace FiftyOne.Parity
             var pipeline = new PipelineBuilder(loggerFactory)
                 .AddFlowElement(new SequenceElementBuilder(loggerFactory).Build())
                 .AddFlowElement(shareUsage)
+                .AddFlowElement(customShareUsage)
                 .AddFlowElement(device)
                 .AddFlowElement(ip)
                 .AddFlowElement(json)
@@ -198,13 +208,21 @@ namespace FiftyOne.Parity
 
             // Disposing usage sharing sends what is queued and waits for it.
             shareUsage.Dispose();
-            var records = capture.RecordsBySession();
+            customShareUsage.Dispose();
+            if (customShareUsage.Failure != null)
+            {
+                throw new InvalidOperationException(
+                    "The custom usage sharing element did not write its records",
+                    customShareUsage.Failure);
+            }
+            var records = UsageRecords.BySession(capture.Messages());
+            var customRecords = UsageRecords.BySession(
+                customShareUsage.Documents());
             foreach (var line in sharedLines)
             {
                 var sessionId = line["session"]?["id"]?.GetValue<string>();
-                line["usage"] = sessionId != null &&
-                    records.TryGetValue(sessionId, out var record)
-                    ? record : null;
+                line["usage"] = UsageRecords.Find(records, sessionId);
+                line["usageCustom"] = UsageRecords.Find(customRecords, sessionId);
             }
 
             using (var writer = new StreamWriter(args.Out, false,
@@ -218,7 +236,8 @@ namespace FiftyOne.Parity
             }
             Console.Error.WriteLine(
                 $"{lines.Count} cases written to {args.Out}, " +
-                $"{records.Count} usage records captured");
+                $"{records.Count} usage records and " +
+                $"{customRecords.Count} custom usage records captured");
             agentSignature.Dispose();
             values.Dispose();
             pipeline.Dispose();
@@ -274,8 +293,25 @@ namespace FiftyOne.Parity
                 ["json"] = Try(() => data.Get<IJsonBuilderElementData>()?.Json),
                 ["javascript"] = Try(() =>
                     data.Get<IJavaScriptBuilderElementData>()?.JavaScript),
-                ["usage"] = null
+                ["usage"] = null,
+                ["usageCustom"] = null
             };
+        }
+
+        // Usage sharing's settings, the same as the Rust producer's, for the
+        // element that posts and for the custom one.
+        private static ShareUsageBuilderBase<T> ConfigureUsage<T>(
+            ShareUsageBuilderBase<T> builder)
+        {
+            return builder
+                .SetShareUsageUrl(UsageUrl)
+                .SetSharePercentage(1)
+                .SetMaximumQueueSize(UsageEntriesPerMessage)
+                .SetMinimumEntriesPerMessage(UsageEntriesPerMessage)
+                .SetRepeatEvidenceIntervalMinutes(0)
+                .SetBlockedHttpHeader(UsageBlockedHeader)
+                .SetIncludedQueryStringParameter(UsageIncludedQueryParameter)
+                .SetIgnoreFlowDataEvidenceFilter(UsageIgnoredPair);
         }
 
         private static string Text(
@@ -678,41 +714,219 @@ namespace FiftyOne.Parity
             return new HttpResponseMessage(HttpStatusCode.OK);
         }
 
+        // A copy of the messages taken so far.
+        public List<string> Messages()
+        {
+            lock (_messages)
+            {
+                return new List<string>(_messages);
+            }
+        }
+    }
+
+    internal static class UsageRecords
+    {
         // Each record's text exactly as .NET wrote it, by its session id.
         // Records are cut from the message text rather than written again
         // from a parsed document, which would change how values are escaped.
-        public Dictionary<string, string> RecordsBySession()
+        public static Dictionary<string, string> BySession(
+            IEnumerable<string> messages)
         {
             const string open = "<Device>";
             const string close = "</Device>";
             var records = new Dictionary<string, string>();
-            lock (_messages)
+            foreach (var message in messages)
             {
-                foreach (var message in _messages)
+                var start = message.IndexOf(open, StringComparison.Ordinal);
+                while (start >= 0)
                 {
-                    var start = message.IndexOf(open, StringComparison.Ordinal);
-                    while (start >= 0)
+                    var end = message.IndexOf(close, start,
+                        StringComparison.Ordinal);
+                    if (end < 0)
                     {
-                        var end = message.IndexOf(close, start,
-                            StringComparison.Ordinal);
-                        if (end < 0)
-                        {
-                            break;
-                        }
-                        var record = message.Substring(
-                            start, end + close.Length - start);
-                        var sessionId = XElement.Parse(record)
-                            .Element("SessionId")?.Value;
-                        if (sessionId != null)
-                        {
-                            records[sessionId] = record;
-                        }
-                        start = message.IndexOf(open, end,
-                            StringComparison.Ordinal);
+                        break;
                     }
+                    var record = message.Substring(
+                        start, end + close.Length - start);
+                    var sessionId = XElement.Parse(record)
+                        .Element("SessionId")?.Value;
+                    if (sessionId != null)
+                    {
+                        records[sessionId] = record;
+                    }
+                    start = message.IndexOf(open, end,
+                        StringComparison.Ordinal);
                 }
             }
             return records;
+        }
+
+        // The record written with the session id, or null.
+        public static string Find(
+            Dictionary<string, string> records,
+            string sessionId)
+        {
+            return sessionId != null &&
+                records.TryGetValue(sessionId, out var record)
+                ? record : null;
+        }
+    }
+
+    // Builds the custom usage sharing element from the same settings as
+    // ShareUsageBuilder gives ShareUsageElement.
+    internal sealed class CustomShareUsageBuilder :
+        ShareUsageBuilderBase<CustomShareUsage>
+    {
+        public CustomShareUsageBuilder(ILoggerFactory loggerFactory)
+            : base(loggerFactory)
+        {
+        }
+
+        public override CustomShareUsage Build()
+        {
+            return new CustomShareUsage(
+                LoggerFactory.CreateLogger<CustomShareUsage>(),
+                SharePercentage,
+                MinimumEntriesPerMessage,
+                MaximumQueueSize,
+                AddTimeout,
+                TakeTimeout,
+                RepeatEvidenceInterval,
+                TrackSession,
+                ShareUsageUri.AbsoluteUri,
+                BlockedHttpHeaders,
+                IncludedQueryStringParameters,
+                IgnoreDataEvidenceFilter,
+                AspSessionCookieName,
+                ShareAllEvidence);
+        }
+    }
+
+    // A usage sharing element that keeps each message in memory. It writes
+    // an element before and after each record through WriteData, and its own
+    // product and Flow Element names through WritePipelineInfo. The Rust
+    // producer's custom sink writes the same.
+    internal sealed class CustomShareUsage : ShareUsageBase
+    {
+        private const string CustomDataKey = "customshareusage";
+
+        private const string BeforeName = "Before";
+        private const string BeforeText = "a & <b> \"c\" é中";
+        private const string AfterName = "After";
+        private const string AfterPrefix = "Sequence ";
+
+        private const string Product = "Parity";
+        private static readonly string[] FlowElementNames =
+        {
+            "Custom element 1", "Custom element 2"
+        };
+
+        private readonly List<string> _documents = new List<string>();
+
+        public CustomShareUsage(
+            ILogger<ShareUsageBase> logger,
+            double sharePercentage,
+            int minimumEntriesPerMessage,
+            int maximumQueueSize,
+            int addTimeout,
+            int takeTimeout,
+            int repeatEvidenceIntervalMinutes,
+            bool trackSession,
+            string shareUsageUrl,
+            List<string> blockedHttpHeaders,
+            List<string> includedQueryStringParameters,
+            List<KeyValuePair<string, string>> ignoreDataEvidenceFilter,
+            string aspSessionCookieName,
+            bool shareAllEvidence)
+            : base(
+                logger,
+                null,
+                sharePercentage,
+                minimumEntriesPerMessage,
+                maximumQueueSize,
+                addTimeout,
+                takeTimeout,
+                repeatEvidenceIntervalMinutes,
+                trackSession,
+                shareUsageUrl,
+                blockedHttpHeaders,
+                includedQueryStringParameters,
+                ignoreDataEvidenceFilter,
+                aspSessionCookieName,
+                null,
+                shareAllEvidence)
+        {
+        }
+
+        public override string ElementDataKey => CustomDataKey;
+
+        // What stopped a message being written, or null. The base class
+        // logs such a failure, and this program's logger writes nothing.
+        public Exception Failure { get; private set; }
+
+        // A copy of the documents written so far.
+        public List<string> Documents()
+        {
+            lock (_documents)
+            {
+                return new List<string>(_documents);
+            }
+        }
+
+        // Writes the queued records into one document in memory, as
+        // ShareUsageElement writes them before compressing and posting.
+        protected override Task BuildAndSendXmlAsync()
+        {
+            try
+            {
+                var queued = new List<ShareUsageData>();
+                while (queued.Count < MinEntriesPerMessage * 2 &&
+                    EvidenceCollection.TryTake(out var taken, TakeTimeout))
+                {
+                    queued.Add(taken);
+                }
+                if (queued.Count > 0)
+                {
+                    using var memory = new MemoryStream();
+                    using (var writer = XmlWriter.Create(memory, WriterSettings))
+                    {
+                        writer.WriteStartElement("Devices");
+                        foreach (var record in queued)
+                        {
+                            WriteData(writer, record);
+                        }
+                        writer.WriteEndElement();
+                    }
+                    lock (_documents)
+                    {
+                        _documents.Add(Encoding.UTF8.GetString(memory.ToArray()));
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Failure = e;
+            }
+            return Task.CompletedTask;
+        }
+
+        protected override void WriteData(XmlWriter writer, ShareUsageData data)
+        {
+            writer.WriteStartElement("Device");
+            writer.WriteElementString(BeforeName, BeforeText);
+            WriteDeviceData(writer, data);
+            writer.WriteElementString(AfterName, AfterPrefix +
+                data.Sequence.ToString(CultureInfo.InvariantCulture));
+            writer.WriteEndElement();
+        }
+
+        protected override void WritePipelineInfo(XmlWriter writer)
+        {
+            writer.WriteElementString("Product", Product);
+            foreach (var name in FlowElementNames)
+            {
+                writer.WriteElementString("FlowElement", name);
+            }
         }
     }
 }
