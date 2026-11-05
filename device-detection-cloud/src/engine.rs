@@ -307,11 +307,11 @@ impl AspectEngine for DeviceDetectionCloudEngine {
 
 /// A fluent builder for [`DeviceDetectionCloudEngine`].
 ///
-/// The cloud request engine
-/// is required, as this engine reads its output and derives its metadata from it.
-/// Optionally call [`DeviceDetectionCloudEngineBuilder::eager_properties`] to pull
-/// the property metadata from the cloud at build time rather than on first
-/// process.
+/// The cloud request engine is required, as this engine reads its output and
+/// derives its metadata from it. Optionally call
+/// [`DeviceDetectionCloudEngineBuilder::eager_properties`] so that
+/// [`DeviceDetectionCloudEngineBuilder::try_build`] fails while the request
+/// engine's discovery has not completed.
 pub struct DeviceDetectionCloudEngineBuilder {
     request_engine: Option<Arc<CloudRequestEngine>>,
     eager_properties: bool,
