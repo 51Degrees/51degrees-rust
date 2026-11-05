@@ -26,8 +26,9 @@
 //! The tiers exercise different files and different cost/coverage trade-offs:
 //!
 //! - **ASN** (`51Degrees-IPIV4AsnIpiV41.ipi`). Small, current and always
-//!   loadable, and checked into the data repository, so the ASN tests run by
-//!   default and are the primary on-premise coverage.
+//!   loadable, and free from the data repository, whose script downloads it, so
+//!   the ASN tests run wherever it is downloaded and are the primary on-premise
+//!   coverage.
 //! - **Enterprise** (`51Degrees-IPIV4EnterpriseIpiV41.ipi`). Full property
 //!   coverage. The Enterprise test is `#[ignore]` because the file is large and
 //!   the share is reachable only on the 51Degrees network; run it explicitly with
@@ -83,7 +84,7 @@ fn find_up(relative: &str) -> Option<PathBuf> {
 }
 
 /// Resolve the ASN data file: an explicit `51DEGREES_IPI_PATH` first, then the
-/// ASN file shipped in the `cxx` submodule.
+/// ASN file in the data repository inside the `cxx` submodule.
 fn asn_data_file() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("51DEGREES_IPI_PATH") {
         let path = PathBuf::from(path.trim());
@@ -91,7 +92,7 @@ fn asn_data_file() -> Option<PathBuf> {
             return Some(path);
         }
     }
-    find_up("cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi")
+    find_up("cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi")
 }
 
 /// The Enterprise data-file name on the Enterprise share.

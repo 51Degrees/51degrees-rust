@@ -30,9 +30,8 @@ use fiftyone_ip_intelligence::{
     IpIntelligencePipelineBuilder, PerformanceProfile, IP_DATA_KEY,
 };
 
-// Use an on-premise IP Intelligence data file. The ASN file checked into the
-// data repository suits quick tests; a full data file is downloaded from the
-// data repository (see its README).
+// Use an on-premise IP Intelligence data file. The free ASN file from the data
+// repository suits quick tests. An Enterprise file has the full property set.
 let pipeline = IpIntelligencePipelineBuilder::on_premise("51Degrees-IPIV4AsnIpiV41.ipi")
     .performance_profile(PerformanceProfile::HighPerformance)
     // Off because the free ASN file has no licence key for updates.
@@ -118,7 +117,7 @@ path, so cloud-only users and most of CI build without a C compiler.
 
 | Crate | Responsibility |
 |-------|----------------|
-| [`examples-shared`](examples-shared) | Shared example helpers: file-finder, resource-key-from-env, the DD/IPI data-path resolvers, the data-file-age warning, property-as-string and the sample evidence. |
+| [`examples-shared`](examples/examples-shared) | Shared example helpers: file-finder, resource-key-from-env, the DD/IPI data-path resolvers, the data-file-age warning, property-as-string and the sample evidence. |
 | [`device-detection-examples`](examples/device-detection-examples) | Runnable device-detection examples (cloud, on-premise and web). |
 | [`ip-intelligence-examples`](examples/ip-intelligence-examples) | Runnable IP-intelligence examples (cloud, on-premise and web). |
 | [`pipeline-examples`](examples/pipeline-examples) | Runnable pipeline examples: custom flow elements, caching, usage sharing and the combined-pipeline server-side examples. |
@@ -245,9 +244,8 @@ use fiftyone_ip_intelligence::{
     IpIntelligencePipelineBuilder, PerformanceProfile, IP_DATA_KEY,
 };
 
-// Use an on-premise IP Intelligence data file. The ASN file checked into the
-// data repository suits quick tests; a full data file is downloaded from the
-// data repository (see its README).
+// Use an on-premise IP Intelligence data file. The free ASN file from the data
+// repository suits quick tests. An Enterprise file has the full property set.
 let pipeline = IpIntelligencePipelineBuilder::on_premise("51Degrees-IPIV4AsnIpiV41.ipi")
     .performance_profile(PerformanceProfile::HighPerformance)
     // Off because the free ASN file has no licence key for updates.
@@ -314,28 +312,74 @@ A cloud-only build that skips the native path:
 cargo build -p fiftyone-device-detection --no-default-features --features cloud
 ```
 
-### Running the examples
+### Data files
 
-The examples are a workspace of their own, so run them from `examples/`.
-[AGENTS.md](AGENTS.md#run-the-examples) gives every step, from a fresh clone
-to the output.
+The on-premise tests and examples read the free data files from the
+[data repository](https://github.com/51Degrees/data), which the `cxx` submodule
+holds at `cxx/data`. The files are not stored in git. Each one is listed as a
+`.link` file in `cxx/data/device-detection` or `cxx/data/ip-intelligence`, and
+the data repository's script downloads it. These commands get the two files the
+tests read.
 
 ```sh
-cd examples
+git submodule update --init --recursive
+sh cxx/data/get-data-files.sh 51Degrees-LiteV4.1.hash 51Degrees-IPIV4AsnIpiV41.ipi
+```
+
+On Windows, run `cxx\data\get-data-files.ps1` with the same file names. An
+on-premise example that cannot find its data file runs the script for that file
+itself, and a test skips when its file is missing.
+
+A clone made while 51degrees-cxx still has its `device-detection-data` and
+`ip-intelligence-data` submodules holds those two folders inside `cxx`. Once
+51degrees-cxx removes the two submodules, delete both folders, because git
+leaves a removed submodule's folder on disk with the old data files in it.
+
+```sh
+rm -rf cxx/device-detection-data cxx/ip-intelligence-data
+```
+
+On Windows, run
+`Remove-Item -Recurse -Force cxx\device-detection-data, cxx\ip-intelligence-data`.
+
+### Running the examples
+
+The examples are a Cargo workspace of their own in `examples`, which the root
+workspace leaves out, so run them from that folder. They build against the
+crates published on crates.io. Add `--config source.toml` to build them against
+the crates in this checkout instead.
+
+```sh
+git clone --recurse-submodules https://github.com/51Degrees/51degrees-rust.git
+cd 51degrees-rust/examples
+
+# On-premise examples run with no settings. Each reads the free data files in
+# cxx/data, downloading one that is missing, unless 51DEGREES_DD_PATH or
+# 51DEGREES_IPI_PATH names another file.
+cargo run -p device-detection-examples --bin dd-onprem-getting-started
+cargo run -p ip-intelligence-examples --bin ipi-onprem-getting-started
 
 # Cloud examples read 51DEGREES_RESOURCE_KEY from the environment.
 cargo run -p device-detection-examples --bin dd-cloud-getting-started
 cargo run -p ip-intelligence-examples --bin ipi-cloud-getting-started
 
-# On-premise examples resolve a data file from a sibling -cxx checkout, or from
-# 51DEGREES_DD_PATH / 51DEGREES_IPI_PATH.
-cargo run -p device-detection-examples --bin dd-onprem-getting-started
-cargo run -p ip-intelligence-examples --bin ipi-onprem-getting-started
-
 # Web examples (cloud variant shown).
 cargo run -p device-detection-examples --bin dd-web-getting-started-cloud
 cargo run -p fodid-examples --bin fodid-web-creator-context
 ```
+
+The free data files carry a small set of properties. Each on-premise example
+also asks for properties only the Enterprise data file carries, such as
+HardwareVendor, DeviceType and PriceBand for Device Detection, and Country,
+Town and IsVPN for IP Intelligence. On a free file each of those says it needs
+the Enterprise data file, and the output gives a link to contact 51Degrees
+about a copy. The on-premise IP Intelligence examples read the free Lite file,
+a download of about 320 MB that carries RegisteredName, RegisteredOwner and
+RegisteredCountry. `ipi-onprem-performance` and `ipi-onprem-update-data-file`
+read the ASN file instead, a download of a few megabytes, because their
+properties do not matter to what they show, and `ipi-onprem-getting-started`
+reads both, the ASN file for Asn and AsnName. Every example ends with a "Find
+out more" section.
 
 Every cloud example calls the public 51Degrees cloud at
 `https://cloud.51degrees.com/api/v4/` unless `51DEGREES_CLOUD_ENDPOINT` names
@@ -345,12 +389,10 @@ cloud for performance reasons. This is the private hosting option of the
 51Degrees cloud service. Both run the same service as the public cloud, so the
 examples work unchanged. The variable is the same one the cloud request engine
 reads, so setting it once points every example at the same place, and the
-value is the API base including the `/api/v4/` segment. The name starts with a
-digit, which bash and sh do not allow before a command, so set it with `env`
-there, or with `$env:51DEGREES_CLOUD_ENDPOINT` in PowerShell.
+value is the API base including the `/api/v4/` segment.
 
 ```sh
-env 51DEGREES_CLOUD_ENDPOINT=http://localhost:8080/api/v4/ cargo run -p ip-intelligence-examples --bin ipi-cloud-getting-started
+51DEGREES_CLOUD_ENDPOINT=http://localhost:8080/api/v4/ cargo run -p ip-intelligence-examples --bin ipi-cloud-getting-started
 ```
 
 #### Browser (Selenium) tests

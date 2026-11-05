@@ -37,6 +37,14 @@ use pipeline_examples::star_sign::{
     STAR_SIGN_PROPERTY, UNKNOWN_STAR_SIGN,
 };
 
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("Usage sharing", "https://51degrees.com/documentation/_pipeline_api__features__usage_sharing.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-usage-sharing.rs&utm_term=find-out-more"),
+    ("Pipeline API", "https://51degrees.com/documentation/_pipeline_api__index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-usage-sharing.rs&utm_term=find-out-more"),
+    ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-usage-sharing.rs&utm_term=find-out-more"),
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-usage-sharing.rs&utm_term=find-out-more"),
+];
+
 /// The evidence key the star-sign element reads.
 const DATE_OF_BIRTH_EVIDENCE: &str = "date-of-birth";
 
@@ -204,7 +212,9 @@ fn main() -> Result<()> {
     if let Some(date) = std::env::args().nth(1) {
         options.date_of_birth = date;
     }
-    run(&options)
+    let result = run(&options);
+    examples_shared::print_find_out_more(FIND_OUT_MORE, pipeline_examples::REPOSITORIES);
+    result
 }
 
 #[cfg(test)]

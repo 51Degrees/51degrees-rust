@@ -79,7 +79,7 @@ fn on_premise_facade_resolves_asn() {
         .ok()
         .map(std::path::PathBuf::from)
         .filter(|p| p.is_file())
-        .or_else(|| find_up("cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi"));
+        .or_else(|| find_up("cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi"));
 
     let Some(data_file) = data_file else {
         eprintln!("no ASN data file found; skipping on-premise facade test");

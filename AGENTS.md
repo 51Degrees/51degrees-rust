@@ -17,8 +17,7 @@ repository. The cloud examples need a resource key.
 
 ### Prerequisites
 
-- Git, and [Git LFS](https://git-lfs.github.com/) for the Device Detection
-  data file.
+- Git.
 - Rust 1.94 or later, the `rust-version` of both workspaces.
 - A C compiler, being the Visual Studio Build Tools on Windows and GCC or
   Clang elsewhere. The `-sys` crates compile the 51Degrees C sources with the
@@ -26,8 +25,10 @@ repository. The cloud examples need a resource key.
   too. If `aws-lc-sys` fails to build, its
   [requirements](https://aws.github.io/aws-lc-rs/requirements/index.html) list
   what it needs on each platform.
-- Network access to GitHub and crates.io.
-- PowerShell 7 (`pwsh`), only to run the examples against this checkout.
+- Network access to GitHub, crates.io and the 51Degrees Distributor, from
+  which the data repository's script downloads the free data files.
+- PowerShell 7 (`pwsh`) on Windows, or `sh` elsewhere, for that script, and
+  `pwsh` to run the examples against this checkout.
 
 Clone the repository with its submodules.
 
@@ -44,23 +45,20 @@ git submodule update --init --recursive
 
 ### Data files
 
-If `README.md` in your checkout has a "Data files" section, the examples read
-the [data](https://github.com/51Degrees/data) repository at `cxx/data`, and
-that section says how to get the files. Otherwise the files are in the `cxx`
-submodule's own data submodules, as follows.
+The examples read the free data files in the
+[data](https://github.com/51Degrees/data) repository, which is at `cxx/data`.
+It lists each file as a `.link` file, and its script downloads the files. An
+on-premise example that cannot find its file runs that script for the one file
+itself, so this step is only needed to download the files ahead of time.
 
-- The Device Detection Lite file,
-  `cxx/device-detection-data/51Degrees-LiteV4.1.hash`, is stored with Git LFS,
-  so a clone holds a pointer of about 130 bytes until the content is pulled.
-  Pull it as CI does.
+```sh
+sh cxx/data/get-data-files.sh 51Degrees-LiteV4.1.hash 51Degrees-IPIV4AsnIpiV41.ipi
+```
 
-  ```sh
-  git -C cxx submodule foreach --recursive 'git lfs install --local && git lfs pull'
-  ```
-
-- The IP Intelligence ASN file,
-  `cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi`, is an ordinary file,
-  so it arrives with the submodule.
+On Windows, run `pwsh ./cxx/data/get-data-files.ps1` with the same names. The
+IP Intelligence getting-started example also reads the Lite IP Intelligence
+file, `51Degrees-LiteV41.ipi`, a download of about 320 MB, which it fetches
+the first time it runs.
 
 ### Run
 
@@ -80,18 +78,20 @@ The first build compiles the 51Degrees C libraries, so it is the slow one.
 
 - `dd-onprem-getting-started` processes a desktop and a mobile User-Agent. For
   each it prints the evidence under "Input values:" and then, under
-  "Results:", Mobile Device, Platform Name, Platform Version, Browser Name,
-  Browser Version and Device Id. It ends with the Lite data file's warnings.
-- `ipi-onprem-getting-started` prints "Looking up 2 IP address(es) against"
-  the data file, then for `1.1.1.1` and `2606:4700:4700::1111` the address
-  and the properties it asks for, from Asn and AsnName to Mcc. A property the
-  ASN file does not hold is printed with the reason it has no value.
+  "Results:", the properties the Lite file carries, such as Mobile Device,
+  Platform Name and Browser Name. Each property only the Enterprise data file
+  carries, such as Hardware Vendor and Device Type, reads "needs the
+  Enterprise data file".
+- `ipi-onprem-getting-started` reads the ASN file and then the Lite IP
+  Intelligence file, and for `1.1.1.1` and `2606:4700:4700::1111` prints Asn
+  and AsnName from the first and RegisteredName, RegisteredOwner and
+  RegisteredCountry from the second. The location properties need the
+  Enterprise data file.
+- Both end by naming the properties the file in use lacks, with a link to ask
+  about the Enterprise data file, and a "Find out more" section.
 
-An exit code of 0 does not show that an example ran. With no data file found,
-each prints a message, "No device-detection data file found" or "No IP
-Intelligence data file could be located", and exits 0. A Device Detection
-file that is still a Git LFS pointer fails instead, with "failed to build the
-on-premise device-detection pipeline".
+An example that cannot find or download its data file fails with the command
+to run, so an exit code of 0 means it ran against a file.
 
 ### Paths and keys from the environment
 
@@ -147,9 +147,13 @@ workspace of runnable examples.
 The three `-sys` crates (`common-sys`, `device-detection-sys`,
 `ip-intelligence-sys`) link the 51Degrees C sources, which come from the `cxx`
 submodule at the root of the repository
-(https://github.com/51Degrees/51degrees-cxx). The submodule's data submodules,
-`cxx/device-detection-data` and `cxx/ip-intelligence-data`, hold the Lite data
-files and the evidence the tests and examples read. The submodule pointer
+(https://github.com/51Degrees/51degrees-cxx). Its `data` submodule is the data
+repository (https://github.com/51Degrees/data). It lists each free data file,
+and the Device Detection evidence the examples read, as a `.link` file in
+`cxx/data/device-detection` and `cxx/data/ip-intelligence`, and that
+repository's script downloads them. The IP Intelligence evidence is stored in
+it. Nothing here reads the older `cxx/device-detection-data` and
+`cxx/ip-intelligence-data` folders. The submodule pointer
 records which C commit the crates build, and the nightly pipeline moves it
 with an update pull request when 51degrees-cxx changes. After a move, build
 and run `pwsh ./ci/check-native-symbols.ps1`, which fails when a common C
@@ -159,12 +163,14 @@ function is missing from `ip-intelligence-sys/src/symbol_prefix.h`.
 
 Once per clone, and again whenever the `owid-rust` submodule moves, check out
 the submodules and place the OWID source that `fodid` compiles in (see
-"Releasing to crates.io" below for why it is carried this way). The data files
-are Git LFS content, so pull them too:
+"Releasing to crates.io" below for why it is carried this way). Then download
+the data files the tests read with the data repository's script, which keeps a
+file that is already there (`sh cxx/data/get-data-files.sh` takes the same
+names, and `-u` or `-Update` replaces a file that has a newer version):
 
 ```
 git submodule update --init --recursive
-git -C cxx submodule foreach --recursive 'git lfs pull'
+pwsh ./cxx/data/get-data-files.ps1 51Degrees-LiteV4.1.hash 51Degrees-IPIV4AsnIpiV41.ipi
 pwsh ./ci/copy-owid-source.ps1
 ```
 
@@ -185,9 +191,12 @@ Each `-sys` `build.rs` resolves its C sources in this order: the
 then the `cxx` submodule, then the `cxx` folder inside the crate, which only a
 packaged crate has (see "Releasing to crates.io" below).
 
-On-premise tests and examples need a data file. They find the Lite files in
-the `cxx` submodule, and skip cleanly when no file is present, so the offline
-build and tests stay green without data. To run them against another file,
+On-premise tests and examples need a data file. They find the free files in
+`cxx/data`, and the tests skip cleanly when no file is present, so the offline
+build and tests stay green without data. An example that cannot find its file
+runs the data repository's script for that one file, with the source
+`examples-51degrees-rust`, and fails with the command to run if it still
+cannot find it. To run them against another file,
 point the relevant variable at it: `51DEGREES_DD_PATH` for a Device Detection
 `.hash` file, `51DEGREES_IPI_PATH` for an IP Intelligence `.ipi` file. Live
 cloud tests are `#[ignore]`d and read a resource key from
@@ -262,9 +271,24 @@ workspace reads the submodule and never needs the copy.
 - `pull-request.yml` runs fmt, build, test, clippy and doc on Windows, Linux
   (two LTS) and macOS (Apple Silicon), plus a wasm32-wasip1 job for the cloud
   crates, on pushes to `main` and on PRs into `main`, `rc` and `release/**`.
-  It builds the C sources and reads the data files in the `cxx` submodule.
-  It also runs `ci/check-native-symbols.ps1` and the property lookup scaling
-  test in release.
+  It builds the C sources and restores the data files into `cxx/data` from
+  the entry `data-files.yml` keeps in the Actions cache, downloading with the
+  data repository's script only a file it lacks. It also runs
+  `ci/check-native-symbols.ps1` and the property lookup scaling test in
+  release.
+- `data-files.yml` runs each day on `main` and keeps the free data files in
+  one Actions cache entry. It restores the newest entry, asks the Distributor
+  only whether each file has changed (`-Update`), and saves the files under a
+  new dated key. `pull-request.yml`, `examples.yml` and
+  `nightly-performance.yml` restore that entry through
+  `.github/actions/restore-data-files`. They leave the daily entry to
+  `data-files.yml`, because an entry saved by a pull request run can only be
+  restored by that pull request. Until a daily entry
+  exists, the action falls back to an entry keyed by the ref, the workflow
+  and the date, which `pull-request.yml` and `examples.yml` save when they
+  restored nothing, so later runs of the same workflow on the same ref that
+  day download nothing. An entry is found only by the same list of paths it
+  was saved with, so the list lives in that action alone.
 - `nightly-pipeline.yml` first runs common-ci's submodule update, which moves
   every submodule to the head of its default branch and raises a pull request
   into `rc` when one has moved, then builds the eligible pull requests into
@@ -272,7 +296,11 @@ workspace reads the submodule and never needs the copy.
   That covers `owid-rust` as well as `cxx`, so a push to the main branch of
   SWAN-community/owid-rust reaches `fodid` through the next update pull
   request once its checks pass, and is published with the next merge of `rc`
-  into `main`.
+  into `main`. It sets `cache-assets: true`, so common-ci runs
+  `ci/fetch-assets.ps1` once before the builds and keeps the Lite and ASN
+  files it fetches in the Actions cache. Each build runs the script again,
+  which takes the files from that cache through common-ci's
+  `steps/fetch-assets.ps1` and copies them into `cxx/data`.
 - `caching-wasm.yml` lints and tests `fiftyone-caching`, the loading cache
   included, on wasm32-wasip1 under wasmtime and, with default features off,
   on wasm32-unknown-unknown under Node through `ci/run-wasm-unknown.mjs`.

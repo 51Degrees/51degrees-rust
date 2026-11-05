@@ -143,6 +143,7 @@ async fn home(State(state): State<PageState>) -> Html<String> {
          browser and fills the results below once it completes, with no server-side rendering.",
         web_support::CLOUD_CONTACT_BANNER,
         &client_script,
+        examples_shared::CLOUD_REPOSITORIES,
     ))
 }
 
@@ -215,6 +216,10 @@ mod tests {
         assert!(
             body.contains(ASSETS_JS_ROUTE),
             "the page references the shared examples JavaScript"
+        );
+        assert!(
+            body.contains(examples_shared::FIND_OUT_MORE_HEADING),
+            "the page ends with the Find out more section"
         );
 
         // The static assets serve too.

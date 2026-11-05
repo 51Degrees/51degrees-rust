@@ -39,6 +39,18 @@ use fiftyone_device_detection::{
 use fiftyone_pipeline_core::PropertyValueType;
 use fiftyone_pipeline_engines::{AspectEngine, OnPremiseAspectEngine};
 
+use device_detection_examples::ENTERPRISE_PROPERTIES;
+
+/// Where to ask about a copy of the Enterprise data file.
+const CONTACT_US_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-metadata.rs&utm_term=enterprise-data-file";
+
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-metadata.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-metadata.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-metadata.rs&utm_term=find-out-more"),
+];
+
 /// Options the example runs with, so `main` and the test share one entry point.
 pub struct ExampleOptions {
     /// The path to the on-premise Hash data file the engine loads.
@@ -53,7 +65,9 @@ pub struct ExampleOptions {
 /// Builds a Hash engine directly (no full pipeline is needed to read metadata),
 /// then enumerates the properties grouped by category/component, the property
 /// value types and descriptions, the accepted evidence keys, and the data file's
-/// publish date and tier.
+/// publish date and tier. It then says which of the Enterprise properties the
+/// data file carries, and ends with where to ask about a copy of the Enterprise
+/// data file and the "Find out more" links.
 pub fn run(options: ExampleOptions) -> Result<()> {
     // A full pipeline is not required to read metadata. Building the engine
     // directly is enough, and is also how you would obtain the metadata if you
@@ -68,12 +82,23 @@ pub fn run(options: ExampleOptions) -> Result<()> {
     output_properties_by_component(engine.as_ref());
     output_evidence_keys(&engine.evidence_keys());
 
-    // Print the standard data-file warnings last, as the other examples do.
-    // The engine is already in hand, so the engine-taking helper prints the same
+    // The engine's properties are those its data file carries.
+    let available = engine.available_properties();
+    output_enterprise_properties(&available);
+
+    // Print the standard data-file warnings, as the other examples do. The
+    // engine is already in hand, so the engine-taking helper prints the same
     // lines without building a second engine.
     println!();
     device_detection_examples::print_data_file_warnings_for(engine.as_ref());
 
+    let missing = examples_shared::missing_properties(ENTERPRISE_PROPERTIES, &available);
+    if let Some(message) = examples_shared::enterprise_data_file_message(&missing, CONTACT_US_URL) {
+        println!();
+        println!("{message}");
+    }
+
+    examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::ON_PREMISE_REPOSITORIES);
     Ok(())
 }
 // [example]
@@ -181,6 +206,21 @@ fn output_evidence_keys(keys: &[String]) {
     );
 }
 
+/// Print whether the data file carries each property only the Enterprise data
+/// file has. `available` holds the properties the data file carries.
+fn output_enterprise_properties(available: &[String]) {
+    println!();
+    println!("--- Enterprise properties ---");
+    for name in ENTERPRISE_PROPERTIES {
+        let state = if examples_shared::is_available(name, available) {
+            "in this data file"
+        } else {
+            examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+        };
+        println!("\t{name:<22}: {state}");
+    }
+}
+
 /// A short display name for a property value type, used in the metadata listing.
 fn value_type_name(value_type: PropertyValueType) -> &'static str {
     match value_type {
@@ -198,7 +238,7 @@ fn value_type_name(value_type: PropertyValueType) -> &'static str {
 }
 
 /// Resolve the data file then run the example, with the same fallback chain as
-/// the other on-premise examples (argument, env var, shipped Lite file).
+/// the other on-premise examples (argument, env var, Lite file).
 fn main() -> Result<()> {
     let data_file = std::env::args()
         .nth(1)
@@ -206,12 +246,10 @@ fn main() -> Result<()> {
         .or_else(examples_shared::dd_data_path);
 
     let Some(data_file) = data_file else {
-        eprintln!(
-            "No device-detection data file found. Set 51DEGREES_DD_PATH (or pass \
-             the path as the first argument), or run `git submodule update \
-             --recursive` so the Lite Hash file in the cxx submodule is present."
+        anyhow::bail!(
+            "No device-detection data file found. Set 51DEGREES_DD_PATH, or pass \
+             the path as the first argument."
         );
-        return Ok(());
     };
 
     run(ExampleOptions {
@@ -232,10 +270,22 @@ mod tests {
             return;
         };
         run(ExampleOptions {
-            data_file,
+            data_file: data_file.clone(),
             profile: PerformanceProfile::LowMemory,
         })
         .expect("the on-premise metadata example should complete");
+
+        // The Lite file carries none of the Enterprise properties, so the run
+        // names them all with the contact link. 51DEGREES_DD_PATH can name
+        // another file.
+        if data_file.ends_with(examples_shared::DD_LITE_RELATIVE_PATH) {
+            let available = device_detection_examples::data_file_properties(&data_file)
+                .expect("the data file opens");
+            assert_eq!(
+                examples_shared::missing_properties(ENTERPRISE_PROPERTIES, &available),
+                ENTERPRISE_PROPERTIES
+            );
+        }
     }
 }
 
@@ -277,10 +327,18 @@ mod tests {
  *   high-entropy values keys and the `51d_` values the client-side JavaScript
  *   sends back.
  *
+ * The example then lists the properties only the Enterprise data file carries
+ * (HardwareVendor, HardwareModel, DeviceType, PriceBand and
+ * ScreenInchesDiagonal), saying for each whether the data file in use carries
+ * it. With the free Lite file each "needs the Enterprise data file".
+ *
  * Finally the example prints the standard data-file warnings (Lite tier has
- * limited accuracy; a file more than 30 days old may miss the latest devices).
+ * limited accuracy, and a file more than 30 days old may miss the latest devices),
+ * names the Enterprise properties the data file does not carry with a link to
+ * contact 51Degrees about a copy, and ends with a "Find out more" section.
  *
  * The data file is read from the first command-line argument, the
- * `51DEGREES_DD_PATH` environment variable, or the Lite Hash file shipped in the
- * cxx submodule.
+ * `51DEGREES_DD_PATH` environment variable, or the Lite Hash file in the data
+ * repository inside the cxx submodule, which the example downloads when it is
+ * missing.
  */

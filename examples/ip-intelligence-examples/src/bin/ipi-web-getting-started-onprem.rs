@@ -28,9 +28,11 @@
 //! (with usage sharing, as a web deployment should), wraps it in a
 //! [`WebPipeline`] so the two client-side endpoints are mounted, and serves an
 //! HTML page showing the weighted IP Intelligence for the connecting client's IP
-//! address, with a form to look up any other address. Because the bundled data
+//! address, with a form to look up any other address. Because the default data
 //! file is a free tier, the page shows the standard data-file warnings as a
-//! `c-eg-alert` and a contact-us banner describing a paid Enterprise file.
+//! `c-eg-alert`, says which properties need the Enterprise data file with a
+//! link to ask about a copy, and shows a contact-us banner describing a paid
+//! Enterprise file and a "Find out more" section.
 //!
 //! @snippet ipi-web-getting-started-onprem.rs example
 
@@ -52,15 +54,31 @@ use fiftyone_pipeline_web_axum::{register, FiftyOneResult, FiftyOneState};
 #[path = "../web_support/mod.rs"]
 mod web_support;
 
+use ip_intelligence_examples::ENTERPRISE_PROPERTIES;
 use web_support::{
-    coordinates, display_values, evidence_table, map_init_script, results_table, serve_css,
-    serve_js, warnings_alert, PageOptions, ASSETS_CSS_ROUTE, ASSETS_JS_ROUTE,
+    coordinates, display_values, enterprise_message_html, evidence_table, map_init_script,
+    mark_enterprise_only, results_table, serve_css, serve_js, warnings_alert, PageOptions,
+    ASSETS_CSS_ROUTE, ASSETS_JS_ROUTE,
 };
+
+/// Where to ask about a copy of the Enterprise data file, as the console
+/// output links it when the server starts.
+const CONTACT_US_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-onprem.rs&utm_term=enterprise-data-file";
 
 /// The query-string parameter the IP form submits under. The on-premise engine
 /// accepts the `query.client-ip` evidence key, so the form lands directly on an
 /// evidence key the on-premise pipeline uses.
 const FORM_FIELD: &str = "client-ip";
+
+/// What the page shows about the data file, read once when the engine is
+/// built.
+#[derive(Clone, Default)]
+pub struct DataFileNotes {
+    /// The standard free-tier and stale-file warnings.
+    pub warnings: Vec<String>,
+    /// The properties the data file carries.
+    pub available: Vec<String>,
+}
 
 /// Options that drive [`run`].
 pub struct Options {
@@ -70,20 +88,21 @@ pub struct Options {
     pub address: SocketAddr,
 }
 
-/// Build the on-premise web application router plus the data-file warnings.
+/// Build the on-premise web application router plus the data-file notes.
 ///
 /// The engine is built once so its data-file warnings (free tier, and over 30
 /// days old) can be read with [`examples_shared::check_data_file`] and shown on
-/// the page, and the very same engine instance is then used as an application
-/// element of the web pipeline. Usage sharing is added first (REQUIRED for a web
-/// example).
+/// the page, along with the properties the data file carries, which say which
+/// rows need the Enterprise data file. The very same engine instance is then
+/// used as an application element of the web pipeline. Usage sharing is added
+/// first (REQUIRED for a web example).
 ///
 /// `share_usage` is true when the binary serves the page. The tests pass false,
 /// so a test run sends nothing to 51Degrees.
 pub fn build_app(
     data_file: &std::path::Path,
     share_usage: bool,
-) -> anyhow::Result<(Router, Vec<String>)> {
+) -> anyhow::Result<(Router, DataFileNotes)> {
     // Build the on-premise engine. The HighPerformance profile suits a
     // long-running web server. Every property the data file supports is loaded by
     // default.
@@ -96,9 +115,13 @@ pub fn build_app(
             .with_context(|| format!("loading the .ipi data file at {}", data_file.display()))?,
     );
 
-    // Read the standard free-tier and stale-file warnings for display, before the
-    // engine is moved into the pipeline element list.
-    let warnings = examples_shared::check_data_file(engine.as_ref());
+    // Read the standard free-tier and stale-file warnings and the data file's
+    // own list of properties for display, before the engine is moved into the
+    // pipeline element list.
+    let notes = DataFileNotes {
+        warnings: examples_shared::check_data_file(engine.as_ref()),
+        available: engine.available_property_names(),
+    };
 
     // Assemble the application's own elements: usage sharing first (REQUIRED for a
     // web example), then the on-premise engine. WebPipeline wraps these with the
@@ -118,7 +141,7 @@ pub fn build_app(
             .route(ASSETS_JS_ROUTE, get(serve_js)),
         state,
     );
-    Ok((app, warnings))
+    Ok((app, notes))
 }
 
 // [example]
@@ -130,8 +153,8 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     // constructed, and tokio forbids dropping a runtime from inside another
     // runtime's async context, so doing this work outside block_on avoids that
     // panic.
-    let (app, warnings) = build_app(&options.data_file, true)?;
-    store_warnings(warnings);
+    let (app, notes) = build_app(&options.data_file, true)?;
+    store_notes(notes);
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -143,8 +166,15 @@ pub fn run(options: Options) -> anyhow::Result<()> {
             .with_context(|| format!("binding {}", options.address))?;
         let bound = listener.local_addr().context("reading the bound address")?;
         println!("IP Intelligence on-premise web example listening on http://{bound}");
-        for warning in current_warnings() {
+        let notes = current_notes();
+        for warning in &notes.warnings {
             println!("WARNING: {warning}");
+        }
+        let missing = examples_shared::missing_properties(ENTERPRISE_PROPERTIES, &notes.available);
+        if let Some(message) =
+            examples_shared::enterprise_data_file_message(&missing, CONTACT_US_URL)
+        {
+            println!("{message}");
         }
         axum::serve(
             listener,
@@ -156,38 +186,41 @@ pub fn run(options: Options) -> anyhow::Result<()> {
 }
 // [example]
 
-// The data-file warnings are computed once at build time and read on every page
+// The data-file notes are computed once at build time and read on every page
 // render. A web handler cannot easily carry extra state alongside FiftyOneState
 // without threading a custom router state, so for this example they are kept in a
 // process-wide slot. A real application would store them in its own state.
-static WARNINGS: std::sync::OnceLock<std::sync::Mutex<Vec<String>>> = std::sync::OnceLock::new();
+static NOTES: std::sync::OnceLock<std::sync::Mutex<DataFileNotes>> = std::sync::OnceLock::new();
 
-/// Record the warnings for the running server to show on each page.
-fn store_warnings(warnings: Vec<String>) {
-    let slot = WARNINGS.get_or_init(|| std::sync::Mutex::new(Vec::new()));
-    *slot.lock().expect("warnings lock") = warnings;
+/// Record the notes for the running server to show on each page.
+fn store_notes(notes: DataFileNotes) {
+    let slot = NOTES.get_or_init(|| std::sync::Mutex::new(DataFileNotes::default()));
+    *slot.lock().expect("notes lock") = notes;
 }
 
-/// The warnings recorded by [`store_warnings`], or an empty list if none.
-fn current_warnings() -> Vec<String> {
-    WARNINGS
+/// The notes recorded by [`store_notes`], or empty notes if none.
+fn current_notes() -> DataFileNotes {
+    NOTES
         .get()
-        .map(|slot| slot.lock().expect("warnings lock").clone())
+        .map(|slot| slot.lock().expect("notes lock").clone())
         .unwrap_or_default()
 }
 
 /// The home-page handler: render the weighted server-side IP-intelligence
-/// results, the evidence table, the IP look-up form, the location map and the
-/// free-tier data-file warnings.
+/// results, the evidence table, the IP look-up form, the location map, the
+/// free-tier data-file warnings and which properties need the Enterprise data
+/// file.
 async fn home(
     Query(params): Query<std::collections::HashMap<String, String>>,
     result: FiftyOneResult,
 ) -> Html<String> {
+    let notes = current_notes();
     let (results_html, coordinates_pair, evidence_html, evidence_ip) = result.with(|flow_data| {
         let (results, coords) = flow_data
             .get(IP_DATA_KEY)
             .map(|ip| {
-                let values = display_values(ip);
+                let mut values = display_values(ip);
+                mark_enterprise_only(&mut values, &notes.available);
                 (results_table(&values), coordinates(ip))
             })
             .unwrap_or_else(|| {
@@ -221,8 +254,11 @@ async fn home(
     };
 
     // The free-tier and stale-file warnings are shown as a single top-of-page
-    // c-eg-alert.
-    let top_alert = warnings_alert(&current_warnings());
+    // c-eg-alert. The Enterprise properties the data file lacks are named
+    // under the results, with a link to ask about a copy.
+    let top_alert = warnings_alert(&notes.warnings);
+    let missing = examples_shared::missing_properties(ENTERPRISE_PROPERTIES, &notes.available);
+    let results_html = format!("{results_html}{}", enterprise_message_html(&missing));
     let map_script = map_init_script(&coordinates_pair);
 
     Html(web_support::render_page(PageOptions {
@@ -240,16 +276,17 @@ async fn home(
         // The on-premise free-tier page describes what a paid data file adds.
         message_html: web_support::ONPREM_CONTACT_BANNER,
         map_script: &map_script,
+        repositories: examples_shared::ON_PREMISE_REPOSITORIES,
     }))
 }
 
 fn main() -> anyhow::Result<()> {
-    // Resolve the on-premise data file through the shared scheme: it defaults to
-    // the ASN file checked into the data repository, or Enterprise when the
-    // production share is reachable.
+    // Resolve the on-premise data file through the shared scheme. It defaults to
+    // the Lite file from the data repository, downloaded when it is missing, or
+    // Enterprise when the production share is reachable.
     let data_file = examples_shared::ipi_data_path(examples_shared::IpiTier::default()).context(
-        "no on-premise IP Intelligence data file found. Set 51DEGREES_IPI_PATH to an .ipi data \
-         file, or check out the cxx submodule with its ASN data file.",
+        "no on-premise IP Intelligence data file found. Set 51DEGREES_IPI_PATH to an .ipi \
+         data file.",
     )?;
 
     let port: u16 = std::env::var("PORT")
@@ -274,10 +311,11 @@ mod tests {
     /// The test pins the ASN tier so it always exercises the small, current,
     /// always-loadable 4.5 ASN file, independent of whether the production
     /// Enterprise share happens to be mounted on the build machine. The binary
-    /// itself uses `IpiTier::default()` (best available).
+    /// itself uses `IpiTier::default()`, the Enterprise file or the Lite file.
     fn test_app() -> Option<Router> {
         let data_file = examples_shared::ipi_data_path(examples_shared::IpiTier::Asn)?;
-        let (app, _warnings) = build_app(&data_file, false).expect("on-premise app builds");
+        let (app, notes) = build_app(&data_file, false).expect("on-premise app builds");
+        store_notes(notes);
         Some(app)
     }
 
@@ -338,6 +376,24 @@ mod tests {
                 page_body.contains("c-eg-form"),
                 "the page includes the IP look-up form"
             );
+            assert!(
+                page_body.contains(examples_shared::FIND_OUT_MORE_HEADING),
+                "the page ends with the Find out more section"
+            );
+            assert!(page_body.contains("ASN"), "the page shows the ASN rows");
+            // The ASN file carries none of the Enterprise properties, so the
+            // page says so. 51DEGREES_IPI_PATH can name another file.
+            let asn_file = examples_shared::IPI_ASN_RELATIVE_PATH.rsplit('/').next();
+            let data_file = examples_shared::ipi_data_path(examples_shared::IpiTier::Asn);
+            if data_file
+                .as_deref()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                == asn_file
+            {
+                assert!(page_body.contains("needs the Enterprise data file"));
+                assert!(page_body.contains("utm_term=enterprise-data-file"));
+            }
 
             let script = get(app.clone(), "/51Degrees.core.js").await;
             assert_eq!(script.status(), StatusCode::OK);
@@ -378,19 +434,28 @@ mod tests {
  *   4. An approximate-location map drawn by the shared `examples.min.js`
  *      `initLocationMap` helper when the lookup resolves coordinates.
  *
- * Because the data file is a free tier (the ASN file checked into the data
- * repository by default), the page shows the standard data-file warnings from
+ * Because the data file is a free tier (the Lite file from the data repository
+ * by default), the page shows the standard data-file warnings from
  * `examples_shared::check_data_file`: a free-tier notice and a stale-file notice
  * when the file is more than 30 days old. These
- * are rendered as a `c-eg-alert` at the top of the page. The `c-eg-message`
+ * are rendered as a `c-eg-alert` at the top of the page. The results table
+ * shows `RegisteredName`, `RegisteredOwner` and `RegisteredCountry`, which the
+ * free Lite file carries, `Asn` and `AsnName`, which the free ASN file
+ * carries, and properties only the Enterprise data file carries, such as
+ * `Country`, `Town`,
+ * `Latitude`, `Longitude`, `IsHosted` and `IsVPN`. The data file's own list of
+ * properties says which it has, so with a free file each of those rows says
+ * "needs the Enterprise data file", and a message under the table names them
+ * with a link to contact 51Degrees about a copy. The `c-eg-message`
  * contact-us banner describes what a paid Enterprise data file adds (more
  * detailed and accurate location and registered-network ownership, broader
- * coverage).
+ * coverage), and the page ends with a "Find out more" section.
  *
  * Usage sharing is enabled, as a web deployment should. The engine is built once:
  * its data-file warnings are read before it is handed to the web pipeline as an
  * application element, so no data file is opened twice.
  *
- * Resolve the data file with `51DEGREES_IPI_PATH` (or rely on the ASN file in
- * the `cxx` submodule), then run the binary and open http://127.0.0.1:8083.
+ * Resolve the data file with `51DEGREES_IPI_PATH` (or rely on the Lite file in
+ * the data repository inside the `cxx` submodule, which is downloaded when it
+ * is missing), then run the binary and open http://127.0.0.1:8083.
  */
