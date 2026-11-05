@@ -42,6 +42,7 @@
 //! what earlier elements added while they run at the same time.
 
 use std::any::Any;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
 use ahash::RandomState;
@@ -85,8 +86,8 @@ pub trait ElementData: Any + Send + Sync {
         true
     }
 
-    /// List the property names available in this data. The order is
-    /// unspecified.
+    /// List the property names available in this data, in the data's own
+    /// order. The JSON builder writes the properties in this order.
     fn keys(&self) -> Vec<String>;
 
     /// Borrow this value as `&dyn Any` for downcasting to the concrete type.
@@ -106,9 +107,14 @@ pub trait ElementData: Any + Send + Sync {
 /// Property names are stored lowercased so lookups are case-insensitive, as the
 /// [access-to-results specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/access-to-results.md#general-guidance)
 /// requires.
+///
+/// [`ElementData::keys`] lists the names in the order they were first set,
+/// and setting a name again keeps its place.
 #[derive(Debug, Clone, Default)]
 pub struct MapElementData {
     values: HashMap<String, PropertyValue, RandomState>,
+    /// The keys of `values` in the order they were first set.
+    order: Vec<String>,
 }
 
 impl MapElementData {
@@ -116,22 +122,29 @@ impl MapElementData {
     pub fn new() -> Self {
         MapElementData {
             values: HashMap::default(),
+            order: Vec::new(),
         }
     }
 
     /// Set a property value, overwriting any existing value for that name. The
     /// name is lowercased. Returns `self` for chaining during construction.
     pub fn set(mut self, name: impl AsRef<str>, value: impl Into<PropertyValue>) -> Self {
-        self.values
-            .insert(name.as_ref().to_lowercase(), value.into());
+        self.insert(name, value);
         self
     }
 
     /// Insert a property value by mutable reference (for use after the bag has
     /// been created), overwriting any existing value for that name.
     pub fn insert(&mut self, name: impl AsRef<str>, value: impl Into<PropertyValue>) {
-        self.values
-            .insert(name.as_ref().to_lowercase(), value.into());
+        match self.values.entry(name.as_ref().to_lowercase()) {
+            Entry::Occupied(mut entry) => {
+                entry.insert(value.into());
+            }
+            Entry::Vacant(entry) => {
+                self.order.push(entry.key().clone());
+                entry.insert(value.into());
+            }
+        }
     }
 
     /// The number of property values held.
@@ -166,7 +179,7 @@ impl ElementData for MapElementData {
     }
 
     fn keys(&self) -> Vec<String> {
-        self.values.keys().cloned().collect()
+        self.order.clone()
     }
 
     fn as_any(&self) -> &dyn Any {

@@ -679,7 +679,9 @@ fn a_builder_the_pipeline_does_not_hold_gives_an_empty_body() {
 fn a_json_builder_that_left_no_data_is_logged_when_the_script_cannot_be_built() {
     // The data key a clashing element takes, whether the pipeline has the
     // JSON builder, and the records expected. The clashing element sits
-    // before the builder whose key it takes.
+    // before the builder whose key it takes. The Sequence element comes
+    // first, because the JSON builder writes nothing without its sequence
+    // number.
     let cases = [
         (
             JSON_BUILDER_ELEMENT_DATA_KEY,
@@ -704,6 +706,9 @@ fn a_json_builder_that_left_no_data_is_logged_when_the_script_cannot_be_built() 
     for (clashed, with_json, expected) in cases {
         let mut builder = Pipeline::builder()
             .suppress_process_exceptions(true)
+            .add_element(Arc::new(
+                fiftyone_pipeline_engines_fiftyone::SequenceElement::new(),
+            ))
             .add_element(Arc::new(DeviceElement::new()));
         if clashed == JSON_BUILDER_ELEMENT_DATA_KEY {
             builder = builder.add_element(Arc::new(ClashElement::new(clashed)));

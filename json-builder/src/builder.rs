@@ -23,9 +23,13 @@
 //! The builder for [`JsonBuilderElement`].
 
 use std::collections::HashSet;
+use std::fmt;
+use std::sync::Arc;
 
 use crate::constants::{DEFAULT_ELEMENT_EXCLUSION_LIST, DEFAULT_PROPERTY_EXCLUSION_LIST};
+use crate::converter::JsonValueConverter;
 use crate::element::JsonBuilderElement;
+use crate::steps::{DefaultJsonBuilderSteps, JsonBuilderSteps};
 
 /// Configures and constructs a [`JsonBuilderElement`].
 ///
@@ -33,7 +37,9 @@ use crate::element::JsonBuilderElement;
 /// ([`crate::DEFAULT_ELEMENT_EXCLUSION_LIST`] and
 /// [`crate::DEFAULT_PROPERTY_EXCLUSION_LIST`]). The methods below add to or
 /// replace them. All matching is case-insensitive, so names are stored
-/// lowercased.
+/// lowercased. [`JsonBuilderElementBuilder::set_steps`] and
+/// [`JsonBuilderElementBuilder::add_json_converter`] change how the output is
+/// written.
 ///
 /// # Example
 ///
@@ -46,10 +52,12 @@ use crate::element::JsonBuilderElement;
 ///     .exclude_element("debug")
 ///     .build();
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct JsonBuilderElementBuilder {
     element_exclusion: HashSet<String>,
     property_exclusion: HashSet<String>,
+    steps: Arc<dyn JsonBuilderSteps>,
+    converters: Vec<Arc<dyn JsonValueConverter>>,
 }
 
 impl JsonBuilderElementBuilder {
@@ -58,7 +66,32 @@ impl JsonBuilderElementBuilder {
         JsonBuilderElementBuilder {
             element_exclusion: lowercased(DEFAULT_ELEMENT_EXCLUSION_LIST),
             property_exclusion: lowercased(DEFAULT_PROPERTY_EXCLUSION_LIST),
+            steps: Arc::new(DefaultJsonBuilderSteps),
+            converters: Vec::new(),
         }
+    }
+
+    /// Use these steps to write the JSON in place of the builder's own. See
+    /// [`JsonBuilderSteps`].
+    pub fn set_steps(mut self, steps: impl JsonBuilderSteps + 'static) -> Self {
+        self.steps = Arc::new(steps);
+        self
+    }
+
+    /// Add a converter, asked after any added before it. See
+    /// [`JsonValueConverter`].
+    pub fn add_json_converter(mut self, converter: impl JsonValueConverter + 'static) -> Self {
+        self.converters.push(Arc::new(converter));
+        self
+    }
+
+    /// Replace the converters with these, in this order.
+    pub fn set_json_converters<I>(mut self, converters: I) -> Self
+    where
+        I: IntoIterator<Item = Arc<dyn JsonValueConverter>>,
+    {
+        self.converters = converters.into_iter().collect();
+        self
     }
 
     /// Add a single property name to the exclusion list. The name is matched
@@ -134,7 +167,22 @@ impl JsonBuilderElementBuilder {
 
     /// Build the configured [`JsonBuilderElement`].
     pub fn build(self) -> JsonBuilderElement {
-        JsonBuilderElement::from_parts(self.element_exclusion, self.property_exclusion)
+        JsonBuilderElement::from_parts(
+            self.element_exclusion,
+            self.property_exclusion,
+            self.steps,
+            self.converters,
+        )
+    }
+}
+
+impl fmt::Debug for JsonBuilderElementBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JsonBuilderElementBuilder")
+            .field("element_exclusion", &self.element_exclusion)
+            .field("property_exclusion", &self.property_exclusion)
+            .field("converters", &self.converters.len())
+            .finish_non_exhaustive()
     }
 }
 

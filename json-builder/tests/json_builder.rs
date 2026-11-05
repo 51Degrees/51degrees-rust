@@ -31,13 +31,15 @@ use std::any::Any;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use fiftyone_cloud_request_engine::CloudRequestEngine;
 use fiftyone_json_builder::{
-    JsonBuilderElement, JSON_BUILDER_DATA_KEY, JSON_BUILDER_ELEMENT_DATA_KEY,
+    JsonBuilderElement, JsonBuilderElementBuilder, JSON_BUILDER_DATA_KEY,
+    JSON_BUILDER_ELEMENT_DATA_KEY, NEW_LINE,
 };
 use fiftyone_pipeline_core::{
-    ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
-    MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue, PropertyValueType,
-    Result, TypedKey,
+    ElementData, Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData,
+    FlowElement, MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue,
+    PropertyValueType, Result, TypedKey,
 };
 use fiftyone_pipeline_engines::AspectDataBase;
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
@@ -194,24 +196,37 @@ impl FlowElement for FailingElement {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Build a pipeline from the given elements plus a trailing JSON builder,
-/// process a flow data with the given sequence number and return the JSON.
+/// Build a pipeline of the Sequence element, the given elements and a
+/// trailing JSON builder, process a flow data and return the JSON.
+///
+/// The request is sent with `sent_sequence` as its `query.sequence`, or
+/// with none, and the Sequence element adds one to it, so a request sent
+/// with none is request 1. The Sequence element's own data is left out of
+/// the JSON, so the JSON holds only what the test's elements give.
 fn run_with_sequence(
     elements: Vec<Arc<dyn FlowElement>>,
-    json_builder: JsonBuilderElement,
-    sequence: &str,
+    json_builder: JsonBuilderElementBuilder,
+    sent_sequence: Option<&str>,
 ) -> String {
-    let mut builder = Pipeline::builder().suppress_process_exceptions(true);
+    let mut builder = Pipeline::builder()
+        .suppress_process_exceptions(true)
+        .add_element(Arc::new(SequenceElement::new()));
     for element in elements {
         builder = builder.add_element(element);
     }
+    let json_builder = json_builder
+        .exclude_element(SequenceElement::DEFAULT_ELEMENT_DATA_KEY)
+        .build();
     let pipeline = builder
         .add_element(Arc::new(json_builder))
         .build()
         .expect("pipeline builds");
 
-    let mut data =
-        pipeline.create_flow_data_with(Evidence::builder().add("query.sequence", sequence).build());
+    let mut evidence = Evidence::builder();
+    if let Some(sent_sequence) = sent_sequence {
+        evidence = evidence.add("query.sequence", sent_sequence);
+    }
+    let mut data = pipeline.create_flow_data_with(evidence.build());
     data.process()
         .expect("processing succeeds (exceptions suppressed)");
 
@@ -221,9 +236,9 @@ fn run_with_sequence(
         .to_owned()
 }
 
-/// Convenience wrapper that runs with sequence number 1.
-fn run(elements: Vec<Arc<dyn FlowElement>>, json_builder: JsonBuilderElement) -> String {
-    run_with_sequence(elements, json_builder, "1")
+/// Run as request 1, the first request of a session.
+fn run(elements: Vec<Arc<dyn FlowElement>>, json_builder: JsonBuilderElementBuilder) -> String {
+    run_with_sequence(elements, json_builder, None)
 }
 
 fn parse(json: &str) -> Value {
@@ -250,7 +265,7 @@ fn serialises_property_values() {
         .with_value("ismobile", true)
         .with_value("platformname", "iOS");
 
-    let json = run(vec![Arc::new(device)], JsonBuilderElement::new());
+    let json = run(vec![Arc::new(device)], JsonBuilderElement::builder());
     let value = parse(&json);
 
     let device = value.get("device").expect("device object present");
@@ -282,7 +297,7 @@ fn excludes_internal_elements_by_default() {
             Arc::new(usage),
             Arc::new(device),
         ],
-        JsonBuilderElement::new(),
+        JsonBuilderElement::builder(),
     );
     let value = parse(&json);
 
@@ -304,29 +319,22 @@ fn excludes_internal_elements_by_default() {
 }
 
 #[test]
-fn excludes_default_properties_and_configured_ones() {
+fn writes_every_property_and_hides_configured_ones() {
     let device = TestElement::new("device")
-        .with_value("products", "should-be-hidden")
-        .with_value("properties", "should-be-hidden")
+        .with_value("products", "written")
+        .with_value("properties", "written")
         .with_value("ismobile", true)
         .with_value("secret", "hide-me");
 
-    // Default lists hide products/properties; the builder also hides `secret`.
-    let element = JsonBuilderElement::builder()
-        .exclude_property("SECRET")
-        .build();
+    // No property name is excluded by default, as in .NET, so `products` and
+    // `properties` are written. The builder hides `secret`.
+    let element = JsonBuilderElement::builder().exclude_property("SECRET");
     let json = run(vec![Arc::new(device)], element);
     let value = parse(&json);
 
     let device = value.get("device").expect("device present");
-    assert!(
-        device.get("products").is_none(),
-        "products excluded by default"
-    );
-    assert!(
-        device.get("properties").is_none(),
-        "properties excluded by default"
-    );
+    assert_eq!(device.get("products"), Some(&Value::from("written")));
+    assert_eq!(device.get("properties"), Some(&Value::from("written")));
     assert!(
         device.get("secret").is_none(),
         "secret excluded by configuration (case-insensitive)"
@@ -344,7 +352,7 @@ fn emits_nullreason_for_no_value_property() {
         ))
         .with_no_value("platformname", "No matching profile was found.");
 
-    let json = run(vec![Arc::new(device)], JsonBuilderElement::new());
+    let json = run(vec![Arc::new(device)], JsonBuilderElement::builder());
     let value = parse(&json);
 
     let device = value.get("device").expect("device present");
@@ -395,7 +403,7 @@ fn serialises_engine_aspect_data() {
         ],
     };
 
-    let json = run(vec![Arc::new(element)], JsonBuilderElement::new());
+    let json = run(vec![Arc::new(element)], JsonBuilderElement::builder());
     let value = parse(&json);
     let device = value.get("device").expect("device present");
 
@@ -438,7 +446,7 @@ fn emits_delayexecution_and_evidenceproperties() {
             PropertyValue::JavaScript("document.write('x');".to_owned()),
         );
 
-    let json = run(vec![Arc::new(device)], JsonBuilderElement::new());
+    let json = run(vec![Arc::new(device)], JsonBuilderElement::builder());
     let value = parse(&json);
     let device = value.get("device").expect("device present");
 
@@ -486,7 +494,7 @@ fn evidence_property_that_is_not_delayed_execution_is_dropped() {
         .with_value("screenpixelswidth", 1080i64)
         .with_value("plainprop", "x");
 
-    let json = run(vec![Arc::new(device)], JsonBuilderElement::new());
+    let json = run(vec![Arc::new(device)], JsonBuilderElement::builder());
     let value = parse(&json);
     let device = value.get("device").expect("device present");
     assert!(
@@ -524,7 +532,7 @@ fn evidenceproperties_keeps_only_delayed_execution_entries() {
         )
         .with_value("plainprop", "y");
 
-    let json = run(vec![Arc::new(device)], JsonBuilderElement::new());
+    let json = run(vec![Arc::new(device)], JsonBuilderElement::builder());
     let value = parse(&json);
     let device = value.get("device").expect("device present");
     let evidence = device
@@ -563,7 +571,7 @@ fn evidenceproperties_match_is_case_insensitive() {
             PropertyValue::JavaScript("x".to_owned()),
         );
 
-    let json = run(vec![Arc::new(device)], JsonBuilderElement::new());
+    let json = run(vec![Arc::new(device)], JsonBuilderElement::builder());
     let value = parse(&json);
     let device = value.get("device").expect("device present");
     let evidence = device
@@ -591,7 +599,7 @@ fn collects_javascript_properties_when_below_cap() {
             PropertyValue::JavaScript("x".to_owned()),
         );
 
-    let json = run_with_sequence(vec![Arc::new(device)], JsonBuilderElement::new(), "1");
+    let json = run(vec![Arc::new(device)], JsonBuilderElement::builder());
     let value = parse(&json);
 
     let js = value
@@ -638,7 +646,7 @@ fn an_unavailable_property_is_neither_javascript_nor_delayed() {
         )
         .with_value("screenpixelsheight", 1920i64);
 
-    let json = run_with_sequence(vec![Arc::new(device)], JsonBuilderElement::new(), "1");
+    let json = run(vec![Arc::new(device)], JsonBuilderElement::builder());
     let value = parse(&json);
 
     let js = value
@@ -668,8 +676,13 @@ fn suppresses_javascript_properties_at_cap() {
             PropertyValue::JavaScript("x".to_owned()),
         );
 
-    // Sequence number 10 == MAX_JAVASCRIPT_ITERATIONS, so the list is dropped.
-    let json = run_with_sequence(vec![Arc::new(device)], JsonBuilderElement::new(), "10");
+    // A request sent with sequence 9 is request 10, which is
+    // MAX_JAVASCRIPT_ITERATIONS, so the list is dropped.
+    let json = run_with_sequence(
+        vec![Arc::new(device)],
+        JsonBuilderElement::builder(),
+        Some("9"),
+    );
     let value = parse(&json);
     assert!(
         value.get("javascriptProperties").is_none(),
@@ -687,7 +700,11 @@ fn suppresses_javascript_properties_at_cap() {
             "screenpixelswidthjavascript",
             PropertyValue::JavaScript("x".to_owned()),
         );
-    let json = run_with_sequence(vec![Arc::new(device)], JsonBuilderElement::new(), "25");
+    let json = run_with_sequence(
+        vec![Arc::new(device)],
+        JsonBuilderElement::builder(),
+        Some("25"),
+    );
     assert!(parse(&json).get("javascriptProperties").is_none());
 }
 
@@ -700,7 +717,7 @@ fn flow_errors_are_a_list_of_messages() {
 
     let json = run(
         vec![Arc::new(device), Arc::new(failing)],
-        JsonBuilderElement::new(),
+        JsonBuilderElement::builder(),
     );
     let value = parse(&json);
 
@@ -716,6 +733,84 @@ fn flow_errors_are_a_list_of_messages() {
     assert!(
         messages[0].contains("deliberate test failure"),
         "error message carried through, got {messages:?}"
+    );
+}
+
+#[test]
+fn a_failed_cloud_request_lists_no_javascript_property_and_writes_the_message() {
+    // When the cloud request fails, a cloud engine stores empty data marked
+    // as failed and records that it did not process. Its metadata still names
+    // a JavaScript property, but the JSON holds no value for it, so
+    // `javascriptProperties` leaves it out. The error is the message alone,
+    // with no words naming the error's kind.
+    struct FailedCloudEngine {
+        filter: EvidenceKeyFilterWhitelist,
+        properties: Vec<PropertyMetaData>,
+    }
+    impl FailedCloudEngine {
+        const KEY: TypedKey<AspectDataBase> = TypedKey::new("device");
+    }
+    impl FlowElement for FailedCloudEngine {
+        fn process(&self, data: &mut FlowData) -> Result<()> {
+            data.get_or_add(Self::KEY, || {
+                let mut device = AspectDataBase::new("device");
+                device.mark_cloud_request_failed();
+                device
+            })?;
+            CloudRequestEngine::record_not_processed(
+                data,
+                "DeviceDetectionCloudEngine",
+                "device",
+                module_path!(),
+            );
+            Ok(())
+        }
+        fn data_key(&self) -> &str {
+            "device"
+        }
+        fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+            &self.filter
+        }
+        fn properties(&self) -> &[PropertyMetaData] {
+            &self.properties
+        }
+    }
+
+    let engine = FailedCloudEngine {
+        filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+        properties: vec![
+            PropertyMetaData::new("ismobile", "device", PropertyValueType::Bool),
+            PropertyMetaData::new(
+                "javascripthardwareprofile",
+                "device",
+                PropertyValueType::JavaScript,
+            ),
+        ],
+    };
+
+    let json = run(vec![Arc::new(engine)], JsonBuilderElement::builder());
+    let value = parse(&json);
+
+    assert_eq!(
+        value
+            .get("device")
+            .and_then(Value::as_object)
+            .map(|device| device.len()),
+        Some(0),
+        "the device data is written with no properties, got {json}"
+    );
+    assert!(
+        value.get("javascriptProperties").is_none(),
+        "no JavaScript property is listed, got {json}"
+    );
+    assert_eq!(
+        value.get("errors"),
+        Some(&serde_json::json!([
+            "The 'DeviceDetectionCloudEngine' did not process because the JSON response \
+             from the CloudRequestEngine was null or empty. This indicates that the cloud \
+             request failed."
+        ])),
+        "the error is the message alone, got {json}"
     );
 }
 
@@ -740,17 +835,110 @@ fn output_is_deterministic() {
             .with_value("middle", 42i64)
     }
 
-    let first = run(vec![Arc::new(make_device())], JsonBuilderElement::new());
-    let second = run(vec![Arc::new(make_device())], JsonBuilderElement::new());
+    let first = run(vec![Arc::new(make_device())], JsonBuilderElement::builder());
+    let second = run(vec![Arc::new(make_device())], JsonBuilderElement::builder());
     assert_eq!(first, second, "identical inputs yield identical JSON");
 
-    // Property names within an element are emitted in sorted order.
+    // Properties are written in the order the element data lists them, not
+    // in name order.
+    let zebra = first.find("\"zebra\"").expect("zebra present");
     let alpha = first.find("\"alpha\"").expect("alpha present");
     let middle = first.find("\"middle\"").expect("middle present");
-    let zebra = first.find("\"zebra\"").expect("zebra present");
     assert!(
-        alpha < middle && middle < zebra,
-        "properties sorted: {first}"
+        zebra < alpha && alpha < middle,
+        "properties in the order the element data lists them: {first}"
+    );
+}
+
+#[test]
+fn text_is_in_the_form_dotnet_writes() {
+    let device = TestElement::new("device")
+        .with_value("text", "a\"b\\c\u{1}\u{2028}<&\u{e9}")
+        .with_value("one", 1.0f64)
+        .with_value("tenth", 0.1f64)
+        .with_value("small", 1e-7f64)
+        .with_value("large", 1e21f64)
+        .with_value("float", PropertyValue::Float(0.3));
+
+    let json = run(vec![Arc::new(device)], JsonBuilderElement::builder());
+
+    let expected = [
+        "{",
+        "  \"device\": {",
+        "    \"text\": \"a\\\"b\\\\c\\u0001\\u2028<&\u{e9}\",",
+        "    \"one\": 1.0,",
+        "    \"tenth\": 0.1,",
+        "    \"small\": 1E-07,",
+        "    \"large\": 1E+21,",
+        "    \"float\": 0.3",
+        "  }",
+        "}",
+    ]
+    .join(NEW_LINE);
+    assert_eq!(json, expected);
+}
+
+#[test]
+fn elements_are_written_in_the_order_their_data_was_added() {
+    let zulu = TestElement::new("zulu").with_value("one", 1i64);
+    let mike = TestElement::new("mike").with_value("two", 2i64);
+    let alpha = TestElement::new("alpha").with_value("three", 3i64);
+
+    let json = run(
+        vec![Arc::new(zulu), Arc::new(mike), Arc::new(alpha)],
+        JsonBuilderElement::builder(),
+    );
+
+    let zulu = json.find("\"zulu\"").expect("zulu present");
+    let mike = json.find("\"mike\"").expect("mike present");
+    let alpha = json.find("\"alpha\"").expect("alpha present");
+    assert!(
+        zulu < mike && mike < alpha,
+        "elements in the order their data was added: {json}"
+    );
+}
+
+#[test]
+fn javascript_properties_follow_element_order_then_property_order() {
+    // The values are set in the opposite order to the metadata, to show the
+    // list follows the metadata.
+    let zulu = TestElement::new("zulu")
+        .with_property(PropertyMetaData::new(
+            "zjavascript",
+            "zulu",
+            PropertyValueType::JavaScript,
+        ))
+        .with_property(PropertyMetaData::new(
+            "ajavascript",
+            "zulu",
+            PropertyValueType::JavaScript,
+        ))
+        .with_value("ajavascript", PropertyValue::JavaScript("a".to_owned()))
+        .with_value("zjavascript", PropertyValue::JavaScript("z".to_owned()));
+    let alpha = TestElement::new("alpha")
+        .with_property(PropertyMetaData::new(
+            "mjavascript",
+            "alpha",
+            PropertyValueType::JavaScript,
+        ))
+        .with_value("mjavascript", PropertyValue::JavaScript("m".to_owned()));
+
+    let json = run(
+        vec![Arc::new(zulu), Arc::new(alpha)],
+        JsonBuilderElement::builder(),
+    );
+    let value = parse(&json);
+
+    let paths: Vec<&str> = value
+        .get("javascriptProperties")
+        .and_then(Value::as_array)
+        .expect("javascriptProperties present below cap")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(
+        paths,
+        ["zulu.zjavascript", "zulu.ajavascript", "alpha.mjavascript"]
     );
 }
 
@@ -764,7 +952,7 @@ fn javascript_value_serialised_as_string() {
         ))
         .with_value("hint", PropertyValue::JavaScript("alert(1)".to_owned()));
 
-    let json = run(vec![Arc::new(device)], JsonBuilderElement::new());
+    let json = run(vec![Arc::new(device)], JsonBuilderElement::builder());
     let value = parse(&json);
     let device = value.get("device").expect("device present");
     assert_eq!(
@@ -774,10 +962,10 @@ fn javascript_value_serialised_as_string() {
     );
 }
 
-#[test]
-fn missing_sequence_keeps_javascript_properties() {
-    // Direct callers that never set query.sequence should still get the list
-    // (the builder treats a missing sequence as 0, below the cap).
+/// Process a pipeline of one JavaScript property and the JSON builder, with
+/// no Sequence element, and check that processing fails with the builder's
+/// error and that no JSON is written.
+fn fails_without_a_sequence_element(evidence: Evidence) {
     let device = TestElement::new("device")
         .with_property(PropertyMetaData::new(
             "hint",
@@ -787,20 +975,57 @@ fn missing_sequence_keeps_javascript_properties() {
         .with_value("hint", PropertyValue::JavaScript("x".to_owned()));
 
     let pipeline = Pipeline::builder()
-        .suppress_process_exceptions(true)
         .add_element(Arc::new(device))
         .add_element(Arc::new(JsonBuilderElement::new()))
         .build()
         .expect("pipeline builds");
-    // No evidence at all.
-    let mut data = pipeline.create_flow_data();
-    data.process().expect("processing succeeds");
-    let json = data.get(JSON_BUILDER_DATA_KEY).unwrap().json().to_owned();
+    let mut data = pipeline.create_flow_data_with(evidence);
+    data.process().expect_err("processing fails");
 
     assert!(
-        parse(&json).get("javascriptProperties").is_some(),
-        "list kept when no sequence number is supplied"
+        data.get(JSON_BUILDER_DATA_KEY).is_none(),
+        "no JSON is written"
     );
+    let errors = data.errors();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        matches!(errors[0].source, Error::Pipeline { .. }),
+        "{errors:?}"
+    );
+    let message = errors[0].source.message();
+    assert!(
+        message.starts_with(
+            "The value for the 'sequence' parameter could not be found. \
+             A Sequence element needs to be placed before the JSON builder \
+             element in the pipeline. See "
+        ),
+        "{message}"
+    );
+    let link = "https://51degrees.com/documentation/4.5/_services__cloud__error_messages.html?";
+    assert!(message.contains(link), "{message}");
+    assert!(message.ends_with(" for more information."), "{message}");
+
+    // The client-side endpoints serve json_for when the builder left no
+    // data, and it takes the request as the first, as .NET's fallback does.
+    let json = JsonBuilderElement::new().json_for(&data);
+    assert!(parse(&json).get("javascriptProperties").is_some(), "{json}");
+}
+
+#[test]
+fn no_sequence_number_fails_and_writes_no_json() {
+    // With no Sequence element and no sequence evidence, .NET's builder
+    // fails with this message and Java's with a configuration error, so
+    // neither writes JSON.
+    fails_without_a_sequence_element(Evidence::builder().build());
+}
+
+#[test]
+fn a_request_sequence_without_a_sequence_element_fails() {
+    // A request's own query.sequence is the Sequence element's input, not a
+    // sequence number, so without a Sequence element the builder still
+    // fails. .NET and Java fail too, as their builders take only an integer
+    // from the evidence and a query string gives them text.
+    fails_without_a_sequence_element(Evidence::builder().add("query.sequence", "3").build());
 }
 
 /// Run a pipeline of the sequence element, one JavaScript property and the
@@ -841,4 +1066,14 @@ fn cap_uses_the_sequence_after_the_sequence_element_adds_one() {
         javascript_properties_after_sequence_element("8"),
         "a request sent with sequence 8 is request 9, which is below the cap"
     );
+}
+
+/// The builder and the element are `Send`, `Sync`, `UnwindSafe` and
+/// `RefUnwindSafe`, as removing an auto trait from a public type breaks
+/// callers. This test fails to compile if either loses one.
+#[test]
+fn the_builder_and_element_keep_their_auto_traits() {
+    fn has_auto_traits<T: Send + Sync + std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
+    has_auto_traits::<fiftyone_json_builder::JsonBuilderElementBuilder>();
+    has_auto_traits::<JsonBuilderElement>();
 }

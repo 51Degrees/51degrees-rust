@@ -109,8 +109,13 @@ fn request(
     (js, records_since(from))
 }
 
+/// The Sequence element, the JSON builder and `element`, as the web
+/// integration orders them.
 fn pipeline(element: JavaScriptBuilderElement) -> Arc<Pipeline> {
     Pipeline::builder()
+        .add_element(Arc::new(
+            fiftyone_pipeline_engines_fiftyone::SequenceElement::new(),
+        ))
         .add_element(Arc::new(JsonBuilderElement::new()))
         .add_element(Arc::new(element))
         .build()
@@ -364,6 +369,9 @@ fn reading_promise_and_fetch_logs_nothing_for_aspect_data_that_lacks_them() {
     }
 
     let pipeline = Pipeline::builder()
+        .add_element(Arc::new(
+            fiftyone_pipeline_engines_fiftyone::SequenceElement::new(),
+        ))
         .add_element(Arc::new(SourcedData {
             filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
         }))

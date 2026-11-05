@@ -522,6 +522,7 @@ fn lookup_of(value: PropertyValue) -> Lookup {
         PropertyValue::Bool(flag) => Lookup::Value(SourceValue::Bool(flag)),
         PropertyValue::Integer(number) => Lookup::Value(SourceValue::Int(number)),
         PropertyValue::Double(number) => Lookup::Value(SourceValue::Double(number)),
+        PropertyValue::Float(number) => Lookup::Value(SourceValue::Double(f64::from(number))),
         PropertyValue::StringList(_) => Lookup::List,
         // A list of weighted values takes the value with the highest weight. A
         // list of anything else, where a single value is needed, cannot be
@@ -561,6 +562,7 @@ fn single_value(value: &PropertyValue) -> Option<SourceValue> {
         PropertyValue::Bool(flag) => Some(SourceValue::Bool(*flag)),
         PropertyValue::Integer(number) => Some(SourceValue::Int(*number)),
         PropertyValue::Double(number) => Some(SourceValue::Double(*number)),
+        PropertyValue::Float(number) => Some(SourceValue::Double(f64::from(*number))),
         _ => None,
     }
 }
