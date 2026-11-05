@@ -135,8 +135,13 @@ pub fn ipi_data_path(tier: IpiTier) -> Option<PathBuf> {
 }
 
 /// The `source` the examples send with each download, so that downloads can be
-/// counted by where they come from.
+/// counted by where they come from. In GitHub Actions they send none, and the
+/// data repository's scripts send `ci-<repository>` instead, so CI is not
+/// counted as use of the examples.
 pub const DATA_DOWNLOAD_SOURCE: &str = "examples-51degrees-rust";
+
+/// The environment variable GitHub Actions sets to `true` in every step.
+const GITHUB_ACTIONS_ENV_VAR: &str = "GITHUB_ACTIONS";
 
 /// The module path Windows PowerShell must not inherit from PowerShell 7. With
 /// PowerShell 7's module folders it cannot load its own modules, and the data
@@ -217,6 +222,8 @@ struct Host {
     windows: bool,
     /// Whether PowerShell 7, `pwsh`, is on the PATH.
     has_pwsh: bool,
+    /// Whether this runs in GitHub Actions, where no source is sent.
+    in_github_actions: bool,
 }
 
 impl Host {
@@ -226,6 +233,8 @@ impl Host {
         Host {
             windows,
             has_pwsh: windows && on_path("pwsh"),
+            in_github_actions: std::env::var(GITHUB_ACTIONS_ENV_VAR)
+                .is_ok_and(|value| value == "true"),
         }
     }
 }
@@ -252,7 +261,8 @@ struct DownloadCommand {
 
 impl DownloadCommand {
     /// The command that downloads `name` into the data repository at
-    /// `data_repository` on `host`.
+    /// `data_repository` on `host`. Outside GitHub Actions it sends
+    /// [`DATA_DOWNLOAD_SOURCE`] as the source.
     fn for_host(data_repository: &Path, name: &str, host: Host) -> Self {
         let folder = command_path(data_repository);
         if host.windows {
@@ -261,28 +271,30 @@ impl DownloadCommand {
             } else {
                 ("powershell", vec![POWERSHELL_MODULE_PATH_ENV_VAR])
             };
-            let arguments = vec![
+            let mut arguments = vec![
                 "-NoProfile".to_owned(),
                 "-ExecutionPolicy".to_owned(),
                 "Bypass".to_owned(),
                 "-File".to_owned(),
                 format!("{folder}\\get-data-files.ps1"),
                 name.to_owned(),
-                "-Source".to_owned(),
-                DATA_DOWNLOAD_SOURCE.to_owned(),
             ];
+            if !host.in_github_actions {
+                arguments.push("-Source".to_owned());
+                arguments.push(DATA_DOWNLOAD_SOURCE.to_owned());
+            }
             Self {
                 program,
                 arguments,
                 removed,
             }
         } else {
-            let arguments = vec![
-                format!("{folder}/get-data-files.sh"),
-                "-s".to_owned(),
-                DATA_DOWNLOAD_SOURCE.to_owned(),
-                name.to_owned(),
-            ];
+            let mut arguments = vec![format!("{folder}/get-data-files.sh")];
+            if !host.in_github_actions {
+                arguments.push("-s".to_owned());
+                arguments.push(DATA_DOWNLOAD_SOURCE.to_owned());
+            }
+            arguments.push(name.to_owned());
             Self {
                 program: "sh",
                 arguments,
@@ -479,10 +491,14 @@ mod tests {
         assert_eq!(ipi_data_path(IpiTier::Enterprise), None);
     }
 
+    /// What the stand-in scripts write when they are sent no source.
+    const NO_SOURCE: &str = "none";
+
     /// A stand-in for the data repository's shell script. It takes the
     /// arguments the real one does and writes the named file beside its link,
-    /// holding the source it was sent with.
-    const SHELL_SCRIPT: &str = "while getopts s: opt; do\n\
+    /// holding the source it was sent with, or [`NO_SOURCE`].
+    const SHELL_SCRIPT: &str = "source=none\n\
+        while getopts s: opt; do\n\
         case $opt in s) source=$OPTARG ;; esac\n\
         done\n\
         shift $((OPTIND - 1))\n\
@@ -490,9 +506,18 @@ mod tests {
 
     /// The PowerShell stand-in, doing what [`SHELL_SCRIPT`] does.
     const POWERSHELL_SCRIPT: &str =
-        "param([Parameter(Position = 0)][string]$Name, [string]$Source)\n\
+        "param([Parameter(Position = 0)][string]$Name, [string]$Source = 'none')\n\
         Set-Content -NoNewline -Value $Source \
         -LiteralPath (Join-Path $PSScriptRoot \"device-detection/$Name\")\n";
+
+    /// This machine, outside GitHub Actions or in it, so that what a test
+    /// checks does not depend on where it runs.
+    fn host(in_github_actions: bool) -> Host {
+        Host {
+            in_github_actions,
+            ..Host::current()
+        }
+    }
 
     /// A stand-in for either script that fails without writing anything, as
     /// the real scripts do when a download fails.
@@ -524,10 +549,20 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let start = data_repository(root.path(), SHELL_SCRIPT, POWERSHELL_SCRIPT);
 
-        let found = find_data_file_for(TEST_RELATIVE_PATH, &start, Host::current())
+        let found = find_data_file_for(TEST_RELATIVE_PATH, &start, host(false))
             .expect("the script should have written the missing file");
         assert!(found.ends_with("test.dat"));
         assert_eq!(fs::read_to_string(&found).unwrap(), DATA_DOWNLOAD_SOURCE);
+    }
+
+    #[test]
+    fn a_download_in_github_actions_sends_no_source() {
+        let root = tempfile::tempdir().unwrap();
+        let start = data_repository(root.path(), SHELL_SCRIPT, POWERSHELL_SCRIPT);
+
+        let found = find_data_file_for(TEST_RELATIVE_PATH, &start, host(true))
+            .expect("the script should have written the missing file");
+        assert_eq!(fs::read_to_string(&found).unwrap(), NO_SOURCE);
     }
 
     #[test]
@@ -564,6 +599,7 @@ mod tests {
         let host = Host {
             windows: cfg!(windows),
             has_pwsh: true,
+            in_github_actions: false,
         };
         let command =
             DownloadCommand::for_host(Path::new("cxx/data"), "20000 User Agents.csv", host);
@@ -580,21 +616,25 @@ mod tests {
 
     /// The command for a host, which needs neither the network nor the
     /// program it names.
-    fn command_for(windows: bool, has_pwsh: bool) -> DownloadCommand {
-        let host = Host { windows, has_pwsh };
+    fn command_for(windows: bool, has_pwsh: bool, in_github_actions: bool) -> DownloadCommand {
+        let host = Host {
+            windows,
+            has_pwsh,
+            in_github_actions,
+        };
         DownloadCommand::for_host(Path::new("data"), "file.dat", host)
     }
 
     #[test]
     fn windows_runs_pwsh_when_it_is_on_the_path() {
-        let command = command_for(true, true);
+        let command = command_for(true, true, false);
         assert_eq!(command.program, "pwsh");
         assert!(command.removed.is_empty());
     }
 
     #[test]
     fn windows_powershell_runs_without_the_powershell_7_module_path() {
-        let command = command_for(true, false);
+        let command = command_for(true, false, false);
         assert_eq!(command.program, "powershell");
         assert_eq!(command.removed, vec!["PSModulePath"]);
         assert!(command
@@ -604,9 +644,24 @@ mod tests {
 
     #[test]
     fn other_systems_run_the_shell_script() {
-        let command = command_for(false, true);
+        let command = command_for(false, true, false);
         assert_eq!(command.program, "sh");
         assert!(command.removed.is_empty());
+    }
+
+    #[test]
+    fn the_source_is_sent_only_outside_github_actions() {
+        for windows in [true, false] {
+            let outside = command_for(windows, true, false);
+            assert!(outside.arguments.iter().any(|a| a == DATA_DOWNLOAD_SOURCE));
+            let inside = command_for(windows, true, true);
+            assert!(!inside.arguments.iter().any(|a| a == DATA_DOWNLOAD_SOURCE));
+            assert!(!inside.arguments.iter().any(|a| a == "-s" || a == "-Source"));
+            assert_eq!(
+                inside.arguments.last().map(String::as_str),
+                Some("file.dat")
+            );
+        }
     }
 
     #[test]
