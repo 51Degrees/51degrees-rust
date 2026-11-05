@@ -58,9 +58,9 @@
 //!   `application/json` for JSON.
 //! - **`Content-Length`**: the UTF-8 byte length of the body.
 //! - **`Cache-Control`**: `private, max-age=1800` when processing recorded no
-//!   errors, else `no-cache` and no `ETag`, so a browser that kept the response
-//!   to a failed request fetches it again in full rather than having it
-//!   confirmed by a `304`.
+//!   errors and the builder's data was there, else `private, no-cache` and no
+//!   `ETag`, so a browser that kept the response to a failed request fetches
+//!   it again in full rather than having it confirmed by a `304`.
 //! - **`Vary`**: the comma-joined HTTP-header evidence keys (prefix stripped,
 //!   de-duplicated case-insensitively, sorted) the pipeline's elements accept,
 //!   or those of a whitelist supplied in their place; omitted when empty.

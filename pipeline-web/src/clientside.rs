@@ -44,9 +44,10 @@
 //!   (JSON).
 //! - `Content-Length`: the UTF-8 byte length of the body.
 //! - `Cache-Control`: `private, max-age=1800` when the flow data recorded no
-//!   processing errors and the builder's data was there, otherwise `no-cache`.
-//!   A `no-cache` response carries no `ETag`, so a browser that kept it
-//!   fetches it again in full rather than having it confirmed by a `304`.
+//!   processing errors and the builder's data was there, otherwise
+//!   `private, no-cache`. That response carries no `ETag`, so a browser that
+//!   kept it fetches it again in full rather than having it confirmed by a
+//!   `304`.
 //! - `Vary`: the comma-joined list of HTTP-header evidence keys in the
 //!   evidence-key whitelist [`EndpointOptions::current_vary_whitelist`] gives,
 //!   with the `header.` prefix stripped and the names de-duplicated
@@ -66,16 +67,17 @@
 //!
 //! A builder in the pipeline can leave no data for a request, for example when
 //! it failed and the pipeline suppresses errors. The endpoint then logs that
-//! at error level on each such request, serves the response with `no-cache`,
-//! and builds the body again from the flow data with the builder the pipeline
-//! holds as a resource (see [`fiftyone_pipeline_core::Pipeline::resource`]),
-//! used only when it is the same `Arc` as the builder element, as
-//! [`crate::WebPipeline`] adds its own builders. The JavaScript is built
-//! around the JSON builder's output, itself built again if that builder left
-//! no data too. When only the JSON builder left no data, the JavaScript
-//! builder's script holds placeholder JSON, so it is treated as left out and
-//! built again too. With no such resource the body is empty. A pipeline
-//! without the builder serves an empty body and logs nothing.
+//! at error level on each such request, serves the response with
+//! `private, no-cache`, and builds the body again from the flow data with the
+//! builder the pipeline holds as a resource (see
+//! [`fiftyone_pipeline_core::Pipeline::resource`]), used only when it is the
+//! same `Arc` as the builder element, as [`crate::WebPipeline`] adds its own
+//! builders. The JavaScript is built around the JSON builder's output, itself
+//! built again if that builder left no data too. When only the JSON builder
+//! left no data, the JavaScript builder's script holds placeholder JSON, so it
+//! is treated as left out and built again too. With no such resource the body
+//! is empty. A pipeline without the builder serves an empty body and logs
+//! nothing.
 //!
 //! # Where the `Vary` whitelist comes from
 //!
@@ -125,10 +127,14 @@ pub const CACHE_CONTROL_CACHEABLE: &str = "private, max-age=1800";
 /// The `Cache-Control` value used when processing recorded one or more errors,
 /// or the builder whose output the endpoint serves left no data.
 ///
-/// A browser may keep such a response but must ask the server before using it
-/// again, and the response carries no `ETag`, so asking again always gets a
-/// full response and never a `304` confirming the faulty one.
-pub const CACHE_CONTROL_NO_CACHE: &str = "no-cache";
+/// `private` keeps shared caches (proxies) from storing a response made for
+/// one device, as in [`CACHE_CONTROL_CACHEABLE`]. A browser may keep the
+/// response but must ask the server before using it again, and the response
+/// carries no `ETag`, so asking again always gets a full response and never a
+/// `304` confirming the faulty one. The web integration specification gives
+/// this value for a failed response
+/// ([specifications#53](https://github.com/51Degrees/specifications/pull/53)).
+pub const CACHE_CONTROL_NO_CACHE: &str = "private, no-cache";
 
 /// The first fixed seed for the ETag hasher (see [`compute_etag`]).
 const ETAG_SEED_0: u64 = 0x_51de_9e55_0000_0001;

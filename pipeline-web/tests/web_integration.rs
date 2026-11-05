@@ -347,7 +347,7 @@ fn javascript_content_type() {
 }
 
 // ----------------------------------------------------------------------------
-// Cache-Control: private when clean, no-cache on failure.
+// Cache-Control: private on every response, no-cache on failure.
 // ----------------------------------------------------------------------------
 
 #[test]
@@ -369,7 +369,7 @@ fn cache_control_no_cache_on_processing_failure() {
     assert!(!data.errors().is_empty(), "processing recorded an error");
     let options = EndpointOptions::new(web.vary_whitelist().clone());
     let response = serve_json(&data, &TestRequest::default(), &options);
-    assert_eq!(response.header("Cache-Control"), Some("no-cache"));
+    assert_eq!(response.header("Cache-Control"), Some("private, no-cache"));
 }
 
 // ----------------------------------------------------------------------------
@@ -898,7 +898,7 @@ fn the_response_to_a_failed_request_is_not_kept_once_processing_recovers() {
         &options,
     );
     assert_eq!(failed.status, WebResponse::STATUS_OK);
-    assert_eq!(failed.header("Cache-Control"), Some("no-cache"));
+    assert_eq!(failed.header("Cache-Control"), Some("private, no-cache"));
     assert!(
         failed.header("ETag").is_none(),
         "the response to a failed request carries no validator"

@@ -286,7 +286,7 @@ fn options(web: &WebPipeline) -> EndpointOptions {
     EndpointOptions::new(web.vary_whitelist().clone())
 }
 
-/// The response is served with `no-cache` and no `ETag`.
+/// The response is served with `private, no-cache` and no `ETag`.
 fn assert_not_cached(response: &WebResponse) {
     assert_eq!(response.status, WebResponse::STATUS_OK);
     assert_eq!(
