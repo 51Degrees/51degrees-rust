@@ -626,14 +626,14 @@ fn an_agent_card_gives_the_keys_and_the_card_properties() {
 fn a_query_string_cannot_stand_in_for_the_request() {
     let harness = Harness::with_test_key();
     let signed = Signer::default().sign();
-    let mut evidence = vec![
+    let agent = signed.signature_agent.clone().unwrap();
+    let evidence = [
         ("query.signature", signed.signature.as_str()),
         ("query.signature-input", signed.signature_input.as_str()),
+        ("query.signature-agent", agent.as_str()),
         ("query.host", "example.com"),
         ("header.host", "example.com"),
     ];
-    let agent = signed.signature_agent.clone().unwrap();
-    evidence.push(("query.signature-agent", agent.as_str()));
     assert_eq!(
         outcome(&harness.process(&evidence)),
         (STATUS_ABSENT.to_owned(), REASON_NO_SIGNATURE.to_owned())

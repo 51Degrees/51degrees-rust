@@ -24,8 +24,8 @@
 //! Appendix B, and the behaviour that depends on the clock.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -206,7 +206,7 @@ fn the_algorithm_is_settled_from_the_key_and_the_signature() {
 struct Harness {
     now: Arc<AtomicI64>,
     fetches: Arc<AtomicUsize>,
-    available: Arc<Mutex<bool>>,
+    available: Arc<AtomicBool>,
     pipeline: Arc<Pipeline>,
 }
 
@@ -214,13 +214,13 @@ struct Harness {
 /// otherwise.
 struct Directory {
     fetches: Arc<AtomicUsize>,
-    available: Arc<Mutex<bool>>,
+    available: Arc<AtomicBool>,
 }
 
 impl HttpClient for Directory {
     fn get(&self, request: &HttpRequest<'_>) -> Result<HttpResponse, String> {
         self.fetches.fetch_add(1, Ordering::SeqCst);
-        if !*self.available.lock().unwrap() || request.url != DIRECTORY_URL {
+        if !self.available.load(Ordering::SeqCst) || request.url != DIRECTORY_URL {
             return Err("the directory is down".to_owned());
         }
         let public = Ed25519KeyPair::from_seed_unchecked(&ED25519_SEED).unwrap();
@@ -243,7 +243,7 @@ impl Harness {
     ) -> Self {
         let now = Arc::new(AtomicI64::new(SIGNED_AT + 100));
         let fetches = Arc::new(AtomicUsize::new(0));
-        let available = Arc::new(Mutex::new(true));
+        let available = Arc::new(AtomicBool::new(true));
         let clock = Arc::clone(&now);
         let builder = AgentSignatureElement::builder()
             .set_http_client(Arc::new(Directory {
@@ -308,7 +308,7 @@ impl Harness {
     }
 
     fn set_available(&self, available: bool) {
-        *self.available.lock().unwrap() = available;
+        self.available.store(available, Ordering::SeqCst);
     }
 
     fn fetches(&self) -> usize {

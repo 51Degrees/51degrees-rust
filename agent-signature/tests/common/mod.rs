@@ -247,7 +247,7 @@ impl HttpClient for FakeClient {
             return Err(format!("nothing is served at {}", request.url));
         };
         thread::sleep(response.delay);
-        let mut headers = response.headers.clone();
+        let mut headers = response.headers;
         if let Some(content_type) = response.content_type {
             headers.push(("Content-Type".to_owned(), content_type));
         }

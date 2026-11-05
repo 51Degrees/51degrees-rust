@@ -526,9 +526,7 @@ impl ComponentResolver for ResponseResolver<'_> {
         if name == "@authority" {
             // The directory draft has the response signature cover the
             // authority of the request, written with ';req'.
-            if component.parameter("req").is_none() {
-                return None;
-            }
+            component.parameter("req")?;
             return self.authority.clone();
         }
         // A request header or any other derived component, which this
