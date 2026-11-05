@@ -262,11 +262,8 @@ fn fetch_false_uses_xml_http_request() {
 
 #[test]
 fn minification_is_robust_on_the_real_template() {
-    // The bundled minifier (minify-js 0.6.0) panics on some constructs in the
-    // full template. The element must catch that and fall back to the
-    // unminified content rather than aborting the request. So the minified-on
-    // run must still produce usable output
-    // (and never crash). It is no larger than the unminified output.
+    // Minifying the full template gives a usable script, or the unminified
+    // one when minifying fails, and never one larger than the unminified one.
     let minified = run(
         None,
         |b| b.set_minify(true).build(),
@@ -284,9 +281,7 @@ fn minification_is_robust_on_the_real_template() {
 #[test]
 fn full_template_renders_through_pipeline() {
     // Render the complete embedded template through a real pipeline, the same
-    // path the element.rs doctest exercises. This is the render that previously
-    // crashed under the third-party engine; it must now produce stable, complete
-    // output every time.
+    // path the element.rs doctest exercises, and check the output is complete.
     let js = run(
         Some(DeviceElement::new(Some("Full"), Some(true))),
         |b| b.set_minify(false).set_protocol("https").unwrap().build(),
@@ -308,9 +303,40 @@ fn full_template_renders_through_pipeline() {
     // No unrendered Mustache tags survive in the output.
     assert!(!js.contains("{{"));
     assert!(!js.contains("}}"));
-    // The output is trimmed at the end, matching the previous engine.
-    assert_eq!(js, js.trim_end());
-    assert!(js.ends_with("var fod = new fiftyoneDegreesManager();"));
+    // The template's last line ends with a line break, which is kept.
+    assert!(js.ends_with("var fod = new fiftyoneDegreesManager();\n"));
+}
+
+#[test]
+fn a_line_holding_only_a_section_tag_leaves_nothing_in_the_script() {
+    // In the template, `{{#_enableCookies}}` has a line of its own between
+    // these two lines, and `{{#_updateEnabled}}` and `{{#_userPrompt}}` have
+    // a line each before the closing brace of the function, with their
+    // closing tags after it. Each of those lines is removed, line break
+    // included, whether the section is rendered or not.
+    for (cookies, host) in [(true, "example.com"), (false, ""), (true, "")] {
+        let js = run(
+            None,
+            |b| {
+                b.set_minify(false)
+                    .set_enable_cookies(cookies)
+                    .set_protocol("https")
+                    .unwrap()
+                    .build()
+            },
+            &[("header.host", host)],
+        );
+        if cookies {
+            assert!(
+                js.contains("        let fodValues = {};\n        {\n"),
+                "cookies {cookies}, host {host:?}"
+            );
+        }
+        assert!(
+            js.contains("            refresh();\n            return;\n        }\n    };\n"),
+            "cookies {cookies}, host {host:?}"
+        );
+    }
 }
 
 /// A cloud request engine whose accessible products are the supplied JSON. The
@@ -374,8 +400,7 @@ fn user_prompt_section_follows_the_keys_licensed_products() {
     );
     assert!(!js.contains("{{"));
     assert!(!js.contains("}}"));
-    assert_eq!(js, js.trim_end());
-    assert!(js.ends_with("var fod = new fiftyoneDegreesManager();"));
+    assert!(js.ends_with("var fod = new fiftyoneDegreesManager();\n"));
 
     // A key with no 51Did product, and a key whose 51Did product grants no
     // property, both leave the section out.
@@ -390,7 +415,7 @@ fn user_prompt_section_follows_the_keys_licensed_products() {
         );
         assert!(!js.contains("{{"));
         assert!(!js.contains("}}"));
-        assert!(js.ends_with("var fod = new fiftyoneDegreesManager();"));
+        assert!(js.ends_with("var fod = new fiftyoneDegreesManager();\n"));
     }
 
     // A builder given no request engine has no licensed products to read, so
