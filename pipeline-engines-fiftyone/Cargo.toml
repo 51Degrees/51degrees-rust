@@ -18,6 +18,9 @@ fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
 fiftyone-pipeline-engines = { version = "4.5.2", path = "../pipeline-engines", default-features = false }
 thiserror.workspace = true
 ahash.workspace = true
+# Set Headers keeps a list for each pipeline, replaced whole when a pipeline is
+# added, so each request reads it without taking a lock.
+arc-swap.workspace = true
 # The usage-sharing tracker keeps recently shared evidence in the sharded LRU
 # cache, so it is bounded and concurrent requests mostly take different locks.
 fiftyone-caching = { version = "4.5.2", path = "../caching", default-features = false }

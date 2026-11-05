@@ -872,6 +872,7 @@ name = "fiftyone-pipeline-engines-fiftyone"
 version = "4.5.2"
 dependencies = [
  "ahash",
+ "arc-swap",
  "fastrand",
  "fiftyone-caching",
  "fiftyone-pipeline-core",

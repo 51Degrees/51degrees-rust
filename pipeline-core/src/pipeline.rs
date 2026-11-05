@@ -267,8 +267,11 @@ impl PipelineBuilder {
 
     /// Consume the builder and produce the shared, immutable pipeline.
     ///
-    /// Returns an error if no elements were added, since an empty pipeline
-    /// cannot do useful work and almost always indicates a misconfiguration.
+    /// Each element's [`FlowElement::add_pipeline`] is called with the new
+    /// pipeline, in order. Returns an error if no elements were added, since an
+    /// empty pipeline cannot do useful work and almost always indicates a
+    /// misconfiguration, or the first error an element returns from
+    /// `add_pipeline`.
     pub fn build(self) -> Result<Arc<Pipeline>> {
         if self.elements.is_empty() {
             return Err(Error::configuration(
@@ -288,13 +291,17 @@ impl PipelineBuilder {
 
         let concurrent = self.elements.iter().any(|e| e.is_concurrent());
 
-        Ok(Arc::new(Pipeline {
+        let pipeline = Arc::new(Pipeline {
             elements: self.elements,
             evidence_key_filter: aggregator,
             suppress_process_exceptions: self.suppress_process_exceptions,
             concurrent,
             resources: self.resources,
-        }))
+        });
+        for element in &pipeline.elements {
+            element.add_pipeline(&pipeline)?;
+        }
+        Ok(pipeline)
     }
 }
 
