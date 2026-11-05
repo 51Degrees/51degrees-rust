@@ -31,12 +31,14 @@ use fiftyone_javascript_builder::{
 };
 use fiftyone_json_builder::JsonBuilderElement;
 use fiftyone_pipeline_core::{Error, Evidence, Pipeline};
+use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 
 /// A statement found only inside the user prompt section of the template.
 const USER_PROMPT_MARKER: &str = "var answerKeys = [\"id.usage\", \"tcstring\"];";
 
 /// The evidence every test here sends, giving a callback URL so the update
-/// section, and the user prompt section inside it, can be rendered.
+/// section, and the user prompt section inside it, can be rendered. The
+/// Sequence element keeps the session id and moves the sequence on to 4.
 const EVIDENCE: &[(&str, &str)] = &[
     ("header.host", "example.com"),
     ("query.x", "1"),
@@ -44,13 +46,15 @@ const EVIDENCE: &[(&str, &str)] = &[
     ("query.sequence", "3"),
 ];
 
-/// Run a pipeline of the JSON builder and the JavaScript builder, built by
-/// `configure` with minification off, and return the script.
+/// Run a pipeline of the Sequence element, the JSON builder and the
+/// JavaScript builder, built by `configure` with minification off, and
+/// return the script.
 fn script(
     configure: impl FnOnce(JavaScriptBuilderElementBuilder) -> JavaScriptBuilderElementBuilder,
 ) -> String {
     let element = configure(JavaScriptBuilderElement::builder().set_minify(false)).build();
     let pipeline = Pipeline::builder()
+        .add_element(Arc::new(SequenceElement::new()))
         .add_element(Arc::new(JsonBuilderElement::new()))
         .add_element(Arc::new(element))
         .build()
@@ -115,7 +119,7 @@ fn the_default_steps_give_the_builders_own_script() {
     assert_eq!(own, defaults);
     assert!(own.contains("return {\"x\":\"1\"};"));
     assert!(own.contains("var sessionId = \"from-evidence\";"));
-    assert!(own.contains("var sequence = 3;"));
+    assert!(own.contains("var sequence = 4;"));
     assert!(!own.contains(USER_PROMPT_MARKER));
 }
 
@@ -136,7 +140,7 @@ fn a_step_keeps_the_default_for_part_of_its_work() {
     assert!(js.contains("return {\"x\":\"1\",\"region\":\"eu\"};"));
     // The steps it does not replace keep their defaults.
     assert!(js.contains("var sessionId = \"from-evidence\";"));
-    assert!(js.contains("var sequence = 3;"));
+    assert!(js.contains("var sequence = 4;"));
 }
 
 /// Builds the session id from the element's configured object name and the
@@ -181,7 +185,7 @@ const TEMPLATE: &str = "var {{_objName}} = {{&_sequence}};\
 #[test]
 fn a_template_the_caller_gives_is_rendered() {
     let js = script(|b| b.set_template(TEMPLATE).expect("the template is valid"));
-    assert_eq!(js, "var fod = 3; no prompt");
+    assert_eq!(js, "var fod = 4; no prompt");
 
     let js = script(|b| {
         b.set_template(TEMPLATE)
