@@ -81,8 +81,9 @@
 //! built again if that builder left no data too. When only the JSON builder
 //! left no data, the JavaScript builder's script holds placeholder JSON, so it
 //! is treated as left out and built again too. With no such resource the body
-//! is empty. A pipeline without the builder serves an empty body and logs
-//! nothing.
+//! is empty, and a JSON builder that left no data is still logged after the
+//! JavaScript builder. A pipeline without the builder serves an empty body and
+//! logs nothing.
 //!
 //! # Where the `Vary` whitelist comes from
 //!
@@ -307,7 +308,8 @@ fn json_left_no_data(flow_data: &FlowData) -> bool {
 }
 
 /// The JavaScript builder's output for the request, built again when
-/// [`javascript_left_no_data`] is true.
+/// [`javascript_left_no_data`] is true. A JSON builder that left no data is
+/// logged after the JavaScript builder even when the script cannot be built.
 fn javascript_body(flow_data: &FlowData, left_no_data: bool) -> String {
     if !left_no_data {
         return flow_data
@@ -316,12 +318,19 @@ fn javascript_body(flow_data: &FlowData, left_no_data: bool) -> String {
             .unwrap_or_default();
     }
     log_missing_data(JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY);
-    held_builder::<JavaScriptBuilderElement>(flow_data, JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY)
-        .map(|builder| {
-            let json = json_body(flow_data, json_left_no_data(flow_data));
+    let json_left_no_data = json_left_no_data(flow_data);
+    match held_builder::<JavaScriptBuilderElement>(flow_data, JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY) {
+        Some(builder) => {
+            let json = json_body(flow_data, json_left_no_data);
             builder.javascript_for(flow_data, &json)
-        })
-        .unwrap_or_default()
+        }
+        None => {
+            if json_left_no_data {
+                log_missing_data(JSON_BUILDER_ELEMENT_DATA_KEY);
+            }
+            String::new()
+        }
+    }
 }
 
 /// The JSON builder's output for the request, built again when

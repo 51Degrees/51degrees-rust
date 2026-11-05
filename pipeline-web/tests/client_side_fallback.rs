@@ -601,6 +601,9 @@ fn a_matching_if_none_match_is_answered_before_the_body_is_built() {
     }
 }
 
+/// Builders the pipeline does not hold give an empty body, and each builder
+/// that left no data is still logged, the JSON builder after the JavaScript
+/// builder whose script it would have gone into.
 #[test]
 fn a_builder_the_pipeline_does_not_hold_gives_an_empty_body() {
     let pipeline = Pipeline::builder()
@@ -621,11 +624,73 @@ fn a_builder_the_pipeline_does_not_hold_gives_an_empty_body() {
         vec![
             missing(JSON_BUILDER_ELEMENT_DATA_KEY),
             missing(JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY),
+            missing(JSON_BUILDER_ELEMENT_DATA_KEY),
         ]
     );
     for response in [&json, &javascript] {
         assert_not_cached(response);
         assert!(response.body.is_empty());
+    }
+}
+
+/// With a JavaScript builder the pipeline does not hold, the script cannot be
+/// built again, but the JSON builder is logged after it when, and only when,
+/// the pipeline has the JSON builder and it left no data.
+#[test]
+fn a_json_builder_that_left_no_data_is_logged_when_the_script_cannot_be_built() {
+    // The data key a clashing element takes, whether the pipeline has the
+    // JSON builder, and the records expected. The clashing element sits
+    // before the builder whose key it takes.
+    let cases = [
+        (
+            JSON_BUILDER_ELEMENT_DATA_KEY,
+            true,
+            vec![
+                missing(JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY),
+                missing(JSON_BUILDER_ELEMENT_DATA_KEY),
+            ],
+        ),
+        (
+            JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY,
+            true,
+            vec![missing(JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY)],
+        ),
+        (
+            JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY,
+            false,
+            vec![missing(JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY)],
+        ),
+    ];
+
+    for (clashed, with_json, expected) in cases {
+        let mut builder = Pipeline::builder()
+            .suppress_process_exceptions(true)
+            .add_element(Arc::new(DeviceElement::new()));
+        if clashed == JSON_BUILDER_ELEMENT_DATA_KEY {
+            builder = builder.add_element(Arc::new(ClashElement::new(clashed)));
+        }
+        if with_json {
+            builder = builder.add_element(Arc::new(JsonBuilderElement::new()));
+        }
+        if clashed == JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY {
+            builder = builder.add_element(Arc::new(ClashElement::new(clashed)));
+        }
+        let pipeline = builder
+            .add_element(Arc::new(JavaScriptBuilderElement::new()))
+            .build()
+            .expect("the pipeline builds");
+        let data = processed(&pipeline);
+        assert_eq!(
+            data.get(JSON_BUILDER_DATA_KEY).is_some(),
+            with_json && clashed != JSON_BUILDER_ELEMENT_DATA_KEY
+        );
+        let from = mark();
+
+        let response = serve_javascript(&data, &TestRequest, &EndpointOptions::default());
+
+        assert_eq!(records_since(from), expected, "{clashed} {with_json}");
+        assert_not_cached(&response);
+        assert!(response.body.is_empty(), "{}", body(&response));
     }
 }
 
