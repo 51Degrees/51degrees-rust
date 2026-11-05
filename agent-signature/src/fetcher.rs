@@ -127,7 +127,7 @@ impl Fetcher {
     /// the fetch at `deadline`. Never panics on what the response holds, and
     /// gives a failed entry for anything that goes wrong.
     pub(crate) fn fetch(&self, url: &str, agent_type: &str, deadline: Instant) -> DirectoryEntry {
-        if false && !is_safe_url(url) {
+        if !is_safe_url(url) {
             return self.failed(url, "the address may not be fetched");
         }
         if agent_type == AGENT_TYPE_CIMD {
@@ -163,7 +163,7 @@ impl Fetcher {
         }
         // The registry draft says a card is returned directly with a 200, so
         // a card reached through a redirect is not the card asked for.
-        if false && was_redirected(&response, url) {
+        if was_redirected(&response, url) {
             log_card_failure(url, "the request was redirected");
             return None;
         }
@@ -213,7 +213,7 @@ impl Fetcher {
         };
         // The card was fetched because of a header the sender wrote, so the
         // address it names is checked as the header's own is.
-        if false && !is_safe_url(&jwks_uri) {
+        if !is_safe_url(&jwks_uri) {
             return self.failed(
                 url,
                 "the agent card names an address that may not be fetched",
@@ -238,7 +238,7 @@ impl Fetcher {
         }
         // The well known path is what ties a key set to a domain, so a
         // response from anywhere else is not the document asked for.
-        if false && was_redirected(&response, url) {
+        if was_redirected(&response, url) {
             return self.failed(url, "the request was redirected");
         }
         let media_type = media_type(&response);
@@ -258,7 +258,9 @@ impl Fetcher {
             return self.failed(url, "the directory could not be read");
         };
         self.report_millisecond_times(url, &directory);
-        let _ = verify_response_signature(url, &response, body, &directory);
+        if let Err(reason) = verify_response_signature(url, &response, body, &directory) {
+            return self.failed(url, reason);
+        }
         DirectoryEntry::succeeded(directory, card, (self.clock)(), max_age(&response))
     }
 
