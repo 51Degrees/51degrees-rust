@@ -34,7 +34,7 @@ use fiftyone_pipeline_engines::{
 };
 
 use fiftyone_cloud_request_engine::CloudRequestEngine;
-use fiftyone_device_detection_shared::{DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY};
+use fiftyone_device_detection_shared::{DeviceDataBase, DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY};
 
 use crate::dto::map_device_object;
 use crate::meta::{cloud_json, fill_metadata, DiscoveredMetadata};
@@ -193,13 +193,17 @@ impl DeviceDetectionCloudEngine {
     /// [`DEVICE_DATA_KEY`].
     ///
     /// Returns an [`Error::PipelineConfiguration`] if no cloud request engine ran
-    /// before this engine. An empty or absent JSON response (which signals the
-    /// request engine itself failed and already reported the error) leaves the
-    /// device data unpopulated and does not raise a new error.
+    /// before this engine. An empty or absent JSON response, which means the
+    /// request engine failed and reported the error itself, stores empty device
+    /// data and raises no new error. Storing it, as .NET's engines store their
+    /// data before processing, tells later elements that this engine ran.
     fn populate(&self, data: &mut FlowData) -> Result<()> {
         let json = match cloud_json(data, ENGINE_NAME)? {
             Some(json) => json,
-            None => return Ok(()),
+            None => {
+                data.get_or_add(DEVICE_DATA_KEY, DeviceDataBase::new)?;
+                return Ok(());
+            }
         };
 
         let device = slice_device_json(&json)?;

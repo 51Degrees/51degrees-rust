@@ -183,12 +183,17 @@ impl HardwareProfileCloudEngine {
     ///
     /// Returns an [`Error::PipelineConfiguration`] if no cloud request engine ran
     /// before this engine. An empty or absent JSON response (the request engine
-    /// itself failed and already reported the error) leaves the result
-    /// unpopulated and does not raise a new error.
+    /// itself failed and already reported the error) stores a result with no
+    /// profiles and does not raise a new error. Storing it, as .NET's engines
+    /// store their data before processing, tells later elements that this
+    /// engine ran.
     fn populate(&self, data: &mut FlowData) -> Result<()> {
         let json = match cloud_json(data, ENGINE_NAME)? {
             Some(json) => json,
-            None => return Ok(()),
+            None => {
+                data.get_or_add(HARDWARE_DATA_KEY, MultiDeviceData::new)?;
+                return Ok(());
+            }
         };
 
         let result = slice_hardware_profiles(&json)?;

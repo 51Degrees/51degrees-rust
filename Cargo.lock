@@ -671,6 +671,7 @@ name = "fiftyone-derived-properties"
 version = "4.5.2"
 dependencies = [
  "fiftyone-pipeline-core",
+ "log",
  "serde_norway",
  "thiserror 2.0.18",
 ]
@@ -715,6 +716,7 @@ dependencies = [
  "fiftyone-native",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "log",
 ]
 
 [[package]]
