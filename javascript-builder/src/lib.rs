@@ -54,9 +54,12 @@
 //! The template has a section that gathers the visitor's answer from the
 //! 51Degrees Preference Management Platform (PMP) or a consent platform on the
 //! page, which is what a 51Did is created from. It is rendered only when the
-//! builder was given a cloud request engine, through
-//! [`JavaScriptBuilderElementBuilder::set_cloud_request_engine`], whose
-//! resource key is licensed for 51Did.
+//! builder was given a cloud request engine whose resource key is licensed for
+//! 51Did, through
+//! [`JavaScriptBuilderElementBuilder::set_shared_cloud_request_engine`], which
+//! waits for the engine's discovery to complete, or
+//! [`JavaScriptBuilderElementBuilder::set_cloud_request_engine`], which decides
+//! when it is called.
 //!
 //! ## Minification
 //!

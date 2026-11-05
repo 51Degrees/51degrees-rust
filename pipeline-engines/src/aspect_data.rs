@@ -32,11 +32,15 @@
 //! [`AspectDataBase`] is a ready-made backing an engine's concrete data struct
 //! can embed. It forwards the core [`ElementData`] property bag to a
 //! [`MapElementData`] and tracks the engine keys and cache-hit flag for the
-//! aspect layer.
+//! aspect layer. With a [`MissingPropertySource`] from each engine that wrote
+//! to it, it also gives the reason a property it does not hold is missing.
 
 use std::any::Any;
+use std::sync::Arc;
 
 use fiftyone_pipeline_core::{ElementData, MapElementData, NoValueError, PropertyValue};
+
+use crate::missing_property::{first_known_reason, MissingPropertyResult, MissingPropertySource};
 
 /// Element data produced by an aspect engine.
 ///
@@ -70,7 +74,8 @@ pub trait AspectData: ElementData {
 ///
 /// Concrete aspect data embeds one of these and forwards the [`ElementData`]
 /// and [`AspectData`] traits to it. It holds the property bag (a
-/// [`MapElementData`]), the contributing engine keys and the cache-hit flag.
+/// [`MapElementData`]), the contributing engine keys, the cache-hit flag and
+/// the [`MissingPropertySource`] of each engine that added one.
 /// The lazy-loading task list lives on the engine wrapper rather than the data
 /// (see [`crate::AspectEngineBase`]).
 #[derive(Debug, Clone)]
@@ -78,6 +83,7 @@ pub struct AspectDataBase {
     values: MapElementData,
     engine_keys: Vec<String>,
     cache_hit: bool,
+    missing_property_sources: Vec<Arc<MissingPropertySource>>,
 }
 
 impl AspectDataBase {
@@ -88,6 +94,7 @@ impl AspectDataBase {
             values: MapElementData::new(),
             engine_keys: vec![engine_key.into()],
             cache_hit: false,
+            missing_property_sources: Vec::new(),
         }
     }
 
@@ -98,6 +105,7 @@ impl AspectDataBase {
             values,
             engine_keys: vec![engine_key.into()],
             cache_hit: false,
+            missing_property_sources: Vec::new(),
         }
     }
 
@@ -149,11 +157,38 @@ impl AspectDataBase {
     pub fn cache_hit(&self) -> bool {
         self.cache_hit
     }
+
+    /// Add the details of an engine that wrote to this data, so that a
+    /// property this data does not hold gives that engine's reason.
+    pub fn add_missing_property_source(&mut self, source: Arc<MissingPropertySource>) {
+        self.missing_property_sources.push(source);
+    }
+
+    /// Why `property_name` is missing, from the sources in the order they were
+    /// added, the first reason other than
+    /// [`MissingPropertyReason::Unknown`](crate::MissingPropertyReason::Unknown)
+    /// deciding. [`None`] when no source was added.
+    ///
+    /// The bag is not consulted, so ask only about a property this data does
+    /// not hold.
+    pub fn missing_property_reason(&self, property_name: &str) -> Option<MissingPropertyResult> {
+        first_known_reason(
+            self.missing_property_sources
+                .iter()
+                .map(|source| source.reason(property_name)),
+        )
+    }
 }
 
 impl ElementData for AspectDataBase {
+    /// The value of a property in the bag. For a property the bag does not
+    /// hold, the error carries the reason it is missing when a source was
+    /// added, and otherwise the bag's own explanation.
     fn get(&self, name: &str) -> Result<PropertyValue, NoValueError> {
-        self.values.get(name)
+        self.values.get(name).map_err(|absent| {
+            self.missing_property_reason(name)
+                .map_or(absent, |missing| NoValueError::new(missing.description))
+        })
     }
 
     fn keys(&self) -> Vec<String> {
@@ -182,6 +217,8 @@ impl AspectData for AspectDataBase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{AspectPropertyMetaData, EngineDeployment, MissingPropertyReason};
+    use fiftyone_pipeline_core::PropertyValueType;
 
     #[test]
     fn property_bag_round_trips() {
@@ -206,6 +243,88 @@ mod tests {
 
         data.set_cache_hit();
         assert!(data.cache_hit());
+    }
+
+    fn source(element_data_key: &str, tier: &str) -> Arc<MissingPropertySource> {
+        Arc::new(
+            MissingPropertySource::new(
+                element_data_key,
+                "TestEngine",
+                EngineDeployment::OnPremise,
+                tier,
+                vec![AspectPropertyMetaData::new(
+                    "IsMobile",
+                    element_data_key,
+                    PropertyValueType::Bool,
+                )
+                .with_data_tiers(["Premium"])],
+            )
+            .with_typed_properties(|name: &str| name.eq_ignore_ascii_case("IsMobile")),
+        )
+    }
+
+    #[test]
+    fn without_a_source_the_bag_explains_a_missing_property() {
+        let data = AspectDataBase::new("device").set("PlatformName", "iOS");
+        assert_eq!(data.missing_property_reason("IsMobile"), None);
+        assert_eq!(
+            data.get("IsMobile").unwrap_err().message,
+            "No value for property 'IsMobile'."
+        );
+    }
+
+    #[test]
+    fn a_source_explains_a_missing_property() {
+        let mut data = AspectDataBase::new("device").set("PlatformName", "iOS");
+        let source = source("device", "Lite");
+        data.add_missing_property_source(Arc::clone(&source));
+
+        let missing = data.missing_property_reason("IsMobile").unwrap();
+        assert_eq!(missing, source.reason("IsMobile"));
+        assert_eq!(
+            missing.reason,
+            MissingPropertyReason::DataFileUpgradeRequired
+        );
+        assert_eq!(
+            data.get("IsMobile").unwrap_err().message,
+            missing.description
+        );
+        assert_eq!(
+            data.get("NotAProperty").unwrap_err().message,
+            source.reason("NotAProperty").description
+        );
+        // A property the bag holds is still read from it.
+        assert_eq!(data.get("PlatformName").unwrap().as_str(), Some("iOS"));
+    }
+
+    #[test]
+    fn the_first_source_with_a_known_reason_decides() {
+        let mut data = AspectDataBase::new("device");
+        let unknown = Arc::new(MissingPropertySource::new(
+            "device",
+            "FirstEngine",
+            EngineDeployment::OnPremise,
+            "Lite",
+            Vec::new(),
+        ));
+        let known = source("device", "Lite");
+        data.add_missing_property_source(unknown);
+        data.add_missing_property_source(Arc::clone(&known));
+        assert_eq!(
+            data.missing_property_reason("IsMobile"),
+            Some(known.reason("IsMobile"))
+        );
+        assert_eq!(
+            data.missing_property_reason("NotAProperty").unwrap().reason,
+            MissingPropertyReason::Unknown
+        );
+    }
+
+    #[test]
+    fn a_clone_keeps_its_sources() {
+        let mut data = AspectDataBase::new("device");
+        data.add_missing_property_source(source("device", "Lite"));
+        assert!(data.clone().missing_property_reason("IsMobile").is_some());
     }
 
     #[test]

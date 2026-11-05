@@ -48,9 +48,7 @@ use fiftyone_caching::{CacheBuilder, DataKeyedCache, PutCache};
 use crate::aspect_data::AspectData;
 use crate::aspect_property_metadata::AspectPropertyMetaData;
 use crate::lazy_loading::LazyLoadingConfiguration;
-use crate::missing_property::{
-    missing_property_reason, EngineDeployment, EngineMissingPropertyContext, MissingPropertyResult,
-};
+use crate::missing_property::{resolve, EngineDeployment, EngineView, MissingPropertyResult};
 
 /// A flow element that produces aspect data for a single 51Degrees aspect.
 ///
@@ -101,21 +99,41 @@ pub trait AspectEngine: FlowElement {
         false
     }
 
+    /// The name of this engine's type, which the message for a data file
+    /// upgrade names. Defaults to the name of the implementing type without
+    /// its path.
+    fn engine_type_name(&self) -> &str {
+        short_type_name(std::any::type_name::<Self>())
+    }
+
+    /// Whether this engine's data type has a typed accessor for the property,
+    /// matched ignoring case.
+    ///
+    /// A property with an accessor that the engine's metadata does not list is
+    /// one another data file supplies, so the missing property rules give a
+    /// data file upgrade as the reason. Defaults to `false`.
+    fn has_typed_property(&self, _property_name: &str) -> bool {
+        false
+    }
+
     /// Resolve why `property_name` is missing from this engine's results.
     ///
     /// Applies the rules in [`crate::MissingPropertyService`] using this
-    /// engine's deployment, data tier and aspect metadata. The default
-    /// implementation is correct for every engine, so an engine rarely
-    /// overrides it.
+    /// engine's deployment, data tier, aspect metadata, type name and typed
+    /// accessors. The default implementation is correct for every engine, so
+    /// an engine rarely overrides it.
     fn missing_property_reason(&self, property_name: &str) -> MissingPropertyResult {
-        let ctx = EngineMissingPropertyContext {
+        let has_typed_property = |name: &str| self.has_typed_property(name);
+        let view = EngineView {
             element_data_key: self.data_key(),
+            type_name: self.engine_type_name(),
             deployment: self.deployment(),
             data_source_tier: self.data_source_tier(),
             properties_loaded: self.has_loaded_properties(),
             properties: self.aspect_properties(),
+            has_typed_property: Some(&has_typed_property),
         };
-        missing_property_reason(property_name, &ctx)
+        resolve(property_name, &view)
     }
 
     /// Build a core [`Error::PropertyMissing`] for `property_name`, using
@@ -426,6 +444,14 @@ pub fn property_pair(aspect: AspectPropertyMetaData) -> EnginePropertyPair {
     (aspect.core().clone(), aspect)
 }
 
+/// The last segment of a type's path, without generic arguments, for example
+/// `DeviceDetectionOnPremiseEngine` from
+/// `fiftyone_device_detection_onpremise::engine::DeviceDetectionOnPremiseEngine`.
+fn short_type_name(full: &str) -> &str {
+    let path = full.split('<').next().unwrap_or(full);
+    path.rsplit("::").next().unwrap_or(path)
+}
+
 /// Resolve a missing-property reason directly from an [`AspectEngine`] without
 /// going through the trait method, for callers holding a `&dyn AspectEngine`.
 pub fn engine_missing_property_reason(
@@ -667,5 +693,60 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn the_upgrade_message_names_the_engine_type() {
+        let mut engine = DeviceEngine::new(false, Arc::new(AtomicUsize::new(0)));
+        engine.aspect_properties =
+            vec![
+                AspectPropertyMetaData::new("ScreenWidth", "device", PropertyValueType::Integer)
+                    .with_data_tiers(["Enterprise"]),
+            ];
+        assert_eq!(engine.engine_type_name(), "DeviceEngine");
+        let result = engine.missing_property_reason("ScreenWidth");
+        assert!(result
+            .description
+            .contains("It is available with the Enterprise license/data for the DeviceEngine."));
+        // Through a trait object the name is still the implementing type's.
+        let engine: &dyn AspectEngine = &engine;
+        assert_eq!(engine.engine_type_name(), "DeviceEngine");
+    }
+
+    #[test]
+    fn the_first_engine_with_a_reason_decides() {
+        let unknown = DeviceEngine::new(false, Arc::new(AtomicUsize::new(0)));
+        let mut upgrade = DeviceEngine::new(false, Arc::new(AtomicUsize::new(0)));
+        upgrade.aspect_properties =
+            vec![
+                AspectPropertyMetaData::new("ScreenWidth", "device", PropertyValueType::Integer)
+                    .with_data_tiers(["Enterprise"]),
+            ];
+
+        let reason = |engines: &[&dyn AspectEngine]| {
+            crate::missing_property_reason_for_engines("ScreenWidth", engines)
+                .map(|result| result.reason)
+        };
+
+        assert_eq!(
+            reason(&[&unknown, &upgrade]),
+            Some(MissingPropertyReason::DataFileUpgradeRequired)
+        );
+        assert_eq!(
+            reason(&[&upgrade, &unknown]),
+            Some(MissingPropertyReason::DataFileUpgradeRequired)
+        );
+        assert_eq!(
+            reason(&[&unknown, &unknown]),
+            Some(MissingPropertyReason::Unknown)
+        );
+        assert_eq!(reason(&[]), None);
+    }
+
+    #[test]
+    fn short_type_names_drop_the_path_and_generics() {
+        assert_eq!(short_type_name("a::b::Engine"), "Engine");
+        assert_eq!(short_type_name("a::Engine<b::Data, c::D<e::F>>"), "Engine");
+        assert_eq!(short_type_name("Engine"), "Engine");
     }
 }

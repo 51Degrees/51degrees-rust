@@ -88,6 +88,20 @@ pub trait FlowElement: Send + Sync {
     /// pipeline-wide filter.
     fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter;
 
+    /// True once [`FlowElement::evidence_key_filter`] holds every key this
+    /// element will accept. Defaults to `true`.
+    ///
+    /// An element that learns its accepted evidence after it is built, as the
+    /// cloud request engine does after a transient discovery failure, returns
+    /// `false` until then. A consumer that keeps the filter's keys, such as the
+    /// web `Vary` list, collects them again until this is `true`, because the
+    /// [cloud request engine specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/cloud-request-engine.md#consequences-for-consumers-of-the-engine)
+    /// forbids keeping a result obtained before discovery completed. An
+    /// element that wraps another forwards this.
+    fn is_evidence_key_filter_complete(&self) -> bool {
+        true
+    }
+
     /// Metadata for the properties this element can populate.
     ///
     /// Publishing produced properties is a specification MUST. See the
