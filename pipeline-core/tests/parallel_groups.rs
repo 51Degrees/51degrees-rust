@@ -623,10 +623,11 @@ fn an_element_of_a_group_with_the_data_key_of_one_before_it_is_refused_when_buil
     assert_eq!(build_outcome(after_a_group), message("Shared"));
 }
 
-/// Only an element of a group is refused, because an element on its own gets
-/// the data already under its key, as it does in .NET.
+/// An element on its own may have the data key of an element before it, on
+/// its own or in a group, because it gets the data already under its key, as
+/// it does in .NET.
 #[test]
-fn elements_on_their_own_may_share_a_data_key_with_any_element() {
+fn an_element_on_its_own_may_have_the_data_key_of_one_before_it() {
     let pipeline = Pipeline::builder()
         .add_element(writer("first", "before"))
         .add_element(writer("First", "again"))
