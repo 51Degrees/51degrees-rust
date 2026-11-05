@@ -657,6 +657,15 @@ fn the_build_method_is_chosen_by_the_names_of_its_parameters() {
             NO_INNER
         )
     );
+
+    // Two names, as the build method takes, but one is not its parameter.
+    let found = message(build(&one(ElementOptions::new("DataFileEngine")
+        .parameter("DataFile", "51Degrees.hash")
+        .parameter("CreateTempCopy", "true"))));
+    assert!(
+        found.contains("the following parameters: DATAFILE,CREATETEMPCOPY. The available"),
+        "{found}"
+    );
 }
 
 #[test]
