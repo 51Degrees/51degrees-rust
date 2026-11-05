@@ -31,10 +31,13 @@
 //!
 //! The outcome is a core [`MissingPropertyReason`] plus a developer-facing
 //! description. An aspect engine surfaces this through
-//! [`crate::AspectEngine::missing_property_reason`], which builds an
+//! [`crate::AspectEngine::missing_property_reason`].
+//! [`crate::AspectEngine::property_missing_error`] builds an
 //! [`Error::PropertyMissing`](fiftyone_pipeline_core::Error::PropertyMissing)
-//! from the result. [`missing_property_reason_for_engines`] resolves the reason
-//! across every engine that writes to one aspect data.
+//! from the reason alone, so that error's text is the reason's general
+//! wording rather than the description.
+//! [`missing_property_reason_for_engines`] resolves the reason across every
+//! engine that writes to one aspect data.
 //!
 //! An aspect data gives the reason for a property it does not hold through a
 //! [`MissingPropertySource`] that the engine attached when it wrote the data.
