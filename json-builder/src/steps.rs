@@ -164,7 +164,8 @@ impl<'a> JsonBuilderContext<'a> {
         self.data
     }
 
-    /// The pipeline's delayed execution and evidence property names.
+    /// The names from the pipeline's property metadata that the steps need,
+    /// being the delayed execution, evidence and JavaScript properties.
     pub fn config(&self) -> &'a PipelineConfig {
         self.config
     }
