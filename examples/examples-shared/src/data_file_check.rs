@@ -91,12 +91,13 @@ pub fn check_data_file(engine: &dyn OnPremiseAspectEngine) -> Vec<String> {
 /// Whether `tier` names a free, limited-accuracy data file that the examples
 /// should flag.
 ///
-/// This covers the Device Detection `Lite` tier and the IP Intelligence free
-/// `Asn` file (whose data-set name carries `Asn`, for example `IPIV4Asn`). Both
-/// are illustration-only, in contrast to the paid Enterprise and TAC files.
+/// This covers the Device Detection `Lite` tier and the two free IP
+/// Intelligence files, whose data-set names carry `Asn` or `Lite`, for example
+/// `IPIV4Asn` and `IPIV4Lite`. All are illustration-only, in contrast to the
+/// paid Enterprise and TAC files.
 fn is_limited_data_tier(tier: &str) -> bool {
     let tier = tier.to_ascii_lowercase();
-    tier == "lite" || tier.contains("asn")
+    tier.contains("lite") || tier.contains("asn")
 }
 
 /// A short, single-line summary of the data file `engine` is using, suitable for
@@ -212,6 +213,14 @@ mod tests {
         let warnings = check_data_file(&engine);
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("Lite"));
+    }
+
+    #[test]
+    fn ip_intelligence_lite_tier_warns_even_when_recent() {
+        let engine = FakeOnPremiseEngine::new("IPIV4Lite", Some(Utc::now()));
+        let warnings = check_data_file(&engine);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("IPIV4Lite"));
     }
 
     #[test]
