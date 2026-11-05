@@ -188,8 +188,11 @@ fn render(
         .build()
         .expect("pipeline builds");
     // A host gives the script a callback URL, which renders the update
-    // section that holds the page evidence lookup.
-    let mut ev = Evidence::builder().add("header.host", "localhost");
+    // section that holds the page evidence lookup. The JSON builder needs a
+    // sequence number, which a Sequence element would otherwise give.
+    let mut ev = Evidence::builder()
+        .add("header.host", "localhost")
+        .add("query.sequence", "1");
     for (key, value) in evidence {
         ev = ev.add(*key, *value);
     }

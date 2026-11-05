@@ -157,6 +157,11 @@ fn run(
     for (key, value) in evidence {
         ev = ev.add(*key, *value);
     }
+    // The JSON builder needs a sequence number, which a Sequence element
+    // would otherwise give.
+    if !evidence.iter().any(|(key, _)| *key == "query.sequence") {
+        ev = ev.add("query.sequence", "1");
+    }
     let mut data = pipeline.create_flow_data_with(ev.build());
     data.process().expect("processing succeeds");
 
@@ -449,6 +454,7 @@ fn render_through(pipeline: &Arc<Pipeline>) -> String {
     let mut data = pipeline.create_flow_data_with(
         Evidence::builder()
             .add("header.host", "example.com")
+            .add("query.sequence", "1")
             .build(),
     );
     let _ = data.process();
@@ -721,6 +727,7 @@ fn a_request_without_device_data_leaves_later_visitors_unaffected() {
             Evidence::builder()
                 .add("header.host", "example.com")
                 .add("header.user-agent", user_agent)
+                .add("query.sequence", "1")
                 .build(),
         );
         data.process().expect("errors are suppressed");

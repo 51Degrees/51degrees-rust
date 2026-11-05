@@ -35,9 +35,9 @@ use fiftyone_json_builder::{
     JsonBuilderElement, JSON_BUILDER_DATA_KEY, JSON_BUILDER_ELEMENT_DATA_KEY, NEW_LINE,
 };
 use fiftyone_pipeline_core::{
-    ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
-    MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue, PropertyValueType,
-    Result, TypedKey,
+    ElementData, Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData,
+    FlowElement, MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue,
+    PropertyValueType, Result, TypedKey,
 };
 use fiftyone_pipeline_engines::AspectDataBase;
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
@@ -863,9 +863,10 @@ fn javascript_value_serialised_as_string() {
 }
 
 #[test]
-fn missing_sequence_keeps_javascript_properties() {
-    // Direct callers that never set query.sequence should still get the list
-    // (the builder treats a missing sequence as 0, below the cap).
+fn no_sequence_number_fails_and_writes_no_json() {
+    // With no Sequence element and no sequence evidence, .NET's builder
+    // fails with this message and Java's with a configuration error, so
+    // neither writes JSON.
     let device = TestElement::new("device")
         .with_property(PropertyMetaData::new(
             "hint",
@@ -875,20 +876,37 @@ fn missing_sequence_keeps_javascript_properties() {
         .with_value("hint", PropertyValue::JavaScript("x".to_owned()));
 
     let pipeline = Pipeline::builder()
-        .suppress_process_exceptions(true)
         .add_element(Arc::new(device))
         .add_element(Arc::new(JsonBuilderElement::new()))
         .build()
         .expect("pipeline builds");
     // No evidence at all.
     let mut data = pipeline.create_flow_data();
-    data.process().expect("processing succeeds");
-    let json = data.get(JSON_BUILDER_DATA_KEY).unwrap().json().to_owned();
+    data.process().expect_err("processing fails");
 
     assert!(
-        parse(&json).get("javascriptProperties").is_some(),
-        "list kept when no sequence number is supplied"
+        data.get(JSON_BUILDER_DATA_KEY).is_none(),
+        "no JSON is written"
     );
+    let errors = data.errors();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        matches!(errors[0].source, Error::Pipeline { .. }),
+        "{errors:?}"
+    );
+    let message = errors[0].source.message();
+    assert!(
+        message.starts_with("The value for the 'sequence' parameter could not be found. See "),
+        "{message}"
+    );
+    let link = "https://51degrees.com/documentation/4.5/_services__cloud__error_messages.html?";
+    assert!(message.contains(link), "{message}");
+    assert!(message.ends_with(" for more information."), "{message}");
+
+    // The client-side endpoints serve json_for when the builder left no
+    // data, and it takes the request as the first, as .NET's fallback does.
+    let json = JsonBuilderElement::new().json_for(&data);
+    assert!(parse(&json).get("javascriptProperties").is_some(), "{json}");
 }
 
 /// Run a pipeline of the sequence element, one JavaScript property and the

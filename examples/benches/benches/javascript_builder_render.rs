@@ -58,6 +58,7 @@ fn render_once(pipeline: &Arc<Pipeline>) -> usize {
     let mut data = pipeline.create_flow_data_with(
         Evidence::builder()
             .add("header.host", "example.com")
+            .add("query.sequence", "1")
             .build(),
     );
     data.process()

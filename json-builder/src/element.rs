@@ -26,7 +26,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use fiftyone_pipeline_core::{
-    EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
+    Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
     PropertyValue, PropertyValueType, Result,
 };
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
@@ -37,6 +37,10 @@ use crate::converter::JsonValueConverter;
 use crate::data::{JsonBuilderData, JSON_BUILDER_DATA_KEY};
 use crate::steps::{JsonBuilderContext, JsonBuilderSteps, PipelineConfig};
 use crate::value::JsonValue;
+
+/// The message of the error processing gives when a flow data has no
+/// sequence number, being .NET's message with this repository's link tags.
+const SEQUENCE_NUMBER_NOT_PRESENT: &str = "The value for the 'sequence' parameter could not be found. See https://51degrees.com/documentation/4.5/_services__cloud__error_messages.html?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=json-builder-src-element.rs&utm_term=sequence-number-not-present for more information.";
 
 /// Serializes all element data in a flow data into a single JSON object.
 ///
@@ -88,6 +92,17 @@ use crate::value::JsonValue;
 /// order comes from the flow data and its pipeline, so the same flow data
 /// always produces byte-identical JSON, which stable ETags downstream rely
 /// on.
+///
+/// # Sequence number
+///
+/// The builder needs the request's sequence number, taken from the Sequence
+/// element's data or, when no Sequence element ran, the `query.sequence`
+/// evidence. Without one, processing fails with
+/// [`Error::Pipeline`](fiftyone_pipeline_core::Error::Pipeline) and no JSON
+/// is written, as .NET's and Java's builders do. Put a Sequence element
+/// before the builder, as the web integration does.
+/// [`json_for`](Self::json_for) writes JSON without one, taking the request
+/// as the first.
 ///
 /// # Example
 ///
@@ -294,6 +309,11 @@ impl Default for JsonBuilderElement {
 
 impl FlowElement for JsonBuilderElement {
     fn process(&self, data: &mut FlowData) -> Result<()> {
+        if Self::sequence_number(data).is_none() {
+            return Err(Error::Pipeline {
+                message: SEQUENCE_NUMBER_NOT_PRESENT.to_owned(),
+            });
+        }
         let json = self.json_for(data);
 
         let result = data.get_or_add(JSON_BUILDER_DATA_KEY, JsonBuilderData::new);

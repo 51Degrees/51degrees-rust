@@ -96,6 +96,11 @@ fn request(
     for (key, value) in evidence {
         builder = builder.add(*key, *value);
     }
+    // The JSON builder needs a sequence number, which a Sequence element
+    // would otherwise give.
+    if !evidence.iter().any(|(key, _)| *key == "query.sequence") {
+        builder = builder.add("query.sequence", "1");
+    }
     let mut data = pipeline.create_flow_data_with(builder.build());
     data.process().expect("processing succeeds");
     let js = data

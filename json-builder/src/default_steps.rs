@@ -46,7 +46,9 @@ use crate::value::{JsonObject, JsonValue};
 /// The default of [`JsonBuilderSteps::build_json`].
 ///
 /// A flow data with no sequence number is treated as the first request, so
-/// the `javascriptProperties` list is added.
+/// the `javascriptProperties` list is added. Processing fails before this
+/// step when there is none, so that happens only through
+/// [`JsonBuilderElement::json_for`].
 pub fn build_json<S: JsonBuilderSteps + ?Sized>(
     steps: &S,
     context: &JsonBuilderContext<'_>,
