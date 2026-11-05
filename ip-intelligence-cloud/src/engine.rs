@@ -294,6 +294,10 @@ impl IpIntelligenceCloudEngine {
 
 impl FlowElement for IpIntelligenceCloudEngine {
     fn process(&self, data: &mut FlowData) -> Result<()> {
+        // Read the metadata if discovery has completed since construction,
+        // whether or not this response carries an `ip` member, so a key
+        // without the product is logged and later elements see its metadata.
+        self.ensure_metadata();
         let element = self.build_data(data)?;
         // The on-premise and cloud engines store identical types under the same
         // key, so a consumer can swap one for the other unchanged.

@@ -201,17 +201,16 @@ fn a_product_listed_with_no_properties_logs_one_error_when_built() {
 fn a_product_that_is_not_granted_is_logged_once_discovery_completes() {
     let _serial = start();
     let down = Arc::new(AtomicBool::new(true));
-    let pipeline = build_on(
-        DEVICE_PRODUCT,
-        r#"{"ip":{"registeredname":"Example"}}"#,
-        Arc::clone(&down),
-    );
+    // The cloud gives no `ip` member for a key without the product.
+    let pipeline = build_on(DEVICE_PRODUCT, r#"{"device":{}}"#, Arc::clone(&down));
+    let engine = &pipeline.flow_elements()[1];
     assert!(
         !take_logged()
             .iter()
             .any(|record| record.contains("Aspect properties")),
         "not known yet"
     );
+    assert!(!engine.properties().is_empty(), "the defaults until then");
 
     down.store(false, Ordering::Relaxed);
     process(&pipeline);
@@ -219,6 +218,7 @@ fn a_product_that_is_not_granted_is_logged_once_discovery_completes() {
         take_logged(),
         vec!["ERROR Aspect properties could not be loaded for IpIntelligenceCloudEngine - 'ip'"]
     );
+    assert!(engine.properties().is_empty(), "none once it is known");
     process(&pipeline);
     assert_eq!(take_logged(), Vec::<String>::new());
 }
