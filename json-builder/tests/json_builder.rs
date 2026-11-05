@@ -31,6 +31,7 @@ use std::any::Any;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use fiftyone_cloud_request_engine::CloudRequestEngine;
 use fiftyone_json_builder::{
     JsonBuilderElement, JsonBuilderElementBuilder, JSON_BUILDER_DATA_KEY,
     JSON_BUILDER_ELEMENT_DATA_KEY, NEW_LINE,
@@ -732,6 +733,79 @@ fn flow_errors_are_a_list_of_messages() {
     assert!(
         messages[0].contains("deliberate test failure"),
         "error message carried through, got {messages:?}"
+    );
+}
+
+#[test]
+fn a_failed_cloud_request_lists_no_javascript_property_and_writes_the_message() {
+    // When the cloud request fails, a cloud engine stores empty data marked
+    // as failed and records that it did not process. Its metadata still names
+    // a JavaScript property, but the JSON holds no value for it, so
+    // `javascriptProperties` leaves it out. The error is the message alone,
+    // with no words naming the error's kind.
+    struct FailedCloudEngine {
+        filter: EvidenceKeyFilterWhitelist,
+        properties: Vec<PropertyMetaData>,
+    }
+    impl FailedCloudEngine {
+        const KEY: TypedKey<AspectDataBase> = TypedKey::new("device");
+    }
+    impl FlowElement for FailedCloudEngine {
+        fn process(&self, data: &mut FlowData) -> Result<()> {
+            data.get_or_add(Self::KEY, || {
+                let mut device = AspectDataBase::new("device");
+                device.mark_cloud_request_failed();
+                device
+            })?;
+            CloudRequestEngine::record_not_processed(data, "DeviceDetectionCloudEngine", "device");
+            Ok(())
+        }
+        fn data_key(&self) -> &str {
+            "device"
+        }
+        fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+            &self.filter
+        }
+        fn properties(&self) -> &[PropertyMetaData] {
+            &self.properties
+        }
+    }
+
+    let engine = FailedCloudEngine {
+        filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+        properties: vec![
+            PropertyMetaData::new("ismobile", "device", PropertyValueType::Bool),
+            PropertyMetaData::new(
+                "javascripthardwareprofile",
+                "device",
+                PropertyValueType::JavaScript,
+            ),
+        ],
+    };
+
+    let json = run(vec![Arc::new(engine)], JsonBuilderElement::builder());
+    let value = parse(&json);
+
+    assert_eq!(
+        value
+            .get("device")
+            .and_then(Value::as_object)
+            .map(|device| device.len()),
+        Some(0),
+        "the device data is written with no properties, got {json}"
+    );
+    assert!(
+        value.get("javascriptProperties").is_none(),
+        "no JavaScript property is listed, got {json}"
+    );
+    assert_eq!(
+        value.get("errors"),
+        Some(&serde_json::json!([
+            "The 'DeviceDetectionCloudEngine' did not process because the JSON response \
+             from the CloudRequestEngine was null or empty. This indicates that the cloud \
+             request failed."
+        ])),
+        "the error is the message alone, got {json}"
     );
 }
 
