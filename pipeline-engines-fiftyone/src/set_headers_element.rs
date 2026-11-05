@@ -201,7 +201,20 @@ impl SetHeadersElement {
             };
             let header_value = match element_data.get(&property.property_name) {
                 Ok(value) => string_value(&value),
-                Err(_) => continue,
+                Err(_) => {
+                    // .NET warns when the data does not hold the property, and
+                    // says nothing when it holds the property with no value.
+                    if !element_data.has_property(&property.property_name) {
+                        log::warn!(
+                            "Property '{}' is missing from '{}', so it adds no \
+                             value to the {} header.",
+                            property.property_name,
+                            property.element_data_key,
+                            property.response_header_name
+                        );
+                    }
+                    continue;
+                }
             };
 
             let Some(header_value) = header_value else {
