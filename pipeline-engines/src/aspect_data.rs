@@ -86,8 +86,8 @@ pub trait AspectData: ElementData {
 /// Concrete aspect data embeds one of these and forwards the [`ElementData`]
 /// and [`AspectData`] traits to it. It holds the property bag (a
 /// [`MapElementData`]), the contributing engine keys, the cache-hit flag, the
-/// [`MissingPropertySource`] of each engine that added one and whether the
-/// cloud request failed.
+/// [`MissingPropertySource`] of each engine that added one, whether the
+/// cloud request failed and whether a read of a missing property is logged.
 /// The lazy-loading task list lives on the engine wrapper rather than the data
 /// (see [`crate::AspectEngineBase`]).
 #[derive(Debug, Clone)]
@@ -97,6 +97,7 @@ pub struct AspectDataBase {
     cache_hit: bool,
     missing_property_sources: Vec<Arc<MissingPropertySource>>,
     cloud_request_failed: bool,
+    log_missing_properties: bool,
 }
 
 impl AspectDataBase {
@@ -109,6 +110,7 @@ impl AspectDataBase {
             cache_hit: false,
             missing_property_sources: Vec::new(),
             cloud_request_failed: false,
+            log_missing_properties: true,
         }
     }
 
@@ -121,6 +123,7 @@ impl AspectDataBase {
             cache_hit: false,
             missing_property_sources: Vec::new(),
             cloud_request_failed: false,
+            log_missing_properties: true,
         }
     }
 
@@ -193,6 +196,13 @@ impl AspectDataBase {
         self.cloud_request_failed
     }
 
+    /// Stop a read of a property this data does not hold logging a record.
+    /// The read still gives the reason. An engine calls this for data that
+    /// .NET builds with no logger, such as a cloud hardware profile.
+    pub fn stop_logging_missing_properties(&mut self) {
+        self.log_missing_properties = false;
+    }
+
     /// Why `property_name` is missing. When the cloud request failed that is
     /// the reason, naming the first engine key. Otherwise it is from the
     /// sources in the order they were added, the first reason other than
@@ -223,13 +233,17 @@ impl AspectDataBase {
     /// such read logs once, as .NET's aspect data does. A failed cloud request
     /// logs at info level, because the cloud request engine has already
     /// recorded the failure and one failure leads to many such reads, and
-    /// every other reason logs a warning.
+    /// every other reason logs a warning. Nothing is logged after
+    /// [`stop_logging_missing_properties`](Self::stop_logging_missing_properties).
     pub fn missing_property(
         &self,
         property_name: &str,
         data_type: &str,
     ) -> Option<MissingPropertyResult> {
         let missing = self.missing_property_reason(property_name)?;
+        if !self.log_missing_properties {
+            return Some(missing);
+        }
         if missing.reason == MissingPropertyReason::CloudRequestFailed {
             log::info!(
                 "Property '{property_name}' missing from aspect data '{data_type}' because \

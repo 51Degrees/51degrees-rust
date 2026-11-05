@@ -56,7 +56,8 @@ pub(crate) struct DiscoveredMetadata {
 impl DiscoveredMetadata {
     /// Give `device`, mapped from a successful response, the reason for each
     /// property the response did not return, so reading one gives that
-    /// reason and logs a warning, as .NET's cloud data does.
+    /// reason. The read also logs a warning, as .NET's cloud data does,
+    /// unless logging is stopped, as it is for a hardware profile.
     pub(crate) fn add_missing_property_source(&self, device: &mut DeviceDataBase) {
         if let Some(missing) = &self.missing {
             device

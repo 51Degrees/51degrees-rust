@@ -21,8 +21,10 @@
  * ********************************************************************* */
 
 //! What Device Detection data and hardware profiles from a successful cloud
-//! request give for a property the response did not return, as .NET's cloud
-//! data does, and what Set Headers logs for one. Kept in its own test binary
+//! request give and log for a property the response did not return, as
+//! .NET's cloud data does, and what Set Headers logs for one. A read of the
+//! device data logs a warning. A read of a profile logs nothing, because
+//! .NET builds each profile with no logger. Kept in its own test binary
 //! because a logger is installed once for the whole process, and each test
 //! holds [`SERIAL`] so the records it reads are its own.
 
@@ -338,9 +340,18 @@ fn each_hardware_profile_gives_the_reason_for_a_property_it_does_not_hold() {
             profile.hardware_model().no_value_message(),
             Some(expected.description.as_str())
         );
+        assert_eq!(
+            profile.get("HardwareModel").unwrap_err().message,
+            expected.description
+        );
     }
-    let read = missing_read("HardwareModel", "PropertyNotAccessibleWithResourceKey");
-    assert_eq!(take_logged(), vec![read.clone(), read]);
+    // .NET builds each profile with no logger, so reading a property a
+    // profile does not hold logs nothing.
+    assert_eq!(
+        take_logged(),
+        Vec::<String>::new(),
+        "reading a profile logs nothing"
+    );
 
     // A vendor the response gave, and one it gave as null with a reason.
     assert_eq!(profiles[0].hardware_vendor().value().unwrap(), "Apple");

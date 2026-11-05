@@ -213,8 +213,9 @@ impl HardwareProfileCloudEngine {
 /// result rather than an error, since that is the normal response from a
 /// resource key without the hardware-profile-lookup product. Each profile is
 /// given the missing property source of `metadata`, as .NET gives each
-/// profile the engine's. Returns an [`Error::CloudRequest`] only when the
-/// body is not valid JSON.
+/// profile the engine's, and logs nothing when a missing property is read,
+/// because .NET builds each profile with no logger. Returns an
+/// [`Error::CloudRequest`] only when the body is not valid JSON.
 fn slice_hardware_profiles(
     json: &str,
     metadata: Option<&DiscoveredMetadata>,
@@ -239,6 +240,7 @@ fn slice_hardware_profiles(
             if let Some(metadata) = metadata {
                 metadata.add_missing_property_source(&mut device);
             }
+            device.base_mut().stop_logging_missing_properties();
             result.push_profile(device);
         }
     }

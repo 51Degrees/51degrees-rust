@@ -81,7 +81,9 @@
 //! properties the resource key grants, so reading a property the response did
 //! not return gives the reason the
 //! [missing properties specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#missing-properties)
-//! names and logs a warning, as .NET's cloud data does.
+//! names. A read of the device data also logs a warning, as .NET's cloud data
+//! does. A read of a hardware profile logs nothing, because .NET builds each
+//! profile with no logger.
 //! [`ElementData::has_property`](fiftyone_pipeline_core::ElementData::has_property)
 //! answers `false` for such a property, so an element that asks first, such
 //! as Set Headers, can tell it from one the response gave as null. With a
