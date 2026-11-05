@@ -330,8 +330,8 @@ evidence flows back, and that the server renders a real detection result.
 
 CI runs it here in the `contract` job of the Examples workflow
 (`.github/workflows/examples.yml`), through `ci/run-browser-contract.ps1`,
-against both device detection web examples built from this checkout. The
-cloud example (`dd-web-getting-started-cloud`) talks to the public cloud with
+against both device detection web examples built from this checkout's crates
+through `ci/test-examples-against-source.ps1`. The cloud example (`dd-web-getting-started-cloud`) talks to the public cloud with
 the bespoke resource key. The on-premise example
 (`dd-web-getting-started-onprem`) loads the TAC data file, because the Lite
 file has neither `DeviceType` nor the screen size JavaScript properties the

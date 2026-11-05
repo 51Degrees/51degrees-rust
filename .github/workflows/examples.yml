@@ -121,7 +121,14 @@ jobs:
       matrix:
         mode: [cloud, onpremise]
     steps:
+      # The script builds the example from this checkout's crates, whose -sys
+      # crates compile the C sources in the cxx submodule. Its data
+      # submodules are not needed, because the TAC file is fetched below. The
+      # crates are versioned from the release tags.
       - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
