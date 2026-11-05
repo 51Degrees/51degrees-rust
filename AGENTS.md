@@ -157,10 +157,14 @@ workspace reads the submodule and never needs the copy.
   only whether each file has changed (`-Update`), and saves the files under a
   new dated key. `pull-request.yml`, `examples.yml` and
   `nightly-performance.yml` restore that entry through
-  `.github/actions/restore-data-files` and never save one, because an entry
-  saved by a pull request run can only be restored by that pull request. The
-  entry is found only by the same list of paths it was saved with, so the list
-  lives in that action alone.
+  `.github/actions/restore-data-files`. They leave the daily entry to
+  `data-files.yml`, because an entry saved by a pull request run can only be
+  restored by that pull request. Until a daily entry
+  exists, the action falls back to an entry keyed by the ref, the workflow
+  and the date, which `pull-request.yml` and `examples.yml` save when they
+  restored nothing, so later runs of the same workflow on the same ref that
+  day download nothing. An entry is found only by the same list of paths it
+  was saved with, so the list lives in that action alone.
 - `nightly-pipeline.yml` first runs common-ci's submodule update, which moves
   every submodule to the head of its default branch and raises a pull request
   into `rc` when one has moved, then builds the eligible pull requests into

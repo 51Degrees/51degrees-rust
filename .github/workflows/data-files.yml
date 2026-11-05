@@ -10,8 +10,10 @@ name: Data Files
 # file has changed, which downloads nothing when it has not, and saves the
 # files as a new entry. An entry saved on the default branch can be restored
 # by every branch and pull request, whilst one a pull request saves can only
-# be restored by that pull request, so no other workflow saves one. GitHub
-# runs a schedule only from the default branch.
+# be restored by that pull request. So the other workflows save an entry of
+# their own only while no daily entry exists, for later runs of the same
+# workflow on the same ref that day. GitHub runs a schedule only from the
+# default branch.
 
 on:
   schedule:

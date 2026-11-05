@@ -1,8 +1,10 @@
 name: Restore the data files
 description: >-
   Restores the free data files into cxx/data from the newest entry the Data
-  Files workflow saved in the Actions cache. It saves nothing and downloads
-  nothing, so the caller downloads any file it reads that was not restored.
+  Files workflow saved in the Actions cache or, until that entry exists, from
+  the entry an earlier run of the same workflow on the same ref saved that
+  day. It saves nothing and downloads nothing, so the caller downloads any
+  file it reads that was not restored.
 
 inputs:
   root:
@@ -14,11 +16,17 @@ inputs:
 outputs:
   paths:
     description: >-
-      The files the entry holds, one per line, relative to the workspace.
+      The files an entry holds, one per line, relative to the workspace.
     value: ${{ steps.files.outputs.paths }}
   key:
     description: The key the Data Files workflow saves this run's entry under.
     value: ${{ steps.files.outputs.key }}
+  save-key:
+    description: >-
+      Set only when nothing was restored. The key to save the downloaded
+      files under, with the paths above, so later runs of the same workflow
+      on the same ref that day restore them.
+    value: ${{ steps.missed.outputs.save-key }}
 
 runs:
   using: composite
@@ -29,7 +37,11 @@ runs:
       id: files
       shell: bash
       run: |
-        echo "key=data-files-daily-$(date -u +%Y%m%d)-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+        date=$(date -u +%Y%m%d)
+        ref=$(printf '%s' "${GITHUB_REF#refs/}" | tr -c 'A-Za-z0-9' '-')
+        workflow=$(printf '%s' "$GITHUB_WORKFLOW" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9' '-')
+        echo "key=data-files-daily-${date}-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+        echo "fallback-key=data-files-fallback-${ref}-${workflow}-${date}" >> "$GITHUB_OUTPUT"
         cat >> "$GITHUB_OUTPUT" <<'EOF'
         paths<<END
         cxx/data/device-detection/51Degrees-LiteV4.1.hash
@@ -39,22 +51,32 @@ runs:
         END
         EOF
 
-    # No entry has this run's key yet, so the prefix finds the newest one. A
-    # pull request run can restore an entry saved on the default branch, but
-    # never one saved by another pull request.
+    # No entry has this run's key yet, so the first prefix finds the newest
+    # daily entry. The second finds the entry an earlier run of this workflow
+    # on this ref saved today, which is only there before any daily entry
+    # exists. GitHub searches the run's own ref first, then a pull request's
+    # base branch, then the default branch, and a pull request run can never
+    # restore an entry another pull request saved.
     - name: Restore the newest entry
       id: restore
       uses: actions/cache/restore@v4
       with:
         path: ${{ steps.files.outputs.paths }}
         key: ${{ steps.files.outputs.key }}
-        restore-keys: data-files-daily-
+        restore-keys: |
+          data-files-daily-
+          ${{ steps.files.outputs.fallback-key }}
         enableCrossOsArchive: true
 
     - name: Report a missing entry
+      id: missed
       if: steps.restore.outputs.cache-matched-key == ''
       shell: bash
-      run: echo "::warning title=No data file entry::No entry was restored, so the data files this job reads are downloaded."
+      env:
+        SAVE_KEY: ${{ steps.files.outputs.fallback-key }}
+      run: |
+        echo "::warning title=No data file entry::No entry was restored, so the data files this job reads are downloaded."
+        echo "save-key=${SAVE_KEY}" >> "$GITHUB_OUTPUT"
 
     # The entry puts the files under cxx/data in the workspace, so a checkout
     # in a folder of its own has them moved into it.
