@@ -185,7 +185,7 @@ async fn home(result: FiftyOneResult) -> Html<String> {
     let (results_html, evidence_html, headers_html, has_accept_ch) = result.with(|flow_data| {
         let results = flow_data
             .get(DEVICE_DATA_KEY)
-            .map(|device| detection_results_table(device))
+            .map(|device| detection_results_table(device, None))
             .unwrap_or_else(|| {
                 "<p class=\"c-eg-page__lead\">No device data was produced.</p>".to_owned()
             });
@@ -232,6 +232,7 @@ async fn home(result: FiftyOneResult) -> Html<String> {
         // The cloud page uses the server-mounted client script, so the client
         // bootstrap loads /51Degrees.core.js then binds the shared callback.
         client_script: web_support::SERVER_CLIENT_SCRIPT,
+        repositories: examples_shared::CLOUD_REPOSITORIES,
     }))
 }
 
@@ -352,6 +353,10 @@ mod tests {
         assert!(
             page.body.contains("c-eg-page"),
             "the page uses the shared design system markup"
+        );
+        assert!(
+            page.body.contains(examples_shared::FIND_OUT_MORE_HEADING),
+            "the page ends with the Find out more section"
         );
         assert_eq!(script.status, StatusCode::OK);
         assert!(

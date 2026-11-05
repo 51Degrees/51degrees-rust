@@ -40,9 +40,21 @@ use fiftyone_device_detection::{
     DEVICE_DATA_KEY,
 };
 
+use device_detection_examples::ENTERPRISE_PROPERTIES;
+
 /// The relative path to the evidence file in the data repository inside the
 /// `cxx` submodule, used when no path is supplied.
 const EVIDENCE_RELATIVE_PATH: &str = "cxx/data/device-detection/20000 Evidence Records.yml";
+
+/// Where to ask about a copy of the Enterprise data file.
+const CONTACT_US_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-offline-processing.rs&utm_term=enterprise-data-file";
+
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-offline-processing.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-offline-processing.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-offline-processing.rs&utm_term=find-out-more"),
+];
 
 /// Options the example runs with, so `main` and the test share one entry point.
 pub struct ExampleOptions {
@@ -62,7 +74,10 @@ pub struct ExampleOptions {
 ///
 /// Builds an on-premise pipeline, streams evidence records from the YAML file,
 /// runs device detection on each, and writes the input evidence together with the
-/// detected properties to a YAML output file.
+/// detected properties to a YAML output file. The Enterprise properties the data
+/// file does not carry are written as needing the Enterprise data file, and the
+/// run ends by naming them with where to ask about a copy, then the "Find out
+/// more" links.
 pub fn run(options: ExampleOptions) -> Result<()> {
     // Build the on-premise pipeline with usage sharing off. Off-line processing
     // should not share usage with 51Degrees, because it lacks the full evidence
@@ -75,6 +90,9 @@ pub fn run(options: ExampleOptions) -> Result<()> {
         .auto_update(false)
         .build()
         .context("failed to build the on-premise device-detection pipeline")?;
+
+    // The properties the engine can return are those its data file carries.
+    let available = device_detection_examples::available_properties(&pipeline);
 
     // Read the whole evidence file. It is a multi-document YAML stream, one
     // document per record, each a map of evidence key to value.
@@ -100,7 +118,7 @@ pub fn run(options: ExampleOptions) -> Result<()> {
             break;
         }
         let record = record.context("failed to parse an evidence record")?;
-        let result = analyse_evidence(&pipeline, &record)?;
+        let result = analyse_evidence(&pipeline, &record, &available)?;
         write_record(&mut output, &result)?;
         processed += 1;
     }
@@ -116,6 +134,13 @@ pub fn run(options: ExampleOptions) -> Result<()> {
         PerformanceProfile::LowMemory,
     )?;
 
+    let missing = examples_shared::missing_properties(ENTERPRISE_PROPERTIES, &available);
+    if let Some(message) = examples_shared::enterprise_data_file_message(&missing, CONTACT_US_URL) {
+        println!();
+        println!("{message}");
+    }
+
+    examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::ON_PREMISE_REPOSITORIES);
     Ok(())
 }
 // [example]
@@ -136,10 +161,12 @@ fn evidence_records(yaml: &str) -> impl Iterator<Item = Result<BTreeMap<String, 
 }
 
 /// Process one evidence record and return the input plus the detected properties
-/// as an ordered map ready to serialize.
+/// as an ordered map ready to serialize. `available` holds the properties the
+/// data file carries.
 fn analyse_evidence(
     pipeline: &Arc<Pipeline>,
     evidence: &BTreeMap<String, String>,
+    available: &[String],
 ) -> Result<BTreeMap<String, String>> {
     // Build a flow data carrying this record's evidence and process it. The flow
     // data owns the native results and frees them when dropped at the end of this
@@ -159,9 +186,7 @@ fn analyse_evidence(
     let mut out: BTreeMap<String, String> = evidence.clone();
 
     // Add the detected properties under their conventional `device.*` keys, using
-    // the marker text for any property the data file did not populate. Only the
-    // properties present in the free Lite tier are read here; further fields
-    // (hardware vendor/model/name) are available with a paid Enterprise file.
+    // the marker text for any property the data file did not populate.
     out.insert(
         "device.ismobile".to_owned(),
         examples_shared::get_property_as_string(device, "IsMobile"),
@@ -190,6 +215,17 @@ fn analyse_evidence(
         "device.deviceid".to_owned(),
         device.device_id().into_option().unwrap_or_default(),
     );
+
+    // Properties only the Enterprise data file carries. When the data file in
+    // use does not carry one, its value says so.
+    for property in ENTERPRISE_PROPERTIES {
+        let value = if examples_shared::is_available(property, available) {
+            examples_shared::get_property_as_string(device, property)
+        } else {
+            examples_shared::NEEDS_ENTERPRISE_DATA_FILE.to_owned()
+        };
+        out.insert(format!("device.{}", property.to_ascii_lowercase()), value);
+    }
 
     Ok(out)
 }
@@ -269,6 +305,7 @@ mod tests {
             eprintln!("skipping: bundled evidence file not found");
             return;
         };
+        let lite = data_file.ends_with(examples_shared::DD_LITE_RELATIVE_PATH);
 
         // Write to a unique temporary file so the test does not clobber a real
         // output and cleans up after itself.
@@ -290,6 +327,14 @@ mod tests {
         // The output file must exist and be non-empty.
         let written = std::fs::read_to_string(&output_file).expect("output file should exist");
         assert!(written.contains("device.ismobile"), "results were written");
+        // The Lite file carries none of the Enterprise properties, so each
+        // record says so. 51DEGREES_DD_PATH can name another file.
+        if lite {
+            assert!(
+                written.contains("device.hardwarevendor: needs the Enterprise data file"),
+                "the Enterprise properties say they need the Enterprise data file"
+            );
+        }
         let _ = std::fs::remove_file(&output_file);
     }
 
@@ -380,9 +425,12 @@ mod tests {
  * `query.51D_deviceId` evidence key, which is faster and yields the same result
  * even as detection improves over time.
  *
- * Only the properties available in the free Lite data tier are read here. Further
- * fields (hardware vendor, model and name) are available with a paid Enterprise
- * data file and can be added in the same way.
+ * Each record also carries properties only the Enterprise data file has
+ * (HardwareVendor, HardwareModel, DeviceType, PriceBand and
+ * ScreenInchesDiagonal). The engine's properties are those its data file
+ * carries, so with the free Lite file each of these is written as "needs the
+ * Enterprise data file", and the run ends by naming them with a link to contact
+ * 51Degrees about a copy, then a "Find out more" section.
  *
  * Usage sharing is turned off with `.share_usage(false)`. Off-line processing
  * should not share usage with 51Degrees, because it lacks the full evidence the

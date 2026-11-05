@@ -71,7 +71,9 @@ pub struct Options {
 /// The pipeline is on-premise so the UA-CH high-entropy decoder
 /// ([`UachJsConversionElement`]) is wired explicitly ahead of the Hash engine.
 /// The decoder turns a `getHighEntropyValues` blob into the `sec-ch-ua*` headers
-/// the engine consumes, which is the heart of this example.
+/// the engine consumes, which is the heart of this example. The engine's
+/// properties, which are those its data file carries, go to the page handler
+/// so it can say which Enterprise properties the data file lacks.
 ///
 /// `share_usage` is true when the binary serves the page. The tests pass false,
 /// so a test run sends nothing to 51Degrees.
@@ -80,6 +82,7 @@ pub fn build_app(data_file: &std::path::Path, share_usage: bool) -> anyhow::Resu
         .performance_profile(PerformanceProfile::HighPerformance)
         .build()
         .with_context(|| format!("loading the Hash data file at {}", data_file.display()))?;
+    let available = Arc::new(engine.available_properties());
 
     // The element order: usage sharing (required for a web example), the UA-CH
     // high-entropy decoder, then the Hash engine. The decoder is the element
@@ -96,7 +99,10 @@ pub fn build_app(data_file: &std::path::Path, share_usage: bool) -> anyhow::Resu
 
     let app = register(
         Router::new()
-            .route("/", get(home))
+            .route(
+                "/",
+                get(move |result: FiftyOneResult| home(result, Arc::clone(&available))),
+            )
             .route(ASSETS_CSS_ROUTE, get(serve_css))
             .route(ASSETS_JS_ROUTE, get(serve_js)),
         state,
@@ -140,12 +146,13 @@ pub fn run(options: Options) -> anyhow::Result<()> {
 
 /// The home-page handler: show the evidence the pipeline received (the decoded
 /// `sec-ch-ua*` client hints become visible here after the client round trip),
-/// the detection results and the `Accept-CH` request headers.
-async fn home(result: FiftyOneResult) -> Html<String> {
+/// the detection results and the `Accept-CH` request headers. `available`
+/// holds the properties the data file carries.
+async fn home(result: FiftyOneResult, available: Arc<Vec<String>>) -> Html<String> {
     let (results_html, evidence_html, headers_html, has_accept_ch) = result.with(|flow_data| {
         let results = flow_data
             .get(DEVICE_DATA_KEY)
-            .map(|device| detection_results_table(device))
+            .map(|device| detection_results_table(device, Some(available.as_slice())))
             .unwrap_or_else(|| {
                 "<p class=\"c-eg-page__lead\">No device data was produced.</p>".to_owned()
             });
@@ -189,6 +196,7 @@ async fn home(result: FiftyOneResult) -> Html<String> {
         accept_ch_alert,
         message_html: web_support::ONPREM_CONTACT_BANNER,
         client_script: web_support::SERVER_CLIENT_SCRIPT,
+        repositories: examples_shared::ON_PREMISE_REPOSITORIES,
     }))
 }
 
@@ -295,6 +303,22 @@ mod tests {
             "the supplied client-hint evidence is shown, got: {}",
             page.body
         );
+        assert!(
+            page.body.contains(examples_shared::FIND_OUT_MORE_HEADING),
+            "the page ends with the Find out more section"
+        );
+        // The Lite file carries none of the Enterprise properties, so each says
+        // so with the contact link. 51DEGREES_DD_PATH can name another file.
+        let lite = examples_shared::dd_data_path()
+            .is_some_and(|file| file.ends_with(examples_shared::DD_LITE_RELATIVE_PATH));
+        if lite {
+            assert!(
+                page.body
+                    .contains(examples_shared::NEEDS_ENTERPRISE_DATA_FILE)
+                    && page.body.contains("utm_term=enterprise-data-file"),
+                "the Lite page says which properties need the Enterprise data file"
+            );
+        }
 
         assert_eq!(script.status, StatusCode::OK);
         assert!(
@@ -332,6 +356,10 @@ mod tests {
  * The page is written to the shared 51Degrees example design system. Usage
  * sharing is enabled, as a web deployment should. Because the default data file
  * is the free Lite tier, the on-premise paid-data contact-us banner is shown.
+ * The results table also shows properties only the Enterprise data file
+ * carries, and with the Lite file each says it needs the Enterprise data file,
+ * with a link to contact 51Degrees about a copy. The page ends with a "Find out
+ * more" section.
  *
  * Resolve the data file with `51DEGREES_DD_PATH` (or the Lite file in the data
  * repository inside the `cxx` submodule, which is downloaded when it is

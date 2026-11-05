@@ -28,13 +28,13 @@
 //! renderer used by both the TAC and the native-model cloud examples,
 //! [`print_data_file_warnings`] / [`print_data_file_warnings_for`], the standard
 //! data-file introspection the on-premise examples print at the end of a run,
-//! and [`available_properties`] with [`ENTERPRISE_PROPERTIES`], which the
-//! on-premise examples use to say which properties need the Enterprise data
-//! file.
+//! and [`available_properties`] and [`data_file_properties`] with
+//! [`ENTERPRISE_PROPERTIES`], which the on-premise examples use to say which
+//! properties need the Enterprise data file.
 
 #![warn(missing_docs)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
@@ -66,6 +66,18 @@ pub fn available_properties(pipeline: &Pipeline) -> Vec<String> {
         .flat_map(|element| element.properties().iter())
         .map(|property| property.name.clone())
         .collect()
+}
+
+/// The names of the properties the data file at `data_file` carries, read
+/// from an engine opened over it with the low-memory profile. This suits an
+/// example whose own engine asks for fewer properties than the file carries,
+/// so its pipeline cannot say what the file holds.
+pub fn data_file_properties(data_file: &Path) -> Result<Vec<String>> {
+    let engine = DeviceDetectionOnPremiseEngineBuilder::new(data_file)
+        .performance_profile(PerformanceProfile::LowMemory)
+        .build()
+        .context("failed to open the data file to read its properties")?;
+    Ok(engine.available_properties())
 }
 
 /// Render one matched device profile as a `Vendor Name (Model)` line, reading
