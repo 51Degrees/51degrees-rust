@@ -20,9 +20,9 @@ accepts it and the crate then cannot resolve from the registry, which is how
 `fodid-client` came to require `fodid 4.6` after 4.6 was yanked.
 
 Each requirement is written exact, as `=` and the version, so a crate of one
-release builds only with the other crates of that release and the C sources
-they carry. A plain version is a caret requirement, which would let a fresh
-build of an older crate take a newer release of the crates beneath it.
+release builds only with the crates of that release beneath it and the C
+sources they carry. A plain version is a caret requirement, which would let a
+fresh build of an older crate take a newer release of the crates beneath it.
 Dev-dependencies are the exception and get the plain version. They never
 reach a project's build, and an exact one would force a new release of a
 crate whenever a crate its tests use is released.
