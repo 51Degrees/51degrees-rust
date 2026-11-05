@@ -95,15 +95,20 @@ removes a difference removes its entry in the same pull request.
 
 ## The C code
 
-The crates build their native code from the
-[51degrees-cxx](https://github.com/51Degrees/51degrees-cxx) commit the
-`cxx` submodule records. The .NET packages named in `dotnet/Parity.csproj`
-build theirs from
-[device-detection-cxx](https://github.com/51Degrees/device-detection-cxx)
-and [ip-intelligence-cxx](https://github.com/51Degrees/ip-intelligence-cxx),
-which are archived. Engine answers that differ for that reason alone are
-listed as C code. They are judged again once .NET packages built from the
-same 51degrees-cxx release are published, by naming those packages:
+Both sides build the same C code. The crates build their native code from
+the [51degrees-cxx](https://github.com/51Degrees/51degrees-cxx) commit the
+`cxx` submodule records, 4.5.103. The .NET packages named in
+`dotnet/Parity.csproj` are the
+[51degrees-dotnet](https://github.com/51Degrees/51degrees-dotnet) release
+whose own `cxx` submodule records the same commit, being Device Detection
+4.5.180, IP Intelligence 4.5.155 and Pipeline 4.5.129. So an engine answer
+that differs is a difference in the code around the C, never in the C
+itself.
+
+When the `cxx` submodule moves, the package versions move in the same pull
+request, to the 51degrees-dotnet release built from the new commit, so no
+comparison runs with the two sides on different C code. A run can try other
+packages by naming them:
 
 ```
 dotnet build dotnet -c Release -p:DeviceDetectionVersion=<version> -p:IpIntelligenceVersion=<version>
