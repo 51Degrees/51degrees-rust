@@ -135,8 +135,10 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
     writeln!(out, "Result after reload:  {}", lookup_asn(&pipeline)?)?;
 
     // The location properties, which the engine's data file may not carry. The
-    // data file's own list of properties says which it does.
-    let available = engine.available_property_names();
+    // data file's own list of properties says which it does. This engine names
+    // its properties, so it lists those names whether or not the file carries
+    // them, and the list comes from an engine that names none.
+    let available = ip_intelligence_examples::data_file_properties(&options.data_file)?;
     report_enterprise(&pipeline, &available, out)?;
 
     writeln!(out)?;

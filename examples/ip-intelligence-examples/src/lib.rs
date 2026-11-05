@@ -53,9 +53,11 @@ pub const ENTERPRISE_PROPERTIES: &[&str] = &[
 
 /// The names of the properties the data file at `data_file` carries.
 ///
-/// The pipeline builder does not hand back its engine, so this opens a second
-/// engine over the same file with the low-memory profile, which leaves the
-/// data on disk, and asks it.
+/// This opens a second engine over the same file with the low-memory profile,
+/// which leaves the data on disk, and no named properties, and asks it. The
+/// pipeline builder does not hand back its engine, and an engine built with
+/// named properties lists the names it was given, including any the file
+/// lacks.
 pub fn data_file_properties(data_file: &Path) -> Result<Vec<String>> {
     Ok(open_for_inspection(data_file)?.available_property_names())
 }

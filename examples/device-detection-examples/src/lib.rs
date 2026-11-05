@@ -57,7 +57,10 @@ pub const ENTERPRISE_PROPERTIES: &[&str] = &[
 ];
 
 /// The names of the properties the Device Detection engine in `pipeline` can
-/// return, which are those its data file carries.
+/// return. For an engine built without naming properties these are the ones
+/// its data file carries. An engine built with named properties lists the
+/// names it was given, including any its data file lacks, so use
+/// [`data_file_properties`] for one of those.
 pub fn available_properties(pipeline: &Pipeline) -> Vec<String> {
     pipeline
         .flow_elements()
@@ -69,9 +72,10 @@ pub fn available_properties(pipeline: &Pipeline) -> Vec<String> {
 }
 
 /// The names of the properties the data file at `data_file` carries, read
-/// from an engine opened over it with the low-memory profile. This suits an
-/// example whose own engine asks for fewer properties than the file carries,
-/// so its pipeline cannot say what the file holds.
+/// from an engine opened over it with the low-memory profile and no named
+/// properties. This suits an example whose own engine names its properties,
+/// because such an engine lists the names it was given rather than what the
+/// file holds.
 pub fn data_file_properties(data_file: &Path) -> Result<Vec<String>> {
     let engine = DeviceDetectionOnPremiseEngineBuilder::new(data_file)
         .performance_profile(PerformanceProfile::LowMemory)
