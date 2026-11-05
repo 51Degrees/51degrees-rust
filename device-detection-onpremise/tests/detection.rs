@@ -573,12 +573,12 @@ fn a_property_the_data_file_lacks_needs_a_data_file_upgrade() {
         .ends_with("&utm_term=data-upgrade-required."));
 }
 
-/// A name the engine is built with is listed in its metadata with the data
-/// file's own tier even when the file holds no such property. The typed
-/// accessor rule is only for a property the metadata does not list, so the
-/// reason is unknown rather than an upgrade to the tier the file has.
+/// A name the engine is built with that the data file holds no property for
+/// is not listed, because the metadata lists the data file's own properties.
+/// The typed accessor rule then gives a data file upgrade that names no tier,
+/// rather than the tier the file already has.
 #[test]
-fn a_named_property_the_data_file_lacks_has_an_unknown_reason() {
+fn a_named_property_the_data_file_lacks_names_no_tier() {
     let Some(full) = build_engine() else {
         eprintln!("no on-premise Hash data file found; skipping missing property test");
         return;
@@ -601,18 +601,24 @@ fn a_named_property_the_data_file_lacks_has_an_unknown_reason() {
         }
     };
     assert!(
-        engine
+        !engine
             .aspect_properties()
             .iter()
             .any(|p| p.name() == "HardwareVendor"),
-        "this test covers a name the engine lists although the file lacks it"
+        "the engine lists only the data file's properties"
     );
 
     let result = engine.missing_property_reason("HardwareVendor");
 
-    assert_eq!(result.reason, MissingPropertyReason::Unknown);
+    assert_eq!(
+        result.reason,
+        MissingPropertyReason::DataFileUpgradeRequired
+    );
     assert!(
-        !result.description.contains("license/data"),
+        result.description.contains(
+            "It is available with the Unknown license/data for the \
+             DeviceDetectionOnPremiseEngine."
+        ),
         "{}",
         result.description
     );

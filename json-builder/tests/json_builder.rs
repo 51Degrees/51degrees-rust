@@ -607,6 +607,55 @@ fn collects_javascript_properties_when_below_cap() {
 }
 
 #[test]
+fn an_unavailable_property_is_neither_javascript_nor_delayed() {
+    // An engine lists the properties its data set was opened without as
+    // unavailable. The JavaScript and delayed-execution lists come from the
+    // available properties only, as .NET's come from the pipeline's available
+    // properties, so the client is never asked to run a script the engine
+    // gives no value for.
+    let device = TestElement::new("device")
+        .with_property(PropertyMetaData::new(
+            "screenpixelswidthjavascript",
+            "device",
+            PropertyValueType::JavaScript,
+        ))
+        .with_property(
+            PropertyMetaData::new(
+                "screenpixelsheightjavascript",
+                "device",
+                PropertyValueType::JavaScript,
+            )
+            .with_delay_execution(true)
+            .with_available(false),
+        )
+        .with_property(
+            PropertyMetaData::new("screenpixelsheight", "device", PropertyValueType::Integer)
+                .with_evidence_properties(["screenpixelsheightjavascript"]),
+        )
+        .with_value(
+            "screenpixelswidthjavascript",
+            PropertyValue::JavaScript("x".to_owned()),
+        )
+        .with_value("screenpixelsheight", 1920i64);
+
+    let json = run_with_sequence(vec![Arc::new(device)], JsonBuilderElement::new(), "1");
+    let value = parse(&json);
+
+    let js = value
+        .get("javascriptProperties")
+        .and_then(Value::as_array)
+        .expect("javascriptProperties present below cap");
+    assert_eq!(
+        js,
+        &vec![Value::String(
+            "device.screenpixelswidthjavascript".to_owned()
+        )]
+    );
+    let device = value.get("device").expect("device present");
+    assert!(device.get("screenpixelsheightevidenceproperties").is_none());
+}
+
+#[test]
 fn suppresses_javascript_properties_at_cap() {
     let device = TestElement::new("device")
         .with_property(PropertyMetaData::new(

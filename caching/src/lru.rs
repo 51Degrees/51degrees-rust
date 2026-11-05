@@ -51,7 +51,7 @@ use crate::config::CacheBuilder;
 /// cannot outlive the per-shard lock).
 ///
 /// This is the reason the cache is generic over a value type and never over
-/// `dyn ElementData`: element data is not `Sync`. Engines instead cache their
+/// `dyn ElementData`: element data is not `Clone`. Engines instead cache their
 /// own concrete `Send + Sync + Clone` data, typically an [`std::sync::Arc`]
 /// around an aspect-data struct, or the raw cloud JSON.
 ///
