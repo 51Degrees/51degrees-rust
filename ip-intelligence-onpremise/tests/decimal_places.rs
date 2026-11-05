@@ -35,7 +35,7 @@ use fiftyone_ip_intelligence_onpremise::{
 };
 use fiftyone_native::ipi::Manager;
 use fiftyone_native::PerformanceProfile;
-use fiftyone_pipeline_core::{Evidence, FlowElement, Pipeline, ANGLE_DECIMAL_PLACES};
+use fiftyone_pipeline_core::{Evidence, FlowElement, Pipeline};
 
 /// Public addresses in both address families with a location in the
 /// Enterprise data file.
@@ -52,6 +52,9 @@ const ADDRESSES: &[&str] = &[
 /// The separator the C library's text joins the values of a property with.
 const SEPARATOR: &str = "|";
 
+/// The decimal places the specification gives a location to.
+const PLACES: usize = 3;
+
 /// The data file `51DEGREES_IPI_PATH` names, if it exists.
 fn data_file() -> Option<PathBuf> {
     let path = PathBuf::from(std::env::var("51DEGREES_IPI_PATH").ok()?.trim());
@@ -64,7 +67,7 @@ fn assert_places(text: &str, what: &str) {
         .split_once('.')
         .map_or(0, |(_, fraction)| fraction.len());
     assert!(
-        places <= ANGLE_DECIMAL_PLACES,
+        places <= PLACES,
         "{what} is {text}, with {places} decimal places"
     );
 }

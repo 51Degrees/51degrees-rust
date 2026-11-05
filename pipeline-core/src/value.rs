@@ -225,11 +225,15 @@ impl From<Vec<String>> for PropertyValue {
 
 /// The number of decimal places a value converted from an Azimuth or
 /// Declination, such as a latitude or a longitude, is given to.
-pub const ANGLE_DECIMAL_PLACES: usize = 3;
+const ANGLE_DECIMAL_PLACES: usize = 3;
+
+// The quarter place `round_angle` moves a half by must be far wider than the
+// gap between doubles near 180, which is about 3e-14.
+const _: () = assert!(ANGLE_DECIMAL_PLACES <= 9);
 
 /// Round a value converted from an Azimuth or Declination, such as a latitude
-/// or a longitude, to [`ANGLE_DECIMAL_PLACES`] decimal places, giving the
-/// `f32` nearest the rounded decimal, as the
+/// or a longitude, to 3 decimal places, giving the `f32` nearest the rounded
+/// decimal, as the
 /// [value types specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/value-types.md#rounding-of-azimuth-and-declination-values)
 /// requires.
 ///
@@ -248,12 +252,15 @@ pub fn round_angle(value: f64) -> f32 {
     if !value.is_finite() {
         return value as f32;
     }
-    // A double exactly half way at the fourth place is an odd number of
-    // sixteenths, such as 0.0625. Formatting rounds such a half to even, so
-    // it is moved a quarter of a place away from zero first.
-    let sixteenths = value * 16.0;
-    let value = if sixteenths.fract() == 0.0 && sixteenths % 2.0 != 0.0 {
-        value + value.signum() * 0.00025
+    // A double exactly half way between two places is an odd number of half
+    // places. A double holds only binary fractions, so such a value is an odd
+    // multiple of 1 / 2^(places + 1), which is a sixteenth for 3 places, such
+    // as 0.0625. Formatting rounds a half to even, so it is moved a quarter of
+    // a place away from zero first.
+    let halves = value * (1_u64 << (ANGLE_DECIMAL_PLACES + 1)) as f64;
+    let value = if halves.fract() == 0.0 && halves % 2.0 != 0.0 {
+        let quarter_place = 0.25 / 10_f64.powi(ANGLE_DECIMAL_PLACES as i32);
+        value + value.signum() * quarter_place
     } else {
         value
     };
@@ -307,6 +314,24 @@ mod tests {
         assert_eq!(round_angle(0.1875), 0.188);
         // An eighth has three places, so it is not a half.
         assert_eq!(round_angle(0.125), 0.125);
+    }
+
+    /// Every value half way between two places from -180 to 180 rounds away
+    /// from zero. These are the odd sixteenths.
+    #[test]
+    fn every_half_rounds_away_from_zero() {
+        let mut checked = 0;
+        for sixteenths in (-2879_i32..=2879).step_by(2) {
+            let value = f64::from(sixteenths) / 16.0;
+            // In thousandths the value is an odd number of halves, so its
+            // size rounded away from zero is one more half.
+            let size = (sixteenths.unsigned_abs() * 125 + 1) / 2;
+            let sign = if sixteenths < 0 { "-" } else { "" };
+            let text = format!("{sign}{}.{:03}", size / 1000, size % 1000);
+            assert_eq!(round_angle(value), text.parse::<f32>().unwrap(), "{value}");
+            checked += 1;
+        }
+        assert_eq!(checked, 2880);
     }
 
     #[test]
