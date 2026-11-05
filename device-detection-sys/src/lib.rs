@@ -706,13 +706,20 @@ pub const SHIM_PROPERTY_CATEGORY: c_int = 2;
 /// The URL of a data file property.
 pub const SHIM_PROPERTY_URL: c_int = 3;
 
-/// The name of a property value, for
-/// [`fiftyoneDegreesShimHashGetDataFilePropertyValueString`].
+/// The name of a property value, the first of its strings
+/// [`fiftyoneDegreesShimHashGetDataFilePropertyValues`] gives.
 pub const SHIM_VALUE_NAME: c_int = 0;
-/// The description of a property value.
+/// The description of a property value, given after its name.
 pub const SHIM_VALUE_DESCRIPTION: c_int = 1;
-/// The URL of a property value.
+/// The URL of a property value, given after its description.
 pub const SHIM_VALUE_URL: c_int = 2;
+
+/// Takes one string of a property value from
+/// [`fiftyoneDegreesShimHashGetDataFilePropertyValues`]. `field` is one of the
+/// `SHIM_VALUE_` constants and `value` a null terminated string valid only
+/// for the call. `context` is the pointer the caller passed.
+pub type ShimValueStringCallback =
+    unsafe extern "C" fn(context: *mut c_void, field: c_int, value: *const c_char);
 
 /// Returned by the data file metadata string readers when the string, or the
 /// property, value or component it belongs to, cannot be read, or an index
@@ -794,23 +801,27 @@ extern "C" {
         length: usize,
     ) -> usize;
 
-    /// Writes the string `field`, one of the `SHIM_VALUE_` constants, of the
-    /// value at `value_number` among those the data file holds for the
-    /// property at `property_index` into `buffer`, as much as fits, and
-    /// returns its full length, or [`SHIM_STRING_FAILED`] when either index is
-    /// out of range or the string cannot be read. See `src/shim.c`.
+    /// Reads at most `count` of the values the data file holds for the
+    /// property at `property_index`, from the one at `value_number` among
+    /// them, and returns 1. For each value it calls `callback` with `context`
+    /// three times, with its name, description and URL in that order, an
+    /// absent description or URL being empty. A `value_number` at or past the
+    /// last value reads none. Returns 0 when the property index is out of
+    /// range or the property, a value or a string cannot be read, after
+    /// giving `callback` the strings read before the failure. See
+    /// `src/shim.c`.
     ///
     /// # Safety
-    /// `manager` must be an initialized Hash manager. `buffer` must point to
-    /// `length` writable bytes.
-    pub fn fiftyoneDegreesShimHashGetDataFilePropertyValueString(
+    /// `manager` must be an initialized Hash manager, and `context` must be
+    /// what `callback` expects.
+    pub fn fiftyoneDegreesShimHashGetDataFilePropertyValues(
         manager: *mut ResourceManager,
         property_index: u32,
         value_number: u32,
-        field: c_int,
-        buffer: *mut c_char,
-        length: usize,
-    ) -> usize;
+        count: u32,
+        callback: ShimValueStringCallback,
+        context: *mut c_void,
+    ) -> c_int;
 
     /// Returns the number of components the data set lists, or zero when no
     /// data set is available. See `src/shim.c`.

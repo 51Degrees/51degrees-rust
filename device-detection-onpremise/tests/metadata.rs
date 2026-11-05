@@ -27,6 +27,7 @@
 //! names, and skip with a note when there is none. They check what every Hash
 //! data file holds, so they pass against any tier.
 
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -328,6 +329,49 @@ fn property_values_are_read_from_the_data_file() {
     assert_eq!(engine.property_values("NotAProperty").unwrap(), None);
     // Names are matched exactly, as .NET matches them.
     assert_eq!(engine.property_values("ismobile").unwrap(), None);
+}
+
+/// A range of a property's values is that part of the whole list, for a
+/// property the engine was opened with, one it was opened without and two
+/// match metrics, and the count is the length of the whole list.
+#[test]
+fn a_range_of_property_values_is_that_part_of_the_list() {
+    let Some(engine) = engine(&["IsMobile"]) else {
+        return;
+    };
+    for name in ["IsMobile", "BrowserName", "Method", "MatchedNodes"] {
+        let all = engine
+            .property_values(name)
+            .expect("the values are read")
+            .expect("the property is listed");
+        let count = all.len();
+        assert_eq!(engine.property_value_count(name), Some(count), "{name}");
+        let ranges = [
+            0..0,
+            0..1,
+            0..20,
+            1..3,
+            count / 2..count,
+            count..count + 5,
+            Range { start: 3, end: 1 },
+            usize::MAX - 1..usize::MAX,
+            0..usize::MAX,
+        ];
+        for range in ranges {
+            let part = engine
+                .property_value_range(name, range.clone())
+                .expect("the values are read")
+                .expect("the property is listed");
+            let end = range.end.min(count);
+            assert_eq!(part, all[range.start.min(end)..end], "{name} {range:?}");
+        }
+    }
+    assert_eq!(engine.property_value_count("NotAProperty"), None);
+    assert_eq!(
+        engine.property_value_range("NotAProperty", 0..5).unwrap(),
+        None
+    );
+    assert_eq!(engine.property_value_count("ismobile"), None);
 }
 
 /// The issue's check. An engine restricted to IsMobile and asked for

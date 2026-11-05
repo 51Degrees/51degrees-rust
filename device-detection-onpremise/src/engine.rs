@@ -30,6 +30,7 @@
 
 use std::collections::HashMap;
 use std::ffi::CStr;
+use std::ops::Range;
 use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -240,15 +241,24 @@ pub struct DeviceDetectionOnPremiseEngine {
 struct LoadedDataSet {
     manager: Arc<Manager>,
     readable: Arc<ReadableProperties>,
-    /// The place of each data file property among the data file's properties,
-    /// by name, which [`Manager::data_file_property_values`] takes.
-    property_indexes: HashMap<String, u32>,
+    /// Each data file property's place among the data file's properties and
+    /// its number of values, by name.
+    file_properties: HashMap<String, FilePropertyPlace>,
     /// Why a property is missing, from the metadata of this data set, added to
     /// every device data a detection writes.
     missing: Arc<MissingPropertySource>,
     /// Held only to be dropped with the data set, and declared after the
     /// manager, so it is removed after the data set that has it open is freed.
     _copy: Option<OperationalCopy>,
+}
+
+/// Where a data file property is among the data file's properties, and how
+/// many values the data file holds for it.
+#[derive(Clone, Copy)]
+struct FilePropertyPlace {
+    /// The index [`Manager::data_file_property_value_range`] takes.
+    index: u32,
+    value_count: u32,
 }
 
 /// The property and component metadata and tier of a loaded data set.
@@ -280,9 +290,15 @@ fn describe(
     let file_properties = manager.data_file_properties()?;
     let metadata = build_metadata(&file_properties, &manager.data_file_components()?, tier);
     let readable = Arc::new(ReadableProperties::new(&file_properties));
-    let property_indexes = file_properties
+    let file_property_places = file_properties
         .iter()
-        .map(|property| (property.name.clone(), property.index))
+        .map(|property| {
+            let place = FilePropertyPlace {
+                index: property.index,
+                value_count: property.value_count,
+            };
+            (property.name.clone(), place)
+        })
         .collect();
     let missing = Arc::new(
         MissingPropertySource::new(
@@ -298,7 +314,7 @@ fn describe(
         LoadedDataSet {
             manager,
             readable,
-            property_indexes,
+            file_properties: file_property_places,
             missing,
             _copy: copy,
         },
@@ -406,18 +422,54 @@ impl DeviceDetectionOnPremiseEngine {
     ///
     /// A data file property's values are read from the loaded data file on
     /// each call, in the data file's order. A match metric gives the values its
-    /// metadata lists, which is none for all but `Method`.
+    /// metadata lists, which is none for all but `Method`. A data file can
+    /// hold over a hundred thousand values for one property, so
+    /// [`Self::property_value_range`] reads part of the list.
     pub fn property_values(&self, property_name: &str) -> Result<Option<Vec<ValueMetaData>>> {
+        self.property_value_range(property_name, 0..usize::MAX)
+    }
+
+    /// The values at the places `range` covers among those
+    /// [`Self::property_values`] gives for the property named
+    /// `property_name`, so a caller that shows the first 20 reads only 20.
+    /// The part of `range` past the last value is left out. [`None`] when
+    /// the engine lists no such property.
+    pub fn property_value_range(
+        &self,
+        property_name: &str,
+        range: Range<usize>,
+    ) -> Result<Option<Vec<ValueMetaData>>> {
         let loaded = self.loaded.load();
-        if let Some(index) = loaded.property_indexes.get(property_name) {
-            let values = loaded.manager.data_file_property_values(*index)?;
+        if let Some(place) = loaded.file_properties.get(property_name) {
+            let start = u32::try_from(range.start).unwrap_or(u32::MAX);
+            let end = u32::try_from(range.end).unwrap_or(u32::MAX);
+            let values = loaded
+                .manager
+                .data_file_property_value_range(place.index, start..end)?;
             return Ok(Some(values.iter().map(value_metadata).collect()));
         }
         Ok(self
             .fiftyone_properties()
             .iter()
             .find(|property| property.name() == property_name)
-            .map(|property| property.values().to_vec()))
+            .map(|property| {
+                let values = property.values();
+                let end = range.end.min(values.len());
+                values[range.start.min(end)..end].to_vec()
+            }))
+    }
+
+    /// The number of values [`Self::property_values`] gives for the property
+    /// named `property_name`, or [`None`] when the engine lists no such
+    /// property. No value is read to count them.
+    pub fn property_value_count(&self, property_name: &str) -> Option<usize> {
+        if let Some(place) = self.loaded.load().file_properties.get(property_name) {
+            return Some(place.value_count as usize);
+        }
+        self.fiftyone_properties()
+            .iter()
+            .find(|property| property.name() == property_name)
+            .map(|property| property.values().len())
     }
 
     /// Run a detection for `data` into new device data.
