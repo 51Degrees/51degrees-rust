@@ -142,12 +142,6 @@
     "issue": 223
   },
   {
-    "path": "properties.ip.*",
-    "kind": "noValueMessage",
-    "reason": "IP Intelligence gives none of .NET's reasons for a property with no value.",
-    "issue": 223
-  },
-  {
     "path": "properties.device.*javascript*",
     "kind": "type",
     "reason": "The crates take Device Detection property types from a table compiled into the crate rather than from the data file, so the JavaScript properties are strings.",
@@ -247,7 +241,7 @@
   {
     "path": "json.device.*nullreason",
     "kind": "value",
-    "reason": "The crates give every Device Detection property with no value the reason No value for property and its name, where .NET says why it has none, such as that the evidence it needs was not supplied (properties.* noValueMessage).",
+    "reason": "The crates give every Device Detection property with no value the reason No value for property and its name, where .NET says why it has none, such as that the evidence it needs was not supplied (properties.device.* noValueMessage).",
     "issue": 223
   },
   {
