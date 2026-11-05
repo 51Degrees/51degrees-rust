@@ -399,8 +399,6 @@ pub(crate) type DataMap = HashMap<String, Box<dyn ElementData>, RandomState>;
 
 #[cfg(test)]
 mod tests {
-    use std::hash::BuildHasher;
-
     use super::*;
     use crate::{EvidenceKeyFilterWhitelist, FlowElement, PropertyMetaData};
 

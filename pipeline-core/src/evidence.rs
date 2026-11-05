@@ -451,8 +451,6 @@ impl EvidenceKeyFilter for EvidenceKeyFilterAggregator {
 
 #[cfg(test)]
 mod tests {
-    use std::hash::BuildHasher;
-
     use super::*;
 
     /// Evidence made for a parallel group copies the hasher of the evidence
