@@ -24,6 +24,8 @@
 //! installed once for the whole process.
 
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 use fiftyone_pipeline_core::{
     Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, Pipeline,
@@ -181,6 +183,52 @@ fn a_suppressed_error_in_a_parallel_group_is_logged() {
         ]
     );
     assert_eq!(logged_about("'grouped-beside'").len(), 1);
+}
+
+/// How long the first of two failing group members waits before it fails,
+/// so that the second finishes first.
+const FIRST_MEMBER_WAIT_MILLISECONDS: u64 = 100;
+
+/// With errors returned, two failing members of a group are logged at error
+/// level and returned in the order they were given, even when the first
+/// finishes last.
+#[test]
+fn failing_group_members_are_logged_in_order_when_errors_are_returned() {
+    capture_logs();
+    let group: [Arc<dyn FlowElement>; 2] = [
+        Arc::new(FailingElement::new("ordered-first", || {
+            thread::sleep(Duration::from_millis(FIRST_MEMBER_WAIT_MILLISECONDS));
+            Error::configuration("first failure")
+        })),
+        Arc::new(FailingElement::new("ordered-second", || {
+            Error::configuration("second failure")
+        })),
+    ];
+    let result = Pipeline::builder()
+        .add_parallel_elements(group)
+        .build()
+        .unwrap()
+        .create_flow_data()
+        .process();
+
+    assert_eq!(
+        logged_about("'ordered-"),
+        vec![
+            "ERROR An error occurred in element 'ordered-first': pipeline \
+             configuration error: first failure",
+            "ERROR An error occurred in element 'ordered-second': pipeline \
+             configuration error: second failure",
+        ]
+    );
+    let errors = match result {
+        Err(Error::Aggregate(errors)) => errors,
+        other => panic!("expected the aggregate error, got {other:?}"),
+    };
+    let keys: Vec<&str> = errors
+        .iter()
+        .map(|error| error.element_data_key.as_str())
+        .collect();
+    assert_eq!(keys, ["ordered-first", "ordered-second"]);
 }
 
 /// .NET's pipeline logs one error-level record for an element that fails
