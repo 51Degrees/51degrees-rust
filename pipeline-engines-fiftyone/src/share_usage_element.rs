@@ -32,7 +32,7 @@
 //! Processing follows the recommended producer/consumer design. The `process`
 //! function does the minimum work on the request thread: apply the ignore
 //! filter, roll the share dice, consult the repeat-evidence tracker, extract
-//! the wanted evidence into a self-contained [`ShareUsageData`], then hand it
+//! the wanted evidence into a self-contained [`UsageRecord`], then hand it
 //! to a bounded channel. A single background thread consumes the channel.
 //! Once it holds the configured minimum entries it takes more until none
 //! arrives within the take timeout or it holds twice the minimum, as the .NET
@@ -71,9 +71,6 @@
 //! cannot run (such as `wasm32-wasip1`) the feature is left off and the
 //! element runs with the no-op transport.
 
-use std::borrow::Cow;
-use std::collections::BTreeMap;
-use std::fmt::Write as _;
 use std::io::Write;
 use std::net::UdpSocket;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -86,8 +83,6 @@ use std::time::{Duration, Instant};
 
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
-use quick_xml::writer::Writer;
 
 use fiftyone_pipeline_core::constants::EVIDENCE_CLIENT_IP_KEY;
 use fiftyone_pipeline_core::{
@@ -99,11 +94,12 @@ use crate::constants::{
     SHARE_USAGE_DEFAULT_ELEMENT_DATA_KEY, SHARE_USAGE_DEFAULT_MAX_QUEUE_SIZE,
     SHARE_USAGE_DEFAULT_MIN_ENTRIES_PER_MESSAGE,
     SHARE_USAGE_DEFAULT_REPEAT_EVIDENCE_INTERVAL_MINUTES, SHARE_USAGE_DEFAULT_SHARE_PERCENTAGE,
-    SHARE_USAGE_DEFAULT_TAKE_TIMEOUT_MS, SHARE_USAGE_DEFAULT_URL, SHARE_USAGE_MAX_EVIDENCE_LENGTH,
+    SHARE_USAGE_DEFAULT_TAKE_TIMEOUT_MS, SHARE_USAGE_DEFAULT_URL,
 };
 use crate::evidence_filter::{EvidenceKeyFilterShareUsage, EvidenceKeyFilterShareUsageTracker};
 use crate::sequence_element::{SequenceData, SequenceElement};
 use crate::share_usage_tracker::ShareUsageTracker;
+use crate::usage_record::{parse_sequence, write_document, StaticInfo, UsageRecord};
 
 /// The smallest value accepted for the minimum entries per message. A message
 /// needs at least one record.
@@ -133,30 +129,6 @@ const ROUTE_PROBE_V4: &str = "8.8.8.8:10002";
 
 /// The IPv6 equivalent of [`ROUTE_PROBE_V4`], for hosts without IPv4.
 const ROUTE_PROBE_V6: &str = "[2001:4860:4860::8888]:10002";
-
-/// The attribute that marks a value whose invalid XML characters were escaped.
-const ESCAPED_ATTRIBUTE: &str = "escaped";
-
-/// The attribute that marks a value cut to the maximum length.
-const TRUNCATED_ATTRIBUTE: &str = "truncated";
-
-/// The data extracted from one request, ready to be written to the XML payload.
-///
-/// The evidence is copied out (rather than referenced) so the request's flow
-/// data can be dropped before the background thread sends it. The map is keyed
-/// by the evidence category (the part before the first `.`) and then by field
-/// name, matching the XML structure.
-#[derive(Debug, Clone, Default)]
-struct ShareUsageData {
-    session_id: Option<String>,
-    sequence: Option<i64>,
-    client_ip: Option<String>,
-    /// The type names of the elements in the pipeline that processed the
-    /// request.
-    flow_elements: Vec<&'static str>,
-    /// category -> (field -> (value, truncated)).
-    evidence: BTreeMap<String, BTreeMap<String, (String, bool)>>,
-}
 
 /// Configuration for the usage-sharing element.
 ///
@@ -376,17 +348,9 @@ impl Default for ShareUsageConfigBuilder {
     }
 }
 
-/// The values that are the same in every record this element sends, gathered
-/// when the element is created.
-#[derive(Debug, Default)]
-struct StaticInfo {
-    core_version: String,
-    language_version: String,
-    server_ip: String,
-    platform: String,
-}
-
 impl StaticInfo {
+    /// The values for this machine and build, gathered when the element is
+    /// created.
     fn gather() -> Self {
         StaticInfo {
             core_version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -545,7 +509,7 @@ pub struct ShareUsageElement {
     properties: Vec<PropertyMetaData>,
     tracker: ShareUsageTracker,
     config: ShareUsageConfig,
-    sender: SyncSender<ShareUsageData>,
+    sender: SyncSender<UsageRecord>,
     worker: Mutex<Option<JoinHandle<()>>>,
     /// The pipeline the element is in, so a second can be refused.
     pipeline: Mutex<Weak<Pipeline>>,
@@ -619,7 +583,7 @@ impl ShareUsageElement {
             Box::new(EvidenceKeyFilterShareUsageTracker::new(make_filter())),
         );
 
-        let (tx, rx) = sync_channel::<ShareUsageData>(config.maximum_queue_size);
+        let (tx, rx) = sync_channel::<UsageRecord>(config.maximum_queue_size);
 
         let success_count = Arc::new(AtomicU64::new(0));
         let fail_count = Arc::new(AtomicU64::new(0));
@@ -693,77 +657,50 @@ impl ShareUsageElement {
         p >= 1.0 || (p > 0.0 && fastrand::f64() < p)
     }
 
-    /// Extract the wanted evidence from a flow data into a self-contained
-    /// [`ShareUsageData`].
-    fn extract(&self, data: &FlowData) -> ShareUsageData {
-        let mut out = ShareUsageData {
+    /// Copy what the record needs out of a request's flow data. The evidence
+    /// is read in the order it was given, with each key spelled as given.
+    fn extract(&self, data: &FlowData) -> UsageRecord {
+        let mut record = UsageRecord {
             flow_elements: data
                 .pipeline()
                 .flow_elements()
                 .iter()
                 .map(|element| element.type_name())
                 .collect(),
-            ..ShareUsageData::default()
+            ..UsageRecord::default()
         };
-        // The session id and sequence are written into their own XML elements,
-        // so they are kept out of the generic evidence map.
+        // The session id, sequence and client IP have elements of their own,
+        // so they are not written again as evidence entries.
         let mut evidence_session_id = None;
         let mut evidence_sequence = None;
-        for (key, value) in data.evidence().iter() {
+        for entry in data.evidence().entries() {
+            let key = entry.key();
             if key.eq_ignore_ascii_case(EVIDENCE_CLIENT_IP_KEY) {
-                out.client_ip = Some(value.to_owned());
-                continue;
+                record.client_ip = entry.value().to_owned();
+            } else if key.eq_ignore_ascii_case(EVIDENCE_SESSIONID) {
+                evidence_session_id = Some(entry.value());
+            } else if key.eq_ignore_ascii_case(EVIDENCE_SEQUENCE) {
+                evidence_sequence = Some(entry.value());
+            } else if self.filter.include(key) {
+                record.add_evidence(entry.key_as_given(), entry.value());
             }
-            if key.eq_ignore_ascii_case(EVIDENCE_SESSIONID) {
-                evidence_session_id = Some(value.to_owned());
-                continue;
-            }
-            if key.eq_ignore_ascii_case(EVIDENCE_SEQUENCE) {
-                evidence_sequence = value.trim().parse::<i64>().ok();
-                continue;
-            }
-            if !self.filter.include(key) {
-                continue;
-            }
-
-            let (category, field) = match key.split_once('.') {
-                Some((c, f)) => (c.to_owned(), f.to_owned()),
-                None => (String::new(), key.to_owned()),
-            };
-
-            let (value, truncated) = if value.len() > SHARE_USAGE_MAX_EVIDENCE_LENGTH {
-                (
-                    value
-                        .char_indices()
-                        .take_while(|(i, _)| *i < SHARE_USAGE_MAX_EVIDENCE_LENGTH)
-                        .map(|(_, c)| c)
-                        .collect::<String>(),
-                    true,
-                )
-            } else {
-                (value.to_owned(), false)
-            };
-
-            out.evidence
-                .entry(category)
-                .or_default()
-                .insert(field, (value, truncated));
         }
 
-        // The sequence element's values come first. It increments the sequence
-        // the client sent, so its value is the one this request carries. The
-        // evidence is the fallback when the pipeline has no sequence element
-        // before this one.
+        // The Sequence element's values are the ones this request carries,
+        // because it increments the sequence the client sent. Without one the
+        // request's own evidence gives them. A sequence that is not a 32-bit
+        // integer is written as 0.
         let sequence = data.get(SequenceElement::KEY);
-        out.session_id = sequence
+        record.session_id = sequence
             .and_then(SequenceData::session_id)
-            .map(str::to_owned)
-            .or(evidence_session_id);
-        out.sequence = sequence
-            .and_then(SequenceData::sequence)
-            .or(evidence_sequence);
-
-        out
+            .or(evidence_session_id)
+            .unwrap_or_default()
+            .to_owned();
+        record.sequence = match sequence.and_then(SequenceData::sequence) {
+            Some(sequence) => i32::try_from(sequence).unwrap_or(0),
+            None => evidence_sequence.and_then(parse_sequence).unwrap_or(0),
+        };
+        record
     }
 
     /// Log a discarded record, at most once a minute.
@@ -866,7 +803,7 @@ impl Drop for ShareUsageElement {
         // minimum batch size) and then exits. We replace the held sender with a
         // disconnected one so the original is dropped here, then join the
         // worker so the final flush completes before the element goes away.
-        let (dead_tx, _dead_rx) = sync_channel::<ShareUsageData>(0);
+        let (dead_tx, _dead_rx) = sync_channel::<UsageRecord>(0);
         let live_tx = std::mem::replace(&mut self.sender, dead_tx);
         drop(live_tx);
 
@@ -883,8 +820,8 @@ impl Drop for ShareUsageElement {
 /// Add a record to the queue, waiting up to `timeout` for room while it is
 /// full.
 fn add_to_queue(
-    sender: &SyncSender<ShareUsageData>,
-    mut usage: ShareUsageData,
+    sender: &SyncSender<UsageRecord>,
+    mut usage: UsageRecord,
     timeout: Duration,
 ) -> std::result::Result<(), Discarded> {
     // A timeout too long to add to the clock, such as Duration::MAX, has no
@@ -912,7 +849,7 @@ fn add_to_queue(
 
 /// The background thread: what it reads from and what it sends with.
 struct Worker {
-    receiver: Receiver<ShareUsageData>,
+    receiver: Receiver<UsageRecord>,
     sender: Box<dyn UsageSender>,
     config: ShareUsageConfig,
     static_info: StaticInfo,
@@ -932,7 +869,7 @@ impl Worker {
         let min_entries = self.config.minimum_entries_per_message;
         let max_entries = min_entries.saturating_mul(MAXIMUM_ENTRIES_MULTIPLE);
         let take_timeout = self.config.take_timeout;
-        let mut batch: Vec<ShareUsageData> = Vec::with_capacity(max_entries);
+        let mut batch: Vec<UsageRecord> = Vec::with_capacity(max_entries);
 
         // `recv` fails only when the channel is closed and empty.
         while let Ok(item) = self.receiver.recv() {
@@ -954,7 +891,7 @@ impl Worker {
     }
 
     /// Build the XML, gzip it and send it, recording success or failure.
-    fn send_batch(&self, batch: Vec<ShareUsageData>) {
+    fn send_batch(&self, batch: Vec<UsageRecord>) {
         if batch.is_empty() {
             return;
         }
@@ -988,201 +925,17 @@ impl Worker {
     }
 }
 
-/// Build the `<Devices>` XML document for a batch and gzip-compress it.
+/// Write a batch as the `<Devices>` document and gzip-compress it.
 fn build_compressed_xml(
-    batch: &[ShareUsageData],
+    batch: &[UsageRecord],
     info: &StaticInfo,
 ) -> std::result::Result<Vec<u8>, String> {
-    let xml = build_xml(batch, info).map_err(|e| e.to_string())?;
+    let xml = write_document(batch, info, utc_now_iso8601);
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     encoder
         .write_all(xml.as_bytes())
         .map_err(|e| e.to_string())?;
     encoder.finish().map_err(|e| e.to_string())
-}
-
-/// Build the `<Devices>` XML document for a batch.
-///
-/// The document structure follows the
-/// [usage-sharing processing section](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/usage-sharing-element.md#processing):
-/// a `<Devices>` root with one `<Device>` per request. Each evidence value is
-/// written as a child element named after its category (for example `Header`)
-/// with a `Name` attribute for the field. [`BytesText`] escapes the characters
-/// XML gives meaning to, such as `<` and `&`. Characters XML cannot carry at
-/// all, such as most control characters, are replaced by
-/// [`escape_invalid_xml_chars`] and the element is marked `escaped="true"`.
-/// Values that were cut to the maximum length are marked `truncated="true"`.
-fn build_xml(batch: &[ShareUsageData], info: &StaticInfo) -> XmlResult {
-    let mut writer = Writer::new(Vec::new());
-
-    writer.write_event(Event::Start(BytesStart::new("Devices")))?;
-    for data in batch {
-        write_device(&mut writer, data, info)?;
-    }
-    writer.write_event(Event::End(BytesEnd::new("Devices")))?;
-
-    let bytes = writer.into_inner();
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
-}
-
-/// The XML writer result type. quick-xml's `write_event` returns
-/// `Result<(), quick_xml::Error>`.
-type XmlResult = std::result::Result<String, quick_xml::Error>;
-
-/// Write a single `<Device>` element.
-fn write_device(
-    writer: &mut Writer<Vec<u8>>,
-    data: &ShareUsageData,
-    info: &StaticInfo,
-) -> std::result::Result<(), quick_xml::Error> {
-    writer.write_event(Event::Start(BytesStart::new("Device")))?;
-
-    if let Some(session_id) = &data.session_id {
-        write_text_element(writer, "SessionId", session_id)?;
-    }
-    if let Some(sequence) = data.sequence {
-        write_text_element(writer, "Sequence", &sequence.to_string())?;
-    }
-    write_text_element(writer, "DateSent", &utc_now_iso8601())?;
-    if let Some(client_ip) = &data.client_ip {
-        write_text_element(writer, "ClientIP", client_ip)?;
-    }
-
-    // The per-machine static information.
-    write_text_element(writer, "Version", &info.core_version)?;
-    write_text_element(writer, "Product", "Pipeline")?;
-    for element in &data.flow_elements {
-        write_text_element(writer, "FlowElement", element)?;
-    }
-    write_text_element(writer, "Language", "rust")?;
-    write_text_element(writer, "LanguageVersion", &info.language_version)?;
-    write_text_element(writer, "ServerIP", &info.server_ip)?;
-    write_text_element(writer, "Platform", &info.platform)?;
-
-    // The shared evidence, grouped by category.
-    for (category, fields) in &data.evidence {
-        for (field, (value, truncated)) in fields {
-            write_evidence(writer, category, field, value, *truncated)?;
-        }
-    }
-
-    writer.write_event(Event::End(BytesEnd::new("Device")))?;
-    Ok(())
-}
-
-/// Write one evidence value as `<Category Name="field">value</Category>`, or as
-/// `<field>value</field>` when the key has no category.
-///
-/// An entry whose element name would not be a valid XML name is left out,
-/// because writing it would make the whole message unreadable.
-fn write_evidence(
-    writer: &mut Writer<Vec<u8>>,
-    category: &str,
-    field: &str,
-    value: &str,
-    truncated: bool,
-) -> std::result::Result<(), quick_xml::Error> {
-    let element_name = if category.is_empty() {
-        field.to_owned()
-    } else {
-        capitalize(category)
-    };
-    if !is_xml_name(&element_name) {
-        log::debug!(
-            "Usage sharing left out the evidence '{category}.{field}' because \
-             '{element_name}' cannot be an XML element name."
-        );
-        return Ok(());
-    }
-
-    let value = escape_invalid_xml_chars(value);
-    let mut escaped = matches!(value, Cow::Owned(_));
-    let mut start = BytesStart::new(element_name.as_str());
-    if !category.is_empty() {
-        let name = escape_invalid_xml_chars(field);
-        escaped |= matches!(name, Cow::Owned(_));
-        start.push_attribute(("Name", name.as_ref()));
-    }
-    if escaped {
-        start.push_attribute((ESCAPED_ATTRIBUTE, "true"));
-    }
-    if truncated {
-        start.push_attribute((TRUNCATED_ATTRIBUTE, "true"));
-    }
-    writer.write_event(Event::Start(start))?;
-    writer.write_event(Event::Text(BytesText::new(&value)))?;
-    writer.write_event(Event::End(BytesEnd::new(element_name.as_str())))?;
-    Ok(())
-}
-
-/// Write a `<name>text</name>` element, marked `escaped="true"` when the text
-/// held characters XML cannot carry.
-fn write_text_element(
-    writer: &mut Writer<Vec<u8>>,
-    name: &str,
-    text: &str,
-) -> std::result::Result<(), quick_xml::Error> {
-    let text = escape_invalid_xml_chars(text);
-    let mut start = BytesStart::new(name);
-    if matches!(text, Cow::Owned(_)) {
-        start.push_attribute((ESCAPED_ATTRIBUTE, "true"));
-    }
-    writer.write_event(Event::Start(start))?;
-    writer.write_event(Event::Text(BytesText::new(&text)))?;
-    writer.write_event(Event::End(BytesEnd::new(name)))?;
-    Ok(())
-}
-
-/// True for a character an XML 1.0 document may contain.
-fn is_xml_char(c: char) -> bool {
-    matches!(
-        c,
-        '\t' | '\n'
-            | '\r'
-            | '\u{20}'..='\u{D7FF}'
-            | '\u{E000}'..='\u{FFFD}'
-            | '\u{10000}'..='\u{10FFFF}'
-    )
-}
-
-/// Replace each character XML cannot carry with `\x` and four hex digits, the
-/// form the .NET implementation writes, so the reader can see what was there.
-/// Returns [`Cow::Borrowed`] when nothing needed replacing and
-/// [`Cow::Owned`] when something did.
-fn escape_invalid_xml_chars(value: &str) -> Cow<'_, str> {
-    if value.chars().all(is_xml_char) {
-        return Cow::Borrowed(value);
-    }
-    let mut escaped = String::with_capacity(value.len() + 8);
-    for c in value.chars() {
-        if is_xml_char(c) {
-            escaped.push(c);
-        } else {
-            let _ = write!(escaped, "\\x{:04x}", u32::from(c));
-        }
-    }
-    Cow::Owned(escaped)
-}
-
-/// True if `name` can be an XML element name. Deliberately narrower than XML
-/// allows: a letter or underscore, then letters, digits, `-`, `_` or `.`.
-fn is_xml_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    match chars.next() {
-        Some(first) if first.is_alphabetic() || first == '_' => {}
-        _ => return false,
-    }
-    chars.all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
-}
-
-/// Upper-case the first character of an evidence category so the XML element
-/// names match the reference output (`Header`, `Cookie`, `Query`, and so on).
-fn capitalize(value: &str) -> String {
-    let mut chars = value.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
-    }
 }
 
 /// The address this host uses to reach the internet. The operating system
@@ -1353,6 +1106,7 @@ mod tests {
     use fiftyone_pipeline_core::{Evidence, Pipeline};
 
     use super::*;
+    use crate::constants::SHARE_USAGE_MAX_EVIDENCE_LENGTH;
 
     /// A transport that keeps each message's XML, and fails with `failure`
     /// when one is set.
@@ -1441,88 +1195,12 @@ mod tests {
         Evidence::builder().add("header.user-agent", value).build()
     }
 
-    fn device(session_id: Option<&str>, evidence: &[(&str, &str, &str)]) -> ShareUsageData {
-        let mut data = ShareUsageData {
-            session_id: session_id.map(str::to_owned),
-            ..ShareUsageData::default()
-        };
-        for (category, field, value) in evidence {
-            data.evidence
-                .entry((*category).to_owned())
-                .or_default()
-                .insert((*field).to_owned(), ((*value).to_owned(), false));
-        }
-        data
-    }
-
     /// Wait up to five seconds for `condition`.
     fn wait_for(condition: impl Fn() -> bool) {
         let start = Instant::now();
         while !condition() && start.elapsed() < Duration::from_secs(5) {
             std::thread::sleep(Duration::from_millis(10));
         }
-    }
-
-    #[test]
-    fn invalid_xml_characters_are_escaped_and_marked() {
-        let xml = build_xml(
-            &[device(
-                Some("session\u{0}"),
-                &[("header", "user-agent", "agent\u{1}\u{1b}end\u{fffe}")],
-            )],
-            &StaticInfo::default(),
-        )
-        .unwrap();
-        assert!(
-            xml.contains(
-                r#"<Header Name="user-agent" escaped="true">agent\x0001\x001bend\xfffe</Header>"#
-            ),
-            "{xml}"
-        );
-        assert!(
-            xml.contains(r#"<SessionId escaped="true">session\x0000</SessionId>"#),
-            "{xml}"
-        );
-        assert!(xml.chars().all(is_xml_char), "{xml:?}");
-    }
-
-    #[test]
-    fn valid_text_is_left_alone() {
-        let xml = build_xml(
-            &[device(
-                Some("session"),
-                &[(
-                    "header",
-                    "user-agent",
-                    "Mozilla/5.0 <b> & \"\u{fc}\" \u{65e5}\t",
-                )],
-            )],
-            &StaticInfo::default(),
-        )
-        .unwrap();
-        assert!(!xml.contains(ESCAPED_ATTRIBUTE), "{xml}");
-        assert!(
-            xml.contains("Mozilla/5.0 &lt;b&gt; &amp; &quot;\u{fc}&quot; \u{65e5}\t"),
-            "{xml}"
-        );
-    }
-
-    #[test]
-    fn evidence_that_cannot_be_an_element_name_is_left_out() {
-        let xml = build_xml(
-            &[device(
-                None,
-                &[
-                    ("", "51d_value", "dropped"),
-                    ("", "plain", "kept"),
-                    ("my prefix", "field", "dropped"),
-                ],
-            )],
-            &StaticInfo::default(),
-        )
-        .unwrap();
-        assert!(!xml.contains("dropped"), "{xml}");
-        assert!(xml.contains("<plain>kept</plain>"), "{xml}");
     }
 
     #[test]
@@ -1538,9 +1216,39 @@ mod tests {
         let kept = "a".repeat(SHARE_USAGE_MAX_EVIDENCE_LENGTH);
         assert!(
             capture.messages()[0].contains(&format!(
-                r#"<Header Name="user-agent" truncated="true">{kept}</Header>"#
+                "<header Name=\"user-agent\">\
+                 <![CDATA[[TRUNCATED BY USAGE SHARING] {kept}]]></header>"
             )),
             "the value is cut to the maximum length and marked"
+        );
+    }
+
+    #[test]
+    fn evidence_is_written_as_given_and_grouped_by_prefix() {
+        let capture = Capture::default();
+        share(
+            ShareUsageConfig::default(),
+            capture.clone(),
+            Vec::new(),
+            vec![Evidence::builder()
+                .add("header.User-Agent", "agent")
+                .add("query.51D_Test", "x")
+                .add("server.client-ip", "192.0.2.7")
+                .add("header.Accept-Language", "en")
+                .build()],
+        );
+        let xml = &capture.messages()[0];
+        assert!(
+            xml.contains("<SessionId /><Sequence>0</Sequence>"),
+            "no session id or sequence: {xml}"
+        );
+        assert!(xml.contains("<ClientIP>192.0.2.7</ClientIP>"), "{xml}");
+        let end = "</Platform>";
+        assert_eq!(
+            &xml[xml.find(end).unwrap() + end.len()..],
+            "<header Name=\"User-Agent\"><![CDATA[agent]]></header>\
+             <header Name=\"Accept-Language\"><![CDATA[en]]></header>\
+             <query Name=\"51D_Test\"><![CDATA[x]]></query></Device></Devices>"
         );
     }
 
@@ -1564,11 +1272,11 @@ mod tests {
         share(config, capture.clone(), Vec::new(), requests);
         let xml = capture.messages().concat();
         assert!(
-            !xml.contains(">one<"),
+            !xml.contains("[CDATA[one]]"),
             "the exact match is not shared: {xml}"
         );
-        assert!(xml.contains(">two<"), "values match exactly: {xml}");
-        assert!(xml.contains(">three<"), "{xml}");
+        assert!(xml.contains("[CDATA[two]]"), "values match exactly: {xml}");
+        assert!(xml.contains("[CDATA[three]]"), "{xml}");
     }
 
     #[test]
@@ -1705,23 +1413,23 @@ mod tests {
 
     #[test]
     fn a_stopped_or_full_queue_reports_why() {
-        let (tx, rx) = sync_channel::<ShareUsageData>(1);
-        assert!(add_to_queue(&tx, ShareUsageData::default(), Duration::ZERO).is_ok());
+        let (tx, rx) = sync_channel::<UsageRecord>(1);
+        assert!(add_to_queue(&tx, UsageRecord::default(), Duration::ZERO).is_ok());
         assert!(matches!(
-            add_to_queue(&tx, ShareUsageData::default(), Duration::ZERO),
+            add_to_queue(&tx, UsageRecord::default(), Duration::ZERO),
             Err(Discarded::QueueFull)
         ));
         drop(rx);
         assert!(matches!(
-            add_to_queue(&tx, ShareUsageData::default(), Duration::ZERO),
+            add_to_queue(&tx, UsageRecord::default(), Duration::ZERO),
             Err(Discarded::Stopped)
         ));
     }
 
     #[test]
     fn an_add_timeout_too_long_for_the_clock_waits_for_room() {
-        let (tx, rx) = sync_channel::<ShareUsageData>(1);
-        assert!(add_to_queue(&tx, ShareUsageData::default(), Duration::MAX).is_ok());
+        let (tx, rx) = sync_channel::<UsageRecord>(1);
+        assert!(add_to_queue(&tx, UsageRecord::default(), Duration::MAX).is_ok());
 
         // The queue of one is full, so the next add waits until it has room.
         let taker = std::thread::spawn(move || {
@@ -1729,7 +1437,7 @@ mod tests {
             rx.recv().unwrap();
             rx
         });
-        assert!(add_to_queue(&tx, ShareUsageData::default(), Duration::MAX).is_ok());
+        assert!(add_to_queue(&tx, UsageRecord::default(), Duration::MAX).is_ok());
         let rx = taker.join().unwrap();
         assert!(rx.try_recv().is_ok(), "the second record was queued");
     }
@@ -1843,6 +1551,9 @@ mod tests {
         );
         let xml = &capture.messages()[0];
         let text = |name: &str| {
+            if xml.contains(&format!("<{name} />")) {
+                return String::new();
+            }
             let start = xml.find(&format!("<{name}>")).unwrap() + name.len() + 2;
             let end = start + xml[start..].find(&format!("</{name}>")).unwrap();
             xml[start..end].to_owned()
@@ -1913,6 +1624,27 @@ mod tests {
         let xml = &capture.messages()[0];
         assert!(xml.contains("<SessionId>session</SessionId>"), "{xml}");
         assert!(xml.contains("<Sequence>3</Sequence>"), "{xml}");
+    }
+
+    #[test]
+    fn a_sequence_that_is_not_a_32_bit_integer_is_written_as_0() {
+        let capture = Capture::default();
+        share(
+            ShareUsageConfig::default(),
+            capture.clone(),
+            Vec::new(),
+            ["2147483648", "five"]
+                .into_iter()
+                .map(|sequence| {
+                    Evidence::builder()
+                        .add("header.user-agent", sequence)
+                        .add(EVIDENCE_SEQUENCE, sequence)
+                        .build()
+                })
+                .collect(),
+        );
+        let xml = capture.messages().concat();
+        assert_eq!(xml.matches("<Sequence>0</Sequence>").count(), 2, "{xml}");
     }
 
     #[test]

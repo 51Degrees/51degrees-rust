@@ -35,9 +35,6 @@ fastrand = "2"
 uuid = { version = "1", features = ["v4"] }
 # GZip compression of the usage-sharing XML payload before it is posted.
 flate2.workspace = true
-# Streaming XML writer used to build the usage-sharing payload. The crate is
-# small and writer-only which is all this element needs.
-quick-xml = "0.37"
 # Blocking HTTP client used by the usage-sharing background thread. The blocking
 # client runs on its own std::thread and does not need an async runtime. rustls
 # avoids a system OpenSSL dependency, matching the sibling engines crate. Optional

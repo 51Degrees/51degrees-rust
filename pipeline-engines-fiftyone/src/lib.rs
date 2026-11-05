@@ -113,6 +113,7 @@ mod sequence_element;
 mod set_headers_element;
 mod share_usage_element;
 mod share_usage_tracker;
+mod usage_record;
 
 pub use evidence_filter::{EvidenceKeyFilterShareUsage, EvidenceKeyFilterShareUsageTracker};
 pub use metadata::{ComponentMetaData, FiftyOneAspectPropertyMetaData, ValueMetaData};
