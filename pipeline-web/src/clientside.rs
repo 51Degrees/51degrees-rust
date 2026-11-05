@@ -115,13 +115,15 @@ pub const CONTENT_TYPE_JAVASCRIPT: &str = "application/x-javascript";
 /// The `Content-Type` used for the JSON endpoint.
 pub const CONTENT_TYPE_JSON: &str = "application/json";
 
-/// The `Cache-Control` value used when processing recorded no errors.
+/// The `Cache-Control` value used when processing recorded no errors and the
+/// builder whose output the endpoint serves left its data.
 ///
 /// `private` so shared caches (proxies) do not store the per-device result, and
 /// `max-age=1800` (30 minutes) so the client may reuse it for half an hour.
 pub const CACHE_CONTROL_CACHEABLE: &str = "private, max-age=1800";
 
-/// The `Cache-Control` value used when processing recorded one or more errors.
+/// The `Cache-Control` value used when processing recorded one or more errors,
+/// or the builder whose output the endpoint serves left no data.
 ///
 /// A browser may keep such a response but must ask the server before using it
 /// again, and the response carries no `ETag`, so asking again always gets a
