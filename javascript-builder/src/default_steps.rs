@@ -114,14 +114,19 @@ pub fn get_session_id(context: &JavaScriptBuilderContext<'_>) -> String {
     safe_session_id(session_id.to_owned())
 }
 
-/// True when the builder was given a cloud request engine whose licensed
-/// products include 51Did, through
+/// True when the pipeline has an element whose data key is `fodid`, ignoring
+/// case, offering at least one available property, as .NET decides.
+///
+/// A builder given
+/// [`set_user_prompt`](crate::JavaScriptBuilderElementBuilder::set_user_prompt)
+/// gives that answer instead. A builder given a cloud request engine, through
 /// [`set_shared_cloud_request_engine`](crate::JavaScriptBuilderElementBuilder::set_shared_cloud_request_engine)
 /// or
 /// [`set_cloud_request_engine`](crate::JavaScriptBuilderElementBuilder::set_cloud_request_engine),
-/// and false while the shared engine's discovery has not completed.
+/// gives true when the engine's licensed products include 51Did, and false
+/// while the shared engine's discovery has not completed.
 pub fn render_user_prompt(context: &JavaScriptBuilderContext<'_>) -> bool {
-    context.element().user_prompt()
+    context.element().user_prompt(context.data())
 }
 
 #[cfg(test)]
@@ -217,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn the_user_prompt_is_off_without_a_cloud_request_engine() {
+    fn the_user_prompt_is_off_in_a_pipeline_with_no_51did_element() {
         let element = JavaScriptBuilderElement::new();
         let data = flow_data_with(&[]);
         assert!(!render_user_prompt(&JavaScriptBuilderContext::new(

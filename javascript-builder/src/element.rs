@@ -32,7 +32,9 @@ use fiftyone_pipeline_core::{
     PropertyValue, PropertyValueType, Result,
 };
 
-use crate::builder::{grants_51did, is_valid_object_name, SharedEngine, UserPromptSource};
+use crate::builder::{
+    grants_51did, is_valid_object_name, offers_51did, SharedEngine, UserPromptSource,
+};
 use crate::callback_url::{callback_url, CallbackUrl};
 use crate::constants::{
     DELAY_EXECUTION_MARKER, EVIDENCE_ENABLE_COOKIES, EVIDENCE_HOST_KEY, EVIDENCE_OBJECT_NAME,
@@ -48,6 +50,20 @@ use crate::JavaScriptBuilderElementBuilder;
 
 /// The Mustache template, embedded at compile time.
 const TEMPLATE_SOURCE: &str = include_str!("../assets/JavaScriptResource.mustache");
+
+/// How an element decides whether the script carries the user prompt
+/// section.
+enum UserPrompt {
+    /// From the pipeline each script is built for, read for each script.
+    Pipeline,
+    /// The same answer for every script.
+    Decided(bool),
+    /// From the request engine's licensed products, kept once they are known.
+    Engine {
+        engine: SharedEngine,
+        settled: OnceLock<bool>,
+    },
+}
 
 /// The request parameters as the JSON object the script is given, each name
 /// and value written as a JSON string in the order given.
@@ -109,13 +125,17 @@ fn parameters_json(parameters: &[(String, String)]) -> String {
 ///   `Promise` property is `Full`.
 /// - **supports fetch**: true when this request's device-detection `Fetch`
 ///   property is true.
-/// - **user prompt**: true when the builder was given a cloud request engine
-///   whose licensed products include 51Did, through
+/// - **user prompt**: by default, true when the pipeline has an element whose
+///   data key is `fodid`, ignoring case, offering at least one available
+///   property, as .NET decides. A builder given
+///   [`JavaScriptBuilderElementBuilder::set_user_prompt`] uses that answer
+///   instead. A builder given a cloud request engine, through
 ///   [`JavaScriptBuilderElementBuilder::set_shared_cloud_request_engine`] or
-///   [`JavaScriptBuilderElementBuilder::set_cloud_request_engine`], and false
-///   while the shared engine's discovery has not completed. The section it
-///   controls sits inside the update section, so it is only rendered when a
-///   callback URL was built as well.
+///   [`JavaScriptBuilderElementBuilder::set_cloud_request_engine`], renders
+///   the section when the engine's licensed products include 51Did, and
+///   leaves it out while the shared engine's discovery has not completed.
+///   The section sits inside the update section, so it is only rendered when
+///   a callback URL was built as well.
 ///
 /// The parameters, session id, sequence and user prompt rules are the
 /// defaults of [`JavaScriptBuilderSteps`](crate::JavaScriptBuilderSteps),
@@ -161,12 +181,9 @@ pub struct JavaScriptBuilderElement {
     object_name: String,
     enable_cookies: bool,
     minify: bool,
-    /// Whether the script carries the user prompt section, once that is
-    /// settled from the cloud request engine's licensed products.
-    user_prompt_settled: OnceLock<bool>,
-    /// The request engine whose licensed products settle
-    /// `user_prompt_settled`, when the builder was given a shared one.
-    user_prompt_engine: Option<SharedEngine>,
+    /// How the element decides whether the script carries the user prompt
+    /// section.
+    user_prompt: UserPrompt,
     /// Set once a callback URL that is not valid has been logged, because a
     /// misconfigured element would otherwise log on every request.
     invalid_url_logged: AtomicBool,
@@ -238,9 +255,13 @@ impl JavaScriptBuilderElement {
             Template::parse(TEMPLATE_SOURCE)
                 .expect("the embedded JavaScriptResource template is valid Mustache")
         });
-        let (user_prompt_settled, user_prompt_engine) = match builder.user_prompt {
-            UserPromptSource::Decided(render) => (OnceLock::from(render), None),
-            UserPromptSource::Engine(engine) => (OnceLock::new(), Some(engine)),
+        let user_prompt = match builder.user_prompt {
+            UserPromptSource::Pipeline => UserPrompt::Pipeline,
+            UserPromptSource::Decided(render) => UserPrompt::Decided(render),
+            UserPromptSource::Engine(engine) => UserPrompt::Engine {
+                engine,
+                settled: OnceLock::new(),
+            },
         };
 
         JavaScriptBuilderElement {
@@ -262,32 +283,28 @@ impl JavaScriptBuilderElement {
             object_name: builder.object_name,
             enable_cookies: builder.enable_cookies,
             minify: builder.minify,
-            user_prompt_settled,
-            user_prompt_engine,
+            user_prompt,
             invalid_url_logged: AtomicBool::new(false),
             minify_error_logged: AtomicBool::new(false),
             steps: builder.steps,
         }
     }
 
-    /// Whether this script carries the user prompt section, by the default
-    /// rule. The answer is kept once the request engine's licensed products
-    /// are known. Until then the section is left out without keeping that
-    /// answer, as a result obtained before discovery completes must not be
-    /// kept.
-    pub(crate) fn user_prompt(&self) -> bool {
-        if let Some(&render) = self.user_prompt_settled.get() {
-            return render;
-        }
-        match self
-            .user_prompt_engine
-            .as_ref()
-            .map(|engine| engine.public_properties())
-        {
-            Some(Ok(products)) => *self
-                .user_prompt_settled
-                .get_or_init(|| grants_51did(products)),
-            _ => false,
+    /// Whether the script for this flow data carries the user prompt section,
+    /// by the default rule. With a shared request engine the answer is kept
+    /// once the engine's licensed products are known, and until then the
+    /// section is left out without keeping that answer.
+    pub(crate) fn user_prompt(&self, data: &FlowData) -> bool {
+        match &self.user_prompt {
+            UserPrompt::Pipeline => offers_51did(data.pipeline()),
+            UserPrompt::Decided(render) => *render,
+            UserPrompt::Engine { engine, settled } => match settled.get() {
+                Some(&render) => render,
+                None => match engine.public_properties() {
+                    Ok(products) => *settled.get_or_init(|| grants_51did(products)),
+                    Err(_) => false,
+                },
+            },
         }
     }
 

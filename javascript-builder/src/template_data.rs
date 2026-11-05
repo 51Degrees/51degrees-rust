@@ -103,8 +103,7 @@ pub struct JavaScriptResource {
     /// Whether the payload contains delayed-execution JavaScript properties.
     has_delayed_properties: bool,
     /// Whether the script carries the section that gathers the visitor's
-    /// answer a 51Did is created from. True only when the cloud request
-    /// engine's licensed products include 51Did.
+    /// answer a 51Did is created from.
     user_prompt: bool,
 }
 
@@ -118,9 +117,10 @@ impl JavaScriptResource {
     /// session id inside quotes and the sequence as bare code.
     /// `url` is the already-built callback URL (empty string when none could be
     /// formed). `update_enabled` should be `true` only when that URL is present.
-    /// `user_prompt` should be `true` only when the cloud request engine's
-    /// licensed products include 51Did. The section it controls sits inside the
-    /// update section, so it renders only when `update_enabled` is also `true`.
+    /// `user_prompt` should be `true` only when the pipeline can return a
+    /// 51Did, as [`JavaScriptBuilderSteps::render_user_prompt`](crate::JavaScriptBuilderSteps::render_user_prompt)
+    /// decides. The section it controls sits inside the update section, so it
+    /// renders only when `update_enabled` is also `true`.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         obj_name: impl Into<String>,

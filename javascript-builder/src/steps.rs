@@ -154,9 +154,12 @@ pub trait JavaScriptBuilderSteps: Send + Sync + RefUnwindSafe {
     ///
     /// The section sits inside the update section, so it is only rendered
     /// when the script has a callback URL as well. The default renders it
-    /// when the builder was given a cloud request engine whose licensed
-    /// products include 51Did. A server running the whole pipeline for many
-    /// callers can replace this step to decide for each request.
+    /// when the pipeline has an element whose data key is `fodid`, ignoring
+    /// case, offering at least one available property, unless the builder
+    /// was told otherwise (see
+    /// [`default_steps::render_user_prompt`](crate::default_steps::render_user_prompt)).
+    /// A server running the whole pipeline for many callers can replace this
+    /// step to decide for each request.
     fn render_user_prompt(&self, context: &JavaScriptBuilderContext<'_>) -> bool {
         default_steps::render_user_prompt(context)
     }

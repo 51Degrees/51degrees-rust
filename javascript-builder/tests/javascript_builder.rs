@@ -427,8 +427,8 @@ fn user_prompt_section_follows_the_keys_licensed_products() {
         assert!(js.ends_with("var fod = new fiftyoneDegreesManager();\n"));
     }
 
-    // A builder given no request engine has no licensed products to read, so
-    // the section is left out as well.
+    // A builder given no request engine, in a pipeline with no 51Did element,
+    // leaves the section out as well.
     let js = run(
         None,
         |b| b.set_minify(false).build(),
