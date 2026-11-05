@@ -696,6 +696,21 @@ extern "C" {
 // Data file metadata shim (src/shim.c)
 // ---------------------------------------------------------------------------
 
+/// A string value. The `FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_` constants are
+/// the C library's `fiftyoneDegreesPropertyValueType` values
+/// (`src/common/propertyValueType.h`) the C++ `PropertyMetaDataBuilderHash`
+/// names, for the `value_type`
+/// [`fiftyoneDegreesShimHashGetDataFileProperty`] gives.
+pub const FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_STRING: u8 = 0;
+/// An integer value.
+pub const FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_INTEGER: u8 = 1;
+/// A double value.
+pub const FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_DOUBLE: u8 = 2;
+/// A boolean value.
+pub const FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_BOOLEAN: u8 = 3;
+/// A JavaScript value.
+pub const FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_JAVASCRIPT: u8 = 4;
+
 /// The name of a data file property, for
 /// [`fiftyoneDegreesShimHashGetDataFilePropertyString`].
 pub const SHIM_PROPERTY_NAME: c_int = 0;

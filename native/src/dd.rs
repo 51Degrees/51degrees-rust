@@ -834,12 +834,19 @@ impl Manager {
 /// `fiftyoneDegreesPropertyValueType`, as the C++ `PropertyMetaDataBuilderHash`
 /// names it. A type the builder does not name is a string, as there.
 fn data_file_value_type(value_type: u8, is_list: bool) -> PropertyValueType {
+    use sys::{
+        FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_BOOLEAN as BOOLEAN,
+        FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_DOUBLE as DOUBLE,
+        FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_INTEGER as INTEGER,
+        FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_JAVASCRIPT as JAVASCRIPT,
+        FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_STRING as STRING,
+    };
     match value_type {
-        1 => PropertyValueType::Integer,
-        2 => PropertyValueType::Double,
-        3 => PropertyValueType::Bool,
-        4 => PropertyValueType::JavaScript,
-        0 if is_list => PropertyValueType::StringList,
+        INTEGER => PropertyValueType::Integer,
+        DOUBLE => PropertyValueType::Double,
+        BOOLEAN => PropertyValueType::Bool,
+        JAVASCRIPT => PropertyValueType::JavaScript,
+        STRING if is_list => PropertyValueType::StringList,
         _ => PropertyValueType::String,
     }
 }
@@ -1733,6 +1740,32 @@ mod tests {
             let script = find("JavascriptHardwareProfile");
             assert_eq!(script.value_type, PropertyValueType::JavaScript);
             assert!(properties.iter().all(|p| !p.name.is_empty()));
+        }
+    }
+
+    /// The numbers are `fiftyoneDegreesPropertyValueType` in the C library's
+    /// `src/common/propertyValueType.h`, and the types are those the C++
+    /// `PropertyMetaDataBuilderHash::getPropertyType` gives. The Lite file
+    /// has no double or list property, so only this test covers them.
+    #[test]
+    fn each_c_value_type_is_the_type_the_cxx_builder_names() {
+        let cases = [
+            (0, false, PropertyValueType::String),
+            (0, true, PropertyValueType::StringList),
+            (1, false, PropertyValueType::Integer),
+            (1, true, PropertyValueType::Integer),
+            (2, false, PropertyValueType::Double),
+            (3, false, PropertyValueType::Bool),
+            (4, false, PropertyValueType::JavaScript),
+            // A single precision float, which the builder does not name.
+            (5, false, PropertyValueType::String),
+        ];
+        for (value_type, is_list, expected) in cases {
+            assert_eq!(
+                data_file_value_type(value_type, is_list),
+                expected,
+                "type {value_type}, list {is_list}"
+            );
         }
     }
 

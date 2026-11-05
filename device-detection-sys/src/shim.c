@@ -647,8 +647,9 @@ int fiftyoneDegreesShimHashGetDataFileProperty(
         const uint32_t first = property->firstValueIndex;
         const uint32_t count = value_count(dataSet, property);
         *valueCount = count;
-        // The C++ builder finds the default value by name among the
-        // property's values, so a default outside them is none.
+        // The C++ MetaDataHash::getDefaultValueForProperty looks the default
+        // value up by name among the property's values, so a default outside
+        // them is none.
         *defaultValueNumber = property->defaultValueIndex >= first &&
             property->defaultValueIndex - first < count ?
             (int32_t)(property->defaultValueIndex - first) : -1;

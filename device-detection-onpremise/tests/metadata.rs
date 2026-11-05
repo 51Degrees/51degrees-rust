@@ -477,9 +477,9 @@ fn a_range_of_property_values_is_that_part_of_the_list() {
     assert_eq!(engine.property_value_count("ismobile"), None);
 }
 
-/// The issue's check. An engine restricted to IsMobile and asked for
-/// BrowserName, for a property the data file lacks and for `NotAProperty`
-/// gives .NET's reason and text each time.
+/// An engine restricted to IsMobile and asked for BrowserName, for a
+/// property the data file lacks and for `NotAProperty` gives .NET's reason
+/// and text each time.
 #[test]
 fn a_restricted_engine_gives_the_dotnet_reasons() {
     let Some(engine) = engine(&["IsMobile"]) else {
