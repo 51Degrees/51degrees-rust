@@ -2234,4 +2234,132 @@ mod tests {
         drop(manager);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// A reader for `read_metadata_string` that writes `text` as the shim
+    /// does and returns its full length, or returns `SHIM_STRING_FAILED` on
+    /// call number `fail_on`, counting from one. `calls` counts the calls.
+    fn shim_like_reader<'a>(
+        text: &'a str,
+        fail_on: Option<usize>,
+        calls: &'a mut usize,
+    ) -> impl FnMut(*mut c_char, usize) -> usize + 'a {
+        move |buffer, length| {
+            *calls += 1;
+            // Safety: `read_metadata_string` passes `length` writable bytes,
+            // and `length` is never zero.
+            let buffer = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, length) };
+            buffer[0] = 0;
+            if Some(*calls) == fail_on {
+                return sys::SHIM_STRING_FAILED;
+            }
+            let written = text.len().min(length - 1);
+            buffer[..written].copy_from_slice(&text.as_bytes()[..written]);
+            buffer[written] = 0;
+            text.len()
+        }
+    }
+
+    #[test]
+    fn a_metadata_string_that_fails_on_either_call_is_none() {
+        let fits = "x".repeat(METADATA_STRING_BUFFER_LENGTH - 1);
+        let too_long = "x".repeat(METADATA_STRING_BUFFER_LENGTH);
+        let read = |text: &str, fail_on| {
+            let mut calls = 0;
+            let result = read_metadata_string(shim_like_reader(text, fail_on, &mut calls));
+            (result, calls)
+        };
+
+        assert_eq!(read(&fits, None), (Some(fits.clone()), 1));
+        assert_eq!(read(&too_long, None), (Some(too_long.clone()), 2));
+        assert_eq!(read(&fits, Some(1)), (None, 1));
+        assert_eq!(read(&too_long, Some(1)), (None, 1));
+        assert_eq!(read(&too_long, Some(2)), (None, 2));
+    }
+
+    /// Calls a shim string reader with a buffer that starts full, and gives
+    /// the length it returns, or [`None`] for `SHIM_STRING_FAILED`, checking
+    /// that a failed read leaves the buffer empty.
+    fn shim_string_length(read: impl FnOnce(*mut c_char, usize) -> usize) -> Option<usize> {
+        let mut buffer = [b'x'; 64];
+        let length = read(buffer.as_mut_ptr() as *mut c_char, buffer.len());
+        if length == sys::SHIM_STRING_FAILED {
+            assert_eq!(buffer[0], 0, "a failed read leaves the buffer empty");
+            return None;
+        }
+        Some(length)
+    }
+
+    #[test]
+    fn each_shim_string_reader_fails_for_an_index_past_the_end() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping string readers");
+            return;
+        };
+        let fields = [
+            sys::SHIM_PROPERTY_NAME,
+            sys::SHIM_PROPERTY_DESCRIPTION,
+            sys::SHIM_PROPERTY_CATEGORY,
+            sys::SHIM_PROPERTY_URL,
+        ];
+        for profile in METADATA_PROFILES {
+            let manager = Manager::open(&path, profile).expect("data file loads");
+            let _file_read = manager.file_read();
+            let ptr = manager.as_ptr();
+            // Safety (every call below): the manager is initialized for the
+            // lifetime of `manager`, and each buffer is writable for the
+            // length given.
+            let properties = unsafe { sys::fiftyoneDegreesShimHashGetDataFilePropertyCount(ptr) };
+            let components = unsafe { sys::fiftyoneDegreesShimHashGetComponentCount(ptr) };
+            let string = |index, field| {
+                shim_string_length(|buffer, length| unsafe {
+                    sys::fiftyoneDegreesShimHashGetDataFilePropertyString(
+                        ptr, index, field, buffer, length,
+                    )
+                })
+            };
+            let tier = |index, map| {
+                shim_string_length(|buffer, length| unsafe {
+                    sys::fiftyoneDegreesShimHashGetDataFilePropertyMap(
+                        ptr, index, map, buffer, length,
+                    )
+                })
+            };
+            let component = |index| {
+                shim_string_length(|buffer, length| unsafe {
+                    sys::fiftyoneDegreesShimHashGetComponentName(ptr, index, buffer, length)
+                })
+            };
+            let profile = profile.as_str();
+
+            let last = properties - 1;
+            for field in fields {
+                assert!(string(last, field).is_some(), "{profile} field {field}");
+                for index in [properties, u32::MAX] {
+                    assert_eq!(string(index, field), None, "{profile} {index} {field}");
+                }
+            }
+            for field in [-1, sys::SHIM_PROPERTY_URL + 1] {
+                assert_eq!(string(last, field), None, "{profile} field {field}");
+            }
+
+            let (index, maps) = (0..properties)
+                .map(|index| {
+                    let fields = manager
+                        .read_property_fields(index)
+                        .expect("the property is read");
+                    (index, fields.map_count)
+                })
+                .find(|&(_, maps)| maps > 0)
+                .expect("a property is in a data tier");
+            assert!(tier(index, maps - 1).is_some(), "{profile}");
+            assert_eq!(tier(index, maps), None, "{profile}");
+            assert_eq!(tier(index, u32::MAX), None, "{profile}");
+            assert_eq!(tier(properties, 0), None, "{profile}");
+
+            assert!(component(components - 1).is_some(), "{profile}");
+            for index in [components, u32::MAX] {
+                assert_eq!(component(index), None, "{profile} {index}");
+            }
+        }
+    }
 }
