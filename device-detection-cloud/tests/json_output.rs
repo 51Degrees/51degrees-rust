@@ -25,7 +25,13 @@
 //! A cloud response gives a property it has no value for as null, beside a
 //! `<property>nullreason` entry. The data holds the property with that
 //! message, and the JSON builder writes it back as the property set to null
-//! followed by the same `<property>nullreason` key and text.
+//! followed by the same `<property>nullreason` key and text, in the place
+//! the response gave the property. A null property with no
+//! `<property>nullreason` entry is written with the reason `Unknown`.
+//!
+//! The JSON builder turns on serde_json's `preserve_order` feature, so in
+//! this build the response and the output are both read in the order their
+//! keys were written.
 
 use std::sync::Arc;
 
@@ -55,13 +61,14 @@ const ACCESSIBLE_PROPERTIES: &str = r#"{
 /// The evidence keys the request engine fetches.
 const EVIDENCE_KEYS: &str = r#"["header.user-agent"]"#;
 
-/// One null property with a reason and one without.
+/// One null property with a reason and one without, each beside a property
+/// with a value, in an order that is not alphabetical.
 const DEVICE_RESPONSE: &str = r#"{
     "device": {
+        "platformname": null,
         "ismobile": true,
         "hardwarevendor": null,
-        "hardwarevendornullreason": "No matching profiles were found.",
-        "platformname": null
+        "hardwarevendornullreason": "No matching profiles were found."
     }
 }"#;
 
@@ -129,11 +136,28 @@ fn a_null_property_is_written_as_null_with_its_reason() {
     assert_eq!(
         json["device"],
         json!({
+            "platformname": null,
+            "platformnamenullreason": "Unknown",
             "ismobile": true,
             "hardwarevendor": null,
-            "hardwarevendornullreason": "No matching profiles were found.",
-            "platformname": null,
-            "platformnamenullreason": "Unknown"
+            "hardwarevendornullreason": "No matching profiles were found."
         })
+    );
+    // Comparing two values ignores the order of their keys, so check it too.
+    let keys: Vec<&str> = json["device"]
+        .as_object()
+        .expect("the device data is an object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "platformname",
+            "platformnamenullreason",
+            "ismobile",
+            "hardwarevendor",
+            "hardwarevendornullreason"
+        ]
     );
 }

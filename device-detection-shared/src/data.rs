@@ -252,6 +252,10 @@ pub struct DeviceDataBase {
     /// The message of each property held with no value, as a string under
     /// the property's name, in the order the properties were added.
     no_values: MapElementData,
+    /// For each property in `no_values`, in the same order, how many names
+    /// the bag held when the property was added, so that `keys` lists it
+    /// among the bag's names where it was added.
+    no_value_places: Vec<usize>,
     /// The values read on request, when an engine attached a reader.
     deferred: Option<Arc<DeferredValues>>,
 }
@@ -272,6 +276,7 @@ impl DeviceDataBase {
         DeviceDataBase {
             base,
             no_values: MapElementData::new(),
+            no_value_places: Vec::new(),
             deferred: None,
         }
     }
@@ -383,6 +388,9 @@ impl DeviceDataBase {
     /// set for the same name takes precedence. The name is matched
     /// case-insensitively.
     pub fn insert_no_value(&mut self, name: impl AsRef<str>, message: impl Into<String>) {
+        if self.no_values.get_value(name.as_ref()).is_none() {
+            self.no_value_places.push(self.base.values().len());
+        }
         self.no_values
             .insert(name, PropertyValue::String(message.into()));
     }
@@ -476,18 +484,27 @@ impl ElementData for DeviceDataBase {
         !self.base.knows_missing_properties() || self.holds(name)
     }
 
-    /// The names of the properties in the bag, then those held with no value,
-    /// then those the reader holds, with or without a value, as .NET's data
-    /// lists every property it holds. A property with no value is listed so
-    /// the JSON builder writes it as null with the reason. Listing reads
-    /// nothing.
+    /// The names of the properties in the bag and those held with no value,
+    /// in the order they were added, then those the reader holds, with or
+    /// without a value, as .NET's data lists every property it holds. A
+    /// property with no value is listed so the JSON builder writes it as
+    /// null with the reason, in the place the cloud response gave it.
+    /// Listing reads nothing.
     fn keys(&self) -> Vec<String> {
-        let mut keys = self.base.keys();
-        for name in self.no_values.keys() {
+        let bag = self.base.keys();
+        let mut keys = Vec::with_capacity(bag.len() + self.no_value_places.len());
+        let mut listed = 0;
+        for (name, &place) in self.no_values.keys().into_iter().zip(&self.no_value_places) {
+            // The bag only grows, so each place is at least the one before
+            // and at most the bag's length.
+            let place = place.clamp(listed, bag.len());
+            keys.extend_from_slice(&bag[listed..place]);
+            listed = place;
             if self.base.values().get_value(&name).is_none() {
                 keys.push(name);
             }
         }
+        keys.extend_from_slice(&bag[listed..]);
         if let Some(deferred) = &self.deferred {
             // The reader's names are distinct, so only the few names set
             // directly can repeat one of them.
@@ -996,6 +1013,29 @@ mod tests {
         assert_eq!(device.hardware_vendor().no_value_message(), Some(NO_MATCH));
         assert_eq!(device.get("HardwareVendor").unwrap_err().message, NO_MATCH);
         assert!(!device.has_property("DeviceType"));
+    }
+
+    #[test]
+    fn keys_keep_the_order_properties_were_added_in() {
+        let mut device = DeviceDataBase::new();
+        device.insert_no_value("HardwareVendor", NO_MATCH);
+        device.insert("IsMobile", true);
+        device.insert("BrowserName", "Chrome");
+        device.insert_no_value("PlatformName", NO_MATCH);
+        device.insert("DeviceType", "Mobile");
+        // A name given again keeps its first place.
+        device.insert_no_value("hardwarevendor", NO_MATCH);
+        device.insert("ismobile", false);
+        assert_eq!(
+            device.keys(),
+            [
+                "hardwarevendor",
+                "ismobile",
+                "browsername",
+                "platformname",
+                "devicetype"
+            ]
+        );
     }
 
     #[test]
