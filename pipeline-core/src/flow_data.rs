@@ -559,4 +559,28 @@ mod tests {
         drop(member);
         data.end_group(before);
     }
+
+    /// The empty evidence a group's flow data and each member hold copies the
+    /// hasher of the evidence from before the group, so a key hashes the same
+    /// through each, where a freshly seeded hasher hashes it differently.
+    #[test]
+    fn group_evidence_copies_the_hasher_of_the_evidence_before_the_group() {
+        const KEY: &str = "header.user-agent";
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(Idle(EvidenceKeyFilterWhitelist::default())))
+            .build()
+            .unwrap();
+        let mut data = pipeline.create_flow_data();
+        let hash = data.evidence.hasher().hash_one(KEY);
+        assert_ne!(RandomState::new().hash_one(KEY), hash);
+
+        let before = data.begin_group();
+        let member = FlowData::group_member(&before);
+        assert_eq!(before.evidence.hasher().hash_one(KEY), hash);
+        assert_eq!(data.evidence.hasher().hash_one(KEY), hash);
+        assert_eq!(member.evidence.hasher().hash_one(KEY), hash);
+
+        drop(member);
+        data.end_group(before);
+    }
 }
