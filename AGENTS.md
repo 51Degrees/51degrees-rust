@@ -147,10 +147,20 @@ workspace reads the submodule and never needs the copy.
 - `pull-request.yml` — fmt, build, test, clippy and doc on Windows, Linux
   (two LTS) and macOS (Apple Silicon), plus a wasm32-wasip1 job for the cloud
   crates. Runs on pushes to `main` and on PRs into `main`, `rc` and
-  `release/**`. It builds the C sources and downloads the data files into
-  `cxx/data` with the data repository's script, keeping them in the Actions
-  cache for the day. It also runs `ci/check-native-symbols.ps1` and the
-  property lookup scaling test in release.
+  `release/**`. It builds the C sources and restores the data files into
+  `cxx/data` from the entry `data-files.yml` keeps in the Actions cache,
+  downloading with the data repository's script only a file it lacks. It also
+  runs `ci/check-native-symbols.ps1` and the property lookup scaling test in
+  release.
+- `data-files.yml` runs each day on `main` and keeps the free data files in
+  one Actions cache entry. It restores the newest entry, asks the Distributor
+  only whether each file has changed (`-Update`), and saves the files under a
+  new dated key. `pull-request.yml`, `examples.yml` and
+  `nightly-performance.yml` restore that entry through
+  `.github/actions/restore-data-files` and never save one, because an entry
+  saved by a pull request run can only be restored by that pull request. The
+  entry is found only by the same list of paths it was saved with, so the list
+  lives in that action alone.
 - `nightly-pipeline.yml` first runs common-ci's submodule update, which moves
   every submodule to the head of its default branch and raises a pull request
   into `rc` when one has moved, then builds the eligible pull requests into

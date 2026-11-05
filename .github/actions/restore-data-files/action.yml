@@ -1,0 +1,76 @@
+name: Restore the data files
+description: >-
+  Restores the free data files into cxx/data from the newest entry the Data
+  Files workflow saved in the Actions cache. It saves nothing and downloads
+  nothing, so the caller downloads any file it reads that was not restored.
+
+inputs:
+  root:
+    description: >-
+      The folder this repository is checked out in, relative to the
+      workspace.
+    default: .
+
+outputs:
+  paths:
+    description: >-
+      The files the entry holds, one per line, relative to the workspace.
+    value: ${{ steps.files.outputs.paths }}
+  key:
+    description: The key the Data Files workflow saves this run's entry under.
+    value: ${{ steps.files.outputs.key }}
+
+runs:
+  using: composite
+  steps:
+    # An entry is found only by the same paths, in the same order, as it was
+    # saved with, so every workflow takes the list from here.
+    - name: List the data files
+      id: files
+      shell: bash
+      run: |
+        echo "key=data-files-daily-$(date -u +%Y%m%d)-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+        cat >> "$GITHUB_OUTPUT" <<'EOF'
+        paths<<END
+        cxx/data/device-detection/51Degrees-LiteV4.1.hash
+        cxx/data/device-detection/20000 Evidence Records.yml
+        cxx/data/device-detection/20000 User Agents.csv
+        cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi
+        END
+        EOF
+
+    # No entry has this run's key yet, so the prefix finds the newest one. A
+    # pull request run can restore an entry saved on the default branch, but
+    # never one saved by another pull request.
+    - name: Restore the newest entry
+      id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.files.outputs.paths }}
+        key: ${{ steps.files.outputs.key }}
+        restore-keys: data-files-daily-
+        enableCrossOsArchive: true
+
+    - name: Report a missing entry
+      if: steps.restore.outputs.cache-matched-key == ''
+      shell: bash
+      run: echo "::warning title=No data file entry::No entry was restored, so the data files this job reads are downloaded."
+
+    # The entry puts the files under cxx/data in the workspace, so a checkout
+    # in a folder of its own has them moved into it.
+    - name: Move the data files into the checkout
+      if: inputs.root != '.' && steps.restore.outputs.cache-matched-key != ''
+      shell: pwsh
+      working-directory: ${{ github.workspace }}
+      env:
+        ROOT: ${{ inputs.root }}
+        PATHS: ${{ steps.files.outputs.paths }}
+      run: |
+        foreach ($path in $env:PATHS.Trim() -split '\r?\n' | ForEach-Object Trim) {
+          if (Test-Path -LiteralPath $path) {
+            $target = Join-Path $env:ROOT $path
+            $null = New-Item -ItemType Directory -Force -Path (Split-Path $target)
+            Move-Item -LiteralPath $path -Destination $target -Force
+          }
+        }
+        Remove-Item -LiteralPath cxx -Recurse -Force
