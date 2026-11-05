@@ -36,23 +36,35 @@ use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use crate::steps::JavaScriptBuilderContext;
 use crate::template_data::{safe_sequence, safe_session_id};
 
-/// The `application/x-www-form-urlencoded` percent-encoding set used for the
-/// request parameter names and values.
-///
-/// The set percent-encodes everything except the unreserved characters
-/// `A-Z a-z 0-9 - _ . *` (and encodes a space as `%20`, not `+`, because each
-/// name and value is encoded on its own before being placed into the JSON
-/// object). It starts from "encode all non-alphanumerics" and adds back the
-/// four exceptions.
+/// The characters [`url_encode`] percent-encodes. Letters, digits,
+/// `- _ . ! * ( )` and the space are left out, as .NET's
+/// `WebUtility.UrlEncode` leaves them, and the space is then written as `+`.
 const URL_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'-')
     .remove(b'_')
     .remove(b'.')
-    .remove(b'*');
+    .remove(b'!')
+    .remove(b'*')
+    .remove(b'(')
+    .remove(b')')
+    .remove(b' ');
+
+/// Encode a parameter name or value as .NET's `WebUtility.UrlEncode` does.
+/// A space becomes `+`, and every byte of the UTF-8 text other than a letter,
+/// a digit or one of `- _ . ! * ( )` becomes `%` and two upper case hex
+/// digits.
+fn url_encode(text: &str) -> String {
+    utf8_percent_encode(text, URL_ENCODE_SET)
+        .to_string()
+        .replace(' ', "+")
+}
 
 /// Every `query.` evidence value apart from the session id and sequence,
-/// named by the text after `query.`, with the name and value percent-encoded,
-/// in name order.
+/// named by the text after `query.`, with the name and value encoded as
+/// .NET's `WebUtility.UrlEncode` encodes them, in name order.
+///
+/// Evidence holds no order of its own, so the parameters are given in name
+/// order, where .NET gives them in the order the evidence was added.
 pub fn get_parameters(context: &JavaScriptBuilderContext<'_>) -> Vec<(String, String)> {
     let query_prefix = format!("{EVIDENCE_QUERY_PREFIX}{EVIDENCE_SEPARATOR}");
     let mut parameters: BTreeMap<String, String> = BTreeMap::new();
@@ -68,48 +80,42 @@ pub fn get_parameters(context: &JavaScriptBuilderContext<'_>) -> Vec<(String, St
             continue;
         }
         let field = &key[query_prefix.len()..];
-        let encoded_key = utf8_percent_encode(field, URL_ENCODE_SET).to_string();
-        let encoded_value = utf8_percent_encode(value, URL_ENCODE_SET).to_string();
-        parameters.insert(encoded_key, encoded_value);
+        parameters.insert(url_encode(field), url_encode(value));
     }
 
     parameters.into_iter().collect()
 }
 
 /// The sequence from the Sequence element's data, which has already added
-/// one to any `query.sequence` evidence, as the specification says. Without a
-/// Sequence element the `query.sequence` evidence is read instead. `1` when
-/// neither holds a positive 32-bit integer.
+/// one to any `query.sequence` evidence. `1` when no Sequence element ran or
+/// its sequence is not a positive 32-bit integer.
+///
+/// The specification says a pipeline with no Sequence element renders the
+/// sequence as `1`, so the `query.sequence` evidence is never read here.
 pub fn get_sequence(context: &JavaScriptBuilderContext<'_>) -> i32 {
-    let data = context.data();
-    let sequence = data
+    let sequence = context
+        .data()
         .get(SequenceElement::KEY)
         .and_then(|sequence| sequence.sequence())
         .and_then(|sequence| i32::try_from(sequence).ok())
-        .or_else(|| {
-            data.evidence()
-                .get(EVIDENCE_SEQUENCE)
-                .and_then(|s| s.trim().parse::<i32>().ok())
-        })
         .unwrap_or(1);
     safe_sequence(sequence)
 }
 
-/// The session id from the Sequence element's data. Without a Sequence
-/// element the `query.session-id` evidence is read instead. An empty string
-/// when neither holds 1 to 64 ASCII letters, digits and hyphens.
+/// The session id from the Sequence element's data. An empty string when no
+/// Sequence element ran or its session id is not 1 to 64 ASCII letters,
+/// digits and hyphens.
 ///
-/// The specification takes the session id from the Sequence element's data,
-/// because on a first request there is no `query.session-id` evidence and the
-/// Sequence element is what creates the id. Evidence cannot be changed once
-/// processing starts, so the id the Sequence element creates is only in its
-/// element data.
+/// The specification says a pipeline with no Sequence element renders an
+/// empty session id, so the `query.session-id` evidence is never read here.
+/// On a first request the Sequence element creates the id, and evidence
+/// cannot be changed once processing starts, so that id is only in the
+/// element's data.
 pub fn get_session_id(context: &JavaScriptBuilderContext<'_>) -> String {
-    let data = context.data();
-    let session_id = data
+    let session_id = context
+        .data()
         .get(SequenceElement::KEY)
         .and_then(|sequence| sequence.session_id())
-        .or_else(|| data.evidence().get(EVIDENCE_SESSIONID))
         .unwrap_or("");
     safe_session_id(session_id.to_owned())
 }
@@ -150,6 +156,23 @@ mod tests {
         pipeline.create_flow_data_with(builder.build())
     }
 
+    /// Build a flow data carrying the supplied evidence and process it on a
+    /// pipeline whose only element is the Sequence element, so the Sequence
+    /// element's data is there to read.
+    fn flow_data_after_sequence(pairs: &[(&str, &str)]) -> FlowData {
+        let mut builder = Evidence::builder();
+        for (key, value) in pairs {
+            builder = builder.add(*key, *value);
+        }
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(SequenceElement::new()))
+            .build()
+            .expect("pipeline builds");
+        let mut data = pipeline.create_flow_data_with(builder.build());
+        data.process().expect("the Sequence element runs");
+        data
+    }
+
     /// The default parameters for the supplied evidence.
     fn parameters(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         let element = JavaScriptBuilderElement::new();
@@ -166,18 +189,34 @@ mod tests {
     }
 
     #[test]
-    fn session_id_and_sequence_come_from_evidence() {
+    fn session_id_and_sequence_come_from_the_sequence_element() {
+        let element = JavaScriptBuilderElement::new();
+        let data =
+            flow_data_after_sequence(&[("query.session-id", "abc-123"), ("query.sequence", "7")]);
+        let context = JavaScriptBuilderContext::new(&element, &data);
+        assert_eq!(get_session_id(&context), "abc-123");
+        assert_eq!(get_sequence(&context), 8);
+    }
+
+    #[test]
+    fn without_a_sequence_element_the_evidence_is_not_read() {
         let element = JavaScriptBuilderElement::new();
         let data = flow_data_with(&[("query.session-id", "abc-123"), ("query.sequence", "7")]);
         let context = JavaScriptBuilderContext::new(&element, &data);
-        assert_eq!(get_session_id(&context), "abc-123");
-        assert_eq!(get_sequence(&context), 7);
+        assert_eq!(get_session_id(&context), "");
+        assert_eq!(get_sequence(&context), 1);
     }
 
     #[test]
     fn session_id_and_sequence_are_safe() {
         let element = JavaScriptBuilderElement::new();
-        let data = flow_data_with(&[("query.session-id", "a\"b"), ("query.sequence", "-1")]);
+        let data =
+            flow_data_after_sequence(&[("query.session-id", "a\"b"), ("query.sequence", "-2")]);
+        // The Sequence element keeps the session id as given and adds one to
+        // the sequence, so neither value it holds is safe for the script.
+        let sequence = data.get(SequenceElement::KEY).expect("sequence data");
+        assert_eq!(sequence.session_id(), Some("a\"b"));
+        assert_eq!(sequence.sequence(), Some(-1));
         let context = JavaScriptBuilderContext::new(&element, &data);
         assert_eq!(get_session_id(&context), "");
         assert_eq!(get_sequence(&context), 1);
@@ -208,10 +247,42 @@ mod tests {
         // header.* evidence is excluded, as only query.* is taken.
         assert!(!parameters.iter().any(|(_, value)| value == "ignored"));
         // The remaining query.* keys are present with the prefix stripped, and
-        // the space in the value is URL-encoded as %20 (not '+').
-        assert_eq!(parameter(&parameters, "user-agent"), Some("test%20agent"));
+        // the space in the value is encoded as '+', as .NET encodes it.
+        assert_eq!(parameter(&parameters, "user-agent"), Some("test+agent"));
         assert_eq!(parameter(&parameters, "fod-js-object-name"), Some("myObj"));
         assert_eq!(parameters.len(), 2);
+    }
+
+    #[test]
+    fn parameter_names_and_values_are_encoded_as_dotnet_encodes_them() {
+        // Each pair is the text and what .NET's WebUtility.UrlEncode gives
+        // for it.
+        for (text, encoded) in [
+            ("test agent", "test+agent"),
+            ("a+b", "a%2Bb"),
+            ("a=b&c", "a%3Db%26c"),
+            ("-_.!*()", "-_.!*()"),
+            ("~", "%7E"),
+            ("'", "%27"),
+            ("\"", "%22"),
+            ("/?#[]@", "%2F%3F%23%5B%5D%40"),
+            ("%", "%25"),
+            ("caf\u{e9}", "caf%C3%A9"),
+            ("\u{20ac}", "%E2%82%AC"),
+            ("\u{1f600}", "%F0%9F%98%80"),
+            ("  ", "++"),
+            ("", ""),
+            ("x<y>z", "x%3Cy%3Ez"),
+            ("^`{|}", "%5E%60%7B%7C%7D"),
+            ("line\nbreak", "line%0Abreak"),
+            ("tab\there", "tab%09here"),
+            (",;:$", "%2C%3B%3A%24"),
+        ] {
+            assert_eq!(url_encode(text), encoded, "{text:?}");
+        }
+
+        let parameters = parameters(&[("query.a b", "c d")]);
+        assert_eq!(parameter(&parameters, "a+b"), Some("c+d"));
     }
 
     #[test]

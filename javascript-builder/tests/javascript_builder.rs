@@ -664,9 +664,10 @@ fn supplied_session_id_is_kept_and_the_sequence_moves_on() {
 }
 
 #[test]
-fn without_a_sequence_element_the_evidence_is_used() {
-    // A pipeline with no sequence element still reads the evidence directly.
-    // The JSON builder fails without a Sequence element, so its error is
+fn without_a_sequence_element_the_evidence_is_not_used() {
+    // The specification renders an empty session id and a sequence of 1
+    // when there is no Sequence element, so the evidence is not read. The
+    // JSON builder fails without a Sequence element, so its error is
     // suppressed and the JavaScript builder still renders.
     let pipeline = Pipeline::builder()
         .add_element(Arc::new(JsonBuilderElement::new()))
@@ -691,8 +692,8 @@ fn without_a_sequence_element_the_evidence_is_used() {
         .expect("javascript builder data present")
         .javascript()
         .to_owned();
-    assert_eq!(rendered_session_id(&js), "abc");
-    assert!(js.contains("var sequence = 4;"));
+    assert_eq!(rendered_session_id(&js), "");
+    assert!(js.contains("var sequence = 1;"));
 }
 
 #[test]

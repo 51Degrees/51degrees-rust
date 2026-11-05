@@ -70,24 +70,45 @@ enum UserPrompt {
 fn parameters_json(parameters: &[(String, String)]) -> String {
     let members: Vec<String> = parameters
         .iter()
-        .map(|(name, value)| {
-            format!(
-                "{}:{}",
-                serde_json::Value::from(name.as_str()),
-                serde_json::Value::from(value.as_str())
-            )
-        })
+        .map(|(name, value)| format!("{}:{}", json_string(name), json_string(value)))
         .collect();
     format!("{{{}}}", members.join(","))
+}
+
+/// A JSON string as Newtonsoft.Json writes it with its default settings,
+/// which is serde_json's form with U+0085, U+2028 and U+2029 also written as
+/// `\u` escapes. Those three can only appear inside a string, so replacing
+/// them after serde_json has written the string changes nothing else.
+fn json_string(text: &str) -> String {
+    serde_json::Value::from(text)
+        .to_string()
+        .replace('\u{85}', "\\u0085")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
+}
+
+/// Read a boolean as .NET's `bool.TryParse` does. `true` or `false` in any
+/// case, once white space and NUL characters are trimmed from both ends.
+/// White space is the Unicode White_Space property in both languages.
+fn parse_boolean(text: &str) -> Option<bool> {
+    let text = text.trim_matches(|c: char| c.is_whitespace() || c == '\0');
+    if text.eq_ignore_ascii_case("true") {
+        Some(true)
+    } else if text.eq_ignore_ascii_case("false") {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 /// Generates a JavaScript include to be run on the client device.
 ///
 /// The element renders the bundled Mustache template with the JSON payload
 /// produced by the JSON builder, the session id and sequence number (from the
-/// sequence element's data, or from evidence when no sequence element ran),
-/// a callback URL and the request parameters, then optionally minifies the
-/// result. The generated JavaScript is stored on the flow data under the
+/// Sequence element's data, or an empty session id and sequence `1` when no
+/// Sequence element ran), a callback URL and the request parameters, then
+/// optionally minifies the result. The generated JavaScript is stored on the
+/// flow data under the
 /// [`crate::JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY`] element data key. It implements
 /// the
 /// [javascript-builder specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/javascript-builder.md).
@@ -102,8 +123,10 @@ fn parameters_json(parameters: &[(String, String)]) -> String {
 ///   `NaN`, `undefined` or `fiftyoneDegreesManager`, else the configured
 ///   object name (default `fod`). An invalid requested name, the empty string
 ///   included, is ignored with a warning logged through the `log` crate.
-/// - **enable cookies**: the `query.fod-js-enable-cookies` evidence parsed as a
-///   boolean if present, else the configured default (true).
+/// - **enable cookies**: the `query.fod-js-enable-cookies` evidence when it
+///   is `true` or `false` in any case, with white space and NUL characters
+///   around it ignored, as .NET's `bool.TryParse` reads it, else the
+///   configured default (true).
 /// - **callback URL**: built only when protocol, host and endpoint are all
 ///   present, normalizing the single slash between host and endpoint. A URL
 ///   that is not valid is left out and logged at error level the first time,
@@ -112,13 +135,16 @@ fn parameters_json(parameters: &[(String, String)]) -> String {
 ///   percent-encoded. The protocol must be `http` or `https`, ignoring case.
 ///   When a URL is built the background-update mechanism is enabled.
 /// - **parameters**: every `query.*` evidence entry except the session id and
-///   sequence, with the prefix stripped and the key and value URL-encoded,
-///   in name order, serialized as a JSON object.
-/// - **session id**: the session id from the flow data when it is 1 to 64
-///   ASCII letters, digits and hyphens, else an empty string, because the
-///   template writes it inside quotes without any escaping.
-/// - **sequence**: the sequence from the flow data when it is a positive 32
-///   bit integer, else `1`, because the template writes it as bare code.
+///   sequence, with the prefix stripped and the key and value encoded as
+///   .NET's `WebUtility.UrlEncode` encodes them, in name order, serialized as
+///   a JSON object as Newtonsoft.Json writes one.
+/// - **session id**: the session id from the Sequence element's data when it
+///   is 1 to 64 ASCII letters, digits and hyphens, else an empty string,
+///   because the template writes it inside quotes without any escaping. An
+///   empty string when no Sequence element ran.
+/// - **sequence**: the sequence from the Sequence element's data when it is a
+///   positive 32 bit integer, else `1`, because the template writes it as
+///   bare code. `1` when no Sequence element ran.
 /// - **has delayed properties**: true when the JSON payload contains the
 ///   `delayexecution` marker.
 /// - **supports promises**: true when this request's device-detection
@@ -357,13 +383,14 @@ impl JavaScriptBuilderElement {
     }
 
     /// Resolve the enable-cookies flag: `query.fod-js-enable-cookies` evidence
-    /// parsed as a boolean if present and parseable, else the configured
-    /// default.
+    /// read as .NET's `bool.TryParse` reads it, else the configured default.
+    /// Blank or other text gives the configured default, as the specification
+    /// and .NET do.
     fn resolve_enable_cookies(&self, data: &FlowData) -> bool {
-        match data.evidence().get(EVIDENCE_ENABLE_COOKIES) {
-            Some(value) => value.trim().parse::<bool>().unwrap_or(self.enable_cookies),
-            None => self.enable_cookies,
-        }
+        data.evidence()
+            .get(EVIDENCE_ENABLE_COOKIES)
+            .and_then(parse_boolean)
+            .unwrap_or(self.enable_cookies)
     }
 
     /// The callback URL, or `None` when a part is missing or the URL is not
@@ -567,7 +594,31 @@ mod tests {
     }
 
     #[test]
-    fn the_default_parameters_are_written_as_before() {
+    fn parameters_are_written_as_newtonsoft_writes_them() {
+        // The text .NET's JsonConvert.SerializeObject gives for a dictionary
+        // holding the same names and values, in the same order.
+        let json = parameters_json(&[
+            pair("nel", "\u{85}"),
+            pair("ls", "\u{2028}"),
+            pair("ps", "\u{2029}"),
+            pair("quote", "a\"b\\c"),
+            pair("control", "\u{8}\u{c}\n\r\t\u{1}\u{1f}\u{7f}"),
+            pair("html", "<&'>/"),
+            pair("high", "caf\u{e9}\u{20ac}"),
+        ]);
+        assert_eq!(
+            json,
+            "{\"nel\":\"\\u0085\",\"ls\":\"\\u2028\",\"ps\":\"\\u2029\",\
+             \"quote\":\"a\\\"b\\\\c\",\
+             \"control\":\"\\b\\f\\n\\r\\t\\u0001\\u001f\u{7f}\",\
+             \"html\":\"<&'>/\",\"high\":\"caf\u{e9}\u{20ac}\"}"
+        );
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(value["ls"], "\u{2028}");
+    }
+
+    #[test]
+    fn the_default_parameters_are_encoded_as_dotnet_encodes_them() {
         let element = JavaScriptBuilderElement::new();
         let data = flow_data_with(&[
             ("query.b", "2 3"),
@@ -576,7 +627,7 @@ mod tests {
         ]);
         let context = JavaScriptBuilderContext::new(&element, &data);
         let parameters = crate::default_steps::get_parameters(&context);
-        assert_eq!(parameters_json(&parameters), r#"{"a":"1","b":"2%203"}"#);
+        assert_eq!(parameters_json(&parameters), r#"{"a":"1","b":"2+3"}"#);
     }
 
     #[test]
@@ -650,6 +701,56 @@ mod tests {
         // Default is true when no evidence is supplied.
         let data = flow_data_with(&[]);
         assert!(element.resolve_enable_cookies(&data));
+    }
+
+    #[test]
+    fn enable_cookies_evidence_is_read_as_dotnet_reads_it() {
+        // Each value with what .NET's bool.TryParse gives for it, None being
+        // a value it does not take, which leaves the configured default.
+        let cases: [(&str, Option<bool>); 29] = [
+            ("true", Some(true)),
+            ("TRUE", Some(true)),
+            ("True", Some(true)),
+            ("tRuE", Some(true)),
+            ("false", Some(false)),
+            ("FALSE", Some(false)),
+            ("False", Some(false)),
+            (" false ", Some(false)),
+            ("\tfalse\0", Some(false)),
+            ("false\0", Some(false)),
+            ("\0true", Some(true)),
+            ("\u{3000}false", Some(false)),
+            ("\u{85}true", Some(true)),
+            ("\u{a0}true", Some(true)),
+            ("\u{200b}false", None),
+            ("\u{feff}false", None),
+            ("", None),
+            (" ", None),
+            ("yes", None),
+            ("no", None),
+            ("1", None),
+            ("0", None),
+            ("on", None),
+            ("t", None),
+            ("f", None),
+            ("falsey", None),
+            ("true1", None),
+            (" tru", None),
+            ("tr ue", None),
+        ];
+        for configured in [true, false] {
+            let element = JavaScriptBuilderElement::builder()
+                .set_enable_cookies(configured)
+                .build();
+            for (value, parsed) in cases {
+                let data = flow_data_with(&[("query.fod-js-enable-cookies", value)]);
+                assert_eq!(
+                    element.resolve_enable_cookies(&data),
+                    parsed.unwrap_or(configured),
+                    "{value:?} with {configured} configured"
+                );
+            }
+        }
     }
 
     #[test]

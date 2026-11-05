@@ -124,27 +124,25 @@ pub trait JavaScriptBuilderSteps: Send + Sync + RefUnwindSafe {
     /// value as it is given, so a name should be given once and both should
     /// already be encoded for a URL. The default gives every `query.`
     /// evidence value apart from the session id and sequence, named by the
-    /// text after `query.`, with the name and value percent-encoded, in name
-    /// order.
+    /// text after `query.`, with the name and value encoded as .NET's
+    /// `WebUtility.UrlEncode` encodes them, in name order.
     fn get_parameters(&self, context: &JavaScriptBuilderContext<'_>) -> Vec<(String, String)> {
         default_steps::get_parameters(context)
     }
 
     /// The sequence number of this request in its session.
     ///
-    /// The default reads the Sequence element's data, then the
-    /// `query.sequence` evidence when no Sequence element ran, and gives `1`
-    /// when neither holds a positive 32-bit integer.
+    /// The default reads the Sequence element's data, and gives `1` when no
+    /// Sequence element ran or its sequence is not a positive 32-bit integer.
     fn get_sequence(&self, context: &JavaScriptBuilderContext<'_>) -> i32 {
         default_steps::get_sequence(context)
     }
 
     /// The session id of this request.
     ///
-    /// The default reads the Sequence element's data, then the
-    /// `query.session-id` evidence when no Sequence element ran, and gives
-    /// an empty string when neither holds 1 to 64 ASCII letters, digits and
-    /// hyphens.
+    /// The default reads the Sequence element's data, and gives an empty
+    /// string when no Sequence element ran or its session id is not 1 to 64
+    /// ASCII letters, digits and hyphens.
     fn get_session_id(&self, context: &JavaScriptBuilderContext<'_>) -> String {
         default_steps::get_session_id(context)
     }
