@@ -747,6 +747,7 @@ dependencies = [
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
  "fodid",
+ "log",
  "once_cell",
  "serde_json",
 ]

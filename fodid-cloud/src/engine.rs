@@ -165,8 +165,8 @@ impl FodIdCloudEngine {
     /// Derive the identifier metadata from the request engine's accessible
     /// properties, taking the product keyed by `fodid` compared ignoring case,
     /// because the cloud service reports the product as `FODid`. Returns `None`
-    /// if the discovery fetch fails or the resource key grants no identifier
-    /// product, in which case the engine keeps reporting the shared defaults.
+    /// if the resource key grants no identifier product or lists it with no
+    /// properties.
     fn derive_metadata(
         products: &LicensedProducts,
     ) -> Option<(Vec<PropertyMetaData>, Vec<AspectPropertyMetaData>)> {
@@ -200,19 +200,37 @@ impl FodIdCloudEngine {
         Some((core, aspect))
     }
 
-    /// Ensure the lazily derived metadata is populated, fetching the request
-    /// engine's accessible properties on first use. A discovery failure leaves
-    /// the caches empty, so the engine continues with the shared defaults,
-    /// degrading gracefully when the metadata cannot be loaded.
+    /// Set the metadata once the request engine's discovery has completed.
+    ///
+    /// Until then the caches stay empty and the engine reports the shared
+    /// defaults. A resource key that grants no identifier product, or lists it
+    /// with no properties, gets empty metadata, as the other cloud engines and
+    /// .NET do, and the call that sets it logs an error, so it is logged once.
+    /// With only a license key there are no accessible properties to read, so
+    /// the engine keeps the defaults and logs nothing. The properties are set
+    /// last because a request that finds them set reads the rest.
     fn ensure_metadata(&self) {
         if self.properties.get().is_some() {
             return;
         }
-        if let Ok(products) = self.request_engine.public_properties() {
-            if let Some((core, aspect)) = Self::derive_metadata(products) {
-                let _ = self.properties.set(core);
+        let Ok(products) = self.request_engine.public_properties() else {
+            return;
+        };
+        match Self::derive_metadata(products) {
+            Some((core, aspect)) => {
                 let _ = self.aspect_properties.set(aspect);
+                let _ = self.properties.set(core);
             }
+            None if self.request_engine.resource_key().is_some() => {
+                let _ = self.aspect_properties.set(Vec::new());
+                if self.properties.set(Vec::new()).is_ok() {
+                    log::error!(
+                        "Aspect properties could not be loaded for {ENGINE_NAME} - \
+                         '{FODID_ELEMENT_DATA_KEY}'"
+                    );
+                }
+            }
+            None => {}
         }
     }
 
@@ -261,6 +279,7 @@ impl FodIdCloudEngine {
 
 impl FlowElement for FodIdCloudEngine {
     fn process(&self, data: &mut FlowData) -> Result<()> {
+        self.ensure_metadata();
         let element = match self.build_data(data)? {
             Some(element) => element,
             None => {

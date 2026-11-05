@@ -18,6 +18,7 @@ fiftyone-cloud-request-engine = { version = "4.5.2", path = "../cloud-request-en
 fodid = { version = "4.5.5", path = "../fodid" }
 serde_json.workspace = true
 once_cell.workspace = true
+log = "0.4"
 
 [features]
 # Forward the cloud request engine's built-in reqwest client. Off by default so
