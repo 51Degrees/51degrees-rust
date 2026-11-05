@@ -184,6 +184,15 @@ jobs:
           cat out/report.md >> "$GITHUB_STEP_SUMMARY"
           exit $status
 
+      # Latitude, Longitude and the points of Areas are given to 3 decimal
+      # places. Only the Enterprise file carries them, so the test runs here.
+      - name: Check locations have 3 decimal places
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        run: |
+          env 51DEGREES_IPI_PATH="$IPI_FILE" cargo test \
+            -p fiftyone-ip-intelligence-onpremise --test decimal_places \
+            -- --nocapture
+
       # A changed Rust answer must fail the comparison and be named in the
       # report, or the comparison proves nothing.
       - name: Check that a changed answer fails
