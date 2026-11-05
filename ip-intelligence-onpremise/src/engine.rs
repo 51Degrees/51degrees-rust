@@ -103,6 +103,9 @@ pub struct IpIntelligenceOnPremiseEngine {
     loaded: ArcSwap<LoadedDataSet>,
     /// The performance profile used to (re)open the data file on refresh.
     profile: PerformanceProfile,
+    /// The expected concurrency used to (re)open the data file on refresh, or
+    /// `None` for the profile's own.
+    concurrency: Option<u16>,
     /// The properties the engine was restricted to, lowercased. Empty means all
     /// typed properties are populated.
     requested_properties: Vec<String>,
@@ -197,6 +200,7 @@ impl IpIntelligenceOnPremiseEngine {
                 &metadata,
             )),
             profile,
+            concurrency: None,
             requested_properties,
             populated_property_names,
             properties,
@@ -212,6 +216,13 @@ impl IpIntelligenceOnPremiseEngine {
     /// copied it into, or the system's temporary folder when `None`.
     pub(crate) fn with_temp_dir(mut self, temp_dir: Option<PathBuf>) -> Self {
         self.temp_dir = temp_dir;
+        self
+    }
+
+    /// Open the data file on refresh with the expected concurrency the builder
+    /// opened it with, or the profile's own when `None`.
+    pub(crate) fn with_concurrency(mut self, concurrency: Option<u16>) -> Self {
+        self.concurrency = concurrency;
         self
     }
 
@@ -316,10 +327,11 @@ impl IpIntelligenceOnPremiseEngine {
                 file.configuration(),
             )
         });
-        let manager = Manager::open_with_properties(
+        let manager = Manager::open_with_options(
             copy.as_ref().map_or(path.as_path(), OperationalCopy::path),
             self.profile,
             property_refs.as_deref(),
+            self.concurrency,
         )?;
         let evidence_keys = DataFileEvidenceKeys::whitelist(&manager);
         let metadata = TierMetadata::new(
@@ -824,6 +836,58 @@ mod tests {
             .build()
             .expect("the IP Intelligence data file should build an engine");
         assert_reader_covers_carried_properties(&engine);
+    }
+
+    /// The most expected concurrency the Balanced profile opens with. Its
+    /// smallest cache, the profiles, holds 10,000 entries, and a cache needs at
+    /// least as many entries in each of its parts as it has parts.
+    const BALANCED_MOST_CONCURRENCY: u16 = 100;
+
+    /// True when opening the data set was refused for a cache that cannot be
+    /// split into the parts the expected concurrency asks for.
+    fn refused_for_concurrency(result: Result<()>) -> bool {
+        matches!(
+            result,
+            Err(Error::Native { status, .. }) if status == "InvalidCollectionConfig"
+        )
+    }
+
+    /// The expected concurrency reaches the native data set when the engine
+    /// is built and when it is refreshed, as one more than the Balanced
+    /// profile allows is refused only if it gets there.
+    #[test]
+    fn the_expected_concurrency_opens_the_data_set_and_its_refresh() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping concurrency");
+            return;
+        };
+        let builder = || {
+            IpIntelligenceOnPremiseEngine::builder(&data_file)
+                .performance_profile(PerformanceProfile::Balanced)
+                // Off so the build needs no licence key.
+                .auto_update(false)
+        };
+
+        let too_many = builder()
+            .concurrency(BALANCED_MOST_CONCURRENCY + 1)
+            .build()
+            .map(drop);
+        assert!(refused_for_concurrency(too_many));
+        let most = builder()
+            .concurrency(BALANCED_MOST_CONCURRENCY)
+            .build()
+            .expect("the most concurrency Balanced allows opens");
+        drop(most);
+
+        let engine = builder()
+            .build()
+            .expect("the profile's own concurrency opens")
+            .with_concurrency(Some(BALANCED_MOST_CONCURRENCY + 1));
+        assert!(refused_for_concurrency(engine.refresh(None)));
+        let engine = engine.with_concurrency(Some(BALANCED_MOST_CONCURRENCY));
+        engine
+            .refresh(None)
+            .expect("a refresh with the most concurrency Balanced allows opens");
     }
 
     /// With properties requested each lookup reads only those.

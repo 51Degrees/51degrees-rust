@@ -86,6 +86,8 @@ pub struct IpIntelligenceOnPremiseEngineBuilder {
     max_randomisation_seconds: Option<u64>,
     data_update_service: Option<Arc<DataUpdateService>>,
     temp_dir: Option<PathBuf>,
+    /// The expected concurrency, or [`None`] to keep the profile's own.
+    concurrency: Option<u16>,
 }
 
 impl IpIntelligenceOnPremiseEngineBuilder {
@@ -113,12 +115,33 @@ impl IpIntelligenceOnPremiseEngineBuilder {
             max_randomisation_seconds: None,
             data_update_service: None,
             temp_dir: None,
+            concurrency: None,
         }
     }
 
     /// Set the performance profile the data file is opened with.
     pub fn performance_profile(mut self, profile: PerformanceProfile) -> Self {
         self.profile = profile;
+        self
+    }
+
+    /// Set the expected concurrency, which is the number of threads that will
+    /// look up through the engine at once.
+    ///
+    /// Under [`PerformanceProfile::LowMemory`] and
+    /// [`PerformanceProfile::Balanced`] it sizes the pool of file handles the
+    /// collections left on file read through, so it is how many calls can read
+    /// the data file at once, and a call beyond that waits for a handle. Under
+    /// [`PerformanceProfile::Balanced`] it is also the number of separately
+    /// locked parts of each cache. A cache needs at least as many entries in
+    /// each part as it has parts, so a value whose square is more than the
+    /// entries of the smallest cache fails to open, with the native status
+    /// `InvalidCollectionConfig`. The in-memory profiles read nothing from the
+    /// data file once it is loaded, so it does not change how their lookups
+    /// run. Unset, the profile's own expected concurrency is kept. A refresh
+    /// opens the new data file with the same value.
+    pub fn concurrency(mut self, concurrency: u16) -> Self {
+        self.concurrency = Some(concurrency);
         self
     }
 
@@ -300,11 +323,12 @@ impl IpIntelligenceOnPremiseEngineBuilder {
             self.profile,
             &configuration,
         );
-        let manager = Manager::open_with_properties(
+        let manager = Manager::open_with_options(
             copy.as_ref()
                 .map_or(self.data_file_path.as_path(), OperationalCopy::path),
             self.profile,
             property_refs.as_deref(),
+            self.concurrency,
         )?;
 
         let data_file = Arc::new(AspectEngineDataFile::new(configuration));
@@ -318,7 +342,8 @@ impl IpIntelligenceOnPremiseEngineBuilder {
             self.data_source_tier,
             data_file,
         )
-        .with_temp_dir(self.temp_dir))
+        .with_temp_dir(self.temp_dir)
+        .with_concurrency(self.concurrency))
     }
 
     /// Build the data-file configuration that captures the update options. The
@@ -442,6 +467,14 @@ mod tests {
             .err()
             .expect("the file does not exist");
         assert!(!error.to_string().contains("licence key"), "{error}");
+    }
+
+    #[test]
+    fn concurrency_is_unset_until_it_is_set() {
+        const THREADS: u16 = 16;
+        let builder = IpIntelligenceOnPremiseEngineBuilder::new("d.ipi");
+        assert_eq!(builder.concurrency, None);
+        assert_eq!(builder.concurrency(THREADS).concurrency, Some(THREADS));
     }
 
     #[test]
