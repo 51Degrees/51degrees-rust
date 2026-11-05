@@ -344,20 +344,42 @@ On Windows, run
 
 ### Running the examples
 
+The examples are a Cargo workspace of their own in `examples`, which the root
+workspace leaves out, so run them from that folder. They build against the
+crates published on crates.io. Add `--config source.toml` to build them against
+the crates in this checkout instead.
+
 ```sh
+git clone --recurse-submodules https://github.com/51Degrees/51degrees-rust.git
+cd 51degrees-rust/examples
+
+# On-premise examples run with no settings. Each reads the free data files in
+# cxx/data, downloading one that is missing, unless 51DEGREES_DD_PATH or
+# 51DEGREES_IPI_PATH names another file.
+cargo run -p device-detection-examples --bin dd-onprem-getting-started
+cargo run -p ip-intelligence-examples --bin ipi-onprem-getting-started
+
 # Cloud examples read 51DEGREES_RESOURCE_KEY from the environment.
 cargo run -p device-detection-examples --bin dd-cloud-getting-started
 cargo run -p ip-intelligence-examples --bin ipi-cloud-getting-started
-
-# On-premise examples read the data files in cxx/data, downloading one that is
-# missing, or the files 51DEGREES_DD_PATH and 51DEGREES_IPI_PATH name.
-cargo run -p device-detection-examples --bin dd-onprem-getting-started
-cargo run -p ip-intelligence-examples --bin ipi-onprem-getting-started
 
 # Web examples (cloud variant shown).
 cargo run -p device-detection-examples --bin dd-web-getting-started-cloud
 cargo run -p fodid-examples --bin fodid-web-creator-context
 ```
+
+The free data files carry a small set of properties. Each on-premise example
+also asks for properties only the Enterprise data file carries, such as
+HardwareVendor, DeviceType and PriceBand for Device Detection, and Country,
+Town and IsVPN for IP Intelligence. On a free file each of those says it needs
+the Enterprise data file, and the output gives a link to contact 51Degrees
+about a copy. The on-premise IP Intelligence examples read the free Lite file,
+a download of about 320 MB that carries RegisteredName, RegisteredOwner and
+RegisteredCountry. `ipi-onprem-performance` and `ipi-onprem-update-data-file`
+read the ASN file instead, a download of a few megabytes, because their
+properties do not matter to what they show, and `ipi-onprem-getting-started`
+reads both, the ASN file for Asn and AsnName. Every example ends with a "Find
+out more" section.
 
 Every cloud example calls the public 51Degrees cloud at
 `https://cloud.51degrees.com/api/v4/` unless `51DEGREES_CLOUD_ENDPOINT` names
