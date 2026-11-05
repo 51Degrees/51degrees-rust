@@ -31,8 +31,7 @@
 //!
 //! [`map_device_object`] turns that object into a [`DeviceDataBase`], the same
 //! concrete type the on-premise engine populates, so the two engines are
-//! interface-compatible (see the [crate documentation](crate)). It pairs each
-//! value with its `nullreason` sibling entry.
+//! interface-compatible (see the [crate documentation](crate)).
 //!
 //! ## How a value becomes a typed [`PropertyValue`]
 //!
@@ -52,17 +51,15 @@
 //!
 //! ## No-value handling
 //!
-//! A `null` property is not written into the bag at all, exactly as the
-//! on-premise engine leaves an absent property absent. Its accompanying
-//! `<property>nullreason` message is preserved verbatim in the bag under that
-//! same `nullreason` key, so a caller (or a higher-level typed wrapper) can
-//! recover the cloud's explanation rather than the generic "not present"
-//! message. A shared [`DeviceData`](fiftyone_device_detection_shared::DeviceData)
-//! accessor for the absent property therefore returns
-//! [`AspectPropertyValue::NoValue`](fiftyone_pipeline_engines::AspectPropertyValue::NoValue),
-//! which is the behavior the
-//! [null-values specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#null-values)
-//! requires.
+//! A `null` property is held with no value through
+//! [`DeviceDataBase::insert_no_value`], its message being the
+//! `<property>nullreason` entry's text, or `Unknown` when there is none. The
+//! `nullreason` entries are not properties, so they are left out of the data.
+//! A typed accessor or `get` for the property gives that message, and the
+//! JSON builder writes it back as `<property>nullreason`. This is what the
+//! [cloud aspect engine specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/cloud-aspect-engine.md#processing)
+//! describes for the
+//! [null values feature](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#null-values).
 
 use fiftyone_device_detection_shared::DeviceDataBase;
 use fiftyone_pipeline_core::PropertyValue;
@@ -72,15 +69,20 @@ use serde_json::Value;
 /// explains why a property has no value.
 pub(crate) const NULL_REASON_SUFFIX: &str = "nullreason";
 
+/// The message for a null property whose response has no `nullreason` entry
+/// for it.
+pub(crate) const UNKNOWN_REASON: &str = "Unknown";
+
 /// Build a [`DeviceDataBase`] from the cloud `device` JSON object.
 ///
 /// `device` is the `device` member of the cloud response, already isolated from
 /// the surrounding document. Every non-null property is written into the data's
-/// dynamic bag as the nearest [`PropertyValue`]. Null properties are skipped, but
-/// their `<property>nullreason` sibling is preserved so the no-value explanation
-/// is not lost. The keys are stored under their cloud names (lower case as the
-/// cloud sends them); the bag folds case, so the shared canonical accessors such
-/// as `IsMobile` still resolve them.
+/// dynamic bag as the nearest [`PropertyValue`]. A null property is held with
+/// no value, its message being its `<property>nullreason` entry, found
+/// ignoring case, or [`UNKNOWN_REASON`]. Every key ending `nullreason` is left
+/// out. The keys are stored under their cloud names (lower case as the cloud
+/// sends them); the bag folds case, so the shared canonical accessors such as
+/// `IsMobile` still resolve them.
 ///
 /// Returns an empty [`DeviceDataBase`] if `device` is not a JSON object, which
 /// keeps a malformed or unexpected payload from panicking.
@@ -93,26 +95,12 @@ pub(crate) fn map_device_object(device: &Value) -> DeviceDataBase {
     };
 
     for (name, value) in object {
-        // The nullreason siblings are written through alongside their owning
-        // property below, so they are not treated as properties in their own
-        // right here.
         if is_null_reason_key(name) {
-            // Preserve the explanation so a no-value property keeps its cloud
-            // message. It is stored verbatim under its own key.
-            if let Value::String(message) = value {
-                data.insert(name, message.clone());
-            }
             continue;
         }
-
-        // A null value carries no data: leave the property absent, exactly as
-        // the on-premise engine does, so the typed accessor reports a no-value.
-        // The paired nullreason entry (handled above) keeps the reason.
         if value.is_null() {
-            continue;
-        }
-
-        if let Some(property) = json_to_property_value(value) {
+            data.insert_no_value(name, null_reason(object, name));
+        } else if let Some(property) = json_to_property_value(value) {
             data.insert(name, property);
         }
     }
@@ -120,11 +108,29 @@ pub(crate) fn map_device_object(device: &Value) -> DeviceDataBase {
     data
 }
 
-/// True if `name` is a `<property>nullreason` sibling key, matched
-/// case-insensitively as the cloud may use any casing.
+/// True if `name` ends with `nullreason`, ignoring case. Such an entry
+/// explains a null property and is not a property itself.
 fn is_null_reason_key(name: &str) -> bool {
-    let name = name.to_ascii_lowercase();
-    name.len() > NULL_REASON_SUFFIX.len() && name.ends_with(NULL_REASON_SUFFIX)
+    name.len() >= NULL_REASON_SUFFIX.len()
+        && name.as_bytes()[name.len() - NULL_REASON_SUFFIX.len()..]
+            .eq_ignore_ascii_case(NULL_REASON_SUFFIX.as_bytes())
+}
+
+/// The text of `name`'s `<name>nullreason` entry, found ignoring case, or
+/// [`UNKNOWN_REASON`] when there is no such entry holding a string.
+fn null_reason(object: &serde_json::Map<String, Value>, name: &str) -> String {
+    let sibling = format!("{name}{NULL_REASON_SUFFIX}");
+    object
+        .get(&sibling)
+        .or_else(|| {
+            object
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case(&sibling))
+                .map(|(_, value)| value)
+        })
+        .and_then(Value::as_str)
+        .unwrap_or(UNKNOWN_REASON)
+        .to_owned()
 }
 
 /// Convert a single cloud JSON value into the nearest [`PropertyValue`].
@@ -203,22 +209,75 @@ mod tests {
     }
 
     #[test]
-    fn null_property_is_absent_and_reason_preserved() {
+    fn null_property_holds_its_reason() {
         let device = serde_json::json!({
             "hardwarevendor": null,
             "hardwarevendornullreason": "No matching profiles were found."
         });
         let data = map_device_object(&device);
 
-        // The property itself is a no-value.
         let vendor = data.hardware_vendor();
         assert!(!vendor.has_value());
-
-        // The cloud's explanation is preserved verbatim under the sibling key.
         assert_eq!(
-            data.get("hardwarevendornullreason").unwrap().as_str(),
+            vendor.no_value_message(),
             Some("No matching profiles were found.")
         );
+        assert_eq!(
+            data.get("HardwareVendor").unwrap_err().message,
+            "No matching profiles were found."
+        );
+        assert!(data.has_property("hardwarevendor"));
+    }
+
+    #[test]
+    fn null_reason_entries_are_left_out() {
+        let device = serde_json::json!({
+            "ismobile": true,
+            "hardwarevendor": null,
+            "hardwarevendornullreason": "No matching profiles were found.",
+            "orphannullreason": "No property of this name.",
+            "nullreason": "No name at all."
+        });
+        let data = map_device_object(&device);
+
+        assert_eq!(data.keys(), vec!["ismobile", "hardwarevendor"]);
+        assert!(data.get("hardwarevendornullreason").is_err());
+        assert!(data.get("orphannullreason").is_err());
+        assert!(data.get("nullreason").is_err());
+    }
+
+    #[test]
+    fn null_property_with_no_reason_is_unknown() {
+        let device = serde_json::json!({
+            "hardwarevendor": null,
+            "platformname": null,
+            "platformnamenullreason": 7
+        });
+        let data = map_device_object(&device);
+
+        assert_eq!(
+            data.hardware_vendor().no_value_message(),
+            Some(UNKNOWN_REASON)
+        );
+        assert_eq!(
+            data.platform_name().no_value_message(),
+            Some(UNKNOWN_REASON)
+        );
+    }
+
+    #[test]
+    fn null_reason_is_found_ignoring_case() {
+        let device = serde_json::json!({
+            "HardwareVendor": null,
+            "hardwarevendorNullReason": "No matching profiles were found."
+        });
+        let data = map_device_object(&device);
+
+        assert_eq!(
+            data.hardware_vendor().no_value_message(),
+            Some("No matching profiles were found.")
+        );
+        assert_eq!(data.keys(), vec!["hardwarevendor"]);
     }
 
     #[test]
@@ -231,7 +290,9 @@ mod tests {
     fn null_reason_key_detection_is_case_insensitive() {
         assert!(is_null_reason_key("hardwarevendornullreason"));
         assert!(is_null_reason_key("HardwareVendorNullReason"));
-        assert!(!is_null_reason_key("nullreason"));
+        assert!(is_null_reason_key("nullreason"));
+        assert!(!is_null_reason_key("reason"));
         assert!(!is_null_reason_key("ismobile"));
+        assert!(!is_null_reason_key("nullreasonx"));
     }
 }

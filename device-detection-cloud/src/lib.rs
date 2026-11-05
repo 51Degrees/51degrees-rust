@@ -65,10 +65,14 @@
 //!
 //! When the cloud determines no value for a property it sends JSON `null` with a
 //! sibling `<property>nullreason` entry explaining why. The mapping (in the
-//! private `dto` module) leaves the property absent so a typed accessor returns
-//! [`AspectPropertyValue::NoValue`](fiftyone_pipeline_engines::AspectPropertyValue::NoValue),
-//! while preserving the `nullreason` message in the data bag so the explanation
-//! is not lost. This realises the
+//! private `dto` module) holds the property with no value and that entry's
+//! text as its message, or `Unknown` when the response gives none, so a typed
+//! accessor returns
+//! [`AspectPropertyValue::NoValue`](fiftyone_pipeline_engines::AspectPropertyValue::NoValue)
+//! carrying the cloud's explanation. The `nullreason` entries themselves are
+//! not properties and are left out of the data. Read the message from the
+//! property, for example `device.hardware_vendor().no_value_message()`, rather
+//! than from a `hardwarevendornullreason` entry. This realises the
 //! [null-values specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#null-values).
 //!
 //! ## Property metadata

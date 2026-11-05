@@ -718,8 +718,10 @@ version = "4.5.2"
 dependencies = [
  "fiftyone-cloud-request-engine",
  "fiftyone-device-detection-shared",
+ "fiftyone-json-builder",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "fiftyone-pipeline-engines-fiftyone",
  "log",
  "serde",
  "serde_json",

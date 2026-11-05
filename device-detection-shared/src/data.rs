@@ -470,8 +470,8 @@ impl ElementData for DeviceDataBase {
     /// the property. Unless the wrapped
     /// [`AspectDataBase`] knows its missing properties, through a
     /// [`MissingPropertySource`](fiftyone_pipeline_engines::MissingPropertySource)
-    /// or a failed cloud request, it answers `true`, because a cloud engine
-    /// leaves a property with no value out of the bag.
+    /// or a failed cloud request, it answers `true`, because without one the
+    /// data cannot say which properties should be there.
     fn has_property(&self, name: &str) -> bool {
         !self.base.knows_missing_properties() || self.holds(name)
     }
