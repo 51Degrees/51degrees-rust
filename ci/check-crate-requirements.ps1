@@ -6,7 +6,7 @@ its order.
 
 .DESCRIPTION
 The crates of one release require each other with `=`, so a crate pinned at a
-version builds only with the other crates of that release, and with the C
+version builds only with the crates of that release beneath it, and with the C
 sources they carry. A plain version such as "4.5.2" is a caret requirement,
 which lets a fresh build of an older crate take a newer release of the crates
 beneath it.
@@ -31,6 +31,9 @@ compiles nothing.
    Dev-dependencies with a version count, because they stay in the published
    manifest.
 
+It also fails when it finds no workspace crates, no crates in ci/crates.txt
+or no normal requirements to check, so it can never pass by checking nothing.
+
 .PARAMETER Root
 The workspace root. Defaults to the repository this script sits in.
 #>
@@ -49,10 +52,17 @@ $versions = @{}
 foreach ($package in $metadata.packages) {
     $versions[$package.name] = $package.version
 }
+if ($versions.Count -eq 0) {
+    throw "cargo metadata found no workspace crates in $manifest, so there " +
+        "is nothing to check."
+}
 
 $published = @(Get-Content -Path (Join-Path $Root "ci/crates.txt") |
     ForEach-Object { $_.Trim() } |
     Where-Object { $_ -and -not $_.StartsWith("#") })
+if ($published.Count -eq 0) {
+    throw "ci/crates.txt names no crates, so there is nothing to check."
+}
 $order = @{}
 for ($i = 0; $i -lt $published.Count; $i++) {
     $order[$published[$i]] = $i
@@ -114,6 +124,11 @@ foreach ($package in $metadata.packages) {
             }
         }
     }
+}
+
+if ($exactCount -eq 0) {
+    $failures += "found no normal requirements between the workspace " +
+        "crates, so there was nothing to check."
 }
 
 if ($failures.Count -gt 0) {
