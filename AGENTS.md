@@ -91,6 +91,14 @@ published crates while the library workspace builds from source.
 Example binaries live in `<crate>/src/bin/*.rs` (run with `--bin`), not in an
 `examples/` directory.
 
+## Releases
+
+Pull requests go to `rc`, not `main`, and stay drafts until they have been
+reviewed, because the nightly merges any pull request into `rc` that is not a
+draft and has no review requested. When a release is wanted, one pull request
+merges `rc` into `main`, and the "Only rc into main" check fails a pull request
+into `main` from any other branch.
+
 ## Releasing to crates.io
 
 Releases are automated, and every push to `main` releases. The version is never
@@ -128,18 +136,19 @@ workspace reads the submodule and never needs the copy.
 ## CI gates
 
 - `pull-request.yml` — fmt, build, test, clippy and doc on Windows, Linux
-  (two LTS) and macOS (Intel and Apple Silicon), plus a wasm32-wasip1 job for
-  the cloud crates. Runs on pushes to `main` and PRs targeting `main`. It
-  builds the C sources and reads the data files in the `cxx` submodule. It
-  also runs `ci/check-native-symbols.ps1` and the property lookup scaling
-  test in release.
+  (two LTS) and macOS (Apple Silicon), plus a wasm32-wasip1 job for the cloud
+  crates. Runs on pushes to `main` and on PRs into `main`, `rc` and
+  `release/**`. It builds the C sources and reads the data files in the `cxx`
+  submodule. It also runs `ci/check-native-symbols.ps1` and the property
+  lookup scaling test in release.
 - `nightly-pipeline.yml` first runs common-ci's submodule update, which moves
   every submodule to the head of its default branch and raises a pull request
-  when one has moved, then runs the eligible pull requests through common-ci's
-  nightly checks. That covers `owid-rust` as well as `cxx`, so a push to the
-  main branch of SWAN-community/owid-rust reaches `fodid` through the next
-  update pull request once its checks pass. Merging an update releases the
-  crates, as any merge to `main` does.
+  into `rc` when one has moved, then builds the eligible pull requests into
+  `rc` through common-ci's nightly checks and merges each one that passes.
+  That covers `owid-rust` as well as `cxx`, so a push to the main branch of
+  SWAN-community/owid-rust reaches `fodid` through the next update pull
+  request once its checks pass, and is published with the next merge of `rc`
+  into `main`.
 - `caching-wasm.yml` lints and tests `fiftyone-caching`, the loading cache
   included, on wasm32-wasip1 under wasmtime and, with default features off,
   on wasm32-unknown-unknown under Node through `ci/run-wasm-unknown.mjs`.
