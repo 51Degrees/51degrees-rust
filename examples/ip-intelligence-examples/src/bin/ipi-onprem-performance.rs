@@ -53,21 +53,10 @@ const FIND_OUT_MORE: &[(&str, &str)] = &[
 /// The relative path to the IP-intelligence evidence file in the data submodule.
 const IPI_EVIDENCE_RELATIVE_PATH: &str = "cxx/data/ip-intelligence/evidence.yml";
 
-/// The properties each lookup asks for. The free ASN file carries Asn, the
-/// free Lite file RegisteredName, and only the Enterprise data file the
-/// location ones. A data file opens only when it carries at least one property
-/// asked for, so each free file is covered.
-const REQUESTED_PROPERTIES: &[&str] = &[
-    "Asn",
-    "RegisteredName",
-    "Country",
-    "Town",
-    "Latitude",
-    "Longitude",
-];
-
-/// The requested properties only the Enterprise data file carries.
-const ENTERPRISE_REQUESTED: &[&str] = &["Country", "Town", "Latitude", "Longitude"];
+/// Location properties only the Enterprise data file carries. The timed
+/// lookups ask for Asn alone, so the figures stay comparable from run to run,
+/// and these are listed after them.
+const ENTERPRISE_LISTED: &[&str] = &["Country", "Town", "Latitude", "Longitude"];
 
 /// The options that drive a run of this example.
 pub struct ExampleOptions {
@@ -159,7 +148,7 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
     // https://51degrees.com/documentation/_device_detection__features__performance_options.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-performance.rs&utm_term=performance-options
     let pipeline: Arc<Pipeline> = IpIntelligencePipelineBuilder::on_premise(&options.data_file)
         .performance_profile(PerformanceProfile::InMemory)
-        .properties(REQUESTED_PROPERTIES.iter().copied())
+        .properties(["Asn"])
         .auto_update(false)
         .file_system_watcher(false)
         .build()
@@ -225,25 +214,23 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
         )?;
     }
 
-    // The data file's own list of properties says which requested properties
-    // it can answer. The free files carry none of the location ones.
+    // The data file's own list of properties says which of the location
+    // properties it can answer. The free files carry none of them.
     let available = ip_intelligence_examples::data_file_properties(&options.data_file)?;
     writeln!(out)?;
-    writeln!(out, "Properties each lookup asked for:")?;
-    for name in REQUESTED_PROPERTIES {
+    writeln!(out, "Enterprise properties:")?;
+    for name in ENTERPRISE_LISTED {
         let state = if examples_shared::is_available(name, &available) {
             "in this data file"
-        } else if ENTERPRISE_REQUESTED.contains(name) {
-            examples_shared::NEEDS_ENTERPRISE_DATA_FILE
         } else {
-            "not in this data file"
+            examples_shared::NEEDS_ENTERPRISE_DATA_FILE
         };
         writeln!(out, "\t{name}: {state}")?;
     }
 
     writeln!(out)?;
     ip_intelligence_examples::write_data_file_warnings(&options.data_file, out)?;
-    let missing = examples_shared::missing_properties(ENTERPRISE_REQUESTED, &available);
+    let missing = examples_shared::missing_properties(ENTERPRISE_LISTED, &available);
     if let Some(message) = examples_shared::enterprise_data_file_message(&missing, CONTACT_US_URL) {
         writeln!(out)?;
         writeln!(out, "{message}")?;
@@ -449,10 +436,10 @@ mod tests {
  * 4. Report the headline metrics: total lookups, elapsed time, throughput
  *    (lookups per second) and the mean time per lookup.
  *
- * Each lookup asks for `Asn` and the location properties `Country`, `Town`,
- * `Latitude` and `Longitude`, which only the Enterprise data file carries.
- * After the timed passes the run lists which of them the data file has,
- * judged from the data file's own list of properties, prints the standard
+ * Each timed lookup asks for `Asn` alone. After the timed passes the run
+ * lists the location properties `Country`, `Town`, `Latitude` and
+ * `Longitude`, which only the Enterprise data file carries, saying which the
+ * data file has, judged from its own list of properties. It prints the standard
  * data-file warnings, names the properties the file lacks with a link to
  * contact 51Degrees about a copy of the Enterprise data file, and ends with a
  * "Find out more" section.
