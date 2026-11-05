@@ -271,11 +271,11 @@
     "reason": "The .NET 4.5.129 package embeds its template with CRLF line endings, so each line of its script that comes from the template ends with CRLF. The template the specification names and the copy the crates bundle end each line with LF, and the crates write no CRLF."
   },
   {
-    "path": "usage",
-    "kind": "presence",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "reason": "The crates have no public sink for usage records yet, so the Rust producer writes none. The values pipeline has no usage sharing, so its cases are not listed.",
-    "issue": 232
+    "path": "usage*",
+    "kind": "text",
+    "cases": ["sequence-int-max", "sequence-text"],
+    "reason": "Each usage record writes the sequence the Sequence element gives. After 2147483647 .NET's wraps to -2147483648 and the crates' 2147483648 is written as 0, because it is not a 32-bit integer. For text .NET's leaves the text, written as 0, where the crates' starts again at 1.",
+    "issue": 231
   },
   {
     "path": "properties.agent-signature.agentsignaturecreated",

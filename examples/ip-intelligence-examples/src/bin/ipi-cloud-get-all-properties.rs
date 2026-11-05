@@ -32,6 +32,13 @@ use anyhow::{Context, Result};
 use fiftyone_ip_intelligence::{IpIntelligencePipelineBuilder, IP_DATA_KEY};
 use fiftyone_pipeline_core::{ElementData, Evidence, PropertyValue};
 
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-get-all-properties.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-get-all-properties.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-get-all-properties.rs&utm_term=find-out-more"),
+];
+
 /// The evidence key under which the client IP address is supplied to the cloud
 /// pipeline.
 const CLIENT_IP_EVIDENCE_KEY: &str = "query.client-ip-51d";
@@ -157,17 +164,20 @@ fn main() -> Result<()> {
              variable or pass a key as the first argument. Create a key for free at \
              https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-get-all-properties.rs&utm_term=resource-key-required."
         );
+        examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
         return Ok(());
     };
 
-    run(Options {
+    let result = run(Options {
         resource_key,
         // The cloud endpoint from 51DEGREES_CLOUD_ENDPOINT, or the public cloud
         // when unset. A host other than cloud.51degrees.com is an on premise web
         // server or a privately hosted 51Degrees cloud (see
         // examples_shared::CLOUD_ENDPOINT_ENV_VAR).
         endpoint: examples_shared::cloud_endpoint_from_env(),
-    })
+    });
+    examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
+    result
 }
 
 #[cfg(test)]

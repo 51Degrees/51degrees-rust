@@ -26,9 +26,17 @@ rather than thrown. A case runs through the first unless its `pipeline` is
 `values` or `agent-signature`.
 
 1. The Sequence element.
-2. Usage sharing, in .NET only. The records go to a handler inside the
-   program, so nothing is sent anywhere. The crates have no public sink for
-   usage records yet ([#232](https://github.com/51Degrees/51degrees-rust/issues/232)).
+2. Usage sharing, twice, with the same settings on both sides. The first
+   element writes the record the built-in transport sends, and its documents
+   go to a handler in .NET and to a sink in the crates, inside the program,
+   so nothing is sent anywhere. The second writes an element before and after
+   each record and its own product and Flow Element names, through a
+   `ShareUsageBase` subclass in .NET and a sink in the crates
+   ([#232](https://github.com/51Degrees/51degrees-rust/issues/232)). Both
+   share every request, with a share percentage of 1 and a repeat evidence
+   interval of 0, leave out the `Referer` header, share the `utm_source`
+   query parameter beside those starting `51D_`, and share no request whose
+   `header.x-health-check` is `true`.
 3. On-premise Device Detection, HighPerformance profile.
 4. On-premise IP Intelligence, LowMemory profile.
 5. The JSON builder.
@@ -85,6 +93,7 @@ Each program writes one JSON object per case.
 | `json` | The JSON builder's output. |
 | `javascript` | The JavaScript builder's output. |
 | `usage` | The usage sharing record written for the case, or null. |
+| `usageCustom` | The record the second usage sharing element wrote for the case, or null. |
 
 Value types are `string`, `bool`, `integer`, `double`, `stringList`,
 `javascript`, `ipAddress`, `dateTime` (in .NET only, written as RFC 3339
@@ -99,8 +108,8 @@ numbers compare by value. When a property's types differ its values are
 compared as well, so allowing a type never hides a value. The JSON output
 is compared by structure, then by
 key order, then as text, so a path such as `json.device.ismobile` names the
-key that differs. The JavaScript and the usage record are compared as text,
-and the report shows the first line that differs. When the two texts are the
+key that differs. The JavaScript is compared as text, and the report shows
+the first line that differs. When the two scripts are the
 same once each CRLF is read as LF, the difference is of kind `lineEndings`
 instead, and each side is the number of lines it ends with CRLF. The .NET
 4.5.129 package embeds its JavaScript template with CRLF line endings, where
@@ -108,6 +117,16 @@ the template the specification names and the crates' copy have LF, so each
 line of .NET's script that comes from the template ends with CRLF. The
 `lineEndings` entry in `allowed-differences.json` allows that and nothing
 else, because the crates' side must have no CRLF.
+
+The usage records are compared as text once the text of `DateSent`,
+`Version`, `Language`, `LanguageVersion`, `Platform` and each `FlowElement`
+is left out on both sides, because those hold the time the record was
+written or name the runtime. Only the values before the evidence entries are
+left out, and the second element's records keep their `FlowElement` names,
+which both sides must write the same. `ServerIP` is compared, because both
+programs run on the same machine and work it out from the machine's own
+name. The report shows how many characters come before the first that
+differs, then the text from shortly before it.
 
 | Kind | Meaning |
 | --- | --- |
@@ -186,7 +205,7 @@ from Git LFS and `pwsh ../ci/copy-owid-source.ps1` run once, as
 ```
 cargo build -p parity-rust -p parity-compare
 dotnet build dotnet -c Release -o out/dotnet
-DATA="--corpus corpus/evidence.json --dd ../cxx/device-detection-data/51Degrees-LiteV4.1.hash --ipi ../cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi"
+DATA="--corpus corpus/evidence.json --dd ../cxx/data/device-detection/51Degrees-LiteV4.1.hash --ipi ../cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi"
 dotnet out/dotnet/Parity.dll $DATA --out out/dotnet.jsonl
 target/debug/parity-rust $DATA --out out/rust.jsonl
 target/debug/parity-compare --corpus corpus/evidence.json --dotnet out/dotnet.jsonl \
@@ -203,6 +222,7 @@ sentence saying what it covers, and with `"pipeline": "values"` if it runs
 through the values pipeline. Give it a `query.session-id` unless it is
 about a generated one, because usage records are matched to cases by
 session id. Only the engines' pipeline shares usage, so a values case never
-has a usage record, even when it gives an engines' case's session id. Keep
+has a usage record, even when it gives an engines' case's session id, and an
+engines' case whose `header.x-health-check` is `true` has none either. Keep
 every character within the Basic Multilingual Plane. Then run both programs
 and list any new difference with its reason, or fix it.

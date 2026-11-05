@@ -845,12 +845,13 @@ mod tests {
         // 2. Walk up from the crate directory looking for the data file in a
         //    cxx submodule. The crate lives at
         //    <workspace>/device-detection, and the data file at
-        //    <workspace-parent>/cxx/device-detection-data/...
+        //    <workspace>/cxx/data/device-detection/...
         let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         loop {
             let candidate = dir
                 .join("cxx")
-                .join("device-detection-data")
+                .join("data")
+                .join("device-detection")
                 .join("51Degrees-LiteV4.1.hash");
             if candidate.is_file() {
                 return Some(candidate);

@@ -1,32 +1,34 @@
 [package]
 name = "fiftyone-device-detection"
 version = "4.5.2"
-description = "Device-detection facade re-exporting the engines plus a builder that selects the cloud or on-premise deployment."
+description = "Device Detection and User-Agent parser for Rust. Detects the device, browser, operating system, and crawlers from the User-Agent and User-Agent Client Hints, on-premise with a data file or in the cloud. This facade re-exports the cloud and on-premise engines, with a builder that selects the deployment. An alternative to UAParser.js, DeviceAtlas, and WURFL."
+keywords = ["user-agent", "user-agent-parser", "device-detection", "client-hints", "browser-detection"]
+categories = ["parser-implementations", "web-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage.workspace = true
+homepage = "https://51degrees.com/device-detection?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-device-detection-cargo.toml&utm_term=homepage"
 
 [dependencies]
 # Always present: the core pipeline plumbing and the shared device-data model
 # (result types and key) every deployment surfaces, plus the engine traits the
 # facade re-exports for consumers who want to introspect aspect metadata.
-fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
-fiftyone-pipeline-engines = { version = "4.5.2", path = "../pipeline-engines" }
-fiftyone-pipeline-engines-fiftyone = { version = "4.5.2", path = "../pipeline-engines-fiftyone" }
-fiftyone-device-detection-shared = { version = "4.5.2", path = "../device-detection-shared" }
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
+fiftyone-pipeline-engines = { version = "=4.5.2", path = "../pipeline-engines" }
+fiftyone-pipeline-engines-fiftyone = { version = "=4.5.2", path = "../pipeline-engines-fiftyone" }
+fiftyone-device-detection-shared = { version = "=4.5.2", path = "../device-detection-shared" }
 
 # The on-premise Hash engine. Pulled in only with the `on-premise` feature so a
 # cloud-only consumer never links the native Hash library.
-fiftyone-device-detection-onpremise = { version = "4.5.2", path = "../device-detection-onpremise", optional = true }
-fiftyone-native = { version = "4.5.2", path = "../native", default-features = false, features = ["dd"], optional = true }
+fiftyone-device-detection-onpremise = { version = "=4.5.2", path = "../device-detection-onpremise", optional = true }
+fiftyone-native = { version = "=4.5.2", path = "../native", default-features = false, features = ["dd"], optional = true }
 
 # The cloud engine and the request engine it reads from. Pulled in only with the
 # `cloud` feature.
-fiftyone-device-detection-cloud = { version = "4.5.2", path = "../device-detection-cloud", optional = true }
-fiftyone-cloud-request-engine = { version = "4.5.2", path = "../cloud-request-engine", optional = true, default-features = false }
+fiftyone-device-detection-cloud = { version = "=4.5.2", path = "../device-detection-cloud", optional = true }
+fiftyone-cloud-request-engine = { version = "=4.5.2", path = "../cloud-request-engine", optional = true, default-features = false }
 
 [features]
 # The full SDK is built and tested here. A cloud-only consumer can opt out of

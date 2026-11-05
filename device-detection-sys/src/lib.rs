@@ -204,7 +204,20 @@ pub struct ConfigDeviceDetection {
     pub b: ConfigBase,
     /// True if the matched user agent characters should be recorded.
     pub update_matched_user_agent: bool,
-    /// Number of characters to consider in the matched user agent.
+    /// The limit, in bytes, on the length of each header value that detection
+    /// uses. Despite the name it applies to every header and every
+    /// pseudo-header, not only the User-Agent, and a pseudo-header counts one
+    /// separator byte between each of the values it joins. A value longer
+    /// than the limit is ignored with no error, and detection moves on to the
+    /// next header.
+    ///
+    /// The predefined configurations set 500 bytes, the C library's default.
+    /// The reason for that default is given where [the default is defined]
+    /// and in the C library's [header length limit] documentation, which
+    /// also gives the memory a larger limit costs.
+    ///
+    /// [the default is defined]: https://github.com/51Degrees/51degrees-cxx/blob/e866f6d3cea936587790f87967eff7863778b30e/src/dd/config-dd.h#L100-L106
+    /// [header length limit]: https://github.com/51Degrees/51degrees-cxx/blob/e866f6d3cea936587790f87967eff7863778b30e/docs/dd/README.md#header-length-limit
     pub max_matched_user_agent_length: usize,
     /// True if a result with no matched node should still be considered valid.
     pub allow_unmatched: bool,
@@ -917,7 +930,7 @@ mod tests {
     use std::ffi::{CStr, CString};
 
     /// Optional path to the Lite Hash data file, injected by the build script
-    /// when the packaged file is found under the checkout.
+    /// when the file has been downloaded into the checkout.
     const LITE_DATA_FILE: Option<&str> = option_env!("51DEGREES_DD_PATH");
 
     /// A representative desktop Chrome on Windows user agent.
@@ -1017,9 +1030,8 @@ mod tests {
             );
             // The init ran cleanly through the FFI boundary and returned a well
             // defined status, which proves the native Hash library linked. The
-            // data file may be absent or unusable (for example a Git LFS pointer
-            // rather than the real file in a checkout without LFS), reported as a
-            // non-Success status. Treat that as a clean skip rather than a
+            // data file may be absent or unusable, reported as a non-Success
+            // status. Treat that as a clean skip rather than a
             // failure: the real detection path is exercised by the higher-level
             // on-premise tests when a usable data file is present.
             if status != StatusCode::Success {

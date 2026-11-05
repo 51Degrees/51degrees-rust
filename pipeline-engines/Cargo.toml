@@ -7,11 +7,11 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage.workspace = true
+homepage = "https://51degrees.com/build-your-own?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-engines-cargo.toml&utm_term=homepage"
 
 [dependencies]
-fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
-fiftyone-caching = { version = "4.5.2", path = "../caching" }
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
+fiftyone-caching = { version = "=4.5.2", path = "../caching" }
 thiserror.workspace = true
 # Date and time handling for data-file publish/expiry timestamps and the
 # If-Modified-Since header. `default-features = false` with `clock` keeps the

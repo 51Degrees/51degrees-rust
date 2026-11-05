@@ -40,8 +40,23 @@ use anyhow::Context;
 use fiftyone_ip_intelligence::{IpIntelligencePipelineBuilder, PerformanceProfile, IP_DATA_KEY};
 use fiftyone_pipeline_core::{Evidence, Pipeline};
 
+/// Where to ask about a copy of the Enterprise data file.
+const CONTACT_US_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-performance.rs&utm_term=enterprise-data-file";
+
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-performance.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-performance.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-performance.rs&utm_term=find-out-more"),
+];
+
 /// The relative path to the IP-intelligence evidence file in the data submodule.
-const IPI_EVIDENCE_RELATIVE_PATH: &str = "cxx/ip-intelligence-data/evidence.yml";
+const IPI_EVIDENCE_RELATIVE_PATH: &str = "cxx/data/ip-intelligence/evidence.yml";
+
+/// Location properties only the Enterprise data file carries. The timed
+/// lookups ask for Asn alone, so the figures stay comparable from run to run,
+/// and these are listed after them.
+const ENTERPRISE_LISTED: &[&str] = &["Country", "Town", "Latitude", "Longitude"];
 
 /// The options that drive a run of this example.
 pub struct ExampleOptions {
@@ -63,10 +78,12 @@ pub struct ExampleOptions {
 }
 
 impl ExampleOptions {
-    /// Default options, using the best-available loadable data-file tier and a
-    /// thread count taken from the available parallelism.
+    /// Default options, reading the Enterprise file when its share is reachable
+    /// and otherwise the free ASN file, which is far smaller to download than
+    /// the Lite file and serves a benchmark as well. The thread count is taken
+    /// from the available parallelism.
     pub fn from_env() -> Option<Self> {
-        let options = Self::for_tier(examples_shared::IpiTier::BestAvailable, 500, 4)?;
+        let options = Self::for_tier(examples_shared::IpiTier::EnterpriseOrAsn, 500, 4)?;
         Some(ExampleOptions {
             json_output: examples_shared::json_output_path(std::env::args().skip(1)),
             ..options
@@ -199,6 +216,32 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
         )?;
     }
 
+    // The data file's own list of properties says which of the location
+    // properties it can answer. The free files carry none of them.
+    let available = ip_intelligence_examples::data_file_properties(&options.data_file)?;
+    writeln!(out)?;
+    writeln!(out, "Enterprise properties:")?;
+    for name in ENTERPRISE_LISTED {
+        let state = if examples_shared::is_available(name, &available) {
+            "in this data file"
+        } else {
+            examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+        };
+        writeln!(out, "\t{name}: {state}")?;
+    }
+
+    writeln!(out)?;
+    ip_intelligence_examples::write_data_file_warnings(&options.data_file, out)?;
+    let missing = examples_shared::missing_properties(ENTERPRISE_LISTED, &available);
+    if let Some(message) = examples_shared::enterprise_data_file_message(&missing, CONTACT_US_URL) {
+        writeln!(out)?;
+        writeln!(out, "{message}")?;
+    }
+    examples_shared::write_find_out_more(
+        out,
+        FIND_OUT_MORE,
+        examples_shared::ON_PREMISE_REPOSITORIES,
+    )?;
     Ok(())
 }
 // [example]
@@ -305,16 +348,13 @@ fn main() -> anyhow::Result<()> {
 
     let options = match ExampleOptions::from_env() {
         Some(options) => options,
-        None => {
-            writeln!(
-                out,
-                "Could not locate both an IP Intelligence data file and the \
-                 evidence.yml file. Set {} to an .ipi file, and check out the \
-                 cxx submodule so evidence.yml is present.",
-                examples_shared::IPI_PATH_ENV_VAR
-            )?;
-            return Ok(());
-        }
+        None => anyhow::bail!(
+            "Could not locate both an IP Intelligence data file and the \
+             evidence.yml file. Set {} to an .ipi file, and run git submodule \
+             update --init --recursive so cxx/data/ip-intelligence/evidence.yml \
+             is present.",
+            examples_shared::IPI_PATH_ENV_VAR
+        ),
     };
 
     run(&options, &mut out)
@@ -339,6 +379,14 @@ mod tests {
         assert!(printed.contains("Single-threaded result"));
         assert!(printed.contains("Multi-threaded result"));
         assert!(printed.contains("lookups/sec"));
+        assert!(printed.contains(examples_shared::FIND_OUT_MORE_HEADING));
+        // The ASN file carries no location properties, so the run says so.
+        // 51DEGREES_IPI_PATH can name another file.
+        let asn_file = examples_shared::IPI_ASN_RELATIVE_PATH.rsplit('/').next();
+        if options.data_file.file_name().and_then(|n| n.to_str()) == asn_file {
+            assert!(printed.contains("Country: needs the Enterprise data file"));
+            assert!(printed.contains("utm_term=enterprise-data-file"));
+        }
     }
 
     /// The results file CI publishes must be written in the shared schema, with
@@ -390,10 +438,19 @@ mod tests {
  * 4. Report the headline metrics: total lookups, elapsed time, throughput
  *    (lookups per second) and the mean time per lookup.
  *
+ * Each timed lookup asks for `Asn` alone. After the timed passes the run
+ * lists the location properties `Country`, `Town`, `Latitude` and
+ * `Longitude`, which only the Enterprise data file carries, saying which the
+ * data file has, judged from its own list of properties. It prints the standard
+ * data-file warnings, names the properties the file lacks with a link to
+ * contact 51Degrees about a copy of the Enterprise data file, and ends with a
+ * "Find out more" section.
+ *
  * # Data file
  *
- * Resolved by `examples_shared::ipi_data_path`. Contact 51Degrees for an
- * Enterprise file: <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-performance.rs&utm_term=ipi-onprem-performance>.
+ * Resolved by `examples_shared::ipi_data_path`, which gives the free ASN file
+ * when no other file is set, because the properties a benchmark reads do not
+ * matter to what it shows. Contact 51Degrees for an Enterprise file: <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-performance.rs&utm_term=ipi-onprem-performance>.
  *
  * # Usage sharing
  *

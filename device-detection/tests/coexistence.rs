@@ -70,12 +70,12 @@ fn dd_and_ipi_on_premise_coexist_in_one_binary() {
         .ok()
         .map(PathBuf::from)
         .filter(|p| p.is_file())
-        .or_else(|| find_up("cxx/device-detection-data/51Degrees-LiteV4.1.hash"));
+        .or_else(|| find_up("cxx/data/device-detection/51Degrees-LiteV4.1.hash"));
     let ipi_file = std::env::var("51DEGREES_IPI_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|p| p.is_file())
-        .or_else(|| find_up("cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi"));
+        .or_else(|| find_up("cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi"));
 
     // Build both on-premise pipelines in this one binary. The mere fact that this
     // links and both builders run is the coexistence proof.
@@ -172,12 +172,12 @@ fn dd_and_ipi_combined_in_one_pipeline() {
         .ok()
         .map(PathBuf::from)
         .filter(|p| p.is_file())
-        .or_else(|| find_up("cxx/device-detection-data/51Degrees-LiteV4.1.hash"));
+        .or_else(|| find_up("cxx/data/device-detection/51Degrees-LiteV4.1.hash"));
     let ipi_file = std::env::var("51DEGREES_IPI_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|p| p.is_file())
-        .or_else(|| find_up("cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi"));
+        .or_else(|| find_up("cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi"));
     let (Some(dd_file), Some(ipi_file)) = (dd_file, ipi_file) else {
         eprintln!("skipping the combined-pipeline test: both data files are required");
         return;
@@ -382,11 +382,11 @@ mod parallel_group {
     fn dd_ipi_and_a_failing_element_answer_alike_in_a_group_and_in_sequence() {
         let dd_file = data_file(
             "51DEGREES_DD_PATH",
-            "cxx/device-detection-data/51Degrees-LiteV4.1.hash",
+            "cxx/data/device-detection/51Degrees-LiteV4.1.hash",
         );
         let ipi_file = data_file(
             "51DEGREES_IPI_PATH",
-            "cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi",
+            "cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi",
         );
         let (Some(dd_file), Some(ipi_file)) = (dd_file, ipi_file) else {
             eprintln!("skipping the parallel group test: both data files are required");

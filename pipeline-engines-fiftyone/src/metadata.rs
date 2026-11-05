@@ -364,7 +364,7 @@ mod tests {
         let property =
             FiftyOneAspectPropertyMetaData::new("IsMobile", "device", PropertyValueType::Bool)
                 .with_component_name("Hardware")
-                .with_url("https://51degrees.com/IsMobile")
+                .with_url("https://example.com/IsMobile")
                 .with_display_order(3)
                 .with_mandatory(true)
                 .with_list(false)
