@@ -37,6 +37,13 @@ use fiftyone_device_detection::{
 };
 use fiftyone_pipeline_engines::AspectPropertyValue;
 
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=find-out-more"),
+];
+
 /// The pricing message printed when one of the requested properties came back
 /// without a value, which usually means the resource key does not include that
 /// property.
@@ -194,10 +201,11 @@ fn main() -> Result<()> {
              service is accessed using a resource key, which you can create for free \
              at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=resource-key-required."
         );
+        examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
         return Ok(());
     };
 
-    run(ExampleOptions {
+    let result = run(ExampleOptions {
         resource_key,
         // The cloud endpoint. Unset, the cloud request engine reads
         // 51DEGREES_CLOUD_ENDPOINT itself, and it is passed here as well so the
@@ -205,7 +213,9 @@ fn main() -> Result<()> {
         // premise web server or a privately hosted 51Degrees cloud (see
         // examples_shared::CLOUD_ENDPOINT_ENV_VAR).
         endpoint: examples_shared::cloud_endpoint_from_env(),
-    })
+    });
+    examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
+    result
 }
 
 #[cfg(test)]

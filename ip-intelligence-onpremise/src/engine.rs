@@ -738,8 +738,8 @@ mod tests {
     /// wider Workspace tree. Returns [`None`] when none is present so the tests
     /// can skip cleanly only on a machine without the data file.
     ///
-    /// This resolves the ASN file (`51Degrees-IPIV4AsnIpiV41.ipi`) checked into
-    /// the data repository, which loads against this source revision and lets the
+    /// This resolves the ASN file (`51Degrees-IPIV4AsnIpiV41.ipi`) from the data
+    /// repository, which loads against this source revision and lets the
     /// real-lookup tests run an actual lookup. Set `51DEGREES_IPI_PATH` to
     /// override the path.
     fn ipi_data_file() -> Option<PathBuf> {
@@ -753,16 +753,17 @@ mod tests {
             .parent()?
             .to_path_buf();
         let name = "51Degrees-IPIV4AsnIpiV41.ipi";
-        // The data file lives in the `cxx` submodule, or directly in the wider
-        // Workspace tree beside the Rust workspace.
+        // The data repository is in the `cxx` submodule, or checked out in the
+        // wider Workspace tree beside the Rust workspace.
         let candidates = [
             workspace
                 .join("cxx")
-                .join("ip-intelligence-data")
+                .join("data")
+                .join("ip-intelligence")
                 .join(name),
             workspace
                 .parent()
-                .map(|p| p.join("ip-intelligence-data").join(name))
+                .map(|p| p.join("data").join("ip-intelligence").join(name))
                 .unwrap_or_default(),
         ];
         candidates.into_iter().find(|p| p.is_file())

@@ -89,6 +89,13 @@ use serde::Deserialize;
 /// stylesheet URL is served from the shared Rust example asset.
 const PAGE: &str = include_str!("../../assets/page.html");
 
+/// The links the page and the console output end with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("51Did", "https://51degrees.com/documentation/_identifiers_51_did.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=find-out-more"),
+    ("51Did inspector", "https://51degrees.com/developers/51did-inspector?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=find-out-more"),
+];
+
 /// The route the demo page's relative stylesheet URL resolves to.
 const PAGE_CSS_ROUTE: &str = "/examples-main.min.css";
 
@@ -161,11 +168,32 @@ async fn home(State(demo): State<Demo>) -> Response {
     }
     let challenge: String = random.iter().map(|b| format!("{b:02x}")).collect();
     Html(
-        PAGE.replace("__RESOURCE__", demo.client.resource_key())
+        page_with_find_out_more()
+            .replace("__RESOURCE__", demo.client.resource_key())
             .replace("__CHALLENGE__", &challenge)
             .replace("__API__", demo.client.endpoint()),
     )
     .into_response()
+}
+
+/// [`PAGE`] with a "Find out more" section, set apart by a rule, before its
+/// closing body tag. The section is added here so the page file stays the
+/// same as every other language's copy.
+fn page_with_find_out_more() -> String {
+    let mut html = format!(
+        "<div class=\"c-eg-page\">\n<hr>\n\
+         <h3 class=\"c-eg-page__heading\">{}</h3>\n<ul>\n",
+        examples_shared::FIND_OUT_MORE_HEADING
+    );
+    for (label, url) in FIND_OUT_MORE {
+        let href = url.replace('&', "&amp;");
+        html.push_str(&format!("<li><a href=\"{href}\">{label}</a></li>\n"));
+    }
+    for url in examples_shared::CLOUD_REPOSITORIES {
+        html.push_str(&format!("<li><a href=\"{url}\">{url}</a></li>\n"));
+    }
+    html.push_str("</ul>\n</div>\n</body>");
+    PAGE.replacen("</body>", &html, 1)
 }
 
 /// The three parameters the page sends to `/redeem`. Each defaults to empty
@@ -351,6 +379,7 @@ async fn main() -> anyhow::Result<()> {
              https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=resource-key-required \
              and run again."
         );
+        examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
         std::process::exit(1);
     };
 
@@ -549,6 +578,11 @@ mod tests {
         assert!(page.contains("var API = \"http://cloud.example/api/v4/\""));
         assert!(page.contains("var RESOURCE = \"resource-key-placeholder\""));
         assert!(page.contains("href=\"examples-main.min.css\""));
+        // The page ends with the "Find out more" section.
+        let section = page
+            .find(examples_shared::FIND_OUT_MORE_HEADING)
+            .expect("the page has a Find out more section");
+        assert!(section < page.find("</body>").unwrap());
 
         // 16 random bytes as 32 lowercase hex characters, different each load.
         let first = challenge_of(&page);
@@ -711,7 +745,9 @@ mod tests {
  * The page is written to the shared 51Degrees example design system. It
  * references the vendored `examples-main.min.css`, embedded in the
  * `examples-web-shared` crate and served at the page's relative URL. It uses
- * the `.c-eg-*` class contract.
+ * the `.c-eg-*` class contract. The server adds a "Find out more" section
+ * before the page's closing body tag, so the page file stays the same as
+ * every other language's copy.
  *
  * Build a resource key at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=fodid-web-creator-context and export it as
  * `51DEGREES_RESOURCE_KEY`, then run the binary and open http://localhost:5100/.

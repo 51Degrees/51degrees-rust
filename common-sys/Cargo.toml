@@ -7,7 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage.workspace = true
+homepage = "https://51degrees.com/services?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-common-sys-cargo.toml&utm_term=homepage"
 links = "fiftyone-common-c"
 build = "build.rs"
 # The C sources under cxx are ignored by git, because

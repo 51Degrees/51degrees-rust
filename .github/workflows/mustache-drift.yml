@@ -24,7 +24,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, 'release/**']
+    branches: [main, rc, 'release/**']
   workflow_dispatch:
   schedule:
     # 04:00 every Monday, so upstream changes are caught even with no PR activity.

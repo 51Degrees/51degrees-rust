@@ -29,12 +29,21 @@ jobs:
     defaults:
       run:
         working-directory: examples
+    env:
+      # The data files the examples' tests read, one per line. The download
+      # and the check below both take this list, so they cannot drift apart.
+      DATA_FILES: |
+        cxx/data/device-detection/51Degrees-LiteV4.1.hash
+        cxx/data/device-detection/20000 Evidence Records.yml
+        cxx/data/device-detection/20000 User Agents.csv
+        cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi
     steps:
       # The owid-rust submodule holds the OWID source that the fodid crate
       # compiles in, so it is needed whenever an example reaches fodid
       # through the local source patch. The cxx submodule holds the C sources
-      # the -sys crates compile and, in its own data submodules, the data
-      # files the on-premise examples read, so the checkout is recursive.
+      # the -sys crates compile and, at cxx/data, the data repository that
+      # links the data files the on-premise examples read, so the checkout is
+      # recursive.
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -57,33 +66,94 @@ jobs:
         shell: pwsh
         working-directory: .
         run: ./ci/copy-owid-source.ps1
-      # The data files are Git LFS content inside the data submodules in cxx,
-      # which actions/checkout leaves as pointers, so fetch them. A file that
-      # is missing, or is still a pointer, fails the job here, because the
-      # examples' tests would skip without it.
-      - name: Fetch the data files
+      # The data repository holds a link for each data file rather than the
+      # file, and its own script downloads them. As in pull-request.yml, the
+      # files come from the entry the Data Files workflow saves in the Actions
+      # cache each day. The script keeps a restored file and downloads only
+      # one that was not restored. A file that is missing fails the job at the
+      # check, because the examples' tests would skip without it. Until a
+      # daily entry exists, the files a job downloads are saved for later runs
+      # here that day.
+      - name: Restore the data files
+        id: data
+        uses: ./.github/actions/restore-data-files
+      - name: Download any data file not restored
+        continue-on-error: true
+        shell: pwsh
+        working-directory: .
+        run: |
+          $names = $env:DATA_FILES.Trim() -split '\r?\n' |
+            ForEach-Object { Split-Path -Leaf $_.Trim() }
+          ./cxx/data/get-data-files.ps1 @names
+      - name: Check the data files
         shell: bash
         working-directory: .
         run: |
-          git -C cxx submodule foreach --recursive 'git lfs install --local && git lfs pull'
-          for file in \
-            cxx/device-detection-data/51Degrees-LiteV4.1.hash \
-            cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi; do
-            if [ ! -f "$file" ] || head -c 64 "$file" | grep -q 'git-lfs'; then
-              echo "::error::$file is missing or is a Git LFS pointer, so the on-premise examples' tests would skip"
+          while IFS= read -r file; do
+            if [ -n "$file" ] && [ ! -f "$file" ]; then
+              echo "::error::$file is missing, so the on-premise examples' tests would skip"
               exit 1
             fi
-          done
+          done <<< "$DATA_FILES"
+      # As in pull-request.yml, only when nothing was restored, and with the
+      # action's paths, because an entry is found only by the list it was
+      # saved with.
+      - name: Save the data files for later runs today
+        if: steps.data.outputs.save-key != ''
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.data.outputs.paths }}
+          key: ${{ steps.data.outputs.save-key }}
+          enableCrossOsArchive: true
       # Build and test the examples against this tree's crates. The script gives
       # the crates the next patch above the latest release, so Cargo takes them
       # through source.toml in place of the published ones, and fails if any
       # example still takes one from crates.io. The on-premise examples' tests
-      # read the Lite Hash and ASN files checked out above. The tests that need
-      # a resource key or an Enterprise file skip, because the job has neither.
+      # read the data files downloaded above. The tests that need a resource
+      # key or an Enterprise file skip, because the job has neither.
       - name: Test the examples against this tree's crates
         shell: pwsh
         working-directory: .
         run: ./ci/test-examples-against-source.ps1
+      # The on-premise examples as someone who has just cloned the repository
+      # runs them, with no settings, so each finds the free data files in
+      # cxx/data itself. Each must run, give the link for asking about the
+      # Enterprise data file, and end with its "Find out more" section. It
+      # runs even when a test failed, so the log shows both.
+      # Every on-premise IP Intelligence example but performance and update
+      # reads the Lite IP Intelligence file, a download of about 320 MB that
+      # the daily entry does not hold, so the file has an entry of its own for
+      # the week. Each example that reads it finds it restored, and on a miss
+      # the first one downloads it for the rest. Each system has its own
+      # entry, so on a miss Windows downloads the file through the PowerShell
+      # script, as Linux does through the shell script, rather than restoring
+      # the copy Linux saved.
+      - name: Name the week for the Lite IP Intelligence file
+        id: week
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - name: Restore the Lite IP Intelligence file
+        id: ipi-lite
+        if: ${{ !cancelled() }}
+        uses: actions/cache/restore@v4
+        with:
+          path: cxx/data/ip-intelligence/51Degrees-LiteV41.ipi
+          key: ipi-lite-v41-${{ runner.os }}-${{ steps.week.outputs.week }}
+      - name: Run the on-premise examples on the free data files
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        working-directory: .
+        run: ./ci/run-examples-on-free-data.ps1
+      # A file that was not downloaded leaves nothing to save, which is not a
+      # failure of this job.
+      - name: Save the Lite IP Intelligence file for later runs this week
+        if: ${{ !cancelled() && steps.ipi-lite.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: cxx/data/ip-intelligence/51Degrees-LiteV41.ipi
+          key: ipi-lite-v41-${{ runner.os }}-${{ steps.week.outputs.week }}
 
   # The check publish.yml runs after a release, here so that it can be run by
   # hand on a branch before one: gh workflow run Examples --ref <branch>. It
