@@ -517,8 +517,8 @@ impl CloudRequestEngine {
                 Error::Pipeline {
                     message: format!(
                         "The '{engine_name}' did not process because the JSON response from \
-                     the CloudRequestEngine was null or empty. This indicates that the \
-                     cloud request failed."
+                         the CloudRequestEngine was null or empty. This indicates that the \
+                         cloud request failed."
                     ),
                 },
                 false,

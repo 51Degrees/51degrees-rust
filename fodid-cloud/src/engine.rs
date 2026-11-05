@@ -220,9 +220,9 @@ impl FodIdCloudEngine {
     /// element data from it, or `None` when the request engine left no
     /// response.
     ///
-    /// Returns an [`Error::PipelineConfiguration`] when there is no cloud JSON,
-    /// which almost always means no [`CloudRequestEngine`] ran before this
-    /// engine.
+    /// Returns an [`Error::PipelineConfiguration`] when there is no cloud
+    /// request data, which almost always means no [`CloudRequestEngine`] ran
+    /// before this engine.
     fn build_data(&self, data: &FlowData) -> Result<Option<FodIdDataBase>> {
         let cloud = data.get(CloudRequestEngine::DATA_KEY).ok_or_else(|| {
             Error::configuration(

@@ -351,6 +351,7 @@ fn a_failed_request_records_that_the_51did_engine_did_not_process() {
         .get(FODID_DATA_KEY)
         .expect("identifier data is present after a failed request");
     assert!(!fodid.id_prob_global().has_value());
+    assert!(!fodid.base().cloud_request_failed());
 }
 
 /// The flags byte of a random 51Did created for non-marketing use. Bits 6 and
