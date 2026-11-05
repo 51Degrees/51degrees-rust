@@ -54,14 +54,22 @@
 //! [`JsonValueConverter`] changes how a property value is written. Both are
 //! given to the [`JsonBuilderElementBuilder`].
 //!
+//! ## Text form
+//!
+//! The JSON is written as .NET's builder writes it with Newtonsoft.Json,
+//! indented by two spaces, with keys in lower case apart from
+//! `javascriptProperties`, doubles in .NET's shortest round trip form and
+//! .NET's string escapes. Lines end with the platform's line ending, as
+//! .NET's do. [`write_indented`] describes the form, and a step that wants
+//! the same text on every platform calls it with `"\n"`.
+//!
 //! ## Determinism
 //!
-//! The serializer uses `serde_json` with the `preserve_order` feature so the
-//! key order is the insertion order rather than a hash order. Elements are
-//! inserted in the order their data was added to the flow data, and
-//! properties in the order each element data lists them, as .NET writes them,
-//! so the same flow data always yields byte-identical JSON. That stability is
-//! what lets downstream code compute a reliable ETag from the JSON.
+//! Keys are written in the order they were added. Elements are added in the
+//! order their data was added to the flow data, and properties in the order
+//! each element data lists them, as .NET writes them, so the same flow data
+//! always yields byte-identical JSON on one platform. That stability is what
+//! lets downstream code compute a reliable ETag from the JSON.
 
 #![warn(missing_docs)]
 
@@ -72,6 +80,7 @@ mod data;
 pub mod default_steps;
 mod element;
 mod steps;
+mod text;
 mod value;
 
 pub use builder::JsonBuilderElementBuilder;
@@ -85,4 +94,5 @@ pub use converter::JsonValueConverter;
 pub use data::{JsonBuilderData, JSON_BUILDER_DATA_KEY};
 pub use element::JsonBuilderElement;
 pub use steps::{DefaultJsonBuilderSteps, JsonBuilderContext, JsonBuilderSteps, PipelineConfig};
+pub use text::{write_indented, NEW_LINE};
 pub use value::{JsonObject, JsonValue};

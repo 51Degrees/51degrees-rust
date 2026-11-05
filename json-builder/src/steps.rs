@@ -236,8 +236,9 @@ pub trait JsonBuilderSteps: Send + Sync {
 
     /// Write the collected values as JSON text.
     ///
-    /// The default writes them indented by two spaces, with keys in the
-    /// order they were added.
+    /// The default writes them as .NET's builder does, indented by two
+    /// spaces with keys in the order they were added, ending lines with the
+    /// platform's line ending. See [`write_indented`](crate::write_indented).
     fn write_json(&self, context: &JsonBuilderContext<'_>, all_properties: &JsonObject) -> String {
         default_steps::write_json(self, context, all_properties)
     }

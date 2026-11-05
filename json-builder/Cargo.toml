@@ -29,12 +29,13 @@ fiftyone-pipeline-engines-fiftyone = { version = "4.5.2", path = "../pipeline-en
 # data is the raw cloud response. default-features = false keeps reqwest out, so
 # the crate still compiles for wasm32-wasip1.
 fiftyone-cloud-request-engine = { version = "4.5.2", path = "../cloud-request-engine", default-features = false }
-# serde_json with preserve_order keeps the serialized key order deterministic so
-# the JSON (and any ETag computed from it downstream) is stable across runs. The
-# indexmap-backed Map this enables preserves insertion order rather than sorting.
+# serde_json reads the output in this crate's tests. The writer does not use
+# it. preserve_order stays on because Cargo turns a feature on for every crate
+# built with this one, so removing it here would change the key order of
+# serde_json maps elsewhere in the same build.
 serde_json = { version = "1", features = ["preserve_order"] }
 # The ordered map behind JsonObject, so the output keeps the order keys were
-# added in. serde_json's preserve_order already depends on it.
+# added in.
 indexmap = "2"
 
 [package.metadata.docs.rs]

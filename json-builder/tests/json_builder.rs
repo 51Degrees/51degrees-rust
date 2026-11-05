@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use fiftyone_json_builder::{
-    JsonBuilderElement, JSON_BUILDER_DATA_KEY, JSON_BUILDER_ELEMENT_DATA_KEY,
+    JsonBuilderElement, JSON_BUILDER_DATA_KEY, JSON_BUILDER_ELEMENT_DATA_KEY, NEW_LINE,
 };
 use fiftyone_pipeline_core::{
     ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
@@ -748,6 +748,32 @@ fn output_is_deterministic() {
         zebra < alpha && alpha < middle,
         "properties in the order the element data lists them: {first}"
     );
+}
+
+#[test]
+fn text_is_in_the_form_dotnet_writes() {
+    let device = TestElement::new("device")
+        .with_value("text", "a\"b\\c\u{1}\u{2028}<&\u{e9}")
+        .with_value("one", 1.0f64)
+        .with_value("tenth", 0.1f64)
+        .with_value("small", 1e-7f64)
+        .with_value("large", 1e21f64);
+
+    let json = run(vec![Arc::new(device)], JsonBuilderElement::new());
+
+    let expected = [
+        "{",
+        "  \"device\": {",
+        "    \"text\": \"a\\\"b\\\\c\\u0001\\u2028<&\u{e9}\",",
+        "    \"one\": 1.0,",
+        "    \"tenth\": 0.1,",
+        "    \"small\": 1E-07,",
+        "    \"large\": 1E+21",
+        "  }",
+        "}",
+    ]
+    .join(NEW_LINE);
+    assert_eq!(json, expected);
 }
 
 #[test]

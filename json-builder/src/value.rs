@@ -38,7 +38,9 @@ pub enum JsonValue {
     Bool(bool),
     /// A whole number.
     Integer(i64),
-    /// A 64-bit floating point number.
+    /// A 64-bit floating point number. It is written in .NET's shortest
+    /// round trip form, and NaN and the infinities as the strings `"NaN"`,
+    /// `"Infinity"` and `"-Infinity"`, as .NET's builder writes them.
     Double(f64),
     /// A string.
     String(String),
@@ -166,30 +168,4 @@ impl FromIterator<(String, JsonValue)> for JsonObject {
     fn from_iter<I: IntoIterator<Item = (String, JsonValue)>>(iter: I) -> Self {
         JsonObject(iter.into_iter().collect())
     }
-}
-
-/// The `serde_json` form of a value, used to write the text.
-///
-/// A double that is not finite has no JSON number form, so it is written as
-/// `null`.
-pub(crate) fn to_serde(value: &JsonValue) -> serde_json::Value {
-    match value {
-        JsonValue::Null => serde_json::Value::Null,
-        JsonValue::Bool(b) => serde_json::Value::Bool(*b),
-        JsonValue::Integer(i) => serde_json::Value::Number((*i).into()),
-        JsonValue::Double(d) => serde_json::Number::from_f64(*d)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
-        JsonValue::String(s) => serde_json::Value::String(s.clone()),
-        JsonValue::Array(items) => serde_json::Value::Array(items.iter().map(to_serde).collect()),
-        JsonValue::Object(object) => serde_json::Value::Object(object_to_serde(object)),
-    }
-}
-
-/// The `serde_json` form of an object, keeping its key order.
-pub(crate) fn object_to_serde(object: &JsonObject) -> serde_json::Map<String, serde_json::Value> {
-    object
-        .iter()
-        .map(|(key, value)| (key.to_owned(), to_serde(value)))
-        .collect()
 }

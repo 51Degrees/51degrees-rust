@@ -40,7 +40,8 @@ use crate::constants::{
 };
 use crate::element::JsonBuilderElement;
 use crate::steps::{JsonBuilderContext, JsonBuilderSteps};
-use crate::value::{object_to_serde, JsonObject, JsonValue};
+use crate::text::{write_indented, NEW_LINE};
+use crate::value::{JsonObject, JsonValue};
 
 /// The default of [`JsonBuilderSteps::build_json`].
 ///
@@ -60,14 +61,15 @@ pub fn build_json<S: JsonBuilderSteps + ?Sized>(
     steps.write_json(context, &all_properties)
 }
 
-/// The default of [`JsonBuilderSteps::write_json`].
+/// The default of [`JsonBuilderSteps::write_json`], being indented text in
+/// the form .NET's builder writes, with the platform's line ending. See
+/// [`write_indented`] for the form.
 pub fn write_json<S: JsonBuilderSteps + ?Sized>(
     _steps: &S,
     _context: &JsonBuilderContext<'_>,
     all_properties: &JsonObject,
 ) -> String {
-    serde_json::to_string_pretty(&serde_json::Value::Object(object_to_serde(all_properties)))
-        .unwrap_or_else(|_| "{}".to_owned())
+    write_indented(all_properties, NEW_LINE)
 }
 
 /// The default of [`JsonBuilderSteps::get_all_properties`].
