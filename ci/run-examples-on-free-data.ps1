@@ -91,7 +91,8 @@ function Start-Example([string]$Bin) {
 }
 
 # Print an example's output in a group, and the lines about the Enterprise
-# data file after it.
+# data file after it. A page is split at each tag as well, so each line is a
+# piece of text or a link rather than the whole page.
 function Show-Output([string]$Bin, [string]$Text) {
     Write-Host "::group::$Bin output"
     Write-Host $Text
@@ -101,10 +102,10 @@ function Show-Output([string]$Bin, [string]$Text) {
         Write-Host (Get-Content -Raw $errors)
     }
     Write-Host "::endgroup::"
-    $Text -split '\r?\n' |
-        Where-Object { $_ -match 'Enterprise data file|contact-us|^Find out more' } |
-        Select-Object -First 12 |
-        ForEach-Object { Write-Host "  $bin | $($_.Trim())" }
+    $Text -split '\r?\n|(?=<)' |
+        Where-Object { $_ -match 'Enterprise data file|contact-us|Find out more' } |
+        Select-Object -First 14 |
+        ForEach-Object { Write-Host "  $Bin | $($_.Trim())" }
 }
 
 # Check that `Text` carries the contact-us link and then the section.
