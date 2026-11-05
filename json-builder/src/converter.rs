@@ -22,6 +22,8 @@
 
 //! A caller's conversion of property values to JSON.
 
+use std::panic::RefUnwindSafe;
+
 use fiftyone_pipeline_core::PropertyValue;
 
 use crate::element::JsonBuilderElement;
@@ -39,7 +41,11 @@ use crate::value::JsonValue;
 /// These match the extra `JsonConverter` instances given to .NET's
 /// `JsonBuilderElementBuilder.SetJsonConverters`. A closure taking the
 /// element and the value is also a converter.
-pub trait JsonValueConverter: Send + Sync {
+///
+/// A converter must be `RefUnwindSafe` so the builder and element holding
+/// it stay `UnwindSafe` and `RefUnwindSafe`. Keep any state a converter
+/// changes in a `Mutex` or an atomic, which are both.
+pub trait JsonValueConverter: Send + Sync + RefUnwindSafe {
     /// The JSON for the value, or `None` to leave it to the next converter.
     ///
     /// Call [`JsonBuilderElement::to_json_value`] to convert a value held
@@ -49,7 +55,7 @@ pub trait JsonValueConverter: Send + Sync {
 
 impl<F> JsonValueConverter for F
 where
-    F: Fn(&JsonBuilderElement, &PropertyValue) -> Option<JsonValue> + Send + Sync,
+    F: Fn(&JsonBuilderElement, &PropertyValue) -> Option<JsonValue> + Send + Sync + RefUnwindSafe,
 {
     fn convert(&self, element: &JsonBuilderElement, value: &PropertyValue) -> Option<JsonValue> {
         self(element, value)

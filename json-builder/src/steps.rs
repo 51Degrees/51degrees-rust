@@ -24,6 +24,7 @@
 //! time.
 
 use std::collections::{HashMap, HashSet};
+use std::panic::RefUnwindSafe;
 
 use fiftyone_pipeline_core::{
     ElementData, FlowData, NoValueError, Pipeline, PropertyMetaData, PropertyValue,
@@ -182,6 +183,10 @@ impl<'a> JsonBuilderContext<'a> {
 /// | [`add_errors`](Self::add_errors) | `AddErrors`                   |
 /// | [`add_warnings`](Self::add_warnings) | `AddWarnings`             |
 ///
+/// An implementation must be `RefUnwindSafe` so the builder and element
+/// holding it stay `UnwindSafe` and `RefUnwindSafe`. Keep any state a step
+/// changes in a `Mutex` or an atomic, which are both.
+///
 /// # Example
 ///
 /// Writing only the `ismobile` property of each element, so no other
@@ -221,7 +226,7 @@ impl<'a> JsonBuilderContext<'a> {
 ///     .set_steps(IsMobileOnly)
 ///     .build();
 /// ```
-pub trait JsonBuilderSteps: Send + Sync {
+pub trait JsonBuilderSteps: Send + Sync + RefUnwindSafe {
     /// Write the whole flow data as JSON text.
     ///
     /// The default collects the element data with

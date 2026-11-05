@@ -930,3 +930,13 @@ fn cap_uses_the_sequence_after_the_sequence_element_adds_one() {
         "a request sent with sequence 8 is request 9, which is below the cap"
     );
 }
+
+/// The builder and the element are `Send`, `Sync`, `UnwindSafe` and
+/// `RefUnwindSafe`, as removing an auto trait from a public type breaks
+/// callers. This test fails to compile if either loses one.
+#[test]
+fn the_builder_and_element_keep_their_auto_traits() {
+    fn has_auto_traits<T: Send + Sync + std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
+    has_auto_traits::<fiftyone_json_builder::JsonBuilderElementBuilder>();
+    has_auto_traits::<JsonBuilderElement>();
+}
