@@ -15,12 +15,14 @@
 //! binary because a logger is installed once for the whole process, and each
 //! test holds [`SERIAL`] so the records it reads are its own.
 
+use std::any::Any;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use fiftyone_derived_properties::{DerivedPropertyElement, DERIVED_DEFAULT_ELEMENT_DATA_KEY};
 use fiftyone_pipeline_core::{
-    Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, MapElementData,
-    Pipeline, PropertyMetaData, PropertyValueType, Result, TypedKey,
+    ElementData, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue, PropertyValueType,
+    Result, TypedKey,
 };
 
 /// Log records at warning level or above, as "LEVEL message".
@@ -93,11 +95,47 @@ fn derived(source: &str) -> Arc<DerivedPropertyElement> {
     )
 }
 
-/// Writes `N` = 1 under its key, or data with no properties, or fails.
+/// The message [`NoValueData`] gives for `N`.
+const NO_VALUE: &str = "the source found no value on this request";
+
+/// Data holding `N` with no value, as a detection that found none stores.
+struct NoValueData;
+
+impl ElementData for NoValueData {
+    fn get(&self, _name: &str) -> std::result::Result<PropertyValue, NoValueError> {
+        Err(NoValueError::new(NO_VALUE))
+    }
+
+    fn keys(&self) -> Vec<String> {
+        vec!["N".to_owned()]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+/// What a [`SourceElement`] stores under its key.
+#[derive(Clone, Copy, PartialEq)]
+enum Stored {
+    /// `N` = 1.
+    Value,
+    /// Data with no properties.
+    Nothing,
+    /// `N` with no value, as [`NoValueData`].
+    NoValue,
+}
+
+/// Writes `N` = 1 under its key, or data with no properties, or `N` with no
+/// value, or fails.
 struct SourceElement {
     key: &'static str,
     fail: bool,
-    empty: bool,
+    stored: Stored,
     filter: EvidenceKeyFilterWhitelist,
     properties: Vec<PropertyMetaData>,
 }
@@ -111,24 +149,23 @@ impl SourceElement {
     /// An element writing data with no properties under `src`, as a cloud
     /// engine does when its request failed.
     fn storing_nothing() -> Arc<Self> {
-        Arc::new(SourceElement {
-            key: "src",
-            fail: false,
-            empty: true,
-            filter: EvidenceKeyFilterWhitelist::new(Vec::<&str>::new()),
-            properties: vec![PropertyMetaData::new(
-                "N",
-                "src",
-                PropertyValueType::Integer,
-            )],
-        })
+        Self::storing("src", false, Stored::Nothing)
+    }
+
+    /// An element writing `N` with no value under `src`.
+    fn storing_no_value() -> Arc<Self> {
+        Self::storing("src", false, Stored::NoValue)
     }
 
     fn writing(key: &'static str, fail: bool) -> Arc<Self> {
+        Self::storing(key, fail, Stored::Value)
+    }
+
+    fn storing(key: &'static str, fail: bool, stored: Stored) -> Arc<Self> {
         Arc::new(SourceElement {
             key,
             fail,
-            empty: false,
+            stored,
             filter: EvidenceKeyFilterWhitelist::new(Vec::<&str>::new()),
             properties: vec![PropertyMetaData::new("N", key, PropertyValueType::Integer)],
         })
@@ -140,9 +177,14 @@ impl FlowElement for SourceElement {
         if self.fail {
             return Err(Error::configuration("the source failed"));
         }
+        if self.stored == Stored::NoValue {
+            let key: TypedKey<NoValueData> = TypedKey::new(self.key);
+            data.get_or_add(key, || NoValueData)?;
+            return Ok(());
+        }
         let key: TypedKey<MapElementData> = TypedKey::new(self.key);
         let stored = data.get_or_add(key, MapElementData::default)?;
-        if !self.empty {
+        if self.stored == Stored::Value {
             stored.insert("N", 1i64);
         }
         Ok(())
@@ -259,6 +301,28 @@ fn a_source_element_that_stores_no_properties_logs_nothing() {
         .build()
         .unwrap();
     assert_eq!(run(&pipeline, 3), vec![Vec::<String>::new(); 3]);
+}
+
+/// A source element that runs first and stores the property with no value
+/// logs nothing, as .NET's derived property element logs only when the
+/// request carried no data from the source element. The script's no value
+/// message carries the source's own message.
+#[test]
+fn a_source_element_that_stores_the_property_with_no_value_logs_nothing() {
+    let _serial = start();
+    let pipeline = Pipeline::builder()
+        .add_element(SourceElement::storing_no_value())
+        .add_element(derived("src.N"))
+        .build()
+        .unwrap();
+    assert_eq!(run(&pipeline, 3), vec![Vec::<String>::new(); 3]);
+    let message = demo(&pipeline).expect_err("N has no value");
+    assert!(
+        message.contains(&format!(
+            "'src.N' (element 'src' has no value for 'N': {NO_VALUE})."
+        )),
+        "{message}"
+    );
 }
 
 #[test]
