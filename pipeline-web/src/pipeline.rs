@@ -59,7 +59,8 @@
 //! against the configured paths, so an application mounted under a sub-path
 //! (for example `/app/51Degrees.core.js`) still routes correctly.
 
-use std::sync::Arc;
+use std::fmt;
+use std::sync::{Arc, OnceLock};
 
 use fiftyone_javascript_builder::JavaScriptBuilderElement;
 use fiftyone_json_builder::JsonBuilderElement;
@@ -68,6 +69,8 @@ use fiftyone_pipeline_core::constants::{
 };
 use fiftyone_pipeline_core::{EvidenceKeyFilterWhitelist, FlowElement, Pipeline, Result};
 use fiftyone_pipeline_engines_fiftyone::{SequenceElement, SetHeadersElement};
+
+use crate::clientside::EndpointOptions;
 
 /// The client-side endpoint a request path targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,12 +133,12 @@ impl Default for WebIntegrationOptions {
 /// Construct one with [`WebPipeline::build`]. It owns the shared
 /// [`Pipeline`], the resolved [`WebIntegrationOptions`] and the evidence-key
 /// whitelist used to derive the `Vary` header. An adapter clones the `Arc` to
-/// create flow data per request, and reads the endpoint paths and Vary whitelist
-/// when serving the client-side endpoints.
+/// create flow data per request, reads the endpoint paths, and serves the
+/// client-side endpoints with [`WebPipeline::endpoint_options`].
 pub struct WebPipeline {
     pipeline: Arc<Pipeline>,
     options: WebIntegrationOptions,
-    vary_whitelist: EvidenceKeyFilterWhitelist,
+    vary: Arc<VaryList>,
 }
 
 impl WebPipeline {
@@ -157,8 +160,8 @@ impl WebPipeline {
         let ordered = order_elements(elements, &options);
 
         // The Vary whitelist is the union of the header keys every element in
-        // the pipeline names, collected here and handed to the endpoints.
-        let vary_whitelist = collect_vary_whitelist(&ordered);
+        // the pipeline names, shared with the endpoints.
+        let vary = Arc::new(VaryList::new(ordered.clone()));
 
         let mut builder =
             Pipeline::builder().suppress_process_exceptions(options.suppress_process_exceptions);
@@ -170,7 +173,7 @@ impl WebPipeline {
         Ok(WebPipeline {
             pipeline,
             options,
-            vary_whitelist,
+            vary,
         })
     }
 
@@ -185,9 +188,22 @@ impl WebPipeline {
     }
 
     /// The evidence-key whitelist used to derive the `Vary` header for the
-    /// client-side endpoints. Pass this to [`crate::EndpointOptions::new`].
+    /// client-side endpoints.
+    ///
+    /// While an element is still learning the evidence it accepts, as the cloud
+    /// request engine is after a transient discovery failure, this is the list
+    /// collected when the pipeline was built. Once every element's filter is
+    /// complete the list is collected again and kept. A copy taken earlier does
+    /// not change, so serve the endpoints with
+    /// [`WebPipeline::endpoint_options`] rather than a copy.
     pub fn vary_whitelist(&self) -> &EvidenceKeyFilterWhitelist {
-        &self.vary_whitelist
+        self.vary.whitelist()
+    }
+
+    /// The [`EndpointOptions`] for the client-side endpoints, taking the `Vary`
+    /// header from [`WebPipeline::vary_whitelist`] at each response.
+    pub fn endpoint_options(&self) -> EndpointOptions {
+        EndpointOptions::from_vary_list(Arc::clone(&self.vary))
     }
 
     /// Decide which client-side endpoint, if any, a request path targets.
@@ -251,6 +267,57 @@ fn order_elements(
     }
 
     ordered
+}
+
+/// The `Vary` whitelist of a [`WebPipeline`], shared with the
+/// [`EndpointOptions`] it gives out.
+///
+/// The cloud request engine specification says a consumer must not keep
+/// accepted evidence obtained before discovery completed, so until every
+/// element reports its filter complete the list collected at build is given
+/// out. The first call after that collects the list again and keeps it.
+pub(crate) struct VaryList {
+    elements: Vec<Arc<dyn FlowElement>>,
+    at_build: EvidenceKeyFilterWhitelist,
+    complete: OnceLock<EvidenceKeyFilterWhitelist>,
+}
+
+impl VaryList {
+    fn new(elements: Vec<Arc<dyn FlowElement>>) -> Self {
+        let at_build = collect_vary_whitelist(&elements);
+        VaryList {
+            elements,
+            at_build,
+            complete: OnceLock::new(),
+        }
+    }
+
+    /// The complete list once every element's filter is complete, otherwise
+    /// the list collected at build.
+    pub(crate) fn whitelist(&self) -> &EvidenceKeyFilterWhitelist {
+        if let Some(complete) = self.complete.get() {
+            return complete;
+        }
+        if self
+            .elements
+            .iter()
+            .all(|element| element.is_evidence_key_filter_complete())
+        {
+            return self
+                .complete
+                .get_or_init(|| collect_vary_whitelist(&self.elements));
+        }
+        &self.at_build
+    }
+}
+
+impl fmt::Debug for VaryList {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VaryList")
+            .field("at_build", &self.at_build)
+            .field("complete", &self.complete.get())
+            .finish_non_exhaustive()
+    }
 }
 
 /// Build the union of the `header.*` keys the elements accept, for the `Vary`
