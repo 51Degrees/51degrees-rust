@@ -226,6 +226,23 @@ jobs:
           grep -q 'ua-chrome-windows.*properties.device.ismobile' out/report-lost.md
           grep -q 'ua-chrome-windows.*json.device.ismobile' out/report-lost.md
 
+      # The values cases compare the JSON byte for byte, so a Rust text with
+      # the same structure and one escape written differently must fail too.
+      - name: Check that a changed JSON text fails
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          jq -c 'if .id == "json-values-sequence-8" then .json |= sub("\\\\u2028"; "\u2028") else . end' \
+            out/rust.jsonl > out/rust-text.jsonl
+          if target/debug/parity-compare --corpus corpus/evidence.json \
+            --dotnet out/dotnet.jsonl --rust out/rust-text.jsonl \
+            --allowed allowed-differences.json --data lite \
+            --report out/report-text.md > /dev/null; then
+            echo "::error::The comparison passed with a changed JSON text"
+            exit 1
+          fi
+          grep -q '`json-values-sequence-8`.* at `json`: ' out/report-text.md
+
       - name: Upload the answers and the report
         if: always() && env.RUN == 'true'
         uses: actions/upload-artifact@v4

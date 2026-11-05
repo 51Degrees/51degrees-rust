@@ -8,7 +8,7 @@ change by a difference this comparison stops reporting.
 
 | Path | What it is |
 | --- | --- |
-| `corpus/evidence.json` | The cases. Each has an id, a sentence saying what it covers, and its evidence. None of it comes from real visitors. |
+| `corpus/evidence.json` | The cases. Each has an id, a sentence saying what it covers, its evidence and, for some, the pipeline it runs through. None of it comes from real visitors. |
 | `dotnet/` | A .NET 8 console program that runs the cases through the .NET packages and writes one JSON line for each. |
 | `rust/` | The same program over the crates in this checkout. |
 | `compare/` | The comparer, which reports each difference with the case that caused it. |
@@ -19,10 +19,11 @@ The workflow
 of it on every pull request, over the Lite files in the `cxx` submodule and,
 when the license keys are available to the run, over the Enterprise files.
 
-## The pipeline
+## The pipelines
 
-Both programs build the same pipeline, with process errors collected rather
-than thrown.
+Both programs build the same two pipelines, with process errors collected
+rather than thrown. A case runs through the first unless its `pipeline` is
+`values`.
 
 1. The Sequence element.
 2. Usage sharing, in .NET only. The records go to a handler inside the
@@ -33,6 +34,19 @@ than thrown.
 5. The JSON builder.
 6. The JavaScript builder, with minification off, because the two languages
    use different minifiers.
+
+The values pipeline has the Sequence element, the values element and the
+JSON builder. The values element is part of each program. Its data holds one
+of each kind of value the JSON builder writes, being strings that need
+escaping, doubles and 32-bit floats that need an exponent or a decimal point,
+a whole number, true or false, a list, a property with no value and its
+reason, a delayed JavaScript property and a property naming it as evidence,
+and a weighted list. It also adds two errors and a warning. With no engine in
+the pipeline, nothing the engines give differently reaches the JSON, so its
+text can be the same on both sides, and the comparison then checks it byte
+for byte. The crates' JSON builder leaves the crates' Sequence element's data
+out there, because .NET's Sequence element has none
+([#231](https://github.com/51Degrees/51degrees-rust/issues/231)).
 
 ## The line
 
@@ -154,7 +168,8 @@ target/debug/parity-compare --corpus corpus/evidence.json --dotnet out/dotnet.js
 ## Adding a case
 
 Add it to `corpus/evidence.json` with an id no other case has and a
-sentence saying what it covers. Give it a `query.session-id` unless it is
+sentence saying what it covers, and with `"pipeline": "values"` if it runs
+through the values pipeline. Give it a `query.session-id` unless it is
 about a generated one, because usage records are matched to cases by
 session id. Keep every character within the Basic Multilingual Plane. Then
 run both programs and list any new difference with its reason, or fix it.

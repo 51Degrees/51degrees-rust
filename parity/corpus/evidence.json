@@ -538,5 +538,40 @@
       "server.client-ip": "81.2.69.142",
       "query.session-id": "parity-usage-evidence"
     }
+  },
+  {
+    "id": "json-values-sequence-8",
+    "about": "The values pipeline with sequence 8, so the JSON builder sees 9, the last sequence that lists JavaScript properties.",
+    "pipeline": "values",
+    "evidence": {
+      "query.session-id": "parity-json-values-sequence-8",
+      "query.sequence": "8"
+    }
+  },
+  {
+    "id": "json-values-sequence-9",
+    "about": "The values pipeline with sequence 9, so the JSON builder sees 10, where JavaScript properties stop.",
+    "pipeline": "values",
+    "evidence": {
+      "query.session-id": "parity-json-values-sequence-9",
+      "query.sequence": "9"
+    }
+  },
+  {
+    "id": "json-values-sequence-10",
+    "about": "The values pipeline with sequence 10, so the JSON builder sees 11.",
+    "pipeline": "values",
+    "evidence": {
+      "query.session-id": "parity-json-values-sequence-10",
+      "query.sequence": "10"
+    }
+  },
+  {
+    "id": "json-values-sequence-absent",
+    "about": "The values pipeline with no sequence, so the JSON builder sees 1.",
+    "pipeline": "values",
+    "evidence": {
+      "query.session-id": "parity-json-values-sequence-absent"
+    }
   }
 ]

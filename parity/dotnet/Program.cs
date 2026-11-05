@@ -24,7 +24,7 @@
 //
 //   dotnet run -- --corpus <json> --dd <hash file> --ipi <ipi file> --out <jsonl>
 //
-// The pipeline and the line format are the same as the Rust producer's, as
+// The pipelines and the line format are the same as the Rust producer's, as
 // parity/README.md describes. Usage records go to a handler inside this
 // process, so nothing is sent anywhere.
 
@@ -45,6 +45,7 @@ using FiftyOne.DeviceDetection.Hash.Engine.OnPremise.FlowElements;
 using FiftyOne.IpIntelligence.Engine.OnPremise.FlowElements;
 using FiftyOne.Pipeline.Core.Data;
 using FiftyOne.Pipeline.Core.Data.Types;
+using FiftyOne.Pipeline.Core.Exceptions;
 using FiftyOne.Pipeline.Core.FlowElements;
 using FiftyOne.Pipeline.Engines;
 using FiftyOne.Pipeline.Engines.Data;
@@ -74,6 +75,9 @@ namespace FiftyOne.Parity
         // The evidence the Sequence element reads and writes back.
         private const string SessionIdKey = "query.session-id";
         private const string SequenceKey = "query.sequence";
+
+        // The pipeline of a case that runs through the values pipeline.
+        private const string ValuesPipeline = "values";
 
         // Never contacted. The handler answers every request itself.
         private const string UsageUrl = "http://usage.invalid/new.ashx";
@@ -124,6 +128,14 @@ namespace FiftyOne.Parity
                 .AddFlowElement(javascript)
                 .SetSuppressProcessExceptions(true)
                 .Build();
+            // Sequence, the values element and the JSON builder, for the
+            // cases that compare the JSON byte for byte.
+            var values = new PipelineBuilder(loggerFactory)
+                .AddFlowElement(new SequenceElementBuilder(loggerFactory).Build())
+                .AddFlowElement(new ValuesElement())
+                .AddFlowElement(new JsonBuilderElementBuilder(loggerFactory).Build())
+                .SetSuppressProcessExceptions(true)
+                .Build();
             var skipped = new HashSet<string>
             {
                 json.ElementDataKey, javascript.ElementDataKey
@@ -132,7 +144,14 @@ namespace FiftyOne.Parity
             var lines = new List<JsonObject>();
             foreach (var item in cases)
             {
-                lines.Add(RunCase(pipeline, item.AsObject(), skipped));
+                var chosen = item["pipeline"]?.GetValue<string>() switch
+                {
+                    null => pipeline,
+                    ValuesPipeline => values,
+                    var other => throw new ArgumentException(
+                        $"{item["id"]}: unknown pipeline {other}")
+                };
+                lines.Add(RunCase(chosen, item.AsObject(), skipped));
             }
 
             // Disposing usage sharing sends what is queued and waits for it.
@@ -158,6 +177,7 @@ namespace FiftyOne.Parity
             Console.Error.WriteLine(
                 $"{lines.Count} cases written to {args.Out}, " +
                 $"{records.Count} usage records captured");
+            values.Dispose();
             pipeline.Dispose();
             return 0;
         }
@@ -408,6 +428,108 @@ namespace FiftyOne.Parity
                 }
                 return args;
             }
+        }
+    }
+
+    // The values element, whose data holds one of each kind of value the JSON
+    // builder writes and which adds two errors and a warning, so the JSON the
+    // two languages write for the same flow data can be compared byte for
+    // byte. The Rust producer's values element holds the same values in the
+    // same order. Only the two properties whose metadata the JSON builder
+    // reads are declared, being a delayed JavaScript property and one that
+    // names it as evidence. The builder writes the rest from the data alone.
+    internal sealed class ValuesElement :
+        FlowElementBase<ValuesData, IElementPropertyMetaData>
+    {
+        private const string Key = "values";
+
+        // The errors the element adds, in order.
+        private static readonly string[] ErrorMessages =
+        {
+            "The first error.", "The second error."
+        };
+
+        // The warning the element adds after its errors.
+        private const string WarningMessage = "The warning.";
+
+        // The reason the property with no value gives.
+        private const string NoValueReason = "There is no value, on purpose.";
+
+        private readonly IList<IElementPropertyMetaData> _properties;
+
+        private readonly IEvidenceKeyFilter _filter =
+            new EvidenceKeyFilterWhitelist(new List<string>());
+
+        public ValuesElement() : base(
+            NullLogger<FlowElementBase<ValuesData, IElementPropertyMetaData>>
+                .Instance)
+        {
+            _properties = new List<IElementPropertyMetaData>
+            {
+                new ElementPropertyMetaData(
+                    this, "Script", typeof(JavaScript), true,
+                    delayExecution: true),
+                new ElementPropertyMetaData(
+                    this, "FromScript", typeof(string), true,
+                    evidenceProperties: new[] { "Script" })
+            };
+        }
+
+        public override string ElementDataKey => Key;
+
+        public override IEvidenceKeyFilter EvidenceKeyFilter => _filter;
+
+        public override IList<IElementPropertyMetaData> Properties =>
+            _properties;
+
+        protected override void ProcessInternal(IFlowData data)
+        {
+            var values = data.GetOrAdd(
+                ElementDataKeyTyped,
+                pipeline => new ValuesData(pipeline));
+            values["Text"] = "a \"quote\", a backslash \\, U+0001 \u0001, " +
+                "U+2028 \u2028, <, & and \u00e9";
+            values["Whitespace"] = "a tab \t, a new line \n, a return \r, " +
+                "U+0085 \u0085 and U+2029 \u2029";
+            values["One"] = 1.0;
+            values["Tenth"] = 0.1;
+            values["Small"] = 1e-7;
+            values["Large"] = 1e21;
+            values["Single"] = 0.1f;
+            values["SingleLarge"] = 1e9f;
+            values["Count"] = 42;
+            values["Flag"] = true;
+            values["Names"] = new List<string> { "first", "second" };
+            values["Missing"] = new AspectPropertyValue<string>
+            {
+                NoValueMessage = NoValueReason
+            };
+            values["Script"] = new JavaScript(
+                "document.cookie = \"51D_Values=1\";");
+            values["FromScript"] = "Read from the script.";
+            values["Weights"] = new List<IWeightedValue<string>>
+            {
+                new WeightedValue<string>(40000, "first"),
+                new WeightedValue<string>(25535, "second")
+            };
+            foreach (var message in ErrorMessages)
+            {
+                data.AddError(new PipelineException(message), this);
+            }
+            data.AddWarning(WarningMessage, this);
+        }
+
+        protected override void ManagedResourcesCleanup() { }
+
+        protected override void UnmanagedResourcesCleanup() { }
+    }
+
+    // The values element's data, in the order the properties were set.
+    internal sealed class ValuesData : ElementDataBase
+    {
+        public ValuesData(IPipeline pipeline)
+            : base(NullLogger<ElementDataBase>.Instance, pipeline)
+        {
         }
     }
 
