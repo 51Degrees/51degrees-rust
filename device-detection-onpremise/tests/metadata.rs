@@ -398,3 +398,36 @@ fn a_property_named_in_another_case_is_read() {
     let device = detect(&engine, MOBILE_USER_AGENT);
     assert!(*device.is_mobile().value().expect("IsMobile has a value"));
 }
+
+/// A tier set on the builder is the one the engine reports, but the missing
+/// property rules compare each property's tiers with the tier the data file
+/// names, so a property left out of the configuration is still excluded
+/// rather than one to upgrade for, from the engine and from device data.
+#[test]
+fn a_tier_set_on_the_builder_leaves_an_excluded_property_excluded() {
+    let Some(path) = data_file() else {
+        eprintln!("no Hash data file found; skipping");
+        return;
+    };
+    let engine = Arc::new(
+        DeviceDetectionOnPremiseEngineBuilder::new(path)
+            .performance_profile(PerformanceProfile::LowMemory)
+            .property("IsMobile")
+            .data_source_tier("Premium")
+            .build()
+            .expect("the data file loads"),
+    );
+    assert_eq!(engine.data_source_tier(), "Premium");
+
+    let browser_name = engine.missing_property_reason("BrowserName");
+    assert_eq!(
+        browser_name.reason,
+        MissingPropertyReason::PropertyExcludedFromConfig
+    );
+
+    let device = detect(&engine, MOBILE_USER_AGENT);
+    assert_eq!(
+        device.browser_name().no_value_message(),
+        Some(browser_name.description.as_str())
+    );
+}

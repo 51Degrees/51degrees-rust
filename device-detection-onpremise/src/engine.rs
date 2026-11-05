@@ -49,7 +49,7 @@ use fiftyone_pipeline_core::{
 };
 use fiftyone_pipeline_engines::{
     AspectEngine, AspectEngineDataFile, AspectPropertyMetaData, DataFileConfiguration,
-    EngineDeployment, MissingPropertySource, OnPremiseAspectEngine,
+    EngineDeployment, MissingPropertyResult, MissingPropertySource, OnPremiseAspectEngine,
 };
 use fiftyone_pipeline_engines_fiftyone::{
     ComponentMetaData, FiftyOneAspectPropertyMetaData, ValueMetaData,
@@ -263,7 +263,8 @@ struct EngineMetadata {
 
 /// The data set `manager` holds, read from `copy` when there is one, and its
 /// metadata, reporting `tier_override` when it is set, otherwise the tier the
-/// data file names.
+/// data file names. The missing property rules always compare with the tier
+/// the data file names, because that is what each property's tiers list.
 fn describe(
     manager: Arc<Manager>,
     copy: Option<OperationalCopy>,
@@ -272,10 +273,10 @@ fn describe(
     // An explicit builder override wins, then the tier read from the native
     // data file header (Lite, Enterprise, TAC and so on), then the safe Lite
     // default when the native name is absent.
-    let tier = tier_override
-        .clone()
-        .or_else(|| manager.data_set_name())
+    let file_tier = manager
+        .data_set_name()
         .unwrap_or_else(|| DEFAULT_DATA_SOURCE_TIER.to_owned());
+    let tier = tier_override.clone().unwrap_or_else(|| file_tier.clone());
     let file_properties = manager.data_file_properties();
     let metadata = build_metadata(&file_properties, &manager.data_file_components(), tier);
     let readable = Arc::new(ReadableProperties::new(&file_properties));
@@ -288,7 +289,7 @@ fn describe(
             DEVICE_ELEMENT_DATA_KEY,
             ENGINE_TYPE_NAME,
             EngineDeployment::OnPremise,
-            metadata.tier.clone(),
+            file_tier,
             metadata.aspect_properties.clone(),
         )
         .with_typed_properties(is_typed_property),
@@ -603,6 +604,13 @@ impl AspectEngine for DeviceDetectionOnPremiseEngine {
 
     fn engine_type_name(&self) -> &str {
         ENGINE_TYPE_NAME
+    }
+
+    /// The reason from the loaded data set's missing property source, the same
+    /// one device data gives, which compares each property's tiers with the
+    /// data file's own tier even when the builder set another to report.
+    fn missing_property_reason(&self, property_name: &str) -> MissingPropertyResult {
+        self.loaded.load().missing.reason(property_name)
     }
 
     /// True for every property `DeviceData` has a typed accessor for.
