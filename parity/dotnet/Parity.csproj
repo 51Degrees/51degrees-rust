@@ -2,9 +2,13 @@
 
   <!--
     Writes the .NET packages' answers for each corpus case (see
-    parity/README.md). The package versions are properties so a run can
-    name others, for example
-    dotnet run -p:DeviceDetectionVersion=4.5.180 -p:IpIntelligenceVersion=4.5.155
+    parity/README.md). The versions are one 51degrees-dotnet release whose
+    cxx submodule is the 51degrees-cxx commit this repository's cxx
+    submodule records, so both sides build the same C code. Move them
+    together with that submodule. They are properties so a run can name
+    others. Name all three, because each Device Detection and IP
+    Intelligence release needs its own Pipeline release, for example
+    dotnet run -p:DeviceDetectionVersion=<version> -p:IpIntelligenceVersion=<version> -p:PipelineVersion=<version>
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -12,9 +16,9 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <IsPackable>false</IsPackable>
-    <DeviceDetectionVersion>4.5.179</DeviceDetectionVersion>
-    <IpIntelligenceVersion>4.5.154</IpIntelligenceVersion>
-    <PipelineVersion>4.5.128</PipelineVersion>
+    <DeviceDetectionVersion>4.5.180</DeviceDetectionVersion>
+    <IpIntelligenceVersion>4.5.155</IpIntelligenceVersion>
+    <PipelineVersion>4.5.129</PipelineVersion>
   </PropertyGroup>
 
   <ItemGroup>

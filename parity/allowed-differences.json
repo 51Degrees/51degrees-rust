@@ -1,21 +1,5 @@
 [
   {
-    "path": "*device*",
-    "cases": ["ua-long"],
-    "reason": "C code. 51degrees-cxx ignores a single header longer than the maximum matched User-Agent length (src/dd/results-dd.h, bufferPseudoLength), so the crates find no device for a 2,000 character User-Agent. The .NET package builds older C code, which matches the start of it. Judged again once the .NET packages build the same 51degrees-cxx release."
-  },
-  {
-    "path": "*ip.*",
-    "cases": ["ip-v6-mapped"],
-    "reason": "C code. 51degrees-cxx looks up an address in ::ffff:0:0/96 as the IPv4 address it holds (RFC 4291 section 2.5.5.2, src/ipi/ipi.c), so ::ffff:1.1.1.1 gives 1.1.1.1's answers. The older C code the .NET package builds does not. Judged again once the .NET packages build the same 51degrees-cxx release."
-  },
-  {
-    "path": "*ip.*",
-    "cases": ["ip-v4-zero"],
-    "data": "enterprise",
-    "reason": "C code. 0.0.0.0 is below the lowest key in the Enterprise graphs. 51degrees-cxx gives Unknown, where the older C code the .NET package builds walks to the loopback profile (51Degrees/51degrees-cxx#44). Judged again once the .NET packages build the same 51degrees-cxx release."
-  },
-  {
     "path": "*",
     "cases": ["sequence-over-int", "sequence-text"],
     "kind": "value",
@@ -141,7 +125,7 @@
     "path": "*ip.l*itude",
     "kind": "value",
     "data": "enterprise",
-    "reason": "Not yet explained. .NET's latitude and longitude are the float of a three decimal number, 51.352, where the crates give 51.35166549682617. The .NET managed code does not round them, so the difference is in the native code one side builds.",
+    "reason": "Both sides build the same 51degrees-cxx but read the value through different functions in it. .NET reads one latitude or longitude with the C++ ResultsBase::getValueAsDouble, which takes the value as text from ResultsIpi::getValuesInternal, written with 3 decimal places (FIFTYONE_DEGREES_WKT_DECIMAL_PLACES in src/ipi/constantsIpi.h). .NET then turns that into a 32-bit float, so it gives 18.543 as 18.542999267578125. The crates take the double fiftyoneDegreesResultsIpiGetValuesCollection gives (collect_weighted in native/src/ipi.rs), 18.542741172521133, which is the conversion the specification gives under Declination and Azimuth in pipeline-specification/features/value-types.md, with no rounding, and turn that into a 32-bit float, 18.542741775512695. So the 3 decimal places are the only cause.",
     "issue": 226
   },
   {
@@ -176,10 +160,10 @@
   {
     "path": "properties.device.*",
     "kind": "state",
-    "cases": ["no-evidence", "ua-empty", "uach-android-no-ua", "ip-*"],
+    "cases": ["no-evidence", "ua-empty", "ua-long", "uach-android-no-ua", "ip-*"],
     "dotnet": {"noValue": true},
     "rust": {"value": ["", []]},
-    "reason": "With no User-Agent, or an empty one, the crates give an empty string or an empty list where .NET gives no value.",
+    "reason": "With no User-Agent, an empty one, or one longer than the C code reads (a 2,000 character User-Agent, which 51degrees-cxx ignores on both sides), the crates give an empty string or an empty list where .NET gives no value.",
     "issue": 224
   },
   {
