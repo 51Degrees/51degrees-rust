@@ -27,19 +27,20 @@
 //! ```
 //!
 //! The pipelines and the line format are the same as the .NET producer's, as
-//! `parity/README.md` describes. Usage sharing is left out of the pipeline,
-//! because the crates have no public sink for its records yet, so `usage` is
-//! always null.
+//! `parity/README.md` describes. Usage records go to sinks inside this
+//! program, so nothing is sent anywhere.
 
 mod agent_signature;
+mod usage;
 mod values;
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
@@ -57,8 +58,9 @@ use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{
     ElementData, Evidence, FlowData, FlowElement, Pipeline, PropertyValue,
 };
-use fiftyone_pipeline_engines_fiftyone::SequenceElement;
+use fiftyone_pipeline_engines_fiftyone::{SequenceElement, ShareUsageElement};
 
+use usage::{CustomUsageCapture, UsageCapture};
 use values::ValuesElement;
 
 /// The element whose data also gets the match metrics read.
@@ -108,13 +110,17 @@ fn main() -> Result<()> {
     let text = std::fs::read_to_string(&args.corpus)
         .with_context(|| format!("reading {}", args.corpus.display()))?;
     let cases: Vec<Case> = serde_json::from_str(&text).context("parsing the corpus")?;
-    let pipeline = build_pipeline(&args)?;
+    let capture = Arc::new(UsageCapture::default());
+    let custom_capture = Arc::new(CustomUsageCapture::default());
+    let pipeline = build_pipeline(&args, &capture, &custom_capture)?;
     let values = build_values_pipeline()?;
     let signatures = agent_signature::build_pipeline()?;
 
-    let mut out = BufWriter::new(
-        File::create(&args.out).with_context(|| format!("creating {}", args.out.display()))?,
-    );
+    let mut lines = Vec::with_capacity(cases.len());
+    // The lines whose case ran through usage sharing. A values case may give
+    // a session id an engines' case also gives, and must not be given that
+    // case's record.
+    let mut shared = Vec::new();
     for case in &cases {
         let chosen = match case.pipeline.as_deref() {
             None => &pipeline,
@@ -122,13 +128,52 @@ fn main() -> Result<()> {
             Some(agent_signature::PIPELINE) => &signatures,
             Some(other) => bail!("{}: unknown pipeline {other}", case.id),
         };
-        let line = run_case(chosen, case)?;
-        serde_json::to_writer(&mut out, &line)?;
+        if Arc::ptr_eq(chosen, &pipeline) {
+            shared.push(lines.len());
+        }
+        lines.push(run_case(chosen, case)?);
+    }
+
+    // Dropping the pipeline drops usage sharing, which delivers what it holds
+    // before the drop returns.
+    let pipeline = Arc::try_unwrap(pipeline).map_err(|_| {
+        anyhow!(
+            "the engines' pipeline is still held, so usage sharing has not delivered its records"
+        )
+    })?;
+    drop(pipeline);
+    let records = capture.records_by_session();
+    let custom_records = custom_capture.records_by_session();
+    for index in shared {
+        let line = &mut lines[index];
+        let session_id = line["session"]["id"].as_str().map(str::to_owned);
+        line["usage"] = record_for(&records, session_id.as_deref());
+        line["usageCustom"] = record_for(&custom_records, session_id.as_deref());
+    }
+
+    let mut out = BufWriter::new(
+        File::create(&args.out).with_context(|| format!("creating {}", args.out.display()))?,
+    );
+    for line in &lines {
+        serde_json::to_writer(&mut out, line)?;
         out.write_all(b"\n")?;
     }
     out.flush()?;
-    eprintln!("{} cases written to {}", cases.len(), args.out.display());
+    eprintln!(
+        "{} cases written to {}, {} usage records and {} custom usage records captured",
+        cases.len(),
+        args.out.display(),
+        records.len(),
+        custom_records.len()
+    );
     Ok(())
+}
+
+/// The record usage sharing wrote with `session_id`, or null.
+fn record_for(records: &HashMap<String, String>, session_id: Option<&str>) -> Value {
+    session_id
+        .and_then(|id| records.get(id))
+        .map_or(Value::Null, |record| Value::String(record.clone()))
 }
 
 fn parse_args() -> Result<Args> {
@@ -157,10 +202,14 @@ fn parse_args() -> Result<Args> {
     })
 }
 
-/// Sequence, Device Detection, IP Intelligence, then the JSON and JavaScript
-/// builders, with process errors collected rather than returned, as the .NET
-/// producer builds it.
-fn build_pipeline(args: &Args) -> Result<Arc<Pipeline>> {
+/// Sequence, usage sharing into each capture, Device Detection, IP
+/// Intelligence, then the JSON and JavaScript builders, with process errors
+/// collected rather than returned, as the .NET producer builds it.
+fn build_pipeline(
+    args: &Args,
+    capture: &Arc<UsageCapture>,
+    custom_capture: &Arc<CustomUsageCapture>,
+) -> Result<Arc<Pipeline>> {
     let device = DeviceDetectionOnPremiseEngineBuilder::new(&args.dd)
         .performance_profile(PerformanceProfile::HighPerformance)
         .build()
@@ -175,8 +224,12 @@ fn build_pipeline(args: &Args) -> Result<Arc<Pipeline>> {
     let javascript = JavaScriptBuilderElementBuilder::new()
         .set_minify(false)
         .build();
+    let shared = ShareUsageElement::with_sink(usage::config(), Arc::clone(capture));
+    let custom = ShareUsageElement::with_sink(usage::config(), Arc::clone(custom_capture));
     Ok(Pipeline::builder()
         .add_element(Arc::new(SequenceElement::new()))
+        .add_element(Arc::new(shared))
+        .add_element(Arc::new(custom))
         .add_element(device)
         .add_element(ip)
         .add_element(Arc::new(JsonBuilderElementBuilder::new().build()))
@@ -247,6 +300,7 @@ fn run_case(pipeline: &Arc<Pipeline>, case: &Case) -> Result<Value> {
         "json": data.get(JSON_BUILDER_DATA_KEY).map(|d| d.json()),
         "javascript": data.get(JAVASCRIPT_BUILDER_DATA_KEY).map(|d| d.javascript()),
         "usage": Value::Null,
+        "usageCustom": Value::Null,
     }))
 }
 

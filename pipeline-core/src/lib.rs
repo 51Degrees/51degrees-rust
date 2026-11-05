@@ -136,7 +136,7 @@ mod warning;
 pub use element_data::{ElementData, MapElementData};
 pub use error::{Error, FlowError, MissingPropertyReason, NoValueError, Result};
 pub use evidence::{
-    compare_keys, DataKey, Evidence, EvidenceBuilder, EvidenceKeyFilter,
+    compare_keys, DataKey, Evidence, EvidenceBuilder, EvidenceEntry, EvidenceKeyFilter,
     EvidenceKeyFilterAggregator, EvidenceKeyFilterWhitelist, EvidencePrefix,
 };
 pub use flow_data::FlowData;

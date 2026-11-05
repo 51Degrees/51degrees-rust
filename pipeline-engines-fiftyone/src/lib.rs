@@ -45,7 +45,10 @@
 //!   gated behind the [`share-usage-transport`](#cargo-features) feature, which
 //!   is off by default in this crate, so a default build of this crate sends
 //!   nothing. The Device Detection and IP Intelligence facade crates turn it on
-//!   through their default `share-usage` feature.
+//!   through their default `share-usage` feature. A caller can instead take
+//!   each batch itself, as the records and as the document, through a
+//!   [`UsageSink`] given to [`ShareUsageElement::with_sink`], with or without
+//!   the feature.
 //!   See the
 //!   [usage-sharing-element specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/usage-sharing-element.md).
 //!
@@ -108,11 +111,14 @@
 
 pub mod constants;
 mod evidence_filter;
+mod host_address;
 mod metadata;
 mod sequence_element;
 mod set_headers_element;
 mod share_usage_element;
 mod share_usage_tracker;
+mod usage_record;
+mod usage_sink;
 
 pub use evidence_filter::{EvidenceKeyFilterShareUsage, EvidenceKeyFilterShareUsageTracker};
 pub use metadata::{ComponentMetaData, FiftyOneAspectPropertyMetaData, ValueMetaData};
@@ -124,3 +130,5 @@ pub use share_usage_element::{
     ShareUsageConfig, ShareUsageConfigBuilder, ShareUsageElement, MIN_ENTRIES_PER_MESSAGE_FLOOR,
 };
 pub use share_usage_tracker::ShareUsageTracker;
+pub use usage_record::{UsageRecord, UsageWriteError, UsageWriter};
+pub use usage_sink::{UsageBatch, UsageSink};
