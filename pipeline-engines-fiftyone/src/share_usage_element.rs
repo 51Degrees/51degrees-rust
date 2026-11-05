@@ -53,8 +53,8 @@
 //! client, and `reqwest` does not build for `wasm32-wasip1`.
 //!
 //! - With the feature **off** (the default), the element is constructed with a
-//!   no-op sender. It still samples, filters, batches and deduplicates evidence
-//!   like any pipeline element, but each batch is dropped rather than
+//!   no-op transport. It still samples, filters, batches and deduplicates
+//!   evidence like any pipeline element, but each batch is dropped rather than
 //!   transmitted, so **no connection to 51Degrees is ever opened**. This is the
 //!   state of a plain `cargo build` of any crate that does not turn the feature
 //!   on.
@@ -70,8 +70,14 @@
 //! through their `share-usage` feature. On a target where the built-in client
 //! cannot run (such as `wasm32-wasip1`) the feature is left off and the
 //! element runs with the no-op transport.
+//!
+//! # Receiving the records
+//!
+//! [`ShareUsageElement::with_sink`] hands each batch to a caller's
+//! [`UsageSink`] in place of the built-in transport, whether or not the
+//! feature is on. The sink gets the records and the document the built-in
+//! transport would send, and can add its own elements to each record.
 
-use std::io::Write;
 use std::net::UdpSocket;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
@@ -80,9 +86,6 @@ use std::sync::OnceLock;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-
-use flate2::write::GzEncoder;
-use flate2::Compression;
 
 use fiftyone_pipeline_core::constants::EVIDENCE_CLIENT_IP_KEY;
 use fiftyone_pipeline_core::{
@@ -100,6 +103,7 @@ use crate::evidence_filter::{EvidenceKeyFilterShareUsage, EvidenceKeyFilterShare
 use crate::sequence_element::{SequenceData, SequenceElement};
 use crate::share_usage_tracker::ShareUsageTracker;
 use crate::usage_record::{parse_sequence, write_document, StaticInfo, UsageRecord};
+use crate::usage_sink::{UsageBatch, UsageSink};
 
 /// The smallest value accepted for the minimum entries per message. A message
 /// needs at least one record.
@@ -361,35 +365,27 @@ impl StaticInfo {
     }
 }
 
-/// A trait for the transport that sends a built, gzip-compressed payload.
-///
-/// Abstracting the transport lets tests substitute an in-memory sink (or a
-/// local server client) for the real HTTP POST without spawning network I/O in
-/// the unit tests.
-trait UsageSender: Send + Sync {
-    /// Send the gzip-compressed XML body. Returns `Ok` on a 200 response, and
-    /// otherwise a description of the failure, which for any other answer
-    /// includes its status and content.
-    fn send(&self, body: Vec<u8>) -> std::result::Result<(), String>;
-}
+/// The error a sink's `receive` gives.
+type SinkError = Box<dyn std::error::Error + Send + Sync>;
 
-/// The production transport: a blocking `reqwest` client posting gzip XML.
-/// Compiled only with the `share-usage-transport` feature, because reqwest does
-/// not build for wasm32-wasip1.
+/// The built-in transport, a blocking `reqwest` client posting the gzip
+/// compressed document, which counts only a 200 answer as success. Compiled
+/// only with the `share-usage-transport` feature, because reqwest does not
+/// build for wasm32-wasip1.
 ///
 /// The client is built by the first send, which runs on the background thread,
 /// because building a blocking client inside an async runtime panics and an
 /// element is often created inside one.
 #[cfg(feature = "share-usage-transport")]
-struct HttpUsageSender {
+struct HttpUsageSink {
     client: OnceLock<std::result::Result<reqwest::blocking::Client, String>>,
     url: String,
 }
 
 #[cfg(feature = "share-usage-transport")]
-impl HttpUsageSender {
+impl HttpUsageSink {
     fn new(url: String) -> Self {
-        HttpUsageSender {
+        HttpUsageSink {
             client: OnceLock::new(),
             url,
         }
@@ -411,8 +407,11 @@ impl HttpUsageSender {
 }
 
 #[cfg(feature = "share-usage-transport")]
-impl UsageSender for HttpUsageSender {
-    fn send(&self, body: Vec<u8>) -> std::result::Result<(), String> {
+impl UsageSink for HttpUsageSink {
+    fn receive(&self, batch: UsageBatch) -> std::result::Result<(), SinkError> {
+        let body = batch
+            .gzip()
+            .map_err(|e| format!("The message could not be compressed: {e}"))?;
         let response = self
             .client()?
             .post(&self.url)
@@ -420,7 +419,7 @@ impl UsageSender for HttpUsageSender {
             .header("content-type", "text/xml")
             .body(body)
             .send()
-            .map_err(|e| format!("The request failed: {e}"))?;
+            .map_err(|e| format!("The request to {} failed: {e}", self.url))?;
         let status = response.status();
         if status == reqwest::StatusCode::OK {
             return Ok(());
@@ -430,21 +429,21 @@ impl UsageSender for HttpUsageSender {
             .chars()
             .take(MAX_LOGGED_RESPONSE_CHARACTERS)
             .collect();
-        Err(format!("The endpoint answered {status} with {content:?}"))
+        Err(format!("{} answered {status} with {content:?}", self.url).into())
     }
 }
 
-/// The no-op transport used when the built-in HTTP transport is not compiled in,
-/// which is the default and the only option on `wasm32-wasip1`. The usage-sharing
-/// element still runs and collects evidence, but a batch is dropped rather than
-/// transmitted, so nothing is sent to 51Degrees. Enable the
-/// `share-usage-transport` feature to transmit over the built-in reqwest client.
+/// The sink used when the built-in HTTP transport is not compiled in, which is
+/// the default and the only option on `wasm32-wasip1`. The usage-sharing
+/// element still runs and collects evidence, but each batch is dropped, so
+/// nothing is sent to 51Degrees. Enable the `share-usage-transport` feature to
+/// transmit over the built-in reqwest client.
 #[cfg(not(feature = "share-usage-transport"))]
-struct NoopUsageSender;
+struct DiscardingSink;
 
 #[cfg(not(feature = "share-usage-transport"))]
-impl UsageSender for NoopUsageSender {
-    fn send(&self, _body: Vec<u8>) -> std::result::Result<(), String> {
+impl UsageSink for DiscardingSink {
+    fn receive(&self, _batch: UsageBatch) -> std::result::Result<(), SinkError> {
         Ok(())
     }
 }
@@ -529,21 +528,32 @@ impl ShareUsageElement {
     /// blocking `reqwest` transport posting to `config.share_usage_url`. With it
     /// off, the element is constructed with a no-op transport: it collects and
     /// batches evidence but sends nothing to 51Degrees. See the module-level
-    /// documentation for the full rationale.
+    /// documentation for the full rationale. To receive each batch instead,
+    /// use [`with_sink`](Self::with_sink).
     ///
     /// The element can be created inside an async runtime, because the HTTP
     /// client is built on the element's own background thread.
     pub fn new(config: ShareUsageConfig) -> Self {
         // With the built-in transport, post over a blocking reqwest client.
-        // Without it (for example on wasm32-wasip1) fall back to a no-op sender
-        // so the element still constructs and runs.
+        // Without it (for example on wasm32-wasip1) drop each batch so the
+        // element still constructs and runs.
         #[cfg(feature = "share-usage-transport")]
-        let sender: Box<dyn UsageSender> =
-            Box::new(HttpUsageSender::new(config.share_usage_url.clone()));
+        let sink: Box<dyn UsageSink> = Box::new(HttpUsageSink::new(config.share_usage_url.clone()));
         #[cfg(not(feature = "share-usage-transport"))]
-        let sender: Box<dyn UsageSender> = Box::new(NoopUsageSender);
+        let sink: Box<dyn UsageSink> = Box::new(DiscardingSink);
 
-        Self::with_sender(config, sender)
+        Self::with_boxed_sink(config, sink)
+    }
+
+    /// Create a usage-sharing element that hands each batch to `sink` in place
+    /// of the built-in transport, with or without the `share-usage-transport`
+    /// feature. The configuration's endpoint is not used.
+    ///
+    /// The sink's `receive` runs on the element's background thread, and a
+    /// batch it accepts counts towards [`success_count`](Self::success_count)
+    /// and one it refuses towards [`fail_count`](Self::fail_count).
+    pub fn with_sink(config: ShareUsageConfig, sink: impl UsageSink + 'static) -> Self {
+        Self::with_boxed_sink(config, Box::new(sink))
     }
 
     /// Create a usage-sharing element with the default configuration.
@@ -555,9 +565,7 @@ impl ShareUsageElement {
         Self::new(ShareUsageConfig::default())
     }
 
-    /// Internal constructor that accepts any [`UsageSender`], used by tests to
-    /// capture payloads without real network I/O.
-    fn with_sender(config: ShareUsageConfig, sender: Box<dyn UsageSender>) -> Self {
+    fn with_boxed_sink(config: ShareUsageConfig, sink: Box<dyn UsageSink>) -> Self {
         // Build the evidence filter from the configured settings. Used for both
         // the element filter and the tracker filter so the two cannot diverge.
         let make_filter = || {
@@ -590,7 +598,7 @@ impl ShareUsageElement {
 
         let worker = Worker {
             receiver: rx,
-            sender,
+            sink,
             config: config.clone(),
             static_info: StaticInfo::gather(),
             success_count: Arc::clone(&success_count),
@@ -845,10 +853,10 @@ fn add_to_queue(
     }
 }
 
-/// The background thread: what it reads from and what it sends with.
+/// The background thread: what it reads from and where it delivers to.
 struct Worker {
     receiver: Receiver<UsageRecord>,
-    sender: Box<dyn UsageSender>,
+    sink: Box<dyn UsageSink>,
     config: ShareUsageConfig,
     static_info: StaticInfo,
     success_count: Arc<AtomicU64>,
@@ -888,22 +896,13 @@ impl Worker {
         }
     }
 
-    /// Build the XML, gzip it and send it, recording success or failure.
+    /// Write the document and hand the batch to the sink, recording success
+    /// or failure.
     fn send_batch(&self, batch: Vec<UsageRecord>) {
         if batch.is_empty() {
             return;
         }
-
-        let body = match build_compressed_xml(&batch, &self.static_info) {
-            Ok(body) => body,
-            Err(e) => {
-                self.fail_count.fetch_add(1, Ordering::Relaxed);
-                log::error!("Usage sharing could not build a message. {e}");
-                return;
-            }
-        };
-
-        match self.sender.send(body) {
+        match self.deliver(batch) {
             Ok(()) => {
                 self.success_count.fetch_add(1, Ordering::Relaxed);
             }
@@ -913,27 +912,22 @@ impl Worker {
                 self.fail_count.fetch_add(1, Ordering::Relaxed);
                 if let Some(failures) = self.send_failures.record() {
                     log::warn!(
-                        "Usage sharing failed to send a message to {}. {detail}. \
-                         Messages failed since the last report: {failures}.",
-                        self.config.share_usage_url
+                        "Usage sharing failed to deliver a message. {detail}. \
+                         Messages failed since the last report: {failures}."
                     );
                 }
             }
         }
     }
-}
 
-/// Write a batch as the `<Devices>` document and gzip-compress it.
-fn build_compressed_xml(
-    batch: &[UsageRecord],
-    info: &StaticInfo,
-) -> std::result::Result<Vec<u8>, String> {
-    let xml = write_document(batch, info, utc_now_iso8601);
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder
-        .write_all(xml.as_bytes())
-        .map_err(|e| e.to_string())?;
-    encoder.finish().map_err(|e| e.to_string())
+    /// Write the `<Devices>` document for the batch and hand both to the sink.
+    fn deliver(&self, records: Vec<UsageRecord>) -> std::result::Result<(), String> {
+        let document = write_document(&records, &self.static_info, &*self.sink, utc_now_iso8601)
+            .map_err(|e| format!("A record could not be written, because {e}"))?;
+        self.sink
+            .receive(UsageBatch::new(records, document))
+            .map_err(|e| e.to_string())
+    }
 }
 
 /// The address this host uses to reach the internet. The operating system
@@ -1098,25 +1092,33 @@ fn civil_from_unix(secs: u64) -> (i64, u32, u32, u32, u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
     use std::sync::mpsc;
 
     use fiftyone_pipeline_core::{Evidence, Pipeline};
 
     use super::*;
     use crate::constants::SHARE_USAGE_MAX_EVIDENCE_LENGTH;
+    use crate::usage_record::{UsageWriteError, UsageWriter};
 
-    /// A transport that keeps each message's XML, and fails with `failure`
-    /// when one is set.
+    /// A sink that keeps each batch, and fails with `failure` when one is
+    /// set.
     #[derive(Clone, Default)]
     struct Capture {
-        messages: Arc<Mutex<Vec<String>>>,
+        batches: Arc<Mutex<Vec<UsageBatch>>>,
         failure: Option<String>,
     }
 
     impl Capture {
+        fn batches(&self) -> Vec<UsageBatch> {
+            self.batches.lock().unwrap().clone()
+        }
+
+        /// Each batch's document.
         fn messages(&self) -> Vec<String> {
-            self.messages.lock().unwrap().clone()
+            self.batches()
+                .iter()
+                .map(|batch| batch.document().to_owned())
+                .collect()
         }
 
         /// Every `<Device>` element across the captured messages.
@@ -1128,21 +1130,72 @@ mod tests {
         }
     }
 
-    impl UsageSender for Capture {
-        fn send(&self, body: Vec<u8>) -> std::result::Result<(), String> {
-            let mut xml = String::new();
-            flate2::read::GzDecoder::new(&body[..])
-                .read_to_string(&mut xml)
-                .unwrap();
-            self.messages.lock().unwrap().push(xml);
+    impl UsageSink for Capture {
+        fn receive(&self, batch: UsageBatch) -> std::result::Result<(), SinkError> {
+            self.batches.lock().unwrap().push(batch);
             match &self.failure {
-                Some(failure) => Err(failure.clone()),
+                Some(failure) => Err(failure.clone().into()),
                 None => Ok(()),
             }
         }
     }
 
-    /// A transport that reports when a send starts, then holds it until it is
+    /// A sink that keeps each batch in a [`Capture`], writes an element
+    /// before and after each record, and names its own product with no
+    /// elements.
+    struct Wrapping(Capture);
+
+    impl UsageSink for Wrapping {
+        fn receive(&self, batch: UsageBatch) -> std::result::Result<(), SinkError> {
+            self.0.receive(batch)
+        }
+
+        fn write_before_record(
+            &self,
+            writer: &mut UsageWriter<'_>,
+            record: &UsageRecord,
+        ) -> std::result::Result<(), UsageWriteError> {
+            writer.element("Before", record.session_id())
+        }
+
+        fn write_pipeline_info(
+            &self,
+            writer: &mut UsageWriter<'_>,
+            _flow_elements: &[&str],
+        ) -> std::result::Result<(), UsageWriteError> {
+            writer.element("Product", "Pipeline.Custom")
+        }
+
+        fn write_after_record(
+            &self,
+            writer: &mut UsageWriter<'_>,
+            _record: &UsageRecord,
+        ) -> std::result::Result<(), UsageWriteError> {
+            let server_ip = writer.server_ip();
+            writer.element("After", server_ip)
+        }
+    }
+
+    /// A sink that writes an element whose name cannot be an XML name, and
+    /// counts the batches it is given.
+    struct Misnamed(Arc<AtomicU64>);
+
+    impl UsageSink for Misnamed {
+        fn receive(&self, _batch: UsageBatch) -> std::result::Result<(), SinkError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn write_after_record(
+            &self,
+            writer: &mut UsageWriter<'_>,
+            _record: &UsageRecord,
+        ) -> std::result::Result<(), UsageWriteError> {
+            writer.element("Two words", "x")
+        }
+    }
+
+    /// A sink that reports when a batch arrives, then holds it until it is
     /// released, so a test can keep the queue full.
     struct Gate {
         entered: Mutex<mpsc::Sender<()>>,
@@ -1150,8 +1203,8 @@ mod tests {
         sent: Arc<AtomicU64>,
     }
 
-    impl UsageSender for Gate {
-        fn send(&self, _body: Vec<u8>) -> std::result::Result<(), String> {
+    impl UsageSink for Gate {
+        fn receive(&self, _batch: UsageBatch) -> std::result::Result<(), SinkError> {
             let _ = self.entered.lock().unwrap().send(());
             // A time limit, so a failing test ends instead of waiting for a
             // release its panic skipped.
@@ -1169,11 +1222,11 @@ mod tests {
     /// sharing element, then drop everything so the last message is sent.
     fn share(
         config: ShareUsageConfig,
-        sender: impl UsageSender + 'static,
+        sink: impl UsageSink + 'static,
         before: Vec<Arc<dyn FlowElement>>,
         requests: Vec<Evidence>,
     ) {
-        let element = Arc::new(ShareUsageElement::with_sender(config, Box::new(sender)));
+        let element = Arc::new(ShareUsageElement::with_sink(config, sink));
         let mut builder = Pipeline::builder();
         for other in before {
             builder = builder.add_element(other);
@@ -1281,11 +1334,11 @@ mod tests {
     fn the_share_percentage_is_the_proportion_shared() {
         const SAMPLES: usize = 100_000;
         for percentage in [0.25, 0.4, 0.6, 0.75] {
-            let element = ShareUsageElement::with_sender(
+            let element = ShareUsageElement::with_sink(
                 ShareUsageConfig::builder()
                     .share_percentage(percentage)
                     .build(),
-                Box::new(Capture::default()),
+                Capture::default(),
             );
             fastrand::seed(7);
             let shared = (0..SAMPLES).filter(|_| element.in_sample()).count();
@@ -1310,11 +1363,11 @@ mod tests {
     #[test]
     fn a_message_is_sent_once_the_minimum_is_reached() {
         let capture = Capture::default();
-        let element = Arc::new(ShareUsageElement::with_sender(
+        let element = Arc::new(ShareUsageElement::with_sink(
             ShareUsageConfig::builder()
                 .minimum_entries_per_message(2)
                 .build(),
-            Box::new(capture.clone()),
+            capture.clone(),
         ));
         let pipeline = Pipeline::builder()
             .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
@@ -1363,17 +1416,17 @@ mod tests {
         let (entered_tx, entered_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         let sent = Arc::new(AtomicU64::new(0));
-        let element = Arc::new(ShareUsageElement::with_sender(
+        let element = Arc::new(ShareUsageElement::with_sink(
             ShareUsageConfig::builder()
                 .minimum_entries_per_message(1)
                 .maximum_queue_size(1)
                 .add_timeout(Duration::from_millis(ADD_TIMEOUT_MILLISECONDS))
                 .build(),
-            Box::new(Gate {
+            Gate {
                 entered: Mutex::new(entered_tx),
                 release: Mutex::new(release_rx),
                 sent: Arc::clone(&sent),
-            }),
+            },
         ));
         let pipeline = Pipeline::builder()
             .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
@@ -1386,7 +1439,7 @@ mod tests {
                 .unwrap()
         };
 
-        // The first record goes straight to the sender, which holds it. The
+        // The first record goes straight to the sink, which holds it. The
         // second fills the queue of one.
         process("one");
         entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -1412,14 +1465,14 @@ mod tests {
     #[test]
     fn a_stopped_or_full_queue_reports_why() {
         let (tx, rx) = sync_channel::<UsageRecord>(1);
-        assert!(add_to_queue(&tx, UsageRecord::default(), Duration::ZERO).is_ok());
+        assert!(add_to_queue(&tx, UsageRecord::new(Vec::new()), Duration::ZERO).is_ok());
         assert!(matches!(
-            add_to_queue(&tx, UsageRecord::default(), Duration::ZERO),
+            add_to_queue(&tx, UsageRecord::new(Vec::new()), Duration::ZERO),
             Err(Discarded::QueueFull)
         ));
         drop(rx);
         assert!(matches!(
-            add_to_queue(&tx, UsageRecord::default(), Duration::ZERO),
+            add_to_queue(&tx, UsageRecord::new(Vec::new()), Duration::ZERO),
             Err(Discarded::Stopped)
         ));
     }
@@ -1427,7 +1480,7 @@ mod tests {
     #[test]
     fn an_add_timeout_too_long_for_the_clock_waits_for_room() {
         let (tx, rx) = sync_channel::<UsageRecord>(1);
-        assert!(add_to_queue(&tx, UsageRecord::default(), Duration::MAX).is_ok());
+        assert!(add_to_queue(&tx, UsageRecord::new(Vec::new()), Duration::MAX).is_ok());
 
         // The queue of one is full, so the next add waits until it has room.
         let taker = std::thread::spawn(move || {
@@ -1435,7 +1488,7 @@ mod tests {
             rx.recv().unwrap();
             rx
         });
-        assert!(add_to_queue(&tx, UsageRecord::default(), Duration::MAX).is_ok());
+        assert!(add_to_queue(&tx, UsageRecord::new(Vec::new()), Duration::MAX).is_ok());
         let rx = taker.join().unwrap();
         assert!(rx.try_recv().is_ok(), "the second record was queued");
     }
@@ -1469,11 +1522,11 @@ mod tests {
             failure: Some("the endpoint answered 500".to_owned()),
             ..Capture::default()
         };
-        let element = Arc::new(ShareUsageElement::with_sender(
+        let element = Arc::new(ShareUsageElement::with_sink(
             ShareUsageConfig::builder()
                 .minimum_entries_per_message(1)
                 .build(),
-            Box::new(capture),
+            capture,
         ));
         let pipeline = Pipeline::builder()
             .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
@@ -1491,9 +1544,9 @@ mod tests {
     #[test]
     fn each_record_lists_the_elements_of_the_pipeline_that_made_it() {
         let capture = Capture::default();
-        let element = Arc::new(ShareUsageElement::with_sender(
+        let element = Arc::new(ShareUsageElement::with_sink(
             ShareUsageConfig::default(),
-            Box::new(capture.clone()),
+            capture.clone(),
         ));
         // The first pipeline is dropped before the second is built, because
         // the element can be in only one pipeline at a time.
@@ -1643,6 +1696,112 @@ mod tests {
         );
         let xml = capture.messages().concat();
         assert_eq!(xml.matches("<Sequence>0</Sequence>").count(), 2, "{xml}");
+    }
+
+    #[test]
+    fn a_sink_receives_the_records_and_the_document() {
+        // An Arc of the sink, so the test keeps a handle to it.
+        let capture = Arc::new(Capture::default());
+        share(
+            ShareUsageConfig::default(),
+            Arc::clone(&capture),
+            Vec::new(),
+            vec![Evidence::builder()
+                .add("header.User-Agent", "agent")
+                .add(EVIDENCE_SESSIONID, "session")
+                .add(EVIDENCE_SEQUENCE, "3")
+                .add(EVIDENCE_CLIENT_IP_KEY, "192.0.2.7")
+                .build()],
+        );
+        let batches = capture.batches();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].records().len(), 1);
+        let record = &batches[0].records()[0];
+        assert_eq!(record.session_id(), "session");
+        assert_eq!(record.sequence(), 3);
+        assert_eq!(record.client_ip(), "192.0.2.7");
+        assert_eq!(
+            record.flow_elements(),
+            ["fiftyone_pipeline_engines_fiftyone::share_usage_element::ShareUsageElement"]
+        );
+        assert_eq!(
+            record.evidence().collect::<Vec<_>>(),
+            [("header", "User-Agent", "agent")]
+        );
+        let xml = batches[0].document();
+        assert!(
+            xml.starts_with("\u{FEFF}<?xml version=\"1.0\" encoding=\"utf-8\"?><Devices><Device>"),
+            "{xml}"
+        );
+        assert!(
+            xml.contains("<SessionId>session</SessionId><Sequence>3</Sequence>"),
+            "{xml}"
+        );
+        assert!(xml.contains("<ClientIP>192.0.2.7</ClientIP>"), "{xml}");
+    }
+
+    #[test]
+    fn a_sinks_elements_are_written_around_each_record() {
+        let capture = Capture::default();
+        share(
+            ShareUsageConfig::default(),
+            Arc::new(Wrapping(capture.clone())),
+            Vec::new(),
+            vec![Evidence::builder()
+                .add("header.User-Agent", "agent")
+                .add(EVIDENCE_SESSIONID, "session")
+                .build()],
+        );
+        let xml = &capture.messages()[0];
+        assert!(
+            xml.contains("<Device><Before>session</Before><SessionId>session</SessionId>"),
+            "{xml}"
+        );
+        assert!(
+            xml.contains("</Version><Product>Pipeline.Custom</Product><Language>"),
+            "the product is replaced and no FlowElement is written: {xml}"
+        );
+        let after = if xml.contains("<ServerIP />") {
+            "<After />".to_owned()
+        } else {
+            let start = xml.find("<ServerIP>").unwrap() + "<ServerIP>".len();
+            let end = xml.find("</ServerIP>").unwrap();
+            format!("<After>{}</After>", &xml[start..end])
+        };
+        assert!(
+            xml.ends_with(&format!(
+                "<header Name=\"User-Agent\"><![CDATA[agent]]></header>\
+                 {after}</Device></Devices>"
+            )),
+            "{xml}"
+        );
+    }
+
+    #[test]
+    fn a_sink_element_that_cannot_be_named_fails_the_batch() {
+        let received = Arc::new(AtomicU64::new(0));
+        let element = Arc::new(ShareUsageElement::with_sink(
+            ShareUsageConfig::builder()
+                .minimum_entries_per_message(1)
+                .build(),
+            Misnamed(Arc::clone(&received)),
+        ));
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        pipeline
+            .create_flow_data_with(user_agent("one"))
+            .process()
+            .unwrap();
+        wait_for(|| element.fail_count() > 0);
+        assert_eq!(element.fail_count(), 1);
+        assert_eq!(element.success_count(), 0);
+        assert_eq!(
+            received.load(Ordering::SeqCst),
+            0,
+            "the sink is not given the batch"
+        );
     }
 
     #[test]

@@ -26,9 +26,10 @@
 //! language.
 
 use std::borrow::Cow;
-use std::fmt::Write as _;
+use std::fmt::{self, Write as _};
 
 use crate::constants::SHARE_USAGE_MAX_EVIDENCE_LENGTH;
+use crate::usage_sink::UsageSink;
 
 /// The byte order mark and XML declaration that start every document.
 const DOCUMENT_START: &str = "\u{FEFF}<?xml version=\"1.0\" encoding=\"utf-8\"?>";
@@ -58,19 +59,18 @@ pub(crate) struct StaticInfo {
     pub(crate) platform: String,
 }
 
-/// One request's values, copied out of its flow data so the request can
-/// finish before the record is written.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct UsageRecord {
-    /// Empty when the request has no session id.
+/// One shared request's values, copied out of its flow data so the request
+/// can finish before the record is written.
+///
+/// A [`UsageSink`] reads the records of each batch through
+/// [`UsageBatch::records`](crate::UsageBatch::records).
+#[derive(Debug, Clone)]
+pub struct UsageRecord {
     pub(crate) session_id: String,
     pub(crate) sequence: i32,
-    /// Empty when the request has no client IP.
     pub(crate) client_ip: String,
-    /// The type names of the elements in the pipeline that made the request.
     flow_elements: Vec<&'static str>,
-    /// The shared evidence, grouped by prefix in the order each prefix first
-    /// appears.
+    /// Grouped by prefix in the order each prefix first appears.
     groups: Vec<EvidenceGroup>,
 }
 
@@ -90,9 +90,50 @@ impl UsageRecord {
     /// no evidence yet.
     pub(crate) fn new(flow_elements: Vec<&'static str>) -> Self {
         UsageRecord {
+            session_id: String::new(),
+            sequence: 0,
+            client_ip: String::new(),
             flow_elements,
-            ..UsageRecord::default()
+            groups: Vec::new(),
         }
+    }
+
+    /// The session id, or an empty string when the request has none.
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// The sequence number, or 0 when the request has none or it is not a
+    /// 32-bit integer.
+    pub fn sequence(&self) -> i32 {
+        self.sequence
+    }
+
+    /// The client IP address, or an empty string when the request has none.
+    pub fn client_ip(&self) -> &str {
+        &self.client_ip
+    }
+
+    /// The type names of the elements in the pipeline that made the request,
+    /// in the pipeline's order.
+    pub fn flow_elements(&self) -> &[&'static str] {
+        &self.flow_elements
+    }
+
+    /// The shared evidence as `(prefix, name, value)`, in the order the
+    /// record writes it, which groups entries by prefix. The prefix and name
+    /// are spelled as the evidence key has them, and the prefix is empty for
+    /// a key with no prefix, whose name is then the whole key. A value over
+    /// the maximum length is already cut. Characters XML cannot carry are
+    /// replaced only when the record is written, and an entry whose element
+    /// name cannot be an XML name is left out of the written record.
+    pub fn evidence(&self) -> impl Iterator<Item = (&str, &str, &str)> + '_ {
+        self.groups.iter().flat_map(|group| {
+            group
+                .entries
+                .iter()
+                .map(move |(name, value)| (group.prefix.as_str(), name.as_str(), value.as_str()))
+        })
     }
 
     /// Add a shared evidence entry. The key, spelled as given, is split at its
@@ -130,38 +171,47 @@ fn is_number_white_space(c: char) -> bool {
     matches!(c, ' ' | '\t'..='\r')
 }
 
-/// Write a batch of records as one `<Devices>` document. `date_sent` gives
-/// each record's `DateSent` as the record is written.
+/// Write a batch of records as one `<Devices>` document, with the elements
+/// the sink adds to each record. `date_sent` gives each record's `DateSent`
+/// as the record is written.
 pub(crate) fn write_document(
     records: &[UsageRecord],
     info: &StaticInfo,
+    sink: &dyn UsageSink,
     mut date_sent: impl FnMut() -> String,
-) -> String {
+) -> Result<String, UsageWriteError> {
     let mut out = String::from(DOCUMENT_START);
     out.push_str("<Devices>");
     for record in records {
-        write_record(&mut out, record, info, &date_sent());
+        write_record(&mut out, record, info, sink, &date_sent())?;
     }
     out.push_str("</Devices>");
-    out
+    Ok(out)
 }
 
 /// Write one `<Device>` element.
-fn write_record(out: &mut String, record: &UsageRecord, info: &StaticInfo, date_sent: &str) {
+fn write_record(
+    out: &mut String,
+    record: &UsageRecord,
+    info: &StaticInfo,
+    sink: &dyn UsageSink,
+    date_sent: &str,
+) -> Result<(), UsageWriteError> {
+    out.push_str("<Device>");
+    sink.write_before_record(&mut UsageWriter::new(&mut *out, &info.server_ip), record)?;
     let mut writer = RecordWriter {
         out,
         replaced: false,
     };
-    writer.out.push_str("<Device>");
     writer.element("SessionId", &record.session_id);
     writer.element("Sequence", &record.sequence.to_string());
     writer.element("DateSent", date_sent);
     writer.element("ClientIP", &record.client_ip);
     writer.element("Version", &info.core_version);
-    writer.element("Product", PRODUCT);
-    for name in &record.flow_elements {
-        writer.element("FlowElement", name);
-    }
+    sink.write_pipeline_info(
+        &mut UsageWriter::new(&mut *writer.out, &info.server_ip),
+        &record.flow_elements,
+    )?;
     writer.element("Language", LANGUAGE);
     writer.element("LanguageVersion", &info.language_version);
     writer.element("ServerIP", &info.server_ip);
@@ -174,7 +224,103 @@ fn write_record(out: &mut String, record: &UsageRecord, info: &StaticInfo, date_
     if writer.replaced {
         writer.element("BadSchema", "true");
     }
+    sink.write_after_record(
+        &mut UsageWriter::new(&mut *writer.out, &info.server_ip),
+        record,
+    )?;
     writer.out.push_str("</Device>");
+    Ok(())
+}
+
+/// Write the product and one `FlowElement` for each name, as every record
+/// has them unless a sink writes its own.
+pub(crate) fn write_default_pipeline_info(
+    writer: &mut UsageWriter<'_>,
+    flow_elements: &[&str],
+) -> Result<(), UsageWriteError> {
+    writer.element("Product", PRODUCT)?;
+    for name in flow_elements {
+        writer.element("FlowElement", name)?;
+    }
+    Ok(())
+}
+
+/// Writes elements into a usage record for a [`UsageSink`]'s
+/// `write_before_record`, `write_pipeline_info` and `write_after_record`.
+pub struct UsageWriter<'a> {
+    out: &'a mut String,
+    server_ip: &'a str,
+}
+
+impl<'a> UsageWriter<'a> {
+    fn new(out: &'a mut String, server_ip: &'a str) -> Self {
+        UsageWriter { out, server_ip }
+    }
+
+    /// Write `<name>text</name>`, or `<name />` when the text is empty. The
+    /// text is escaped, and each character XML cannot carry is replaced as in
+    /// the record's own values. These elements are the sink's own, so a
+    /// replacement in them does not add `BadSchema` to the record.
+    ///
+    /// # Errors
+    ///
+    /// [`UsageWriteError`] when `name` cannot be an XML element name with no
+    /// namespace prefix, and nothing is written.
+    pub fn element(&mut self, name: &str, text: &str) -> Result<(), UsageWriteError> {
+        if !is_xml_name(name) {
+            return Err(UsageWriteError {
+                name: name.to_owned(),
+            });
+        }
+        push_element(self.out, name, &replace_invalid_xml_chars(text));
+        Ok(())
+    }
+
+    /// The address of this server, as each record gives it in `ServerIP`.
+    pub fn server_ip(&self) -> &'a str {
+        self.server_ip
+    }
+}
+
+/// A [`UsageWriter`] was asked for an element whose name cannot be an XML
+/// element name.
+///
+/// A batch whose sink gives this error is counted as failed and is not
+/// passed to [`UsageSink::receive`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsageWriteError {
+    name: String,
+}
+
+impl UsageWriteError {
+    /// The name that cannot be an XML element name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl fmt::Display for UsageWriteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "'{}' cannot be an XML element name", self.name)
+    }
+}
+
+impl std::error::Error for UsageWriteError {}
+
+/// Append `<name>text</name>`, or `<name />` when the text is empty, with the
+/// text escaped.
+fn push_element(out: &mut String, name: &str, text: &str) {
+    out.push('<');
+    out.push_str(name);
+    if text.is_empty() {
+        out.push_str(" />");
+        return;
+    }
+    out.push('>');
+    push_escaped(out, text, false);
+    out.push_str("</");
+    out.push_str(name);
+    out.push('>');
 }
 
 /// Writes the elements of one record, noting whether any character in them
@@ -188,17 +334,7 @@ impl RecordWriter<'_> {
     /// Write `<name>text</name>`, or `<name />` when the text is empty.
     fn element(&mut self, name: &str, text: &str) {
         let text = self.replace(text);
-        self.out.push('<');
-        self.out.push_str(name);
-        if text.is_empty() {
-            self.out.push_str(" />");
-            return;
-        }
-        self.out.push('>');
-        push_escaped(self.out, &text, false);
-        self.out.push_str("</");
-        self.out.push_str(name);
-        self.out.push('>');
+        push_element(self.out, name, &text);
     }
 
     /// Write an evidence entry, as
@@ -355,6 +491,76 @@ fn is_name_char(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::usage_sink::UsageBatch;
+
+    /// The result of a sink's `receive`.
+    type Received = Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+    /// A sink that adds nothing to a record.
+    struct Plain;
+
+    impl UsageSink for Plain {
+        fn receive(&self, _batch: UsageBatch) -> Received {
+            Ok(())
+        }
+    }
+
+    /// A sink that adds two elements before each record and one after it,
+    /// and names its own product and the elements by their last segment.
+    struct Around;
+
+    impl UsageSink for Around {
+        fn receive(&self, _batch: UsageBatch) -> Received {
+            Ok(())
+        }
+
+        fn write_before_record(
+            &self,
+            writer: &mut UsageWriter<'_>,
+            record: &UsageRecord,
+        ) -> Result<(), UsageWriteError> {
+            writer.element("Received", "2026-11-02T14:05:10")?;
+            writer.element("Entries", &record.evidence().count().to_string())
+        }
+
+        fn write_pipeline_info(
+            &self,
+            writer: &mut UsageWriter<'_>,
+            flow_elements: &[&str],
+        ) -> Result<(), UsageWriteError> {
+            writer.element("Product", "Pipeline.Custom")?;
+            for &name in flow_elements {
+                writer.element("FlowElement", name.rsplit("::").next().unwrap_or(name))?;
+            }
+            Ok(())
+        }
+
+        fn write_after_record(
+            &self,
+            writer: &mut UsageWriter<'_>,
+            _record: &UsageRecord,
+        ) -> Result<(), UsageWriteError> {
+            let server_ip = writer.server_ip();
+            writer.element("Host", server_ip)
+        }
+    }
+
+    /// A sink that writes one element before each record.
+    struct Before(&'static str, &'static str);
+
+    impl UsageSink for Before {
+        fn receive(&self, _batch: UsageBatch) -> Received {
+            Ok(())
+        }
+
+        fn write_before_record(
+            &self,
+            writer: &mut UsageWriter<'_>,
+            _record: &UsageRecord,
+        ) -> Result<(), UsageWriteError> {
+            writer.element(self.0, self.1)
+        }
+    }
 
     /// The time every test record is written.
     const DATE_SENT: &str = "2026-11-02T14:05:09";
@@ -386,8 +592,12 @@ mod tests {
     }
 
     fn written(record: &UsageRecord) -> String {
+        written_with(record, &Plain)
+    }
+
+    fn written_with(record: &UsageRecord, sink: &dyn UsageSink) -> String {
         let mut out = String::new();
-        write_record(&mut out, record, &info(), DATE_SENT);
+        write_record(&mut out, record, &info(), sink, DATE_SENT).unwrap();
         out
     }
 
@@ -421,7 +631,7 @@ mod tests {
             record(&[("header.User-Agent", "one")]),
             record(&[("header.User-Agent", "two")]),
         ];
-        let xml = write_document(&records, &info(), || DATE_SENT.to_owned());
+        let xml = write_document(&records, &info(), &Plain, || DATE_SENT.to_owned()).unwrap();
         assert!(
             xml.as_bytes().starts_with(
                 b"\xEF\xBB\xBF<?xml version=\"1.0\" encoding=\"utf-8\"?>\
@@ -559,5 +769,89 @@ mod tests {
             ("my prefix.field", "dropped"),
         ]));
         assert_eq!(entries(&xml), "<plain>kept</plain></Device>");
+    }
+
+    #[test]
+    fn a_record_gives_its_values_in_the_order_written() {
+        let mut shared = record(&[
+            ("query.51D_b", "1"),
+            ("header.Accept", "2"),
+            ("plain", "3"),
+            ("query.51D_a", "4"),
+        ]);
+        shared.session_id = "session".to_owned();
+        shared.sequence = 7;
+        shared.client_ip = "192.0.2.7".to_owned();
+        assert_eq!(shared.session_id(), "session");
+        assert_eq!(shared.sequence(), 7);
+        assert_eq!(shared.client_ip(), "192.0.2.7");
+        assert_eq!(shared.flow_elements(), ["example::Element"]);
+        assert_eq!(
+            shared.evidence().collect::<Vec<_>>(),
+            [
+                ("query", "51D_b", "1"),
+                ("query", "51D_a", "4"),
+                ("header", "Accept", "2"),
+                ("", "plain", "3"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_sink_writes_around_each_record_and_names_the_pipeline() {
+        let xml = written_with(
+            &record(&[
+                ("header.User-Agent", "Mozilla/5.0"),
+                ("query.51D_Test", "x\u{1}y"),
+            ]),
+            &Around,
+        );
+        let expected = format!(
+            "<Device><Received>2026-11-02T14:05:10</Received>\
+             <Entries>2</Entries><SessionId /><Sequence>0</Sequence>\
+             <DateSent>{DATE_SENT}</DateSent><ClientIP />\
+             <Version>4.5.2</Version><Product>Pipeline.Custom</Product>\
+             <FlowElement>Element</FlowElement><Language>rust</Language>\
+             <LanguageVersion>1.94.0</LanguageVersion>\
+             <ServerIP>192.0.2.10</ServerIP><Platform>linux 6.8.0</Platform>\
+             <header Name=\"User-Agent\"><![CDATA[Mozilla/5.0]]></header>\
+             <query Name=\"51D_Test\"><![CDATA[x\\x0001y]]></query>\
+             <BadSchema>true</BadSchema><Host>192.0.2.10</Host></Device>"
+        );
+        assert_eq!(xml, expected);
+    }
+
+    #[test]
+    fn a_sinks_text_is_escaped_and_replaced_without_marking_the_record() {
+        let xml = written_with(
+            &record(&[("header.User-Agent", "agent")]),
+            &Before("Note", "a<b&c\u{1}"),
+        );
+        assert!(
+            xml.starts_with("<Device><Note>a&lt;b&amp;c\\x0001</Note><SessionId />"),
+            "{xml}"
+        );
+        assert!(!xml.contains("BadSchema"), "{xml}");
+    }
+
+    #[test]
+    fn a_sink_element_that_cannot_be_named_stops_the_document() {
+        for name in ["", "1st", "Two words", "ns:name", "a<b"] {
+            let error = write_document(&[record(&[])], &info(), &Before(name, "x"), || {
+                DATE_SENT.to_owned()
+            })
+            .unwrap_err();
+            assert_eq!(error.name(), name);
+            assert_eq!(
+                error.to_string(),
+                format!("'{name}' cannot be an XML element name")
+            );
+        }
+
+        let mut out = String::new();
+        let mut writer = UsageWriter::new(&mut out, "");
+        assert!(writer.element("Two words", "x").is_err());
+        writer.element("Kept", "").unwrap();
+        assert_eq!(out, "<Kept />", "the refused element wrote nothing");
     }
 }
