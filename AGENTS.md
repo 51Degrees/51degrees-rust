@@ -168,7 +168,11 @@ workspace reads the submodule and never needs the copy.
   That covers `owid-rust` as well as `cxx`, so a push to the main branch of
   SWAN-community/owid-rust reaches `fodid` through the next update pull
   request once its checks pass, and is published with the next merge of `rc`
-  into `main`.
+  into `main`. It sets `cache-assets: true`, so common-ci runs
+  `ci/fetch-assets.ps1` once before the builds and keeps the Lite and ASN
+  files it fetches in the Actions cache. Each build runs the script again,
+  which takes the files from that cache through common-ci's
+  `steps/fetch-assets.ps1` and copies them into `cxx/data`.
 - `caching-wasm.yml` lints and tests `fiftyone-caching`, the loading cache
   included, on wasm32-wasip1 under wasmtime and, with default features off,
   on wasm32-unknown-unknown under Node through `ci/run-wasm-unknown.mjs`.

@@ -19,12 +19,12 @@ Write-Output "::group::Check out the cxx submodule"
 git -C $RepoName submodule update --init --recursive
 Write-Output "::endgroup::"
 
-# The data repository holds a link for each data file rather than the file, so
-# its script downloads the two files the tests read before anything opens
-# them. A file that is already there is kept. The tests skip without the
-# files, so a download that fails stops the build here. The script sets an
-# exit code only when it fails, so any code an earlier command left is cleared
-# first.
+# fetch-assets.ps1, which common-ci runs first, has copied the two data files
+# the tests read into the data repository, so its script finds them there and
+# keeps them. It downloads a file only when one is missing. The tests skip
+# without the files, so a download that fails stops the build here. The
+# script sets an exit code only when it fails, so any code an earlier command
+# left is cleared first.
 Write-Output "::group::Download the data files"
 $global:LASTEXITCODE = 0
 & (Join-Path $RepoName "cxx/data/get-data-files.ps1") `
