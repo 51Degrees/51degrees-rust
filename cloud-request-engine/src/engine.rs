@@ -43,7 +43,7 @@ use crate::data::CloudRequestData;
 use crate::http::{CloudHttpClient, CloudHttpRequest, HttpMethod};
 use crate::properties::LicensedProducts;
 use crate::recovery::{RecoveryConfig, RecoveryGate};
-use crate::response::{cloud_error, validate_response, ParsedResponse};
+use crate::response::{cloud_error, validate_keeping_warnings, validate_response, ParsedResponse};
 use crate::state::CloudEngineState;
 
 /// The set of resolved endpoint URLs the engine talks to.
@@ -515,8 +515,8 @@ impl CloudRequestEngine {
 /// Log each warning the cloud service returned, on every response, as .NET
 /// does. Called before the engine adds its own missing property warning,
 /// which goes to standard error instead.
-fn log_cloud_warnings(parsed: &ParsedResponse) {
-    for warning in &parsed.warnings {
+fn log_cloud_warnings(warnings: &[String]) {
+    for warning in warnings {
         log::warn!("{warning}");
     }
 }
@@ -693,7 +693,9 @@ impl FlowElement for CloudRequestEngine {
                     // A cached body is as good a sample as a live one for the
                     // asked-for property check, and on a short-lived host the
                     // first response after a cold start may well be this one.
-                    log_cloud_warnings(&parsed);
+                    // A live response logs its warnings as it is validated, so
+                    // a cached one is logged here to match.
+                    log_cloud_warnings(&parsed.warnings);
                     self.add_missing_values_warning(&mut parsed);
                     if let Some(cloud) = data.get_mut_cloud() {
                         cloud.set_cache_hit();
@@ -720,7 +722,6 @@ impl FlowElement for CloudRequestEngine {
             true,
             &self.secrets,
         )?;
-        log_cloud_warnings(&parsed);
         self.add_missing_values_warning(&mut parsed);
 
         // Store the successful response so the next identical request is a hit,
@@ -1432,10 +1433,15 @@ fn send_and_validate_inner(
     // The query string of a discovery request carries the keys, so messages
     // name the endpoint without it.
     let endpoint = url_without_query(&request.url);
-    match validate_response(&response, endpoint, check_for_error_messages) {
-        Ok(parsed) => {
+    let (outcome, warnings) =
+        validate_keeping_warnings(&response, endpoint, check_for_error_messages);
+    // Every live response's warnings are logged here, discovery included, and
+    // before any errors it carries are raised, as .NET does.
+    log_cloud_warnings(&warnings);
+    match outcome {
+        Ok(json) => {
             recovery.record_success();
-            Ok(parsed)
+            Ok(ParsedResponse { json, warnings })
         }
         Err(error) => {
             if signals_service_trouble(response.status) {
