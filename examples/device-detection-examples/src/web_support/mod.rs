@@ -33,7 +33,8 @@
 //! [`two_column_table`] and [`evidence_table`]) lives in the `examples-web-shared`
 //! crate and is re-exported here so the binaries import everything from one
 //! place. What remains in this module is device-detection specific: the
-//! results table, the response-header table and the page renderers.
+//! results table, the response-header table, the "Find out more" section and
+//! the page renderers.
 //!
 //! Because the module is included into each binary separately, any given binary
 //! uses only a subset of these helpers (whether defined here or re-exported from
@@ -49,12 +50,25 @@ pub use examples_web_shared::{
 };
 use fiftyone_pipeline_core::ElementData;
 
+/// Where the on-premise pages send a reader to ask about a copy of the
+/// Enterprise data file.
+pub const ENTERPRISE_CONTACT_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=enterprise-data-file";
+
+/// The 51degrees.com links every page's "Find out more" section lists.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=find-out-more"),
+];
+
 /// The device-detection properties the example pages display, as
 /// `(label, property-name)` pairs.
 const DISPLAY_PROPERTIES: &[(&str, &str)] = &[
     ("Hardware Vendor", "hardwarevendor"),
     ("Hardware Name", "hardwarename"),
+    ("Hardware Model", "hardwaremodel"),
     ("Device Type", "devicetype"),
+    ("Price Band", "priceband"),
     ("Platform Vendor", "platformvendor"),
     ("Platform Name", "platformname"),
     ("Platform Version", "platformversion"),
@@ -63,18 +77,45 @@ const DISPLAY_PROPERTIES: &[(&str, &str)] = &[
     ("Browser Version", "browserversion"),
     ("Screen width (pixels)", "screenpixelswidth"),
     ("Screen height (pixels)", "screenpixelsheight"),
+    ("Screen diagonal (inches)", "screeninchesdiagonal"),
     ("Device Id", "deviceid"),
 ];
+
+/// Whether `property` is one the pages display that only the Enterprise data
+/// file carries, being those in the crate's list plus HardwareName, which the
+/// free Lite file does not carry either.
+fn enterprise_only(property: &str) -> bool {
+    property.eq_ignore_ascii_case("HardwareName")
+        || device_detection_examples::ENTERPRISE_PROPERTIES
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(property))
+}
 
 /// Render the server-side detection results as a `.c-eg-table`.
 ///
 /// `device` is the device element data read from the flow data. Each displayed
 /// property is rendered through [`examples_shared::get_property_as_string`], so a
 /// missing or no-value property shows the standard marker rather than failing.
-pub fn detection_results_table(device: &dyn ElementData) -> String {
+///
+/// `available` is the on-premise engine's properties, which are those its data
+/// file carries, or `None` for the cloud. An Enterprise property the data file
+/// does not carry says it needs the Enterprise data file, with a link to ask
+/// about a copy.
+pub fn detection_results_table(device: &dyn ElementData, available: Option<&[String]>) -> String {
     let mut rows = String::new();
     for (index, (label, property)) in DISPLAY_PROPERTIES.iter().enumerate() {
-        let value = examples_shared::get_property_as_string(device, property);
+        let value = match available {
+            Some(available)
+                if enterprise_only(property)
+                    && !examples_shared::is_available(property, available) =>
+            {
+                format!(
+                    "{} (<a href=\"{ENTERPRISE_CONTACT_URL}\">contact us</a> about a copy)",
+                    examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+                )
+            }
+            _ => html_escape(&examples_shared::get_property_as_string(device, property)),
+        };
         let alt = if index % 2 == 0 {
             " c-eg-table__row--alt"
         } else {
@@ -85,10 +126,29 @@ pub fn detection_results_table(device: &dyn ElementData) -> String {
              <td class=\"c-eg-table__cell c-eg-table__cell--key\">{}</td>\
              <td class=\"c-eg-table__cell\">{}</td></tr>",
             html_escape(label),
-            html_escape(&value)
+            value
         ));
     }
     two_column_table(&rows, "Key", "Value")
+}
+
+/// The "Find out more" section that ends every page, set apart by a rule. It
+/// lists the 51degrees.com links, then each of `repositories` as its address.
+pub fn find_out_more_html(repositories: &[&str]) -> String {
+    let mut items = String::new();
+    for (label, url) in FIND_OUT_MORE {
+        items.push_str(&format!(
+            "<li><a href=\"{url}\">{}</a></li>",
+            html_escape(label)
+        ));
+    }
+    for url in repositories {
+        items.push_str(&format!("<li><a href=\"{url}\">{url}</a></li>"));
+    }
+    format!(
+        "<hr><h3 class=\"c-eg-page__heading\">{}</h3><ul>{items}</ul>",
+        examples_shared::FIND_OUT_MORE_HEADING
+    )
 }
 
 /// Render the set-headers response headers (such as `Accept-CH`) as a
@@ -173,6 +233,8 @@ pub struct PageOptions<'a> {
     pub message_html: &'a str,
     /// The client bootstrap `<script>` block.
     pub client_script: &'a str,
+    /// The repositories the "Find out more" section lists.
+    pub repositories: &'a [&'a str],
 }
 
 /// Render a full HTML document for a server-plus-client web example page.
@@ -180,7 +242,8 @@ pub struct PageOptions<'a> {
 /// The structure is a titled page, a `#content` region holding the
 /// detection-results, evidence-used and response-headers tables (the shared
 /// JavaScript appends a refreshed results table here after the client round
-/// trip), the contact-us banner, and the client bootstrap.
+/// trip), the contact-us banner, the "Find out more" section, and the client
+/// bootstrap.
 pub fn render_page(options: PageOptions<'_>) -> String {
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
@@ -209,6 +272,7 @@ pub fn render_page(options: PageOptions<'_>) -> String {
          headers.</p>\
          </div>\
          {message_html}\
+         {find_out_more}\
          </div>\
          {client_script}\
          </body></html>",
@@ -221,17 +285,20 @@ pub fn render_page(options: PageOptions<'_>) -> String {
         headers_html = options.headers_html,
         accept_ch_alert = options.accept_ch_alert,
         message_html = options.message_html,
+        find_out_more = find_out_more_html(options.repositories),
         client_script = options.client_script,
     )
 }
 
 /// Render a client-only page: no server-side tables, just the `#content` target
-/// the client script fills, the contact-us banner and the client bootstrap.
+/// the client script fills, the contact-us banner, the "Find out more" section
+/// listing `repositories`, and the client bootstrap.
 pub fn render_client_only_page(
     title: &str,
     lead: &str,
     message_html: &str,
     client_script: &str,
+    repositories: &[&str],
 ) -> String {
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
@@ -245,6 +312,7 @@ pub fn render_client_only_page(
          run on this client-only page.</div></noscript>\
          <div id=\"content\"></div>\
          {message_html}\
+         {find_out_more}\
          </div>\
          {client_script}\
          </body></html>",
@@ -252,6 +320,7 @@ pub fn render_client_only_page(
         css = ASSETS_CSS_ROUTE,
         lead = html_escape(lead),
         message_html = message_html,
+        find_out_more = find_out_more_html(repositories),
         client_script = client_script,
     )
 }

@@ -40,6 +40,25 @@ use fiftyone_device_detection::{
 };
 use fiftyone_pipeline_engines::AspectPropertyValue;
 
+/// The properties shown beside the metrics that only the Enterprise data file
+/// carries. The free Lite file carries none of them.
+const ENTERPRISE_SHOWN: &[&str] = &[
+    "HardwareVendor",
+    "HardwareName",
+    "HardwareModel",
+    "DeviceType",
+];
+
+/// Where to ask about a copy of the Enterprise data file.
+const CONTACT_US_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-match-metrics.rs&utm_term=enterprise-data-file";
+
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-match-metrics.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-match-metrics.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-match-metrics.rs&utm_term=find-out-more"),
+];
+
 /// Options the example runs with, so `main` and the test share one entry point.
 pub struct ExampleOptions {
     /// The path to the on-premise Hash data file the engine loads.
@@ -55,7 +74,9 @@ pub struct ExampleOptions {
 /// Processes a sample User-Agent and prints the detection match metrics
 /// (MatchedNodes, Difference, Drift, Iterations, Method and the DeviceId), then
 /// demonstrates that restricting the requested properties to a single component
-/// reduces detection time compared with requesting every property.
+/// reduces detection time compared with requesting every property. It ends by
+/// naming the Enterprise properties the data file does not carry, with where to
+/// ask about a copy, and the "Find out more" links.
 pub fn run(options: ExampleOptions) -> Result<()> {
     // Build a pipeline that returns every property in the data tier. Requesting
     // no specific property loads them all, so every component is resolved and the
@@ -76,21 +97,36 @@ pub fn run(options: ExampleOptions) -> Result<()> {
         PerformanceProfile::LowMemory,
     )?;
 
+    // The properties the engine can return are those its data file carries.
+    let available = device_detection_examples::available_properties(&pipeline);
+
     // Run a single detection and print the match metrics for it.
     let sample = examples_shared::evidence::mobile_user_agent_evidence();
-    print_match_metrics(&pipeline, &sample)?;
+    print_match_metrics(&pipeline, &sample, &available)?;
 
     // Demonstrate that requesting fewer properties is faster: time a one-property
     // engine against an all-properties engine over the same evidence.
     compare_property_count_timing(&options)?;
 
+    let missing = examples_shared::missing_properties(ENTERPRISE_SHOWN, &available);
+    if let Some(message) = examples_shared::enterprise_data_file_message(&missing, CONTACT_US_URL) {
+        println!();
+        println!("{message}");
+    }
+
+    examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::ON_PREMISE_REPOSITORIES);
     Ok(())
 }
 // [example]
 
 /// Process one evidence set and print every match metric the on-premise engine
-/// exposes for the detection.
-fn print_match_metrics(pipeline: &Arc<Pipeline>, pairs: &[(&str, &str)]) -> Result<()> {
+/// exposes for the detection. `available` holds the properties the data file
+/// carries.
+fn print_match_metrics(
+    pipeline: &Arc<Pipeline>,
+    pairs: &[(&str, &str)],
+    available: &[String],
+) -> Result<()> {
     let mut message = String::new();
     let _ = writeln!(message, "--- Match metrics for the sample detection ---");
     let _ = writeln!(message, "Evidence:");
@@ -141,11 +177,19 @@ fn print_match_metrics(pipeline: &Arc<Pipeline>, pairs: &[(&str, &str)]) -> Resu
     );
     let _ = writeln!(message);
 
-    // Show a couple of ordinary detected properties alongside the metrics, so the
-    // result is self-explanatory.
+    // Show a few detected properties alongside the metrics, so the result is
+    // self-explanatory. All but IsMobile need the Enterprise data file.
     let _ = writeln!(message, "Detected device properties:");
     output_value("IsMobile", &device.is_mobile(), &mut message);
-    output_value("HardwareName", &device.hardware_name_joined(), &mut message);
+    let enterprise = [
+        ("HardwareVendor", device.hardware_vendor()),
+        ("HardwareName", device.hardware_name_joined()),
+        ("HardwareModel", device.hardware_model()),
+        ("DeviceType", device.device_type()),
+    ];
+    for (name, value) in &enterprise {
+        output_enterprise(name, value, available, &mut message);
+    }
     let _ = writeln!(message);
     print!("{message}");
 
@@ -269,6 +313,25 @@ fn output_value<T: std::fmt::Display>(
     }
 }
 
+/// Append a property only the Enterprise data file carries, or say that it
+/// needs the Enterprise data file when the data file in use does not carry it.
+fn output_enterprise(
+    name: &str,
+    value: &AspectPropertyValue<String>,
+    available: &[String],
+    message: &mut String,
+) {
+    if examples_shared::is_available(name, available) {
+        output_value(name, value, message);
+    } else {
+        let _ = writeln!(
+            message,
+            "\t{name:<14}: {}",
+            examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+        );
+    }
+}
+
 /// A small helper trait so the example can print a `HardwareName` list value
 /// through the same `output_value` path as the scalar properties.
 trait HardwareNameJoined {
@@ -284,7 +347,7 @@ impl HardwareNameJoined for fiftyone_device_detection::DeviceDataBase {
 }
 
 /// Resolve the data file then run the example, with the same fallback chain as
-/// the other on-premise examples (argument, env var, shipped Lite file).
+/// the other on-premise examples (argument, env var, Lite file).
 fn main() -> Result<()> {
     let data_file = std::env::args()
         .nth(1)
@@ -292,12 +355,10 @@ fn main() -> Result<()> {
         .or_else(examples_shared::dd_data_path);
 
     let Some(data_file) = data_file else {
-        eprintln!(
-            "No device-detection data file found. Set 51DEGREES_DD_PATH (or pass \
-             the path as the first argument), or run `git submodule update \
-             --recursive` so the Lite Hash file in the cxx submodule is present."
+        anyhow::bail!(
+            "No device-detection data file found. Set 51DEGREES_DD_PATH, or pass \
+             the path as the first argument."
         );
-        return Ok(());
     };
 
     run(ExampleOptions {
@@ -320,11 +381,23 @@ mod tests {
             return;
         };
         run(ExampleOptions {
-            data_file,
+            data_file: data_file.clone(),
             // Keep the timing loop short so the test stays fast.
             timing_iterations: 200,
         })
         .expect("the on-premise match-metrics example should complete");
+
+        // The Lite file carries none of the Enterprise properties shown, so the
+        // run names them all with the contact link. 51DEGREES_DD_PATH can name
+        // another file.
+        if data_file.ends_with(examples_shared::DD_LITE_RELATIVE_PATH) {
+            let available = device_detection_examples::data_file_properties(&data_file)
+                .expect("the data file opens");
+            assert_eq!(
+                examples_shared::missing_properties(ENTERPRISE_SHOWN, &available),
+                ENTERPRISE_SHOWN
+            );
+        }
     }
 }
 
@@ -362,6 +435,13 @@ mod tests {
  * detection through each and reports the per-detection time. The single-property
  * engine is the faster of the two.
  *
+ * Beside the metrics it shows IsMobile and four properties only the Enterprise
+ * data file carries: HardwareVendor, HardwareName, HardwareModel and
+ * DeviceType. The engine's properties are those its data file carries, so with
+ * the free Lite file each of these prints "needs the Enterprise data file", and
+ * the run ends by naming them with a link to contact 51Degrees about a copy of
+ * the Enterprise data file, then a "Find out more" section.
+ *
  * The example prints the data file's tier and publish date and the standard
  * warnings (Lite tier has a small number of properties and limited accuracy; a
  * file more than 30 days old may miss the latest devices). For a discussion of
@@ -374,6 +454,7 @@ mod tests {
  * default, so 51Degrees receives evidence that improves detection.
  *
  * The data file is read from the first command-line argument, the
- * `51DEGREES_DD_PATH` environment variable, or the Lite Hash file shipped in the
- * cxx submodule.
+ * `51DEGREES_DD_PATH` environment variable, or the Lite Hash file in the data
+ * repository inside the cxx submodule, which the example downloads when it is
+ * missing.
  */

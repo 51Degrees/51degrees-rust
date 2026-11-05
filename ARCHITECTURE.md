@@ -133,28 +133,40 @@ symbol list and the note on how to regenerate it.
 
 ## IP Intelligence data strategy
 
-The IP Intelligence data files come in two tiers. The example data-path
+The IP Intelligence data files come in three tiers. The example data-path
 resolver in `examples-shared` (`ipi_data_path(IpiTier)`) encodes the strategy:
 
-- **ASN** (`51Degrees-IPIV4AsnIpiV41.ipi`). Small, current and checked into the
-  `ip-intelligence-data` repository (checked out inside the `cxx`
-  submodule). It loads against the current native library and is the default
-  offline tier, suitable for quick tests.
+- **Lite** (`51Degrees-LiteV41.ipi`). Free, and carries RegisteredName,
+  RegisteredOwner and RegisteredCountry. The data repository links it as it
+  does the ASN file, and it is a download of about 320 MB.
+- **ASN** (`51Degrees-IPIV4AsnIpiV41.ipi`). Small, current and free. The data
+  repository, checked out inside the `cxx` submodule at `cxx/data`, links it,
+  and that repository's script downloads it into `cxx/data/ip-intelligence`,
+  as the examples do when it is missing. It loads against the current native
+  library and is the default offline tier, suitable for quick tests.
 - **Enterprise** (`51Degrees-IPIV4EnterpriseIpiV41.ipi`, on the dated production
   UNC share). The full-accuracy file, reachable only from the 51Degrees network.
   The resolver walks the `YYYY/MM/DD` share layout for the latest dated folder
   that actually contains the file, and treats any I/O error (the common case off
   the network) as "not reachable" rather than blocking or panicking.
 
-A full IP Intelligence data file is downloaded from the data repository (see its
-README); the file committed to the repository for convenient testing is the ASN
-file.
+The data repository links the free files for convenient testing, and its
+README describes them. An Enterprise file, with the full property set, is
+available from 51Degrees.
 
-The default, `IpiTier::BestAvailable`, picks the best *loadable* tier:
-Enterprise when the production share is reachable, otherwise ASN. The
-`51DEGREES_IPI_PATH` environment variable, when set, overrides the tier
-selection and points every example at one explicit file. On-premise examples
-also print the more-than-28-days-old data-file warning through
+With no file set, the examples follow the
+[IP Intelligence required examples](https://github.com/51Degrees/specifications/blob/main/ip-intelligence-specification/required-examples.md#data-files).
+The default, `IpiTier::EnterpriseOrLite`, reads the Enterprise file when the
+production share is reachable and otherwise the Lite file, for every example
+that shows location or registration properties, and for compare, metrics and
+the suspicious example, whose purpose needs the Enterprise file.
+`IpiTier::EnterpriseOrAsn` falls back to the ASN file instead, for the
+performance and update examples, whose properties do not matter to what they
+show. `ipi-onprem-getting-started` reads both free files, so it shows Asn and
+AsnName as well as the registration properties. The examples' tests read the
+ASN file. The `51DEGREES_IPI_PATH` environment variable, when set, overrides
+the tier selection and points every example at one explicit file. On-premise
+examples also print the more-than-28-days-old data-file warning through
 `examples_shared::check_data_file`.
 
 ## JavaScript minification opt-in

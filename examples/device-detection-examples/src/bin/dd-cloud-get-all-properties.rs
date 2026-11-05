@@ -34,6 +34,13 @@ use fiftyone_device_detection::{DeviceDetectionPipelineBuilder, Evidence, DEVICE
 // re-exported by the facade, so it is brought in from the core crate directly.
 use fiftyone_pipeline_core::ElementData;
 
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-get-all-properties.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-get-all-properties.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-get-all-properties.rs&utm_term=find-out-more"),
+];
+
 /// The maximum length any single property value is printed at, so a long list
 /// or JavaScript value does not flood the console. Values are truncated at 200
 /// characters.
@@ -152,10 +159,13 @@ fn main() -> Result<()> {
              https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-get-all-properties.rs&utm_term=resource-key-required, making sure to include all the \
              properties you want this example to display."
         );
+        examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
         return Ok(());
     };
 
-    run(ExampleOptions::with_resource_key(resource_key))
+    let result = run(ExampleOptions::with_resource_key(resource_key));
+    examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
+    result
 }
 
 #[cfg(test)]

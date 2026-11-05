@@ -61,6 +61,10 @@ jobs:
       repo-name: ${{ github.event.repository.name }}
       org-name: ${{ github.event.repository.owner.login }}
       dryrun: ${{ inputs.dryrun || false }}
+      # The data files the tests read are fetched once, through
+      # ci/fetch-assets.ps1, and kept in the Actions cache for every
+      # platform's build, rather than downloaded by each one.
+      cache-assets: true
       skip-compare-performance: true
       # The native sources are compiled from scratch on every platform,
       # because there is no cargo cache here, so allow longer than the

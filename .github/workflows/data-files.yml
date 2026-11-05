@@ -1,0 +1,74 @@
+name: Data Files
+
+# Keeps the free data files that the tests, examples and performance run read
+# in one Actions cache entry, which every other workflow restores through
+# .github/actions/restore-data-files, so CI rarely asks the Distributor for
+# them. The Distributor allows each file only a few downloads an hour from one
+# address.
+#
+# Each day this restores the newest entry, asks the Distributor whether each
+# file has changed, which downloads nothing when it has not, and saves the
+# files as a new entry. An entry saved on the default branch can be restored
+# by every branch and pull request, whilst one a pull request saves can only
+# be restored by that pull request. So the other workflows save an entry of
+# their own only while no daily entry exists, for later runs of the same
+# workflow on the same ref that day. GitHub runs a schedule only from the
+# default branch.
+
+on:
+  schedule:
+    # 00:30 UTC daily, before the nightly performance run.
+    - cron: '30 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    name: Refresh the data files
+    runs-on: ubuntu-latest
+    steps:
+      # The cxx submodule brings the data repository and its script at
+      # cxx/data.
+      - name: Checkout workspace
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore the data files
+        id: data
+        uses: ./.github/actions/restore-data-files
+
+      # -Update asks for each restored file only if it is newer than the copy
+      # here, and the Distributor answers 304 with no file when it is not. A
+      # file the entry does not hold is downloaded. A failed request leaves
+      # the restored file in place, so the check below decides.
+      - name: Refresh the data files
+        continue-on-error: true
+        shell: pwsh
+        env:
+          PATHS: ${{ steps.data.outputs.paths }}
+        run: |
+          $names = $env:PATHS.Trim() -split '\r?\n' |
+            ForEach-Object { Split-Path -Leaf $_.Trim() }
+          ./cxx/data/get-data-files.ps1 @names -Update
+
+      - name: Check the data files
+        shell: bash
+        env:
+          PATHS: ${{ steps.data.outputs.paths }}
+        run: |
+          while IFS= read -r file; do
+            if [ -n "$file" ] && [ ! -f "$file" ]; then
+              echo "::error::$file is missing, so no entry is saved"
+              exit 1
+            fi
+          done <<< "$PATHS"
+
+      - name: Save the data files
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.data.outputs.paths }}
+          key: ${{ steps.data.outputs.key }}
+          enableCrossOsArchive: true
