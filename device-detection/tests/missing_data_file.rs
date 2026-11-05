@@ -97,8 +97,10 @@ fn assert_file_not_found<T>(build: &str, result: Result<T, Error>, path: &Path) 
 }
 
 /// Each build fails with the native file-not-found status, and none logs at
-/// warning level or above. One test, so the records cannot come from another
-/// test running at the same time.
+/// warning level or above. Updates are off wherever they are on by default,
+/// because with them on and no licence key a build refuses before it opens the
+/// file. One test, so the records cannot come from another test running at the
+/// same time.
 #[test]
 fn a_missing_data_file_is_returned_and_not_logged() {
     let _ = log::set_logger(&LOGGER);
@@ -126,7 +128,9 @@ fn a_missing_data_file_is_returned_and_not_logged() {
     );
     assert_file_not_found(
         "the IP Intelligence engine",
-        IpIntelligenceOnPremiseEngineBuilder::new(ipi.clone()).build(),
+        IpIntelligenceOnPremiseEngineBuilder::new(ipi.clone())
+            .auto_update(false)
+            .build(),
         &ipi,
     );
     assert_file_not_found(
