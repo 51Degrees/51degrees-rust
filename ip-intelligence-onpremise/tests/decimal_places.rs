@@ -49,6 +49,9 @@ const ADDRESSES: &[&str] = &[
     "2001:4860:4860::8888",
 ];
 
+/// The separator the C library's text joins the values of a property with.
+const SEPARATOR: &str = "|";
+
 /// The data file `51DEGREES_IPI_PATH` names, if it exists.
 fn data_file() -> Option<PathBuf> {
     let path = PathBuf::from(std::env::var("51DEGREES_IPI_PATH").ok()?.trim());
@@ -64,6 +67,17 @@ fn assert_places(text: &str, what: &str) {
         places <= ANGLE_DECIMAL_PLACES,
         "{what} is {text}, with {places} decimal places"
     );
+}
+
+/// The values in the C library's text for a property, which writes each as
+/// `"<value>":<weighting>`, most probable first, joined by [`SEPARATOR`].
+fn quoted_values(text: &str) -> Vec<&str> {
+    text.split(SEPARATOR)
+        .filter_map(|item| {
+            let (value, _) = item.strip_prefix('"')?.split_once("\":")?;
+            Some(value)
+        })
+        .collect()
 }
 
 #[test]
@@ -119,14 +133,18 @@ fn locations_are_given_to_three_decimal_places() {
 
             // The C library's text, which .NET reads the number from.
             let text = results
-                .value_as_string(name, "|")
+                .value_as_string(name, SEPARATOR)
                 .expect("the text should read")
                 .expect("the text should have a value");
-            assert_places(&text, &format!("the text of {what}"));
+            let values = quoted_values(&text);
+            assert!(!values.is_empty(), "the text of {what} is {text}");
+            for value in &values {
+                assert_places(value, &format!("a value in the text of {what}"));
+            }
             assert_eq!(
                 Some(*number),
-                text.parse::<f32>().ok(),
-                "{what} should be the float nearest its text"
+                values[0].parse::<f32>().ok(),
+                "{what} should be the float nearest the first value in {text}"
             );
 
             for (candidate, _) in results
