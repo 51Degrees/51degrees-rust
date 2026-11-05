@@ -411,6 +411,7 @@ dependencies = [
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
  "fiftyone-pipeline-engines-fiftyone",
+ "indexmap",
  "serde_json",
 ]
 

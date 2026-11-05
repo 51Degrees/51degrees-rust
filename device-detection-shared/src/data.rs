@@ -147,18 +147,10 @@ impl DeferredValues {
         Some(self.outcome(&mut read, position).clone())
     }
 
-    /// The lowercase names of the properties that have a value, reading any not
-    /// yet read.
+    /// The lowercase names of every property the reader holds, with or
+    /// without a value. Nothing is read.
     fn keys(&self) -> Vec<String> {
-        let mut read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
-        let names = self.reader.property_names();
-        let mut keys = Vec::new();
-        for (position, name) in names.iter().enumerate() {
-            if matches!(self.outcome(&mut read, position), Ok(Some(_))) {
-                keys.push(name.clone());
-            }
-        }
-        keys
+        self.reader.property_names().to_vec()
     }
 }
 
@@ -447,9 +439,10 @@ impl ElementData for DeviceDataBase {
         !self.base.knows_missing_properties() || self.holds(name)
     }
 
-    /// The names of the properties that have a value. With a reader attached
-    /// this reads every property not yet read, because whether a property has
-    /// a value is only known once it is read.
+    /// The names of the properties in the bag, then those the reader holds,
+    /// with or without a value, as .NET's on-premise data lists every
+    /// available property. A property with no value is listed so the JSON
+    /// builder writes it as null with the reason. Listing reads nothing.
     fn keys(&self) -> Vec<String> {
         let mut keys = self.base.keys();
         if let Some(deferred) = &self.deferred {
@@ -735,20 +728,37 @@ mod tests {
     }
 
     #[test]
-    fn keys_list_only_the_properties_with_a_value() {
+    fn keys_list_every_property_with_or_without_a_value() {
         let (reader, reads) = CountingReader::new();
         let device = DeviceDataBase::new()
             .set("DeviceId", "1-2-3-4")
             .with_reader(reader);
-        let mut keys = device.keys();
-        keys.sort();
-        assert_eq!(keys, ["deviceid", "ismobile", "platformname"]);
-        // Every property was read once to find which have a value.
+        // The bag first, then the reader's names in its order, including
+        // browsername, which has no value, and hardwarevendor, whose read
+        // fails.
+        assert_eq!(
+            device.keys(),
+            [
+                "deviceid",
+                "ismobile",
+                "platformname",
+                "browsername",
+                "hardwarevendor"
+            ]
+        );
+        // Listing the names reads nothing.
         for name in ["ismobile", "platformname", "browsername", "hardwarevendor"] {
-            assert_eq!(reads_of(&reads, name), 1, "{name}");
+            assert_eq!(reads_of(&reads, name), 0, "{name}");
         }
-        device.keys();
-        assert_eq!(reads_of(&reads, "ismobile"), 1);
+        // Each listed property without a value gives its reason.
+        assert_eq!(
+            device.get("browsername").unwrap_err().message,
+            "No value for property 'browsername'."
+        );
+        assert_eq!(
+            device.get("hardwarevendor").unwrap_err().message,
+            "the native read failed"
+        );
     }
 
     #[test]

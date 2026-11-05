@@ -38,6 +38,7 @@
 //!   the resource key). This is the
 //!   ["missing properties" rule](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#missing-properties).
 
+use std::borrow::Cow;
 use std::fmt;
 
 use thiserror::Error;
@@ -367,6 +368,25 @@ impl Error {
             message: message.into(),
         }
     }
+
+    /// The error's message without the words naming its kind, as .NET's
+    /// `Exception.Message` and Java's `getMessage` give it, with credentials
+    /// removed as they are from the display. The JSON builder writes this in
+    /// `errors`.
+    ///
+    /// A missing property and an aggregate give their display, which is
+    /// already the message.
+    pub fn message(&self) -> Cow<'_, str> {
+        match self {
+            Error::NoValue(inner) => crate::redact::redact(&inner.message),
+            Error::PipelineConfiguration { message }
+            | Error::NotProcessed { message }
+            | Error::CloudRequest { message, .. }
+            | Error::Native { message, .. }
+            | Error::Pipeline { message } => crate::redact::redact(message),
+            other => Cow::Owned(other.to_string()),
+        }
+    }
 }
 
 /// Each error of an aggregate in brackets, for the aggregate's message. Every
@@ -523,6 +543,32 @@ mod tests {
         assert!(!error.to_string().contains(NOT_A_KEY));
         assert!(!format!("{error:?}").contains(NOT_A_KEY));
         assert!(error.to_string().contains("is refused"));
+    }
+
+    #[test]
+    fn a_message_leaves_out_the_kind_and_removes_the_key() {
+        let error = Error::Pipeline {
+            message: "carried on".to_owned(),
+        };
+        assert_eq!(error.to_string(), "pipeline error: carried on");
+        assert_eq!(error.message(), "carried on");
+
+        let cloud = cloud_error_carrying_a_key().message().into_owned();
+        assert!(!cloud.contains(NOT_A_KEY), "the key survived: {cloud}");
+        assert!(cloud.starts_with("Cloud service at "), "{cloud}");
+
+        let native = Error::Native {
+            status: "InvalidInput".to_owned(),
+            message: "no address".to_owned(),
+        };
+        assert_eq!(native.message(), "no address");
+
+        let missing = Error::PropertyMissing {
+            property: "ismobile".to_owned(),
+            element_data_key: "device".to_owned(),
+            reason: MissingPropertyReason::PropertyNotAccessibleWithResourceKey,
+        };
+        assert_eq!(missing.message(), missing.to_string());
     }
 
     #[test]
