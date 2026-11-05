@@ -629,6 +629,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "fiftyone-agent-signature"
+version = "4.5.2"
+dependencies = [
+ "base64",
+ "chrono",
+ "fiftyone-agent-signature",
+ "fiftyone-caching",
+ "fiftyone-pipeline-core",
+ "fiftyone-pipeline-engines",
+ "log",
+ "percent-encoding",
+ "reqwest",
+ "ring",
+ "serde_json",
+ "tiny_http",
+ "url",
+]
+
+[[package]]
 name = "fiftyone-caching"
 version = "4.5.2"
 dependencies = [

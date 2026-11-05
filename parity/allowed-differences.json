@@ -136,9 +136,9 @@
     "issue": 223
   },
   {
-    "path": "properties.*",
+    "path": "properties.device.*",
     "kind": "noValueMessage",
-    "reason": "Every Device Detection property with no value gives the same sentence and IP Intelligence gives none of .NET's reasons.",
+    "reason": "Every Device Detection property with no value gives the same sentence, where .NET gives the reason for each.",
     "issue": 223
   },
   {
@@ -241,7 +241,7 @@
   {
     "path": "json.device.*nullreason",
     "kind": "value",
-    "reason": "The crates give every Device Detection property with no value the reason No value for property and its name, where .NET says why it has none, such as that the evidence it needs was not supplied (properties.* noValueMessage).",
+    "reason": "The crates give every Device Detection property with no value the reason No value for property and its name, where .NET says why it has none, such as that the evidence it needs was not supplied (properties.device.* noValueMessage).",
     "issue": 223
   },
   {
@@ -276,5 +276,15 @@
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "reason": "The crates have no public sink for usage records yet, so the Rust producer writes none. The values pipeline has no usage sharing, so its cases are not listed.",
     "issue": 232
+  },
+  {
+    "path": "properties.agent-signature.agentsignaturecreated",
+    "kind": "type",
+    "reason": "The crates' property values have no type for a point in time, so the agent signature element gives the time as RFC 3339 text, the form .NET's JSON builder writes, where .NET gives a DateTimeOffset. The values are still compared, and are the same."
+  },
+  {
+    "path": "properties.agent-signature.agentsignatureexpires",
+    "kind": "type",
+    "reason": "The crates' property values have no type for a point in time, so the agent signature element gives the time as RFC 3339 text, the form .NET's JSON builder writes, where .NET gives a DateTimeOffset. The values are still compared, and are the same."
   }
 ]
