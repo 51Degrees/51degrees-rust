@@ -377,6 +377,63 @@ fn property_values_are_read_from_the_data_file() {
     assert_eq!(engine.property_values("ismobile").unwrap(), None);
 }
 
+/// One value is found by its name for a property the engine was opened with,
+/// one it was opened without and a match metric, and is the one the whole
+/// list holds. Both names are matched exactly, as .NET matches them.
+#[test]
+fn a_property_value_is_found_by_its_exact_name() {
+    let Some(engine) = engine(&["IsMobile"]) else {
+        return;
+    };
+    for (property, value) in [
+        ("IsMobile", "True"),
+        ("IsMobile", "False"),
+        ("BrowserName", "Safari"),
+        ("Method", "PERFORMANCE"),
+    ] {
+        let expected = engine
+            .property_values(property)
+            .expect("the values are read")
+            .expect("the property is listed")
+            .into_iter()
+            .find(|v| v.name == value);
+        assert!(expected.is_some(), "{property} {value}");
+        assert_eq!(
+            engine
+                .property_value(property, value)
+                .expect("the value is read"),
+            expected,
+            "{property} {value}"
+        );
+    }
+    for (property, value) in [
+        ("IsMobile", "true"),
+        ("IsMobile", "Safari"),
+        ("Method", "performance"),
+        ("MatchedNodes", "0"),
+        ("ismobile", "True"),
+        ("NotAProperty", "True"),
+    ] {
+        assert_eq!(
+            engine
+                .property_value(property, value)
+                .expect("the value is read"),
+            None,
+            "{property} {value}"
+        );
+    }
+
+    // A data file property's metadata lists no values, so only the engine
+    // finds one.
+    let properties = engine.fiftyone_properties();
+    let is_mobile = properties
+        .iter()
+        .find(|p| p.name() == "IsMobile")
+        .expect("IsMobile is listed");
+    assert!(is_mobile.values().is_empty());
+    assert_eq!(is_mobile.value("True"), None);
+}
+
 /// A range of a property's values is that part of the whole list, for a
 /// property the engine was opened with, one it was opened without and two
 /// match metrics, and the count is the length of the whole list.

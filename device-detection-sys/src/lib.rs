@@ -726,6 +726,17 @@ pub type ShimValueStringCallback =
 /// is out of range. An absent string gives zero instead.
 pub const SHIM_STRING_FAILED: usize = usize::MAX;
 
+/// Returned by [`fiftyoneDegreesShimHashFindDataFilePropertyValue`] when the
+/// property or the value cannot be read, or the property index is out of
+/// range.
+pub const SHIM_FIND_FAILED: c_int = 0;
+/// Returned by [`fiftyoneDegreesShimHashFindDataFilePropertyValue`] when it
+/// found the value and gave its strings.
+pub const SHIM_FIND_FOUND: c_int = 1;
+/// Returned by [`fiftyoneDegreesShimHashFindDataFilePropertyValue`] when the
+/// property has no value with the name.
+pub const SHIM_FIND_NOT_FOUND: c_int = 2;
+
 extern "C" {
     /// Returns the number of properties the data file defines, including
     /// those the data set was not created with, or zero when no data set is
@@ -820,6 +831,28 @@ extern "C" {
         property_index: u32,
         value_number: u32,
         count: u32,
+        callback: ShimValueStringCallback,
+        context: *mut c_void,
+    ) -> c_int;
+
+    /// Finds the value named `name`, matched exactly, among those the data
+    /// file holds for the property at `property_index`, calls `callback` with
+    /// its name, description and URL as
+    /// [`fiftyoneDegreesShimHashGetDataFilePropertyValues`] does, and returns
+    /// [`SHIM_FIND_FOUND`]. Returns [`SHIM_FIND_NOT_FOUND`] when the property
+    /// has no such value, or [`SHIM_FIND_FAILED`] when the property index is
+    /// out of range or the property, a value or a string cannot be read. The
+    /// value is found by the C library's binary search over the property's
+    /// values, which are in order of their names, so a value the data file
+    /// holds out of that order can be missed. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager, `name` a null
+    /// terminated string, and `context` what `callback` expects.
+    pub fn fiftyoneDegreesShimHashFindDataFilePropertyValue(
+        manager: *mut ResourceManager,
+        property_index: u32,
+        name: *const c_char,
         callback: ShimValueStringCallback,
         context: *mut c_void,
     ) -> c_int;

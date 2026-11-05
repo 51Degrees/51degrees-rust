@@ -652,6 +652,59 @@ impl Manager {
             .ok_or_else(|| metadata_read_failed(&format!("values of property {property_index}")))
     }
 
+    /// The value named `name`, matched exactly, among those
+    /// [`Self::data_file_property_values`] gives for the property at
+    /// `property_index`, or [`None`] when the index is out of range or the
+    /// property has no such value. A property or value that cannot be read is
+    /// an error.
+    ///
+    /// A property's values are in order of their names, so the value is found
+    /// by the C library's binary search, as the C++ code the other SDKs call
+    /// finds it, without reading the others. A value the data file holds out
+    /// of that order can be missed, as the C++ misses it.
+    pub fn data_file_property_value(
+        &self,
+        property_index: u32,
+        name: &str,
+    ) -> Result<Option<DataFileValue>> {
+        let _file_read = self.file_read();
+        // Safety: the manager is initialized for the lifetime of `self`.
+        let count = unsafe { sys::fiftyoneDegreesShimHashGetDataFilePropertyCount(self.as_ptr()) };
+        if property_index >= count {
+            return Ok(None);
+        }
+        // A data file's strings end at their first null, so no value has a
+        // name holding one.
+        let Ok(c_name) = CString::new(name) else {
+            return Ok(None);
+        };
+        let mut values: Vec<DataFileValue> = Vec::new();
+        // Safety: `c_name` is null terminated, and `take_value_string` treats
+        // the context as the `Vec<DataFileValue>` it points to, which outlives
+        // the call and is not used elsewhere during it.
+        let found = unsafe {
+            sys::fiftyoneDegreesShimHashFindDataFilePropertyValue(
+                self.as_ptr(),
+                property_index,
+                c_name.as_ptr(),
+                take_value_string,
+                (&mut values as *mut Vec<DataFileValue>).cast::<c_void>(),
+            )
+        };
+        // The C search answers 0, the file's first value, when reading a value
+        // gives nothing and sets no exception, so a value of another name is a
+        // failure.
+        match (found, values.pop()) {
+            (sys::SHIM_FIND_FOUND, Some(value)) if values.is_empty() && value.name == name => {
+                Ok(Some(value))
+            }
+            (sys::SHIM_FIND_NOT_FOUND, None) => Ok(None),
+            _ => Err(metadata_read_failed(&format!(
+                "value {name:?} of property {property_index}"
+            ))),
+        }
+    }
+
     /// The values at the places `range` covers among those the data file
     /// holds for the property at `property_index`, read in one shim call, or
     /// [`None`] when the property or any of them cannot be read. The caller
@@ -792,13 +845,14 @@ fn data_file_value_type(value_type: u8, is_list: bool) -> PropertyValueType {
 }
 
 /// Take one string of a property value from
-/// `fiftyoneDegreesShimHashGetDataFilePropertyValues` into the
+/// `fiftyoneDegreesShimHashGetDataFilePropertyValues` or
+/// `fiftyoneDegreesShimHashFindDataFilePropertyValue` into the
 /// `Vec<DataFileValue>` that `context` points to. The shim gives each value's
 /// name first, which starts a new value, then its description and URL.
 unsafe extern "C" fn take_value_string(context: *mut c_void, field: c_int, value: *const c_char) {
-    // Safety: `Manager::read_values` passes its own `Vec<DataFileValue>` as
-    // the context, and the shim passes a null terminated string valid for
-    // this call.
+    // Safety: `Manager::read_values` and `Manager::data_file_property_value`
+    // pass their own `Vec<DataFileValue>` as the context, and the shim passes
+    // a null terminated string valid for this call.
     let (values, text) = unsafe {
         (
             &mut *context.cast::<Vec<DataFileValue>>(),
@@ -1883,6 +1937,69 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_value_is_found_by_its_exact_name() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping finding values");
+            return;
+        };
+        for profile in METADATA_PROFILES {
+            let manager = Manager::open(&path, profile).expect("data file loads");
+            let properties = manager
+                .data_file_properties()
+                .expect("the properties are read");
+            let find = |index: u32, name: &str| {
+                manager
+                    .data_file_property_value(index, name)
+                    .expect("the values are read")
+            };
+            // Every value of a property whose values are in order of their
+            // names is found by its name, and is the one the whole list holds.
+            // The C search can miss a value of a property whose values are not
+            // in order, so for those a value found must be the one the list
+            // holds under that name.
+            let (mut in_order, mut checked) = (0usize, 0u32);
+            for property in &properties {
+                let values = manager
+                    .data_file_property_values(property.index)
+                    .expect("the values are read");
+                let ordered = values.windows(2).all(|pair| pair[0].name < pair[1].name);
+                for value in &values {
+                    let what = format!("{} {} {}", property.name, value.name, profile.as_str());
+                    match find(property.index, &value.name) {
+                        Some(found) => assert_eq!(&found, value, "{what}"),
+                        None => assert!(!ordered, "{what}"),
+                    }
+                }
+                if ordered {
+                    in_order += 1;
+                    checked += property.value_count;
+                }
+            }
+            assert!(in_order > 0, "{}", profile.as_str());
+            assert!(checked > 0, "{}", profile.as_str());
+
+            // The name must match exactly, so another case, part of the name,
+            // more than the name, or another property's value finds nothing.
+            let index_of = |name: &str| {
+                properties
+                    .iter()
+                    .find(|p| p.name == name)
+                    .expect("the property is in every Hash data file")
+                    .index
+            };
+            let is_mobile = index_of("IsMobile");
+            assert!(find(index_of("BrowserName"), "Safari").is_some());
+            for name in [
+                "true", "TRUE", "Tru", "True ", "TrueX", "", "True\0", "Safari",
+            ] {
+                assert_eq!(find(is_mobile, name), None, "{name:?} {}", profile.as_str());
+            }
+            let outside = u32::try_from(properties.len()).expect("few properties");
+            assert_eq!(find(outside, "True"), None, "{}", profile.as_str());
+        }
+    }
+
     /// Places in a Hash data file, from the packed
     /// `fiftyoneDegreesDataSetHashHeader` in the C library's `hash.h` and
     /// `fiftyoneDegreesProperty` in `property.h`. A collection's header is its
@@ -1919,6 +2036,14 @@ mod tests {
         let original = manager
             .data_file_properties()
             .expect("the properties are read");
+        let original_values: Vec<Vec<DataFileValue>> = original
+            .iter()
+            .map(|property| {
+                manager
+                    .data_file_property_values(property.index)
+                    .expect("the values are read")
+            })
+            .collect();
         drop(manager);
         assert_eq!(original.len(), count);
         // Each record's indexes give the count read through the shim, so the
@@ -1994,6 +2119,18 @@ mod tests {
                         .is_empty(),
                     "{what}"
                 );
+                let names = &original_values[property.index as usize];
+                assert!(!names.is_empty(), "{what}");
+                for value in names {
+                    assert_eq!(
+                        manager
+                            .data_file_property_value(property.index, &value.name)
+                            .expect("the values are read"),
+                        None,
+                        "{what} {}",
+                        value.name
+                    );
+                }
             }
         }
         let _ = std::fs::remove_dir_all(&dir);

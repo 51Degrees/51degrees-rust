@@ -444,6 +444,11 @@ typedef void (*fiftyoneDegreesShimValueStringCallback)(
 /* Returned by a string reader that could not read the string. */
 #define SHIM_STRING_FAILED ((size_t)-1)
 
+/* What fiftyoneDegreesShimHashFindDataFilePropertyValue returns. */
+#define SHIM_FIND_FAILED 0
+#define SHIM_FIND_FOUND 1
+#define SHIM_FIND_NOT_FOUND 2
+
 /*
  * Writes as much of `value` as fits into `buffer` and returns the full length
  * of `value`, or writes an empty string and returns zero when `value` is null.
@@ -891,6 +896,63 @@ int fiftyoneDegreesShimHashGetDataFilePropertyValues(
         for (uint32_t number = valueNumber; result == 1 && number < end;
             number++) {
             result = give_value(dataSet, first + number, callback, context);
+        }
+    }
+    fiftyoneDegreesDataSetHashRelease(dataSet);
+    return result;
+}
+
+/*
+ * Finds the value named `name` among those the data file holds for the
+ * property at `propertyIndex` and gives `callback` its strings as
+ * fiftyoneDegreesShimHashGetDataFilePropertyValues gives each value. The name
+ * must match exactly. A property's values are in order of their names, so the
+ * C library's binary search finds it, as the C++
+ * ValueMetaDataCollectionForPropertyHash::getByKey does, without reading the
+ * others. A value the data file holds out of that order can be missed, as the
+ * C++ misses it. Returns SHIM_FIND_FOUND, SHIM_FIND_NOT_FOUND when the property
+ * has no value with that name, or SHIM_FIND_FAILED when the property index is
+ * out of range or the property, a value or a string cannot be read.
+ */
+int fiftyoneDegreesShimHashFindDataFilePropertyValue(
+    fiftyoneDegreesResourceManager *manager,
+    uint32_t propertyIndex,
+    const char *name,
+    fiftyoneDegreesShimValueStringCallback callback,
+    void *context) {
+    fiftyoneDegreesDataSetHash *dataSet =
+        fiftyoneDegreesDataSetHashGet(manager);
+    if (dataSet == NULL) {
+        return SHIM_FIND_FAILED;
+    }
+    int result = SHIM_FIND_FAILED;
+    fiftyoneDegreesCollectionItem item;
+    const fiftyoneDegreesProperty *held =
+        get_property(dataSet, propertyIndex, &item);
+    if (held != NULL) {
+        // A copy, so only one item is held at a time during the search.
+        const fiftyoneDegreesProperty property = *held;
+        FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->properties, &item);
+        result = SHIM_FIND_NOT_FOUND;
+        // The search reads every place between the two value indexes, so it
+        // runs only when value_count finds them all in the values collection.
+        if (value_count(dataSet, &property) > 0) {
+            FIFTYONE_DEGREES_EXCEPTION_CREATE;
+            const long index = fiftyoneDegreesValueGetIndexByNameAndType(
+                dataSet->values,
+                dataSet->strings,
+                &property,
+                FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_STRING,
+                name,
+                exception);
+            if (FIFTYONE_DEGREES_EXCEPTION_FAILED) {
+                result = SHIM_FIND_FAILED;
+            }
+            else if (index >= 0) {
+                result = give_value(
+                    dataSet, (uint32_t)index, callback, context) == 1 ?
+                    SHIM_FIND_FOUND : SHIM_FIND_FAILED;
+            }
         }
     }
     fiftyoneDegreesDataSetHashRelease(dataSet);

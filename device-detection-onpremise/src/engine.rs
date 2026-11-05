@@ -497,6 +497,43 @@ impl DeviceDetectionOnPremiseEngine {
             .map(|property| property.values().len())
     }
 
+    /// The value named `value_name` among those [`Self::property_values`]
+    /// gives for the property named `property_name`, both matched exactly, as
+    /// .NET's `GetValue(valueName)` matches them, or [`None`] when the engine
+    /// lists no such property or the property has no such value. Fails when
+    /// the data file's values cannot be read.
+    ///
+    /// [`FiftyOneAspectPropertyMetaData::value`] finds nothing for a data file
+    /// property, because its metadata lists no values. This finds the value in
+    /// the loaded data file without reading the property's other values, by
+    /// the C library's binary search over values in order of their names, as
+    /// .NET finds it. So a value the data file holds out of that order can be
+    /// missed.
+    pub fn property_value(
+        &self,
+        property_name: &str,
+        value_name: &str,
+    ) -> Result<Option<ValueMetaData>> {
+        let loaded = self.loaded.load();
+        if let Some(place) = loaded.file_properties.get(property_name) {
+            let value = loaded
+                .manager
+                .data_file_property_value(place.index, value_name)?;
+            return Ok(value.as_ref().map(value_metadata));
+        }
+        Ok(loaded
+            .fiftyone_properties
+            .iter()
+            .find(|property| property.name() == property_name)
+            .and_then(|property| {
+                property
+                    .values()
+                    .iter()
+                    .find(|value| value.name == value_name)
+                    .cloned()
+            }))
+    }
+
     /// Run a detection for `data` into new device data.
     ///
     /// Builds a native evidence set from the flow data (preferring the decoded
