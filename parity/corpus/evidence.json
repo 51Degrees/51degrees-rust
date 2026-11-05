@@ -1,0 +1,542 @@
+[
+  {
+    "id": "no-evidence",
+    "about": "No evidence at all, so the session id is generated.",
+    "evidence": {}
+  },
+  {
+    "id": "ua-chrome-windows",
+    "about": "Chrome on Windows.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "query.session-id": "parity-ua-chrome-windows"
+    }
+  },
+  {
+    "id": "ua-safari-macos",
+    "about": "Safari on macOS.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15",
+      "query.session-id": "parity-ua-safari-macos"
+    }
+  },
+  {
+    "id": "ua-firefox-linux",
+    "about": "Firefox on Linux.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0",
+      "query.session-id": "parity-ua-firefox-linux"
+    }
+  },
+  {
+    "id": "ua-edge-windows",
+    "about": "Edge on Windows.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
+      "query.session-id": "parity-ua-edge-windows"
+    }
+  },
+  {
+    "id": "ua-iphone",
+    "about": "Safari on an iPhone.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.session-id": "parity-ua-iphone"
+    }
+  },
+  {
+    "id": "ua-ipad",
+    "about": "Safari on an iPad.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPad; CPU OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.session-id": "parity-ua-ipad"
+    }
+  },
+  {
+    "id": "ua-android-reduced",
+    "about": "Chrome on Android with the reduced User-Agent.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+      "query.session-id": "parity-ua-android-reduced"
+    }
+  },
+  {
+    "id": "ua-samsung",
+    "about": "Samsung Internet on a Galaxy S23.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
+      "query.session-id": "parity-ua-samsung"
+    }
+  },
+  {
+    "id": "ua-googlebot",
+    "about": "A crawler.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+      "query.session-id": "parity-ua-googlebot"
+    }
+  },
+  {
+    "id": "ua-curl",
+    "about": "A command line client.",
+    "evidence": {
+      "header.user-agent": "curl/8.5.0",
+      "query.session-id": "parity-ua-curl"
+    }
+  },
+  {
+    "id": "ua-empty",
+    "about": "An empty User-Agent.",
+    "evidence": {
+      "header.user-agent": "",
+      "query.session-id": "parity-ua-empty"
+    }
+  },
+  {
+    "id": "ua-not-a-user-agent",
+    "about": "Text that is not a User-Agent.",
+    "evidence": {
+      "header.user-agent": "not a user agent",
+      "query.session-id": "parity-ua-not-a-user-agent"
+    }
+  },
+  {
+    "id": "ua-non-ascii",
+    "about": "A User-Agent holding characters outside ASCII.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0) éà 中文",
+      "query.session-id": "parity-ua-non-ascii"
+    }
+  },
+  {
+    "id": "ua-long",
+    "about": "A User-Agent of 2,000 characters.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "query.session-id": "parity-ua-long"
+    }
+  },
+  {
+    "id": "ua-query",
+    "about": "The User-Agent in the query string.",
+    "evidence": {
+      "query.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.session-id": "parity-ua-query"
+    }
+  },
+  {
+    "id": "ua-header-case",
+    "about": "The header name in mixed case.",
+    "evidence": {
+      "header.User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.session-id": "parity-ua-header-case"
+    }
+  },
+  {
+    "id": "ua-header-and-query",
+    "about": "Different User-Agents in the header and the query string.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "query.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.session-id": "parity-ua-header-and-query"
+    }
+  },
+  {
+    "id": "uach-windows-header",
+    "about": "Chrome on Windows with every client hint as headers.",
+    "evidence": {
+      "header.sec-ch-ua": "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+      "header.sec-ch-ua-mobile": "?0",
+      "header.sec-ch-ua-platform": "\"Windows\"",
+      "header.sec-ch-ua-platform-version": "\"15.0.0\"",
+      "header.sec-ch-ua-full-version-list": "\"Google Chrome\";v=\"131.0.6778.86\", \"Chromium\";v=\"131.0.6778.86\", \"Not_A Brand\";v=\"24.0.0.0\"",
+      "header.sec-ch-ua-arch": "\"x86\"",
+      "header.sec-ch-ua-bitness": "\"64\"",
+      "header.sec-ch-ua-model": "\"\"",
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "query.session-id": "parity-uach-windows-header"
+    }
+  },
+  {
+    "id": "uach-windows-query",
+    "about": "Chrome on Windows with every client hint in the query string.",
+    "evidence": {
+      "query.sec-ch-ua": "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+      "query.sec-ch-ua-mobile": "?0",
+      "query.sec-ch-ua-platform": "\"Windows\"",
+      "query.sec-ch-ua-platform-version": "\"15.0.0\"",
+      "query.sec-ch-ua-full-version-list": "\"Google Chrome\";v=\"131.0.6778.86\", \"Chromium\";v=\"131.0.6778.86\", \"Not_A Brand\";v=\"24.0.0.0\"",
+      "query.sec-ch-ua-arch": "\"x86\"",
+      "query.sec-ch-ua-bitness": "\"64\"",
+      "query.sec-ch-ua-model": "\"\"",
+      "query.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "query.session-id": "parity-uach-windows-query"
+    }
+  },
+  {
+    "id": "uach-android-header",
+    "about": "Chrome on Android with the model as headers.",
+    "evidence": {
+      "header.sec-ch-ua": "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+      "header.sec-ch-ua-mobile": "?1",
+      "header.sec-ch-ua-platform": "\"Android\"",
+      "header.sec-ch-ua-platform-version": "\"13.0.0\"",
+      "header.sec-ch-ua-full-version-list": "\"Google Chrome\";v=\"131.0.6778.81\", \"Chromium\";v=\"131.0.6778.81\", \"Not_A Brand\";v=\"24.0.0.0\"",
+      "header.sec-ch-ua-model": "\"SM-S911B\"",
+      "header.user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+      "query.session-id": "parity-uach-android-header"
+    }
+  },
+  {
+    "id": "uach-android-query",
+    "about": "Chrome on Android with the model in the query string.",
+    "evidence": {
+      "query.sec-ch-ua": "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+      "query.sec-ch-ua-mobile": "?1",
+      "query.sec-ch-ua-platform": "\"Android\"",
+      "query.sec-ch-ua-platform-version": "\"13.0.0\"",
+      "query.sec-ch-ua-full-version-list": "\"Google Chrome\";v=\"131.0.6778.81\", \"Chromium\";v=\"131.0.6778.81\", \"Not_A Brand\";v=\"24.0.0.0\"",
+      "query.sec-ch-ua-model": "\"SM-S911B\"",
+      "query.user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+      "query.session-id": "parity-uach-android-query"
+    }
+  },
+  {
+    "id": "uach-android-no-ua",
+    "about": "Client hints with no User-Agent.",
+    "evidence": {
+      "header.sec-ch-ua": "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+      "header.sec-ch-ua-mobile": "?1",
+      "header.sec-ch-ua-platform": "\"Android\"",
+      "header.sec-ch-ua-platform-version": "\"13.0.0\"",
+      "header.sec-ch-ua-full-version-list": "\"Google Chrome\";v=\"131.0.6778.81\", \"Chromium\";v=\"131.0.6778.81\", \"Not_A Brand\";v=\"24.0.0.0\"",
+      "header.sec-ch-ua-model": "\"SM-S911B\"",
+      "query.session-id": "parity-uach-android-no-ua"
+    }
+  },
+  {
+    "id": "uach-mixed",
+    "about": "The low entropy hints as headers and the high entropy ones in the query.",
+    "evidence": {
+      "header.sec-ch-ua": "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+      "header.sec-ch-ua-mobile": "?1",
+      "header.sec-ch-ua-platform": "\"Android\"",
+      "header.user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+      "query.sec-ch-ua-platform-version": "\"13.0.0\"",
+      "query.sec-ch-ua-full-version-list": "\"Google Chrome\";v=\"131.0.6778.81\", \"Chromium\";v=\"131.0.6778.81\", \"Not_A Brand\";v=\"24.0.0.0\"",
+      "query.sec-ch-ua-model": "\"SM-S911B\"",
+      "query.session-id": "parity-uach-mixed"
+    }
+  },
+  {
+    "id": "screen-pixels-width",
+    "about": "An iPhone with the screen width from the client.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.51D_ScreenPixelsWidth": "1170",
+      "query.session-id": "parity-screen-pixels-width"
+    }
+  },
+  {
+    "id": "ip-v4-gb",
+    "about": "An IPv4 address in Great Britain.",
+    "evidence": {
+      "server.client-ip": "185.28.167.77",
+      "query.session-id": "parity-ip-v4-gb"
+    }
+  },
+  {
+    "id": "ip-v4-81",
+    "about": "An IPv4 address in Great Britain.",
+    "evidence": {
+      "server.client-ip": "81.2.69.142",
+      "query.session-id": "parity-ip-v4-81"
+    }
+  },
+  {
+    "id": "ip-v4-ng",
+    "about": "An IPv4 address in Nigeria.",
+    "evidence": {
+      "server.client-ip": "102.89.32.1",
+      "query.session-id": "parity-ip-v4-ng"
+    }
+  },
+  {
+    "id": "ip-v4-1111",
+    "about": "A public resolver.",
+    "evidence": {
+      "server.client-ip": "1.1.1.1",
+      "query.session-id": "parity-ip-v4-1111"
+    }
+  },
+  {
+    "id": "ip-v4-8888",
+    "about": "A public resolver.",
+    "evidence": {
+      "server.client-ip": "8.8.8.8",
+      "query.session-id": "parity-ip-v4-8888"
+    }
+  },
+  {
+    "id": "ip-v6-gb",
+    "about": "An IPv6 address in Great Britain.",
+    "evidence": {
+      "server.client-ip": "2a00:23c5:a1a6:a01::1",
+      "query.session-id": "parity-ip-v6-gb"
+    }
+  },
+  {
+    "id": "ip-v6-resolver",
+    "about": "A public resolver.",
+    "evidence": {
+      "server.client-ip": "2001:4860:4860::8888",
+      "query.session-id": "parity-ip-v6-resolver"
+    }
+  },
+  {
+    "id": "ip-v6-mapped",
+    "about": "An IPv4 address mapped into IPv6.",
+    "evidence": {
+      "server.client-ip": "::ffff:1.1.1.1",
+      "query.session-id": "parity-ip-v6-mapped"
+    }
+  },
+  {
+    "id": "ip-v6-bracketed",
+    "about": "An IPv6 address in brackets.",
+    "evidence": {
+      "server.client-ip": "[2a00:23c5:a1a6:a01::1]",
+      "query.session-id": "parity-ip-v6-bracketed"
+    }
+  },
+  {
+    "id": "ip-v4-loopback",
+    "about": "The IPv4 loopback address.",
+    "evidence": {
+      "server.client-ip": "127.0.0.1",
+      "query.session-id": "parity-ip-v4-loopback"
+    }
+  },
+  {
+    "id": "ip-v6-loopback",
+    "about": "The IPv6 loopback address.",
+    "evidence": {
+      "server.client-ip": "::1",
+      "query.session-id": "parity-ip-v6-loopback"
+    }
+  },
+  {
+    "id": "ip-v4-private-10",
+    "about": "A private IPv4 address.",
+    "evidence": {
+      "server.client-ip": "10.0.0.1",
+      "query.session-id": "parity-ip-v4-private-10"
+    }
+  },
+  {
+    "id": "ip-v4-private-192",
+    "about": "A private IPv4 address.",
+    "evidence": {
+      "server.client-ip": "192.168.1.1",
+      "query.session-id": "parity-ip-v4-private-192"
+    }
+  },
+  {
+    "id": "ip-v4-zero",
+    "about": "The unspecified IPv4 address.",
+    "evidence": {
+      "server.client-ip": "0.0.0.0",
+      "query.session-id": "parity-ip-v4-zero"
+    }
+  },
+  {
+    "id": "ip-v4-broadcast",
+    "about": "The IPv4 broadcast address.",
+    "evidence": {
+      "server.client-ip": "255.255.255.255",
+      "query.session-id": "parity-ip-v4-broadcast"
+    }
+  },
+  {
+    "id": "ip-not-an-address",
+    "about": "Text that is not an address.",
+    "evidence": {
+      "server.client-ip": "not-an-ip",
+      "query.session-id": "parity-ip-not-an-address"
+    }
+  },
+  {
+    "id": "ip-empty",
+    "about": "An empty address.",
+    "evidence": {
+      "server.client-ip": "",
+      "query.session-id": "parity-ip-empty"
+    }
+  },
+  {
+    "id": "ip-query",
+    "about": "The address in the query string.",
+    "evidence": {
+      "query.client-ip-51d": "81.2.69.142",
+      "query.session-id": "parity-ip-query"
+    }
+  },
+  {
+    "id": "ip-query-and-server",
+    "about": "Different addresses in the query string and the connection.",
+    "evidence": {
+      "server.client-ip": "1.1.1.1",
+      "query.client-ip-51d": "81.2.69.142",
+      "query.session-id": "parity-ip-query-and-server"
+    }
+  },
+  {
+    "id": "ua-and-ip",
+    "about": "A User-Agent and an address together.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
+      "server.client-ip": "102.89.32.1",
+      "query.session-id": "parity-ua-and-ip"
+    }
+  },
+  {
+    "id": "sequence-absent",
+    "about": "A session id with no sequence.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.session-id": "parity-sequence-absent"
+    }
+  },
+  {
+    "id": "sequence-5",
+    "about": "Sequence 5.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "5",
+      "query.session-id": "parity-sequence-5"
+    }
+  },
+  {
+    "id": "sequence-9",
+    "about": "Sequence 9, the last that still runs JavaScript properties.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "9",
+      "query.session-id": "parity-sequence-9"
+    }
+  },
+  {
+    "id": "sequence-10",
+    "about": "Sequence 10, where JavaScript properties stop.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "10",
+      "query.session-id": "parity-sequence-10"
+    }
+  },
+  {
+    "id": "sequence-int-max",
+    "about": "The largest 32-bit integer.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "2147483647",
+      "query.session-id": "parity-sequence-int-max"
+    }
+  },
+  {
+    "id": "sequence-over-int",
+    "about": "Larger than a 32-bit integer.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "3000000000",
+      "query.session-id": "parity-sequence-over-int"
+    }
+  },
+  {
+    "id": "sequence-text",
+    "about": "Not a number.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "abc",
+      "query.session-id": "parity-sequence-text"
+    }
+  },
+  {
+    "id": "sequence-space",
+    "about": "A number after a space.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": " 5",
+      "query.session-id": "parity-sequence-space"
+    }
+  },
+  {
+    "id": "sequence-plus",
+    "about": "A number with a plus sign.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "+5",
+      "query.session-id": "parity-sequence-plus"
+    }
+  },
+  {
+    "id": "session-generated",
+    "about": "A User-Agent with no session id, so one is generated.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1"
+    }
+  },
+  {
+    "id": "javascript-host",
+    "about": "A host and protocol for the callback URL.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.session-id": "abc-123",
+      "query.sequence": "1",
+      "header.host": "example.com",
+      "header.protocol": "https"
+    }
+  },
+  {
+    "id": "javascript-object-name",
+    "about": "An object name the builder accepts.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.fod-js-object-name": "myObject",
+      "query.session-id": "parity-javascript-object-name"
+    }
+  },
+  {
+    "id": "javascript-object-name-unsafe",
+    "about": "An object name that is not a safe identifier.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.fod-js-object-name": "bad name;alert(1)",
+      "query.session-id": "parity-javascript-object-name-unsafe"
+    }
+  },
+  {
+    "id": "javascript-cookies-on",
+    "about": "Cookies turned on for one request.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.fod-js-enable-cookies": "true",
+      "query.session-id": "parity-javascript-cookies-on"
+    }
+  },
+  {
+    "id": "usage-evidence",
+    "about": "Headers in mixed case, cookies, query parameters on and off the shared list, and a value over 10,000 characters.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "header.Accept-Language": "en-GB,en;q=0.9",
+      "header.X-Long": "é中\u0001<&]]>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "cookie.51D_ProfileIds": "12280-17779-17470-18092",
+      "cookie.other": "value",
+      "query.51D_ScreenPixelsWidth": "1920",
+      "query.utm_source": "parity",
+      "server.client-ip": "81.2.69.142",
+      "query.session-id": "parity-usage-evidence"
+    }
+  }
+]
