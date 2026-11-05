@@ -10,8 +10,8 @@ repository.workspace = true
 homepage = "https://51degrees.com/build-your-own?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-web-axum-cargo.toml&utm_term=homepage"
 
 [dependencies]
-fiftyone-pipeline-web = { version = "4.5.2", path = "../pipeline-web" }
-fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
+fiftyone-pipeline-web = { version = "=4.5.2", path = "../pipeline-web" }
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
 # axum 0.8 is the current line. It rides on hyper 1.x and tower 0.5, which the
 # workspace already resolves through the cloud and fiftyone engines, so adding it
 # does not pull a second major version of either.

@@ -244,6 +244,26 @@ examples against the crates at that version, publishes each crate to crates.io
 in dependency order with `ci/publish-crates.sh`, skipping any version already
 published, and tags the commit.
 
+The crates require each other exactly, as in
+`fiftyone-common-sys = { version = "=4.5.2", path = "../common-sys" }`, so a
+crate of one release builds only with the crates of that release beneath it
+and the C sources they carry. A plain version is a caret requirement, which
+would let a fresh build of an older crate take newer `-sys` crates.
+Dev-dependencies are the exception and take the plain version, because they
+never reach a project's build and an exact one would force a new release of a
+crate whenever a crate its tests use is released. `set-crate-versions.ps1`
+writes the release's version into each requirement in that form, and
+`ci/check-crate-requirements.ps1`, which it runs before and after writing,
+fails on a requirement in the other form, on a published crate that requires
+one `ci/crates.txt` does not publish, on a `ci/crates.txt` order that
+publishes a crate before one it requires, and on finding nothing to check.
+
+Cargo will not take two crates that share a crate beneath them from different
+releases. It takes both from one release, even if that means an older version
+of one, or stops with an error when the project's requirements allow none.
+Crates that share nothing beneath them, such as `fodid` and
+`fiftyone-device-detection`, can still come from different releases.
+
 Authentication uses crates.io **Trusted Publishing**, where the publish workflow
 exchanges the run's GitHub OIDC identity for a short-lived token, so no API
 token is stored. Each crate has this repository and `publish.yml` registered as

@@ -12,15 +12,15 @@ repository.workspace = true
 homepage = "https://51degrees.com/device-detection?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-device-detection-onpremise-cargo.toml&utm_term=homepage"
 
 [dependencies]
-fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
-fiftyone-pipeline-engines = { version = "4.5.2", path = "../pipeline-engines" }
-fiftyone-pipeline-engines-fiftyone = { version = "4.5.2", path = "../pipeline-engines-fiftyone" }
-fiftyone-device-detection-shared = { version = "4.5.2", path = "../device-detection-shared" }
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
+fiftyone-pipeline-engines = { version = "=4.5.2", path = "../pipeline-engines" }
+fiftyone-pipeline-engines-fiftyone = { version = "=4.5.2", path = "../pipeline-engines-fiftyone" }
+fiftyone-device-detection-shared = { version = "=4.5.2", path = "../device-detection-shared" }
 # Enable only the Device Detection product of the native wrapper. This links
 # Device Detection's copy of the common C library alone and never pulls in the
 # IP Intelligence copy, so the two ABI incompatible common C library builds
 # never collide in a Device Detection binary.
-fiftyone-native = { version = "4.5.2", path = "../native", default-features = false, features = ["dd"] }
+fiftyone-native = { version = "=4.5.2", path = "../native", default-features = false, features = ["dd"] }
 arc-swap.workspace = true
 chrono.workspace = true
 # Logs a refresh that fails through the log facade, which does nothing until
