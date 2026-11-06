@@ -566,7 +566,8 @@ fn properties_restrict_the_engine() {
 /// .NET read a copy of the data file made in the temporary folder when
 /// `CreateTempDataCopy` was true, under every profile, and removed it with
 /// the engine. It made none with an empty temporary folder, or for
-/// `BalancedTemp`. A refresh here reads a new copy in place of the old.
+/// `BalancedTemp` alone. A refresh here reads a new copy in place of the
+/// old.
 #[test]
 fn a_copy_of_the_data_file_is_read_when_asked() {
     let Some(asn) = asn() else { return };
@@ -619,6 +620,13 @@ fn a_copy_of_the_data_file_is_read_when_asked() {
     ))
     .unwrap();
     assert_eq!(look_up(&pipeline, IPV4), cloudflare());
+    // No copy was made in the current folder, which an empty folder name
+    // would give.
+    let current = files_in(&std::env::current_dir().unwrap());
+    assert!(
+        !current.iter().any(|name| name.ends_with(".operational")),
+        "{current:?}"
+    );
     drop(pipeline);
     std::fs::remove_dir_all(&folder).unwrap();
 }
