@@ -2,9 +2,11 @@
 
 # 51Did Core
 
-The 51Did element data, property names and metadata that any engine producing
-51Dids is built on.
+The 51Did element data, property names, metadata and engine trait that any
+engine producing 51Dids is built on.
 
+- `FodIdEngine` is the trait an engine producing 51Dids implements, the
+  counterpart of .NET's `IDidEngine`.
 - `FodIdData` gives typed access to the six identifiers a 51Did result holds,
   each as the raw base64 envelope and as a parsed `FodId`.
 - `FodIdDataBase` is the concrete data an engine stores under `FODID_DATA_KEY`.
@@ -15,8 +17,8 @@ The 51Did element data, property names and metadata that any engine producing
 The crate depends on the pipeline core, the aspect engine layer, the
 51Degrees metadata model and the `fodid` reader only, so an engine producing
 51Dids can be built on it without the cloud request engine. The cloud engine
-in `fiftyone-fodid-cloud` populates the same data and re-exports every item
-here.
+in `fiftyone-fodid-cloud` implements `FodIdEngine`, populates the same data
+and re-exports every item here.
 
 This crate is part of the [51Degrees](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fiftyone-fodid-core-readme.md&utm_term=introduction) Rust solution for high-performance
 device detection and IP intelligence, available both on-premise from a local

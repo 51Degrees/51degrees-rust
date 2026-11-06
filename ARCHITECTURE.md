@@ -100,9 +100,10 @@ examples        examples-shared, device-detection-examples,
 
 The `fodid` crate (a 51Did/OWID reader) sits alongside this stack and is
 independent of it. `fiftyone-fodid-core` puts the 51Did element data, property
-names and metadata on the engines layer, with no cloud request engine, so any
-engine producing 51Dids can be built on it. `fiftyone-fodid-cloud` is the cloud
-engine that fills that data from the cloud response, and re-exports it.
+names, metadata and the `FodIdEngine` trait on the engines layer, with no cloud
+request engine, so any engine producing 51Dids can be built on it.
+`fiftyone-fodid-cloud` is the cloud engine that implements that trait and fills
+that data from the cloud response, and re-exports it.
 
 ## Feature gating
 

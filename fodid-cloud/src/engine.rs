@@ -28,8 +28,8 @@ use once_cell::sync::OnceCell;
 
 use fiftyone_cloud_request_engine::{CloudRequestEngine, LicensedProducts};
 use fiftyone_fodid_core::{
-    default_aspect_property_metadata, default_property_metadata, FodIdDataBase, FODID_DATA_KEY,
-    FODID_ELEMENT_DATA_KEY,
+    default_aspect_property_metadata, default_property_metadata, FodIdDataBase, FodIdEngine,
+    FODID_DATA_KEY, FODID_ELEMENT_DATA_KEY,
 };
 use fiftyone_pipeline_core::{
     Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
@@ -62,12 +62,12 @@ const ENGINE_NAME: &str = "FodIdCloudEngine";
 /// stores the raw JSON under its `cloud` data key; this engine reads that JSON.
 /// It must therefore be added to the pipeline *after* the request engine.
 ///
-/// # Cloud only
+/// # The 51Did engine surface
 ///
-/// Unlike device detection and IP intelligence there is no on-premise twin: a
-/// 51Did is issued by the cloud, which alone holds the signing key. So this is
-/// the only engine that produces [`FODID_DATA_KEY`], and there is no shared
-/// crate to keep interface-compatible with.
+/// The engine implements [`FodIdEngine`] from `fiftyone-fodid-core`, so code
+/// that accepts any engine producing 51Dids accepts it. It is the only such
+/// engine in these crates, because the cloud holds the key 51Degrees signs
+/// 51Dids with.
 ///
 /// # Evidence
 ///
@@ -90,7 +90,7 @@ const ENGINE_NAME: &str = "FodIdCloudEngine";
 /// accessible properties on first use, taking the product whose key is `fodid`
 /// compared ignoring case, as the cloud service reports it as `FODid`.
 /// Until that fetch succeeds the engine reports the shared default metadata (the
-/// two identifier properties), so a consumer always sees the documented set.
+/// six identifier properties), so a consumer always sees the documented set.
 ///
 /// # Example
 ///
@@ -355,6 +355,8 @@ impl AspectEngine for FodIdCloudEngine {
     }
 }
 
+impl FodIdEngine for FodIdCloudEngine {}
+
 /// A fluent builder for [`FodIdCloudEngine`] instances.
 ///
 /// The cloud request engine is required, as the engine reads both its JSON
@@ -464,6 +466,16 @@ mod tests {
         assert_eq!(engine.data_source_tier(), "");
         // No evidence is read directly.
         assert!(!engine.evidence_key_filter().include("header.user-agent"));
+    }
+
+    #[test]
+    fn is_a_fodid_engine() {
+        // Held as the trait any engine producing 51Dids implements, the
+        // engine still answers as the cloud engine.
+        let engine: Arc<dyn FodIdEngine> = Arc::new(engine());
+        assert_eq!(engine.data_key(), FODID_ELEMENT_DATA_KEY);
+        assert_eq!(engine.deployment(), EngineDeployment::Cloud);
+        assert_eq!(engine.engine_type_name(), ENGINE_NAME);
     }
 
     #[test]

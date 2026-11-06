@@ -127,7 +127,7 @@ path, so cloud-only users and most of CI build without a C compiler.
 | [`fodid-examples`](examples/fodid-examples) | Runnable 51Did examples: the creator context web demo, which verifies a 51Did from the browser and redeems the encrypted verdict on the server. |
 | [`examples-benches`](examples/benches) | Criterion micro-benchmarks guarding the DD, IPI and JavaScript-builder throughput budgets. |
 | [`fodid`](fodid) | Standalone reader for the 51Did (51Degrees Identifier) returned by the cloud, described in the [identifiers documentation](https://51degrees.com/documentation/_identifiers__index.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=51did). It parses the OWID envelope and is independent of the pipeline stack. |
-| [`fiftyone-fodid-core`](fodid-core) | The 51Did element data, property names and metadata that any engine producing 51Dids is built on. It does not depend on the cloud request engine. |
+| [`fiftyone-fodid-core`](fodid-core) | The 51Did element data, property names, metadata and engine trait that any engine producing 51Dids is built on. It does not depend on the cloud request engine. |
 | [`fiftyone-fodid-cloud`](fodid-cloud) | Cloud engine that maps the cloud response's `fodid` member to the 51Did element data, and re-exports `fiftyone-fodid-core`. |
 | [`fodid-client`](fodid-client) | The server side of the 51Did two-step verification: fetches and caches the signing keys, verifies a signature offline or through the cloud, and redeems the sealed creator context result a browser relays, with the typed outcomes the other 51Did packages report. Builds without a network stack by default. The `reqwest-client` feature turns on the built-in transport. |
 

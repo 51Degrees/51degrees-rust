@@ -61,12 +61,12 @@
 //! cloud request engine. This crate re-exports every item of it under the same
 //! name, so [`FodIdDataBase`] here and there is one type.
 //!
-//! # Cloud only
+//! # The 51Did engine surface
 //!
-//! A 51Did is issued by the cloud, which alone holds the signing key, so there
-//! is no on-premise engine that produces the same data (unlike device detection
-//! and IP intelligence, which have interchangeable cloud and on-premise
-//! engines). [`FodIdCloudEngine`] is the only producer of [`FODID_DATA_KEY`].
+//! [`FodIdCloudEngine`] implements [`FodIdEngine`], the trait any engine
+//! producing 51Dids implements, so code that accepts any such engine accepts
+//! it. It is the only such engine in these crates, because the cloud holds the
+//! key 51Degrees signs 51Dids with.
 
 #![warn(missing_docs)]
 
@@ -77,9 +77,9 @@ pub use engine::{FodIdCloudEngine, FodIdCloudEngineBuilder};
 pub use fiftyone_fodid_core::{
     default_aspect_property_metadata, default_component_metadata,
     default_fiftyone_property_metadata, default_property_metadata, FodIdData, FodIdDataBase,
-    CATEGORY_NAME, COMPONENT_NAME, FODID_DATA_KEY, FODID_ELEMENT_DATA_KEY, IDENTIFIER_PROPERTIES,
-    ID_HEM_GLOBAL_PROPERTY, ID_HEM_LIC_PROPERTY, ID_PROB_GLOBAL_PROPERTY, ID_PROB_LIC_PROPERTY,
-    ID_RAND_GLOBAL_PROPERTY, ID_RAND_LIC_PROPERTY,
+    FodIdEngine, CATEGORY_NAME, COMPONENT_NAME, FODID_DATA_KEY, FODID_ELEMENT_DATA_KEY,
+    IDENTIFIER_PROPERTIES, ID_HEM_GLOBAL_PROPERTY, ID_HEM_LIC_PROPERTY, ID_PROB_GLOBAL_PROPERTY,
+    ID_PROB_LIC_PROPERTY, ID_RAND_GLOBAL_PROPERTY, ID_RAND_LIC_PROPERTY,
 };
 
 // Re-export the parsed-identifier type so a consumer can work with the decoded

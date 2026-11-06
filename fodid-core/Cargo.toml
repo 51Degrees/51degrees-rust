@@ -1,7 +1,7 @@
 [package]
 name = "fiftyone-fodid-core"
 version = "4.5.2"
-description = "The 51Did element data, property names and metadata that any engine producing 51Dids is built on, with no cloud request engine."
+description = "The 51Did element data, property names, metadata and engine trait that any engine producing 51Dids is built on, with no cloud request engine."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

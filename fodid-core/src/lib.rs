@@ -22,11 +22,12 @@
 
 //! [![51Degrees](https://51degrees.com/img/logo.png?utm_source=docs.rs&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=fiftyone-fodid-core-lib.rs&utm_term=logo "Data rewards the curious")](https://51degrees.com/?utm_source=docs.rs&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=fiftyone-fodid-core-lib.rs&utm_term=logo)
 //!
-//! The 51Did element data, property names and metadata that any engine
-//! producing 51Dids is built on.
+//! The 51Did element data, property names, metadata and engine trait that any
+//! engine producing 51Dids is built on.
 //!
 //! # What this crate holds
 //!
+//! - [`FodIdEngine`], the trait an engine producing 51Dids implements.
 //! - [`FodIdData`], typed access to the six identifiers a 51Did result holds,
 //!   each as the raw base64 envelope and as a parsed [`FodId`].
 //! - [`FodIdDataBase`], the concrete data an engine stores under
@@ -45,13 +46,15 @@
 //! producing 51Dids can be built on it without taking the cloud request
 //! engine and its HTTP stack.
 //!
-//! The cloud engine in `fiftyone-fodid-cloud` populates the same
-//! [`FodIdDataBase`], and that crate re-exports every item here under its
-//! own name, so code written against either crate reads one type.
+//! The cloud engine in `fiftyone-fodid-cloud` implements [`FodIdEngine`] and
+//! populates the same [`FodIdDataBase`], and that crate re-exports every item
+//! here under its own name, so code written against either crate reads one
+//! type.
 
 #![warn(missing_docs)]
 
 mod data;
+mod engine;
 mod metadata;
 
 pub use data::{
@@ -59,6 +62,7 @@ pub use data::{
     ID_HEM_GLOBAL_PROPERTY, ID_HEM_LIC_PROPERTY, ID_PROB_GLOBAL_PROPERTY, ID_PROB_LIC_PROPERTY,
     ID_RAND_GLOBAL_PROPERTY, ID_RAND_LIC_PROPERTY,
 };
+pub use engine::FodIdEngine;
 pub use metadata::{
     default_aspect_property_metadata, default_component_metadata,
     default_fiftyone_property_metadata, default_property_metadata, CATEGORY_NAME, COMPONENT_NAME,

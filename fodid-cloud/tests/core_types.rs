@@ -37,6 +37,16 @@ fn the_data_is_the_core_crate_type() {
 }
 
 #[test]
+fn the_engine_trait_is_the_core_crate_one() {
+    // Each call compiles only because the cloud engine implements the core
+    // crate's trait, which this crate re-exports.
+    fn core_engine<E: fiftyone_fodid_core::FodIdEngine>() {}
+    fn reexported_engine<E: fiftyone_fodid_cloud::FodIdEngine>() {}
+    core_engine::<fiftyone_fodid_cloud::FodIdCloudEngine>();
+    reexported_engine::<fiftyone_fodid_cloud::FodIdCloudEngine>();
+}
+
+#[test]
 fn the_names_and_metadata_are_the_core_crate_ones() {
     assert_eq!(
         fiftyone_fodid_cloud::IDENTIFIER_PROPERTIES,
