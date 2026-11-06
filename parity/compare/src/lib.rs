@@ -27,7 +27,7 @@
 //! matches it, and every entry gives its reason. `parity/README.md` describes
 //! the line format, the paths and the kinds.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -82,13 +82,24 @@ const USAGE_LAST_STATIC_ELEMENT: &str = "Platform";
 /// usage record.
 const REPORT_RECORD_CONTEXT: usize = 60;
 
-/// One corpus case.
+/// One corpus case. A case that is not a request, such as a 51Did to read,
+/// has no evidence. Fields the comparer does not use are ignored.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Case {
     pub id: String,
     #[serde(default)]
     pub about: String,
+    #[serde(default)]
     pub evidence: Map<String, Value>,
+}
+
+/// The id that appears more than once in `cases`, if any.
+pub fn repeated_id(cases: &[Case]) -> Option<&str> {
+    let mut seen = HashSet::new();
+    cases
+        .iter()
+        .map(|c| c.id.as_str())
+        .find(|id| !seen.insert(*id))
 }
 
 /// One difference between the two lines for a case.
@@ -345,6 +356,9 @@ pub fn compare_case(case: &Case, dotnet: &Value, rust: &Value) -> Vec<Difference
         field_of(&rust, "usageCustom"),
         USAGE_CUSTOM_RUNTIME_ELEMENTS,
     );
+    for field in ["fodid", "metadata"] {
+        out.data(field, field_of(&dotnet, field), field_of(&rust, field));
+    }
     out.differences
 }
 
@@ -483,6 +497,38 @@ impl Out<'_> {
                 self.push(path, Kind::NoValueMessage, &dotnet[d_state], &rust[r_state]);
             }
             _ => {}
+        }
+    }
+
+    /// Compares two values written as data, key by key and item by item, so
+    /// that each difference names the key or index where it is. Key order is
+    /// not compared, and numbers compare by value.
+    fn data(&mut self, path: &str, dotnet: &Value, rust: &Value) {
+        match (dotnet, rust) {
+            (Value::Object(d), Value::Object(r)) => {
+                for (key, d_value, r_value) in union(d, r) {
+                    self.data_or_only(&format!("{path}.{key}"), d_value, r_value);
+                }
+            }
+            (Value::Array(d), Value::Array(r)) => {
+                for i in 0..d.len().max(r.len()) {
+                    self.data_or_only(&format!("{path}[{i}]"), d.get(i), r.get(i));
+                }
+            }
+            (d, r) if d.is_null() != r.is_null() => self.push(path, Kind::Presence, d, r),
+            (d, r) if !same(d, r) => self.push(path, Kind::Value, d, r),
+            _ => {}
+        }
+    }
+
+    /// [`Out::data`] when both sides have the key or item, and otherwise a
+    /// difference naming the side that has it.
+    fn data_or_only(&mut self, path: &str, dotnet: Option<&Value>, rust: Option<&Value>) {
+        match (dotnet, rust) {
+            (Some(d), Some(r)) => self.data(path, d, r),
+            (Some(d), None) => self.push(path, Kind::OnlyInDotnet, d, &Value::Null),
+            (None, Some(r)) => self.push(path, Kind::OnlyInRust, &Value::Null, r),
+            (None, None) => {}
         }
     }
 
@@ -1299,5 +1345,162 @@ mod tests {
         assert!(glob("a*c*e", "abcde"));
         assert!(!glob("properties.ip.*", "properties.device.ismobile"));
         assert!(!glob("json", "json.device"));
+    }
+
+    /// A case with no evidence, as a 51Did case is.
+    fn data_case(id: &str) -> Case {
+        Case {
+            id: id.into(),
+            about: String::new(),
+            evidence: Map::new(),
+        }
+    }
+
+    /// A line for a 51Did that parsed, as both producers write it.
+    fn fodid_line() -> Value {
+        json!({
+            "id": "rust-probabilistic",
+            "fodid": {
+                "status": "Valid",
+                "type": "Probabilistic",
+                "usage": 3,
+                "usageIsIndirect": false,
+                "matchKey": "00112233",
+                "signatureStatus": "SignatureValid"
+            }
+        })
+    }
+
+    /// A line for the 51Did metadata, with `count` properties.
+    fn metadata_line(count: usize) -> Value {
+        let properties: Vec<Value> = (0..count)
+            .map(|i| json!({"name": format!("Id{i}"), "description": format!("About {i}")}))
+            .collect();
+        json!({
+            "id": "metadata",
+            "metadata": {"name": "FODid", "componentId": 255, "properties": properties}
+        })
+    }
+
+    #[test]
+    fn a_case_needs_no_evidence_and_may_carry_other_fields() {
+        let case: Case = serde_json::from_value(json!({
+            "id": "rust-empty", "about": "An empty string.",
+            "form": "text", "input": "", "publicKey": null
+        }))
+        .unwrap();
+        assert_eq!(case.id, "rust-empty");
+        assert!(case.evidence.is_empty());
+    }
+
+    #[test]
+    fn a_repeated_case_id_is_found() {
+        let cases = [data_case("a"), data_case("b"), data_case("a")];
+        assert_eq!(repeated_id(&cases), Some("a"));
+        assert_eq!(repeated_id(&cases[..2]), None);
+    }
+
+    #[test]
+    fn fodid_lines_that_agree_have_no_difference() {
+        let mut dotnet = json!({"id": "rust-probabilistic", "fodid": {}});
+        let rust = fodid_line();
+        // .NET writing the keys in another order, and a number as a double.
+        for (key, value) in rust["fodid"].as_object().unwrap().iter().rev() {
+            dotnet["fodid"][key] = value.clone();
+        }
+        dotnet["fodid"]["usage"] = json!(3.0);
+        let differences = compare_case(&data_case("rust-probabilistic"), &dotnet, &rust);
+        assert!(differences.is_empty(), "{differences:?}");
+    }
+
+    #[test]
+    fn a_changed_fodid_field_is_a_value_difference_at_its_path() {
+        let mut rust = fodid_line();
+        rust["fodid"]["matchKey"] = json!("00112234");
+        let differences = compare_case(&data_case("a"), &fodid_line(), &rust);
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].path, "fodid.matchKey");
+        assert_eq!(differences[0].kind, Kind::Value);
+        assert_eq!(differences[0].dotnet, json!("00112233"));
+        assert_eq!(differences[0].rust, json!("00112234"));
+    }
+
+    #[test]
+    fn a_fodid_field_only_one_side_writes_names_that_side() {
+        let mut dotnet = fodid_line();
+        dotnet["fodid"]
+            .as_object_mut()
+            .unwrap()
+            .remove("usageIsIndirect");
+        let mut rust = fodid_line();
+        rust["fodid"]
+            .as_object_mut()
+            .unwrap()
+            .remove("signatureStatus");
+        let differences = compare_case(&data_case("a"), &dotnet, &rust);
+        let found: Vec<(&str, Kind)> = differences
+            .iter()
+            .map(|d| (d.path.as_str(), d.kind))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("fodid.signatureStatus", Kind::OnlyInDotnet),
+                ("fodid.usageIsIndirect", Kind::OnlyInRust),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_null_fodid_field_on_one_side_is_a_presence_difference() {
+        let mut rust = fodid_line();
+        rust["fodid"]["matchKey"] = Value::Null;
+        let differences = compare_case(&data_case("a"), &fodid_line(), &rust);
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].path, "fodid.matchKey");
+        assert_eq!(differences[0].kind, Kind::Presence);
+    }
+
+    #[test]
+    fn a_fodid_on_one_side_only_is_a_presence_difference() {
+        let rust = json!({"id": "a"});
+        let differences = compare_case(&data_case("a"), &fodid_line(), &rust);
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].path, "fodid");
+        assert_eq!(differences[0].kind, Kind::Presence);
+    }
+
+    #[test]
+    fn metadata_lists_compare_item_by_item() {
+        let mut rust = metadata_line(7);
+        rust["metadata"]["properties"][2]["description"] = json!("Changed");
+        let differences = compare_case(&data_case("metadata"), &metadata_line(6), &rust);
+        let found: Vec<(&str, Kind)> = differences
+            .iter()
+            .map(|d| (d.path.as_str(), d.kind))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("metadata.properties[2].description", Kind::Value),
+                ("metadata.properties[6]", Kind::OnlyInRust),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_entry_can_allow_one_metadata_field_in_every_property() {
+        let mut rust = metadata_line(6);
+        rust["metadata"]["properties"][4]["description"] = json!("Changed");
+        rust["metadata"]["componentId"] = json!(0);
+        let differences = compare_case(&data_case("metadata"), &metadata_line(6), &rust);
+        let allowed = entries(json!([{
+            "path": "metadata.properties[*].description", "kind": "value",
+            "reason": "test"
+        }]));
+        let outcome = check(&differences, &allowed, "lite");
+        assert_eq!(outcome.allowed_counts[&0], 1);
+        assert_eq!(outcome.failures.len(), 1);
+        assert_eq!(outcome.failures[0].path, "metadata.componentId");
     }
 }
