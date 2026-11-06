@@ -23,6 +23,7 @@
 //! Reading a setting's value from text, as .NET's `TryParse` methods,
 //! `Enum.Parse` and the pipeline's comma-separated list reader do, so a
 //! value that .NET accepts is accepted here and one it refuses is refused.
+//! A .NET `TimeSpan` is read by [`TimeSpan`](super::TimeSpan).
 
 use super::ConfigValue;
 
@@ -136,9 +137,9 @@ impl ParseFailure {
 /// A type a setting can take, read from the text a configuration gives.
 ///
 /// Implemented for `String`, `bool`, the integer types .NET builders take,
-/// `f64`, and `Vec<String>` and `Box<[String]>` for .NET's ``List`1`` and
-/// `String[]`. A crate implements it for its own enumeration with
-/// [`parse_enum`].
+/// `f64`, [`TimeSpan`](super::TimeSpan), and `Vec<String>` and
+/// `Box<[String]>` for .NET's ``List`1`` and `String[]`. A crate implements
+/// it for its own enumeration with [`parse_enum`].
 pub trait ConfigType: Sized + Send + 'static {
     /// The name of the matching .NET type, such as `Int32` or `Boolean`,
     /// which configuration errors give.

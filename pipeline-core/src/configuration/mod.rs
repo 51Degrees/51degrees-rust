@@ -91,7 +91,9 @@ mod json;
 mod options;
 mod registry;
 mod text;
+mod time_span;
 
 pub use options::{ConfigValue, ElementOptions, PipelineOptions};
 pub use registry::{BuildArguments, BuildContext, BuilderDefinition, BuilderRegistry, Parameter};
 pub use text::{parse_csv, parse_enum, ConfigType, ParseFailure};
+pub use time_span::TimeSpan;
