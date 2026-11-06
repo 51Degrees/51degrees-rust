@@ -1,0 +1,88 @@
+[![51Degrees](https://raw.githubusercontent.com/51Degrees/51degrees-rust/main/.github/images/logo-160.png "Data rewards the curious")](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fiftyone-ip-intelligence-translation-readme.md&utm_term=logo)
+
+# 51Degrees IP Intelligence Country Translation Engines
+
+Translation engines for the 51Degrees pipeline that turn the country codes
+[IP Intelligence](https://51degrees.com/ip-intelligence?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fiftyone-ip-intelligence-translation-readme.md&utm_term=introduction)
+gives into country names, in the language the request asks for.
+
+This crate is part of the 51Degrees Rust solution for high-performance device
+detection and IP intelligence, available both on-premise from a local data
+file and from the 51Degrees cloud. It is built on the
+[translation engine](https://github.com/51Degrees/51degrees-rust/tree/main/pipeline-translation).
+
+## What it does
+
+IP Intelligence gives `CountryCodesGeographical` and `CountryCodesPopulation`,
+each a weighted list of the codes of the countries an IP address may be in.
+Two engines build on them.
+
+| Engine | Data key | Gives |
+| --- | --- | --- |
+| `CountryCodeTranslationEngine` | `countrynames` | `CountryNamesGeographical` and `CountryNamesPopulation`, the English name of each country, with its weighting |
+| `CountriesTranslationEngine` | `countrynamestranslated` | `CountryNamesGeographicalTranslated` and `CountryNamesPopulationTranslated`, those names in the language asked for, and four lists of every country |
+
+The lists of every country are `CountryNamesGeographicalAllTranslated`,
+`CountryNamesPopulationAllTranslated`, `CountryCodesGeographicalAll` and
+`CountryCodesPopulationAll`. Each starts with the countries IP Intelligence
+gives, highest weighting first, and follows with every other country sorted
+by name as the language sorts it. The names and codes lists line up, so the
+same place in each is the same country. A code that is not a country, such
+as `Unknown`, is left out of them.
+
+The names, in English and 16 other languages, come from the 51Degrees data
+repository and are compiled in, so neither engine needs any configuration
+or files.
+
+## The language
+
+The language is read as the translation engine reads it, from
+`query.translation`, `query.accept-language` or `header.accept-language`. A
+request that prefers English, or asks for no language the engine holds,
+gets the English names, and the lists of every country are then sorted
+ignoring case.
+
+The translated weighted names use the first of those evidence values that is
+not blank. The lists of every country try each in turn until one names a
+language the engine holds.
+
+## Using it
+
+Add the engines **after** the IP Intelligence engine, in this order.
+
+```rust
+use std::sync::Arc;
+
+use fiftyone_ip_intelligence_translation::{
+    CountriesTranslationData, CountriesTranslationEngine, CountryCodeTranslationEngine,
+    COUNTRY_NAMES_TRANSLATED_KEY,
+};
+use fiftyone_pipeline_core::Pipeline;
+
+let pipeline = Pipeline::builder()
+    .add_element(ip_intelligence_engine)
+    .add_element(Arc::new(CountryCodeTranslationEngine::builder().build()?))
+    .add_element(Arc::new(CountriesTranslationEngine::builder().build()?))
+    .build()?;
+
+let mut data = pipeline.create_flow_data_with(evidence);
+data.process()?;
+if let Some(countries) = data.get(COUNTRY_NAMES_TRANSLATED_KEY) {
+    // Every country, the most likely first, for a country picker.
+    let codes = countries.country_codes_geographical_all();
+    let names = countries.country_names_geographical_all_translated();
+}
+```
+
+## Links
+
+- Source and issues: [github.com/51Degrees/51degrees-rust](https://github.com/51Degrees/51degrees-rust)
+- API documentation: [docs.rs/fiftyone-ip-intelligence-translation](https://docs.rs/fiftyone-ip-intelligence-translation)
+- The engine specification: [51Degrees/specifications](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/translation-engine.md)
+- The translation files: [51Degrees/data](https://github.com/51Degrees/data/tree/main/ip-intelligence/Translations)
+- About 51Degrees: [51degrees.com](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fiftyone-ip-intelligence-translation-readme.md&utm_term=about)
+
+## License
+
+Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the
+[repository](https://github.com/51Degrees/51degrees-rust) for the full text.
