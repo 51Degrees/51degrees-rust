@@ -24,13 +24,18 @@
 //!
 //! ```text
 //! parity-rust --corpus <json> --dd <hash file> --ipi <ipi file> --out <jsonl>
+//! parity-rust fodid-sign --cases <json> --prefix <text> --out <json>
+//! parity-rust fodid --corpus <json> [--corpus <json>] --out <jsonl>
 //! ```
 //!
-//! The pipelines and the line format are the same as the .NET producer's, as
+//! The first form runs the evidence cases through the pipelines. The
+//! pipelines and the line format are the same as the .NET producer's, as
 //! `parity/README.md` describes. Usage records go to sinks inside this
-//! program, so nothing is sent anywhere.
+//! program, so nothing is sent anywhere. The other two forms are the 51Did
+//! cases, described in `fodid_cases`.
 
 mod agent_signature;
+mod fodid_cases;
 mod usage;
 mod values;
 
@@ -106,7 +111,13 @@ struct Args {
 }
 
 fn main() -> Result<()> {
-    let args = parse_args()?;
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        Some(fodid_cases::SIGN) => return fodid_cases::sign(&args[1..]),
+        Some(fodid_cases::READ) => return fodid_cases::read(&args[1..]),
+        _ => {}
+    }
+    let args = parse_args(&args)?;
     let text = std::fs::read_to_string(&args.corpus)
         .with_context(|| format!("reading {}", args.corpus.display()))?;
     let cases: Vec<Case> = serde_json::from_str(&text).context("parsing the corpus")?;
@@ -176,12 +187,12 @@ fn record_for(records: &HashMap<String, String>, session_id: Option<&str>) -> Va
         .map_or(Value::Null, |record| Value::String(record.clone()))
 }
 
-fn parse_args() -> Result<Args> {
+fn parse_args(args: &[String]) -> Result<Args> {
     let mut corpus = None;
     let mut dd = None;
     let mut ipi = None;
     let mut out = None;
-    let mut args = std::env::args().skip(1);
+    let mut args = args.iter();
     while let Some(flag) = args.next() {
         let value = args
             .next()

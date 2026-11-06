@@ -144,8 +144,8 @@ jobs:
         with:
           workspaces: parity
 
-      # The JavaScript builder depends on the 51Did crates, which compile in
-      # the OWID source.
+      # The producer depends on the 51Did crates, which compile in the OWID
+      # source.
       - name: Copy the OWID source into fodid
         if: env.RUN == 'true'
         shell: pwsh
@@ -200,6 +200,11 @@ jobs:
           args=(--corpus corpus/evidence.json --dd "$DD_FILE" --ipi "$IPI_FILE")
           dotnet out/dotnet/Parity.dll "${args[@]}" --out out/dotnet.jsonl
           target/debug/parity-rust "${args[@]}" --out out/rust.jsonl
+          # The 51Did cases, signed with a key made for the run, then read.
+          target/debug/parity-rust fodid-sign --cases corpus/fodid.json \
+            --prefix rust- --out out/fodid-rust.json
+          target/debug/parity-rust fodid --corpus out/fodid-rust.json \
+            --out out/fodid-rust.jsonl
 
       - name: Compare
         if: env.RUN == 'true'
@@ -371,6 +376,7 @@ jobs:
         with:
           name: comparison-${{ matrix.data }}
           path: |
+            parity/out/*.json
             parity/out/*.jsonl
             parity/out/*.md
           if-no-files-found: ignore
