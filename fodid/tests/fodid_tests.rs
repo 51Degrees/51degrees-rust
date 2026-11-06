@@ -1529,7 +1529,7 @@ fn white_space_inside_the_text_is_refused() {
     let (w, s) = (whole.len(), short.len());
     let invalid = Err(Status::Owid(ParseStatus::InvalidBase64));
 
-    let cases: [(&str, String, Result<&FodId, Status>); 14] = [
+    let cases: [(&str, String, Result<&FodId, Status>); 16] = [
         (
             "text-url-space-1",
             insert_after(&whole, &[w / 2], " "),
@@ -1594,6 +1594,16 @@ fn white_space_inside_the_text_is_refused() {
             "text-url-vertical-tab",
             insert_after(&whole, &[w / 2], "\u{b}"),
             invalid,
+        ),
+        (
+            "text-url-line-separator",
+            insert_after(&whole, &[w / 2], "\u{2028}"),
+            invalid,
+        ),
+        (
+            "text-url-ideographic-space-surrounded",
+            format!("\u{3000}{whole}\u{3000}"),
+            Ok(&whole_read),
         ),
         (
             "text-white-space",
