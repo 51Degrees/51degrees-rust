@@ -717,10 +717,11 @@ fn code_only_settings_are_refused_as_dotnet_refuses_them() {
 /// .NET makes a cache of the size given, 0 included, and refuses a
 /// negative size, as the inner message of "Exception has been thrown by
 /// the target of an invocation.". The engine here holds at least one
-/// response in each part of its cache.
+/// response in each part of its cache, and the largest size takes memory
+/// only as responses arrive.
 #[test]
 fn the_cache_size_gives_the_engine_a_cache() {
-    for size in ["10", "0"] {
+    for size in ["10", "0", "2147483647"] {
         let (pipeline, stand_in) = with(&[("CacheSize", size)]);
         let pipeline = pipeline.expect(size);
         let first = process(&pipeline, "UA");

@@ -233,6 +233,11 @@ fn a_count_below_one_is_refused_with_dotnets_message() {
         );
     }
     assert_eq!(element(with(&[("CacheSize", "1")])).cache_size(), 1);
+    // The largest size takes memory only as signatures arrive.
+    assert_eq!(
+        element(with(&[("CacheSize", "2147483647")])).cache_size(),
+        2_147_483_647
+    );
     assert_eq!(
         element(with(&[("MaxResponseBytes", "2147483647")])).max_response_bytes(),
         2_147_483_647
