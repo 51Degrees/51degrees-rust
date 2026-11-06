@@ -373,11 +373,15 @@ fn a_successful_request_is_unchanged() {
     let device = data.get(DEVICE_DATA_KEY).unwrap();
     assert!(!device.base().cloud_request_failed());
     assert_eq!(device.is_mobile().value().ok(), Some(&true));
-    // A property the cloud returned as null, and one it did not return, are
-    // both still held, because cloud data cannot yet tell them apart.
+    // A property the cloud returned as null is held, with its reason, and
+    // one it did not return is not. Asking and reading the null one log
+    // nothing.
     assert!(device.has_property("BrowserName"));
-    assert!(device.has_property("PlatformName"));
-    assert!(!device.browser_name().has_value());
+    assert!(!device.has_property("PlatformName"));
+    assert_eq!(
+        device.browser_name().no_value_message(),
+        Some("No matching profiles")
+    );
     assert_eq!(take_logged(), Vec::<String>::new());
 }
 

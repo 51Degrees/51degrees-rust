@@ -1,0 +1,457 @@
+/* *********************************************************************
+ * This Original Work is copyright of 51 Degrees Mobile Experts Limited.
+ * Copyright 2026 51 Degrees Mobile Experts Limited, Davidson House,
+ * Forbury Square, Reading, Berkshire, United Kingdom RG1 3EU.
+ *
+ * This Original Work is licensed under the European Union Public Licence
+ * (EUPL) v.1.2 and is subject to its terms as set out below.
+ *
+ * If a copy of the EUPL was not distributed with this file, You can obtain
+ * one at https://opensource.org/licenses/EUPL-1.2.
+ *
+ * The 'Compatible Licences' set out in the Appendix to the EUPL (as may be
+ * amended by the European Commission) shall be deemed incompatible for
+ * the purposes of the Work and the provisions of the compatibility
+ * clause in Article 5 of the EUPL shall not apply.
+ *
+ * If using the Work as, or as part of, a network application, by
+ * including the attribution notice(s) required under Article 5 of the EUPL
+ * in the end user terms of the application under an appropriate heading,
+ * such notice(s) shall fulfill the requirements of that article.
+ * ********************************************************************* */
+
+//! What IP Intelligence data from a successful cloud request gives and logs
+//! for a property the response did not return and for one it gave as null,
+//! as .NET's cloud data does, and what Set Headers logs for each. A read of a
+//! property the response did not return logs a warning. Kept in its own test
+//! binary because a logger is installed once for the whole process, and each
+//! test holds [`SERIAL`] so the records it reads are its own.
+
+use std::sync::{Arc, Mutex, MutexGuard};
+
+use fiftyone_cloud_request_engine::{
+    CloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine,
+};
+use fiftyone_ip_intelligence_cloud::{IpIntelligenceCloudEngine, IpIntelligenceData, IP_DATA_KEY};
+use fiftyone_pipeline_core::{
+    ElementData, Evidence, FlowData, FlowElement, MissingPropertyReason, Pipeline,
+};
+use fiftyone_pipeline_engines::AspectEngine;
+use fiftyone_pipeline_engines_fiftyone::SetHeadersElement;
+
+/// Grants Country, two plain and two weighted properties the response gives
+/// as null, and not Town.
+const IP_PRODUCT: &str = r#""ip":{"DataTier":"CloudV4","Properties":[
+    {"Name":"RegisteredName","Type":"String","Category":"Network"},
+    {"Name":"Country","Type":"String","Category":"Location"},
+    {"Name":"RegisteredOwner","Type":"String","Category":"Network"},
+    {"Name":"CountryCodesGeographical","Type":"WeightedString","Category":"Location"},
+    {"Name":"CountryCodesPopulation","Type":"WeightedString","Category":"Location"}]}"#;
+const DEVICE_PRODUCT: &str = r#""device":{"DataTier":"CloudV4","Properties":[
+    {"Name":"IsMobile","Type":"Boolean","Category":"Device"}]}"#;
+
+/// Gives Country, gives the other four granted properties as null, a plain
+/// one and a weighted one with a `<name>nullreason` entry and the others
+/// with a reason in `nullValueReasons`, and does not return Town.
+const IP_RESPONSE: &str = r#"{"ip":{
+    "registeredname":null,
+    "registerednamenullreason":"No registration for this range.",
+    "country":"United Kingdom",
+    "registeredowner":null,
+    "countrycodesgeographical":null,
+    "countrycodesgeographicalnullreason":"No location for this range.",
+    "countrycodespopulation":null,
+    "nullValueReasons":{
+        "RegisteredOwner":"The results are empty.",
+        "CountryCodesPopulation":"No population for this range."}}}"#;
+
+/// Grants RegisteredName and three properties Set Headers reads, all for the
+/// Accept-CH header.
+const SET_HEADER_PRODUCT: &str = r#""ip":{"DataTier":"CloudV4","Properties":[
+    {"Name":"RegisteredName","Type":"String","Category":"Network"},
+    {"Name":"SetHeaderNetworkAccept-CH","Type":"String","Category":"Network"},
+    {"Name":"SetHeaderLocationAccept-CH","Type":"String","Category":"Location"},
+    {"Name":"SetHeaderRangeAccept-CH","Type":"String","Category":"Network"}]}"#;
+
+/// Gives SetHeaderNetworkAccept-CH, gives SetHeaderLocationAccept-CH as null
+/// with the cloud's reason, and does not return SetHeaderRangeAccept-CH.
+const SET_HEADER_RESPONSE: &str = r#"{"ip":{"registeredname":"Example Networks",
+    "setheadernetworkaccept-ch":"Sec-CH-UA,Sec-CH-UA-Full-Version-List",
+    "setheaderlocationaccept-ch":null,
+    "setheaderlocationaccept-chnullreason":"No location for this range."}}"#;
+
+const NOT_GRANTED_IP: &str =
+    "ERROR Aspect properties could not be loaded for IpIntelligenceCloudEngine - 'ip'";
+
+/// The record of each read of a property the data does not hold.
+fn missing_read(property: &str, reason: &str) -> String {
+    format!(
+        "WARN Property '{property}' missing from aspect data 'IpIntelligenceDataBase'. {reason}"
+    )
+}
+
+/// Records at warning level or above from the cloud crates, the aspect data
+/// and Set Headers, as "LEVEL message".
+static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Held by each test for its whole run.
+static SERIAL: Mutex<()> = Mutex::new(());
+
+struct TestLogger;
+
+impl log::Log for TestLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        let target = metadata.target();
+        metadata.level() <= log::Level::Warn
+            && (target.starts_with("fiftyone_cloud_request_engine")
+                || target.starts_with("fiftyone_ip_intelligence")
+                || target.starts_with("fiftyone_pipeline_engines"))
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            LOGGED
+                .lock()
+                .unwrap()
+                .push(format!("{} {}", record.level(), record.args()));
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static LOGGER: TestLogger = TestLogger;
+
+/// Install the logger, wait for any other test to finish and clear the
+/// records it left.
+fn start() -> MutexGuard<'static, ()> {
+    let _ = log::set_logger(&LOGGER);
+    log::set_max_level(log::LevelFilter::Warn);
+    let guard = SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    LOGGED.lock().unwrap().clear();
+    guard
+}
+
+/// Take the records logged since [`start`] or the last call.
+fn take_logged() -> Vec<String> {
+    std::mem::take(&mut *LOGGED.lock().unwrap())
+}
+
+/// A fake cloud granting `products` and answering every data request with
+/// `data`.
+struct FakeCloud {
+    products: String,
+    data: &'static str,
+}
+
+impl CloudHttpClient for FakeCloud {
+    fn send(&self, request: &CloudHttpRequest) -> Result<CloudHttpResponse, String> {
+        let body = if request.url.contains("accessibleproperties") {
+            format!(r#"{{"Products":{{{}}}}}"#, self.products)
+        } else if request.url.contains("evidencekeys") {
+            r#"["query.client-ip"]"#.to_owned()
+        } else {
+            self.data.to_owned()
+        };
+        Ok(CloudHttpResponse {
+            status: 200,
+            body,
+            retry_after: None,
+        })
+    }
+}
+
+/// A request engine with a resource key granting `products`.
+fn request_engine(products: &[&str], data: &'static str) -> Arc<CloudRequestEngine> {
+    Arc::new(
+        CloudRequestEngine::builder()
+            .resource_key("test-resource-key")
+            .endpoint("https://cloud.example.test/api/v4/")
+            .http_client(Arc::new(FakeCloud {
+                products: products.join(","),
+                data,
+            }))
+            .build()
+            .unwrap(),
+    )
+}
+
+/// The IP Intelligence engine reading `request`.
+fn ip_engine(request: &Arc<CloudRequestEngine>) -> Arc<IpIntelligenceCloudEngine> {
+    Arc::new(
+        IpIntelligenceCloudEngine::builder()
+            .cloud_request_engine(Arc::clone(request))
+            .build()
+            .unwrap(),
+    )
+}
+
+fn pipeline(request: Arc<CloudRequestEngine>, engine: Arc<dyn FlowElement>) -> Arc<Pipeline> {
+    Pipeline::builder()
+        .add_element(request)
+        .add_element(engine)
+        .build()
+        .unwrap()
+}
+
+/// Process an IP address through `pipeline`, which must succeed.
+fn process(pipeline: &Arc<Pipeline>) -> FlowData {
+    let evidence = Evidence::builder()
+        .add("query.client-ip", "192.0.2.1")
+        .build();
+    let mut data = pipeline.create_flow_data_with(evidence);
+    data.process().expect("processing succeeds");
+    assert!(data.errors().is_empty(), "{:?}", data.errors());
+    data
+}
+
+#[test]
+fn a_property_the_response_did_not_return_gives_the_resource_key_reason() {
+    let _serial = start();
+    let request = request_engine(&[IP_PRODUCT], IP_RESPONSE);
+    let engine = ip_engine(&request);
+    let pipeline = pipeline(request, engine.clone());
+    let data = process(&pipeline);
+    let ip = data.get(IP_DATA_KEY).expect("the IP data is there");
+    assert!(!ip.base().cloud_request_failed());
+    assert_eq!(
+        take_logged(),
+        Vec::<String>::new(),
+        "processing logs nothing"
+    );
+
+    // The data knows which properties it holds, and asking logs nothing.
+    assert!(ip.has_property("Country"));
+    assert!(ip.has_property("RegisteredName"));
+    assert!(ip.has_property("CountryCodesGeographical"));
+    assert!(!ip.has_property("Town"));
+    assert_eq!(take_logged(), Vec::<String>::new());
+
+    // The reason is the engine's own, naming the properties the key grants.
+    let expected = engine.missing_property_reason("Town");
+    assert_eq!(
+        expected.reason,
+        MissingPropertyReason::PropertyNotAccessibleWithResourceKey
+    );
+    assert!(
+        expected.description.starts_with(
+            "Property 'Town' not found in data for element 'ip'. This is because your \
+             resource key does not include access to this property. The properties \
+             included for your key under 'ip' are RegisteredName,Country,RegisteredOwner,\
+             CountryCodesGeographical,CountryCodesPopulation. "
+        ),
+        "{}",
+        expected.description
+    );
+    assert_eq!(
+        ip.base().missing_property_reason("Town"),
+        Some(expected.clone())
+    );
+    assert_eq!(take_logged(), Vec::<String>::new(), "asking logs nothing");
+
+    // Each read gives the reason and logs a warning.
+    let town = ip.town();
+    assert!(!town.has_value());
+    assert_eq!(town.no_value_message(), Some(expected.description.as_str()));
+    assert_eq!(ip.get("Town").unwrap_err().message, expected.description);
+    let read = missing_read("Town", "PropertyNotAccessibleWithResourceKey");
+    assert_eq!(take_logged(), vec![read.clone(), read]);
+
+    // A property the response gave has its value, and reading it logs
+    // nothing.
+    assert_eq!(ip.country().value().unwrap().as_str(), "United Kingdom");
+    assert_eq!(take_logged(), Vec::<String>::new());
+}
+
+#[test]
+fn a_property_the_response_gave_as_null_keeps_its_reason() {
+    let _serial = start();
+    let request = request_engine(&[IP_PRODUCT], IP_RESPONSE);
+    let engine = ip_engine(&request);
+    let pipeline = pipeline(request, engine);
+    let data = process(&pipeline);
+    let ip = data.get(IP_DATA_KEY).expect("the IP data is there");
+
+    // Each is held, and listed where the response gave it.
+    for name in [
+        "RegisteredName",
+        "RegisteredOwner",
+        "CountryCodesGeographical",
+        "CountryCodesPopulation",
+    ] {
+        assert!(ip.has_property(name), "{name}");
+    }
+    assert_eq!(
+        ip.keys(),
+        [
+            "registeredname",
+            "country",
+            "registeredowner",
+            "countrycodesgeographical",
+            "countrycodespopulation"
+        ]
+    );
+
+    // A plain property, its reason from a `<name>nullreason` entry.
+    let name = ip.registered_name();
+    assert!(!name.has_value());
+    assert_eq!(
+        name.no_value_message(),
+        Some("No registration for this range.")
+    );
+    assert_eq!(
+        ip.get("RegisteredName").unwrap_err().message,
+        "No registration for this range."
+    );
+
+    // A plain property, its reason from `nullValueReasons`.
+    assert_eq!(
+        ip.registered_owner().no_value_message(),
+        Some("The results are empty.")
+    );
+    assert_eq!(
+        ip.get("RegisteredOwner").unwrap_err().message,
+        "The results are empty."
+    );
+
+    // A weighted property, its reason from a `<name>nullreason` entry.
+    let codes = ip.country_codes_geographical();
+    assert!(!codes.has_value());
+    assert_eq!(
+        codes.no_value_message(),
+        Some("No location for this range.")
+    );
+    assert_eq!(
+        ip.get("CountryCodesGeographical").unwrap_err().message,
+        "No location for this range."
+    );
+
+    // A weighted property, its reason from `nullValueReasons`.
+    assert_eq!(
+        ip.country_codes_population().no_value_message(),
+        Some("No population for this range.")
+    );
+    assert_eq!(
+        ip.get("CountryCodesPopulation").unwrap_err().message,
+        "No population for this range."
+    );
+
+    // None of them is missing, so nothing is logged.
+    assert_eq!(take_logged(), Vec::<String>::new());
+}
+
+#[test]
+fn a_key_without_the_ip_product_gives_the_product_reason() {
+    let _serial = start();
+    let request = request_engine(&[DEVICE_PRODUCT], r#"{"device":{"ismobile":true}}"#);
+    let engine = ip_engine(&request);
+    assert_eq!(take_logged(), vec![NOT_GRANTED_IP]);
+    let pipeline = pipeline(request, engine.clone());
+    let data = process(&pipeline);
+    let ip = data.get(IP_DATA_KEY).expect("the IP data is there");
+    assert!(ip.keys().is_empty());
+    assert!(!ip.has_property("RegisteredName"));
+    assert_eq!(take_logged(), Vec::<String>::new());
+
+    let expected = engine.missing_property_reason("RegisteredName");
+    assert_eq!(
+        expected.reason,
+        MissingPropertyReason::ProductNotAccessibleWithResourceKey
+    );
+    assert!(
+        expected.description.starts_with(
+            "Property 'RegisteredName' not found in data for element 'ip'. This is \
+             because your resource key does not include access to any properties under \
+             'ip'. "
+        ),
+        "{}",
+        expected.description
+    );
+    assert_eq!(
+        ip.base().missing_property_reason("RegisteredName"),
+        Some(expected.clone())
+    );
+    assert_eq!(
+        ip.registered_name().no_value_message(),
+        Some(expected.description.as_str())
+    );
+    assert_eq!(
+        take_logged(),
+        vec![missing_read(
+            "RegisteredName",
+            "ProductNotAccessibleWithResourceKey"
+        )]
+    );
+}
+
+#[test]
+fn with_a_license_key_alone_every_property_counts_as_held() {
+    let _serial = start();
+    let request = Arc::new(
+        CloudRequestEngine::builder()
+            .license_key("test-license-key")
+            .values(["ip.registeredname"])
+            .endpoint("https://cloud.example.test/api/v4/")
+            .http_client(Arc::new(FakeCloud {
+                products: String::new(),
+                data: r#"{"ip":{"registeredname":"Example Networks"}}"#,
+            }))
+            .build()
+            .unwrap(),
+    );
+    let engine = ip_engine(&request);
+    let pipeline = pipeline(request, engine);
+    let data = process(&pipeline);
+    let ip = data.get(IP_DATA_KEY).expect("the IP data is there");
+
+    // The properties a license key grants are not listed, so the data
+    // cannot say why one is missing.
+    assert!(ip.has_property("Town"));
+    assert_eq!(ip.base().missing_property_reason("Town"), None);
+    assert!(!ip.town().has_value());
+    assert!(ip.get("Town").is_err());
+    assert_eq!(
+        ip.registered_name().value().unwrap().as_str(),
+        "Example Networks"
+    );
+    assert_eq!(take_logged(), Vec::<String>::new());
+}
+
+#[test]
+fn set_headers_warns_only_for_a_property_the_response_did_not_return() {
+    let _serial = start();
+    let request = request_engine(&[SET_HEADER_PRODUCT], SET_HEADER_RESPONSE);
+    let engine = ip_engine(&request);
+    let pipeline = Pipeline::builder()
+        .add_element(request)
+        .add_element(engine)
+        .add_element(Arc::new(SetHeadersElement::new()))
+        .build()
+        .unwrap();
+    let data = process(&pipeline);
+
+    // The header carries the one value the response gave.
+    let headers = data
+        .get(SetHeadersElement::KEY)
+        .expect("the Set Headers data is there")
+        .response_headers();
+    assert_eq!(headers.len(), 1, "{headers:?}");
+    assert_eq!(
+        headers.get("Accept-CH").map(String::as_str),
+        Some("Sec-CH-UA,Sec-CH-UA-Full-Version-List")
+    );
+
+    // Set Headers warns for the property the response did not return, as
+    // .NET's SetHeadersElement does when TryGet fails, and the data's own
+    // warning for a read is not given, because Set Headers asks first. The
+    // property the response gave as null logs nothing.
+    assert_eq!(
+        take_logged(),
+        vec![
+            "WARN Property 'SetHeaderRangeAccept-CH' is missing from 'ip', so it adds \
+             no value to the Accept-CH header."
+        ]
+    );
+}

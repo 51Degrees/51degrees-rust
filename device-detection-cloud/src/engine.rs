@@ -206,7 +206,8 @@ impl DeviceDetectionCloudEngine {
     /// before this engine. An empty or absent JSON response, which means the
     /// request engine failed and recorded its own error, gives empty device
     /// data marked as from a failed cloud request, and a flow error that does
-    /// not fail processing.
+    /// not fail processing. Data from a response is given the reason for each
+    /// property the response did not return.
     fn populate(&self, data: &mut FlowData) -> Result<()> {
         let json = match cloud_json(data, ENGINE_NAME)? {
             Some(json) => json,
@@ -225,7 +226,10 @@ impl DeviceDetectionCloudEngine {
         };
 
         let device = slice_device_json(&json)?;
-        let device_data = map_device_object(&device);
+        let mut device_data = map_device_object(&device);
+        if let Some(metadata) = self.metadata.get() {
+            metadata.add_missing_property_source(&mut device_data);
+        }
         data.get_or_add(DEVICE_DATA_KEY, || device_data)?;
         Ok(())
     }

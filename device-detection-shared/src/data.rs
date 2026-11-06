@@ -34,7 +34,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use fiftyone_pipeline_core::{
-    ElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType, TypedKey,
+    ElementData, MapElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType,
+    TypedKey,
 };
 use fiftyone_pipeline_engines::{
     AspectData, AspectDataBase, AspectPropertyMetaData, AspectPropertyValue,
@@ -181,6 +182,8 @@ enum Lookup {
     Found(PropertyValue),
     /// No value, with the bag's explanation.
     Absent(NoValueError),
+    /// Held with no value, with the message set for it.
+    NoValue(String),
     /// The data does not hold the property, with the reason it is missing.
     Missing(String),
     /// The reader failed to read the value, with its message.
@@ -212,8 +215,12 @@ enum Lookup {
 /// [`DeviceDataBase::with_reader`], and a property not in the bag is then read
 /// from the native results the first time it is requested.
 ///
-/// A property in neither the bag nor the reader is missing. When the engine
-/// added a
+/// A cloud engine holds a property the response gives as null through
+/// [`DeviceDataBase::insert_no_value`], so the property has no value and
+/// carries the response's message.
+///
+/// A property the data does not hold in any of these ways is missing. When
+/// the engine added a
 /// [`MissingPropertySource`](fiftyone_pipeline_engines::MissingPropertySource)
 /// to the wrapped [`AspectDataBase`], its no-value carries the reason, as
 /// .NET's `PropertyMissingException` does, and each read of the property logs
@@ -242,6 +249,13 @@ enum Lookup {
 #[derive(Debug, Clone)]
 pub struct DeviceDataBase {
     base: AspectDataBase,
+    /// The message of each property held with no value, as a string under
+    /// the property's name, in the order the properties were added.
+    no_values: MapElementData,
+    /// For each property in `no_values`, in the same order, how many names
+    /// the bag held when the property was added, so that `keys` lists it
+    /// among the bag's names where it was added.
+    no_value_places: Vec<usize>,
     /// The values read on request, when an engine attached a reader.
     deferred: Option<Arc<DeferredValues>>,
 }
@@ -250,10 +264,7 @@ impl DeviceDataBase {
     /// Create an empty device data attributed to the device-detection engine
     /// (data key [`DEVICE_ELEMENT_DATA_KEY`]).
     pub fn new() -> Self {
-        DeviceDataBase {
-            base: AspectDataBase::new(DEVICE_ELEMENT_DATA_KEY),
-            deferred: None,
-        }
+        DeviceDataBase::from_base(AspectDataBase::new(DEVICE_ELEMENT_DATA_KEY))
     }
 
     /// Create a device data wrapping an existing [`AspectDataBase`].
@@ -264,6 +275,8 @@ impl DeviceDataBase {
     pub fn from_base(base: AspectDataBase) -> Self {
         DeviceDataBase {
             base,
+            no_values: MapElementData::new(),
+            no_value_places: Vec::new(),
             deferred: None,
         }
     }
@@ -281,10 +294,14 @@ impl DeviceDataBase {
         self
     }
 
-    /// Look a property up in the bag, then through the reader if there is one.
+    /// Look a property up in the bag, then among the properties held with no
+    /// value, then through the reader if there is one.
     fn lookup(&self, name: &str) -> Lookup {
         if let Some(value) = self.base.values().get_value(name) {
             return Lookup::Found(value.clone());
+        }
+        if let Some(message) = self.no_value_message(name) {
+            return Lookup::NoValue(message.to_owned());
         }
         match self
             .deferred
@@ -303,10 +320,18 @@ impl DeviceDataBase {
         }
     }
 
-    /// Whether the bag or the reader holds a property, with or without a
-    /// value.
+    /// The message of a property held with no value.
+    fn no_value_message(&self, name: &str) -> Option<&str> {
+        self.no_values
+            .get_value(name)
+            .and_then(PropertyValue::as_str)
+    }
+
+    /// Whether the bag, the properties held with no value or the reader hold
+    /// a property.
     fn holds(&self, name: &str) -> bool {
         self.base.values().get_value(name).is_some()
+            || self.no_values.get_value(name).is_some()
             || self
                 .deferred
                 .as_ref()
@@ -333,8 +358,8 @@ impl DeviceDataBase {
                 None => AspectPropertyValue::no_value(WRONG_TYPE_MESSAGE),
             },
             Lookup::Absent(_) => AspectPropertyValue::no_value(ABSENT_MESSAGE),
-            Lookup::Missing(reason) | Lookup::Failed(reason) => {
-                AspectPropertyValue::no_value(reason)
+            Lookup::NoValue(message) | Lookup::Missing(message) | Lookup::Failed(message) => {
+                AspectPropertyValue::no_value(message)
             }
         }
     }
@@ -354,6 +379,22 @@ impl DeviceDataBase {
         self.base.insert(name, value);
     }
 
+    /// Hold a property with no value, with the message that says why, as a
+    /// cloud engine does for a property the response gives as null.
+    ///
+    /// The typed accessor then gives a no-value carrying `message`, and
+    /// [`ElementData::get`] fails with it. The data holds the property, so
+    /// nothing is logged and no missing property reason is given. A value
+    /// set for the same name takes precedence. The name is matched
+    /// case-insensitively.
+    pub fn insert_no_value(&mut self, name: impl AsRef<str>, message: impl Into<String>) {
+        if self.no_values.get_value(name.as_ref()).is_none() {
+            self.no_value_places.push(self.base.values().len());
+        }
+        self.no_values
+            .insert(name, PropertyValue::String(message.into()));
+    }
+
     /// Mark this data as having been served from a cache hit. Delegates to
     /// [`AspectDataBase::set_cache_hit`].
     pub fn set_cache_hit(&mut self) {
@@ -361,8 +402,9 @@ impl DeviceDataBase {
     }
 
     /// Borrow the wrapped [`AspectDataBase`], which holds the values set on
-    /// this data directly. Values a reader supplies are not in it, so read
-    /// through [`ElementData`] or the typed getters to see every value.
+    /// this data directly. Values a reader supplies and properties held with
+    /// no value are not in it, so read through [`ElementData`] or the typed
+    /// getters to see every property.
     pub fn base(&self) -> &AspectDataBase {
         &self.base
     }
@@ -426,31 +468,49 @@ impl ElementData for DeviceDataBase {
         match self.lookup(name) {
             Lookup::Found(value) => Ok(value),
             Lookup::Absent(absent) => Err(absent),
-            Lookup::Missing(reason) | Lookup::Failed(reason) => Err(NoValueError::new(reason)),
+            Lookup::NoValue(message) | Lookup::Missing(message) | Lookup::Failed(message) => {
+                Err(NoValueError::new(message))
+            }
         }
     }
 
-    /// Whether the bag or the reader holds the property. Unless the wrapped
+    /// Whether the bag, the properties held with no value or the reader hold
+    /// the property. Unless the wrapped
     /// [`AspectDataBase`] knows its missing properties, through a
     /// [`MissingPropertySource`](fiftyone_pipeline_engines::MissingPropertySource)
-    /// or a failed cloud request, it answers `true`, because a cloud engine
-    /// leaves a property with no value out of the bag.
+    /// or a failed cloud request, it answers `true`, because without one the
+    /// data cannot say which properties should be there.
     fn has_property(&self, name: &str) -> bool {
         !self.base.knows_missing_properties() || self.holds(name)
     }
 
-    /// The names of the properties in the bag, then those the reader holds,
-    /// with or without a value, as .NET's on-premise data lists every
-    /// available property. A property with no value is listed so the JSON
-    /// builder writes it as null with the reason. Listing reads nothing.
+    /// The names of the properties in the bag and those held with no value,
+    /// in the order they were added, then those the reader holds, with or
+    /// without a value, as .NET's data lists every property it holds. A
+    /// property with no value is listed so the JSON builder writes it as
+    /// null with the reason, in the place the cloud response gave it.
+    /// Listing reads nothing.
     fn keys(&self) -> Vec<String> {
-        let mut keys = self.base.keys();
+        let bag = self.base.keys();
+        let mut keys = Vec::with_capacity(bag.len() + self.no_value_places.len());
+        let mut listed = 0;
+        for (name, &place) in self.no_values.keys().into_iter().zip(&self.no_value_places) {
+            // The bag only grows, so each place is at least the one before
+            // and at most the bag's length.
+            let place = place.clamp(listed, bag.len());
+            keys.extend_from_slice(&bag[listed..place]);
+            listed = place;
+            if self.base.values().get_value(&name).is_none() {
+                keys.push(name);
+            }
+        }
+        keys.extend_from_slice(&bag[listed..]);
         if let Some(deferred) = &self.deferred {
-            // The reader's names are distinct, so only the bag's few names can
-            // repeat one of them.
-            let in_bag = keys.len();
+            // The reader's names are distinct, so only the few names set
+            // directly can repeat one of them.
+            let set_directly = keys.len();
             for name in deferred.keys() {
-                if !keys[..in_bag].contains(&name) {
+                if !keys[..set_directly].contains(&name) {
                     keys.push(name);
                 }
             }
@@ -923,6 +983,89 @@ mod tests {
         assert!(!device.has_property("NotAProperty"));
         // Asking reads nothing.
         assert_eq!(reads_of(&reads, "ismobile"), 0);
+    }
+
+    /// A message a cloud response gives for a property it returns as null.
+    const NO_MATCH: &str = "No matching profiles were found.";
+
+    #[test]
+    fn a_property_held_with_no_value_gives_its_message() {
+        let mut device = DeviceDataBase::new().set("IsMobile", true);
+        device.insert_no_value("HardwareVendor", NO_MATCH);
+        let vendor = device.hardware_vendor();
+        assert!(!vendor.has_value());
+        assert_eq!(vendor.no_value_message(), Some(NO_MATCH));
+        assert_eq!(device.get("hardwarevendor").unwrap_err().message, NO_MATCH);
+        assert!(device.has_property("HARDWAREVENDOR"));
+        assert_eq!(device.keys(), ["ismobile", "hardwarevendor"]);
+        assert!(device.base().values().get_value("hardwarevendor").is_none());
+    }
+
+    #[test]
+    fn a_property_held_with_no_value_is_not_missing() {
+        let mut device = DeviceDataBase::new();
+        device.insert_no_value("HardwareVendor", NO_MATCH);
+        device
+            .base_mut()
+            .add_missing_property_source(missing_property_source());
+        assert!(device.has_property("HardwareVendor"));
+        // The source would give "The reason for this is unknown...".
+        assert_eq!(device.hardware_vendor().no_value_message(), Some(NO_MATCH));
+        assert_eq!(device.get("HardwareVendor").unwrap_err().message, NO_MATCH);
+        assert!(!device.has_property("DeviceType"));
+    }
+
+    #[test]
+    fn keys_keep_the_order_properties_were_added_in() {
+        let mut device = DeviceDataBase::new();
+        device.insert_no_value("HardwareVendor", NO_MATCH);
+        device.insert("IsMobile", true);
+        device.insert("BrowserName", "Chrome");
+        device.insert_no_value("PlatformName", NO_MATCH);
+        device.insert("DeviceType", "Mobile");
+        // A name given again keeps its first place.
+        device.insert_no_value("hardwarevendor", NO_MATCH);
+        device.insert("ismobile", false);
+        assert_eq!(
+            device.keys(),
+            [
+                "hardwarevendor",
+                "ismobile",
+                "browsername",
+                "platformname",
+                "devicetype"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_value_for_the_same_name_wins_over_no_value() {
+        let mut device = DeviceDataBase::new();
+        device.insert_no_value("HardwareVendor", NO_MATCH);
+        device.insert("hardwarevendor", "Apple");
+        assert_eq!(device.hardware_vendor().value().unwrap(), "Apple");
+        assert_eq!(device.keys(), ["hardwarevendor"]);
+    }
+
+    #[test]
+    fn no_value_wins_over_the_reader_and_is_listed_once() {
+        let (reader, reads) = CountingReader::new();
+        let mut device = DeviceDataBase::new()
+            .set("DeviceId", "1-2-3-4")
+            .with_reader(reader);
+        device.insert_no_value("PlatformName", NO_MATCH);
+        assert_eq!(device.platform_name().no_value_message(), Some(NO_MATCH));
+        assert_eq!(reads_of(&reads, "platformname"), 0);
+        assert_eq!(
+            device.keys(),
+            [
+                "deviceid",
+                "platformname",
+                "ismobile",
+                "browsername",
+                "hardwarevendor"
+            ]
+        );
     }
 
     // WebAssembly has no threads to spawn.

@@ -38,7 +38,7 @@ use fiftyone_pipeline_core::{
 };
 use fiftyone_pipeline_engines::{
     default_missing_property_reason, AspectEngine, AspectPropertyMetaData, EngineDeployment,
-    MissingPropertyResult,
+    MissingPropertyResult, MissingPropertySource,
 };
 use serde_json::Value;
 
@@ -85,6 +85,14 @@ struct DerivedMetadata {
 /// metadata empty and logs an error once. The metadata `Type` field of each
 /// cloud property also drives how its weighted values are parsed (string,
 /// integer or floating-point).
+///
+/// # A property the response did not return
+///
+/// With a resource key, the data from a successful response is given the
+/// properties the key grants, so a read of a property the response did not
+/// return gives the reason it is missing and logs a warning, as .NET's
+/// `MissingPropertyServiceCloud` does. With a license key alone the granted
+/// properties are not listed, so the data cannot say why one is missing.
 ///
 /// # Example
 ///
@@ -136,6 +144,10 @@ pub struct IpIntelligenceCloudEngine {
     properties: OnceCell<Vec<PropertyMetaData>>,
     /// The aspect view of the same metadata.
     aspect_properties: OnceCell<Vec<AspectPropertyMetaData>>,
+    /// Why a property is missing from data of a successful request, derived
+    /// with the metadata. Holds `None` with only a license key, because the
+    /// properties a license key grants are not listed.
+    missing: OnceCell<Option<Arc<MissingPropertySource>>>,
     /// Property name (lower case) to value kind, derived with the metadata and
     /// used to parse each weighted property as the right type.
     value_kinds: OnceCell<HashMap<String, ValueKind>>,
@@ -212,8 +224,9 @@ impl IpIntelligenceCloudEngine {
     /// too, because it has no accessible properties to read, as the cloud
     /// request engine specification says. With a resource key the call that
     /// sets the empty metadata logs an error, so it is logged once. The
-    /// properties are set last because a request that finds them set reads
-    /// the rest.
+    /// reason for a missing property is derived with the metadata, naming no
+    /// properties when the key has no `ip` product. The properties are set
+    /// last because a request that finds them set reads the rest.
     fn ensure_metadata(&self) {
         if self.properties.get().is_some() {
             return;
@@ -223,11 +236,15 @@ impl IpIntelligenceCloudEngine {
         };
         match Self::derive_metadata(products) {
             Some(derived) => {
+                let _ = self
+                    .missing
+                    .set(self.missing_property_source(&derived.aspect));
                 let _ = self.value_kinds.set(derived.kinds);
                 let _ = self.aspect_properties.set(derived.aspect);
                 let _ = self.properties.set(derived.core);
             }
             None => {
+                let _ = self.missing.set(self.missing_property_source(&[]));
                 let _ = self.value_kinds.set(HashMap::new());
                 let _ = self.aspect_properties.set(Vec::new());
                 if self.properties.set(Vec::new()).is_ok()
@@ -240,6 +257,25 @@ impl IpIntelligenceCloudEngine {
                 }
             }
         }
+    }
+
+    /// The reason for each property missing from data of a successful
+    /// request, from the properties the resource key grants, as .NET's
+    /// `MissingPropertyServiceCloud` gives it. `None` with only a license
+    /// key, because the properties it grants are not listed.
+    fn missing_property_source(
+        &self,
+        properties: &[AspectPropertyMetaData],
+    ) -> Option<Arc<MissingPropertySource>> {
+        self.request_engine.resource_key().is_some().then(|| {
+            Arc::new(MissingPropertySource::new(
+                IP_DATA_KEY_NAME,
+                ENGINE_NAME,
+                EngineDeployment::Cloud,
+                self.data_source_tier(),
+                properties.to_vec(),
+            ))
+        })
     }
 
     /// The value kinds derived from the cloud metadata, or an empty map before
@@ -301,14 +337,22 @@ impl FlowElement for IpIntelligenceCloudEngine {
     /// does not fail processing, and stores empty data marked as from a failed
     /// cloud request, so each property read gives
     /// [`MissingPropertyReason::CloudRequestFailed`](fiftyone_pipeline_core::MissingPropertyReason::CloudRequestFailed),
-    /// as .NET does.
+    /// as .NET does. Data from a response is given the reason for each
+    /// property the response did not return.
     fn process(&self, data: &mut FlowData) -> Result<()> {
         // Read the metadata if discovery has completed since construction,
         // whether or not this response carries an `ip` member, so a key
         // without the product is logged and later elements see its metadata.
         self.ensure_metadata();
         let element = match self.build_data(data)? {
-            Some(element) => element,
+            Some(mut element) => {
+                if let Some(Some(missing)) = self.missing.get() {
+                    element
+                        .base_mut()
+                        .add_missing_property_source(Arc::clone(missing));
+                }
+                element
+            }
             None => {
                 CloudRequestEngine::record_not_processed(
                     data,
@@ -426,6 +470,7 @@ impl IpIntelligenceCloudEngineBuilder {
             evidence_filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
             properties: OnceCell::new(),
             aspect_properties: OnceCell::new(),
+            missing: OnceCell::new(),
             value_kinds: OnceCell::new(),
             default_properties: default_property_metadata(),
             default_aspect_properties: default_aspect_property_metadata(),

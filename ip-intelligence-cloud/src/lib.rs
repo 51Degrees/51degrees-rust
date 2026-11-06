@@ -54,8 +54,8 @@
 //!
 //! # No values
 //!
-//! When the cloud determines nothing for a property it sends `null` (or omits
-//! it) and supplies a reason. Two reason encodings are handled, matching the two
+//! When the cloud determines nothing for a property it sends `null` and
+//! supplies a reason. Two reason encodings are handled, matching the two
 //! shapes the cloud service has used:
 //!
 //! - a sibling `<propertyname>nullreason` entry next to the property, and
@@ -63,7 +63,26 @@
 //!
 //! Either way the reason is recorded through the shared `set_*_no_value`
 //! methods, so the typed accessor returns an [`AspectPropertyValue::NoValue`]
-//! carrying the message.
+//! carrying the message, and `Unknown` when the response gives no reason. The
+//! data holds the property and lists it among its keys, in the order the
+//! response is read, so the JSON builder writes it as null followed by its
+//! `<propertyname>nullreason`, as .NET does. The reason entries are not
+//! properties and are left out of the data.
+//!
+//! # A property the response did not return
+//!
+//! With a resource key, data from a successful response is given the
+//! properties the key grants, so reading a property the response did not
+//! return gives the reason the
+//! [missing properties specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#missing-properties)
+//! names, and logs a warning, as .NET's cloud data does. A key without the IP
+//! Intelligence product gives `ProductNotAccessibleWithResourceKey` for every
+//! property.
+//! [`ElementData::has_property`](fiftyone_pipeline_core::ElementData::has_property)
+//! answers `false` for such a property, so an element that asks first, such
+//! as Set Headers, can tell it from one the response gave as null. With a
+//! license key alone the granted properties are not listed, so every property
+//! counts as held.
 
 #![warn(missing_docs)]
 

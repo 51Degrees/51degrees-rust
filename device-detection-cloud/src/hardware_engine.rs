@@ -185,6 +185,8 @@ impl HardwareProfileCloudEngine {
     /// before this engine. An empty or absent JSON response, which means the
     /// request engine failed and recorded its own error, gives a result with no
     /// profiles and a flow error that does not fail processing, as .NET does.
+    /// Each profile from a response is given the reason for each property the
+    /// profile does not hold.
     fn populate(&self, data: &mut FlowData) -> Result<()> {
         let json = match cloud_json(data, ENGINE_NAME)? {
             Some(json) => json,
@@ -200,7 +202,7 @@ impl HardwareProfileCloudEngine {
             }
         };
 
-        let result = slice_hardware_profiles(&json)?;
+        let result = slice_hardware_profiles(&json, self.metadata.get())?;
         data.get_or_add(HARDWARE_DATA_KEY, || result)?;
         Ok(())
     }
@@ -213,9 +215,15 @@ impl HardwareProfileCloudEngine {
 /// profile reads back through the same typed accessors as a single-device
 /// result. A missing `hardware` block or `profiles` array yields an empty
 /// result rather than an error, since that is the normal response from a
-/// resource key without the hardware-profile-lookup product. Returns an
+/// resource key without the hardware-profile-lookup product. Each profile is
+/// given the missing property source of `metadata`, as .NET gives each
+/// profile the engine's, and logs nothing when a missing property is read,
+/// because .NET builds each profile with no logger. Returns an
 /// [`Error::CloudRequest`] only when the body is not valid JSON.
-fn slice_hardware_profiles(json: &str) -> Result<MultiDeviceData> {
+fn slice_hardware_profiles(
+    json: &str,
+    metadata: Option<&DiscoveredMetadata>,
+) -> Result<MultiDeviceData> {
     let document: serde_json::Value =
         serde_json::from_str(json).map_err(|e| Error::CloudRequest {
             status_code: 0,
@@ -232,7 +240,12 @@ fn slice_hardware_profiles(json: &str) -> Result<MultiDeviceData> {
 
     if let Some(profiles) = profiles {
         for profile in profiles {
-            result.push_profile(map_device_object(profile));
+            let mut device = map_device_object(profile);
+            if let Some(metadata) = metadata {
+                metadata.add_missing_property_source(&mut device);
+            }
+            device.base_mut().stop_logging_missing_properties();
+            result.push_profile(device);
         }
     }
 
@@ -385,7 +398,7 @@ mod tests {
             {"hardwarevendor":"Apple","hardwarename":["iPhone 11"],"hardwaremodel":"iPhone11,8"},
             {"hardwarevendor":"Apple","hardwarename":["iPhone 11 Pro"],"hardwaremodel":"iPhone12,3"}
         ]}}"#;
-        let result = slice_hardware_profiles(json).unwrap();
+        let result = slice_hardware_profiles(json, None).unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(
             result.profiles()[0].hardware_vendor().value().unwrap(),
@@ -406,13 +419,13 @@ mod tests {
         // A standard single-device response (key without the hardware-profile
         // product) has no `hardware` block, so the result is empty, not an error.
         let json = r#"{"device":{"hardwarename":["Desktop"]}}"#;
-        let result = slice_hardware_profiles(json).unwrap();
+        let result = slice_hardware_profiles(json, None).unwrap();
         assert!(result.is_empty());
     }
 
     #[test]
     fn slice_profiles_invalid_json_is_cloud_error() {
-        match slice_hardware_profiles("not json") {
+        match slice_hardware_profiles("not json", None) {
             Err(Error::CloudRequest { .. }) => {}
             other => panic!("expected a cloud request error, got {other:?}"),
         }

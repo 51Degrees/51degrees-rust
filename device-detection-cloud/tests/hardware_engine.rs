@@ -177,19 +177,21 @@ fn null_profile_property_becomes_no_value_with_reason() {
     data.process().expect("processing succeeds");
     let hardware = data.get(HARDWARE_DATA_KEY).expect("hardware data present");
 
-    // The second profile's vendor was null, so the typed accessor is a no-value.
+    // The second profile's vendor was null, so the typed accessor is a no-value
+    // carrying the cloud's explanation.
     let second = &hardware.profiles()[1];
     assert!(
         !second.hardware_vendor().has_value(),
         "null profile property must be a no-value"
     );
-
-    // The cloud's explanation is preserved per profile under the sibling key.
-    use fiftyone_pipeline_core::ElementData;
     assert_eq!(
-        second.get("hardwarevendornullreason").unwrap().as_str(),
+        second.hardware_vendor().no_value_message(),
         Some("The value cannot be determined from a TAC alone.")
     );
+
+    // The nullreason entry is not a property, so it is not in the profile.
+    use fiftyone_pipeline_core::ElementData;
+    assert!(second.get("hardwarevendornullreason").is_err());
 }
 
 #[test]

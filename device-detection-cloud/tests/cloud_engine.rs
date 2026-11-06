@@ -290,16 +290,21 @@ fn null_property_becomes_no_value_with_reason() {
     let device = data.get(DEVICE_DATA_KEY).expect("device data present");
 
     // hardwarevendor was null in the response, so the typed accessor is a
-    // no-value rather than a hard error.
+    // no-value carrying the cloud's explanation.
     let vendor = device.hardware_vendor();
     assert!(!vendor.has_value(), "null property must be a no-value");
-
-    // The cloud's explanation is preserved in the data bag under the sibling key.
-    use fiftyone_pipeline_core::ElementData;
     assert_eq!(
-        device.get("hardwarevendornullreason").unwrap().as_str(),
+        vendor.no_value_message(),
         Some("The value cannot be determined until more evidence is provided.")
     );
+
+    // The nullreason entry is not a property, so it is not in the data.
+    use fiftyone_pipeline_core::ElementData;
+    assert!(device.get("hardwarevendornullreason").is_err());
+    assert!(!device
+        .keys()
+        .iter()
+        .any(|name| name.ends_with("nullreason")));
 }
 
 #[test]
