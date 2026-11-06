@@ -182,7 +182,19 @@ pub fn add_builders(registry: &mut BuilderRegistry) -> &mut BuilderRegistry {
 /// # Ok::<(), fiftyone_pipeline_core::Error>(())
 /// ```
 pub fn use_fiftyone_pipeline_builder(registry: &mut BuilderRegistry) -> &mut BuilderRegistry {
-    registry.set_pipeline(fiftyone_pipeline_builder())
+    use_fiftyone_pipeline_builder_with_share_usage(registry, SHARE_USAGE_ENABLED_BY_DEFAULT)
+}
+
+/// As [`use_fiftyone_pipeline_builder`], with `share_usage` as the value
+/// of `SetShareUsage` when the configuration does not give it. A crate
+/// whose own pipeline builders leave usage sharing off by default uses
+/// this so that pipelines made from a configuration do the same. Returns
+/// `registry` for chaining.
+pub fn use_fiftyone_pipeline_builder_with_share_usage(
+    registry: &mut BuilderRegistry,
+    share_usage: bool,
+) -> &mut BuilderRegistry {
+    registry.set_pipeline(fiftyone_pipeline_builder(share_usage))
 }
 
 /// The setting .NET's `FiftyOnePipelineBuilder` adds to the pipeline's own.
@@ -190,11 +202,9 @@ struct FiftyOnePipelineBuilder {
     share_usage: bool,
 }
 
-fn fiftyone_pipeline_builder() -> PipelineDefinition<FiftyOnePipelineBuilder> {
+fn fiftyone_pipeline_builder(share_usage: bool) -> PipelineDefinition<FiftyOnePipelineBuilder> {
     PipelineDefinition::new(
-        || FiftyOnePipelineBuilder {
-            share_usage: SHARE_USAGE_ENABLED_BY_DEFAULT,
-        },
+        move || FiftyOnePipelineBuilder { share_usage },
         |builder: FiftyOnePipelineBuilder,
          elements: &mut PipelineElements,
          context: &mut BuildContext| {

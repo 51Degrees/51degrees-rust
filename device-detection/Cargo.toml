@@ -36,10 +36,12 @@ fiftyone-cloud-request-engine = { version = "=4.5.2", path = "../cloud-request-e
 default = ["cloud", "on-premise", "share-usage"]
 # Pull in the on-premise Hash engine and the native wrapper it needs.
 on-premise = ["dep:fiftyone-device-detection-onpremise", "dep:fiftyone-native"]
-# Turn usage sharing on by default in both pipeline builders, and compile the
-# built-in transport the usage-sharing element sends with. Without it the
-# builders leave usage sharing off unless share_usage(true) is called, and the
-# element sends nothing unless the transport is enabled another way.
+# Turn usage sharing on by default in both pipeline builders and in pipelines
+# made from a configuration, and compile the built-in transport the
+# usage-sharing element sends with. Without it the builders leave usage sharing
+# off unless share_usage(true) is called, a configuration leaves it off unless
+# it sets SetShareUsage to true, and the element sends nothing unless the
+# transport is enabled another way.
 share-usage = ["fiftyone-pipeline-engines-fiftyone/share-usage-transport"]
 # Pull in the cloud engine and the cloud request engine that feeds it.
 cloud = ["dep:fiftyone-device-detection-cloud", "dep:fiftyone-cloud-request-engine"]
@@ -64,8 +66,9 @@ fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
 # default (for wasm and lean cloud builds); the examples workspace used to unify
 # it on for the whole build, but now that the examples are a separate workspace
 # the tests opt in here. Dev-dependencies never reach the published graph, so
-# this does not change what a consumer resolves.
-fiftyone-device-detection = { path = ".", features = ["reqwest-client"] }
+# this does not change what a consumer resolves. It leaves the default features
+# to the command line, so a test run with --no-default-features has them off.
+fiftyone-device-detection = { path = ".", default-features = false, features = ["reqwest-client"] }
 # A capturing logger for the test of what a missing data file logs.
 log = "0.4"
 

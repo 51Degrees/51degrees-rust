@@ -51,8 +51,9 @@
 //!
 //! - `cloud` (default): the cloud engine and its request engine.
 //! - `on-premise` (default): the native Hash engine.
-//! - `share-usage` (default): usage sharing on in both builders, and the
-//!   built-in transport it sends with.
+//! - `share-usage` (default): usage sharing on in both builders and in
+//!   pipelines made from a configuration, and the built-in transport it
+//!   sends with.
 //!
 //! The default `["cloud", "on-premise", "share-usage"]` builds the full SDK. A
 //! cloud-only consumer that does not want to link the native library sets
@@ -95,6 +96,14 @@
 //! specification's master switch does. `.file_system_watcher(false)` turns
 //! only the watcher off, and `pipeline.resource::<DataUpdateService>()`
 //! reaches the service for a check on demand.
+//!
+//! ## From a configuration file
+//!
+//! [`configuration::registry`] makes a pipeline from a configuration file
+//! written for .NET's `FiftyOne.DeviceDetection` package, finding each
+//! builder and setting by .NET's names, and adding the Sequence element and
+//! usage sharing as .NET's `FiftyOnePipelineBuilder` does. See the
+//! [`configuration`] module.
 //!
 //! ## Examples
 //!
@@ -163,6 +172,8 @@ pub use fiftyone_device_detection_cloud::{
 pub use fiftyone_cloud_request_engine::{
     CloudEngineState, CloudRequestEngine, CloudRequestEngineBuilder,
 };
+
+pub mod configuration;
 
 // ---------------------------------------------------------------------------
 // The convenience top-level pipeline builder.

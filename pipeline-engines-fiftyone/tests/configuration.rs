@@ -818,6 +818,36 @@ fn share_usage_false_leaves_usage_sharing_out() {
 }
 
 #[test]
+fn share_usage_has_the_default_the_registry_was_given() {
+    let _serial = start();
+    let build_with = |share_usage: bool, options: &PipelineOptions| {
+        let mut registry = registry();
+        configuration::use_fiftyone_pipeline_builder_with_share_usage(&mut registry, share_usage);
+        PipelineBuilder::new()
+            .build_from_configuration(&registry, options)
+            .unwrap()
+    };
+    let on = set_headers().parameter("SetShareUsage", "true");
+    let off = set_headers().parameter("SetShareUsage", "false");
+    assert_eq!(
+        data_keys(&build_with(false, &set_headers())),
+        ["sequence", "set-headers"]
+    );
+    assert_eq!(
+        data_keys(&build_with(false, &on)),
+        ["sequence", "set-headers", "shareusage"]
+    );
+    assert_eq!(
+        data_keys(&build_with(true, &set_headers())),
+        ["sequence", "set-headers", "shareusage"]
+    );
+    assert_eq!(
+        data_keys(&build_with(true, &off)),
+        ["sequence", "set-headers"]
+    );
+}
+
+#[test]
 fn share_usage_that_is_not_a_boolean_fails() {
     let _serial = start();
     for (value, ending) in [

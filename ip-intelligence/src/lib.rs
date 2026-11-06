@@ -71,6 +71,14 @@
 //! off, and `pipeline.resource::<DataUpdateService>()` reaches the service for
 //! a check on demand.
 //!
+//! # From a configuration file
+//!
+//! [`configuration::registry`] makes a pipeline from a configuration file
+//! written for .NET's `FiftyOne.IpIntelligence` package, finding each
+//! builder and setting by .NET's names, and adding the Sequence element and
+//! usage sharing as .NET's `FiftyOnePipelineBuilder` does. See the
+//! [`configuration`] module.
+//!
 //! # Features
 //!
 //! The two deployments are behind cargo features so a build that only needs one
@@ -78,8 +86,9 @@
 //!
 //! - `cloud` (default): the cloud engine and the cloud request engine.
 //! - `on-premise` (default): the native on-premise engine.
-//! - `share-usage` (default): usage sharing on in both builders, and the
-//!   built-in transport it sends with.
+//! - `share-usage` (default): usage sharing on in both builders and in
+//!   pipelines made from a configuration, and the built-in transport it
+//!   sends with.
 //!
 //! See [`IpIntelligencePipelineBuilder::cloud`] and
 //! [`IpIntelligencePipelineBuilder::on_premise`] for runnable examples of each
@@ -126,6 +135,8 @@ pub use fiftyone_ip_intelligence_onpremise::IP_EVIDENCE_KEYS;
 pub use fiftyone_ip_intelligence_onpremise::{
     IpIntelligenceOnPremiseEngine, IpIntelligenceOnPremiseEngineBuilder, DEFAULT_DATA_SOURCE_TIER,
 };
+
+pub mod configuration;
 
 #[cfg(feature = "cloud")]
 mod cloud;

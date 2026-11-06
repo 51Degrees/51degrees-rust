@@ -24,7 +24,7 @@
 //! [`PipelineOptions`] with them, as .NET's
 //! `PipelineBuilder.BuildFromConfiguration` makes it.
 
-use std::any::{type_name, Any};
+use std::any::{type_name, Any, TypeId};
 use std::sync::Arc;
 
 use super::options::{ConfigValue, ElementOptions, PipelineOptions};
@@ -604,6 +604,9 @@ fn read_settings<B>(
 }
 
 trait ElementFactory: Send + Sync {
+    /// The type of the builder's state, which with the name tells one
+    /// builder from another.
+    fn state_type(&self) -> TypeId;
     fn name(&self) -> &str;
     fn full_name(&self) -> &str;
     fn alternate_names(&self) -> &[String];
@@ -616,6 +619,10 @@ trait ElementFactory: Send + Sync {
 }
 
 impl<B: Send + 'static> ElementFactory for BuilderDefinition<B> {
+    fn state_type(&self) -> TypeId {
+        TypeId::of::<B>()
+    }
+
     fn name(&self) -> &str {
         &self.name
     }
@@ -875,8 +882,20 @@ impl BuilderRegistry {
     }
 
     /// Add an element builder.
+    ///
+    /// A builder already in the registry, being one with the same name and
+    /// the same type of state, is not added again, as .NET finds each
+    /// builder once however many of the loaded packages depend on it. So
+    /// the builders of two crates that both add a third crate's builders
+    /// can go in one registry.
     pub fn add<B: Send + 'static>(&mut self, definition: BuilderDefinition<B>) -> &mut Self {
-        self.builders.push(Box::new(definition));
+        let added = self
+            .builders
+            .iter()
+            .any(|b| b.state_type() == TypeId::of::<B>() && b.name() == definition.name);
+        if !added {
+            self.builders.push(Box::new(definition));
+        }
         self
     }
 

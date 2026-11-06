@@ -189,6 +189,19 @@ fn multiply_definition() -> BuilderDefinition<MultiplyBy> {
     })
 }
 
+/// A second builder named `MultiplyByElementBuilder`, with state of
+/// another type, as two .NET types of one name in different assemblies.
+struct OtherMultiplyBy;
+
+fn other_multiply_definition() -> BuilderDefinition<OtherMultiplyBy> {
+    BuilderDefinition::new("MultiplyByElementBuilder", |_: OtherMultiplyBy, context| {
+        finish(Element::new("multiplyby", 1), context)
+    })
+    .build_method(vec![Parameter::new::<i32>("multiple")], |_, _| {
+        Ok(OtherMultiplyBy)
+    })
+}
+
 fn splitter_definition() -> BuilderDefinition<SplitterBuilder> {
     BuilderDefinition::new(
         "ListSplitterElementBuilder",
@@ -902,7 +915,11 @@ fn a_builder_with_no_build_method_fails() {
 fn a_name_matching_two_builders_fails() {
     let registry = BuilderRegistry::new()
         .with(multiply_definition())
-        .with(multiply_definition().alternate_name("Splitter"))
+        .with(
+            other_multiply_definition()
+                .alternate_name("Multiply")
+                .alternate_name("Splitter"),
+        )
         .with(splitter_definition().alternate_name("Splitter"));
     let run = |name: &str| match PipelineBuilder::new().build_from_configuration(
         &registry,
@@ -917,17 +934,57 @@ fn a_name_matching_two_builders_fails() {
             "Multiply",
             "No SubElements",
             &format!(
-                "The flow element builder name 'Multiply' matches multiple builders: [{0},{0}].",
-                type_name::<MultiplyBy>()
+                "The flow element builder name 'Multiply' matches multiple builders: [{},{}].",
+                type_name::<MultiplyBy>(),
+                type_name::<OtherMultiplyBy>()
             ),
             NO_INNER
         )
     );
     assert!(run("Splitter").contains(&format!(
         "matches multiple builders: [{},{}].",
-        type_name::<MultiplyBy>(),
+        type_name::<OtherMultiplyBy>(),
         type_name::<SplitterBuilder>()
     )));
+    assert!(run("MultiplyByElementBuilder").contains(&format!(
+        "matches multiple builders: [{},{}].",
+        type_name::<MultiplyBy>(),
+        type_name::<OtherMultiplyBy>()
+    )));
+}
+
+#[test]
+fn a_builder_added_twice_is_found_once() {
+    let mut registry = BuilderRegistry::new();
+    registry
+        .add(multiply_definition())
+        .add(splitter_definition())
+        .add(multiply_definition());
+    let registry = registry.with(splitter_definition());
+    assert_eq!(
+        registry.builder_names(),
+        ["MultiplyByElementBuilder", "ListSplitterElementBuilder"]
+    );
+    let pipeline = PipelineBuilder::new()
+        .build_from_configuration(
+            &registry,
+            &PipelineOptions::new()
+                .element(ElementOptions::new("Multiply").parameter("multiple", "2"))
+                .element(ElementOptions::new("ListSplitterElement")),
+        )
+        .expect("each builder is found once");
+    assert_eq!(keys(&pipeline), ["multiplyby", "listsplitter"]);
+}
+
+#[test]
+fn a_builder_of_one_name_and_another_type_is_added() {
+    let registry = BuilderRegistry::new()
+        .with(multiply_definition())
+        .with(other_multiply_definition());
+    assert_eq!(
+        registry.builder_names(),
+        ["MultiplyByElementBuilder", "MultiplyByElementBuilder"]
+    );
 }
 
 #[test]
