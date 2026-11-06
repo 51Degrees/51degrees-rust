@@ -21,9 +21,10 @@
  * ********************************************************************* */
 
 //! What a read of a property that aspect data does not hold logs. .NET's
-//! aspect data logs one warning for each such read, naming the reason. Kept
-//! in its own test binary because a logger is installed once for the whole
-//! process, and in one test so the records it reads are its own.
+//! aspect data logs one warning for each such read, naming the reason, unless
+//! it was built with no logger. Kept in its own test binary because a logger
+//! is installed once for the whole process, and in one test so the records it
+//! reads are its own.
 
 use std::sync::{Arc, Mutex};
 
@@ -107,4 +108,17 @@ fn each_read_of_a_missing_property_logs_one_warning() {
              DataFileUpgradeRequired",
         ]
     );
+
+    // With logging stopped, as for data .NET builds with no logger, a read
+    // gives the same reason and logs nothing.
+    data.stop_logging_missing_properties();
+    let expected = source().reason("IsMobile").description;
+    assert_eq!(data.get("IsMobile").unwrap_err().message, expected);
+    assert!(data.get("NotAProperty").is_err());
+    assert_eq!(
+        data.missing_property("IsMobile", "AspectDataBase")
+            .map(|missing| missing.description),
+        Some(expected)
+    );
+    assert_eq!(take(), Vec::<String>::new(), "with logging stopped");
 }

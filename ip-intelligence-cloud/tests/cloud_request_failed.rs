@@ -314,7 +314,11 @@ fn a_successful_request_is_unchanged() {
     assert!(data.errors().is_empty());
     let ip = data.get(IP_DATA_KEY).unwrap();
     assert!(!ip.base().cloud_request_failed());
+    // A property the cloud returned is held, and one it did not return is
+    // not. Asking logs nothing.
     assert!(ip.has_property("RegisteredName"));
+    assert!(!ip.has_property("Town"));
+    assert_eq!(ip.registered_name().value().unwrap().as_str(), "Example");
     assert_eq!(take_logged(), Vec::<String>::new());
 }
 

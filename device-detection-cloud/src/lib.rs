@@ -65,11 +65,30 @@
 //!
 //! When the cloud determines no value for a property it sends JSON `null` with a
 //! sibling `<property>nullreason` entry explaining why. The mapping (in the
-//! private `dto` module) leaves the property absent so a typed accessor returns
-//! [`AspectPropertyValue::NoValue`](fiftyone_pipeline_engines::AspectPropertyValue::NoValue),
-//! while preserving the `nullreason` message in the data bag so the explanation
-//! is not lost. This realises the
+//! private `dto` module) holds the property with no value and that entry's
+//! text as its message, or `Unknown` when the response gives none, so a typed
+//! accessor returns
+//! [`AspectPropertyValue::NoValue`](fiftyone_pipeline_engines::AspectPropertyValue::NoValue)
+//! carrying the cloud's explanation. The `nullreason` entries themselves are
+//! not properties and are left out of the data. Read the message from the
+//! property, for example `device.hardware_vendor().no_value_message()`, rather
+//! than from a `hardwarevendornullreason` entry. This realises the
 //! [null-values specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#null-values).
+//!
+//! ## A property the response did not return
+//!
+//! Data from a successful response, and each hardware profile, is given the
+//! properties the resource key grants, so reading a property the response did
+//! not return gives the reason the
+//! [missing properties specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#missing-properties)
+//! names. A read of the device data also logs a warning, as .NET's cloud data
+//! does. A read of a hardware profile logs nothing, because .NET builds each
+//! profile with no logger.
+//! [`ElementData::has_property`](fiftyone_pipeline_core::ElementData::has_property)
+//! answers `false` for such a property, so an element that asks first, such
+//! as Set Headers, can tell it from one the response gave as null. With a
+//! license key alone the granted properties are not listed, so every
+//! property counts as held.
 //!
 //! ## Property metadata
 //!
