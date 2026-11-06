@@ -524,5 +524,75 @@
         }
       }
     }
+  },
+  {
+    "id": "configuration-setting-in-both-sections",
+    "about": "ShareUsage under both PipelineBuilderParameters and BuildParameters, and the suppress setting under PipelineBuilderParameters alone. .NET reads the older section first, into the dictionary BuildParameters then fills, so usage sharing takes the BuildParameters value and the suppress setting still applies.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          }
+        ],
+        "PipelineBuilderParameters": {
+          "ShareUsage": "false",
+          "SuppressProcessExceptions": "true"
+        },
+        "BuildParameters": {
+          "ShareUsage": "true"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-setting-forms-in-both-sections",
+    "about": "The suppress setting under a different form of its name in PipelineBuilderParameters and BuildParameters. Each section is read in its own key order, the older one first, so the BuildParameters form is applied last.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          }
+        ],
+        "PipelineBuilderParameters": {
+          "SuppressProcessExceptions": "true"
+        },
+        "BuildParameters": {
+          "SetSuppressProcessExceptions": "false",
+          "ShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-setting-case-in-both-sections",
+    "about": "The suppress setting under two forms of its name in PipelineBuilderParameters, and under one of them in another case in BuildParameters. .NET's dictionary compares names in their case, so the BuildParameters entry is a second one, applied last.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          }
+        ],
+        "PipelineBuilderParameters": {
+          "SetSuppressProcessExceptions": "true",
+          "SuppressProcessExceptions": "true"
+        },
+        "BuildParameters": {
+          "setsuppressprocessexceptions": "false",
+          "ShareUsage": "false"
+        }
+      }
+    }
   }
 ]
