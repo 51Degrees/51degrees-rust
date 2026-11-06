@@ -1021,6 +1021,45 @@ fn a_builder_finds_the_resource_added_most_recently() {
 }
 
 #[test]
+fn a_builder_finds_every_resource_of_a_type_oldest_first() {
+    let mut registry = registry();
+    registry.add(
+        BuilderDefinition::new(
+            "ListsServicesElementBuilder",
+            |_, context: &mut BuildContext| {
+                let found: Vec<&'static str> = context
+                    .resources::<Service>()
+                    .iter()
+                    .map(|service| service.0)
+                    .collect();
+                finish(Element::new("listsservices", found), context)
+            },
+        )
+        .build_method(vec![], |_, _| Ok(())),
+    );
+    let pipeline = PipelineBuilder::new()
+        .add_resource(Arc::new(Service("given in code")))
+        .build_from_configuration(
+            &registry,
+            &PipelineOptions::new()
+                .element(ElementOptions::new("ServiceElement"))
+                .element(ElementOptions::new("ListsServicesElement")),
+        )
+        .unwrap();
+    let element = pipeline.resource::<Element<Vec<&'static str>>>().unwrap();
+    assert_eq!(
+        element.settings,
+        ["given in code", "made by the configuration"]
+    );
+
+    let pipeline = PipelineBuilder::new()
+        .build_from_configuration(&registry, &one(ElementOptions::new("ListsServicesElement")))
+        .unwrap();
+    let element = pipeline.resource::<Element<Vec<&'static str>>>().unwrap();
+    assert!(element.settings.is_empty());
+}
+
+#[test]
 fn elements_added_in_code_are_replaced_by_the_configuration() {
     let pipeline = PipelineBuilder::new()
         .add_element(Arc::new(Element::new("incode", ())))

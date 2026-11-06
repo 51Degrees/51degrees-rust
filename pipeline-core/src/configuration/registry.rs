@@ -54,6 +54,15 @@ impl BuildContext {
             .find_map(|resource| Arc::clone(resource).downcast::<T>().ok())
     }
 
+    /// Every resource of type `T`, oldest first, so a builder can tell
+    /// whether more than one was given or made.
+    pub fn resources<T: Any + Send + Sync>(&self) -> Vec<Arc<T>> {
+        self.resources
+            .iter()
+            .filter_map(|resource| Arc::clone(resource).downcast::<T>().ok())
+            .collect()
+    }
+
     /// Add a resource for the builders that follow and for the pipeline.
     pub fn add_resource(&mut self, resource: Arc<dyn Any + Send + Sync>) {
         self.resources.push(resource);
