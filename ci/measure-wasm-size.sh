@@ -9,8 +9,11 @@
 # ip-intelligence-translation/README.md comes from this script's output in the
 # Pull Request workflow's wasm job.
 #
-# When wasmtime is on the path, both modules are also run, and the script fails
-# unless the larger one sorts the lists of every country for French.
+# When wasmtime is on the path, both modules are also run for Swedish, and the
+# script fails unless the larger one gives the 250 countries in Swedish order,
+# ending with Åland, Österrike and Östtimor. Swedish sorts Å and Ö after Z,
+# which the root collation does not, so the order shows that the module holds
+# the collation data as well as choosing the locale.
 #
 # Needs the wasm32-wasip1 target (rustup target add wasm32-wasip1).
 set -euo pipefail
@@ -49,12 +52,13 @@ fi
 
 if command -v wasmtime > /dev/null; then
   # Each run is its own assignment so that set -e stops on a failed run.
-  alone=$(wasmtime run "$out/without-countries.wasm" fr_FR)
-  echo "without-countries fr_FR: $alone"
-  sorted=$(wasmtime run "$out/with-countries.wasm" fr_FR)
-  echo "with-countries fr_FR: $sorted"
-  if [ "$(echo "$sorted" | tail -n 1)" != "fr-FR" ]; then
-    echo "with-countries did not sort the lists of every country for fr-FR" >&2
+  alone=$(wasmtime run "$out/without-countries.wasm" sv_SE)
+  echo "without-countries sv_SE: $alone"
+  sorted=$(wasmtime run "$out/with-countries.wasm" sv_SE)
+  echo "with-countries sv_SE: $sorted"
+  want=$(printf '%s\n' sv-SE 250 Åland Österrike Östtimor)
+  if [ "$(echo "$sorted" | tail -n 5)" != "$want" ]; then
+    echo "with-countries did not give the 250 countries in Swedish order" >&2
     exit 1
   fi
 fi

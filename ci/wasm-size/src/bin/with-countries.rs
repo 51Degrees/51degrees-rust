@@ -22,8 +22,9 @@
 
 //! A pipeline with `CountryCodeTranslationEngine` and
 //! `CountriesTranslationEngine`, the larger of the two programs
-//! `ci/measure-wasm-size.sh` compares. It prints the locale the lists of
-//! every country were sorted for.
+//! `ci/measure-wasm-size.sh` compares. It prints, one to a line, the locale
+//! the lists of every country were sorted for, the number of names in the
+//! geographical list and that list's last three names.
 //!
 //! The language comes from the first argument, so the build cannot know which
 //! locale's collation data is needed and keeps all of it.
@@ -50,9 +51,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     // With no IP Intelligence data the engines record that their source is
     // missing, so the result is printed rather than returned.
     println!("{:?}", data.process());
-    let culture = data
-        .get(COUNTRY_NAMES_TRANSLATED_KEY)
-        .and_then(|countries| countries.sorting_culture_used());
+    let countries = data.get(COUNTRY_NAMES_TRANSLATED_KEY);
+    let culture = countries.and_then(|countries| countries.sorting_culture_used());
     println!("{}", culture.unwrap_or("none"));
+    let names = countries
+        .and_then(|countries| {
+            countries
+                .country_names_geographical_all_translated()
+                .into_value()
+                .ok()
+        })
+        .unwrap_or_default();
+    println!("{}", names.len());
+    for name in &names[names.len().saturating_sub(3)..] {
+        println!("{name}");
+    }
     Ok(())
 }
