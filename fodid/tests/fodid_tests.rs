@@ -224,6 +224,14 @@ fn the_envelope_methods_answer_as_the_envelope() {
         owid.as_byte_array().unwrap()
     );
     assert_eq!(fod_id.as_base64().unwrap(), owid.as_base64().unwrap());
+    // Called by path, so each compiles only as `FodId`'s own and not through
+    // the `Deref` to the envelope.
+    let (mut written, mut expected) = (vec![0xEE], vec![0xEE]);
+    FodId::to_buffer(&fod_id, &mut written).unwrap();
+    owid.to_buffer(&mut expected).unwrap();
+    assert_eq!(written, expected);
+    assert_eq!(<FodId as ToString>::to_string(&fod_id), owid.to_string());
+    assert_eq!(format!("{fod_id}"), owid.as_base64().unwrap());
     assert!(fod_id.verify_with_crypto(&crypto).unwrap());
     assert!(fod_id.verify_with_public_key(&fixture.public_pem).unwrap());
     assert_eq!(
