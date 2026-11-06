@@ -99,7 +99,8 @@ enum Encoding {
     Url,
     /// `Url` with a space before it and a line feed after it.
     UrlSurrounded,
-    /// `Url` with a space after every [`SPACED_GROUP_LENGTH`] characters.
+    /// `Url` with a space between each group of [`SPACED_GROUP_LENGTH`]
+    /// characters.
     UrlSpaced,
     /// The envelope bytes.
     Bytes,

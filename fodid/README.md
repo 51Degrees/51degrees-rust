@@ -229,10 +229,11 @@ byte-level difference is in the **envelope**. The **match key** carried inside
 is stable. To decide whether two 51Dids refer to the same browser instance,
 compare the match keys, never the full base64 envelopes.
 
-`==` on two `FodId` values does exactly that, comparing the identifier type
-and the match key and nothing else. The usage, License Id and terms are not
-compared either. To ask whether two values are the same envelope, compare
-`as_byte_array()`.
+`==` on two `FodId` values compares the match key and the identifier type and
+nothing else. The type is compared as well because a probabilistic and a
+hashed email 51Did both carry a 32 byte match key, made from different inputs.
+The date, signature, usage, License Id and terms are not compared. To ask
+whether two values are the same envelope, compare `as_byte_array()`.
 
 ```rust
 use fodid::FodId;

@@ -131,12 +131,14 @@
 //!
 //! ## Comparing two 51Dids
 //!
-//! `==` on two [`FodId`] values compares their type and match key, which is
-//! how the specification asks whether two identifiers stand for the same
-//! thing. Two 51Dids issued for the same inputs are equal even though their
-//! envelopes differ, because the date and signature change every time one is
-//! issued. The usage, License Id and terms are not compared either. To ask
-//! whether two values are the same envelope, compare
+//! `==` on two [`FodId`] values compares their type and match key. The
+//! specification compares match keys to ask whether two identifiers stand
+//! for the same thing, and the type is compared as well because a
+//! probabilistic and a hashed email 51Did both carry a 32 byte match key,
+//! made from different inputs. Two 51Dids issued for the same inputs are
+//! equal even though their envelopes differ, because the date and signature
+//! change every time one is issued. The usage, License Id and terms are not
+//! compared either. To ask whether two values are the same envelope, compare
 //! [`FodId::as_byte_array`].
 //!
 //! ## Reading and verifying are two separate questions

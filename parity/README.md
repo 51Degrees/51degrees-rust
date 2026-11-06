@@ -182,7 +182,7 @@ A `payload` case may also have these.
 
 | Field | What it holds |
 | --- | --- |
-| `encoding` | How the signed envelope reaches the reader. `standard`, the default, is the standard alphabet with padding. `url` is the URL-safe alphabet with no padding. `url-surrounded` is `url` with a space before it and a line feed after it. `url-spaced` is `url` with a space after every 20th character. `bytes` gives the envelope's bytes. |
+| `encoding` | How the signed envelope reaches the reader. `standard`, the default, is the standard alphabet with padding. `url` is the URL-safe alphabet with no padding. `url-surrounded` is `url` with a space before it and a line feed after it. `url-spaced` is `url` with a space between each group of 20 characters. `bytes` gives the envelope's bytes. |
 | `trailing` | Hex bytes added after the envelope before it is encoded. |
 | `tamper` | `true` to change the last byte of the signature after signing. |
 

@@ -723,7 +723,9 @@ impl FodId {
 
 /// Two 51Dids are equal when they have the same type and the same match key,
 /// because the specification compares match keys to ask whether two
-/// identifiers stand for the same thing. Nothing else is compared. The
+/// identifiers stand for the same thing. The type is compared as well
+/// because a probabilistic and a hashed email 51Did both carry a 32 byte
+/// match key, made from different inputs. Nothing else is compared. The
 /// envelope's date and signature differ every time an identifier is issued,
 /// and the usage, License Id and terms say how an identifier may be used
 /// rather than what it stands for. Compare
