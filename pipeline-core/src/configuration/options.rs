@@ -151,8 +151,13 @@ impl PipelineOptions {
     /// that differ only in case are refused. Each element's build parameters
     /// are applied in the order .NET's configuration gives them, which is by
     /// name ignoring case, with whole numbers before other names and in
-    /// numeric order. Other sections, and settings the .NET web integration
-    /// reads from the same section, are ignored.
+    /// numeric order. The pipeline's own settings are read from
+    /// `PipelineBuilderParameters`, the older name .NET still reads, and then
+    /// from `BuildParameters`, each section in the same order, and a name
+    /// given in both in the same case keeps its first place with the
+    /// `BuildParameters` value.
+    /// Other sections, and settings the .NET web integration reads from the
+    /// same section, are ignored.
     ///
     /// A build parameter that is an array or an object is refused, because
     /// .NET cannot read one either. A list is written as comma-separated

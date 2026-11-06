@@ -1589,6 +1589,61 @@ fn the_obsolete_pipeline_parameters_name_is_read() {
     assert!(build(&options).unwrap().is_suppress_process_exceptions());
 }
 
+/// .NET binds `PipelineBuilderParameters` first, into the dictionary that
+/// `BuildParameters` then fills, each in key order. A name in both in the
+/// same case keeps its first place with the second value, and one in
+/// another case is a second entry.
+#[test]
+fn the_pipeline_parameters_of_both_sections_are_read_in_dotnet_order() {
+    let options = PipelineOptions::from_json(
+        r#"{ "PipelineOptions": {
+            "BuildParameters": { "SetSuppressProcessException": "false", "B": "2", "a": "3" },
+            "PipelineBuilderParameters": {
+                "SetSuppressProcessException": "true", "C": "1", "A": "4" } } }"#,
+    )
+    .unwrap();
+    let expected: Vec<(String, ConfigValue)> = [
+        ("A", "4"),
+        ("C", "1"),
+        ("SetSuppressProcessException", "false"),
+        ("a", "3"),
+        ("B", "2"),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_string(), value.into()))
+    .collect();
+    assert_eq!(options.build_parameters, expected);
+}
+
+/// The setting applied last wins, so with the order above the
+/// `BuildParameters` value is the one the pipeline takes, whether the name
+/// is the same, in another case or another form of the same setting.
+#[test]
+fn a_pipeline_setting_in_both_sections_takes_the_build_parameters_value() {
+    for (obsolete, current) in [
+        ("SetSuppressProcessException", "SetSuppressProcessException"),
+        ("SetSuppressProcessException", "setsuppressprocessexception"),
+        ("SuppressProcessException", "SetSuppressProcessException"),
+        ("SetSuppressProcessException", "SuppressProcessException"),
+    ] {
+        for value in [true, false] {
+            let options = PipelineOptions::from_json(&format!(
+                r#"{{ "PipelineOptions": {{
+                    "Elements": [ {{ "BuilderName": "ListSplitterElement" }} ],
+                    "BuildParameters": {{ "{current}": {value} }},
+                    "PipelineBuilderParameters": {{ "{obsolete}": {} }} }} }}"#,
+                !value
+            ))
+            .unwrap();
+            assert_eq!(
+                build(&options).unwrap().is_suppress_process_exceptions(),
+                value,
+                "{obsolete} then {current} given {value}"
+            );
+        }
+    }
+}
+
 fn json_message(text: &str) -> String {
     match PipelineOptions::from_json(text) {
         Err(Error::PipelineConfiguration { message }) => message,
