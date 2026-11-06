@@ -41,6 +41,8 @@
 //! - [`DeviceDetectionOnPremiseEngineBuilder`], a fluent builder that takes the
 //!   data file path, a [`PerformanceProfile`](fiftyone_native::PerformanceProfile),
 //!   an optional restricted property set and optional automatic-update settings.
+//! - [`configuration`], which makes the engine from a configuration file
+//!   written for .NET's `DeviceDetectionHashEngineBuilder`.
 //!
 //! ## Interface compatibility with the cloud engine
 //!
@@ -104,6 +106,7 @@
 #![warn(missing_docs)]
 
 mod builder;
+pub mod configuration;
 mod engine;
 mod operational_copy;
 mod retained;
