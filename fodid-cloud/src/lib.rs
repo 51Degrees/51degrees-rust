@@ -57,6 +57,10 @@
 //! envelope handling is identical whether a 51Did arrives from the cloud or is
 //! read from a stored cookie.
 //!
+//! The data model is in [`fiftyone_fodid_core`], which does not depend on the
+//! cloud request engine. This crate re-exports every item of it under the same
+//! name, so [`FodIdDataBase`] here and there is one type.
+//!
 //! # Cloud only
 //!
 //! A 51Did is issued by the cloud, which alone holds the signing key, so there
@@ -66,17 +70,16 @@
 
 #![warn(missing_docs)]
 
-mod data;
 mod dto;
 mod engine;
 
-pub use data::{
+pub use engine::{FodIdCloudEngine, FodIdCloudEngineBuilder};
+pub use fiftyone_fodid_core::{
     default_aspect_property_metadata, default_property_metadata, FodIdData, FodIdDataBase,
     FODID_DATA_KEY, FODID_ELEMENT_DATA_KEY, IDENTIFIER_PROPERTIES, ID_HEM_GLOBAL_PROPERTY,
     ID_HEM_LIC_PROPERTY, ID_PROB_GLOBAL_PROPERTY, ID_PROB_LIC_PROPERTY, ID_RAND_GLOBAL_PROPERTY,
     ID_RAND_LIC_PROPERTY,
 };
-pub use engine::{FodIdCloudEngine, FodIdCloudEngineBuilder};
 
 // Re-export the parsed-identifier type so a consumer can work with the decoded
 // envelope without adding a direct dependency on the `fodid` reader crate.

@@ -99,7 +99,10 @@ examples        examples-shared, device-detection-examples,
   that the 51Degrees web docs are generated from.
 
 The `fodid` crate (a 51Did/OWID reader) sits alongside this stack and is
-independent of it.
+independent of it. `fiftyone-fodid-core` puts the 51Did element data, property
+names and metadata on the engines layer, with no cloud request engine, so any
+engine producing 51Dids can be built on it. `fiftyone-fodid-cloud` is the cloud
+engine that fills that data from the cloud response, and re-exports it.
 
 ## Feature gating
 

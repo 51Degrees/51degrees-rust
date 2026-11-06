@@ -765,12 +765,22 @@ version = "4.5.3"
 dependencies = [
  "fiftyone-cloud-request-engine",
  "fiftyone-fodid-cloud",
+ "fiftyone-fodid-core",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
  "fodid",
  "log",
  "once_cell",
  "serde_json",
+]
+
+[[package]]
+name = "fiftyone-fodid-core"
+version = "4.5.2"
+dependencies = [
+ "fiftyone-pipeline-core",
+ "fiftyone-pipeline-engines",
+ "fodid",
 ]
 
 [[package]]

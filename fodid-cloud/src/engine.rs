@@ -27,6 +27,10 @@ use std::sync::Arc;
 use once_cell::sync::OnceCell;
 
 use fiftyone_cloud_request_engine::{CloudRequestEngine, LicensedProducts};
+use fiftyone_fodid_core::{
+    default_aspect_property_metadata, default_property_metadata, FodIdDataBase, FODID_DATA_KEY,
+    FODID_ELEMENT_DATA_KEY,
+};
 use fiftyone_pipeline_core::{
     Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
     PropertyValueType, Result,
@@ -37,10 +41,6 @@ use fiftyone_pipeline_engines::{
 };
 use serde_json::Value;
 
-use crate::data::{
-    default_aspect_property_metadata, default_property_metadata, FodIdDataBase, FODID_DATA_KEY,
-    FODID_ELEMENT_DATA_KEY,
-};
 use crate::dto::map_fodid_object;
 
 /// The engine's name in log records and messages.
@@ -409,10 +409,10 @@ impl Default for FodIdCloudEngineBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::FodIdData;
     use fiftyone_cloud_request_engine::{
         CloudEngineState, CloudHttpClient, CloudHttpRequest, CloudHttpResponse,
     };
+    use fiftyone_fodid_core::FodIdData;
 
     /// A request engine wired to a stub HTTP client, so no network is touched.
     ///

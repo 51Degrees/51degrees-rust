@@ -15,6 +15,8 @@ fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
 # the cloud path never uses, so this crate builds for wasm32-wasip1.
 fiftyone-pipeline-engines = { version = "=4.5.2", path = "../pipeline-engines", default-features = false }
 fiftyone-cloud-request-engine = { version = "=4.5.2", path = "../cloud-request-engine", default-features = false }
+# The 51Did data model, which this crate re-exports.
+fiftyone-fodid-core = { version = "=4.5.2", path = "../fodid-core" }
 fodid = { version = "=4.5.5", path = "../fodid" }
 serde_json.workspace = true
 once_cell.workspace = true
