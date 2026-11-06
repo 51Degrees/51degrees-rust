@@ -75,8 +75,8 @@ fn each_source_is_the_data_repository_file_byte_for_byte() {
         return;
     };
     for (sources, subfolder) in [
-        (&COUNTRY_CODE_SOURCES[..], folder.clone()),
-        (&COUNTRY_SOURCES[..], folder.join("OSM")),
+        (COUNTRY_CODE_SOURCES, folder.clone()),
+        (COUNTRY_SOURCES, folder.join("OSM")),
     ] {
         let names: BTreeSet<String> = sources.iter().map(|(name, _)| (*name).to_owned()).collect();
         assert_eq!(

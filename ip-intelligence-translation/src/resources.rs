@@ -30,7 +30,10 @@
 /// The country code sources, as pairs of a file name and its text. The one
 /// source, `countrycodes.en_GB.yml`, gives each country's English name for
 /// its code, and lists every country the engines know.
-pub const COUNTRY_CODE_SOURCES: [(&str, &str); 1] = [(
+///
+/// A slice rather than an array, so a source added later does not change
+/// its type.
+pub const COUNTRY_CODE_SOURCES: &[(&str, &str)] = &[(
     "countrycodes.en_GB.yml",
     include_str!("../translations/countrycodes.en_GB.yml"),
 )];
@@ -38,7 +41,10 @@ pub const COUNTRY_CODE_SOURCES: [(&str, &str); 1] = [(
 /// The country name sources, as pairs of a file name and its text, in order
 /// of name. Each gives the name of every country in one language for its
 /// English name.
-pub const COUNTRY_SOURCES: [(&str, &str); 16] = [
+///
+/// A slice rather than an array, so a language added later does not change
+/// its type.
+pub const COUNTRY_SOURCES: &[(&str, &str)] = &[
     (
         "countries.cs_CZ.yml",
         include_str!("../translations/OSM/countries.cs_CZ.yml"),

@@ -46,7 +46,10 @@ pub const TRANSLATION_KEY: TypedKey<TranslationData> = TypedKey::new(TRANSLATION
 
 /// The evidence keys the language is read from, most preferred first. The
 /// first with a value that is not blank is used.
-pub const LANGUAGE_EVIDENCE_KEYS: [&str; 3] = [
+///
+/// A slice rather than an array, so a key added later does not change its
+/// type.
+pub const LANGUAGE_EVIDENCE_KEYS: &[&str] = &[
     "query.translation",
     "query.accept-language",
     "header.accept-language",

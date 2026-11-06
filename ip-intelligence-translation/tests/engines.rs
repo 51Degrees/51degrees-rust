@@ -30,7 +30,8 @@ use std::sync::Arc;
 use fiftyone_ip_intelligence_shared::IpIntelligenceDataBase;
 use fiftyone_ip_intelligence_translation::{
     CountriesTranslationData, CountriesTranslationEngine, CountryCodeTranslationData,
-    CountryCodeTranslationEngine, COUNTRY_NAMES_KEY, COUNTRY_NAMES_TRANSLATED_KEY,
+    CountryCodeTranslationEngine, COUNTRY_CODE_SOURCES, COUNTRY_NAMES_KEY,
+    COUNTRY_NAMES_TRANSLATED_KEY, COUNTRY_SOURCES,
 };
 use fiftyone_pipeline_core::{
     ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
@@ -792,4 +793,14 @@ fn the_data_lists_its_properties_in_the_order_written() {
         result(&data).get("SortingCultureUsed").unwrap(),
         PropertyValue::from("fr-FR")
     );
+}
+
+#[test]
+fn the_source_lists_are_slices() {
+    // A slice's type does not hold its length, so a language added to the
+    // data repository leaves the type of each list unchanged.
+    let codes: &'static [(&str, &str)] = COUNTRY_CODE_SOURCES;
+    let names: &'static [(&str, &str)] = COUNTRY_SOURCES;
+    assert_eq!(codes.len(), 1);
+    assert!(!names.is_empty());
 }

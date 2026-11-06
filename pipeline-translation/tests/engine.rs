@@ -35,7 +35,7 @@ use fiftyone_pipeline_core::{
 use fiftyone_pipeline_engines::{AspectDataBase, AspectPropertyValue};
 use fiftyone_pipeline_translation::{
     Languages, MissingTranslationBehavior, TranslationEngine, TranslationValue, BASE_LANGUAGE,
-    TRANSLATION_KEY,
+    LANGUAGE_EVIDENCE_KEYS, TRANSLATION_KEY,
 };
 
 const SOURCE_KEY: &str = "evidencecopy";
@@ -843,4 +843,19 @@ mod files {
              lookup."
         );
     }
+}
+
+#[test]
+fn the_language_evidence_keys_are_a_slice_in_order() {
+    // A slice's type does not hold its length, so a key added later leaves
+    // the constant's type unchanged.
+    let keys: &'static [&str] = LANGUAGE_EVIDENCE_KEYS;
+    assert_eq!(
+        keys,
+        [
+            "query.translation",
+            "query.accept-language",
+            "header.accept-language"
+        ]
+    );
 }
