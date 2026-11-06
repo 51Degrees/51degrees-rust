@@ -159,6 +159,24 @@ jobs:
           cargo clippy --all-targets -- -D warnings
           cargo test -p parity-compare
 
+      # The parity workspace resolves its own lock. The comparison proves
+      # .NET's order for the collation data that lock holds, so it must be
+      # the data the library's lock, and so the crate's tests, use.
+      - name: Check both locks hold the same collation data
+        if: matrix.data == 'lite'
+        run: |
+          for crate in icu_collator icu_collator_data; do
+            library=$(grep -A1 "^name = \"$crate\"$" Cargo.lock |
+              sed -n 's/^version = "\(.*\)"$/\1/p')
+            parity=$(grep -A1 "^name = \"$crate\"$" parity/Cargo.lock |
+              sed -n 's/^version = "\(.*\)"$/\1/p')
+            echo "$crate: $library in Cargo.lock, $parity in parity/Cargo.lock"
+            if [ -z "$library" ] || [ "$library" != "$parity" ]; then
+              echo "::error::$crate differs between the two locks"
+              exit 1
+            fi
+          done
+
       - name: Build
         if: env.RUN == 'true'
         working-directory: parity
