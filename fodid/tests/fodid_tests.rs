@@ -185,9 +185,9 @@ fn assert_parsed(result: &fodid::Result<FodId>) -> &FodId {
         .expect("a successful read hands back the value")
 }
 
-/// `owid()`, `into_owid()` and the `Deref` are deprecated rather than
-/// removed, so code written against earlier releases still compiles and
-/// still reaches the same envelope.
+/// `owid()` and `into_owid()` are deprecated and the `Deref` is kept, so
+/// code written against earlier releases still compiles and still reaches
+/// the same envelope.
 #[test]
 #[allow(deprecated)]
 fn fod_id_still_derefs_to_owid() {
@@ -224,6 +224,14 @@ fn the_envelope_methods_answer_as_the_envelope() {
         owid.as_byte_array().unwrap()
     );
     assert_eq!(fod_id.as_base64().unwrap(), owid.as_base64().unwrap());
+    // Called by path, so each compiles only as `FodId`'s own and not through
+    // the `Deref` to the envelope.
+    let (mut written, mut expected) = (vec![0xEE], vec![0xEE]);
+    FodId::to_buffer(&fod_id, &mut written).unwrap();
+    owid.to_buffer(&mut expected).unwrap();
+    assert_eq!(written, expected);
+    assert_eq!(<FodId as ToString>::to_string(&fod_id), owid.to_string());
+    assert_eq!(format!("{fod_id}"), owid.as_base64().unwrap());
     assert!(fod_id.verify_with_crypto(&crypto).unwrap());
     assert!(fod_id.verify_with_public_key(&fixture.public_pem).unwrap());
     assert_eq!(
@@ -1521,7 +1529,7 @@ fn white_space_inside_the_text_is_refused() {
     let (w, s) = (whole.len(), short.len());
     let invalid = Err(Status::Owid(ParseStatus::InvalidBase64));
 
-    let cases: [(&str, String, Result<&FodId, Status>); 14] = [
+    let cases: [(&str, String, Result<&FodId, Status>); 16] = [
         (
             "text-url-space-1",
             insert_after(&whole, &[w / 2], " "),
@@ -1586,6 +1594,16 @@ fn white_space_inside_the_text_is_refused() {
             "text-url-vertical-tab",
             insert_after(&whole, &[w / 2], "\u{b}"),
             invalid,
+        ),
+        (
+            "text-url-line-separator",
+            insert_after(&whole, &[w / 2], "\u{2028}"),
+            invalid,
+        ),
+        (
+            "text-url-ideographic-space-surrounded",
+            format!("\u{3000}{whole}\u{3000}"),
+            Ok(&whole_read),
         ),
         (
             "text-white-space",

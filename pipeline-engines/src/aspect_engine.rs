@@ -83,6 +83,12 @@ pub trait AspectEngine: FlowElement {
     /// may answer `false` before its first request, when its metadata is loaded
     /// lazily from the cloud. On-premise engines load metadata when the data
     /// file is loaded, so they answer `true`.
+    ///
+    /// An engine that can answer `false` also overrides
+    /// [`FlowElement::properties_loaded`], reading its property list first
+    /// and then answering this method. Consumers such as the JavaScript
+    /// builder ask that method, whose default of `true` would count the
+    /// engine as loaded before its property list is.
     fn has_loaded_properties(&self) -> bool {
         true
     }
