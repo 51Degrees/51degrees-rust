@@ -282,7 +282,9 @@ fn find_locale(text: &str) -> Option<&str> {
 /// The locale a source's name gives, from its second last part between dots.
 fn locale_of_source(name: &str) -> Result<&str> {
     if name.trim().is_empty() {
-        return Err(Error::configuration("Source name cannot be blank."));
+        return Err(Error::configuration(
+            "Source name cannot be null or whitespace.",
+        ));
     }
     let parts: Vec<&str> = name.split('.').collect();
     if parts.len() < 3 {
@@ -346,6 +348,17 @@ mod tests {
         assert_eq!(locale_of_source("a.b.de_DE.yaml").unwrap(), "de_DE");
         for name in ["", " ", "fr_FR.yml", "animals.mmm_kp.yml"] {
             assert!(locale_of_source(name).is_err(), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_blank_source_name_fails_with_the_dotnet_message() {
+        for name in ["", " ", "\t\n"] {
+            assert_eq!(
+                locale_of_source(name).unwrap_err().message(),
+                "Source name cannot be null or whitespace.",
+                "{name:?}"
+            );
         }
     }
 
