@@ -46,11 +46,13 @@ const USER_PROMPT_MARKER: &str = "var answerKeys = [\"id.usage\", \"tcstring\"];
 
 /// An element that adds no data and reports the properties it is given under
 /// the data key it is given, while `offering` is set, and none otherwise.
+/// Its properties count as loaded while `loaded` is set.
 struct Offering {
     key: &'static str,
     filter: EvidenceKeyFilterWhitelist,
     properties: Vec<PropertyMetaData>,
     offering: Arc<AtomicBool>,
+    loaded: bool,
 }
 
 impl Offering {
@@ -70,6 +72,16 @@ impl Offering {
             filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
             properties,
             offering,
+            loaded: true,
+        }
+    }
+
+    /// An element under `key` reporting `properties` that are not loaded
+    /// yet.
+    fn not_loaded(key: &'static str, properties: Vec<PropertyMetaData>) -> Self {
+        Offering {
+            loaded: false,
+            ..Offering::new(key, properties)
         }
     }
 }
@@ -93,6 +105,10 @@ impl FlowElement for Offering {
         } else {
             &[]
         }
+    }
+
+    fn properties_loaded(&self) -> bool {
+        self.loaded
     }
 }
 
@@ -182,6 +198,17 @@ fn a_51did_element_offering_nothing_available_leaves_the_section_out() {
         unavailable("fodid")
     )));
     assert!(!prompts_beside(Offering::new("fodid", Vec::new())));
+}
+
+/// An element whose properties are not loaded offers nothing, whatever list
+/// it gives meanwhile, as .NET's pipeline leaves out an element whose
+/// properties are not yet loaded.
+#[test]
+fn a_51did_element_whose_properties_are_not_loaded_leaves_the_section_out() {
+    assert!(!prompts_beside(Offering::not_loaded(
+        "fodid",
+        available("fodid")
+    )));
 }
 
 #[test]
@@ -309,6 +336,71 @@ fn the_51did_cloud_engine_renders_the_section_with_no_setting() {
     };
     assert!(prompts_with(WITH_51DID));
     assert!(!prompts_with(WITHOUT_51DID));
+}
+
+/// A cloud that refuses the property list request while `down` is set, then
+/// grants the 51Did product, and answers the other requests.
+struct PropertiesDownThenUp {
+    down: Arc<AtomicBool>,
+}
+
+impl CloudHttpClient for PropertiesDownThenUp {
+    fn send(&self, request: &CloudHttpRequest) -> std::result::Result<CloudHttpResponse, String> {
+        let body = if request.url.contains("accessibleproperties") {
+            if self.down.load(Ordering::Relaxed) {
+                return Err("connection refused".to_owned());
+            }
+            WITH_51DID
+        } else if request.url.contains("evidencekeys") {
+            r#"["header.user-agent"]"#
+        } else {
+            r#"{"fodid":{}}"#
+        };
+        Ok(CloudHttpResponse {
+            status: 200,
+            body: body.to_owned(),
+            retry_after: None,
+        })
+    }
+}
+
+/// Until the 51Did cloud engine's discovery completes, its six default
+/// properties do not count, so the section is left out. Once discovery
+/// completes with a key carrying the 51Did product, the section is rendered.
+#[test]
+fn the_section_waits_for_the_51did_cloud_engine_discovery() {
+    let down = Arc::new(AtomicBool::new(true));
+    let engine = Arc::new(
+        CloudRequestEngine::builder()
+            .resource_key("test-resource-key")
+            .http_client(Arc::new(PropertiesDownThenUp {
+                down: Arc::clone(&down),
+            }))
+            .build()
+            .expect("request engine builds"),
+    );
+    let fodid = Arc::new(
+        FodIdCloudEngine::builder()
+            .cloud_request_engine(Arc::clone(&engine))
+            .build()
+            .expect("51Did engine builds"),
+    );
+    let pipeline = pipeline(
+        |b| {
+            b.add_element(Arc::clone(&engine) as Arc<dyn FlowElement>)
+                .add_element(Arc::clone(&fodid) as Arc<dyn FlowElement>)
+        },
+        &javascript_builder(|b| b),
+    );
+
+    assert!(fodid.properties().iter().any(|property| property.available));
+    assert!(!fodid.properties_loaded());
+    assert!(!prompts(&pipeline));
+    assert!(!fodid.properties_loaded());
+
+    down.store(false, Ordering::Relaxed);
+    assert!(prompts(&pipeline));
+    assert!(fodid.properties_loaded());
 }
 
 /// A cloud that answers only the evidence keys request, the one discovery

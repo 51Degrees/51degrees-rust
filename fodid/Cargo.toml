@@ -1,7 +1,7 @@
 [package]
 name = "fodid"
 version = "4.5.5"
-description = "Reader for the 51Did (51Degrees Identifier) value returned by the 51Degrees cloud service. Parses the OWID envelope and unpacks the usage flags, License Id and 32-byte probabilistic hash."
+description = "Reader for the 51Did (51Degrees Identifier) value returned by the 51Degrees cloud service. Parses the OWID envelope and reads the usage, identifier type, License Id, match key and Terms from its payload."
 keywords = ["51degrees", "fodid", "51did", "identifier", "owid"]
 categories = ["parser-implementations", "cryptography"]
 edition.workspace = true

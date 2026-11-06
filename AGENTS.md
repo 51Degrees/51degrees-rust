@@ -137,8 +137,8 @@ workspace of runnable examples.
 - **Library workspace** (repository root): the pipeline core and engines,
   Device Detection and IP Intelligence (cloud and on-premise), the cloud
   request engine, the JSON and JavaScript builders, the axum web integration,
-  and the `fodid` 51Did reader. Each concern is its own crate so a consumer
-  depends only on what it uses.
+  the `fodid` 51Did reader and the 51Did data model and cloud engine. Each
+  concern is its own crate so a consumer depends only on what it uses.
 - **Example workspace** (`examples/`): excluded from the root workspace
   (`exclude = ["examples"]`). It depends on the **published** crates from
   crates.io by default, so a fresh checkout of `examples/` builds the way a
