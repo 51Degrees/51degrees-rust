@@ -120,6 +120,7 @@
 #![warn(missing_docs)]
 
 mod ci_map;
+pub mod configuration;
 pub mod constants;
 mod element_data;
 mod error;

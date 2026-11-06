@@ -67,6 +67,8 @@
 //!   a freshly reloaded data set while concurrent `process` calls keep using the
 //!   old one until the swap completes, as the data-updates specification
 //!   requires.
+//! - **From a configuration file.** [`configuration`] makes the engine from a
+//!   configuration file written for .NET's `IpiOnPremiseEngineBuilder`.
 //!
 //! # Example
 //!
@@ -104,6 +106,7 @@
 #![warn(missing_docs)]
 
 mod builder;
+pub mod configuration;
 mod engine;
 mod operational_copy;
 mod retained;

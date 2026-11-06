@@ -100,6 +100,13 @@
 //! engine reads it on the first process call after the request engine's
 //! discovery completes, rather than keeping empty metadata.
 //!
+//! ## Configuration
+//!
+//! [`configuration::add_builders`] adds both engines' builders to a
+//! [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the names
+//! .NET gives them, with .NET's settings, so a configuration file written for
+//! .NET makes the same engines here.
+//!
 //! ## Example
 //!
 //! ```no_run
@@ -138,6 +145,7 @@
 
 #![warn(missing_docs)]
 
+pub mod configuration;
 mod dto;
 mod engine;
 mod hardware_engine;

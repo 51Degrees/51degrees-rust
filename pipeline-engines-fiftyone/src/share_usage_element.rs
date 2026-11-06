@@ -185,6 +185,35 @@ impl ShareUsageConfig {
     pub fn ignore_flow_data_evidence_filter(&self) -> &[(String, String)] {
         &self.ignore_flow_data_evidence_filter
     }
+
+    /// How long a request waits for room when the queue is full.
+    pub fn add_timeout(&self) -> Duration {
+        self.add_timeout
+    }
+
+    /// How long the background thread waits for another entry once a
+    /// message holds the minimum entries per message.
+    pub fn take_timeout(&self) -> Duration {
+        self.take_timeout
+    }
+
+    /// The HTTP headers that are not shared, as they were given. The `cookie`
+    /// header is not shared whether or not it is in this list.
+    pub fn blocked_http_headers(&self) -> &[String] {
+        &self.blocked_http_headers
+    }
+
+    /// The query string parameters that are shared, as they were given, in
+    /// addition to any starting with `51d_`. `None` shares every one.
+    pub fn included_query_string_parameters(&self) -> Option<&[String]> {
+        self.included_query_string_parameters.as_deref()
+    }
+
+    /// True if every evidence value is shared, ignoring the blocked-header
+    /// and query filters.
+    pub fn share_all_evidence(&self) -> bool {
+        self.share_all_evidence
+    }
 }
 
 impl Default for ShareUsageConfig {

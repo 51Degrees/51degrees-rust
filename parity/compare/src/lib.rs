@@ -52,6 +52,30 @@ const REPORT_TEXT_LIMIT: usize = 300;
 const CRLF: &str = "\r\n";
 const LF: &str = "\n";
 
+/// Stands in for a builder's type name in a configuration error, because
+/// .NET gives the .NET full name and the crates the Rust name.
+pub const BUILDER_TYPE: &str = "{type}";
+
+/// The text before and after a builder's type name in a configuration error.
+const BEFORE_BUILDER_TYPE: &str = "uilder '";
+const AFTER_BUILDER_TYPE: &str = "' for element";
+
+/// The end of the line a configuration error lists the builder's settings
+/// after, one to a line, up to the line starting with
+/// [`BUILD_METHODS_HEADING`].
+const SETTINGS_HEADING: &str = "The available configuration methods on this builder are:";
+const BUILD_METHODS_HEADING: &str = "The available 'Build' methods";
+
+/// The method .NET lists among the settings when it takes one parameter.
+const BUILD_METHOD: &str = "Build";
+
+/// The text a configuration error lists the available builders after.
+const AVAILABLE_BUILDERS: &str = "Available builders are: ";
+
+/// The character in the name of a .NET generic type, such as
+/// ``SingleFileAspectEngineBuilderBase`2``.
+const GENERIC_MARK: char = '`';
+
 /// The elements of a usage record that hold the time it was written or name
 /// the runtime, which differ between the languages by design. Their text is
 /// left out before two records are compared.
@@ -359,7 +383,81 @@ pub fn compare_case(case: &Case, dotnet: &Value, rust: &Value) -> Vec<Difference
     for field in ["fodid", "metadata"] {
         out.data(field, field_of(&dotnet, field), field_of(&rust, field));
     }
+    out.data(
+        "configuration",
+        &normalise_configuration(field_of(&dotnet, "configuration")),
+        &normalise_configuration(field_of(&rust, "configuration")),
+    );
     out.differences
+}
+
+/// A configuration line's `configuration` with its error, if it has one,
+/// passed through [`normalise_configuration_error`].
+fn normalise_configuration(configuration: &Value) -> Value {
+    let mut configuration = configuration.clone();
+    if let Some(error) = configuration.get("error").and_then(Value::as_str) {
+        configuration["error"] = Value::String(normalise_configuration_error(error));
+    }
+    configuration
+}
+
+/// A configuration error with the parts the two languages write differently
+/// by design made the same, so the rest is compared exactly. Line endings
+/// become LF. The builder's type name becomes [`BUILDER_TYPE`]. In the list
+/// of settings, the parameter type after each name is left out, because
+/// .NET gives `RuntimeParameterInfo` for every one, then a name listed again
+/// straight after itself is listed once and `Build` is left out, because
+/// .NET lists both forms of some usage sharing settings and lists
+/// `Build(Stream)` among the IP Intelligence engine's settings. Generic
+/// types are left out of the available builders, because .NET lists its
+/// abstract base builders there, which no configuration can name.
+pub fn normalise_configuration_error(error: &str) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let mut in_settings = false;
+    for line in error.replace(CRLF, LF).split(LF) {
+        if line.starts_with(BUILD_METHODS_HEADING) {
+            in_settings = false;
+        }
+        if in_settings {
+            let name = line.split_once(" (").map_or(line, |(name, _)| name);
+            if name != BUILD_METHOD && lines.last().is_none_or(|last| last != name) {
+                lines.push(name.to_owned());
+            }
+            continue;
+        }
+        let mut line = without_builder_type(line);
+        if let Some(at) = line.find(AVAILABLE_BUILDERS) {
+            let start = at + AVAILABLE_BUILDERS.len();
+            let names: Vec<&str> = line[start..]
+                .split(',')
+                .filter(|name| !name.contains(GENERIC_MARK))
+                .collect();
+            line = format!("{}{}", &line[..start], names.join(","));
+        }
+        in_settings = line.trim_end().ends_with(SETTINGS_HEADING);
+        lines.push(line);
+    }
+    lines.join(LF)
+}
+
+/// `line` with each builder type name, between [`BEFORE_BUILDER_TYPE`] and
+/// [`AFTER_BUILDER_TYPE`], replaced by [`BUILDER_TYPE`].
+fn without_builder_type(line: &str) -> String {
+    let mut out = String::new();
+    let mut rest = line;
+    while let Some(at) = rest.find(BEFORE_BUILDER_TYPE) {
+        let start = at + BEFORE_BUILDER_TYPE.len();
+        out.push_str(&rest[..start]);
+        rest = &rest[start..];
+        if let Some(end) = rest.find(AFTER_BUILDER_TYPE) {
+            if !rest[..end].contains('\'') {
+                out.push_str(BUILDER_TYPE);
+                rest = &rest[end..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn field_of<'a>(line: &'a Value, field: &str) -> &'a Value {
@@ -1485,6 +1583,132 @@ mod tests {
                 ("metadata.properties[2].description", Kind::Value),
                 ("metadata.properties[6]", Kind::OnlyInRust),
             ]
+        );
+    }
+
+    /// The error .NET gave for an unknown usage sharing setting, cut to the
+    /// lines that differ by design, with CRLF endings.
+    const DOTNET_UNKNOWN_SETTING: &str = "Configuration failed to build.\r\n\
+        BuilderName: ShareUsageBuilder\r\n\
+        Builder 'FiftyOne.Pipeline.Engines.FiftyOne.FlowElements.ShareUsageBuilder' for \
+        element 3 has no 'Set' methods or 'Build' methods that match (case-insensitively) \
+        the following parameters: NOSUCHSETTING. The available configuration methods on \
+        this builder are: \r\n\
+        SetIncludedQueryStringParameters (RuntimeParameterInfo)\r\n\
+        SetIncludedQueryStringParameters (RuntimeParameterInfo)\r\n\
+        Build (RuntimeParameterInfo)\r\n\
+        SetSharePercentage (RuntimeParameterInfo)\r\n\
+        The available 'Build' methods have the following signatures: \r\n\
+        datafile (String),createTempDataCopy (Boolean)\r\n\
+        No Inner Exception.\r\n";
+
+    /// The same error from the crates.
+    const RUST_UNKNOWN_SETTING: &str = "Configuration failed to build.\n\
+        BuilderName: ShareUsageBuilder\n\
+        Builder 'fiftyone_pipeline_engines_fiftyone::configuration::ShareUsageBuilder' for \
+        element 3 has no 'Set' methods or 'Build' methods that match (case-insensitively) \
+        the following parameters: NOSUCHSETTING. The available configuration methods on \
+        this builder are: \n\
+        SetIncludedQueryStringParameters (List`1)\n\
+        SetSharePercentage (Double)\n\
+        The available 'Build' methods have the following signatures: \n\
+        datafile (String),createTempDataCopy (Boolean)\n\
+        No Inner Exception.\n";
+
+    fn configuration_line(error: &str) -> Value {
+        json!({"id": "configuration", "configuration": {"error": error}})
+    }
+
+    #[test]
+    fn configuration_errors_differing_only_by_design_are_the_same() {
+        let differences = compare_case(
+            &data_case("configuration"),
+            &configuration_line(DOTNET_UNKNOWN_SETTING),
+            &configuration_line(RUST_UNKNOWN_SETTING),
+        );
+        assert!(differences.is_empty(), "{differences:?}");
+        assert_eq!(
+            normalise_configuration_error(RUST_UNKNOWN_SETTING)
+                .lines()
+                .nth(2)
+                .unwrap(),
+            "Builder '{type}' for element 3 has no 'Set' methods or 'Build' methods that \
+             match (case-insensitively) the following parameters: NOSUCHSETTING. The \
+             available configuration methods on this builder are: "
+        );
+        let dotnet = "Method 'SetSharePercentage' on builder 'FiftyOne.X.ShareUsageBuilder' \
+                      for element 3 expects a parameter of type 'Double'.";
+        let rust = "Method 'SetSharePercentage' on builder 'fiftyone::ShareUsageBuilder' \
+                    for element 3 expects a parameter of type 'Double'.";
+        assert_eq!(
+            normalise_configuration_error(dotnet),
+            normalise_configuration_error(rust)
+        );
+    }
+
+    #[test]
+    fn generic_builders_are_left_out_of_the_available_builders() {
+        assert_eq!(
+            normalise_configuration_error(
+                "Could not find builder matching 'X' for element 2. Available builders are: \
+                 A`2,SequenceElementBuilder,B`1,ShareUsageBuilder"
+            ),
+            "Could not find builder matching 'X' for element 2. Available builders are: \
+             SequenceElementBuilder,ShareUsageBuilder"
+        );
+    }
+
+    #[test]
+    fn configuration_errors_differing_otherwise_are_a_value_difference() {
+        for (from, to) in [
+            ("element 3", "element 2"),
+            ("NOSUCHSETTING", "NOSUCH"),
+            (
+                "SetSharePercentage (Double)",
+                "SetSharePercentages (Double)",
+            ),
+            (
+                "createTempDataCopy (Boolean)",
+                "createTempDataCopy (String)",
+            ),
+            ("SetIncludedQueryStringParameters (List`1)\n", ""),
+        ] {
+            let rust = RUST_UNKNOWN_SETTING.replacen(from, to, 1);
+            assert_ne!(rust, RUST_UNKNOWN_SETTING, "{from}");
+            let differences = compare_case(
+                &data_case("configuration"),
+                &configuration_line(DOTNET_UNKNOWN_SETTING),
+                &configuration_line(&rust),
+            );
+            let found: Vec<(&str, Kind)> = differences
+                .iter()
+                .map(|d| (d.path.as_str(), d.kind))
+                .collect();
+            assert_eq!(found, [("configuration.error", Kind::Value)], "{from}");
+        }
+    }
+
+    #[test]
+    fn a_changed_configuration_setting_is_a_difference_at_its_path() {
+        let line = |share: f64| {
+            json!({"id": "configuration", "configuration": {
+                "error": null,
+                "elements": [{"dataKey": "sequence"},
+                    {"dataKey": "shareusage", "settings": {"sharePercentage": share}}]
+            }})
+        };
+        assert!(compare_case(&data_case("configuration"), &line(0.5), &line(0.5)).is_empty());
+        let differences = compare_case(&data_case("configuration"), &line(0.5), &line(1.0));
+        let found: Vec<(&str, Kind)> = differences
+            .iter()
+            .map(|d| (d.path.as_str(), d.kind))
+            .collect();
+        assert_eq!(
+            found,
+            [(
+                "configuration.elements[1].settings.sharePercentage",
+                Kind::Value
+            )]
         );
     }
 
