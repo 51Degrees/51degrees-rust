@@ -311,6 +311,56 @@ fn the_51did_cloud_engine_renders_the_section_with_no_setting() {
     assert!(!prompts_with(WITHOUT_51DID));
 }
 
+/// A cloud that answers only the evidence keys request, the one discovery
+/// request an engine with a license key alone makes, and refuses the rest.
+struct EvidenceKeysOnly;
+
+impl CloudHttpClient for EvidenceKeysOnly {
+    fn send(&self, request: &CloudHttpRequest) -> std::result::Result<CloudHttpResponse, String> {
+        if request.url.contains("evidencekeys") {
+            Ok(CloudHttpResponse {
+                status: 200,
+                body: r#"["header.user-agent"]"#.to_owned(),
+                retry_after: None,
+            })
+        } else {
+            Err("only the evidence keys request is answered".to_owned())
+        }
+    }
+}
+
+/// A license key alone gives the 51Did cloud engine no accessible properties,
+/// so a builder with no setting leaves the section out and
+/// `set_user_prompt(true)` keeps it.
+#[test]
+fn a_license_key_alone_leaves_the_section_out_unless_set_user_prompt_keeps_it() {
+    let prompts_with =
+        |configure: fn(JavaScriptBuilderElementBuilder) -> JavaScriptBuilderElementBuilder| {
+            let engine = Arc::new(
+                CloudRequestEngine::builder()
+                    .license_key("test-license-key")
+                    .values(["fodid.idprobglobal"])
+                    .http_client(Arc::new(EvidenceKeysOnly))
+                    .build()
+                    .expect("request engine builds"),
+            );
+            let fodid = FodIdCloudEngine::builder()
+                .cloud_request_engine(Arc::clone(&engine))
+                .build()
+                .expect("51Did engine builds");
+            let pipeline = pipeline(
+                |b| {
+                    b.add_element(Arc::clone(&engine) as Arc<dyn FlowElement>)
+                        .add_element(Arc::new(fodid))
+                },
+                &javascript_builder(configure),
+            );
+            prompts(&pipeline)
+        };
+    assert!(!prompts_with(|b| b));
+    assert!(prompts_with(|b| b.set_user_prompt(true)));
+}
+
 #[test]
 fn set_user_prompt_decides_whatever_the_pipeline_holds() {
     let on = javascript_builder(|b| b.set_user_prompt(true));
