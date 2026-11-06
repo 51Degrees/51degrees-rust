@@ -36,7 +36,8 @@ pub struct Fault {
     /// The file name the script was read under, without its extension, or
     /// `None` where the script came from a string with no name attached.
     pub script: Option<String>,
-    /// Where the script came from: a path, a built-in script name, or `code`.
+    /// Where the script came from: a path, `built in` and the name of a script
+    /// shipped in this crate, or `code`.
     pub source: String,
     /// The place in the document, such as `Rules[3].When.All[1]`. Empty for a
     /// fault about the document as a whole, such as text that will not parse.

@@ -274,8 +274,9 @@ use std::sync::Arc;
 // sharing element can be in only one pipeline at a time. An on-premise
 // facade's pipeline also runs its data file updates, so for on-premise data
 // build the facade with .share_usage(false), keep its pipeline, and add a
-// ShareUsageElement to the elements given to WebPipeline::build, as the
-// on-premise web example does.
+// ShareUsageElement to the elements given to WebPipeline::build. The
+// on-premise web example adds its ShareUsageElement to those elements in the
+// same way, beside a Hash engine it builds without the facade.
 let elements: Vec<Arc<dyn FlowElement>> =
     DeviceDetectionPipelineBuilder::cloud("YOUR_RESOURCE_KEY")
         .share_usage(true)
@@ -417,9 +418,10 @@ evidence flows back, and that the server renders a real detection result.
 
 CI runs it here in the `contract` job of the Examples workflow
 (`.github/workflows/examples.yml`), through `ci/run-browser-contract.ps1`,
-against both Device Detection web examples built from this checkout. The
-cloud example (`dd-web-getting-started-cloud`) talks to the public cloud with
-the bespoke Resource Key. The on-premise example
+against both Device Detection web examples built from this checkout's crates
+through `ci/test-examples-against-source.ps1`. The cloud example
+(`dd-web-getting-started-cloud`) talks to the public cloud with the bespoke
+Resource Key. The on-premise example
 (`dd-web-getting-started-onprem`) loads the TAC data file, because the Lite
 file has neither `DeviceType` nor the screen size JavaScript properties the
 contract checks. A test that fails, or that the suite skips as inconclusive,

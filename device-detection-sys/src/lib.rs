@@ -709,6 +709,21 @@ extern "C" {
 // Data file metadata shim (src/shim.c)
 // ---------------------------------------------------------------------------
 
+/// A string value. The `FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_` constants are
+/// the C library's `fiftyoneDegreesPropertyValueType` values
+/// (`src/common/propertyValueType.h`) the C++ `PropertyMetaDataBuilderHash`
+/// names, for the `value_type`
+/// [`fiftyoneDegreesShimHashGetDataFileProperty`] gives.
+pub const FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_STRING: u8 = 0;
+/// An integer value.
+pub const FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_INTEGER: u8 = 1;
+/// A double value.
+pub const FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_DOUBLE: u8 = 2;
+/// A boolean value.
+pub const FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_BOOLEAN: u8 = 3;
+/// A JavaScript value.
+pub const FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_JAVASCRIPT: u8 = 4;
+
 /// The name of a data file property, for
 /// [`fiftyoneDegreesShimHashGetDataFilePropertyString`].
 pub const SHIM_PROPERTY_NAME: c_int = 0;
@@ -719,18 +734,36 @@ pub const SHIM_PROPERTY_CATEGORY: c_int = 2;
 /// The URL of a data file property.
 pub const SHIM_PROPERTY_URL: c_int = 3;
 
-/// The name of a property value, for
-/// [`fiftyoneDegreesShimHashGetDataFilePropertyValueString`].
+/// The name of a property value, the first of its strings
+/// [`fiftyoneDegreesShimHashGetDataFilePropertyValues`] gives.
 pub const SHIM_VALUE_NAME: c_int = 0;
-/// The description of a property value.
+/// The description of a property value, given after its name.
 pub const SHIM_VALUE_DESCRIPTION: c_int = 1;
-/// The URL of a property value.
+/// The URL of a property value, given after its description.
 pub const SHIM_VALUE_URL: c_int = 2;
+
+/// Takes one string of a property value from
+/// [`fiftyoneDegreesShimHashGetDataFilePropertyValues`]. `field` is one of the
+/// `SHIM_VALUE_` constants and `value` a null terminated string valid only
+/// for the call. `context` is the pointer the caller passed.
+pub type ShimValueStringCallback =
+    unsafe extern "C" fn(context: *mut c_void, field: c_int, value: *const c_char);
 
 /// Returned by the data file metadata string readers when the string, or the
 /// property, value or component it belongs to, cannot be read, or an index
 /// is out of range. An absent string gives zero instead.
 pub const SHIM_STRING_FAILED: usize = usize::MAX;
+
+/// Returned by [`fiftyoneDegreesShimHashFindDataFilePropertyValue`] when the
+/// property or the value cannot be read, or the property index is out of
+/// range.
+pub const SHIM_FIND_FAILED: c_int = 0;
+/// Returned by [`fiftyoneDegreesShimHashFindDataFilePropertyValue`] when it
+/// found the value and gave its strings.
+pub const SHIM_FIND_FOUND: c_int = 1;
+/// Returned by [`fiftyoneDegreesShimHashFindDataFilePropertyValue`] when the
+/// property has no value with the name.
+pub const SHIM_FIND_NOT_FOUND: c_int = 2;
 
 extern "C" {
     /// Returns the number of properties the data file defines, including
@@ -743,14 +776,17 @@ extern "C" {
 
     /// Reads the fields of the data file property at `property_index` that
     /// are not strings and returns 1, or returns 0 when the index is out of
-    /// range or the property cannot be read. `value_type` is the C library's
-    /// property value type, `available` is 1 when the data set was created
-    /// with the property, `required_index` is the index the results getters
-    /// take for it or -1 for none, `component_id` is the id of the property's
-    /// component or 0 for none, `value_count` is the number of values the
-    /// file holds for the property, `default_value_number` the place of its
-    /// default value among them or -1 for none, and `map_count` the number of
-    /// data tiers it is in. See `src/shim.c`.
+    /// range or the property or its name cannot be read, the name being read
+    /// to find whether the data set was created with the property.
+    /// `value_type` is the C library's property value type, `available` is 1
+    /// when the data set was created with the property, `required_index` is
+    /// the index the results getters take for it or -1 for none,
+    /// `component_id` is the id of the property's component or 0 for none,
+    /// `value_count` is the number of values the file holds for the property
+    /// or 0 when they are not all in its values collection,
+    /// `default_value_number` the place of its default value among them or -1
+    /// for none, and `map_count` the number of data tiers it is in. See
+    /// `src/shim.c`.
     ///
     /// # Safety
     /// `manager` must be an initialized Hash manager. Every output pointer
@@ -807,23 +843,49 @@ extern "C" {
         length: usize,
     ) -> usize;
 
-    /// Writes the string `field`, one of the `SHIM_VALUE_` constants, of the
-    /// value at `value_number` among those the data file holds for the
-    /// property at `property_index` into `buffer`, as much as fits, and
-    /// returns its full length, or [`SHIM_STRING_FAILED`] when either index is
-    /// out of range or the string cannot be read. See `src/shim.c`.
+    /// Reads at most `count` of the values the data file holds for the
+    /// property at `property_index`, from the one at `value_number` among
+    /// them, and returns 1. For each value it calls `callback` with `context`
+    /// three times, with its name, description and URL in that order, an
+    /// absent description or URL being empty. A `value_number` at or past the
+    /// last value reads none. Returns 0 when the property index is out of
+    /// range or the property, a value or a string cannot be read, after
+    /// giving `callback` the strings read before the failure. See
+    /// `src/shim.c`.
     ///
     /// # Safety
-    /// `manager` must be an initialized Hash manager. `buffer` must point to
-    /// `length` writable bytes.
-    pub fn fiftyoneDegreesShimHashGetDataFilePropertyValueString(
+    /// `manager` must be an initialized Hash manager, and `context` must be
+    /// what `callback` expects.
+    pub fn fiftyoneDegreesShimHashGetDataFilePropertyValues(
         manager: *mut ResourceManager,
         property_index: u32,
         value_number: u32,
-        field: c_int,
-        buffer: *mut c_char,
-        length: usize,
-    ) -> usize;
+        count: u32,
+        callback: ShimValueStringCallback,
+        context: *mut c_void,
+    ) -> c_int;
+
+    /// Finds the value named `name`, matched exactly, among those the data
+    /// file holds for the property at `property_index`, calls `callback` with
+    /// its name, description and URL as
+    /// [`fiftyoneDegreesShimHashGetDataFilePropertyValues`] does, and returns
+    /// [`SHIM_FIND_FOUND`]. Returns [`SHIM_FIND_NOT_FOUND`] when the property
+    /// has no such value, or [`SHIM_FIND_FAILED`] when the property index is
+    /// out of range or the property, a value or a string cannot be read. The
+    /// value is found by the C library's binary search over the property's
+    /// values, which are in order of their names, so a value the data file
+    /// holds out of that order can be missed. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager, `name` a null
+    /// terminated string, and `context` what `callback` expects.
+    pub fn fiftyoneDegreesShimHashFindDataFilePropertyValue(
+        manager: *mut ResourceManager,
+        property_index: u32,
+        name: *const c_char,
+        callback: ShimValueStringCallback,
+        context: *mut c_void,
+    ) -> c_int;
 
     /// Returns the number of components the data set lists, or zero when no
     /// data set is available. See `src/shim.c`.

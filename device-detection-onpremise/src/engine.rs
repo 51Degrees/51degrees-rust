@@ -30,6 +30,7 @@
 
 use std::collections::HashMap;
 use std::ffi::CStr;
+use std::ops::Range;
 use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -210,7 +211,7 @@ pub struct DeviceDetectionOnPremiseEngine {
     /// The property metadata and tier of the loaded data set, for
     /// [`FlowElement::properties`], [`AspectEngine::aspect_properties`] and
     /// [`AspectEngine::data_source_tier`].
-    metadata: Retained<EngineMetadata>,
+    metadata: Retained<LentMetadata>,
 
     /// The tier the builder set, which every data set loaded reports, or
     /// `None` to report the tier each data file names.
@@ -240,24 +241,44 @@ pub struct DeviceDetectionOnPremiseEngine {
 struct LoadedDataSet {
     manager: Arc<Manager>,
     readable: Arc<ReadableProperties>,
-    /// The place of each data file property among the data file's properties,
-    /// by name, which [`Manager::data_file_property_values`] takes.
-    property_indexes: HashMap<String, u32>,
+    /// Each data file property's place among the data file's properties and
+    /// its number of values, by name.
+    file_properties: HashMap<String, FilePropertyPlace>,
     /// Why a property is missing, from the metadata of this data set, added to
     /// every device data a detection writes.
     missing: Arc<MissingPropertySource>,
+    /// The 51Degrees metadata of each property, freed with the data set once
+    /// no caller holds it.
+    fiftyone_properties: Arc<[FiftyOneAspectPropertyMetaData]>,
+    /// The components, each with its properties, freed in the same way.
+    components: Arc<[ComponentMetaData]>,
     /// Held only to be dropped with the data set, and declared after the
     /// manager, so it is removed after the data set that has it open is freed.
     _copy: Option<OperationalCopy>,
 }
 
+/// Where a data file property is among the data file's properties, and how
+/// many values the data file holds for it.
+#[derive(Clone, Copy)]
+struct FilePropertyPlace {
+    /// The index [`Manager::data_file_property_value_range`] takes.
+    index: u32,
+    value_count: u32,
+}
+
 /// The property and component metadata and tier of a loaded data set.
-#[derive(PartialEq)]
 struct EngineMetadata {
-    properties: Vec<PropertyMetaData>,
-    aspect_properties: Vec<AspectPropertyMetaData>,
+    lent: LentMetadata,
     fiftyone_properties: Vec<FiftyOneAspectPropertyMetaData>,
     components: Vec<ComponentMetaData>,
+}
+
+/// The part of [`EngineMetadata`] the pipeline traits lend by reference,
+/// which [`Retained`] keeps for the engine's life.
+#[derive(PartialEq)]
+struct LentMetadata {
+    properties: Vec<PropertyMetaData>,
+    aspect_properties: Vec<AspectPropertyMetaData>,
     tier: String,
 }
 
@@ -265,11 +286,15 @@ struct EngineMetadata {
 /// metadata, reporting `tier_override` when it is set, otherwise the tier the
 /// data file names. The missing property rules always compare with the tier
 /// the data file names, because that is what each property's tiers list.
+///
+/// `copy` comes before `manager` because Rust drops later parameters first,
+/// so on an error the data set is freed, closing the copy, before the copy
+/// is removed, as [`LoadedDataSet`] orders them.
 fn describe(
-    manager: Arc<Manager>,
     copy: Option<OperationalCopy>,
+    manager: Arc<Manager>,
     tier_override: &Option<String>,
-) -> Result<(LoadedDataSet, EngineMetadata)> {
+) -> Result<(LoadedDataSet, LentMetadata)> {
     // An explicit builder override wins, then the tier read from the native
     // data file header (Lite, Enterprise, TAC and so on), then the safe Lite
     // default when the native name is absent.
@@ -278,11 +303,21 @@ fn describe(
         .unwrap_or_else(|| DEFAULT_DATA_SOURCE_TIER.to_owned());
     let tier = tier_override.clone().unwrap_or_else(|| file_tier.clone());
     let file_properties = manager.data_file_properties()?;
-    let metadata = build_metadata(&file_properties, &manager.data_file_components()?, tier);
+    let EngineMetadata {
+        lent,
+        fiftyone_properties,
+        components,
+    } = build_metadata(&file_properties, &manager.data_file_components()?, tier);
     let readable = Arc::new(ReadableProperties::new(&file_properties));
-    let property_indexes = file_properties
+    let file_property_places = file_properties
         .iter()
-        .map(|property| (property.name.clone(), property.index))
+        .map(|property| {
+            let place = FilePropertyPlace {
+                index: property.index,
+                value_count: property.value_count,
+            };
+            (property.name.clone(), place)
+        })
         .collect();
     let missing = Arc::new(
         MissingPropertySource::new(
@@ -290,7 +325,7 @@ fn describe(
             ENGINE_TYPE_NAME,
             EngineDeployment::OnPremise,
             file_tier,
-            metadata.aspect_properties.clone(),
+            lent.aspect_properties.clone(),
         )
         .with_typed_properties(is_typed_property),
     );
@@ -298,11 +333,13 @@ fn describe(
         LoadedDataSet {
             manager,
             readable,
-            property_indexes,
+            file_properties: file_property_places,
             missing,
+            fiftyone_properties: fiftyone_properties.into(),
+            components: components.into(),
             _copy: copy,
         },
-        metadata,
+        lent,
     ))
 }
 
@@ -312,10 +349,11 @@ impl DeviceDetectionOnPremiseEngine {
     /// Called by the builder once it has opened the data file, or `copy` of
     /// it. Derives the property and evidence-key metadata from the data set,
     /// records the data-file publish time from the file on disk, and assembles
-    /// the engine. Fails when the data file's metadata cannot be read.
+    /// the engine. Fails when the data file's metadata cannot be read. `copy`
+    /// comes before `manager` so it is dropped after it, as in `describe`.
     pub(crate) fn from_manager(
-        manager: Arc<Manager>,
         copy: Option<OperationalCopy>,
+        manager: Arc<Manager>,
         profile: PerformanceProfile,
         requested_properties: Vec<String>,
         data_file_config: DataFileConfiguration,
@@ -323,7 +361,7 @@ impl DeviceDetectionOnPremiseEngine {
         concurrency: Option<u16>,
     ) -> Result<Self> {
         let evidence_key_filter = HashEvidenceKeyFilter::new(named_evidence_keys(&manager));
-        let (loaded, metadata) = describe(manager, copy, &data_source_tier)?;
+        let (loaded, metadata) = describe(copy, manager, &data_source_tier)?;
 
         let data_file = Arc::new(AspectEngineDataFile::new(data_file_config));
         // Record the publish time from the data file on disk, the best signal
@@ -389,15 +427,21 @@ impl DeviceDetectionOnPremiseEngine {
     /// a data file can hold hundreds of thousands of them, so
     /// [`Self::property_values`] reads them when they are asked for. A match
     /// metric's metadata lists its values.
-    pub fn fiftyone_properties(&self) -> &[FiftyOneAspectPropertyMetaData] {
-        &self.metadata.current().fiftyone_properties
+    ///
+    /// The list is the loaded data set's. A refresh loads a new list and frees
+    /// this one once no caller holds it.
+    pub fn fiftyone_properties(&self) -> Arc<[FiftyOneAspectPropertyMetaData]> {
+        Arc::clone(&self.loaded.load().fiftyone_properties)
     }
 
     /// The components the data file defines, such as the hardware and the
     /// browser, each with every property the data file gives it, then the
     /// `Metrics` component, which holds the match metrics.
-    pub fn components(&self) -> &[ComponentMetaData] {
-        &self.metadata.current().components
+    ///
+    /// The list is the loaded data set's. A refresh loads a new list and frees
+    /// this one once no caller holds it.
+    pub fn components(&self) -> Arc<[ComponentMetaData]> {
+        Arc::clone(&self.loaded.load().components)
     }
 
     /// The values the property named `property_name`, matched exactly, can
@@ -406,18 +450,93 @@ impl DeviceDetectionOnPremiseEngine {
     ///
     /// A data file property's values are read from the loaded data file on
     /// each call, in the data file's order. A match metric gives the values its
-    /// metadata lists, which is none for all but `Method`.
+    /// metadata lists, which is none for all but `Method`. A data file can
+    /// hold over a hundred thousand values for one property, so
+    /// [`Self::property_value_range`] reads part of the list.
     pub fn property_values(&self, property_name: &str) -> Result<Option<Vec<ValueMetaData>>> {
+        self.property_value_range(property_name, 0..usize::MAX)
+    }
+
+    /// The values at the places `range` covers among those
+    /// [`Self::property_values`] gives for the property named
+    /// `property_name`, so a caller that shows the first 20 reads only 20.
+    /// The part of `range` past the last value is left out. [`None`] when
+    /// the engine lists no such property.
+    pub fn property_value_range(
+        &self,
+        property_name: &str,
+        range: Range<usize>,
+    ) -> Result<Option<Vec<ValueMetaData>>> {
         let loaded = self.loaded.load();
-        if let Some(index) = loaded.property_indexes.get(property_name) {
-            let values = loaded.manager.data_file_property_values(*index)?;
+        if let Some(place) = loaded.file_properties.get(property_name) {
+            let start = u32::try_from(range.start).unwrap_or(u32::MAX);
+            let end = u32::try_from(range.end).unwrap_or(u32::MAX);
+            let values = loaded
+                .manager
+                .data_file_property_value_range(place.index, start..end)?;
             return Ok(Some(values.iter().map(value_metadata).collect()));
         }
-        Ok(self
-            .fiftyone_properties()
+        Ok(loaded
+            .fiftyone_properties
             .iter()
             .find(|property| property.name() == property_name)
-            .map(|property| property.values().to_vec()))
+            .map(|property| {
+                let values = property.values();
+                let end = range.end.min(values.len());
+                values[range.start.min(end)..end].to_vec()
+            }))
+    }
+
+    /// The number of values [`Self::property_values`] gives for the property
+    /// named `property_name`, or [`None`] when the engine lists no such
+    /// property. No value is read to count them.
+    pub fn property_value_count(&self, property_name: &str) -> Option<usize> {
+        let loaded = self.loaded.load();
+        if let Some(place) = loaded.file_properties.get(property_name) {
+            return Some(place.value_count as usize);
+        }
+        loaded
+            .fiftyone_properties
+            .iter()
+            .find(|property| property.name() == property_name)
+            .map(|property| property.values().len())
+    }
+
+    /// The value named `value_name` among those [`Self::property_values`]
+    /// gives for the property named `property_name`, both matched exactly, as
+    /// .NET's `GetValue(valueName)` matches them, or [`None`] when the engine
+    /// lists no such property or the property has no such value. Fails when
+    /// the data file's values cannot be read.
+    ///
+    /// [`FiftyOneAspectPropertyMetaData::value`] finds nothing for a data file
+    /// property, because its metadata lists no values. This finds the value in
+    /// the loaded data file without reading the property's other values, by
+    /// the C library's binary search over values in order of their names, as
+    /// .NET finds it. So a value the data file holds out of that order can be
+    /// missed.
+    pub fn property_value(
+        &self,
+        property_name: &str,
+        value_name: &str,
+    ) -> Result<Option<ValueMetaData>> {
+        let loaded = self.loaded.load();
+        if let Some(place) = loaded.file_properties.get(property_name) {
+            let value = loaded
+                .manager
+                .data_file_property_value(place.index, value_name)?;
+            return Ok(value.as_ref().map(value_metadata));
+        }
+        Ok(loaded
+            .fiftyone_properties
+            .iter()
+            .find(|property| property.name() == property_name)
+            .and_then(|property| {
+                property
+                    .values()
+                    .iter()
+                    .find(|value| value.name == value_name)
+                    .cloned()
+            }))
     }
 
     /// Run a detection for `data` into new device data.
@@ -553,7 +672,7 @@ impl DeviceDetectionOnPremiseEngine {
             self.concurrency,
         )?;
         let evidence_keys = named_evidence_keys(&manager);
-        let (loaded, metadata) = describe(manager, copy, &self.tier_override)?;
+        let (loaded, metadata) = describe(copy, manager, &self.tier_override)?;
         self.evidence_key_filter.replace(evidence_keys);
         self.loaded.store(Arc::new(loaded));
         self.metadata.replace(metadata);
@@ -635,7 +754,9 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
     fn refresh(&self, _data_file_identifier: Option<&str>) -> Result<()> {
         // A single-file engine ignores the identifier. Reload from the file's
         // configured path on disk and hot-swap it in. A reload that fails is
-        // logged at error level, as .NET does, and returned.
+        // logged at error level, as .NET does, and returned. The message keeps
+        // .NET's "If issue persists" so support can search for one phrase
+        // across languages.
         let path = self
             .data_files
             .first()
@@ -644,7 +765,7 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
             Some(path) => self.reload_from_path(&path).inspect_err(|error| {
                 log::error!(
                     "Failed to refresh data from '{}'. The engine keeps the data it had. \
-                     If this persists, please contact support@51degrees.com. {error}",
+                     If issue persists, please contact support@51degrees.com. {error}",
                     path.display()
                 );
             }),
@@ -847,11 +968,13 @@ fn build_metadata(
     components.push(component(METRICS_COMPONENT_ID, METRICS_COMPONENT_NAME));
 
     EngineMetadata {
-        properties,
-        aspect_properties,
+        lent: LentMetadata {
+            properties,
+            aspect_properties,
+            tier,
+        },
         fiftyone_properties,
         components,
-        tier,
     }
 }
 

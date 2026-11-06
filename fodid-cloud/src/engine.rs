@@ -32,8 +32,8 @@ use fiftyone_pipeline_core::{
     PropertyValueType, Result,
 };
 use fiftyone_pipeline_engines::{
-    missing_property_reason, AspectEngine, AspectPropertyMetaData, EngineDeployment,
-    EngineMissingPropertyContext, MissingPropertyResult,
+    default_missing_property_reason, AspectEngine, AspectPropertyMetaData, EngineDeployment,
+    MissingPropertyResult,
 };
 use serde_json::Value;
 
@@ -165,8 +165,8 @@ impl FodIdCloudEngine {
     /// Derive the identifier metadata from the request engine's accessible
     /// properties, taking the product keyed by `fodid` compared ignoring case,
     /// because the cloud service reports the product as `FODid`. Returns `None`
-    /// if the discovery fetch fails or the resource key grants no identifier
-    /// product, in which case the engine keeps reporting the shared defaults.
+    /// if the resource key grants no identifier product or lists it with no
+    /// properties.
     fn derive_metadata(
         products: &LicensedProducts,
     ) -> Option<(Vec<PropertyMetaData>, Vec<AspectPropertyMetaData>)> {
@@ -200,18 +200,40 @@ impl FodIdCloudEngine {
         Some((core, aspect))
     }
 
-    /// Ensure the lazily derived metadata is populated, fetching the request
-    /// engine's accessible properties on first use. A discovery failure leaves
-    /// the caches empty, so the engine continues with the shared defaults,
-    /// degrading gracefully when the metadata cannot be loaded.
+    /// Set the metadata once the request engine's discovery has completed.
+    ///
+    /// Until then the caches stay empty and the engine reports the shared
+    /// defaults. When the accessible properties hold no identifier product, or
+    /// list it with no properties, the engine gets empty metadata, as the
+    /// missing product rule of draft specifications#75 says, where .NET
+    /// refuses such a key and fails the pipeline build. An engine with only a
+    /// license key gets empty metadata too, because it has no accessible
+    /// properties to read, as the cloud request engine specification says.
+    /// With a resource key the call that sets the empty metadata logs an
+    /// error, so it is logged once. The properties are set last because a
+    /// request that finds them set reads the rest.
     fn ensure_metadata(&self) {
         if self.properties.get().is_some() {
             return;
         }
-        if let Ok(products) = self.request_engine.public_properties() {
-            if let Some((core, aspect)) = Self::derive_metadata(products) {
-                let _ = self.properties.set(core);
+        let Ok(products) = self.request_engine.public_properties() else {
+            return;
+        };
+        match Self::derive_metadata(products) {
+            Some((core, aspect)) => {
                 let _ = self.aspect_properties.set(aspect);
+                let _ = self.properties.set(core);
+            }
+            None => {
+                let _ = self.aspect_properties.set(Vec::new());
+                if self.properties.set(Vec::new()).is_ok()
+                    && self.request_engine.resource_key().is_some()
+                {
+                    log::error!(
+                        "Aspect properties could not be loaded for {ENGINE_NAME} - \
+                         '{FODID_ELEMENT_DATA_KEY}'"
+                    );
+                }
             }
         }
     }
@@ -261,10 +283,16 @@ impl FodIdCloudEngine {
 
 impl FlowElement for FodIdCloudEngine {
     fn process(&self, data: &mut FlowData) -> Result<()> {
+        self.ensure_metadata();
         let element = match self.build_data(data)? {
             Some(element) => element,
             None => {
-                CloudRequestEngine::record_not_processed(data, ENGINE_NAME, FODID_ELEMENT_DATA_KEY);
+                CloudRequestEngine::record_not_processed(
+                    data,
+                    ENGINE_NAME,
+                    FODID_ELEMENT_DATA_KEY,
+                    module_path!(),
+                );
                 FodIdDataBase::new()
             }
         };
@@ -313,18 +341,17 @@ impl AspectEngine for FodIdCloudEngine {
         self.properties.get().is_some()
     }
 
+    /// The request engine asks for the property list when it is built, or is
+    /// given it, so a list it still lacks is one whose request failed.
+    fn property_list_request_failed(&self) -> bool {
+        !self.has_loaded_properties() && self.request_engine.public_properties().is_err()
+    }
+
     fn missing_property_reason(&self, property_name: &str) -> MissingPropertyResult {
-        // Trigger discovery so the reason reflects the live cloud metadata
-        // rather than the pre-discovery defaults.
+        // Read the metadata if discovery has completed, so the reason reflects
+        // the live cloud metadata rather than the pre-discovery defaults.
         self.ensure_metadata();
-        let ctx = EngineMissingPropertyContext {
-            element_data_key: self.data_key(),
-            deployment: self.deployment(),
-            data_source_tier: self.data_source_tier(),
-            properties_loaded: self.has_loaded_properties(),
-            properties: self.aspect_properties(),
-        };
-        missing_property_reason(property_name, &ctx)
+        default_missing_property_reason(self, property_name)
     }
 }
 

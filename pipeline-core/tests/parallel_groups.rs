@@ -33,8 +33,8 @@ use std::time::Duration;
 
 use fiftyone_pipeline_core::{
     ElementData, Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData,
-    FlowElement, MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue,
-    PropertyValueType, Result, TypedKey,
+    FlowElement, MapElementData, NoValueError, Pipeline, PipelineBuilder, PropertyMetaData,
+    PropertyValue, PropertyValueType, Result, TypedKey,
 };
 
 /// How long each of the two slow elements waits.
@@ -577,6 +577,71 @@ fn only_the_first_of_two_elements_adding_one_key_is_kept() {
                 .to_owned()
         )]
     );
+}
+
+/// What building `builder` gave, being "built" or the error's message.
+fn build_outcome(builder: PipelineBuilder) -> String {
+    match builder.build() {
+        Ok(_) => "built".to_owned(),
+        Err(error) => error.to_string(),
+    }
+}
+
+#[test]
+fn two_elements_of_a_group_with_one_data_key_are_refused_when_built() {
+    let builder = Pipeline::builder().add_parallel_elements([
+        writer("same", "one"),
+        writer("other", "two"),
+        writer("Same", "three"),
+    ]);
+
+    assert_eq!(
+        build_outcome(builder),
+        "pipeline configuration error: Two elements of a parallel group have \
+         the data key 'Same', so only one of them could keep its data. Add one \
+         of them on its own."
+    );
+}
+
+#[test]
+fn an_element_of_a_group_with_the_data_key_of_one_before_it_is_refused_when_built() {
+    let message = |key: &str| {
+        format!(
+            "pipeline configuration error: An element of a parallel group has \
+             the data key '{key}' of an element that runs before the group, so \
+             it could not add its data once that element had. Add it on its own."
+        )
+    };
+    let after_an_element = Pipeline::builder()
+        .add_element(writer("shared", "before"))
+        .add_parallel_elements([writer("other", "beside"), writer("SHARED", "in")]);
+    let after_a_group = Pipeline::builder()
+        .add_parallel_elements([writer("one", "a"), writer("shared", "b")])
+        .add_parallel_elements([writer("Shared", "c"), writer("two", "d")]);
+
+    assert_eq!(build_outcome(after_an_element), message("SHARED"));
+    assert_eq!(build_outcome(after_a_group), message("Shared"));
+}
+
+/// An element on its own may have the data key of an element before it, on
+/// its own or in a group, because it gets the data already under its key, as
+/// it does in .NET.
+#[test]
+fn an_element_on_its_own_may_have_the_data_key_of_one_before_it() {
+    let pipeline = Pipeline::builder()
+        .add_element(writer("first", "before"))
+        .add_element(writer("First", "again"))
+        .add_parallel_elements([writer("second", "in"), writer("third", "beside")])
+        .add_element(writer("second", "after"))
+        .build()
+        .expect("the pipeline builds");
+    let mut data = pipeline.create_flow_data_with(evidence());
+    data.process().expect("processing succeeds");
+
+    assert_eq!(read(&data, "first"), "before");
+    assert_eq!(read(&data, "second"), "in");
+    assert_eq!(read(&data, "third"), "beside");
+    assert!(errors(&data).is_empty(), "{:?}", errors(&data));
 }
 
 #[cfg(panic = "unwind")]

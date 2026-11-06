@@ -113,6 +113,8 @@ fn a_refresh_reads_and_reports_the_properties_of_the_new_data_file() {
         built.available_properties()
     );
     assert_eq!(refreshed.properties(), built.properties());
+    assert_eq!(refreshed.fiftyone_properties(), built.fiftyone_properties());
+    assert_eq!(refreshed.components(), built.components());
     assert_eq!(refreshed.aspect_properties(), built.aspect_properties());
     let value = richer_value(&refreshed);
     assert!(

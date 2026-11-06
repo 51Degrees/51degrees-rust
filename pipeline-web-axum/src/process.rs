@@ -28,7 +28,10 @@
 //! synchronous HTTP call. Running that directly inside an async task would stall
 //! the runtime's worker thread, so [`process_request`] hands the work to
 //! [`tokio::task::spawn_blocking`], which runs it on the blocking thread pool and
-//! returns the processed [`FlowData`].
+//! returns the processed [`FlowData`]. The endpoint handlers use
+//! [`process_then`] instead, which also serves the endpoint in that task,
+//! because when a builder left no data, serving builds the body again, which
+//! for the script means rendering and minifying it.
 //!
 //! The captured request parts (header map, URI, buffered body, peer address) are
 //! moved into the blocking closure so it owns everything it reads. [`FlowData`]
@@ -36,7 +39,7 @@
 
 use std::net::SocketAddr;
 
-use axum::http::{HeaderMap, Uri};
+use axum::http::{HeaderMap, Method, Uri};
 use fiftyone_pipeline_core::FlowData;
 use fiftyone_pipeline_web::build_evidence;
 
@@ -47,7 +50,8 @@ use crate::state::FiftyOneState;
 /// blocking thread.
 ///
 /// Built by the middleware and the endpoint handlers after they have read the
-/// request, then consumed by [`process_request`]. Owning the parts (rather than
+/// request, then moved onto the blocking thread pool to be processed, as
+/// [`process_request`] does. Owning the parts (rather than
 /// borrowing the live request) is what lets the heavy work move off the async
 /// runtime.
 pub struct CapturedRequest {
@@ -89,18 +93,38 @@ pub async fn process_request(
     state: &FiftyOneState,
     captured: CapturedRequest,
 ) -> Result<FlowData, tokio::task::JoinError> {
+    process_then(state, captured, None, |flow_data, _| flow_data).await
+}
+
+/// As [`process_request`], then pass the processed [`FlowData`] and the
+/// request view, carrying `method` when given, to `then` in the same blocking
+/// task and return its result. This returns `Err` when processing or `then`
+/// panics.
+pub(crate) async fn process_then<T, F>(
+    state: &FiftyOneState,
+    captured: CapturedRequest,
+    method: Option<Method>,
+    then: F,
+) -> Result<T, tokio::task::JoinError>
+where
+    F: FnOnce(FlowData, &AxumRequestData<'_>) -> T + Send + 'static,
+    T: Send + 'static,
+{
     let pipeline = std::sync::Arc::clone(state.pipeline());
 
     tokio::task::spawn_blocking(move || {
         // Evidence is built inside the closure so the borrowed request view
         // never crosses the spawn boundary; only owned data does.
-        let request = captured.request_data();
+        let mut request = captured.request_data();
+        if let Some(method) = method {
+            request = request.with_method(method);
+        }
         let evidence = build_evidence(&request, pipeline.evidence_key_filter());
         let mut flow_data = pipeline.create_flow_data_with(evidence);
         // Errors are suppressed onto the flow data by the web pipeline, so this
         // returns Ok; the result is read from flow_data.errors() downstream.
         let _ = flow_data.process();
-        flow_data
+        then(flow_data, &request)
     })
     .await
 }

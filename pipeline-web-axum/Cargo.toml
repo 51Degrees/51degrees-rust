@@ -29,6 +29,8 @@ tokio = { workspace = true, features = ["rt"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tower = { workspace = true, features = ["util"] }
 serde_json.workspace = true
+# Records which thread logged that a builder left no data.
+log = "0.4"
 fiftyone-pipeline-engines-fiftyone = { version = "4.5.2", path = "../pipeline-engines-fiftyone" }
 fiftyone-json-builder = { version = "4.5.2", path = "../json-builder" }
 fiftyone-javascript-builder = { version = "4.5.2", path = "../javascript-builder" }

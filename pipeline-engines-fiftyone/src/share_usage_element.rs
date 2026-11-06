@@ -495,7 +495,8 @@ enum Discarded {
 /// element is dropped.
 ///
 /// One element can be in only one pipeline at a time. Building a second
-/// pipeline with it fails while the first is still alive.
+/// pipeline with it fails while the first is still alive, and so does adding
+/// it to one pipeline twice.
 pub struct ShareUsageElement {
     filter: Arc<EvidenceKeyFilterShareUsage>,
     properties: Vec<PropertyMetaData>,
@@ -775,10 +776,21 @@ impl FlowElement for ShareUsageElement {
         true
     }
 
-    /// Refuses a second pipeline while the first is alive, matching the .NET
-    /// element, which refuses a second at any time.
+    /// Refuses a second pipeline while the first is alive, and the same
+    /// pipeline twice. Unlike the .NET element, which refuses a second
+    /// pipeline for its whole life, it accepts a new pipeline once the first
+    /// has been dropped.
     fn add_pipeline(&self, pipeline: &Arc<Pipeline>) -> Result<()> {
         let mut current = self.pipeline.lock().unwrap_or_else(PoisonError::into_inner);
+        // A pipeline that has been dropped no longer holds the element, so
+        // only a live pipeline can be this one again.
+        if current.strong_count() > 0 && std::ptr::eq(current.as_ptr(), Arc::as_ptr(pipeline)) {
+            return Err(Error::configuration(
+                "A ShareUsageElement can be in only one pipeline at a time, and \
+                 this one was added to the same pipeline more than once. Add it \
+                 once.",
+            ));
+        }
         if current.strong_count() > 0 {
             return Err(Error::configuration(
                 "A ShareUsageElement can be in only one pipeline at a time, and \

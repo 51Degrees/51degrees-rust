@@ -28,12 +28,15 @@ use fiftyone_pipeline_core::{
     Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
     Result,
 };
-use fiftyone_pipeline_engines::{AspectEngine, AspectPropertyMetaData, EngineDeployment};
+use fiftyone_pipeline_engines::{
+    default_missing_property_reason, AspectEngine, AspectPropertyMetaData, EngineDeployment,
+    MissingPropertyResult,
+};
 
 use fiftyone_cloud_request_engine::CloudRequestEngine;
 
 use crate::dto::map_device_object;
-use crate::meta::{cloud_json, fill_metadata, DiscoveredMetadata};
+use crate::meta::{cloud_json, fill_metadata, property_list_request_failed, DiscoveredMetadata};
 use crate::multi_device::{MultiDeviceData, HARDWARE_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY};
 
 /// The engine's name in configuration errors and log records.
@@ -192,6 +195,7 @@ impl HardwareProfileCloudEngine {
                     data,
                     ENGINE_NAME,
                     HARDWARE_ELEMENT_DATA_KEY,
+                    module_path!(),
                 );
                 data.get_or_add(HARDWARE_DATA_KEY, MultiDeviceData::new)?;
                 return Ok(());
@@ -292,6 +296,17 @@ impl AspectEngine for HardwareProfileCloudEngine {
 
     fn has_loaded_properties(&self) -> bool {
         self.metadata.get().is_some()
+    }
+
+    fn property_list_request_failed(&self) -> bool {
+        property_list_request_failed(self.has_loaded_properties(), &self.request_engine)
+    }
+
+    fn missing_property_reason(&self, property_name: &str) -> MissingPropertyResult {
+        // Read the metadata if discovery has completed since the last
+        // process call, so the reason reflects it.
+        self.ensure_metadata();
+        default_missing_property_reason(self, property_name)
     }
 }
 

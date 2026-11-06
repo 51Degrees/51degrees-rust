@@ -768,6 +768,7 @@ dependencies = [
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
  "fodid",
+ "log",
  "once_cell",
  "serde_json",
 ]
@@ -820,6 +821,7 @@ version = "4.5.2"
 dependencies = [
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "log",
 ]
 
 [[package]]
@@ -873,6 +875,7 @@ version = "4.5.2"
 dependencies = [
  "ahash",
  "indexmap",
+ "libc",
  "log",
  "thiserror 2.0.18",
 ]
@@ -938,6 +941,7 @@ dependencies = [
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines-fiftyone",
  "fiftyone-pipeline-web",
+ "log",
  "serde_json",
  "tokio",
  "tower",

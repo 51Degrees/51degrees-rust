@@ -44,9 +44,10 @@
 //!   (JSON).
 //! - `Content-Length`: the UTF-8 byte length of the body.
 //! - `Cache-Control`: `private, max-age=1800` when the flow data recorded no
-//!   processing errors and the builder's data was there, otherwise `no-cache`.
-//!   A `no-cache` response carries no `ETag`, so a browser that kept it
-//!   fetches it again in full rather than having it confirmed by a `304`.
+//!   processing errors and the builder's data was there, otherwise
+//!   `private, no-cache`. That response carries no `ETag`, so a browser that
+//!   kept it fetches it again in full rather than having it confirmed by a
+//!   `304`.
 //! - `Vary`: the comma-joined list of HTTP-header evidence keys in the
 //!   evidence-key whitelist [`EndpointOptions::current_vary_whitelist`] gives,
 //!   with the `header.` prefix stripped and the names de-duplicated
@@ -58,24 +59,42 @@
 //!   but only when an origin is present and is not the literal string `null`.
 //!
 //! When the request's `If-None-Match` equals the computed `ETag`, both
-//! endpoints instead return `304 Not Modified` with an empty body and no other
-//! headers. That is checked before the body is built, so nothing below is
-//! logged or built for a `304`.
+//! endpoints instead return `304 Not Modified` with an empty body and the
+//! `Cache-Control`, `Vary`, `ETag` and `Access-Control-Allow-Origin` fields
+//! the `200` would have carried, as
+//! [RFC 9110 section 15.4.5](https://www.rfc-editor.org/rfc/rfc9110#section-15.4.5)
+//! requires for the first three. So while processing is failing the `304`
+//! carries `private, no-cache` and no `ETag`. Whether a builder left no data
+//! is read without building the body, so nothing below is logged or built for
+//! a `304`.
+//!
+//! A `304` answers `GET` or `HEAD` only. On any other method, such as the
+//! `POST` the axum adapter serves the JSON endpoint on, a matching
+//! `If-None-Match` gets `412 Precondition Failed` with an empty body, as
+//! [RFC 9110 section 13.1.2](https://www.rfc-editor.org/rfc/rfc9110#section-13.1.2)
+//! requires, because a response to `POST` is never a `304`
+//! ([section 9.3.3](https://www.rfc-editor.org/rfc/rfc9110#section-9.3.3)).
+//! It carries only the `Access-Control-Allow-Origin` field, so a script on
+//! another origin can read the status. The method is
+//! [`crate::RequestData::method`], and a request that does not give one is
+//! treated as `GET`. Nothing is logged or built for a `412` either.
 //!
 //! # When a builder left no data
 //!
 //! A builder in the pipeline can leave no data for a request, for example when
 //! it failed and the pipeline suppresses errors. The endpoint then logs that
-//! at error level on each such request, serves the response with `no-cache`,
-//! and builds the body again from the flow data with the builder the pipeline
-//! holds as a resource (see [`fiftyone_pipeline_core::Pipeline::resource`]),
-//! used only when it is the same `Arc` as the builder element, as
-//! [`crate::WebPipeline`] adds its own builders. The JavaScript is built
-//! around the JSON builder's output, itself built again if that builder left
-//! no data too. When only the JSON builder left no data, the JavaScript
-//! builder's script holds placeholder JSON, so it is treated as left out and
-//! built again too. With no such resource the body is empty. A pipeline
-//! without the builder serves an empty body and logs nothing.
+//! at error level on each such request, serves the response with
+//! `private, no-cache`, and builds the body again from the flow data with the
+//! builder the pipeline holds as a resource (see
+//! [`fiftyone_pipeline_core::Pipeline::resource`]), used only when it is the
+//! same `Arc` as the builder element, as [`crate::WebPipeline`] adds its own
+//! builders. The JavaScript is built around the JSON builder's output, itself
+//! built again if that builder left no data too. When only the JSON builder
+//! left no data, the JavaScript builder's script holds placeholder JSON, so it
+//! is treated as left out and built again too. With no such resource the body
+//! is empty, and a JSON builder that left no data is still logged after the
+//! JavaScript builder. A pipeline without the builder serves an empty body and
+//! logs nothing.
 //!
 //! # Where the `Vary` whitelist comes from
 //!
@@ -115,18 +134,24 @@ pub const CONTENT_TYPE_JAVASCRIPT: &str = "application/x-javascript";
 /// The `Content-Type` used for the JSON endpoint.
 pub const CONTENT_TYPE_JSON: &str = "application/json";
 
-/// The `Cache-Control` value used when processing recorded no errors.
+/// The `Cache-Control` value used when processing recorded no errors and the
+/// builder whose output the endpoint serves left its data.
 ///
 /// `private` so shared caches (proxies) do not store the per-device result, and
 /// `max-age=1800` (30 minutes) so the client may reuse it for half an hour.
 pub const CACHE_CONTROL_CACHEABLE: &str = "private, max-age=1800";
 
-/// The `Cache-Control` value used when processing recorded one or more errors.
+/// The `Cache-Control` value used when processing recorded one or more errors,
+/// or the builder whose output the endpoint serves left no data.
 ///
-/// A browser may keep such a response but must ask the server before using it
-/// again, and the response carries no `ETag`, so asking again always gets a
-/// full response and never a `304` confirming the faulty one.
-pub const CACHE_CONTROL_NO_CACHE: &str = "no-cache";
+/// `private` keeps shared caches (proxies) from storing a response made for
+/// one device, as in [`CACHE_CONTROL_CACHEABLE`]. A browser may keep the
+/// response but must ask the server before using it again, and the response
+/// carries no `ETag`, so asking again always gets a full response and never a
+/// `304` confirming the faulty one. The web integration specification gives
+/// this value for a failed response
+/// ([specifications#53](https://github.com/51Degrees/specifications/pull/53)).
+pub const CACHE_CONTROL_NO_CACHE: &str = "private, no-cache";
 
 /// The first fixed seed for the ETag hasher (see [`compute_etag`]).
 const ETAG_SEED_0: u64 = 0x_51de_9e55_0000_0001;
@@ -154,10 +179,11 @@ pub struct EndpointOptions {
     /// [`crate::WebPipeline::endpoint_options`].
     pipeline_vary: Option<SharedVaryList>,
 
-    /// When `false`, the caching, `Vary`, `ETag` and CORS headers are not added
-    /// (only `Content-Type` and `Content-Length` are), so an adapter can apply
-    /// its own. The `If-None-Match` -> `304` short circuit still applies.
-    /// Defaults to `true` through [`EndpointOptions::new`].
+    /// When `true`, set by [`EndpointOptions::without_extra_headers`], the
+    /// caching, `Vary`, `ETag` and CORS headers are not added (only
+    /// `Content-Type` and `Content-Length` are), so an adapter can apply its
+    /// own. The `If-None-Match` short circuit still applies, and its `304` or
+    /// `412` carries no headers. `false` by default.
     suppress_extra_headers: bool,
 }
 
@@ -230,17 +256,21 @@ impl EndpointOptions {
 /// CORS headers described in the module documentation.
 ///
 /// `request` supplies the conditional-request (`If-None-Match`) and `Origin`
-/// headers. When `If-None-Match` matches the computed `ETag` a bare `304 Not
-/// Modified` is returned.
+/// headers and the method. When `If-None-Match` matches the computed `ETag` a
+/// `304 Not Modified` is returned with no body and the caching and CORS
+/// headers the `200` would have carried, or on a method other than `GET` or
+/// `HEAD` a `412 Precondition Failed` with only the CORS header.
 pub fn serve_javascript(
     flow_data: &FlowData,
     request: &dyn RequestData,
     options: &EndpointOptions,
 ) -> WebResponse {
+    let left_no_data = javascript_left_no_data(flow_data);
     build_response(
         flow_data,
         request,
-        || javascript_body(flow_data),
+        left_no_data,
+        || javascript_body(flow_data, left_no_data),
         CONTENT_TYPE_JAVASCRIPT,
         options,
     )
@@ -255,83 +285,81 @@ pub fn serve_javascript(
 /// is empty. The response uses the
 /// [`CONTENT_TYPE_JSON`] content type and the shared caching and CORS headers
 /// described in the module documentation. As with the JavaScript endpoint a
-/// matching `If-None-Match` yields a bare `304 Not Modified`.
+/// matching `If-None-Match` yields a `304 Not Modified` with no body and the
+/// caching and CORS headers the `200` would have carried, or on a method other
+/// than `GET` or `HEAD`, such as the `POST` the client-side script sends, a
+/// `412 Precondition Failed` with only the CORS header.
 pub fn serve_json(
     flow_data: &FlowData,
     request: &dyn RequestData,
     options: &EndpointOptions,
 ) -> WebResponse {
+    let left_no_data = json_left_no_data(flow_data);
     build_response(
         flow_data,
         request,
-        || json_body(flow_data),
+        left_no_data,
+        || json_body(flow_data, left_no_data),
         CONTENT_TYPE_JSON,
         options,
     )
 }
 
-/// A response body, and whether a builder left no data for it, which stops the
-/// response being cached.
-struct Body {
-    content: String,
-    failed: bool,
-}
-
-impl Body {
-    fn cacheable(content: String) -> Self {
-        Body {
-            content,
-            failed: false,
-        }
-    }
-
-    fn failed(content: String) -> Self {
-        Body {
-            content,
-            failed: true,
-        }
-    }
-}
-
-/// The JavaScript builder's output for the request, built again when the
-/// builder left no data, or when the JSON builder left none, because the
-/// script then holds placeholder JSON in place of the properties.
-fn javascript_body(flow_data: &FlowData) -> Body {
-    let json_missing = flow_data.get(JSON_BUILDER_DATA_KEY).is_none()
-        && has_element(flow_data, JSON_BUILDER_ELEMENT_DATA_KEY);
+/// True when the JavaScript builder left no data, or the JSON builder left
+/// none, because the script then holds placeholder JSON in place of the
+/// properties. A pipeline without the JavaScript builder leaves nothing out.
+fn javascript_left_no_data(flow_data: &FlowData) -> bool {
     match flow_data.get(JAVASCRIPT_BUILDER_DATA_KEY) {
-        Some(data) if !json_missing => Body::cacheable(data.javascript().to_owned()),
-        None if !has_element(flow_data, JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY) => {
-            Body::cacheable(String::new())
+        Some(_) => json_left_no_data(flow_data),
+        None => has_element(flow_data, JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY),
+    }
+}
+
+/// True when the pipeline has the JSON builder and it left no data.
+fn json_left_no_data(flow_data: &FlowData) -> bool {
+    flow_data.get(JSON_BUILDER_DATA_KEY).is_none()
+        && has_element(flow_data, JSON_BUILDER_ELEMENT_DATA_KEY)
+}
+
+/// The JavaScript builder's output for the request, built again when
+/// [`javascript_left_no_data`] is true. A JSON builder that left no data is
+/// logged after the JavaScript builder even when the script cannot be built.
+fn javascript_body(flow_data: &FlowData, left_no_data: bool) -> String {
+    if !left_no_data {
+        return flow_data
+            .get(JAVASCRIPT_BUILDER_DATA_KEY)
+            .map(|data| data.javascript().to_owned())
+            .unwrap_or_default();
+    }
+    log_missing_data(JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY);
+    let json_left_no_data = json_left_no_data(flow_data);
+    match held_builder::<JavaScriptBuilderElement>(flow_data, JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY) {
+        Some(builder) => {
+            let json = json_body(flow_data, json_left_no_data);
+            builder.javascript_for(flow_data, &json)
         }
-        _ => {
-            log_missing_data(JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY);
-            let content = match held_builder::<JavaScriptBuilderElement>(
-                flow_data,
-                JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY,
-            ) {
-                Some(builder) => builder.javascript_for(flow_data, &json_body(flow_data).content),
-                None => String::new(),
-            };
-            Body::failed(content)
+        None => {
+            if json_left_no_data {
+                log_missing_data(JSON_BUILDER_ELEMENT_DATA_KEY);
+            }
+            String::new()
         }
     }
 }
 
-/// The JSON builder's output for the request, built again when the builder
-/// left no data.
-fn json_body(flow_data: &FlowData) -> Body {
-    if let Some(data) = flow_data.get(JSON_BUILDER_DATA_KEY) {
-        return Body::cacheable(data.json().to_owned());
-    }
-    if !has_element(flow_data, JSON_BUILDER_ELEMENT_DATA_KEY) {
-        return Body::cacheable(String::new());
+/// The JSON builder's output for the request, built again when
+/// [`json_left_no_data`] is true.
+fn json_body(flow_data: &FlowData, left_no_data: bool) -> String {
+    if !left_no_data {
+        return flow_data
+            .get(JSON_BUILDER_DATA_KEY)
+            .map(|data| data.json().to_owned())
+            .unwrap_or_default();
     }
     log_missing_data(JSON_BUILDER_ELEMENT_DATA_KEY);
-    let content = held_builder::<JsonBuilderElement>(flow_data, JSON_BUILDER_ELEMENT_DATA_KEY)
+    held_builder::<JsonBuilderElement>(flow_data, JSON_BUILDER_ELEMENT_DATA_KEY)
         .map(|builder| builder.json_for(flow_data))
-        .unwrap_or_default();
-    Body::failed(content)
+        .unwrap_or_default()
 }
 
 /// The builder the pipeline holds as a resource, when it is the same `Arc` as
@@ -362,56 +390,106 @@ fn log_missing_data(data_key: &str) {
 }
 
 /// Build the response for either endpoint, applying the shared header rules.
-/// `body` is called only when the response is not a `304`.
+/// `left_no_data` says whether a builder left no data for the request, and
+/// `body` is called only when the response is a `200`.
 fn build_response(
     flow_data: &FlowData,
     request: &dyn RequestData,
-    body: impl FnOnce() -> Body,
+    left_no_data: bool,
+    body: impl FnOnce() -> String,
     content_type: &str,
     options: &EndpointOptions,
 ) -> WebResponse {
     let filter = flow_data.evidence_key_filter();
     let etag = compute_etag(flow_data, filter);
+    let matched = request
+        .if_none_match()
+        .is_some_and(|if_none_match| etag_matches(&if_none_match, &etag));
 
-    // A conditional request whose validator matches the current ETag short
-    // circuits to a fully cleared 304, regardless of the header options.
-    if let Some(if_none_match) = request.if_none_match() {
-        if etag_matches(&if_none_match, &etag) {
-            return WebResponse::not_modified();
-        }
+    // A matching validator on a method other than GET or HEAD fails the
+    // precondition (RFC 9110 section 13.1.2).
+    if matched && !is_get_or_head(request) {
+        let headers = if options.suppress_extra_headers {
+            Vec::new()
+        } else {
+            access_control_allow_origin(request)
+                .map(|origin| ("Access-Control-Allow-Origin".to_owned(), origin))
+                .into_iter()
+                .collect()
+        };
+        return WebResponse {
+            headers,
+            ..WebResponse::precondition_failed()
+        };
+    }
+
+    let extra = if options.suppress_extra_headers {
+        Vec::new()
+    } else {
+        extra_headers(flow_data, request, left_no_data, &etag, options)
+    };
+
+    // A conditional request whose validator matches the current ETag gets a
+    // 304 with the headers the 200 would carry, ETag included only when the
+    // 200 would send one.
+    if matched {
+        return WebResponse {
+            headers: extra,
+            ..WebResponse::not_modified()
+        };
     }
 
     let body = body();
-    let mut headers: Vec<(String, String)> = Vec::new();
+    let mut headers: Vec<(String, String)> = Vec::with_capacity(extra.len() + 2);
     headers.push(("Content-Type".to_owned(), content_type.to_owned()));
     // String::len is the UTF-8 byte length, which is exactly the Content-Length
     // the body needs.
-    headers.push(("Content-Length".to_owned(), body.content.len().to_string()));
+    headers.push(("Content-Length".to_owned(), body.len().to_string()));
+    headers.extend(extra);
 
-    if !options.suppress_extra_headers {
-        let cacheable = !body.failed && flow_data.errors().is_empty();
-        headers.push(("Cache-Control".to_owned(), cache_control(cacheable)));
+    WebResponse::text(body, headers)
+}
 
-        if let Some(whitelist) = options.current_vary_whitelist() {
-            let vary = vary_header(whitelist);
-            if !vary.is_empty() {
-                headers.push(("Vary".to_owned(), vary));
-            }
-        }
+/// True when the request method is `GET` or `HEAD`, or the request does not
+/// give one. Method names are case-sensitive
+/// ([RFC 9110 section 9.1](https://www.rfc-editor.org/rfc/rfc9110#section-9.1)).
+fn is_get_or_head(request: &dyn RequestData) -> bool {
+    request
+        .method()
+        .is_none_or(|method| method == "GET" || method == "HEAD")
+}
 
-        // The validator stands for the evidence, not for whether processing
-        // worked, so a response that is not cacheable goes without one rather
-        // than being confirmed by a 304 once processing recovers.
-        if cacheable {
-            headers.push(("ETag".to_owned(), etag));
-        }
+/// The caching, `Vary`, `ETag` and CORS headers, which the `200` and the `304`
+/// to the same request both carry.
+fn extra_headers(
+    flow_data: &FlowData,
+    request: &dyn RequestData,
+    left_no_data: bool,
+    etag: &str,
+    options: &EndpointOptions,
+) -> Vec<(String, String)> {
+    let cacheable = !left_no_data && flow_data.errors().is_empty();
+    let mut headers = vec![("Cache-Control".to_owned(), cache_control(cacheable))];
 
-        if let Some(origin) = access_control_allow_origin(request) {
-            headers.push(("Access-Control-Allow-Origin".to_owned(), origin));
+    if let Some(whitelist) = options.current_vary_whitelist() {
+        let vary = vary_header(whitelist);
+        if !vary.is_empty() {
+            headers.push(("Vary".to_owned(), vary));
         }
     }
 
-    WebResponse::text(body.content, headers)
+    // The validator stands for the evidence, not for whether processing
+    // worked, so a response that is not cacheable goes without one rather
+    // than being confirmed by a 304 once processing recovers.
+    if cacheable {
+        headers.push(("ETag".to_owned(), etag.to_owned()));
+    }
+
+    if let Some(origin) = access_control_allow_origin(request) {
+        headers.push(("Access-Control-Allow-Origin".to_owned(), origin));
+    }
+
+    headers
 }
 
 /// The `Cache-Control` value for a response.
@@ -493,8 +571,8 @@ pub fn compute_etag(flow_data: &FlowData, filter: &dyn EvidenceKeyFilter) -> Str
 /// The comparison tolerates the optional weak-validator prefix (`W/`) and a
 /// comma-separated list of candidate tags, returning true if any candidate
 /// equals the computed tag. The wildcard `*` always matches. This is the subset
-/// of [RFC 7232](https://www.rfc-editor.org/rfc/rfc7232#section-3.2) the
-/// endpoints need.
+/// of [RFC 9110 section 13.1.2](https://www.rfc-editor.org/rfc/rfc9110#section-13.1.2)
+/// the endpoints need.
 pub fn etag_matches(if_none_match: &str, etag: &str) -> bool {
     for candidate in if_none_match.split(',') {
         let candidate = candidate.trim();

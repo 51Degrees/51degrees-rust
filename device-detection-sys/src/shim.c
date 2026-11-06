@@ -416,7 +416,9 @@ uint16_t fiftyoneDegreesShimHashGetFileHandleCount(
  * written as empty and its length is zero. When the string, or the property,
  * value or component it belongs to, cannot be read, or an index is out of
  * range, the buffer is left empty and SHIM_STRING_FAILED is returned, as the
- * C++ builders raise an exception there rather than leave something out.
+ * C++ builders raise an exception there rather than leave something out. The
+ * property values reader instead gives each string to a callback, because a
+ * property can have over a hundred thousand values.
  */
 
 /* The string fields of a data file property. */
@@ -425,13 +427,27 @@ uint16_t fiftyoneDegreesShimHashGetFileHandleCount(
 #define SHIM_PROPERTY_CATEGORY 2
 #define SHIM_PROPERTY_URL 3
 
-/* The string fields of a property value. */
+/* The strings of a property value, in the order they are given. */
 #define SHIM_VALUE_NAME 0
 #define SHIM_VALUE_DESCRIPTION 1
 #define SHIM_VALUE_URL 2
 
+/*
+ * Takes one string of a property value, `field` being one of the
+ * SHIM_VALUE_ constants, from fiftyoneDegreesShimHashGetDataFilePropertyValues.
+ */
+typedef void (*fiftyoneDegreesShimValueStringCallback)(
+    void *context,
+    int field,
+    const char *value);
+
 /* Returned by a string reader that could not read the string. */
 #define SHIM_STRING_FAILED ((size_t)-1)
+
+/* What fiftyoneDegreesShimHashFindDataFilePropertyValue returns. */
+#define SHIM_FIND_FAILED 0
+#define SHIM_FIND_FOUND 1
+#define SHIM_FIND_NOT_FOUND 2
 
 /*
  * Writes as much of `value` as fits into `buffer` and returns the full length
@@ -503,9 +519,11 @@ static const fiftyoneDegreesProperty* get_property(
  * builder does, and sets `available` to 1 when the data set was created with
  * it, otherwise 0, and `requiredIndex` to its required property index, which
  * the results getters take, or -1 when it has none. The C library matches the
- * name ignoring case, so a property named in another case is found.
+ * name ignoring case, so a property named in another case is found. Returns
+ * 1, or 0 when the name cannot be read, as the C++ builder raises an
+ * exception there.
  */
-static void find_available(
+static int find_available(
     fiftyoneDegreesDataSetHash *dataSet,
     const fiftyoneDegreesProperty *property,
     uint8_t *available,
@@ -513,8 +531,9 @@ static void find_available(
     *available = 0;
     *requiredIndex = -1;
     if (dataSet->b.b.available == NULL) {
-        return;
+        return 1;
     }
+    int read = 0;
     FIFTYONE_DEGREES_EXCEPTION_CREATE;
     fiftyoneDegreesCollectionItem item;
     fiftyoneDegreesDataReset(&item.data);
@@ -528,9 +547,26 @@ static void find_available(
             *requiredIndex =
                 fiftyoneDegreesPropertiesGetRequiredPropertyIndexFromName(
                     dataSet->b.b.available, value);
+            read = 1;
         }
         FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->strings, &item);
     }
+    return read;
+}
+
+/*
+ * Returns the number of values the data file holds for `property`, or zero
+ * when they are not all in the values collection, as when both value indexes
+ * are -1. The C library's profile index counts them the same way.
+ */
+static uint32_t value_count(
+    fiftyoneDegreesDataSetHash *dataSet,
+    const fiftyoneDegreesProperty *property) {
+    const uint32_t first = property->firstValueIndex;
+    const uint32_t last = property->lastValueIndex;
+    return first <= last &&
+        last < fiftyoneDegreesCollectionGetCount(dataSet->values) ?
+        last - first + 1 : 0;
 }
 
 /*
@@ -566,12 +602,14 @@ uint32_t fiftyoneDegreesShimHashGetDataFilePropertyCount(
 /*
  * Reads the fields of the data file property at `propertyIndex` that are not
  * strings into the output parameters and returns 1, or returns 0 when the
- * index is out of range or the property cannot be read. `valueType` is the
- * fiftyoneDegreesPropertyValueType the property's values have. `available` is
- * 1 when the data set was created with the property, so results can hold its
- * values, and `requiredIndex` is the index the results getters take for it,
- * or -1 when it has none. `componentId` is the id of the component the
- * property belongs to, or 0 when the property names no component.
+ * index is out of range or the property or its name cannot be read. The
+ * name is read to find whether the data set was created with the property.
+ * `valueType` is the fiftyoneDegreesPropertyValueType the property's values
+ * have. `available` is 1 when the data set was created with the property, so
+ * results can hold its values, and `requiredIndex` is the index the results
+ * getters take for it, or -1 when it has none. `componentId` is the id of the
+ * component the property belongs to, or 0 when the property names no
+ * component.
  * `valueCount` is the number of values the data file holds for the property,
  * `defaultValueNumber` the place of its default value among them, or -1 when
  * it has none, and `mapCount` the number of data tiers it is in.
@@ -605,7 +643,7 @@ int fiftyoneDegreesShimHashGetDataFileProperty(
         const fiftyoneDegreesComponent *component =
             get_component(dataSet, property->componentIndex);
         *valueType = property->valueType;
-        find_available(dataSet, property, available, requiredIndex);
+        result = find_available(dataSet, property, available, requiredIndex);
         *componentId = component == NULL ? 0 : component->componentId;
         *displayOrder = property->displayOrder;
         *isMandatory = property->isMandatory;
@@ -614,17 +652,16 @@ int fiftyoneDegreesShimHashGetDataFileProperty(
         *show = property->show;
         *showValues = property->showValues;
         const uint32_t first = property->firstValueIndex;
-        const uint32_t last = property->lastValueIndex;
-        *valueCount = last >= first ? last - first + 1 : 0;
-        // The C++ builder finds the default value by name among the
-        // property's values, so a default outside them is none.
-        *defaultValueNumber = property->defaultValueIndex != UINT32_MAX &&
-            property->defaultValueIndex >= first &&
-            property->defaultValueIndex <= last ?
+        const uint32_t count = value_count(dataSet, property);
+        *valueCount = count;
+        // The C++ MetaDataHash::getDefaultValueForProperty looks the default
+        // value up by name among the property's values, so a default outside
+        // them is none.
+        *defaultValueNumber = property->defaultValueIndex >= first &&
+            property->defaultValueIndex - first < count ?
             (int32_t)(property->defaultValueIndex - first) : -1;
         *mapCount = property->mapCount;
         FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->properties, &item);
-        result = 1;
     }
     fiftyoneDegreesDataSetHashRelease(dataSet);
     return result;
@@ -737,84 +774,196 @@ size_t fiftyoneDegreesShimHashGetDataFilePropertyMap(
 }
 
 /*
- * Writes the string field `field` of the value at `valueNumber` among those
- * the data file holds for the property at `propertyIndex` into `buffer`, and
- * returns its full length. The fields are SHIM_VALUE_NAME,
- * SHIM_VALUE_DESCRIPTION and SHIM_VALUE_URL. A value with no description or
- * URL has an empty one. Returns SHIM_STRING_FAILED when either index is out
- * of range, the property, value or string cannot be read, or `field` is none
- * of these.
+ * Gives `callback` the string at `offset` in the strings collection as
+ * `field` and returns 1, or returns 0 when the string cannot be read.
  */
-size_t fiftyoneDegreesShimHashGetDataFilePropertyValueString(
+static int give_string_at(
+    fiftyoneDegreesDataSetHash *dataSet,
+    uint32_t offset,
+    int field,
+    fiftyoneDegreesShimValueStringCallback callback,
+    void *context) {
+    int result = 0;
+    FIFTYONE_DEGREES_EXCEPTION_CREATE;
+    fiftyoneDegreesCollectionItem item;
+    fiftyoneDegreesDataReset(&item.data);
+    const fiftyoneDegreesString *value = fiftyoneDegreesStringGet(
+        dataSet->strings, offset, &item, exception);
+    if (value != NULL) {
+        if (FIFTYONE_DEGREES_EXCEPTION_OKAY) {
+            callback(context, field, FIFTYONE_DEGREES_STRING(value));
+            result = 1;
+        }
+        FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->strings, &item);
+    }
+    return result;
+}
+
+/*
+ * Gives `callback` the name, description and URL of the value at
+ * `valueIndex` in the values collection and returns 1, or returns 0 when the
+ * value or one of its strings cannot be read. The value is released before
+ * its strings are read, so one item is held at a time.
+ */
+static int give_value(
+    fiftyoneDegreesDataSetHash *dataSet,
+    uint32_t valueIndex,
+    fiftyoneDegreesShimValueStringCallback callback,
+    void *context) {
+    FIFTYONE_DEGREES_EXCEPTION_CREATE;
+    fiftyoneDegreesCollectionItem item;
+    fiftyoneDegreesDataReset(&item.data);
+    const fiftyoneDegreesValue *value = fiftyoneDegreesValueGet(
+        dataSet->values, valueIndex, &item, exception);
+    if (value == NULL) {
+        return 0;
+    }
+    if (FIFTYONE_DEGREES_EXCEPTION_FAILED) {
+        FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->values, &item);
+        return 0;
+    }
+    const uint32_t nameOffset = (uint32_t)value->nameOffset;
+    const int32_t descriptionOffset = value->descriptionOffset;
+    const int32_t urlOffset = value->urlOffsetOrWeight;
+    FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->values, &item);
+    if (give_string_at(
+        dataSet, nameOffset, SHIM_VALUE_NAME, callback, context) == 0) {
+        return 0;
+    }
+    // A value with no description points at offset 0, which holds the first
+    // string in the file. A weighted value's URL offset holds its weight,
+    // which is negative as a signed offset.
+    if (descriptionOffset > 0) {
+        if (give_string_at(
+            dataSet,
+            (uint32_t)descriptionOffset,
+            SHIM_VALUE_DESCRIPTION,
+            callback,
+            context) == 0) {
+            return 0;
+        }
+    }
+    else {
+        callback(context, SHIM_VALUE_DESCRIPTION, "");
+    }
+    if (urlOffset > 0) {
+        if (give_string_at(
+            dataSet,
+            (uint32_t)urlOffset,
+            SHIM_VALUE_URL,
+            callback,
+            context) == 0) {
+            return 0;
+        }
+    }
+    else {
+        callback(context, SHIM_VALUE_URL, "");
+    }
+    return 1;
+}
+
+/*
+ * Reads at most `count` of the values the data file holds for the property at
+ * `propertyIndex`, from the one at `valueNumber` among them, in the data
+ * file's order, and returns 1. For each value it calls `callback` with
+ * `context` three times, being SHIM_VALUE_NAME with the name, then
+ * SHIM_VALUE_DESCRIPTION with the description, then SHIM_VALUE_URL with the
+ * URL, each a null terminated string valid only for that call. A value with
+ * no description or URL gives an empty one. A `valueNumber` at or past the
+ * last value reads none. The data set and the property are read once for the
+ * whole run, and each value and string once. Returns 0 when the property
+ * index is out of range or the property, a value or a string cannot be read,
+ * after giving `callback` the strings read before the failure.
+ */
+int fiftyoneDegreesShimHashGetDataFilePropertyValues(
     fiftyoneDegreesResourceManager *manager,
     uint32_t propertyIndex,
     uint32_t valueNumber,
-    int field,
-    char *buffer,
-    size_t length) {
-    if (buffer != NULL && length > 0) {
-        buffer[0] = '\0';
-    }
+    uint32_t count,
+    fiftyoneDegreesShimValueStringCallback callback,
+    void *context) {
     fiftyoneDegreesDataSetHash *dataSet =
         fiftyoneDegreesDataSetHashGet(manager);
     if (dataSet == NULL) {
-        return SHIM_STRING_FAILED;
+        return 0;
     }
-    size_t total = SHIM_STRING_FAILED;
+    int result = 0;
     fiftyoneDegreesCollectionItem item;
     const fiftyoneDegreesProperty *property =
         get_property(dataSet, propertyIndex, &item);
     if (property != NULL) {
         const uint32_t first = property->firstValueIndex;
-        const uint32_t last = property->lastValueIndex;
-        if (last >= first && valueNumber <= last - first) {
-            FIFTYONE_DEGREES_EXCEPTION_CREATE;
-            fiftyoneDegreesCollectionItem valueItem;
-            fiftyoneDegreesDataReset(&valueItem.data);
-            const fiftyoneDegreesValue *value = fiftyoneDegreesValueGet(
-                dataSet->values, first + valueNumber, &valueItem, exception);
-            if (value != NULL) {
-                if (FIFTYONE_DEGREES_EXCEPTION_OKAY) {
-                    if (field >= SHIM_VALUE_NAME && field <= SHIM_VALUE_URL) {
-                        total = 0;
-                    }
-                    switch (field) {
-                    case SHIM_VALUE_NAME:
-                        total = copy_string_at(
-                            dataSet, value->nameOffset, buffer, length);
-                        break;
-                    case SHIM_VALUE_DESCRIPTION:
-                        // A value with no description points at offset 0,
-                        // which holds the first string in the file.
-                        if (value->descriptionOffset > 0) {
-                            total = copy_string_at(
-                                dataSet,
-                                (uint32_t)value->descriptionOffset,
-                                buffer,
-                                length);
-                        }
-                        break;
-                    case SHIM_VALUE_URL:
-                        if (value->urlOffsetOrWeight > 0) {
-                            total = copy_string_at(
-                                dataSet,
-                                (uint32_t)value->urlOffsetOrWeight,
-                                buffer,
-                                length);
-                        }
-                        break;
-                    default:
-                        break;
-                    }
-                }
-                FIFTYONE_DEGREES_COLLECTION_RELEASE(
-                    dataSet->values, &valueItem);
-            }
-        }
+        const uint32_t total = value_count(dataSet, property);
         FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->properties, &item);
+        uint32_t end = valueNumber;
+        if (valueNumber < total) {
+            end = count < total - valueNumber ? valueNumber + count : total;
+        }
+        result = 1;
+        for (uint32_t number = valueNumber; result == 1 && number < end;
+            number++) {
+            result = give_value(dataSet, first + number, callback, context);
+        }
     }
     fiftyoneDegreesDataSetHashRelease(dataSet);
-    return total;
+    return result;
+}
+
+/*
+ * Finds the value named `name` among those the data file holds for the
+ * property at `propertyIndex` and gives `callback` its strings as
+ * fiftyoneDegreesShimHashGetDataFilePropertyValues gives each value. The name
+ * must match exactly. A property's values are in order of their names, so the
+ * C library's binary search finds it, as the C++
+ * ValueMetaDataCollectionForPropertyHash::getByKey does, without reading the
+ * others. A value the data file holds out of that order can be missed, as the
+ * C++ misses it. Returns SHIM_FIND_FOUND, SHIM_FIND_NOT_FOUND when the property
+ * has no value with that name, or SHIM_FIND_FAILED when the property index is
+ * out of range or the property, a value or a string cannot be read.
+ */
+int fiftyoneDegreesShimHashFindDataFilePropertyValue(
+    fiftyoneDegreesResourceManager *manager,
+    uint32_t propertyIndex,
+    const char *name,
+    fiftyoneDegreesShimValueStringCallback callback,
+    void *context) {
+    fiftyoneDegreesDataSetHash *dataSet =
+        fiftyoneDegreesDataSetHashGet(manager);
+    if (dataSet == NULL) {
+        return SHIM_FIND_FAILED;
+    }
+    int result = SHIM_FIND_FAILED;
+    fiftyoneDegreesCollectionItem item;
+    const fiftyoneDegreesProperty *held =
+        get_property(dataSet, propertyIndex, &item);
+    if (held != NULL) {
+        // A copy, so only one item is held at a time during the search.
+        const fiftyoneDegreesProperty property = *held;
+        FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->properties, &item);
+        result = SHIM_FIND_NOT_FOUND;
+        // The search reads every place between the two value indexes, so it
+        // runs only when value_count finds them all in the values collection.
+        if (value_count(dataSet, &property) > 0) {
+            FIFTYONE_DEGREES_EXCEPTION_CREATE;
+            const long index = fiftyoneDegreesValueGetIndexByNameAndType(
+                dataSet->values,
+                dataSet->strings,
+                &property,
+                FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_STRING,
+                name,
+                exception);
+            if (FIFTYONE_DEGREES_EXCEPTION_FAILED) {
+                result = SHIM_FIND_FAILED;
+            }
+            else if (index >= 0) {
+                result = give_value(
+                    dataSet, (uint32_t)index, callback, context) == 1 ?
+                    SHIM_FIND_FOUND : SHIM_FIND_FAILED;
+            }
+        }
+    }
+    fiftyoneDegreesDataSetHashRelease(dataSet);
+    return result;
 }
 
 /*

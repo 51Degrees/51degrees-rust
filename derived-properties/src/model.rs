@@ -382,6 +382,9 @@ pub struct Script {
     pub(crate) deprecation_note: Option<String>,
     pub(crate) source: String,
     pub(crate) output: Output,
+    /// Whether the script wrote `VendorIds`, even as an empty list, which the
+    /// canonical form needs because [`Output::vendor_ids`] cannot say.
+    pub(crate) vendor_ids_written: bool,
     pub(crate) properties: Vec<SourceProperty>,
     pub(crate) checks: Vec<Check>,
     pub(crate) rules: Vec<Rule>,
@@ -410,7 +413,8 @@ impl Script {
         self.deprecation_note.as_deref()
     }
 
-    /// Where the script came from: a path, a built-in script name, or `code`.
+    /// Where the script came from: a path, `built in` and the name of a script
+    /// shipped in this crate, or `code`.
     pub fn source(&self) -> &str {
         &self.source
     }
