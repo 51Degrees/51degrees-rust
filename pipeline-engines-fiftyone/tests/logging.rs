@@ -85,27 +85,39 @@ fn logged() -> Vec<String> {
     LOGGED.lock().unwrap().clone()
 }
 
-fn process_sequence(raw: &str, suppress: bool) {
+/// Process `raw` as the request's sequence, with errors suppressed or not.
+fn process_sequence(raw: &str, suppress: bool) -> Result<()> {
     let pipeline = Pipeline::builder()
         .add_element(Arc::new(SequenceElement::new()))
         .suppress_process_exceptions(suppress)
         .build()
         .unwrap();
     let evidence = Evidence::builder().add("query.sequence", raw).build();
-    pipeline.create_flow_data_with(evidence).process().unwrap();
+    pipeline.create_flow_data_with(evidence).process()
 }
 
 #[test]
-fn a_sequence_that_does_not_parse_logs_one_error() {
+fn a_sequence_that_does_not_parse_logs_two_errors() {
+    // The error recorded on the flow data, then the element's own record,
+    // whether or not errors are suppressed, as .NET's FlowData.AddError and
+    // Sequence element log them.
     for suppress in [false, true] {
         let _serial = start();
-        process_sequence("abc", suppress);
+        let result = process_sequence("abc", suppress);
+        assert_eq!(result.is_err(), !suppress, "suppress {suppress}");
+        let records = logged();
+        assert_eq!(records.len(), 2, "suppress {suppress}: {records:?}");
+        assert!(
+            records[0].starts_with(
+                "ERROR An error occurred in element 'sequence': pipeline error: The \
+                 value for the 'sequence' parameter is not valid."
+            ),
+            "suppress {suppress}: {records:?}"
+        );
         assert_eq!(
-            logged(),
-            vec![
-                "ERROR Failed to increment the usage sequence number, because \
-                 the sequence is not an integer."
-            ],
+            records[1],
+            "ERROR Failed to increment the usage sequence number, because the \
+             sequence is not a 32-bit integer.",
             "suppress {suppress}"
         );
     }
@@ -114,7 +126,7 @@ fn a_sequence_that_does_not_parse_logs_one_error() {
 #[test]
 fn a_sequence_that_parses_logs_nothing() {
     let _serial = start();
-    process_sequence("5", false);
+    process_sequence("5", false).unwrap();
     assert_eq!(logged(), Vec::<String>::new());
 }
 

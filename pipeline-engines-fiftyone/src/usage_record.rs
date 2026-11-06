@@ -155,22 +155,6 @@ impl UsageRecord {
     }
 }
 
-/// Read a sequence number from evidence text as .NET's `int.TryParse` reads
-/// it, being white space, an optional sign, the digits 0 to 9, white space,
-/// then any number of NUL characters. White space here is space and U+0009
-/// to U+000D. `None` when the text is not a 32-bit integer.
-pub(crate) fn parse_sequence(text: &str) -> Option<i32> {
-    text.trim_end_matches('\0')
-        .trim_matches(is_number_white_space)
-        .parse()
-        .ok()
-}
-
-/// The white space .NET allows around a number.
-fn is_number_white_space(c: char) -> bool {
-    matches!(c, ' ' | '\t'..='\r')
-}
-
 /// Write a batch of records as one `<Devices>` document, with the elements
 /// the sink adds to each record. `date_sent` gives each record's `DateSent`
 /// as the record is written.
@@ -724,31 +708,6 @@ mod tests {
             )),
             "{xml}"
         );
-    }
-
-    #[test]
-    fn a_sequence_is_read_as_dotnet_reads_an_integer() {
-        for (text, expected) in [
-            ("3", Some(3)),
-            (" \t+7\r\n", Some(7)),
-            ("-2", Some(-2)),
-            ("0005", Some(5)),
-            ("2147483647", Some(i32::MAX)),
-            ("-2147483648", Some(i32::MIN)),
-            ("5\0\0", Some(5)),
-            ("5 \0", Some(5)),
-            ("2147483648", None),
-            ("5\0 ", None),
-            ("\u{a0}5", None),
-            ("\u{663}", None),
-            ("1.0", None),
-            ("five", None),
-            ("+", None),
-            (" ", None),
-            ("", None),
-        ] {
-            assert_eq!(parse_sequence(text), expected, "{text:?}");
-        }
     }
 
     #[test]

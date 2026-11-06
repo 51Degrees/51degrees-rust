@@ -22,11 +22,11 @@
 
 //! Flow data: the unit of work that flows through a pipeline.
 //!
-//! A flow data holds the immutable [`Evidence`] for one request, the element
-//! data produced as it is processed, and any errors and warnings recorded
-//! along the way. It
-//! keeps an [`Arc`] back-reference to the pipeline that created it, so it can be
-//! processed by simply calling [`FlowData::process`]. See the
+//! A flow data holds the [`Evidence`] for one request, with any values its
+//! elements add, the element data produced as it is processed, and any errors
+//! and warnings recorded along the way. It keeps an [`Arc`] back-reference to
+//! the pipeline that created it, so it can be processed by simply calling
+//! [`FlowData::process`]. See the
 //! [conceptual overview](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/conceptual-overview.md#flow-data).
 //!
 //! A flow data belongs to exactly one pipeline and is created by it
@@ -70,6 +70,10 @@ pub struct FlowData {
     order: Vec<String>,
     errors: Vec<FlowError>,
     warnings: Vec<FlowWarning>,
+    /// For an element in a parallel group, the evidence it added, in order.
+    /// Once there is any, `evidence` holds the group's evidence with these
+    /// added, so the element sees its own values.
+    added_evidence: Vec<(String, String)>,
     processed: bool,
 }
 
@@ -106,6 +110,8 @@ pub(crate) struct GroupMemberAdded {
     pub(crate) errors: Vec<FlowError>,
     /// The warnings it recorded.
     pub(crate) warnings: Vec<FlowWarning>,
+    /// The evidence it added, in order.
+    pub(crate) evidence: Vec<(String, String)>,
 }
 
 impl FlowData {
@@ -121,6 +127,7 @@ impl FlowData {
             order: Vec::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
+            added_evidence: Vec::new(),
             processed: false,
         }
     }
@@ -133,12 +140,50 @@ impl FlowData {
         }
     }
 
-    /// The immutable evidence supplied to this flow data.
+    /// The evidence supplied to this flow data, with the values its elements
+    /// have added with [`FlowData::add_evidence`].
+    ///
+    /// An element in a parallel group sees the evidence from before the
+    /// group and what it added itself. What the group's elements add is
+    /// added once every element in it has finished, in the order the
+    /// elements were given.
     pub fn evidence(&self) -> &Evidence {
         match self.before_group() {
-            Some(before) => &before.evidence,
-            None => &self.evidence,
+            Some(before) if self.added_evidence.is_empty() => &before.evidence,
+            _ => &self.evidence,
         }
+    }
+
+    /// Add an evidence value, so the elements that run after this one and the
+    /// caller read it from [`FlowData::evidence`], as .NET's `AddEvidence`
+    /// does. A key already present, ignoring case, keeps its first spelling
+    /// and place and takes the new value, and a new key goes last.
+    ///
+    /// An element in a parallel group sees what it adds at once, and the
+    /// others in the group do not. The pipeline adds it to the group's flow
+    /// data once every element in the group has finished, in the order the
+    /// elements were given, so of two elements adding one key the later one's
+    /// value is kept, as in sequence.
+    ///
+    /// It can also be called after processing, as .NET's and Java's
+    /// `AddEvidence` can. Evidence added then changes no element's results,
+    /// but it does change what a later reader sees, being
+    /// [`FlowData::evidence`], [`FlowData::generate_key`] and so the ETag a
+    /// web integration works out from that key.
+    ///
+    /// The key is logged at debug level. The value is not, because evidence
+    /// can carry credentials.
+    pub fn add_evidence(&mut self, key: impl AsRef<str>, value: impl Into<String>) {
+        let key = key.as_ref();
+        let value = value.into();
+        log::debug!("Evidence '{key}' was added to a flow data.");
+        if let Source::Group(before) = &self.source {
+            if self.added_evidence.is_empty() {
+                self.evidence = before.evidence.clone();
+            }
+            self.added_evidence.push((key.to_owned(), value.clone()));
+        }
+        self.evidence.insert(key, value);
     }
 
     /// The errors recorded during processing. Empty if processing has not run
@@ -244,6 +289,15 @@ impl FlowData {
         self.warnings.extend(warnings);
     }
 
+    /// Add the evidence one element of a parallel group added, in the order
+    /// it added it. [`FlowData::add_evidence`] logged each key as it was
+    /// added.
+    pub(crate) fn add_group_member_evidence(&mut self, evidence: Vec<(String, String)>) {
+        for (key, value) in evidence {
+            self.evidence.insert(&key, value);
+        }
+    }
+
     /// Move the evidence, element data, errors and warnings into the view
     /// every element of a parallel group shares. [`FlowData::end_group`] puts
     /// them back.
@@ -273,6 +327,7 @@ impl FlowData {
             order: Vec::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
+            added_evidence: Vec::new(),
             processed: true,
         }
     }
@@ -285,6 +340,7 @@ impl FlowData {
             order: self.order,
             errors: self.errors,
             warnings: self.warnings,
+            evidence: self.added_evidence,
         }
     }
 
@@ -418,10 +474,10 @@ impl FlowData {
     /// evidence.
     ///
     /// This realises the helper described in the
-    /// [evidence specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/evidence.md#adding-evidence-values):
-    /// because evidence is immutable, an element that wants to expose a value
-    /// for later elements writes it to its element data, and downstream lookups
-    /// use this method to read either source transparently.
+    /// [evidence specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/evidence.md#adding-evidence-values),
+    /// for an element that gives a value to later elements in its element
+    /// data rather than adding it with [`FlowData::add_evidence`], so later
+    /// lookups read either source the same way.
     ///
     /// The search is: every element data that holds the property, as
     /// [`ElementData::has_property`] says, is asked for it by its full name,

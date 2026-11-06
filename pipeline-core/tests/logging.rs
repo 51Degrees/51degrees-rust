@@ -362,3 +362,27 @@ fn a_returned_error_is_logged_without_credentials() {
     assert!(!records[0].contains(NOT_A_KEY), "{records:?}");
     assert!(records[0].contains("status 400"), "{records:?}");
 }
+
+/// Adding evidence logs the key at debug level and never the value, because
+/// evidence can carry credentials.
+#[test]
+fn added_evidence_is_logged_by_key_without_its_value() {
+    const KEY: &str = "query.logged-added-key";
+    const VALUE: &str = "value-that-stays-out-of-logs";
+    capture_logs();
+    let mut data = Pipeline::builder()
+        .add_element(Arc::new(FailingElement::new("added-evidence", || {
+            Error::configuration("never processed")
+        })))
+        .build()
+        .unwrap()
+        .create_flow_data();
+    data.add_evidence(KEY, VALUE);
+
+    assert_eq!(data.evidence().get(KEY), Some(VALUE));
+    assert_eq!(
+        logged_about(KEY),
+        vec![format!("DEBUG Evidence '{KEY}' was added to a flow data.")]
+    );
+    assert!(logged_about(VALUE).is_empty());
+}

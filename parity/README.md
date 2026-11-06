@@ -59,8 +59,8 @@ give differently reaches the JSON or the JavaScript, so their text can be
 the same on both sides, and the comparison then checks both byte for byte,
 apart from the JavaScript's line endings (see "The comparison"). The crates'
 JSON builder leaves the crates' Sequence element's data out there, because
-.NET's Sequence element has none
-([#231](https://github.com/51Degrees/51degrees-rust/issues/231)).
+.NET's Sequence element has none. The crates' has the session id and
+sequence the specification's Element Data gives.
 
 The JavaScript builder in the values pipeline calls back to the endpoint
 `json`, names its object `fod`, has cookies and minification off, and takes
@@ -115,7 +115,7 @@ Each program writes one JSON object per case.
 | `id` | The case id. |
 | `processError` | The error processing gave, or null. |
 | `properties` | For each element that lists properties, apart from the two builders, every property it lists, with the match metrics for `device` and `SortingCultureUsed`, which the engine writes without listing, for `countrynamestranslated`. Each is keyed by its lowercase name and holds its `name` with either a `type` and `value`, a `noValue` reason, or a `missing` message when reading it failed. |
-| `session` | The session id and sequence the pipeline used. |
+| `session` | `query.session-id` and `query.sequence` from the evidence after processing, the sequence as a number, or null when it is not a 64-bit integer. |
 | `evidenceAfter` | `query.session-id` and `query.sequence` as the evidence holds them after processing. |
 | `errors` | The errors in the flow data, each with its element's data key and its message. |
 | `json` | The JSON builder's output. |

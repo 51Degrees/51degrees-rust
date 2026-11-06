@@ -87,8 +87,9 @@ pub fn get_parameters(context: &JavaScriptBuilderContext<'_>) -> Vec<(String, St
 }
 
 /// The sequence from the Sequence element's data, which has already added
-/// one to any `query.sequence` evidence. `1` when no Sequence element ran or
-/// its sequence is not a positive 32-bit integer.
+/// one to any `query.sequence` evidence. `1` when no Sequence element ran,
+/// it could not read the request's sequence, or its sequence is not
+/// positive.
 ///
 /// The specification says a pipeline with no Sequence element renders the
 /// sequence as `1`, so the `query.sequence` evidence is never read here.
@@ -108,9 +109,6 @@ pub fn get_sequence(context: &JavaScriptBuilderContext<'_>) -> i32 {
 ///
 /// The specification says a pipeline with no Sequence element renders an
 /// empty session id, so the `query.session-id` evidence is never read here.
-/// On a first request the Sequence element creates the id, and evidence
-/// cannot be changed once processing starts, so that id is only in the
-/// element's data.
 pub fn get_session_id(context: &JavaScriptBuilderContext<'_>) -> String {
     let session_id = context
         .data()
