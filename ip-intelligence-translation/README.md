@@ -89,11 +89,12 @@ the size of a deployed module, so the figures are given here.
 
 In a release `wasm32-wasip1` build with link time optimisation, one codegen
 unit and symbols stripped, a pipeline holding both engines gave a module of
-1,764,151 bytes, against 377,472 bytes for `CountryCodeTranslationEngine`
-alone. So `CountriesTranslationEngine` added 1,386,679 bytes. Of that, the 16
+1,765,409 bytes, against 377,472 bytes for `CountryCodeTranslationEngine`
+alone. So `CountriesTranslationEngine` added 1,387,937 bytes. Of that, the 16
 languages' country names are 99,380 bytes of text, and the rest is the
-engine's code and the ICU4X code and data it links. This was measured with
-Rust 1.99.1 and `icu_collator` 2.4.0.
+engine's code, the ICU4X code and data it links, and the few lines the larger
+program uses to print the list of every country it checks. This was measured
+with Rust 1.99.1 and `icu_collator` 2.4.0.
 
 The repository's Pull Request workflow measures this on every run with
 `ci/measure-wasm-size.sh`, and writes the figures to the run's summary.
