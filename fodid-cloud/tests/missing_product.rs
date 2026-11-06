@@ -24,6 +24,7 @@
 //! no 51Did product, or the request for its property list fails. Kept in its
 //! own test binary because a logger is installed once for the whole process.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use fiftyone_cloud_request_engine::{
@@ -221,4 +222,74 @@ fn a_license_key_alone_gives_empty_metadata_and_logs_nothing() {
     assert!(fodid.has_loaded_properties());
     assert!(fodid.properties().is_empty());
     assert!(fodid.aspect_properties().is_empty());
+}
+
+/// A cloud granting the 51Did product that refuses the property list request
+/// while `properties_down` is set and answers the rest.
+struct RecoveringCloud {
+    properties_down: Arc<AtomicBool>,
+}
+
+impl CloudHttpClient for RecoveringCloud {
+    fn send(&self, request: &CloudHttpRequest) -> Result<CloudHttpResponse, String> {
+        if !request.url.contains("accessibleproperties") {
+            return DeviceOnlyCloud.send(request);
+        }
+        if self.properties_down.load(Ordering::Relaxed) {
+            return Err("connection refused".to_owned());
+        }
+        Ok(CloudHttpResponse {
+            status: 200,
+            body: r#"{"Products":{"fodid":{"DataTier":"CloudV4","Properties":[
+                {"Name":"IdProbGlobal","Type":"String","Category":"Identifier"}]}}}"#
+                .to_owned(),
+            retry_after: None,
+        })
+    }
+}
+
+/// An engine that has not processed since discovery completed reads the
+/// property list when asked whether its properties are loaded.
+#[test]
+fn an_engine_that_has_not_processed_reads_the_property_list_when_asked() {
+    let _serial = start();
+    let down = Arc::new(AtomicBool::new(true));
+    let request_engine = Arc::new(
+        CloudRequestEngine::builder()
+            .resource_key("rk")
+            .http_client(Arc::new(RecoveringCloud {
+                properties_down: Arc::clone(&down),
+            }))
+            .build()
+            .unwrap(),
+    );
+    let fodid = FodIdCloudEngine::builder()
+        .cloud_request_engine(Arc::clone(&request_engine))
+        .build()
+        .unwrap();
+    assert!(!fodid.properties_loaded());
+
+    // Only the request engine processes, so discovery completes without the
+    // 51Did engine reading the list.
+    down.store(false, Ordering::Relaxed);
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::clone(&request_engine) as Arc<dyn FlowElement>)
+        .build()
+        .unwrap();
+    let evidence = Evidence::builder()
+        .add("header.user-agent", "Mozilla/5.0")
+        .build();
+    let mut data = pipeline.create_flow_data_with(evidence);
+    data.process().unwrap();
+    assert!(request_engine.public_properties().is_ok());
+    assert!(!fodid.has_loaded_properties());
+
+    assert!(fodid.properties_loaded());
+    let names: Vec<&str> = fodid
+        .properties()
+        .iter()
+        .map(|property| property.name.as_str())
+        .collect();
+    assert_eq!(names, ["IdProbGlobal"]);
+    assert_eq!(take_logged(), Vec::<String>::new());
 }

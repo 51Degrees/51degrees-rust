@@ -373,3 +373,32 @@ fn the_properties_are_loaded_once_discovery_completes() {
     assert!(error.is_none(), "{error:?}");
     assert!(engine.properties_loaded());
 }
+
+/// An engine that has not processed since discovery completed reads the
+/// property list when asked whether its properties are loaded.
+#[test]
+fn an_engine_that_has_not_processed_reads_the_property_list_when_asked() {
+    let _serial = start();
+    let down = Arc::new(AtomicBool::new(true));
+    let (request, engine) = engines(r#"{"ip":{}}"#, false, Arc::clone(&down));
+
+    // Only the request engine processes, so discovery completes without the
+    // IP Intelligence engine reading the list.
+    down.store(false, Ordering::Relaxed);
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::clone(&request) as Arc<dyn FlowElement>)
+        .build()
+        .unwrap();
+    let (_data, error) = process(&pipeline);
+    assert!(error.is_none(), "{error:?}");
+    assert!(request.public_properties().is_ok());
+    assert!(!engine.has_loaded_properties());
+
+    assert!(engine.properties_loaded());
+    let names: Vec<&str> = engine
+        .properties()
+        .iter()
+        .map(|property| property.name.as_str())
+        .collect();
+    assert_eq!(names, ["RegisteredName"]);
+}
