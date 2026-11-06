@@ -156,6 +156,107 @@ fn set_pool_concurrency(config: &mut sys::ConfigHash, concurrency: u16) {
     }
 }
 
+/// Settings that change a performance profile's native configuration before
+/// a Hash data set loads, as the builders of the other 51Degrees ports set
+/// them. Each is [`None`] to keep the profile's own value. Start from
+/// [`HashOptions::default`] and set the fields wanted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HashOptions {
+    /// The expected number of threads processing through the data set at
+    /// once, which sizes the file handle pool and the caches of the profiles
+    /// that read from the file. See [`Manager::open_with_options`].
+    pub concurrency: Option<u16>,
+    /// The most difference in hash value a match may have. The profiles'
+    /// own value is 0.
+    pub difference: Option<i32>,
+    /// The most drift, in character positions, a match may have. The
+    /// profiles' own value is 0.
+    pub drift: Option<i32>,
+    /// Whether a detection that matches nothing gives each component's
+    /// default profile rather than no profile. The profiles' own value is
+    /// false.
+    pub allow_unmatched: Option<bool>,
+    /// Whether a detection records the characters of each User-Agent it
+    /// matched. The profiles' own value is true.
+    pub update_matched_user_agent: Option<bool>,
+    /// Whether detection tries the performance graph. The profiles' own
+    /// value is false.
+    pub use_performance_graph: Option<bool>,
+    /// Whether detection tries the predictive graph, after the performance
+    /// graph when both are used. The profiles' own value is true.
+    pub use_predictive_graph: Option<bool>,
+}
+
+impl HashOptions {
+    /// Write each setting that is not [`None`] into `config`.
+    fn apply(&self, config: &mut sys::ConfigHash) {
+        if let Some(concurrency) = self.concurrency {
+            set_pool_concurrency(config, concurrency);
+        }
+        if let Some(difference) = self.difference {
+            config.difference = difference;
+        }
+        if let Some(drift) = self.drift {
+            config.drift = drift;
+        }
+        if let Some(allow) = self.allow_unmatched {
+            config.b.allow_unmatched = allow;
+        }
+        if let Some(update) = self.update_matched_user_agent {
+            config.b.update_matched_user_agent = update;
+        }
+        if let Some(use_graph) = self.use_performance_graph {
+            config.use_performance_graph = use_graph;
+        }
+        if let Some(use_graph) = self.use_predictive_graph {
+            config.use_predictive_graph = use_graph;
+        }
+    }
+}
+
+/// The most expected concurrency `profile` loads with, or [`None`] when any
+/// concurrency loads. A collection read from the file through a cache splits
+/// the cache into one part for each concurrent operation, and the C library
+/// refuses a part smaller than the number of parts, so the smallest such
+/// cache sets the limit (its capacity's whole square root).
+fn most_concurrency(profile: PerformanceProfile) -> Option<u16> {
+    // Safety: `config_for` returns a valid pointer to an initialized config
+    // global, and copying out of it is a plain read of a `repr(C)` value.
+    let config = unsafe { *config_for(profile) };
+    [
+        config.strings,
+        config.components,
+        config.maps,
+        config.properties,
+        config.values,
+        config.profiles,
+        config.root_nodes,
+        config.nodes,
+        config.profile_offsets,
+    ]
+    .into_iter()
+    .filter(|collection| !collection.loaded && collection.capacity > 0)
+    .map(|collection| u16::try_from(collection.capacity.isqrt()).unwrap_or(u16::MAX))
+    .min()
+}
+
+/// The expected concurrency a Hash engine opens `profile` with when none is
+/// named, which the specification gives as the number of processors. It is
+/// held at the most the profile's caches take, so the profile still loads on
+/// a machine with more processors (22 under `Balanced` and `Default`, whose
+/// values cache holds 500 entries).
+pub fn default_concurrency(profile: PerformanceProfile) -> u16 {
+    let processors = std::thread::available_parallelism()
+        .map_or(1, |count| u16::try_from(count.get()).unwrap_or(u16::MAX));
+    concurrency_within(processors, profile)
+}
+
+/// `concurrency`, or the most `profile` loads with when that is less.
+fn concurrency_within(concurrency: u16, profile: PerformanceProfile) -> u16 {
+    most_concurrency(profile).map_or(concurrency, |most| concurrency.min(most))
+}
+
 // ---------------------------------------------------------------------------
 // Manager
 // ---------------------------------------------------------------------------
@@ -229,6 +330,21 @@ impl Manager {
         properties: Option<&[&str]>,
         concurrency: Option<u16>,
     ) -> Result<Arc<Manager>> {
+        let options = HashOptions {
+            concurrency,
+            ..HashOptions::default()
+        };
+        Self::open_with_hash_options(path, profile, properties, &options)
+    }
+
+    /// Open a Hash data file with the named properties, changing the
+    /// profile's native configuration by `options` first.
+    pub fn open_with_hash_options(
+        path: impl AsRef<Path>,
+        profile: PerformanceProfile,
+        properties: Option<&[&str]>,
+        options: &HashOptions,
+    ) -> Result<Arc<Manager>> {
         let path = path.as_ref();
         let path_c = crate::path::native_path(path)?;
 
@@ -254,14 +370,12 @@ impl Manager {
         let manager_ptr = Box::into_raw(boxed);
 
         // Copy the predefined configuration for this profile into a local value
-        // so an expected-concurrency override sizes this engine's handle pool
-        // without mutating the shared global the other engines read.
+        // so the options change this data set without mutating the shared
+        // global the other engines read.
         // Safety: `config_for` returns a valid pointer to an initialized config
         // global; copying out of it is a plain read of a `repr(C)` value.
         let mut config = unsafe { *config_for(profile) };
-        if let Some(concurrency) = concurrency {
-            set_pool_concurrency(&mut config, concurrency);
-        }
+        options.apply(&mut config);
 
         let mut exception = sys::Exception::cleared();
         // Safety: all pointers are valid for the duration of the call. The
@@ -1579,6 +1693,82 @@ mod tests {
                 profile.as_str()
             );
         }
+    }
+
+    /// A profile whose collections read through caches takes at most the
+    /// concurrency its smallest cache can be split into, and the others take
+    /// any.
+    #[test]
+    fn the_smallest_cache_sets_the_most_concurrency() {
+        assert_eq!(most_concurrency(PerformanceProfile::Balanced), Some(22));
+        assert_eq!(most_concurrency(PerformanceProfile::Default), Some(22));
+        for profile in [
+            PerformanceProfile::LowMemory,
+            PerformanceProfile::HighPerformance,
+            PerformanceProfile::InMemory,
+        ] {
+            assert_eq!(most_concurrency(profile), None, "{}", profile.as_str());
+        }
+        let balanced = default_concurrency(PerformanceProfile::Balanced);
+        assert!((1..=22).contains(&balanced), "{balanced}");
+        for (processors, profile, expected) in [
+            (64, PerformanceProfile::Balanced, 22),
+            (64, PerformanceProfile::Default, 22),
+            (8, PerformanceProfile::Balanced, 8),
+            (64, PerformanceProfile::LowMemory, 64),
+            (64, PerformanceProfile::HighPerformance, 64),
+        ] {
+            assert_eq!(
+                concurrency_within(processors, profile),
+                expected,
+                "{processors} {}",
+                profile.as_str()
+            );
+        }
+    }
+
+    /// Unset options leave the profile's configuration as it is, and set
+    /// ones change only their own fields.
+    #[test]
+    fn options_change_only_what_they_name() {
+        // Safety: as in `open_with_hash_options`.
+        let profile = unsafe { *config_for(PerformanceProfile::Balanced) };
+        let fields = |config: &sys::ConfigHash| {
+            (
+                config.difference,
+                config.drift,
+                config.b.allow_unmatched,
+                config.b.update_matched_user_agent,
+                config.use_performance_graph,
+                config.use_predictive_graph,
+                config.values.concurrency,
+                config.values.capacity,
+                config.b.b.all_in_memory,
+            )
+        };
+        let mut unchanged = profile;
+        HashOptions::default().apply(&mut unchanged);
+        assert_eq!(fields(&unchanged), fields(&profile));
+        assert_eq!(
+            fields(&profile),
+            (0, 0, false, true, false, true, 10, 500, false)
+        );
+
+        let mut changed = profile;
+        HashOptions {
+            concurrency: Some(3),
+            difference: Some(4),
+            drift: Some(5),
+            allow_unmatched: Some(true),
+            update_matched_user_agent: Some(false),
+            use_performance_graph: Some(true),
+            use_predictive_graph: Some(false),
+        }
+        .apply(&mut changed);
+        assert_eq!(
+            fields(&changed),
+            (4, 5, true, false, true, false, 3, 500, false)
+        );
     }
 
     #[test]
