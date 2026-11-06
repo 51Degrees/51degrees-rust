@@ -677,7 +677,7 @@ namespace FiftyOne.Parity
     // rather than a data file, so both languages translate the same codes
     // and weightings. It lists no properties, so the line leaves it out and
     // only the JSON shows its data. The Rust producer's element writes the
-    // same.
+    // same codes as the crates' IP Intelligence data.
     internal sealed class CountriesElement :
         FlowElementBase<CountriesData, IElementPropertyMetaData>
     {

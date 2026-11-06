@@ -27,20 +27,19 @@
 //! The codes come from the evidence rather than a data file, so every case
 //! gives both languages the same codes and weightings whatever the file.
 
-use std::any::Any;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
-use fiftyone_ip_intelligence_shared::IP_DATA_KEY_NAME;
+use fiftyone_ip_intelligence_shared::{IpIntelligenceDataBase, IP_DATA_KEY, IP_DATA_KEY_NAME};
 use fiftyone_ip_intelligence_translation::{
     CountriesTranslationEngine, CountryCodeTranslationEngine,
 };
 use fiftyone_json_builder::JsonBuilderElementBuilder;
 use fiftyone_pipeline_core::{
-    ElementData, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
-    NoValueError, Pipeline, PropertyMetaData, PropertyValue, TypedKey,
+    EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, Pipeline,
+    PropertyMetaData, WeightedValue,
 };
+use fiftyone_pipeline_engines::{EngineDeployment, MissingPropertySource};
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 
 /// The `pipeline` of a case that runs through this pipeline.
@@ -57,103 +56,83 @@ const PROPERTIES: [(&str, &str); 2] = [
 /// The reason a property with empty evidence gives.
 const NO_CODES_REASON: &str = "The evidence gave no country codes.";
 
-const IP_KEY: TypedKey<CountriesData> = TypedKey::new(IP_DATA_KEY_NAME);
+/// The type the reason for a missing property names.
+const ELEMENT_TYPE_NAME: &str = "CountriesElement";
 
-/// A property's value, or the reason it has none.
-type Entry = std::result::Result<PropertyValue, &'static str>;
-
-/// The country codes, in the order they were set.
-struct CountriesData {
-    entries: Vec<(&'static str, Entry)>,
-}
-
-impl CountriesData {
-    fn entry(&self, name: &str) -> Option<&Entry> {
-        self.entries
-            .iter()
-            .find(|(key, _)| key.eq_ignore_ascii_case(name))
-            .map(|(_, entry)| entry)
+/// Read one property's evidence as weighted codes, or `None` when it is
+/// empty.
+fn weighted_codes(text: &str) -> Result<Option<Vec<WeightedValue<String>>>> {
+    if text.is_empty() {
+        return Ok(None);
     }
+    text.split(',')
+        .map(|item| -> Result<WeightedValue<String>> {
+            let Some((code, weighting)) = item.split_once(':') else {
+                bail!("{item} is not code:raw weighting");
+            };
+            let weighting: u16 = weighting
+                .parse()
+                .with_context(|| format!("{item} has no raw weighting from 0 to 65535"))?;
+            Ok(WeightedValue::new(weighting, code.to_owned()))
+        })
+        .collect::<Result<_>>()
+        .map(Some)
 }
 
-impl ElementData for CountriesData {
-    fn get(&self, name: &str) -> std::result::Result<PropertyValue, NoValueError> {
-        match self.entry(name) {
-            Some(Ok(value)) => Ok(value.clone()),
-            Some(Err(reason)) => Err(NoValueError::new(*reason)),
-            None => Err(NoValueError::new(format!(
-                "No value for property '{name}'."
-            ))),
+/// Writes the country codes the evidence gives as the crates' IP
+/// Intelligence data, with a missing property source as both IP Intelligence
+/// engines add one, so the translation engines read each code as a record of
+/// `value` and `weight` and find a property the evidence did not give
+/// missing, as in a deployment. It writes no data when neither evidence key
+/// is present. It lists no properties, so the line leaves it out and only the
+/// JSON shows its data.
+struct CountriesElement {
+    filter: EvidenceKeyFilterWhitelist,
+    missing: Arc<MissingPropertySource>,
+}
+
+impl CountriesElement {
+    fn new() -> Self {
+        CountriesElement {
+            filter: EvidenceKeyFilterWhitelist::new(PROPERTIES.map(|(_, key)| key)),
+            missing: Arc::new(MissingPropertySource::new(
+                IP_DATA_KEY_NAME,
+                ELEMENT_TYPE_NAME,
+                EngineDeployment::OnPremise,
+                "",
+                Vec::new(),
+            )),
         }
     }
 
-    fn has_property(&self, name: &str) -> bool {
-        self.entry(name).is_some()
+    /// Empty IP Intelligence data that knows its missing properties.
+    fn empty_data(&self) -> IpIntelligenceDataBase {
+        let mut ip = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        ip.base_mut()
+            .add_missing_property_source(Arc::clone(&self.missing));
+        ip
     }
-
-    fn keys(&self) -> Vec<String> {
-        self.entries
-            .iter()
-            .map(|(name, _)| (*name).to_owned())
-            .collect()
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-}
-
-/// Read one property's evidence as a weighted list, each item a record of
-/// `rawweighting` and `value` as the IP Intelligence engines give it.
-fn weighted_codes(text: &str) -> Result<Entry> {
-    if text.is_empty() {
-        return Ok(Err(NO_CODES_REASON));
-    }
-    let mut records = Vec::new();
-    for item in text.split(',') {
-        let Some((code, weighting)) = item.split_once(':') else {
-            bail!("{item} is not code:raw weighting");
-        };
-        let weighting: u16 = weighting
-            .parse()
-            .with_context(|| format!("{item} has no raw weighting from 0 to 65535"))?;
-        records.push(BTreeMap::from([
-            (
-                "rawweighting".to_owned(),
-                PropertyValue::Integer(i64::from(weighting)),
-            ),
-            ("value".to_owned(), PropertyValue::String(code.to_owned())),
-        ]));
-    }
-    Ok(Ok(PropertyValue::KeyValueList(records)))
-}
-
-/// Writes the country codes the evidence gives under IP Intelligence's data
-/// key, and nothing when the evidence gives none. It lists no properties,
-/// so the line leaves it out and only the JSON shows its data.
-struct CountriesElement {
-    filter: EvidenceKeyFilterWhitelist,
 }
 
 impl FlowElement for CountriesElement {
     fn process(&self, data: &mut FlowData) -> fiftyone_pipeline_core::Result<()> {
-        let mut entries = Vec::new();
+        let mut written: Option<IpIntelligenceDataBase> = None;
         for (name, key) in PROPERTIES {
-            if let Some(text) = data.evidence().get(key) {
-                let entry = weighted_codes(text).map_err(|error| {
-                    fiftyone_pipeline_core::Error::Pipeline {
-                        message: format!("{key}: {error:#}"),
-                    }
+            let Some(text) = data.evidence().get(key) else {
+                continue;
+            };
+            let codes =
+                weighted_codes(text).map_err(|error| fiftyone_pipeline_core::Error::Pipeline {
+                    message: format!("{key}: {error:#}"),
                 })?;
-                entries.push((name, entry));
+            let ip = written.get_or_insert_with(|| self.empty_data());
+            match codes {
+                Some(codes) => ip.set_weighted_string(name, codes),
+                None => ip.set_weighted_string_no_value(name, NO_CODES_REASON),
             }
         }
-        if !entries.is_empty() {
-            data.get_or_add(IP_KEY, || CountriesData { entries })?;
+        if let Some(ip) = written {
+            data.get_or_add(IP_DATA_KEY, || ip)?;
         }
         Ok(())
     }
@@ -180,9 +159,7 @@ pub fn build_pipeline() -> Result<Arc<Pipeline>> {
     let json = JsonBuilderElementBuilder::new()
         .exclude_element(sequence.data_key())
         .build();
-    let countries = CountriesElement {
-        filter: EvidenceKeyFilterWhitelist::new(PROPERTIES.map(|(_, key)| key)),
-    };
+    let countries = CountriesElement::new();
     Ok(Pipeline::builder()
         .add_element(sequence)
         .add_element(Arc::new(countries))
