@@ -167,6 +167,19 @@ fn web_pipeline(fail: bool) -> WebPipeline {
     .expect("web pipeline builds")
 }
 
+/// The session id the requests in these tests carry. Without one, the
+/// Sequence element the web pipeline adds creates a new id for each request,
+/// and the ETag is worked out from the evidence that id is added to.
+const SESSION_ID: &str = "0f8fad5b-d9cb-469f-a165-70867728950e";
+
+/// Evidence for a request from `user_agent` in the session [`SESSION_ID`].
+fn page_evidence(user_agent: &str) -> Evidence {
+    Evidence::builder()
+        .add("header.user-agent", user_agent)
+        .add("query.session-id", SESSION_ID)
+        .build()
+}
+
 /// Process a flow data through the pipeline with the given evidence.
 fn processed(pipeline: &Arc<Pipeline>, evidence: Evidence) -> FlowData {
     let mut data = pipeline.create_flow_data_with(evidence);
@@ -424,8 +437,8 @@ fn no_vary_header_when_whitelist_empty() {
 #[test]
 fn etag_is_stable_and_present() {
     let web = web_pipeline(false);
-    let evidence_a = Evidence::builder().add("header.user-agent", "abc").build();
-    let evidence_b = Evidence::builder().add("header.user-agent", "abc").build();
+    let evidence_a = page_evidence("abc");
+    let evidence_b = page_evidence("abc");
     let data_a = processed(web.pipeline(), evidence_a);
     let data_b = processed(web.pipeline(), evidence_b);
     let options = EndpointOptions::new(web.vary_whitelist().clone());
@@ -441,18 +454,30 @@ fn etag_is_stable_and_present() {
 }
 
 #[test]
+fn a_request_without_a_session_id_gets_an_etag_of_its_own() {
+    // The Sequence element adds the session id it creates to the evidence,
+    // and the specification works the ETag out from all of the evidence the
+    // pipeline accepts, as .NET does.
+    let web = web_pipeline(false);
+    let options = EndpointOptions::new(web.vary_whitelist().clone());
+    let etag = || {
+        let evidence = Evidence::builder().add("header.user-agent", "abc").build();
+        let data = processed(web.pipeline(), evidence);
+        serve_json(&data, &TestRequest::default(), &options)
+            .header("ETag")
+            .expect("an ETag")
+            .to_owned()
+    };
+    assert_ne!(etag(), etag());
+}
+
+#[test]
 fn different_evidence_gives_different_etag() {
     let web = web_pipeline(false);
     let options = EndpointOptions::new(web.vary_whitelist().clone());
 
-    let data_a = processed(
-        web.pipeline(),
-        Evidence::builder().add("header.user-agent", "abc").build(),
-    );
-    let data_b = processed(
-        web.pipeline(),
-        Evidence::builder().add("header.user-agent", "xyz").build(),
-    );
+    let data_a = processed(web.pipeline(), page_evidence("abc"));
+    let data_b = processed(web.pipeline(), page_evidence("xyz"));
     let etag_a = serve_json(&data_a, &TestRequest::default(), &options)
         .header("ETag")
         .unwrap()
@@ -477,7 +502,7 @@ fn a_304_carries_the_fields_the_200_would() {
             .collect(),
         ..Default::default()
     };
-    let evidence = || Evidence::builder().add("header.user-agent", "abc").build();
+    let evidence = || page_evidence("abc");
 
     let first = serve_json(
         &processed(web.pipeline(), evidence()),
@@ -520,7 +545,7 @@ fn a_304_carries_the_fields_the_200_would() {
 fn a_304_without_the_extra_headers_carries_none() {
     let web = web_pipeline(false);
     let options = EndpointOptions::new(web.vary_whitelist().clone()).without_extra_headers();
-    let evidence = || Evidence::builder().add("header.user-agent", "abc").build();
+    let evidence = || page_evidence("abc");
     let data = processed(web.pipeline(), evidence());
     let request = TestRequest {
         headers: vec![(
@@ -560,10 +585,7 @@ fn non_matching_if_none_match_returns_200() {
 fn a_matching_if_none_match_gets_a_304_only_on_get_or_head() {
     let web = web_pipeline(false);
     let options = EndpointOptions::new(web.vary_whitelist().clone());
-    let data = processed(
-        web.pipeline(),
-        Evidence::builder().add("header.user-agent", "abc").build(),
-    );
+    let data = processed(web.pipeline(), page_evidence("abc"));
     let etag = compute_etag(&data, data.evidence_key_filter());
     let cases = [
         (None, WebResponse::STATUS_NOT_MODIFIED),
@@ -602,7 +624,7 @@ fn a_412_carries_only_the_cors_header() {
         method: Some("POST".to_owned()),
         ..Default::default()
     };
-    let evidence = || Evidence::builder().add("header.user-agent", "abc").build();
+    let evidence = || page_evidence("abc");
 
     let first = serve_json(
         &processed(web.pipeline(), evidence()),
@@ -635,10 +657,7 @@ fn a_412_carries_only_the_cors_header() {
 fn a_412_without_the_extra_headers_carries_none() {
     let web = web_pipeline(false);
     let options = EndpointOptions::new(web.vary_whitelist().clone()).without_extra_headers();
-    let data = processed(
-        web.pipeline(),
-        Evidence::builder().add("header.user-agent", "abc").build(),
-    );
+    let data = processed(web.pipeline(), page_evidence("abc"));
     let request = TestRequest {
         headers: vec![
             ("Origin".to_owned(), "https://example.com".to_owned()),
@@ -668,10 +687,7 @@ fn the_same_evidence_gives_the_same_etag_in_another_process() {
     // the same evidence must not depend on the process that computed it.
     let web = web_pipeline(false);
     let options = EndpointOptions::new(web.vary_whitelist().clone());
-    let data = processed(
-        web.pipeline(),
-        Evidence::builder().add("header.user-agent", "abc").build(),
-    );
+    let data = processed(web.pipeline(), page_evidence("abc"));
     let response = serve_json(&data, &TestRequest::default(), &options);
     let etag = response.header("ETag").expect("an ETag").to_owned();
 
@@ -1049,7 +1065,7 @@ fn the_response_to_a_failed_request_is_not_kept_once_processing_recovers() {
     )
     .expect("web pipeline builds");
     let options = EndpointOptions::new(web.vary_whitelist().clone());
-    let evidence = || Evidence::builder().add("header.user-agent", "abc").build();
+    let evidence = || page_evidence("abc");
 
     let failed = serve_javascript(
         &processed(web.pipeline(), evidence()),
@@ -1106,7 +1122,7 @@ fn a_304_while_processing_is_failing_carries_the_fields_of_a_failed_200() {
     )
     .expect("web pipeline builds");
     let options = EndpointOptions::new(web.vary_whitelist().clone());
-    let evidence = || Evidence::builder().add("header.user-agent", "abc").build();
+    let evidence = || page_evidence("abc");
 
     let good = serve_javascript(
         &processed(web.pipeline(), evidence()),

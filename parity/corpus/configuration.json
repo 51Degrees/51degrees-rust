@@ -1,0 +1,528 @@
+[
+  {
+    "id": "configuration-pipeline",
+    "about": "The Sequence element, the Hash and IP Intelligence engines in a parallel group, the JSON builder and usage sharing, with every parameter given as text, and each setting read back.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "SubElements": [
+              {
+                "BuilderName": "DeviceDetectionHashEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{dd}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false",
+                  "UpdatePollingInterval": "00:45:00",
+                  "UpdateRandomisationMax": "120",
+                  "DataUpdateUrl": "https://parity.test/data",
+                  "DataUpdateLicenseKey": "PARITYKEY",
+                  "DataUpdateVerifyMd5": "false",
+                  "DataUpdateDecompress": "false",
+                  "VerifyIfModifiedSince": "false"
+                }
+              },
+              {
+                "BuilderName": "IpiOnPremiseEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{ipi}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false"
+                }
+              }
+            ]
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          },
+          {
+            "BuilderName": "ShareUsageBuilder",
+            "BuildParameters": {
+              "SharePercentage": "0.5",
+              "MinimumEntriesPerMessage": "20",
+              "MaximumQueueSize": "500",
+              "AddTimeout": "10",
+              "TakeTimeout": "200",
+              "ShareUsageUrl": "https://parity.test/usage",
+              "BlockedHttpHeaders": "Referer,X-Forwarded-For",
+              "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
+              "ShareAllEvidence": "false",
+              "RepeatEvidenceIntervalMinutes": "5"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SuppressProcessExceptions": "true"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-no-group",
+    "about": "The same elements with the two engines on their own, so they are listed in the order given and the pipeline is not concurrent.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false",
+              "UpdatePollingInterval": "00:45:00",
+              "UpdateRandomisationMax": "120",
+              "DataUpdateUrl": "https://parity.test/data",
+              "DataUpdateLicenseKey": "PARITYKEY",
+              "DataUpdateVerifyMd5": "false",
+              "DataUpdateDecompress": "false",
+              "VerifyIfModifiedSince": "false"
+            }
+          },
+          {
+            "BuilderName": "IpiOnPremiseEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{ipi}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          },
+          {
+            "BuilderName": "ShareUsageBuilder",
+            "BuildParameters": {
+              "SharePercentage": "0.5",
+              "MinimumEntriesPerMessage": "20",
+              "MaximumQueueSize": "500",
+              "AddTimeout": "10",
+              "TakeTimeout": "200",
+              "ShareUsageUrl": "https://parity.test/usage",
+              "BlockedHttpHeaders": "Referer,X-Forwarded-For",
+              "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
+              "ShareAllEvidence": "false",
+              "RepeatEvidenceIntervalMinutes": "5"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SuppressProcessExceptions": "true"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-unknown-builder",
+    "about": "A builder name no builder has, in place of the JSON builder.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "SubElements": [
+              {
+                "BuilderName": "DeviceDetectionHashEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{dd}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false",
+                  "UpdatePollingInterval": "00:45:00",
+                  "UpdateRandomisationMax": "120",
+                  "DataUpdateUrl": "https://parity.test/data",
+                  "DataUpdateLicenseKey": "PARITYKEY",
+                  "DataUpdateVerifyMd5": "false",
+                  "DataUpdateDecompress": "false",
+                  "VerifyIfModifiedSince": "false"
+                }
+              },
+              {
+                "BuilderName": "IpiOnPremiseEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{ipi}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false"
+                }
+              }
+            ]
+          },
+          {
+            "BuilderName": "NoSuchElementBuilder"
+          },
+          {
+            "BuilderName": "ShareUsageBuilder",
+            "BuildParameters": {
+              "SharePercentage": "0.5",
+              "MinimumEntriesPerMessage": "20",
+              "MaximumQueueSize": "500",
+              "AddTimeout": "10",
+              "TakeTimeout": "200",
+              "ShareUsageUrl": "https://parity.test/usage",
+              "BlockedHttpHeaders": "Referer,X-Forwarded-For",
+              "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
+              "ShareAllEvidence": "false",
+              "RepeatEvidenceIntervalMinutes": "5"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SuppressProcessExceptions": "true"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-unknown-builder-in-group",
+    "about": "A builder name no builder has, in place of the IP Intelligence engine inside the group.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "SubElements": [
+              {
+                "BuilderName": "DeviceDetectionHashEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{dd}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false",
+                  "UpdatePollingInterval": "00:45:00",
+                  "UpdateRandomisationMax": "120",
+                  "DataUpdateUrl": "https://parity.test/data",
+                  "DataUpdateLicenseKey": "PARITYKEY",
+                  "DataUpdateVerifyMd5": "false",
+                  "DataUpdateDecompress": "false",
+                  "VerifyIfModifiedSince": "false"
+                }
+              },
+              {
+                "BuilderName": "NoSuchEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{ipi}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false"
+                }
+              }
+            ]
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          },
+          {
+            "BuilderName": "ShareUsageBuilder",
+            "BuildParameters": {
+              "SharePercentage": "0.5",
+              "MinimumEntriesPerMessage": "20",
+              "MaximumQueueSize": "500",
+              "AddTimeout": "10",
+              "TakeTimeout": "200",
+              "ShareUsageUrl": "https://parity.test/usage",
+              "BlockedHttpHeaders": "Referer,X-Forwarded-For",
+              "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
+              "ShareAllEvidence": "false",
+              "RepeatEvidenceIntervalMinutes": "5"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SuppressProcessExceptions": "true"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-unknown-parameter",
+    "about": "A parameter usage sharing has no setting for.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "SubElements": [
+              {
+                "BuilderName": "DeviceDetectionHashEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{dd}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false",
+                  "UpdatePollingInterval": "00:45:00",
+                  "UpdateRandomisationMax": "120",
+                  "DataUpdateUrl": "https://parity.test/data",
+                  "DataUpdateLicenseKey": "PARITYKEY",
+                  "DataUpdateVerifyMd5": "false",
+                  "DataUpdateDecompress": "false",
+                  "VerifyIfModifiedSince": "false"
+                }
+              },
+              {
+                "BuilderName": "IpiOnPremiseEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{ipi}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false"
+                }
+              }
+            ]
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          },
+          {
+            "BuilderName": "ShareUsageBuilder",
+            "BuildParameters": {
+              "SharePercentage": "0.5",
+              "MinimumEntriesPerMessage": "20",
+              "MaximumQueueSize": "500",
+              "AddTimeout": "10",
+              "TakeTimeout": "200",
+              "ShareUsageUrl": "https://parity.test/usage",
+              "BlockedHttpHeaders": "Referer,X-Forwarded-For",
+              "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
+              "ShareAllEvidence": "false",
+              "RepeatEvidenceIntervalMinutes": "5",
+              "NoSuchSetting": "1"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SuppressProcessExceptions": "true"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-unknown-parameter-in-group",
+    "about": "A parameter the IP Intelligence engine inside the group has no setting for.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "SubElements": [
+              {
+                "BuilderName": "DeviceDetectionHashEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{dd}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false",
+                  "UpdatePollingInterval": "00:45:00",
+                  "UpdateRandomisationMax": "120",
+                  "DataUpdateUrl": "https://parity.test/data",
+                  "DataUpdateLicenseKey": "PARITYKEY",
+                  "DataUpdateVerifyMd5": "false",
+                  "DataUpdateDecompress": "false",
+                  "VerifyIfModifiedSince": "false"
+                }
+              },
+              {
+                "BuilderName": "IpiOnPremiseEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{ipi}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false",
+                  "NoSuchSetting": "1"
+                }
+              }
+            ]
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          },
+          {
+            "BuilderName": "ShareUsageBuilder",
+            "BuildParameters": {
+              "SharePercentage": "0.5",
+              "MinimumEntriesPerMessage": "20",
+              "MaximumQueueSize": "500",
+              "AddTimeout": "10",
+              "TakeTimeout": "200",
+              "ShareUsageUrl": "https://parity.test/usage",
+              "BlockedHttpHeaders": "Referer,X-Forwarded-For",
+              "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
+              "ShareAllEvidence": "false",
+              "RepeatEvidenceIntervalMinutes": "5"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SuppressProcessExceptions": "true"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-value-does-not-parse",
+    "about": "A share percentage that is not a number.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "SubElements": [
+              {
+                "BuilderName": "DeviceDetectionHashEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{dd}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false",
+                  "UpdatePollingInterval": "00:45:00",
+                  "UpdateRandomisationMax": "120",
+                  "DataUpdateUrl": "https://parity.test/data",
+                  "DataUpdateLicenseKey": "PARITYKEY",
+                  "DataUpdateVerifyMd5": "false",
+                  "DataUpdateDecompress": "false",
+                  "VerifyIfModifiedSince": "false"
+                }
+              },
+              {
+                "BuilderName": "IpiOnPremiseEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{ipi}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false"
+                }
+              }
+            ]
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          },
+          {
+            "BuilderName": "ShareUsageBuilder",
+            "BuildParameters": {
+              "SharePercentage": "half",
+              "MinimumEntriesPerMessage": "20",
+              "MaximumQueueSize": "500",
+              "AddTimeout": "10",
+              "TakeTimeout": "200",
+              "ShareUsageUrl": "https://parity.test/usage",
+              "BlockedHttpHeaders": "Referer,X-Forwarded-For",
+              "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
+              "ShareAllEvidence": "false",
+              "RepeatEvidenceIntervalMinutes": "5"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SuppressProcessExceptions": "true"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-value-does-not-parse-in-group",
+    "about": "A polling interval for the Hash engine inside the group that is not a time span.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "SubElements": [
+              {
+                "BuilderName": "DeviceDetectionHashEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{dd}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false",
+                  "UpdatePollingInterval": "soon",
+                  "UpdateRandomisationMax": "120",
+                  "DataUpdateUrl": "https://parity.test/data",
+                  "DataUpdateLicenseKey": "PARITYKEY",
+                  "DataUpdateVerifyMd5": "false",
+                  "DataUpdateDecompress": "false",
+                  "VerifyIfModifiedSince": "false"
+                }
+              },
+              {
+                "BuilderName": "IpiOnPremiseEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{ipi}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false"
+                }
+              }
+            ]
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          },
+          {
+            "BuilderName": "ShareUsageBuilder",
+            "BuildParameters": {
+              "SharePercentage": "0.5",
+              "MinimumEntriesPerMessage": "20",
+              "MaximumQueueSize": "500",
+              "AddTimeout": "10",
+              "TakeTimeout": "200",
+              "ShareUsageUrl": "https://parity.test/usage",
+              "BlockedHttpHeaders": "Referer,X-Forwarded-For",
+              "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
+              "ShareAllEvidence": "false",
+              "RepeatEvidenceIntervalMinutes": "5"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SuppressProcessExceptions": "true"
+        }
+      }
+    }
+  }
+]

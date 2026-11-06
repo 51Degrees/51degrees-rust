@@ -8,6 +8,71 @@ This crate is part of the [51Degrees](https://51degrees.com/?utm_source=github&u
 device detection and IP intelligence, available both on-premise from a local
 data file and from the 51Degrees cloud.
 
+## From a configuration file
+
+A pipeline can also be made from a configuration file written for the .NET
+package [FiftyOne.IpIntelligence](https://www.nuget.org/packages/FiftyOne.IpIntelligence),
+so one file serves both languages. `configuration::registry()` finds each
+builder and setting by its .NET name, and adds a Sequence element first and,
+with the default `share-usage` feature, usage sharing last, as .NET's
+`FiftyOnePipelineBuilder` does. The file may hold comments, as .NET's reader
+allows. This one makes a pipeline with the on-premise engine reading the free
+ASN data file.
+
+```jsonc
+{
+  "PipelineOptions": {
+    "Elements": [
+      {
+        "BuilderName": "IpiOnPremiseEngineBuilder",
+        "BuildParameters": {
+          "DataFile": "51Degrees-IPIV4AsnIpiV41.ipi",
+          "PerformanceProfile": "LowMemory",
+          "CreateTempDataCopy": false,
+          // Off because the free ASN file has no licence key for updates.
+          "AutoUpdate": false,
+          "DataFileSystemWatcher": false
+        }
+      }
+    ]
+  }
+}
+```
+
+```rust,no_run
+use fiftyone_ip_intelligence::configuration::{self, PipelineOptions};
+use fiftyone_ip_intelligence::{IpIntelligenceData, IP_DATA_KEY};
+use fiftyone_pipeline_core::{Evidence, PipelineBuilder};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let options = PipelineOptions::from_json(&std::fs::read_to_string("appsettings.json")?)?;
+    let pipeline =
+        PipelineBuilder::new().build_from_configuration(&configuration::registry(), &options)?;
+
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder().add("server.client-ip", "1.1.1.1").build(),
+    );
+    data.process()?;
+    if let Some(ip) = data.get(IP_DATA_KEY) {
+        println!("AsnName: {:?}", ip.asn_name().value());
+    }
+    Ok(())
+}
+```
+
+`PipelineBuilder` and `Evidence` come from the `fiftyone-pipeline-core`
+crate. The cloud engines are `CloudRequestEngineBuilder`, given the resource
+key as `ResourceKey`, and then `IpiCloudEngineBuilder`. They send their
+requests through the client of the `reqwest-client` feature, or through an
+`Arc<dyn CloudHttpClient>` given to `PipelineBuilder::add_resource`.
+`SetShareUsage` set to false in the pipeline's own `BuildParameters` turns
+usage sharing off, as does `ShareUsage` in `PipelineBuilderParameters`, the
+older name .NET still reads. A builder this crate does not have, such as
+.NET's `CountryCodeTranslationEngineBuilder`, fails the build with the
+message .NET gives for a builder it cannot find. The
+[pipeline configuration specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/pipeline-configuration.md)
+describes the file.
+
 ## License
 
 Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the

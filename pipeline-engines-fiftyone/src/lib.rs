@@ -32,8 +32,8 @@
 //!
 //! - [`SequenceElement`] establishes the session id and sequence number used to
 //!   correlate the callbacks the client-side JavaScript makes to the server. It
-//!   generates a GUID session id when none is supplied and increments the
-//!   sequence on each request. See the
+//!   generates a GUID session id when none is supplied, increments the
+//!   sequence on each request and writes both into the evidence. See the
 //!   [sequence-element specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/sequence-element.md).
 //! - [`SetHeadersElement`] scans every element's properties for the
 //!   `SetHeader[Identifier][HeaderName]` naming convention and builds the set of
@@ -86,6 +86,16 @@
 //! return), following the
 //! [data-model specification](https://github.com/51Degrees/specifications/blob/main/data-model-specification/README.md).
 //!
+//! ## Configuration
+//!
+//! [`configuration::add_builders`] adds the builders of these three elements
+//! to a [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the
+//! names .NET gives them, so a configuration file written for .NET makes the
+//! same elements here. [`configuration::use_fiftyone_pipeline_builder`] makes
+//! the registry's pipelines as .NET's `FiftyOnePipelineBuilder` does, adding
+//! the Sequence element and usage sharing unless the configuration has them
+//! or turns usage sharing off with `SetShareUsage`.
+//!
 //! ## A worked example
 //!
 //! ```
@@ -109,6 +119,7 @@
 
 #![warn(missing_docs)]
 
+pub mod configuration;
 pub mod constants;
 mod evidence_filter;
 mod host_address;

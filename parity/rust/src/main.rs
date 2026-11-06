@@ -26,15 +26,18 @@
 //! parity-rust --corpus <json> --dd <hash file> --ipi <ipi file> --out <jsonl>
 //! parity-rust fodid-sign --cases <json> --prefix <text> --out <json>
 //! parity-rust fodid --corpus <json> [--corpus <json>] --out <jsonl>
+//! parity-rust configuration --cases <json> --dd <hash file> --ipi <ipi file> --out <jsonl>
 //! ```
 //!
 //! The first form runs the evidence cases through the pipelines. The
 //! pipelines and the line format are the same as the .NET producer's, as
 //! `parity/README.md` describes. Usage records go to sinks inside this
-//! program, so nothing is sent anywhere. The other two forms are the 51Did
-//! cases, described in `fodid_cases`.
+//! program, so nothing is sent anywhere. The next two forms are the 51Did
+//! cases, described in `fodid_cases`, and the last builds pipelines from
+//! configuration files, described in `configuration`.
 
 mod agent_signature;
+mod configuration;
 mod fodid_cases;
 mod translation;
 mod usage;
@@ -89,7 +92,7 @@ const EXTRA_PROPERTIES: &[(&str, &[&str])] = &[
     ("countrynamestranslated", &["SortingCultureUsed"]),
 ];
 
-/// The evidence the Sequence element reads, and in .NET writes back.
+/// The evidence the Sequence element reads and writes back.
 const SESSION_ID_KEY: &str = "query.session-id";
 const SEQUENCE_KEY: &str = "query.sequence";
 
@@ -122,6 +125,7 @@ fn main() -> Result<()> {
     match args.first().map(String::as_str) {
         Some(fodid_cases::SIGN) => return fodid_cases::sign(&args[1..]),
         Some(fodid_cases::READ) => return fodid_cases::read(&args[1..]),
+        Some(configuration::RUN) => return configuration::run(&args[1..]),
         _ => {}
     }
     let args = parse_args(&args)?;
@@ -293,7 +297,7 @@ fn run_case(pipeline: &Arc<Pipeline>, case: &Case) -> Result<Value> {
     let mut data = pipeline.create_flow_data_with(evidence.build());
     let process_error = data.process().err().map(|error| error.to_string());
 
-    let session = data.get(SequenceElement::KEY);
+    let evidence_after = data.evidence();
     let errors: Vec<Value> = data
         .errors()
         .iter()
@@ -309,12 +313,12 @@ fn run_case(pipeline: &Arc<Pipeline>, case: &Case) -> Result<Value> {
         "processError": process_error,
         "properties": properties(&data),
         "session": {
-            "id": session.and_then(|s| s.session_id()),
-            "sequence": session.and_then(|s| s.sequence()),
+            "id": evidence_after.get(SESSION_ID_KEY),
+            "sequence": evidence_after.get(SEQUENCE_KEY).and_then(read_long),
         },
         "evidenceAfter": {
-            SESSION_ID_KEY: data.evidence().get(SESSION_ID_KEY),
-            SEQUENCE_KEY: data.evidence().get(SEQUENCE_KEY),
+            SESSION_ID_KEY: evidence_after.get(SESSION_ID_KEY),
+            SEQUENCE_KEY: evidence_after.get(SEQUENCE_KEY),
         },
         "errors": errors,
         "json": data.get(JSON_BUILDER_DATA_KEY).map(|d| d.json()),
@@ -322,6 +326,14 @@ fn run_case(pipeline: &Arc<Pipeline>, case: &Case) -> Result<Value> {
         "usage": Value::Null,
         "usageCustom": Value::Null,
     }))
+}
+
+/// `text` as a 64-bit integer, read as the .NET producer's `long.TryParse`
+/// reads it, allowing white space either side and a sign.
+fn read_long(text: &str) -> Option<i64> {
+    text.trim_matches(|c| matches!(c, ' ' | '\t'..='\r'))
+        .parse()
+        .ok()
 }
 
 /// Every property of every element that lists properties, keyed by the

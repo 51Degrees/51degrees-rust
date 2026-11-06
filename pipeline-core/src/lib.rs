@@ -36,9 +36,10 @@
 //! - [`Pipeline`] and [`PipelineBuilder`] group ordered [`FlowElement`]s and run
 //!   them in order, with the elements of a parallel group at the same time. A
 //!   built pipeline is immutable and shared via [`std::sync::Arc`].
-//! - [`FlowData`] is the unit of work. It carries the immutable [`Evidence`]
-//!   input, the [`ElementData`] outputs, and any errors, and it knows how to
-//!   process itself via its pipeline back-reference.
+//! - [`FlowData`] is the unit of work. It carries the [`Evidence`] input,
+//!   with any values its elements add, the [`ElementData`] outputs, and any
+//!   errors, and it knows how to process itself via its pipeline
+//!   back-reference.
 //! - [`Evidence`] is an immutable, case-insensitive `prefix.field` store with a
 //!   defined precedence order ([`EvidencePrefix`]). [`EvidenceKeyFilter`] and
 //!   [`EvidenceKeyFilterWhitelist`] advertise the evidence an element accepts
@@ -119,6 +120,7 @@
 #![warn(missing_docs)]
 
 mod ci_map;
+pub mod configuration;
 pub mod constants;
 mod element_data;
 mod error;

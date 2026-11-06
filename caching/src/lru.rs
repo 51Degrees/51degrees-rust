@@ -42,6 +42,11 @@ use hashlink::LinkedHashMap;
 use crate::cache::{Cache, PutCache};
 use crate::config::CacheBuilder;
 
+/// The most entries a shard reserves room for when it is made. A larger
+/// shard grows as entries arrive, so a very large size, such as one read
+/// from a configuration, takes memory only for the entries held.
+const MOST_ENTRIES_RESERVED_PER_SHARD: usize = 4096;
+
 /// A sharded, least-recently-used cache.
 ///
 /// `LruCache` is generic over a key `K` and a value `V`. Both must be `Send +
@@ -118,7 +123,9 @@ where
     /// total number of entries across every shard, and `shard_count` is the
     /// number of shards. Both are clamped to at least one. The per-shard
     /// capacity is `size` divided by `shard_count`, rounded up so the total
-    /// capacity is never below the requested size.
+    /// capacity is never below the requested size. Each shard reserves room
+    /// for at most 4,096 entries when it is made and grows beyond that as
+    /// entries arrive.
     pub fn new(size: usize, shard_count: usize) -> Self {
         let shard_count = shard_count.max(1);
         let size = size.max(1);
@@ -130,7 +137,7 @@ where
         let shards = (0..shard_count)
             .map(|_| Shard {
                 map: Mutex::new(LinkedHashMap::with_capacity_and_hasher(
-                    capacity_per_shard,
+                    capacity_per_shard.min(MOST_ENTRIES_RESERVED_PER_SHARD),
                     RandomState::new(),
                 )),
             })
@@ -242,5 +249,31 @@ where
 
     fn clear(&self) {
         self.clear_entries();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The room a shard reserves stays near the limit however large the
+    /// cache, and the shard grows past it as entries arrive.
+    #[test]
+    fn a_large_cache_reserves_room_as_entries_arrive() {
+        const SIZE: usize = 10_000_000;
+        const ADDED: u64 = 10_000;
+        let cache: LruCache<u64, u64> = LruCache::new(SIZE, 1);
+        assert_eq!(cache.capacity(), SIZE);
+        let reserved = cache.shards[0].lock().capacity();
+        assert!(
+            (MOST_ENTRIES_RESERVED_PER_SHARD..2 * MOST_ENTRIES_RESERVED_PER_SHARD)
+                .contains(&reserved),
+            "{reserved}"
+        );
+        for key in 0..ADDED {
+            cache.put(key, key);
+        }
+        assert_eq!(cache.len(), ADDED as usize);
+        assert_eq!(cache.get(&0), Some(0));
     }
 }

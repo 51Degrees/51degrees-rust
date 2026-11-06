@@ -43,6 +43,15 @@ pub(crate) fn built_in_scripts_commit() -> &'static str {
     include_str!("../vendor/COMMIT").trim()
 }
 
+/// The names of the shipped scripts, joined by ", ", as messages list them.
+pub(crate) fn built_in_names() -> String {
+    BuiltInScript::ALL
+        .iter()
+        .map(|script| script.name())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// A script shipped inside this crate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltInScript {

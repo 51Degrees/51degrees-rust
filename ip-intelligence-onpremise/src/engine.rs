@@ -154,6 +154,9 @@ pub struct IpIntelligenceOnPremiseEngine {
     /// The folder a refresh copies the data file into, or `None` for the
     /// system's temporary folder.
     temp_dir: Option<PathBuf>,
+    /// Whether a refresh reads a copy of the data file under every profile,
+    /// as the builder's `create_temp_data_copy` asked.
+    temp_data_copy: bool,
     /// The single data file this engine reads, as shared run-time state for the
     /// data update service.
     data_files: Vec<Arc<AspectEngineDataFile>>,
@@ -289,14 +292,17 @@ impl IpIntelligenceOnPremiseEngine {
             tier_override,
             refresh_lock: Mutex::new(()),
             temp_dir: None,
+            temp_data_copy: false,
             data_files: vec![data_file],
         })
     }
 
     /// Copy the data file into `temp_dir` on refresh, the folder the builder
-    /// copied it into, or the system's temporary folder when `None`.
-    pub(crate) fn with_temp_dir(mut self, temp_dir: Option<PathBuf>) -> Self {
+    /// copied it into, or the system's temporary folder when `None`, and
+    /// under every profile when `always` is true.
+    pub(crate) fn with_temp_dir(mut self, temp_dir: Option<PathBuf>, always: bool) -> Self {
         self.temp_dir = temp_dir;
+        self.temp_data_copy = always;
         self
     }
 
@@ -333,6 +339,12 @@ impl IpIntelligenceOnPremiseEngine {
     /// The performance profile the engine opens its data file with.
     pub fn performance_profile(&self) -> PerformanceProfile {
         self.profile
+    }
+
+    /// The expected concurrency the engine opens its data file with, or
+    /// `None` for the profile's own.
+    pub fn concurrency(&self) -> Option<u16> {
+        self.concurrency
     }
 
     /// The names of the properties the data set was opened with, in the order
@@ -520,6 +532,7 @@ impl IpIntelligenceOnPremiseEngine {
                 self.temp_dir.as_deref(),
                 self.profile,
                 file.configuration(),
+                self.temp_data_copy,
             )
         });
         let manager = Manager::open_with_options(

@@ -155,6 +155,73 @@ impl AgentSignatureElement {
         AgentSignatureElementBuilder::new()
     }
 
+    /// The number of key directories the cache holds.
+    pub fn cache_size(&self) -> usize {
+        self.settings.cache_size
+    }
+
+    /// How long a fetched key directory is reused for.
+    pub fn cache_lifetime(&self) -> Duration {
+        self.settings.cache_lifetime
+    }
+
+    /// How long a failed fetch is remembered for.
+    pub fn negative_cache_lifetime(&self) -> Duration {
+        self.settings.negative_cache_lifetime
+    }
+
+    /// How long a request waits for a key directory fetch.
+    pub fn wait_budget(&self) -> Duration {
+        self.settings.wait_budget
+    }
+
+    /// The time limit on a single fetch.
+    pub fn fetch_timeout(&self) -> Duration {
+        self.settings.fetch_timeout
+    }
+
+    /// The tolerance on the `created` and `expires` signature parameters.
+    pub fn clock_skew(&self) -> Duration {
+        self.settings.clock_skew
+    }
+
+    /// The longest a signature may be valid for, where zero is no limit.
+    pub fn max_lifetime(&self) -> Duration {
+        self.settings.max_lifetime
+    }
+
+    /// The addresses of the registries of agent cards.
+    pub fn registries(&self) -> &[String] {
+        &self.settings.registries
+    }
+
+    /// Whether evidence under the `query` prefix is trusted to describe the
+    /// request that was signed.
+    pub fn trust_forwarded_evidence(&self) -> bool {
+        self.settings.trust_forwarded_evidence
+    }
+
+    /// The address fetched once when the element was built, if any.
+    pub fn reachability_check_url(&self) -> Option<&str> {
+        self.settings.reachability_check_url.as_deref()
+    }
+
+    /// Whether the bare quoted string form of the `Signature-Agent` header
+    /// is accepted.
+    pub fn allow_legacy_signature_agent(&self) -> bool {
+        self.settings.allow_legacy_signature_agent
+    }
+
+    /// Whether a key set carried inline in a `data:` URI is accepted.
+    pub fn allow_inline_directory(&self) -> bool {
+        self.settings.allow_inline_directory
+    }
+
+    /// The most read from a key directory, an agent card or a registry.
+    pub fn max_response_bytes(&self) -> usize {
+        self.fetcher.max_response_bytes()
+    }
+
     pub(crate) fn new(settings: Settings, fetcher: Arc<Fetcher>) -> Self {
         let times = CacheTimes {
             lifetime: to_time_delta(settings.cache_lifetime),

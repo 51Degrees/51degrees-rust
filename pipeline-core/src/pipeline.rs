@@ -230,6 +230,7 @@ impl Pipeline {
                         self.record_error(data, element.data_key(), error);
                     }
                     data.add_group_member_warnings(added.warnings);
+                    data.add_group_member_evidence(added.evidence);
                     for key in data.add_group_member_data(added.data, added.order) {
                         let error = Error::configuration(format!(
                             "Element data under key '{key}' was added by more \
@@ -384,8 +385,11 @@ impl PipelineBuilder {
     ///
     /// Each element of the group reads the evidence, element data and errors
     /// from before the group, and none sees what another element of the group
-    /// adds. One element is added on its own and no elements add nothing, as
-    /// the 51Degrees .NET pipeline does. See the
+    /// adds. Evidence an element adds with [`FlowData::add_evidence`] is added
+    /// after the group, in the order given here, so of two elements adding
+    /// one key the later one's value is kept, as in sequence. One element is
+    /// added on its own and no elements add nothing, as the 51Degrees .NET
+    /// pipeline does. See the
     /// [parallel processing specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/advanced-features/parallel-processing.md).
     ///
     /// So an element of a group cannot add data under a key that another
@@ -430,6 +434,15 @@ impl PipelineBuilder {
     pub fn add_resource(mut self, resource: Arc<dyn Any + Send + Sync>) -> Self {
         self.resources.push(resource);
         self
+    }
+
+    /// Discard the elements added so far and take the resources, for
+    /// [`PipelineBuilder::build_from_configuration`], which makes the
+    /// elements from a configuration.
+    pub(crate) fn reset_for_configuration(&mut self) -> Vec<Arc<dyn Any + Send + Sync>> {
+        self.elements.clear();
+        self.steps.clear();
+        std::mem::take(&mut self.resources)
     }
 
     /// Set whether processing exceptions are suppressed. See

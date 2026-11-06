@@ -827,6 +827,7 @@ dependencies = [
  "fiftyone-pipeline-engines",
  "fiftyone-pipeline-engines-fiftyone",
  "flate2",
+ "log",
 ]
 
 [[package]]

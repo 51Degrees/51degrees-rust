@@ -10,6 +10,7 @@ change by a difference this comparison stops reporting.
 | --- | --- |
 | `corpus/evidence.json` | The cases. Each has an id, a sentence saying what it covers, its evidence and, for some, the pipeline it runs through. None of it comes from real visitors. |
 | `corpus/fodid.json` | The 51Did cases. Each is a payload to sign, a text to read as it is, or the 51Did metadata (see "The 51Did comparison"). |
+| `corpus/configuration.json` | The configuration cases. Each is a configuration file in .NET's shape to build a pipeline from (see "The configuration comparison"). |
 | `dotnet/` | A .NET 8 console program that runs the cases through the .NET packages and writes one JSON line for each. |
 | `rust/` | The same program over the crates in this checkout. |
 | `compare/` | The comparer, which reports each difference with the case that caused it. |
@@ -58,8 +59,8 @@ give differently reaches the JSON or the JavaScript, so their text can be
 the same on both sides, and the comparison then checks both byte for byte,
 apart from the JavaScript's line endings (see "The comparison"). The crates'
 JSON builder leaves the crates' Sequence element's data out there, because
-.NET's Sequence element has none
-([#231](https://github.com/51Degrees/51degrees-rust/issues/231)).
+.NET's Sequence element has none. The crates' has the session id and
+sequence the specification's Element Data gives.
 
 The JavaScript builder in the values pipeline calls back to the endpoint
 `json`, names its object `fod`, has cookies and minification off, and takes
@@ -114,7 +115,7 @@ Each program writes one JSON object per case.
 | `id` | The case id. |
 | `processError` | The error processing gave, or null. |
 | `properties` | For each element that lists properties, apart from the two builders, every property it lists, with the match metrics for `device` and `SortingCultureUsed`, which the engine writes without listing, for `countrynamestranslated`. Each is keyed by its lowercase name and holds its `name` with either a `type` and `value`, a `noValue` reason, or a `missing` message when reading it failed. |
-| `session` | The session id and sequence the pipeline used. |
+| `session` | `query.session-id` and `query.sequence` from the evidence after processing, the sequence as a number, or null when it is not a 64-bit integer. |
 | `evidenceAfter` | `query.session-id` and `query.sequence` as the evidence holds them after processing. |
 | `errors` | The errors in the flow data, each with its element's data key and its message. |
 | `json` | The JSON builder's output. |
@@ -123,6 +124,7 @@ Each program writes one JSON object per case.
 | `usageCustom` | The record the second usage sharing element wrote for the case, or null. |
 | `fodid` | For a 51Did case, the parse status and, when the 51Did was read, the value of each accessor, else null. |
 | `metadata` | For the 51Did metadata case, the component's name and id and each property's metadata in list order. |
+| `configuration` | For a configuration case, what was built or the error (see "The configuration comparison"). |
 
 Value types are `string`, `bool`, `integer`, `double`, `stringList`,
 `javascript`, `ipAddress`, `dateTime` (in .NET only, written as RFC 3339
@@ -240,6 +242,69 @@ signature `SignatureInvalid`, so the two languages cannot agree by both
 failing. Then a Rust line with a changed match key, and a Rust metadata line
 with a changed description, must each fail the comparison.
 
+## The configuration comparison
+
+The configuration cases check that a configuration file written for the
+.NET packages builds the same pipeline from the crates
+([#220](https://github.com/51Degrees/51degrees-rust/issues/220)). A case
+has an `id`, an `about` sentence and a `configuration`, being a file in the
+shape .NET's `PipelineOptions` reads, with every parameter given as text.
+The text `{dd}` stands for the Device Detection data file and `{ipi}` for
+the IP Intelligence one, and each program puts the full path of the file it
+was given in its place.
+
+The first case holds the Sequence element, the Hash and IP Intelligence
+engines in a parallel group, the JSON builder and usage sharing, with the
+pipeline setting `SuppressProcessExceptions`. The second is the same with
+the two engines on their own. Each of the others changes the first in one
+place, to a builder name that matches no builder, a parameter no setting
+takes or a value that does not parse, once at the top level and once
+inside the group.
+
+The .NET program reads each file with .NET's own configuration reader and
+builds it with `FiftyOnePipelineBuilder`, making the builders through a
+service provider, as .NET's examples do. Its `HttpClient` refuses to send,
+and neither program processes anything, so the usage sharing element sends
+nothing. The Rust program builds each file with a registry holding the
+builders of the crates it uses, which make pipelines as .NET's
+`FiftyOnePipelineBuilder` does.
+
+The `configuration` field of a line holds `error`, the message of the
+configuration error, or null. When the pipeline was built it also holds
+`suppressProcessExceptions`, `concurrent`, and `elements`, the elements in
+the order the pipeline lists them, being those on their own first and then
+those in each parallel group, as .NET's `IPipeline.FlowElements` lists them.
+Each element has its `dataKey`. An on-premise engine also has `dataFile`,
+its data file's settings with the path given as its placeholder. The usage
+sharing element also has `settings`, the settings the crates hold in
+`ShareUsageConfig` and .NET in fields of `ShareUsageBase` read by
+reflection, and `evidenceFilter`, the element's evidence filter's answer
+for each of a list of keys, which shows the blocked headers, the query
+string parameters shared and whether all evidence is shared, because .NET
+holds those settings only in that filter. `CreateTempDataCopy` is a build
+parameter that the crates do not read back, and
+`a_copy_of_the_data_file_is_read_when_asked` in each on-premise engine's
+`tests/configuration.rs` checks it against what .NET did.
+
+The comparer compares `configuration` key by key and list item by item,
+after making the parts of an error message that the languages write
+differently by design the same in both. Line endings become LF. A
+builder's type name, the .NET full name or the Rust name, becomes `{type}`.
+In the list of a builder's settings, the parameter type after each name is
+left out, because .NET 4.5.129 gives `RuntimeParameterInfo` for every
+setting, then a name listed straight after itself is listed once and
+`Build` is left out, because .NET lists both forms of two usage sharing
+settings and lists `Build(Stream)` among the IP Intelligence engine's
+settings. Generic types are left out of the available builders, because
+.NET lists its abstract base builders there, which no configuration can
+name. Everything else in the message is compared exactly.
+
+One step of the lite job checks that this comparison means something. The
+first two cases must build on both sides and the others fail, so the two
+cannot agree by both failing. Then a Rust line with a usage sharing
+setting read back differently, and one with two elements in the other
+order, must each fail the comparison.
+
 ## The C code
 
 Both sides build the same C code. The crates build their native code from
@@ -298,9 +363,15 @@ dotnet out/dotnet/Parity.dll fodid-sign --cases corpus/fodid.json --prefix dotne
 SIGNED="--corpus out/fodid-rust.json --corpus out/fodid-dotnet.json"
 target/debug/parity-rust fodid $SIGNED --out out/fodid-rust.jsonl
 dotnet out/dotnet/Parity.dll fodid $SIGNED --out out/fodid-dotnet.jsonl
+CONFIG="--cases corpus/configuration.json --dd ../cxx/data/device-detection/51Degrees-LiteV4.1.hash --ipi ../cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi"
+dotnet out/dotnet/Parity.dll configuration $CONFIG --out out/configuration-dotnet.jsonl
+target/debug/parity-rust configuration $CONFIG --out out/configuration-rust.jsonl
 target/debug/parity-compare --corpus corpus/evidence.json $SIGNED \
+  --corpus corpus/configuration.json \
   --dotnet out/dotnet.jsonl --dotnet out/fodid-dotnet.jsonl \
+  --dotnet out/configuration-dotnet.jsonl \
   --rust out/rust.jsonl --rust out/fodid-rust.jsonl \
+  --rust out/configuration-rust.jsonl \
   --allowed allowed-differences.json --data lite --strict --report out/report.md
 ```
 
@@ -321,4 +392,9 @@ and list any new difference with its reason, or fix it.
 A 51Did case goes in `corpus/fodid.json` in the same way. A new signed case
 that is meant to read changes the number of cases the workflow step "Check
 every signed 51Did verifies" expects to verify, so change that number in the
+same pull request.
+
+A configuration case goes in `corpus/configuration.json` in the same way.
+One that builds changes the cases the workflow step "Check that a changed
+configuration answer fails" expects to build, so change that list in the
 same pull request.

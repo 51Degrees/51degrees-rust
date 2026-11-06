@@ -32,9 +32,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use fiftyone_pipeline_core::{
-    ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
-    MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue, PropertyValueType,
-    Result, TypedKey,
+    ElementData, Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData,
+    FlowElement, MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue,
+    PropertyValueType, Result, TypedKey,
 };
 use fiftyone_pipeline_engines_fiftyone::{
     SequenceElement, SetHeadersElement, ShareUsageConfig, ShareUsageElement,
@@ -44,78 +44,238 @@ use fiftyone_pipeline_engines_fiftyone::{
 // Sequence element
 // --------------------------------------------------------------------------
 
-#[test]
-fn sequence_generates_session_id_and_starts_at_one() {
+/// Run a pipeline of the Sequence element alone over `evidence`, with errors
+/// suppressed or not, and give the flow data and what processing returned.
+fn sequence_run(evidence: &[(&str, &str)], suppress: bool) -> (FlowData, Result<()>) {
     let pipeline = Pipeline::builder()
         .add_element(Arc::new(SequenceElement::new()))
+        .suppress_process_exceptions(suppress)
         .build()
         .unwrap();
+    let mut builder = Evidence::builder();
+    for (key, value) in evidence {
+        builder = builder.add(*key, *value);
+    }
+    let mut data = pipeline.create_flow_data_with(builder.build());
+    let result = data.process();
+    (data, result)
+}
 
-    let mut data = pipeline.create_flow_data();
-    data.process().unwrap();
+/// True for a GUID in the 36 character lower case form with hyphens that
+/// .NET's `Guid.ToString()` gives.
+fn is_dotnet_guid(text: &str) -> bool {
+    text.len() == 36
+        && text.char_indices().all(|(index, c)| match index {
+            8 | 13 | 18 | 23 => c == '-',
+            _ => matches!(c, '0'..='9' | 'a'..='f'),
+        })
+}
 
+#[test]
+fn sequence_generates_session_id_and_starts_at_one() {
+    let (data, result) = sequence_run(&[], false);
+    result.unwrap();
+
+    let session_id = data
+        .evidence()
+        .get("query.session-id")
+        .expect("a session id is added to the evidence");
+    assert!(is_dotnet_guid(session_id), "{session_id}");
+    assert_eq!(data.evidence().get("query.sequence"), Some("1"));
     let sequence = data.get(SequenceElement::KEY).unwrap();
-    let session_id = sequence.session_id().expect("a session id should be set");
-    // A v4 GUID renders as 36 characters with hyphens.
-    assert_eq!(session_id.len(), 36);
+    assert_eq!(sequence.session_id(), Some(session_id));
     assert_eq!(sequence.sequence(), Some(1));
+    assert!(data.errors().is_empty());
 }
 
 #[test]
 fn sequence_preserves_supplied_session_and_increments() {
-    let pipeline = Pipeline::builder()
-        .add_element(Arc::new(SequenceElement::new()))
-        .build()
-        .unwrap();
+    let (data, result) = sequence_run(
+        &[("query.session-id", "abc-123"), ("query.sequence", "4")],
+        false,
+    );
+    result.unwrap();
 
-    let evidence = Evidence::builder()
-        .add("query.session-id", "abc-123")
-        .add("query.sequence", "4")
-        .build();
-    let mut data = pipeline.create_flow_data_with(evidence);
-    data.process().unwrap();
-
+    assert_eq!(data.evidence().get("query.session-id"), Some("abc-123"));
+    assert_eq!(data.evidence().get("query.sequence"), Some("5"));
     let sequence = data.get(SequenceElement::KEY).unwrap();
     assert_eq!(sequence.session_id(), Some("abc-123"));
     assert_eq!(sequence.sequence(), Some(5));
 }
 
 #[test]
-fn sequence_treats_unparseable_sequence_as_one() {
-    let pipeline = Pipeline::builder()
-        .add_element(Arc::new(SequenceElement::new()))
-        .build()
-        .unwrap();
+fn an_empty_session_id_is_kept() {
+    // A session id is added only when the evidence has none.
+    let (data, result) = sequence_run(&[("query.session-id", "")], false);
+    result.unwrap();
 
-    let evidence = Evidence::builder()
-        .add("query.sequence", "not-a-number")
-        .build();
-    let mut data = pipeline.create_flow_data_with(evidence);
-    data.process().unwrap();
-
+    assert_eq!(data.evidence().get("query.session-id"), Some(""));
     let sequence = data.get(SequenceElement::KEY).unwrap();
-    assert_eq!(sequence.sequence(), Some(1));
+    assert_eq!(sequence.session_id(), Some(""));
 }
 
 #[test]
-fn sequence_wraps_after_the_largest_integer() {
-    // The sequence comes from the request, so the largest integer must not
-    // overflow when it is incremented. It wraps, as the .NET and Java
-    // pipelines do.
+fn the_values_keep_the_callers_spelling_and_place() {
+    // A key the caller gave keeps its spelling and place and takes the new
+    // value, and a key the element adds goes last.
+    let entries = |data: &FlowData| -> Vec<(String, String)> {
+        data.evidence()
+            .entries()
+            .map(|entry| (entry.key_as_given().to_owned(), entry.value().to_owned()))
+            .collect()
+    };
+
+    let (data, result) = sequence_run(
+        &[
+            ("Query.Sequence", "4"),
+            ("header.user-agent", "agent"),
+            ("Query.Session-Id", "abc"),
+        ],
+        false,
+    );
+    result.unwrap();
+    assert_eq!(
+        entries(&data),
+        [
+            ("Query.Sequence".to_owned(), "5".to_owned()),
+            ("header.user-agent".to_owned(), "agent".to_owned()),
+            ("Query.Session-Id".to_owned(), "abc".to_owned()),
+        ]
+    );
+
+    let (data, result) = sequence_run(&[("Query.Sequence", "4")], false);
+    result.unwrap();
+    let entries = entries(&data);
+    assert_eq!(entries.len(), 2, "{entries:?}");
+    assert_eq!(entries[0], ("Query.Sequence".to_owned(), "5".to_owned()));
+    assert_eq!(entries[1].0, "query.session-id");
+    assert!(is_dotnet_guid(&entries[1].1), "{entries:?}");
+}
+
+#[test]
+fn sequences_give_the_evidence_and_errors_dotnet_gives() {
+    // The sequence sent, the evidence after, the sequence the element's data
+    // holds and whether an error is recorded. The first five are the cases
+    // the issue names.
+    let cases: [(Option<&str>, &str, Option<i64>, bool); 11] = [
+        (None, "1", Some(1), false),
+        (Some("5"), "6", Some(6), false),
+        (Some("2147483647"), "-2147483648", Some(-2147483648), false),
+        (Some("3000000000"), "3000000000", None, true),
+        (Some("abc"), "abc", None, true),
+        (Some(" 5"), "6", Some(6), false),
+        (Some("+5"), "6", Some(6), false),
+        (Some("5\0"), "6", Some(6), false),
+        (Some("-2147483648"), "-2147483647", Some(-2147483647), false),
+        (Some(""), "", None, true),
+        (Some("1.5"), "1.5", None, true),
+    ];
+    for suppress in [false, true] {
+        for (sent, after, sequence, error) in cases {
+            let evidence: Vec<(&str, &str)> = sent
+                .map(|sent| ("query.sequence", sent))
+                .into_iter()
+                .collect();
+            let (data, result) = sequence_run(&evidence, suppress);
+            let case = format!("{sent:?} with suppress {suppress}");
+
+            let session_id = data.evidence().get("query.session-id").unwrap_or_default();
+            assert!(is_dotnet_guid(session_id), "{case}: {session_id}");
+            assert_eq!(data.evidence().get("query.sequence"), Some(after), "{case}");
+            let held = data.get(SequenceElement::KEY).expect("sequence data");
+            assert_eq!(held.session_id(), Some(session_id), "{case}");
+            assert_eq!(held.sequence(), sequence, "{case}");
+
+            if !error {
+                assert!(data.errors().is_empty(), "{case}");
+                result.unwrap_or_else(|e| panic!("{case}: {e}"));
+                continue;
+            }
+            let errors = data.errors();
+            assert_eq!(errors.len(), 1, "{case}");
+            assert_eq!(errors[0].element_data_key, "sequence", "{case}");
+            assert!(errors[0].should_throw, "{case}");
+            let message = errors[0].source.message();
+            assert!(
+                message.starts_with(
+                    "The value for the 'sequence' parameter is not valid. See \
+                     https://51degrees.com/"
+                ),
+                "{case}: {message}"
+            );
+            assert!(
+                message.ends_with(" for more information."),
+                "{case}: {message}"
+            );
+            match result {
+                Ok(()) => assert!(suppress, "{case}: processing gave no error"),
+                Err(Error::Aggregate(thrown)) => {
+                    assert!(!suppress, "{case}");
+                    assert_eq!(thrown.len(), 1, "{case}");
+                    assert_eq!(thrown[0].element_data_key, "sequence", "{case}");
+                }
+                Err(other) => panic!("{case}: {other}"),
+            }
+        }
+    }
+}
+
+/// Records the session id and sequence the evidence holds when it runs.
+struct EvidenceReader {
+    filter: EvidenceKeyFilterWhitelist,
+    seen: Mutex<Vec<(Option<String>, Option<String>)>>,
+}
+
+impl EvidenceReader {
+    fn new() -> Self {
+        EvidenceReader {
+            filter: EvidenceKeyFilterWhitelist::new(["query.session-id", "query.sequence"]),
+            seen: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl FlowElement for EvidenceReader {
+    fn process(&self, data: &mut FlowData) -> Result<()> {
+        let read = |key: &str| data.evidence().get(key).map(str::to_owned);
+        let seen = (read("query.session-id"), read("query.sequence"));
+        self.seen.lock().unwrap().push(seen);
+        Ok(())
+    }
+    fn data_key(&self) -> &str {
+        "reader"
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        &self.filter
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        &[]
+    }
+}
+
+#[test]
+fn a_later_element_reads_the_values_from_the_evidence() {
+    let reader = Arc::new(EvidenceReader::new());
     let pipeline = Pipeline::builder()
         .add_element(Arc::new(SequenceElement::new()))
+        .add_element(Arc::clone(&reader) as Arc<dyn FlowElement>)
         .build()
         .unwrap();
 
-    for (raw, expected) in [(i64::MAX, i64::MIN), (i64::MAX - 1, i64::MAX)] {
-        let evidence = Evidence::builder()
-            .add("query.sequence", raw.to_string())
-            .build();
-        let mut data = pipeline.create_flow_data_with(evidence);
+    for (sent, expected) in [(None, "1"), (Some("4"), "5")] {
+        let mut evidence = Evidence::builder();
+        if let Some(sent) = sent {
+            evidence = evidence.add("query.sequence", sent);
+        }
+        let mut data = pipeline.create_flow_data_with(evidence.build());
         data.process().unwrap();
 
-        let sequence = data.get(SequenceElement::KEY).unwrap();
-        assert_eq!(sequence.sequence(), Some(expected), "for {raw}");
+        let (session_id, sequence) = reader.seen.lock().unwrap().pop().expect("the reader ran");
+        let created = data
+            .get(SequenceElement::KEY)
+            .and_then(|sequence| sequence.session_id());
+        assert_eq!(session_id.as_deref(), created, "{sent:?}");
+        assert_eq!(sequence.as_deref(), Some(expected), "{sent:?}");
     }
 }
 

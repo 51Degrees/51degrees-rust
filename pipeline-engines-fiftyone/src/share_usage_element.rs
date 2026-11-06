@@ -101,9 +101,9 @@ use crate::constants::{
     SHARE_USAGE_DEFAULT_TAKE_TIMEOUT_MS, SHARE_USAGE_DEFAULT_URL,
 };
 use crate::evidence_filter::{EvidenceKeyFilterShareUsage, EvidenceKeyFilterShareUsageTracker};
-use crate::sequence_element::{SequenceData, SequenceElement};
+use crate::sequence_element::parse_sequence;
 use crate::share_usage_tracker::ShareUsageTracker;
-use crate::usage_record::{parse_sequence, write_document, StaticInfo, UsageRecord};
+use crate::usage_record::{write_document, StaticInfo, UsageRecord};
 use crate::usage_sink::{UsageBatch, UsageSink};
 
 /// The smallest value accepted for the minimum entries per message. A message
@@ -184,6 +184,35 @@ impl ShareUsageConfig {
     /// are lowercase.
     pub fn ignore_flow_data_evidence_filter(&self) -> &[(String, String)] {
         &self.ignore_flow_data_evidence_filter
+    }
+
+    /// How long a request waits for room when the queue is full.
+    pub fn add_timeout(&self) -> Duration {
+        self.add_timeout
+    }
+
+    /// How long the background thread waits for another entry once a
+    /// message holds the minimum entries per message.
+    pub fn take_timeout(&self) -> Duration {
+        self.take_timeout
+    }
+
+    /// The HTTP headers that are not shared, as they were given. The `cookie`
+    /// header is not shared whether or not it is in this list.
+    pub fn blocked_http_headers(&self) -> &[String] {
+        &self.blocked_http_headers
+    }
+
+    /// The query string parameters that are shared, as they were given, in
+    /// addition to any starting with `51d_`. `None` shares every one.
+    pub fn included_query_string_parameters(&self) -> Option<&[String]> {
+        self.included_query_string_parameters.as_deref()
+    }
+
+    /// True if every evidence value is shared, ignoring the blocked-header
+    /// and query filters.
+    pub fn share_all_evidence(&self) -> bool {
+        self.share_all_evidence
     }
 }
 
@@ -669,37 +698,23 @@ impl ShareUsageElement {
                 .map(|element| element.type_name())
                 .collect(),
         );
-        // The session id, sequence and client IP have elements of their own,
-        // so they are not written again as evidence entries.
-        let mut evidence_session_id = None;
-        let mut evidence_sequence = None;
+        // The session id, sequence and client IP have XML elements of their
+        // own, so they are not written again as evidence entries. A Sequence
+        // element earlier in the pipeline has already written this request's
+        // session id and sequence into the evidence. A sequence that is not a
+        // 32-bit integer is written as 0.
         for entry in data.evidence().entries() {
             let key = entry.key();
             if key.eq_ignore_ascii_case(EVIDENCE_CLIENT_IP_KEY) {
                 record.client_ip = entry.value().to_owned();
             } else if key.eq_ignore_ascii_case(EVIDENCE_SESSIONID) {
-                evidence_session_id = Some(entry.value());
+                record.session_id = entry.value().to_owned();
             } else if key.eq_ignore_ascii_case(EVIDENCE_SEQUENCE) {
-                evidence_sequence = Some(entry.value());
+                record.sequence = parse_sequence(entry.value()).unwrap_or(0);
             } else if self.filter.include(key) {
                 record.add_evidence(entry.key_as_given(), entry.value());
             }
         }
-
-        // The Sequence element's values are the ones this request carries,
-        // because it increments the sequence the client sent. Without one the
-        // request's own evidence gives them. A sequence that is not a 32-bit
-        // integer is written as 0.
-        let sequence = data.get(SequenceElement::KEY);
-        record.session_id = sequence
-            .and_then(SequenceData::session_id)
-            .or(evidence_session_id)
-            .unwrap_or_default()
-            .to_owned();
-        record.sequence = match sequence.and_then(SequenceData::sequence) {
-            Some(sequence) => i32::try_from(sequence).unwrap_or(0),
-            None => evidence_sequence.and_then(parse_sequence).unwrap_or(0),
-        };
         record
     }
 
@@ -1109,10 +1124,11 @@ mod tests {
     use std::sync::atomic::AtomicBool;
     use std::sync::mpsc;
 
-    use fiftyone_pipeline_core::{Evidence, Pipeline};
+    use fiftyone_pipeline_core::{Evidence, EvidenceKeyFilterWhitelist, Pipeline};
 
     use super::*;
     use crate::constants::SHARE_USAGE_MAX_EVIDENCE_LENGTH;
+    use crate::sequence_element::SequenceElement;
     use crate::usage_record::{UsageWriteError, UsageWriter};
 
     /// A sink that keeps each batch, and fails with `failure` when one is
@@ -1778,6 +1794,52 @@ mod tests {
             xml.contains("<Sequence>4</Sequence>"),
             "the incremented sequence: {xml}"
         );
+    }
+
+    /// An element that replaces the session id and sequence evidence.
+    struct Rewrite {
+        filter: EvidenceKeyFilterWhitelist,
+    }
+
+    impl FlowElement for Rewrite {
+        fn process(&self, data: &mut FlowData) -> Result<()> {
+            data.add_evidence(EVIDENCE_SESSIONID, "rewritten");
+            data.add_evidence(EVIDENCE_SEQUENCE, "9");
+            Ok(())
+        }
+        fn data_key(&self) -> &str {
+            "rewrite"
+        }
+        fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+            &self.filter
+        }
+        fn properties(&self) -> &[PropertyMetaData] {
+            &[]
+        }
+    }
+
+    #[test]
+    fn the_session_id_and_sequence_are_read_from_the_evidence() {
+        let capture = Capture::default();
+        let rewrite = Rewrite {
+            filter: EvidenceKeyFilterWhitelist::new([EVIDENCE_SESSIONID, EVIDENCE_SEQUENCE]),
+        };
+        share(
+            ShareUsageConfig::default(),
+            capture.clone(),
+            vec![
+                Arc::new(SequenceElement::new()) as Arc<dyn FlowElement>,
+                Arc::new(rewrite) as Arc<dyn FlowElement>,
+            ],
+            vec![Evidence::builder()
+                .add("header.user-agent", "one")
+                .add(EVIDENCE_SESSIONID, "session")
+                .add(EVIDENCE_SEQUENCE, "3")
+                .build()],
+        );
+        let xml = &capture.messages()[0];
+        assert!(xml.contains("<SessionId>rewritten</SessionId>"), "{xml}");
+        assert!(xml.contains("<Sequence>9</Sequence>"), "{xml}");
     }
 
     #[test]

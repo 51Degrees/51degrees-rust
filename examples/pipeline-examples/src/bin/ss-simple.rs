@@ -238,9 +238,8 @@ mod tests {
  *      the strongly-typed `KEY`.
  *
  *   4. Processes the flow data. `process` reads the evidence, computes the sign
- *      and writes it to the element's own data via `get_or_add`. Because evidence
- *      is immutable, an element never writes back to it; it always writes to its
- *      own element data.
+ *      and writes it to the element's own data via `get_or_add`, which is where
+ *      the caller and later elements read an element's results.
  *
  * Reading the result
  * ------------------

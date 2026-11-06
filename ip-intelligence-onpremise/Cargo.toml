@@ -23,6 +23,9 @@ fiftyone-ip-intelligence-shared = { version = "=4.5.2", path = "../ip-intelligen
 fiftyone-native = { version = "=4.5.2", path = "../native", default-features = false, features = ["ipi"] }
 arc-swap.workspace = true
 chrono.workspace = true
+# Logs a configuration setting that has no effect through the log facade,
+# which does nothing until the application installs a logger.
+log = "0.4"
 
 [dev-dependencies]
 # Compresses a data file the way the Distributor serves it, for the update

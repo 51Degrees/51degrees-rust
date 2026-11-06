@@ -31,6 +31,12 @@
     <PackageReference Include="FiftyOne.Pipeline.AgentSignature" Version="$(PipelineVersion)" />
     <PackageReference Include="FiftyOne.Did" Version="$(PipelineVersion)" />
     <PackageReference Include="FiftyOne.Did.Core" Version="$(PipelineVersion)" />
+    <!-- The configuration cases read their files with .NET's own
+         configuration reader and make the builders through a service
+         provider, as .NET's examples do. -->
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
   </ItemGroup>
 
 </Project>

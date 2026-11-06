@@ -70,9 +70,17 @@
 //! producing 51Dids implements, so code that accepts any such engine accepts
 //! it. It is the only such engine in these crates, because the cloud holds the
 //! key 51Degrees signs 51Dids with.
+//!
+//! # Configuration
+//!
+//! [`configuration::add_builders`] adds the engine's builder to a
+//! [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the name
+//! .NET gives it, with .NET's settings, so a configuration file written for
+//! .NET makes the same engine here.
 
 #![warn(missing_docs)]
 
+pub mod configuration;
 mod dto;
 mod engine;
 
