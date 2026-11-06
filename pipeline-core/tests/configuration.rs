@@ -1676,7 +1676,8 @@ const EVERY_FORM: &str = "\u{feff}// A comment.
     \"Elements\": [
       { \"SubElements\": [
         { \"BuilderName\": \"ListSplitterElement\", \"BuildParameters\": { \"delim\": null,
-          \"SetDelimiters\": \"\\u007c,\\t,\\\"é😀\\ud83d\\ude00\", \"SetMaxLength\": 3, }, },
+          \"SetDelimiters\": \"\\u007c,\\t,\\\"é😀\\ud83d\\ude00,\\b\\f\\n\\r\", \"SetMaxLength\": 3, },
+        },
         { \"BuilderName\": \"DataFileEngine\", \"BuildParameters\": {
           \"DataFile\": \"C:\\\\Data\\/51Degrees.hash\", \"CreateTempDataCopy\": true } }, ], },
       { \"BuilderName\": \"EnumPerfProfile\",
@@ -1684,7 +1685,7 @@ const EVERY_FORM: &str = "\u{feff}// A comment.
       { \"BuilderName\": \"Multiply\", \"BuildParameters\": { \"multiple\": -20 } },
     ],
     \"PipelineBuilderParameters\": { \"SetSuppressProcessException\": true },
-    \"BuildParameters\": { \"SuppressProcessException\": false } } }
+    \"BuildParameters\": { \"SuppressProcessException\": false, \"Precision\": -1.5e-3 } } }
 ";
 
 /// Characters that make up JSON, and some wider than one byte.
