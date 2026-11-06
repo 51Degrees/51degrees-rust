@@ -529,8 +529,9 @@ fn the_concurrency_reaches_the_engine_whatever_the_profile() {
 
 /// .NET restricted the engine to the properties named, ignoring case, so
 /// another property has no value, and refused a property the data file
-/// does not hold. .NET gave the missing property the upgrade message, where
-/// the crates give the one for a property left out by the configuration.
+/// does not hold. Both give the property left out the data upgrade reason,
+/// where the Hash engine gives the reason for a property the configuration
+/// left out.
 #[test]
 fn properties_restrict_the_engine() {
     let Some(asn) = asn() else { return };
