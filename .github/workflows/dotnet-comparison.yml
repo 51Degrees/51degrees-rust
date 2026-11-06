@@ -205,6 +205,10 @@ jobs:
             --prefix rust- --out out/fodid-rust.json
           target/debug/parity-rust fodid --corpus out/fodid-rust.json \
             --out out/fodid-rust.jsonl
+          dotnet out/dotnet/Parity.dll fodid-sign --cases corpus/fodid.json \
+            --prefix dotnet- --out out/fodid-dotnet.json
+          dotnet out/dotnet/Parity.dll fodid --corpus out/fodid-dotnet.json \
+            --out out/fodid-dotnet.jsonl
 
       - name: Compare
         if: env.RUN == 'true'

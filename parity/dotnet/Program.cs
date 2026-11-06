@@ -23,6 +23,7 @@
 // Writes one JSON line per corpus case from the .NET packages.
 //
 //   dotnet run -- --corpus <json> --dd <hash file> --ipi <ipi file> --out <jsonl>
+//   dotnet run -- fodid-sign ... and dotnet run -- fodid ..., see FodIdCases
 //
 // The pipelines and the line format are the same as the Rust producer's, as
 // parity/README.md describes. Usage records go to a handler and to a custom
@@ -117,6 +118,11 @@ namespace FiftyOne.Parity
 
         public static int Main(string[] argv)
         {
+            switch (argv.FirstOrDefault())
+            {
+                case FodIdCases.Sign: return FodIdCases.SignCases(argv[1..]);
+                case FodIdCases.Read: return FodIdCases.ReadCases(argv[1..]);
+            }
             var args = Args.Parse(argv);
             var cases = JsonNode.Parse(File.ReadAllText(args.Corpus)).AsArray();
             ILoggerFactory loggerFactory = NullLoggerFactory.Instance;
