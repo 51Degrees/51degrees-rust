@@ -221,6 +221,9 @@ pub struct CloudRequestEngine {
     cloud_request_origin: Option<String>,
     endpoints: Endpoints,
     http: Arc<dyn CloudHttpClient>,
+    /// The request timeout the builder was given, which the built-in client
+    /// applies. A client supplied to the builder keeps its own.
+    timeout: Duration,
     recovery: RecoveryGate,
 
     /// An optional response cache, keyed by the request's evidence. When present,
@@ -287,6 +290,19 @@ impl CloudRequestEngine {
     /// The data endpoint URL POSTed to for each flow data.
     pub fn data_endpoint(&self) -> &str {
         &self.endpoints.data
+    }
+
+    /// The request timeout the engine was built with, where zero means no
+    /// limit. The built-in client applies it, and a client supplied with
+    /// [`CloudRequestEngineBuilder::http_client`] keeps its own.
+    pub fn timeout(&self) -> Duration {
+        self.timeout
+    }
+
+    /// The failures that open a recovery period, the window they must fall
+    /// in, and the period's length.
+    pub fn recovery_config(&self) -> RecoveryConfig {
+        self.recovery.config()
     }
 
     /// The accessible properties for the configured credential.
@@ -1226,6 +1242,7 @@ impl CloudRequestEngineBuilder {
             cloud_request_origin: self.cloud_request_origin.clone(),
             endpoints,
             http,
+            timeout: self.timeout,
             recovery,
             response_cache: self.response_cache.clone(),
             properties,
