@@ -14,6 +14,9 @@ fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
 # default-features = false drops the data-update service (reqwest/notify), which
 # the data model never uses, so this crate builds for wasm32-wasip1.
 fiftyone-pipeline-engines = { version = "=4.5.2", path = "../pipeline-engines", default-features = false }
+# The 51Degrees metadata model the property metadata is built in. Its default
+# features are off, so it brings no HTTP client.
+fiftyone-pipeline-engines-fiftyone = { version = "=4.5.2", path = "../pipeline-engines-fiftyone" }
 fodid = { version = "=4.5.5", path = "../fodid" }
 
 [dev-dependencies]

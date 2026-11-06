@@ -75,10 +75,11 @@ mod engine;
 
 pub use engine::{FodIdCloudEngine, FodIdCloudEngineBuilder};
 pub use fiftyone_fodid_core::{
-    default_aspect_property_metadata, default_property_metadata, FodIdData, FodIdDataBase,
-    FODID_DATA_KEY, FODID_ELEMENT_DATA_KEY, IDENTIFIER_PROPERTIES, ID_HEM_GLOBAL_PROPERTY,
-    ID_HEM_LIC_PROPERTY, ID_PROB_GLOBAL_PROPERTY, ID_PROB_LIC_PROPERTY, ID_RAND_GLOBAL_PROPERTY,
-    ID_RAND_LIC_PROPERTY,
+    default_aspect_property_metadata, default_component_metadata,
+    default_fiftyone_property_metadata, default_property_metadata, FodIdData, FodIdDataBase,
+    CATEGORY_NAME, COMPONENT_NAME, FODID_DATA_KEY, FODID_ELEMENT_DATA_KEY, IDENTIFIER_PROPERTIES,
+    ID_HEM_GLOBAL_PROPERTY, ID_HEM_LIC_PROPERTY, ID_PROB_GLOBAL_PROPERTY, ID_PROB_LIC_PROPERTY,
+    ID_RAND_GLOBAL_PROPERTY, ID_RAND_LIC_PROPERTY,
 };
 
 // Re-export the parsed-identifier type so a consumer can work with the decoded

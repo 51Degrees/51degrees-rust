@@ -31,14 +31,19 @@
 //!   each as the raw base64 envelope and as a parsed [`FodId`].
 //! - [`FodIdDataBase`], the concrete data an engine stores under
 //!   [`FODID_DATA_KEY`].
-//! - The six property names ([`IDENTIFIER_PROPERTIES`]) and their default
-//!   metadata ([`default_property_metadata`]).
+//! - The six property names ([`IDENTIFIER_PROPERTIES`]).
+//! - Their metadata as 51Degrees describes them
+//!   ([`default_fiftyone_property_metadata`]), in the category and component
+//!   [`CATEGORY_NAME`] and [`COMPONENT_NAME`], with the component itself
+//!   ([`default_component_metadata`]) and the aspect and core views
+//!   ([`default_aspect_property_metadata`], [`default_property_metadata`]).
 //!
 //! # No cloud request engine
 //!
-//! This crate depends on the pipeline core, the aspect engine layer and the
-//! [`fodid`] reader only. An engine producing 51Dids can be built on it
-//! without taking the cloud request engine and its HTTP stack.
+//! This crate depends on the pipeline core, the aspect engine layer, the
+//! 51Degrees metadata model and the [`fodid`] reader only. An engine
+//! producing 51Dids can be built on it without taking the cloud request
+//! engine and its HTTP stack.
 //!
 //! The cloud engine in `fiftyone-fodid-cloud` populates the same
 //! [`FodIdDataBase`], and that crate re-exports every item here under its
@@ -47,12 +52,16 @@
 #![warn(missing_docs)]
 
 mod data;
+mod metadata;
 
 pub use data::{
-    default_aspect_property_metadata, default_property_metadata, FodIdData, FodIdDataBase,
-    FODID_DATA_KEY, FODID_ELEMENT_DATA_KEY, IDENTIFIER_PROPERTIES, ID_HEM_GLOBAL_PROPERTY,
-    ID_HEM_LIC_PROPERTY, ID_PROB_GLOBAL_PROPERTY, ID_PROB_LIC_PROPERTY, ID_RAND_GLOBAL_PROPERTY,
-    ID_RAND_LIC_PROPERTY,
+    FodIdData, FodIdDataBase, FODID_DATA_KEY, FODID_ELEMENT_DATA_KEY, IDENTIFIER_PROPERTIES,
+    ID_HEM_GLOBAL_PROPERTY, ID_HEM_LIC_PROPERTY, ID_PROB_GLOBAL_PROPERTY, ID_PROB_LIC_PROPERTY,
+    ID_RAND_GLOBAL_PROPERTY, ID_RAND_LIC_PROPERTY,
+};
+pub use metadata::{
+    default_aspect_property_metadata, default_component_metadata,
+    default_fiftyone_property_metadata, default_property_metadata, CATEGORY_NAME, COMPONENT_NAME,
 };
 
 // Re-export the parsed-identifier type so a consumer can work with the decoded

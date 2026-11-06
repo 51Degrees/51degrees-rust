@@ -42,13 +42,28 @@ fn the_names_and_metadata_are_the_core_crate_ones() {
         fiftyone_fodid_cloud::IDENTIFIER_PROPERTIES,
         fiftyone_fodid_core::IDENTIFIER_PROPERTIES
     );
-    let cloud: Vec<String> = fiftyone_fodid_cloud::default_property_metadata()
-        .into_iter()
-        .map(|p| p.name)
-        .collect();
-    let core: Vec<String> = fiftyone_fodid_core::default_property_metadata()
-        .into_iter()
-        .map(|p| p.name)
-        .collect();
-    assert_eq!(cloud, core);
+    assert_eq!(
+        fiftyone_fodid_cloud::default_property_metadata(),
+        fiftyone_fodid_core::default_property_metadata()
+    );
+    assert_eq!(
+        fiftyone_fodid_cloud::default_aspect_property_metadata(),
+        fiftyone_fodid_core::default_aspect_property_metadata()
+    );
+    assert_eq!(
+        fiftyone_fodid_cloud::default_fiftyone_property_metadata(),
+        fiftyone_fodid_core::default_fiftyone_property_metadata()
+    );
+    assert_eq!(
+        fiftyone_fodid_cloud::default_component_metadata(),
+        fiftyone_fodid_core::default_component_metadata()
+    );
+    assert_eq!(
+        fiftyone_fodid_cloud::CATEGORY_NAME,
+        fiftyone_fodid_core::CATEGORY_NAME
+    );
+    assert_eq!(
+        fiftyone_fodid_cloud::COMPONENT_NAME,
+        fiftyone_fodid_core::COMPONENT_NAME
+    );
 }

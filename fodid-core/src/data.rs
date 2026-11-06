@@ -71,12 +71,8 @@
 
 use std::any::Any;
 
-use fiftyone_pipeline_core::{
-    ElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType, TypedKey,
-};
-use fiftyone_pipeline_engines::{
-    AspectData, AspectDataBase, AspectPropertyMetaData, AspectPropertyValue,
-};
+use fiftyone_pipeline_core::{ElementData, NoValueError, PropertyValue, TypedKey};
+use fiftyone_pipeline_engines::{AspectData, AspectDataBase, AspectPropertyValue};
 use fodid::FodId;
 
 /// The string data key the 51Degrees identifier engine stores its element data
@@ -406,28 +402,6 @@ impl FodIdData for FodIdDataBase {
     }
 }
 
-/// The default core property metadata for the 51Degrees-identifier product: the
-/// six base64 identifier properties ([`IDENTIFIER_PROPERTIES`]), each a string.
-///
-/// An engine that learns its property list at run time, such as the cloud
-/// engine, reports this set until it has that list, so a consumer always sees
-/// the documented property set.
-pub fn default_property_metadata() -> Vec<PropertyMetaData> {
-    IDENTIFIER_PROPERTIES
-        .into_iter()
-        .map(|name| PropertyMetaData::new(name, FODID_ELEMENT_DATA_KEY, PropertyValueType::String))
-        .collect()
-}
-
-/// The default aspect-property metadata, the aspect view of
-/// [`default_property_metadata`].
-pub fn default_aspect_property_metadata() -> Vec<AspectPropertyMetaData> {
-    default_property_metadata()
-        .into_iter()
-        .map(AspectPropertyMetaData::from_core)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -508,20 +482,5 @@ mod tests {
         let empty = FodIdDataBase::new();
         assert!(!empty.id_rand_global().has_value());
         assert!(!empty.id_hem_lic_fod_id().has_value());
-    }
-
-    #[test]
-    fn default_metadata_lists_all_six_identifier_properties() {
-        let core = default_property_metadata();
-        assert_eq!(core.len(), 6);
-        assert!(core.iter().all(|p| p.element_data_key == "fodid"));
-        assert!(core
-            .iter()
-            .all(|p| p.value_type == PropertyValueType::String));
-        let names: Vec<&str> = core.iter().map(|p| p.name.as_str()).collect();
-        for expected in IDENTIFIER_PROPERTIES {
-            assert!(names.contains(&expected), "missing {expected}");
-        }
-        assert_eq!(default_aspect_property_metadata().len(), 6);
     }
 }
