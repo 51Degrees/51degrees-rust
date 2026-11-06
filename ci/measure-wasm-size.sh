@@ -44,6 +44,7 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     echo
     echo "$summary"
   } >> "$GITHUB_STEP_SUMMARY"
+  echo "The table is in the run's summary."
 fi
 
 if command -v wasmtime > /dev/null; then
