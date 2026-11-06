@@ -142,10 +142,12 @@ mod tests {
     }
 
     /// A caller waiting for the only permit gets it when the holder returns
-    /// it, so a return that sees a waiter wakes it.
+    /// it, so a return that sees a waiter wakes it. Each wait in the test has
+    /// a limit, so a fault fails the test rather than hanging it.
     #[test]
     fn a_returned_permit_wakes_the_caller_waiting_for_it() {
         const WAKE_TIMEOUT_SECONDS: u64 = 10;
+        let limit = std::time::Duration::from_secs(WAKE_TIMEOUT_SECONDS);
         let reads = Arc::new(FileReads::for_handles(1).expect("permits"));
         let held = reads.permit();
         let (taken, took) = std::sync::mpsc::channel();
@@ -156,11 +158,16 @@ mod tests {
                 taken.send(()).expect("the test is listening");
             })
         };
+        let started = std::time::Instant::now();
         while reads.lock().waiting == 0 {
+            assert!(
+                started.elapsed() < limit,
+                "the second caller is counted as waiting for the permit"
+            );
             std::thread::yield_now();
         }
         drop(held);
-        took.recv_timeout(std::time::Duration::from_secs(WAKE_TIMEOUT_SECONDS))
+        took.recv_timeout(limit)
             .expect("the waiting caller is woken when the permit is returned");
         waiter.join().expect("the waiter does not panic");
         assert_eq!(reads.lock().waiting, 0);
