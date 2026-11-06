@@ -24,6 +24,7 @@
   <ItemGroup>
     <PackageReference Include="FiftyOne.DeviceDetection.Hash.Engine.OnPremise" Version="$(DeviceDetectionVersion)" />
     <PackageReference Include="FiftyOne.IpIntelligence.Engine.OnPremise" Version="$(IpIntelligenceVersion)" />
+    <PackageReference Include="FiftyOne.IpIntelligence.Translation" Version="$(IpIntelligenceVersion)" />
     <PackageReference Include="FiftyOne.Pipeline.Engines.FiftyOne" Version="$(PipelineVersion)" />
     <PackageReference Include="FiftyOne.Pipeline.JsonBuilder" Version="$(PipelineVersion)" />
     <PackageReference Include="FiftyOne.Pipeline.JavaScriptBuilder" Version="$(PipelineVersion)" />
