@@ -1657,16 +1657,20 @@ fn unused_bits_in_the_last_character_are_ignored() {
     }
 }
 
-#[test]
-fn from_base64_accepts_both_alphabets_with_or_without_padding() {
-    let fixture = Fixture::new();
-    // A payload chosen so the encoding carries both `+` and `/` and needs
-    // padding, which the assertions below check rather than assume.
+/// A payload whose signed encoding carries both `+` and `/` and needs
+/// padding, which the tests using it check rather than assume.
+fn payload_with_both_symbols() -> Vec<u8> {
     let mut payload = canonical_payload();
     for (i, b) in payload[layout::MATCH_KEY_OFFSET..].iter_mut().enumerate() {
         *b = 0xFB + (i as u8 % 5);
     }
-    let standard = fixture.signed_owid_base64(payload);
+    payload
+}
+
+#[test]
+fn from_base64_accepts_both_alphabets_with_or_without_padding() {
+    let fixture = Fixture::new();
+    let standard = fixture.signed_owid_base64(payload_with_both_symbols());
     assert!(standard.contains('+') || standard.contains('/'));
     assert!(standard.ends_with('='));
 
@@ -1682,6 +1686,40 @@ fn from_base64_accepts_both_alphabets_with_or_without_padding() {
     assert_eq!(envelope(&url_safe), expected);
     // Padding stripped from the standard alphabet is restored too.
     assert_eq!(envelope(standard.trim_end_matches('=')), expected);
+}
+
+/// A text that mixes the two alphabets is refused, whichever alphabet most
+/// of it is in, although mapping `-` and `_` onto `+` and `/` would read it
+/// as the clean text. Each row is the case of the same name in
+/// `parity/corpus/fodid.json`.
+#[test]
+fn a_text_mixing_the_two_alphabets_is_refused() {
+    let fixture = Fixture::new();
+    let standard = fixture.signed_owid_base64(payload_with_both_symbols());
+    assert!(standard.contains('+') && standard.contains('/'));
+    assert_eq!(status_of(&FodId::from_base64(&standard)), Status::Parsed);
+    let url_safe = standard.replace('+', "-").replace('/', "_");
+
+    let cases = [
+        ("text-url-one-plus", url_safe.replacen('-', "+", 1)),
+        ("text-url-one-slash", url_safe.replacen('_', "/", 1)),
+        (
+            "text-standard-one-underscore",
+            standard.replacen('/', "_", 1),
+        ),
+    ];
+    for (name, text) in cases {
+        assert_eq!(
+            text.replace('-', "+").replace('_', "/"),
+            standard,
+            "{name} maps to the clean text"
+        );
+        assert_eq!(
+            status_of(&FodId::from_base64(&text)),
+            Status::Owid(ParseStatus::InvalidBase64),
+            "{name}"
+        );
+    }
 }
 
 #[test]
