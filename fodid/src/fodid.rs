@@ -23,7 +23,15 @@
 use std::ops::Deref;
 use std::str::FromStr;
 
-use crate::owid::Owid;
+use base64::alphabet;
+use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
+use base64::Engine as _;
+use chrono::{DateTime, Utc};
+
+use crate::owid::{
+    Crypto, Error as OwidError, Owid, ParseDetail, ParseError, ParseStatus, SignatureStatus,
+    Version,
+};
 
 use crate::error::{Error, Result};
 
@@ -65,8 +73,8 @@ pub(crate) const MATCH_KEY_OFFSET: usize = 5;
 pub(crate) const MATCH_KEY_LENGTH: usize = 32;
 
 /// Byte length of the payload header (flags and License Id) that is common to
-/// every identifier type. A payload shorter than this is
-/// [`Error::PayloadTooShort`].
+/// every identifier type in payload version 0. A version 0 payload shorter
+/// than this, or an empty payload, is [`Error::PayloadTooShort`].
 pub(crate) const HEADER_LENGTH: usize = MATCH_KEY_OFFSET;
 
 /// Byte length of the GUID match key carried by [`IdType::Random`]
@@ -319,19 +327,33 @@ impl Terms {
 /// because a caller has nothing to decide with it.
 ///
 /// Those lengths are minimums. A payload may carry more bytes after the match
-/// key, which this reader accepts and leaves in place, reachable through
-/// [`payload`](Owid::payload). There is no upper bound in this crate.
+/// key, which this reader accepts and keeps in the envelope, so
+/// [`as_byte_array`](FodId::as_byte_array) writes them out again. There is
+/// no upper bound in this crate.
 ///
-/// `FodId` [`Deref`]s to [`Owid`], so the OWID level fields and operations
-/// (`domain()`, `date()`, `payload()`, `signature()`, `as_base64`,
-/// `verify_with_public_key`, ...) are available directly on a `FodId` value.
+/// The envelope's own fields and operations are methods of `FodId`, being
+/// [`version`](FodId::version), [`domain`](FodId::domain),
+/// [`date`](FodId::date), [`signature`](FodId::signature),
+/// [`age_minutes`](FodId::age_minutes),
+/// [`as_byte_array`](FodId::as_byte_array),
+/// [`as_base64`](FodId::as_base64), [`as_base64_url`](FodId::as_base64_url)
+/// and the four verify methods. The payload is not among them, because
+/// every field in it has a named accessor. `FodId` still [`Deref`]s to
+/// [`Owid`], and the deprecated [`owid`](FodId::owid) and
+/// [`into_owid`](FodId::into_owid) still return it, only so that code
+/// written against earlier releases compiles. The `Deref` goes in the next
+/// release that may break the API.
+///
+/// Two values are equal when they have the same type and the same match key,
+/// as the [`PartialEq`] implementation says, so `==` asks whether two
+/// identifiers stand for the same thing and not whether they are the same
+/// envelope.
 ///
 /// A parsed `FodId` is not necessarily cryptographically valid. Reading
 /// does **not** verify the OWID signature. Call
-/// [`verify_status_with_public_key`](Owid::verify_status_with_public_key)
-/// (reached through the [`Deref`]) when cryptographic verification is
-/// required.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// [`verify_status_with_public_key`](FodId::verify_status_with_public_key)
+/// when cryptographic verification is required.
+#[derive(Debug, Clone)]
 pub struct FodId {
     owid: Owid,
     flags: u8,
@@ -354,21 +376,24 @@ impl FodId {
     ///
     /// Returns [`Error::Parse`] carrying the OWID status if the string is not
     /// a valid OWID envelope (for example
-    /// [`ParseStatus::InvalidBase64`](crate::ParseStatus::InvalidBase64)),
-    /// [`Error::PayloadTooShort`] if the payload cannot hold the 51Did
-    /// header, [`Error::UnsupportedPayloadVersion`] if the flags byte names a
-    /// payload version other than 0, [`Error::NoUsage`] if the flags byte sets
-    /// no usage bit, or [`Error::InvalidTypePayloadLength`] if the payload is
-    /// shorter than the minimum for its identifier type.
+    /// [`ParseStatus::InvalidBase64`](crate::ParseStatus::InvalidBase64)) or
+    /// its creator domain is not ASCII
+    /// ([`ParseStatus::InvalidDomainEncoding`](crate::ParseStatus::InvalidDomainEncoding)),
+    /// [`Error::UnsupportedPayloadVersion`] if the flags byte names a payload
+    /// version other than 0, [`Error::PayloadTooShort`] if the payload is
+    /// empty or cannot hold the 51Did header, [`Error::NoUsage`] if the flags
+    /// byte sets no usage bit, or [`Error::InvalidTypePayloadLength`] if the
+    /// payload is shorter than the minimum for its identifier type.
     /// Either base64 alphabet is accepted, standard or URL-safe, with or
     /// without padding, because a 51Did travels in URLs and comes back in
-    /// the alphabet whoever sent it chose. Leading and trailing whitespace
-    /// is stripped first, so a value carrying a trailing newline from a
-    /// file, a header or a copied link reads back to the same envelope as
-    /// the clean form.
-    ///
+    /// the alphabet whoever sent it chose. White space before and after the
+    /// text is ignored, so a value carrying a trailing newline from a file,
+    /// a header or a copied link reads back to the same envelope as the
+    /// clean form. Any other character outside the alphabet is refused with
+    /// [`ParseStatus::InvalidBase64`](crate::ParseStatus::InvalidBase64),
+    /// white space inside the text included.
     pub fn from_base64(base64: &str) -> Result<Self> {
-        Self::from_owid(Owid::from_base64(&from_base64_url(base64.trim()))?)
+        Self::from_owid(Owid::from_byte_array(&decode_base64(base64)?)?)
     }
 
     /// Reads a 51Did from the raw bytes of an OWID envelope, without verifying
@@ -377,25 +402,30 @@ impl FodId {
     /// # Errors
     ///
     /// Returns [`Error::Parse`] carrying the OWID status if the bytes are not
-    /// a valid OWID envelope, [`Error::PayloadTooShort`] if the payload cannot
-    /// hold the 51Did header, [`Error::UnsupportedPayloadVersion`] if the
-    /// flags byte names a payload version other than 0, [`Error::NoUsage`] if
-    /// the flags byte sets no usage bit, or
-    /// [`Error::InvalidTypePayloadLength`] if the payload is shorter than the
-    /// minimum for its identifier type.
+    /// a valid OWID envelope or its creator domain is not ASCII
+    /// ([`ParseStatus::InvalidDomainEncoding`](crate::ParseStatus::InvalidDomainEncoding)),
+    /// [`Error::UnsupportedPayloadVersion`] if the flags byte names a payload
+    /// version other than 0, [`Error::PayloadTooShort`] if the payload is
+    /// empty or cannot hold the 51Did header, [`Error::NoUsage`] if the flags
+    /// byte sets no usage bit, or [`Error::InvalidTypePayloadLength`] if the
+    /// payload is shorter than the minimum for its identifier type.
     pub fn from_byte_array(buffer: &[u8]) -> Result<Self> {
         Self::from_owid(Owid::from_byte_array(buffer)?)
     }
 
     /// Promotes an already parsed [`Owid`] into a 51Did by unpacking its payload
-    /// fields. The OWID is moved into the returned value and remains reachable
-    /// through [`owid`](FodId::owid) and the [`Deref`].
+    /// fields. The OWID is moved into the returned value, and its envelope
+    /// fields are read through the methods of the same names on `FodId`.
     ///
-    /// This is the one place the 51Did payload rules live. The payload must
-    /// hold the five byte header before the type can be read, and then the
-    /// value length that type requires, being 16 GUID bytes for
-    /// [`IdType::Random`] and a 32 byte hash for [`IdType::Probabilistic`]
-    /// and [`IdType::HashedEmail`]. A
+    /// This is the one place the 51Did rules live. The creator domain is
+    /// checked first, because the 51Did layout gives it as ASCII text where
+    /// the OWID reader accepts any UTF-8. The payload version in the flags
+    /// byte is read next, because the header's length and every field after
+    /// the version belong to the version 0 layout.
+    /// The payload must then hold the five byte header before the type can
+    /// be read, and then the value length that type requires, being 16 GUID
+    /// bytes for [`IdType::Random`] and a 32 byte hash for
+    /// [`IdType::Probabilistic`] and [`IdType::HashedEmail`]. A
     /// [`IdType::Reserved`] payload has no defined value length and is read
     /// best effort, taking every byte after the header as its value, so a
     /// reserved identifier states no terms until that length is assigned.
@@ -404,31 +434,47 @@ impl FodId {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::PayloadTooShort`] if the payload is shorter than the
-    /// header, [`Error::UnsupportedPayloadVersion`] if the flags byte names
-    /// a payload version other than 0, [`Error::NoUsage`] if the flags byte
-    /// sets no usage bit, or [`Error::InvalidTypePayloadLength`] if the
-    /// payload is shorter than the header plus the value length the type
-    /// requires.
+    /// Returns [`Error::Parse`] carrying
+    /// [`ParseStatus::InvalidDomainEncoding`](crate::ParseStatus::InvalidDomainEncoding)
+    /// if the creator domain is not ASCII,
+    /// [`Error::UnsupportedPayloadVersion`] if the flags byte names a
+    /// payload version other than 0, whatever the payload's length,
+    /// [`Error::PayloadTooShort`] if the payload is empty or shorter than the
+    /// header, [`Error::NoUsage`] if the flags byte sets no usage bit, or
+    /// [`Error::InvalidTypePayloadLength`] if the payload is shorter than the
+    /// header plus the value length the type requires.
     pub fn from_owid(owid: Owid) -> Result<Self> {
+        // The OWID reader refuses a domain that is not UTF-8 with this
+        // status, so a domain that is UTF-8 but not ASCII gets the same one.
+        if !owid.domain().is_ascii() {
+            return Err(Error::Parse(ParseError::new(
+                ParseStatus::InvalidDomainEncoding,
+                Some(ParseDetail::Field("the creator domain")),
+            )));
+        }
         let payload = owid.payload();
-        if payload.len() < HEADER_LENGTH {
+        let Some(&flags) = payload.get(FLAGS_OFFSET) else {
             return Err(Error::PayloadTooShort {
                 expected: HEADER_LENGTH,
                 actual: payload.len(),
             });
-        }
-        let flags = payload[FLAGS_OFFSET];
-        // The version is read before any field, because a later version
-        // exists precisely because a field moved. Reading a payload of a
-        // version this crate does not know under the layout it does know
-        // would answer with values that are wrong rather than absent, which
-        // is worse than refusing, and a version that nothing checks
-        // protects nothing.
+        };
+        // The version is read before any field, and before the length,
+        // because a later version exists precisely because a field moved.
+        // Reading a payload of a version this crate does not know under the
+        // layout it does know would answer with values that are wrong rather
+        // than absent, and the five byte header is part of that layout, so a
+        // short payload naming another version is refused as that version.
         let payload_version = (flags >> 4) & 0b11;
         if payload_version != SUPPORTED_PAYLOAD_VERSION {
             return Err(Error::UnsupportedPayloadVersion {
                 version: payload_version,
+            });
+        }
+        if payload.len() < HEADER_LENGTH {
+            return Err(Error::PayloadTooShort {
+                expected: HEADER_LENGTH,
+                actual: payload.len(),
             });
         }
         // Every usage the cloud accepts sets bit 0, so a payload with no
@@ -509,7 +555,16 @@ impl FodId {
         self.flags & 0b1000 != 0
     }
 
-    /// The 4-byte little endian License Id from the payload.
+    /// The 4-byte little endian License Id from the payload, as the raw value
+    /// of the field.
+    ///
+    /// On an identifier carrying a creator context these four bytes hold an
+    /// encrypted value that only the issuer can turn back into a license, so
+    /// the value identifies nothing outside 51Degrees, and two identifiers
+    /// issued under one license need not carry the same value. A caller must
+    /// not use it as a grouping or lookup key, as
+    /// <https://github.com/51Degrees/specifications/blob/main/did-specification/identifier-layout.md#license-id>
+    /// says.
     pub fn license_id(&self) -> u32 {
         self.license_id
     }
@@ -563,34 +618,160 @@ impl FodId {
     pub fn terms(&self) -> Option<&'static str> {
         Terms::from_index(self.terms_index).url()
     }
+
+    /// The version of the OWID envelope, read from its first byte. This is
+    /// not the payload version, which a reader never exposes.
+    pub fn version(&self) -> Version {
+        self.owid.version()
+    }
+
+    /// The domain of the creator that signed the envelope.
+    pub fn domain(&self) -> &str {
+        self.owid.domain()
+    }
+
+    /// The minute, in UTC, the issuer created the envelope.
+    pub fn date(&self) -> DateTime<Utc> {
+        self.owid.date()
+    }
+
+    /// The signature over the rest of the envelope.
+    pub fn signature(&self) -> &[u8] {
+        self.owid.signature()
+    }
+
+    /// The whole minutes since the issuer created the envelope.
+    pub fn age_minutes(&self) -> i64 {
+        self.owid.age_minutes()
+    }
+
+    /// The envelope's bytes, which
+    /// [`from_byte_array`](FodId::from_byte_array) reads back to an equal
+    /// envelope.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`OwidError`] [`Owid::as_byte_array`] gives when the
+    /// envelope cannot be written.
+    pub fn as_byte_array(&self) -> std::result::Result<Vec<u8>, OwidError> {
+        self.owid.as_byte_array()
+    }
+
+    /// The envelope in the standard base64 alphabet with padding, the form
+    /// the cloud service issues.
+    ///
+    /// # Errors
+    ///
+    /// As [`as_byte_array`](FodId::as_byte_array).
+    pub fn as_base64(&self) -> std::result::Result<String, OwidError> {
+        self.owid.as_base64()
+    }
+
+    /// Checks the signature with the crypto instance given.
+    ///
+    /// # Errors
+    ///
+    /// As [`Owid::verify_with_crypto`].
+    pub fn verify_with_crypto(&self, crypto: &Crypto) -> std::result::Result<bool, OwidError> {
+        self.owid.verify_with_crypto(crypto)
+    }
+
+    /// Checks the signature with the public key given in SPKI PEM form.
+    ///
+    /// # Errors
+    ///
+    /// As [`Owid::verify_with_public_key`].
+    pub fn verify_with_public_key(&self, public_pem: &str) -> std::result::Result<bool, OwidError> {
+        self.owid.verify_with_public_key(public_pem)
+    }
+
+    /// The same check as [`verify_with_crypto`](FodId::verify_with_crypto),
+    /// answered with the status that names the outcome.
+    pub fn verify_status_with_crypto(&self, crypto: &Crypto) -> SignatureStatus {
+        self.owid.verify_status_with_crypto(crypto)
+    }
+
+    /// The same check as
+    /// [`verify_with_public_key`](FodId::verify_with_public_key), answered
+    /// with the status that names the outcome. Only
+    /// [`SignatureStatus::Invalid`] means the identifier should be
+    /// distrusted, and a key that cannot be read is
+    /// [`SignatureStatus::InvalidKey`].
+    pub fn verify_status_with_public_key(&self, public_pem: &str) -> SignatureStatus {
+        self.owid.verify_status_with_public_key(public_pem)
+    }
+
     /// A reference to the underlying OWID envelope.
+    #[deprecated(note = "the payload is not part of a 51Did's public surface, so use \
+                the envelope methods of FodId, such as domain, date, \
+                as_base64 and verify_status_with_public_key")]
     pub fn owid(&self) -> &Owid {
         &self.owid
     }
 
     /// Consumes the 51Did and returns the underlying OWID envelope.
+    #[deprecated(note = "the payload is not part of a 51Did's public surface, so use \
+                the envelope methods of FodId, such as as_byte_array and \
+                as_base64")]
     pub fn into_owid(self) -> Owid {
         self.owid
     }
 }
 
-/// Restores a string in the URL-safe base64 alphabet to the standard alphabet
-/// with padding. `-` becomes `+`, `_` becomes `/`, and `==` or `=` is added
-/// when the length modulo 4 is 2 or 3. A value already in the standard
-/// alphabet with padding passes through unchanged. The caller strips
-/// surrounding whitespace first, because the padding is worked out from the
-/// length.
-pub(crate) fn from_base64_url(value: &str) -> String {
-    let mut standard = value.replace('-', "+").replace('_', "/");
-    match standard.len() % 4 {
-        2 => standard.push_str("=="),
-        3 => standard.push('='),
-        _ => {}
+/// Two 51Dids are equal when they have the same type and the same match key,
+/// because the specification compares match keys to ask whether two
+/// identifiers stand for the same thing. The type is compared as well
+/// because a probabilistic and a hashed email 51Did both carry a 32 byte
+/// match key, made from different inputs. Nothing else is compared. The
+/// envelope's date and signature differ every time an identifier is issued,
+/// and the usage, License Id and terms say how an identifier may be used
+/// rather than what it stands for. Compare
+/// [`as_byte_array`](FodId::as_byte_array) to ask whether two values are the
+/// same envelope.
+impl PartialEq for FodId {
+    fn eq(&self, other: &Self) -> bool {
+        self.id_type() == other.id_type() && self.match_key == other.match_key
     }
-    standard
 }
 
-/// The inverse of [`from_base64_url`]: the URL-safe alphabet without padding.
+impl Eq for FodId {}
+
+/// Standard base64 with or without padding. The unused low bits of the last
+/// group are ignored rather than refused, as the .NET decoder ignores them.
+const BASE64: GeneralPurpose = GeneralPurpose::new(
+    &alphabet::STANDARD,
+    GeneralPurposeConfig::new()
+        .with_decode_padding_mode(DecodePaddingMode::Indifferent)
+        .with_decode_allow_trailing_bits(true),
+);
+
+/// Reads the base64 text of an envelope in either alphabet into its bytes.
+///
+/// White space before and after the text is ignored, being any character
+/// with the Unicode White_Space property, which is what [`str::trim`]
+/// removes. `-` and `_` then become `+` and `/`, and the rest is decoded,
+/// so any other character outside the alphabet is refused, white space
+/// inside the text included. The issuer never writes white space inside an
+/// identifier, so white space there is a sign of damage, such as a `+`
+/// turned into a space by a form decoder, and skipping it would read bytes
+/// other than the ones issued. Padding is optional, and a text one
+/// character over a group of four is refused because it encodes no whole
+/// byte.
+fn decode_base64(value: &str) -> std::result::Result<Vec<u8>, ParseError> {
+    let invalid = || ParseError::new(ParseStatus::InvalidBase64, None);
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(ParseError::new(ParseStatus::MissingInput, None));
+    }
+    if trimmed.contains(char::is_whitespace) {
+        return Err(invalid());
+    }
+    let text = trimmed.replace('-', "+").replace('_', "/");
+    BASE64.decode(text).map_err(|_| invalid())
+}
+
+/// Writes standard base64 in the URL-safe alphabet without padding, a form
+/// [`decode_base64`] reads back to the same bytes.
 pub(crate) fn to_base64_url(standard: &str) -> String {
     standard
         .replace('+', "-")
@@ -599,6 +780,10 @@ pub(crate) fn to_base64_url(standard: &str) -> String {
         .to_owned()
 }
 
+/// Kept so that code written against earlier releases compiles. It reaches
+/// the payload, which a 51Did package does not expose, so it goes in the
+/// next release that may break the API. Use the envelope methods of
+/// `FodId` instead.
 impl Deref for FodId {
     type Target = Owid;
 

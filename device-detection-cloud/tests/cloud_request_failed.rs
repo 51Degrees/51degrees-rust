@@ -445,3 +445,67 @@ fn while_the_property_list_request_has_failed_a_missing_property_says_so() {
         "the key has no hardware product"
     );
 }
+
+/// Neither engine's properties count as loaded until discovery completes,
+/// and an engine that has not processed since reads them when asked.
+#[test]
+fn the_properties_are_loaded_once_discovery_completes() {
+    let _serial = start();
+    let down = Arc::new(AtomicBool::new(true));
+    let request = request_engine(
+        &[DEVICE_PRODUCT],
+        r#"{"device":{"ismobile":true}}"#,
+        false,
+        Arc::clone(&down),
+    );
+    let engine = Arc::new(DeviceDetectionCloudEngine::new(Arc::clone(&request)));
+    let hardware = HardwareProfileCloudEngine::new(Arc::clone(&request));
+    assert!(!engine.properties_loaded());
+    assert!(!hardware.properties_loaded());
+
+    down.store(false, Ordering::Relaxed);
+    let pipeline = pipeline(request, engine.clone(), false);
+    let (_data, error) = process(&pipeline, "header.user-agent", "A");
+    assert!(error.is_none(), "{error:?}");
+    assert!(engine.properties_loaded());
+    assert!(hardware.properties_loaded());
+    assert!(
+        hardware.properties().is_empty(),
+        "the key has no hardware product"
+    );
+}
+
+/// An engine that has not processed since discovery completed reads the
+/// property list when asked whether its properties are loaded.
+#[test]
+fn an_engine_that_has_not_processed_reads_the_property_list_when_asked() {
+    let _serial = start();
+    let down = Arc::new(AtomicBool::new(true));
+    let request = request_engine(
+        &[DEVICE_PRODUCT],
+        r#"{"device":{"ismobile":true}}"#,
+        false,
+        Arc::clone(&down),
+    );
+    let engine = DeviceDetectionCloudEngine::new(Arc::clone(&request));
+
+    // Only the request engine processes, so discovery completes without the
+    // device engine reading the list.
+    down.store(false, Ordering::Relaxed);
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::clone(&request) as Arc<dyn FlowElement>)
+        .build()
+        .unwrap();
+    let (_data, error) = process(&pipeline, "header.user-agent", "A");
+    assert!(error.is_none(), "{error:?}");
+    assert!(request.public_properties().is_ok());
+    assert!(!engine.has_loaded_properties());
+
+    assert!(engine.properties_loaded());
+    let names: Vec<&str> = engine
+        .properties()
+        .iter()
+        .map(|property| property.name.as_str())
+        .collect();
+    assert_eq!(names, ["IsMobile"]);
+}

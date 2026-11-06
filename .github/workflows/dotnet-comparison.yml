@@ -144,8 +144,8 @@ jobs:
         with:
           workspaces: parity
 
-      # The JavaScript builder depends on the 51Did crates, which compile in
-      # the OWID source.
+      # The producer depends on the 51Did crates, which compile in the OWID
+      # source.
       - name: Copy the OWID source into fodid
         if: env.RUN == 'true'
         shell: pwsh
@@ -200,6 +200,16 @@ jobs:
           args=(--corpus corpus/evidence.json --dd "$DD_FILE" --ipi "$IPI_FILE")
           dotnet out/dotnet/Parity.dll "${args[@]}" --out out/dotnet.jsonl
           target/debug/parity-rust "${args[@]}" --out out/rust.jsonl
+          # Each side signs the 51Did cases with a key made for the run, then
+          # each reads both signed lists, so each verifies the other's
+          # signatures.
+          target/debug/parity-rust fodid-sign --cases corpus/fodid.json \
+            --prefix rust- --out out/fodid-rust.json
+          dotnet out/dotnet/Parity.dll fodid-sign --cases corpus/fodid.json \
+            --prefix dotnet- --out out/fodid-dotnet.json
+          signed=(--corpus out/fodid-rust.json --corpus out/fodid-dotnet.json)
+          target/debug/parity-rust fodid "${signed[@]}" --out out/fodid-rust.jsonl
+          dotnet out/dotnet/Parity.dll fodid "${signed[@]}" --out out/fodid-dotnet.jsonl
 
       - name: Compare
         if: env.RUN == 'true'
@@ -207,7 +217,9 @@ jobs:
         run: |
           set +e
           target/debug/parity-compare --corpus corpus/evidence.json \
-            --dotnet out/dotnet.jsonl --rust out/rust.jsonl \
+            --corpus out/fodid-rust.json --corpus out/fodid-dotnet.json \
+            --dotnet out/dotnet.jsonl --dotnet out/fodid-dotnet.jsonl \
+            --rust out/rust.jsonl --rust out/fodid-rust.jsonl \
             --allowed allowed-differences.json --data ${{ matrix.data }} \
             --report out/report.md --strict > /dev/null
           status=$?
@@ -365,12 +377,71 @@ jobs:
           grep -q '`usage-evidence`.* at `usage`: ' out/report-usage.md
           grep -q '`ua-iphone`.* at `usageCustom`: ' out/report-usage.md
 
+      # Each side must read the signed 51Dids of both lists and verify each
+      # signature, or the two could agree by both failing. Of the 31 signed
+      # cases, 19 are meant to read and verify in .NET and 18 in the crates.
+      # The rest are the tampered case, nine whose payload a reader refuses
+      # and two with bytes after the envelope. The crates also refuse
+      # encoding-url-spaced, whose text has white space inside it, a
+      # difference allowed-differences.json records. A new signed case that
+      # reads changes the numbers.
+      - name: Check every signed 51Did verifies
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          declare -A want=([dotnet]=19 [rust]=18)
+          for side in dotnet rust; do
+            for list in rust dotnet; do
+              # One row per signed case, its id, whether it was tampered,
+              # and the parse and signature status this side read.
+              rows=$(jq -rn --slurpfile signed "out/fodid-$list.json" '
+                (reduce inputs as $line ({}; .[$line.id] = $line.fodid)) as $read
+                | $signed[0][] | select(.publicKey != null)
+                | "\(.id) \(.tamper) \($read[.id].status) \($read[.id].signatureStatus)"' \
+                "out/fodid-$side.jsonl")
+              valid=$(awk '$2 == "false" && $3 == "Parsed" && $4 == "SignatureValid"' <<< "$rows" | wc -l)
+              wrong=$(awk '($2 == "true" && $4 != "SignatureInvalid") ||
+                ($2 == "false" && $3 == "Parsed" && $4 != "SignatureValid")' <<< "$rows" | paste -sd ',')
+              echo "$side verified $valid of the $list list's signed 51Dids"
+              if [ -n "$wrong" ]; then
+                echo "::error::$side read these signed 51Dids of the $list list wrongly: $wrong"
+                exit 1
+              fi
+              if [ "$valid" -ne "${want[$side]}" ]; then
+                echo "::error::$side verified $valid of the $list list's signed 51Dids, not ${want[$side]}"
+                exit 1
+              fi
+            done
+          done
+
+      # The 51Did lines are compared field by field, so a Rust line read from
+      # the .NET list with a changed match key, and a Rust metadata line with
+      # a changed description, must fail.
+      - name: Check that a changed 51Did answer fails
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          jq -c 'if .id == "dotnet-probabilistic" then .fodid.matchKey = "00"
+            elif .id == "rust-metadata" then .metadata.properties[0].description |= . + " Changed."
+            else . end' out/fodid-rust.jsonl > out/fodid-rust-changed.jsonl
+          if target/debug/parity-compare --corpus out/fodid-rust.json \
+            --corpus out/fodid-dotnet.json --dotnet out/fodid-dotnet.jsonl \
+            --rust out/fodid-rust-changed.jsonl --allowed allowed-differences.json \
+            --data lite --report out/report-fodid-changed.md > /dev/null; then
+            echo "::error::The comparison passed with a changed 51Did answer"
+            exit 1
+          fi
+          grep -q '`dotnet-probabilistic`.* at `fodid\.matchKey`: ' out/report-fodid-changed.md
+          grep -q '`rust-metadata`.* at `metadata\.properties\[0\]\.description`: ' \
+            out/report-fodid-changed.md
+
       - name: Upload the answers and the report
         if: always() && env.RUN == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: comparison-${{ matrix.data }}
           path: |
+            parity/out/*.json
             parity/out/*.jsonl
             parity/out/*.md
           if-no-files-found: ignore

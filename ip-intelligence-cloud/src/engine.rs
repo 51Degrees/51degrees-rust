@@ -385,6 +385,13 @@ impl FlowElement for IpIntelligenceCloudEngine {
             None => &self.default_properties,
         }
     }
+
+    /// Reads the cloud's property list first if discovery has completed
+    /// since the engine last looked, so the answer is current.
+    fn properties_loaded(&self) -> bool {
+        self.ensure_metadata();
+        self.has_loaded_properties()
+    }
 }
 
 impl AspectEngine for IpIntelligenceCloudEngine {

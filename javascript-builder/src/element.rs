@@ -152,8 +152,8 @@ fn parse_boolean(text: &str) -> Option<bool> {
 /// - **supports fetch**: true when this request's device-detection `Fetch`
 ///   property is true.
 /// - **user prompt**: by default, true when the pipeline has an element whose
-///   data key is `fodid`, ignoring case, offering at least one available
-///   property, as .NET decides. A builder given
+///   data key is `fodid`, ignoring case, whose properties are loaded and
+///   include at least one available property, as .NET decides. A builder given
 ///   [`JavaScriptBuilderElementBuilder::set_user_prompt`] uses that answer
 ///   instead. A builder given a cloud request engine, through
 ///   [`JavaScriptBuilderElementBuilder::set_shared_cloud_request_engine`] or

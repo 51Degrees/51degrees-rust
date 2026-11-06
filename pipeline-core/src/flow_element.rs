@@ -111,6 +111,18 @@ pub trait FlowElement: Send + Sync {
     /// [properties specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#property-metadata).
     fn properties(&self) -> &[PropertyMetaData];
 
+    /// True once [`FlowElement::properties`] holds this element's own
+    /// property list. Defaults to `true`.
+    ///
+    /// An element that learns its properties after it is built, as a cloud
+    /// aspect engine does from the cloud request engine's discovery, returns
+    /// `false` until then, and the list it gives meanwhile may be defaults. A
+    /// consumer deciding what the pipeline offers leaves such an element out
+    /// and asks again later. An element that wraps another forwards this.
+    fn properties_loaded(&self) -> bool {
+        true
+    }
+
     /// True if this element starts multiple threads internally. Defaults to
     /// `false`. A pipeline reports itself concurrent if any element does, which
     /// influences whether thread-safe flow data is needed.
@@ -142,5 +154,44 @@ pub trait FlowElement: Send + Sync {
     /// wraps another passes the call on to it.
     fn add_pipeline(&self, _pipeline: &Arc<Pipeline>) -> Result<()> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::evidence::EvidenceKeyFilterWhitelist;
+
+    /// An element that overrides none of the provided methods.
+    struct Plain {
+        filter: EvidenceKeyFilterWhitelist,
+    }
+
+    impl FlowElement for Plain {
+        fn process(&self, _data: &mut FlowData) -> Result<()> {
+            Ok(())
+        }
+
+        fn data_key(&self) -> &str {
+            "plain"
+        }
+
+        fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+            &self.filter
+        }
+
+        fn properties(&self) -> &[PropertyMetaData] {
+            &[]
+        }
+    }
+
+    #[test]
+    fn an_element_has_its_properties_loaded_unless_it_says_otherwise() {
+        let element = Plain {
+            filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+        };
+        assert!(element.properties_loaded());
+        let element: &dyn FlowElement = &element;
+        assert!(element.properties_loaded());
     }
 }

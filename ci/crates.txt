@@ -25,6 +25,7 @@ fiftyone-pipeline-engines-fiftyone
 fiftyone-cloud-request-engine
 fiftyone-derived-properties
 fiftyone-device-detection-shared
+fiftyone-fodid-core
 fiftyone-fodid-cloud
 fiftyone-ip-intelligence-shared
 fiftyone-json-builder

@@ -33,7 +33,7 @@ use fiftyone_cloud_request_engine::{
 };
 use fiftyone_ip_intelligence_cloud::{IpIntelligenceCloudEngine, IpIntelligenceData, IP_DATA_KEY};
 use fiftyone_pipeline_core::{
-    ElementData, Error, Evidence, FlowData, MissingPropertyReason, Pipeline,
+    ElementData, Error, Evidence, FlowData, FlowElement, MissingPropertyReason, Pipeline,
 };
 use fiftyone_pipeline_engines::AspectEngine;
 
@@ -355,4 +355,50 @@ fn while_the_property_list_request_has_failed_a_missing_property_says_so() {
     );
     assert!(engine.has_loaded_properties());
     assert!(!engine.property_list_request_failed());
+}
+
+/// The engine's properties do not count as loaded until discovery
+/// completes, whatever default list it reports meanwhile.
+#[test]
+fn the_properties_are_loaded_once_discovery_completes() {
+    let _serial = start();
+    let down = Arc::new(AtomicBool::new(true));
+    let (request, engine) = engines(r#"{"ip":{}}"#, false, Arc::clone(&down));
+    assert!(!engine.properties_loaded());
+    assert!(!engine.properties().is_empty());
+
+    down.store(false, Ordering::Relaxed);
+    let pipeline = pipeline(request, engine.clone(), false);
+    let (_data, error) = process(&pipeline);
+    assert!(error.is_none(), "{error:?}");
+    assert!(engine.properties_loaded());
+}
+
+/// An engine that has not processed since discovery completed reads the
+/// property list when asked whether its properties are loaded.
+#[test]
+fn an_engine_that_has_not_processed_reads_the_property_list_when_asked() {
+    let _serial = start();
+    let down = Arc::new(AtomicBool::new(true));
+    let (request, engine) = engines(r#"{"ip":{}}"#, false, Arc::clone(&down));
+
+    // Only the request engine processes, so discovery completes without the
+    // IP Intelligence engine reading the list.
+    down.store(false, Ordering::Relaxed);
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::clone(&request) as Arc<dyn FlowElement>)
+        .build()
+        .unwrap();
+    let (_data, error) = process(&pipeline);
+    assert!(error.is_none(), "{error:?}");
+    assert!(request.public_properties().is_ok());
+    assert!(!engine.has_loaded_properties());
+
+    assert!(engine.properties_loaded());
+    let names: Vec<&str> = engine
+        .properties()
+        .iter()
+        .map(|property| property.name.as_str())
+        .collect();
+    assert_eq!(names, ["RegisteredName"]);
 }

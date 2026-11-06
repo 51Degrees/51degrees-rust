@@ -2,7 +2,7 @@
 
 # 51Degrees Identifier Cloud
 
-Cloud engine that unpacks the 51Degrees identifier (51Did / FODid) block from the cloud JSON response into typed data.
+Cloud engine that maps the 51Did values in the 51Degrees cloud JSON response into typed data.
 
 This crate is part of the [51Degrees](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fiftyone-fodid-cloud-readme.md&utm_term=introduction) Rust solution for high-performance
 device detection and IP intelligence, available both on-premise from a local

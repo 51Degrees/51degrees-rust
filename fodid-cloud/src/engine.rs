@@ -27,6 +27,10 @@ use std::sync::Arc;
 use once_cell::sync::OnceCell;
 
 use fiftyone_cloud_request_engine::{CloudRequestEngine, LicensedProducts};
+use fiftyone_fodid_core::{
+    default_aspect_property_metadata, default_property_metadata, FodIdDataBase, FodIdEngine,
+    FODID_DATA_KEY, FODID_ELEMENT_DATA_KEY,
+};
 use fiftyone_pipeline_core::{
     Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
     PropertyValueType, Result,
@@ -37,10 +41,6 @@ use fiftyone_pipeline_engines::{
 };
 use serde_json::Value;
 
-use crate::data::{
-    default_aspect_property_metadata, default_property_metadata, FodIdDataBase, FODID_DATA_KEY,
-    FODID_ELEMENT_DATA_KEY,
-};
 use crate::dto::map_fodid_object;
 
 /// The engine's name in log records and messages.
@@ -51,9 +51,8 @@ const ENGINE_NAME: &str = "FodIdCloudEngine";
 /// The engine consumes the JSON response stored by a [`CloudRequestEngine`]
 /// earlier in the same pipeline, slices out the `fodid` member it owns and maps
 /// it into a [`FodIdDataBase`], stored under [`FODID_DATA_KEY`]. That data
-/// carries the two probabilistic identifiers (`IdProbGlobal` and `IdProbLic`) as
-/// raw base64 OWID strings and, on demand, as parsed
-/// [`FodId`](fodid::FodId) values.
+/// carries each of the six 51Dids the response gave as a raw base64 OWID string
+/// and, on demand, as a parsed [`FodId`](fodid::FodId) value.
 ///
 /// # Where it sits
 ///
@@ -62,12 +61,12 @@ const ENGINE_NAME: &str = "FodIdCloudEngine";
 /// stores the raw JSON under its `cloud` data key; this engine reads that JSON.
 /// It must therefore be added to the pipeline *after* the request engine.
 ///
-/// # Cloud only
+/// # The 51Did engine surface
 ///
-/// Unlike device detection and IP intelligence there is no on-premise twin: a
-/// 51Did is issued by the cloud, which alone holds the signing key. So this is
-/// the only engine that produces [`FODID_DATA_KEY`], and there is no shared
-/// crate to keep interface-compatible with.
+/// The engine implements [`FodIdEngine`] from `fiftyone-fodid-core`, so code
+/// that accepts any engine producing 51Dids accepts it. It is the only such
+/// engine in these crates, because the cloud holds the key 51Degrees signs
+/// 51Dids with.
 ///
 /// # Evidence
 ///
@@ -90,7 +89,7 @@ const ENGINE_NAME: &str = "FodIdCloudEngine";
 /// accessible properties on first use, taking the product whose key is `fodid`
 /// compared ignoring case, as the cloud service reports it as `FODid`.
 /// Until that fetch succeeds the engine reports the shared default metadata (the
-/// two identifier properties), so a consumer always sees the documented set.
+/// six identifier properties), so a consumer always sees the documented set.
 ///
 /// # Example
 ///
@@ -314,6 +313,13 @@ impl FlowElement for FodIdCloudEngine {
             None => &self.default_properties,
         }
     }
+
+    /// Reads the cloud's property list first if discovery has completed
+    /// since the engine last looked, so the answer is current.
+    fn properties_loaded(&self) -> bool {
+        self.ensure_metadata();
+        self.has_loaded_properties()
+    }
 }
 
 impl AspectEngine for FodIdCloudEngine {
@@ -354,6 +360,8 @@ impl AspectEngine for FodIdCloudEngine {
         default_missing_property_reason(self, property_name)
     }
 }
+
+impl FodIdEngine for FodIdCloudEngine {}
 
 /// A fluent builder for [`FodIdCloudEngine`] instances.
 ///
@@ -409,15 +417,15 @@ impl Default for FodIdCloudEngineBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::FodIdData;
     use fiftyone_cloud_request_engine::{
         CloudEngineState, CloudHttpClient, CloudHttpRequest, CloudHttpResponse,
     };
+    use fiftyone_fodid_core::FodIdData;
 
     /// A request engine wired to a stub HTTP client, so no network is touched.
     ///
     /// An empty state is supplied so the builder resolves without a discovery
-    /// fetch (the stub would otherwise error). The FODid engine reports its six
+    /// fetch (the stub would otherwise error). The 51Did engine reports its six
     /// fixed identifier properties regardless of the cloud metadata, so an empty
     /// accessible-properties set is fine here.
     fn request_engine() -> Arc<CloudRequestEngine> {
@@ -464,6 +472,16 @@ mod tests {
         assert_eq!(engine.data_source_tier(), "");
         // No evidence is read directly.
         assert!(!engine.evidence_key_filter().include("header.user-agent"));
+    }
+
+    #[test]
+    fn is_a_fodid_engine() {
+        // Held as the trait any engine producing 51Dids implements, the
+        // engine still answers as the cloud engine.
+        let engine: Arc<dyn FodIdEngine> = Arc::new(engine());
+        assert_eq!(engine.data_key(), FODID_ELEMENT_DATA_KEY);
+        assert_eq!(engine.deployment(), EngineDeployment::Cloud);
+        assert_eq!(engine.engine_type_name(), ENGINE_NAME);
     }
 
     #[test]
