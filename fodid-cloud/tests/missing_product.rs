@@ -146,6 +146,7 @@ fn a_resource_key_without_the_product_logs_one_error_and_gives_empty_metadata() 
     }
     assert_eq!(take_logged(), vec![MISSING_PRODUCT_ERROR]);
     assert!(fodid.has_loaded_properties());
+    assert!(fodid.properties_loaded());
     assert!(fodid.properties().is_empty());
     assert!(fodid.aspect_properties().is_empty());
     assert!(!fodid.property_list_request_failed());
@@ -185,6 +186,7 @@ fn a_failed_property_list_request_is_the_reason_a_property_is_missing() {
         .unwrap();
 
     assert!(!fodid.has_loaded_properties());
+    assert!(!fodid.properties_loaded());
     assert!(fodid.property_list_request_failed());
     let missing = fodid.missing_property_reason("IdProbGlobal");
     assert_eq!(missing.reason, MissingPropertyReason::CloudRequestFailed);

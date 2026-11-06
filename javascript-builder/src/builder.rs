@@ -224,10 +224,13 @@ impl JavaScriptBuilderElementBuilder {
     /// decides. Without any of the three, the section is rendered when the
     /// pipeline the script is built for has an element whose data key is
     /// `fodid`, ignoring case, offering at least one available property, as
-    /// .NET's builder decides. The pipeline is read for each script and the
-    /// answer is not kept, because the 51Did cloud engine reports its default
-    /// properties as available until its discovery completes. So a script
-    /// built before then carries the section.
+    /// .NET's builder decides. An element whose properties are not loaded yet
+    /// offers nothing
+    /// ([`FlowElement::properties_loaded`](fiftyone_pipeline_core::FlowElement::properties_loaded)),
+    /// so a script built before the 51Did cloud engine's discovery completes
+    /// leaves the section out. The pipeline is read for each script and the
+    /// answer is not kept, so a script built once discovery completes has the
+    /// section.
     ///
     /// A cloud request engine with only a license key has no accessible
     /// properties to read, so the 51Did cloud engine offers no available
@@ -328,11 +331,12 @@ pub(crate) fn grants_51did(products: &LicensedProducts) -> bool {
 }
 
 /// True when the pipeline has an element whose data key is the 51Did key,
-/// ignoring case, offering at least one available property. The elements of
-/// a parallel group are included.
+/// ignoring case, whose properties are loaded and include at least one
+/// available property. The elements of a parallel group are included.
 pub(crate) fn offers_51did(pipeline: &Pipeline) -> bool {
     pipeline.flow_elements().iter().any(|element| {
         element.data_key().eq_ignore_ascii_case(FODID_PRODUCT_NAME)
+            && element.properties_loaded()
             && element
                 .properties()
                 .iter()

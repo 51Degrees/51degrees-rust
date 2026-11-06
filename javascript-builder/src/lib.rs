@@ -54,8 +54,9 @@
 //! The template has a section that gathers the visitor's answer from the
 //! 51Degrees Preference Management Platform (PMP) or a consent platform on the
 //! page, which is what a 51Did is created from. By default it is rendered when
-//! the pipeline has an element whose data key is `fodid`, ignoring case,
-//! offering at least one available property, as .NET's builder decides.
+//! the pipeline has an element whose data key is `fodid`, ignoring case, whose
+//! properties are loaded and include at least one available property, as
+//! .NET's builder decides.
 //! [`JavaScriptBuilderElementBuilder::set_user_prompt`] renders it in every
 //! script or in none. A builder given a cloud request engine renders it when
 //! the engine's resource key is licensed for 51Did, through
