@@ -23,9 +23,9 @@ when the license keys are available to the run, over the Enterprise files.
 
 ## The pipelines
 
-Both programs build the same four pipelines, with process errors collected
+Both programs build the same five pipelines, with process errors collected
 rather than thrown. A case runs through the first unless its `pipeline` is
-`values`, `agent-signature` or `translation`.
+`values`, `agent-signature`, `translation` or `cloud-translation`.
 
 1. The Sequence element.
 2. Usage sharing, twice, with the same settings on both sides. The first
@@ -106,6 +106,23 @@ the collation of the language asked for, being the ICU on the runner in .NET
 and ICU4X's compiled data in the crates, so any difference in how the two sort
 shows in the lists of every country.
 
+The cloud translation pipeline has the Sequence element, the cloud request
+engine, the cloud countries translation engine and the JSON builder
+([#297](https://github.com/51Degrees/51degrees-rust/issues/297)). .NET's
+engine comes from the FiftyOne.IpIntelligence.Cloud package at the IP
+Intelligence version. The cloud is a stand-in inside each program, an
+`HttpMessageHandler` in .NET and a `CloudHttpClient` in the crates, so
+nothing is sent anywhere. It grants the six translated properties that
+.NET's tests of the engine list, takes the evidence `query.parity-cloud-response`
+and `query.parity-cloud-status`, and answers each request with the body the
+first gives and the status the second gives, 200 when it is absent. So the
+case holds the whole response, and both engines read the same one. The
+cases cover a full section, names and fields in either case, null values with
+and without a reason, the section absent, named in capitals or empty, and a
+failed request. In this pipeline a property the data does not hold is
+written as `missing` on both sides, because .NET's cloud data fails such a
+read, where the crates' read gives no value with the same reason.
+
 ## The line
 
 Each program writes one JSON object per case.
@@ -114,7 +131,7 @@ Each program writes one JSON object per case.
 | --- | --- |
 | `id` | The case id. |
 | `processError` | The error processing gave, or null. |
-| `properties` | For each element that lists properties, apart from the two builders, every property it lists, with the match metrics for `device` and `SortingCultureUsed`, which the engine writes without listing, for `countrynamestranslated`. Each is keyed by its lowercase name and holds its `name` with either a `type` and `value`, a `noValue` reason, or a `missing` message when reading it failed. |
+| `properties` | For each element that lists properties, apart from the two builders and the cloud request engine, whose data is the case's own response, every property it lists, with the match metrics for `device` and `SortingCultureUsed`, which the engine writes without listing, for `countrynamestranslated`. Each is keyed by its lowercase name and holds its `name` with either a `type` and `value`, a `noValue` reason, or a `missing` message when reading it failed. |
 | `session` | `query.session-id` and `query.sequence` from the evidence after processing, the sequence as a number, or null when it is not a 64-bit integer. |
 | `evidenceAfter` | `query.session-id` and `query.sequence` as the evidence holds them after processing. |
 | `errors` | The errors in the flow data, each with its element's data key and its message. |
@@ -381,7 +398,7 @@ target/debug/parity-compare --corpus corpus/evidence.json $SIGNED \
 
 Add it to `corpus/evidence.json` with an id no other case has and a
 sentence saying what it covers, and with its `pipeline` if it runs through
-the values, agent signature or translation pipeline. Give it a `query.session-id` unless it is
+the values, agent signature, translation or cloud translation pipeline. Give it a `query.session-id` unless it is
 about a generated one, because usage records are matched to cases by
 session id. Only the engines' pipeline shares usage, so a values case never
 has a usage record, even when it gives an engines' case's session id, and an

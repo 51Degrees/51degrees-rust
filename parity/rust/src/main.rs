@@ -37,6 +37,7 @@
 //! configuration files, described in `configuration`.
 
 mod agent_signature;
+mod cloud_translation;
 mod configuration;
 mod fodid_cases;
 mod translation;
@@ -53,6 +54,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
+use fiftyone_cloud_request_engine::ELEMENT_DATA_KEY as CLOUD_REQUEST_DATA_KEY;
 use fiftyone_device_detection_onpremise::DeviceDetectionOnPremiseEngineBuilder;
 use fiftyone_ip_intelligence_onpremise::IpIntelligenceOnPremiseEngineBuilder;
 use fiftyone_ip_intelligence_shared::IpIntelligenceDataBase;
@@ -90,6 +92,13 @@ const EXTRA_PROPERTIES: &[(&str, &[&str])] = &[
         ],
     ),
     ("countrynamestranslated", &["SortingCultureUsed"]),
+];
+
+/// The elements whose properties the line leaves out, by data key.
+const SKIPPED_ELEMENTS: &[&str] = &[
+    JSON_BUILDER_ELEMENT_DATA_KEY,
+    JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY,
+    CLOUD_REQUEST_DATA_KEY,
 ];
 
 /// The evidence the Sequence element reads and writes back.
@@ -138,6 +147,7 @@ fn main() -> Result<()> {
     let values = build_values_pipeline()?;
     let signatures = agent_signature::build_pipeline()?;
     let translation = translation::build_pipeline()?;
+    let cloud_translation = cloud_translation::build_pipeline()?;
 
     let mut lines = Vec::with_capacity(cases.len());
     // The lines whose case ran through usage sharing. A values case may give
@@ -150,12 +160,14 @@ fn main() -> Result<()> {
             Some(VALUES_PIPELINE) => &values,
             Some(agent_signature::PIPELINE) => &signatures,
             Some(translation::PIPELINE) => &translation,
+            Some(cloud_translation::PIPELINE) => &cloud_translation,
             Some(other) => bail!("{}: unknown pipeline {other}", case.id),
         };
         if Arc::ptr_eq(chosen, &pipeline) {
             shared.push(lines.len());
         }
-        lines.push(run_case(chosen, case)?);
+        let missing_fails = case.pipeline.as_deref() == Some(cloud_translation::PIPELINE);
+        lines.push(run_case(chosen, case, missing_fails)?);
     }
 
     // Dropping the pipeline drops usage sharing, which delivers what it holds
@@ -286,7 +298,10 @@ fn build_values_pipeline() -> Result<Arc<Pipeline>> {
         .build()?)
 }
 
-fn run_case(pipeline: &Arc<Pipeline>, case: &Case) -> Result<Value> {
+/// Run one case. With `missing_fails`, a property the data does not hold is
+/// written as missing, as .NET's cloud data fails such a read where its
+/// on-premise data gives null.
+fn run_case(pipeline: &Arc<Pipeline>, case: &Case, missing_fails: bool) -> Result<Value> {
     let mut evidence = Evidence::builder();
     for (key, value) in &case.evidence {
         let value = value
@@ -311,7 +326,7 @@ fn run_case(pipeline: &Arc<Pipeline>, case: &Case) -> Result<Value> {
     Ok(json!({
         "id": case.id,
         "processError": process_error,
-        "properties": properties(&data),
+        "properties": properties(&data, missing_fails),
         "session": {
             "id": evidence_after.get(SESSION_ID_KEY),
             "sequence": evidence_after.get(SEQUENCE_KEY).and_then(read_long),
@@ -338,12 +353,13 @@ fn read_long(text: &str) -> Option<i64> {
 
 /// Every property of every element that lists properties, keyed by the
 /// element's data key and the lowercase property name. The two builders are
-/// left out because their whole output is recorded instead.
-fn properties(data: &FlowData) -> Value {
+/// left out because their whole output is recorded instead, and the cloud
+/// request engine because its data is the case's own response.
+fn properties(data: &FlowData, missing_fails: bool) -> Value {
     let mut elements = Map::new();
     for element in data.pipeline().flow_elements() {
         let key = element.data_key();
-        if key == JSON_BUILDER_ELEMENT_DATA_KEY || key == JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY {
+        if SKIPPED_ELEMENTS.contains(&key) {
             continue;
         }
         let mut names: Vec<String> = element
@@ -369,14 +385,17 @@ fn properties(data: &FlowData) -> Value {
         };
         let mut values = Map::new();
         for name in names {
-            values.insert(name.to_lowercase(), read(element_data, &name));
+            values.insert(
+                name.to_lowercase(),
+                read(element_data, &name, missing_fails),
+            );
         }
         elements.insert(key.to_owned(), Value::Object(values));
     }
     Value::Object(elements)
 }
 
-fn read(data: &dyn ElementData, name: &str) -> Value {
+fn read(data: &dyn ElementData, name: &str, missing_fails: bool) -> Value {
     match data.get(name) {
         Ok(PropertyValue::KeyValueList(records)) => match weighted(data, name) {
             Some(list) => json!({"name": name, "type": "weightedList", "value": list}),
@@ -388,6 +407,9 @@ fn read(data: &dyn ElementData, name: &str) -> Value {
         Ok(value) => {
             let (kind, value) = typed(value);
             json!({"name": name, "type": kind, "value": value})
+        }
+        Err(error) if missing_fails && !data.has_property(name) => {
+            json!({"name": name, "missing": error.message})
         }
         Err(error) => json!({"name": name, "noValue": error.message}),
     }

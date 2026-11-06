@@ -475,6 +475,40 @@ jobs:
           grep -q 'translation-header-ja-jp.*properties.countrynamestranslated.countrynamesgeographicalalltranslated' \
             out/report-sorted.md
 
+      # The cloud translation cases must read the stand-in cloud's response
+      # on both sides, or the two could agree by both failing. The full case
+      # must give France's German name second with its raw weighting, the
+      # culture the response gives and the three names of its list of every
+      # country. Then a Rust line with a changed raw weighting must fail.
+      - name: Check the cloud translation cases read the response
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          want='Frankreich 30000 de-DE 3'
+          for side in dotnet rust; do
+            got=$(jq -r 'select(.id == "cloud-translation-full")
+              | .properties.countrynamestranslated
+              | "\(.countrynamesgeographicaltranslated.value[1].value) \(.countrynamesgeographicaltranslated.value[1].rawWeighting) \(.sortingcultureused.value) \(.countrynamesgeographicalalltranslated.value | length)"' \
+              "out/$side.jsonl")
+            echo "$side: $got"
+            if [ "$got" != "$want" ]; then
+              echo "::error::The $side cloud translation case gave $got, not $want"
+              exit 1
+            fi
+          done
+          jq -c 'if .id == "cloud-translation-any-case" then
+              .properties.countrynamestranslated.countrynamesgeographicaltranslated.value[0].rawWeighting = 30001
+            else . end' out/rust.jsonl > out/rust-cloud.jsonl
+          if target/debug/parity-compare --corpus corpus/evidence.json \
+            --dotnet out/dotnet.jsonl --rust out/rust-cloud.jsonl \
+            --allowed allowed-differences.json --data lite \
+            --report out/report-cloud.md > /dev/null; then
+            echo "::error::The comparison passed with a changed raw weighting"
+            exit 1
+          fi
+          grep -q 'cloud-translation-any-case.*properties.countrynamestranslated.countrynamesgeographicaltranslated' \
+            out/report-cloud.md
+
       # Each side must read the signed 51Dids of both lists and verify each
       # signature, or the two could agree by both failing. Of the 31 signed
       # cases, 19 are meant to read and verify in .NET and 18 in the crates.
