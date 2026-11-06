@@ -43,6 +43,9 @@
 //! 3. [`fiftyone_pipeline_engines_fiftyone::SetHeadersElement`] (only when
 //!    [`WebIntegrationOptions::use_set_header_properties`] is set), after the
 //!    core elements so it can see every `SetHeader*` property they produced.
+//!    It is only added when the application's elements do not already hold
+//!    one, found by its data key ignoring case. One the application gives
+//!    runs where the application put it, whatever the option.
 //! 4. [`fiftyone_json_builder::JsonBuilderElement`] as the penultimate element,
 //!    so it serializes the results of everything before it.
 //! 5. [`fiftyone_javascript_builder::JavaScriptBuilderElement`] last, because it
@@ -114,9 +117,10 @@ pub struct WebIntegrationOptions {
     /// the application's elements runs either way.
     pub client_side_evidence_enabled: bool,
 
-    /// When `true` (the default) the set-headers element is added so elements
-    /// can request extra evidence (such as User-Agent Client Hints) via HTTP
-    /// response headers.
+    /// When `true` (the default) the set-headers element is added, only when
+    /// the application's elements hold none, so elements can request extra
+    /// evidence (such as User-Agent Client Hints) via HTTP response headers. A
+    /// set-headers element among the application's elements runs either way.
     pub use_set_header_properties: bool,
 
     /// When `true` (the default) processing exceptions are recorded on the flow
@@ -167,8 +171,9 @@ impl WebPipeline {
     /// order (for example a cloud request engine then a device-detection cloud
     /// engine, or a single on-premise engine). The sequence, set-headers, JSON
     /// and JavaScript elements are inserted around them as described in the
-    /// module documentation, and a JSON or JavaScript builder among them is
-    /// used in place of the one that would be added. The returned pipeline uses
+    /// module documentation, and a set-headers element, JSON builder or
+    /// JavaScript builder among them is used in place of the one that would be
+    /// added. The returned pipeline uses
     /// [`WebIntegrationOptions::suppress_process_exceptions`].
     ///
     /// Returns the same errors as [`fiftyone_pipeline_core::PipelineBuilder::build`]
@@ -279,6 +284,10 @@ fn order_elements(
         ordered.push(Arc::new(SequenceElement::new()));
     }
 
+    // A set-headers element the application gives runs where it put it.
+    let given_set_headers =
+        position(&elements, SetHeadersElement::DEFAULT_ELEMENT_DATA_KEY).is_some();
+
     // The builders the application gives run where it put them, and are held
     // when they give back their own type.
     let given_json = position(&elements, JSON_BUILDER_ELEMENT_DATA_KEY);
@@ -315,8 +324,9 @@ fn order_elements(
         ordered.push(element);
     }
 
-    // 3. Set-headers after the core elements (so it sees their properties).
-    if options.use_set_header_properties {
+    // 3. Set-headers after the core elements (so it sees their properties),
+    // unless the application gives one.
+    if options.use_set_header_properties && !given_set_headers {
         ordered.push(Arc::new(SetHeadersElement::new()));
     }
 
