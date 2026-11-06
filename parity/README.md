@@ -121,7 +121,10 @@ cases cover a full section, names and fields in either case, null values with
 and without a reason, the section absent, named in capitals or empty, and a
 failed request. In this pipeline a property the data does not hold is
 written as `missing` on both sides, because .NET's cloud data fails such a
-read, where the crates' read gives no value with the same reason.
+read, where the crates' read gives no value with the same reason. The
+two reasons differ only in the configurator link's campaign tags, so
+`allowed-differences.json` allows that difference and a workflow step
+compares the reasons with the tags removed.
 
 ## The line
 

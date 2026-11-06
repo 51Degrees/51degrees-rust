@@ -479,7 +479,9 @@ jobs:
       # on both sides, or the two could agree by both failing. The full case
       # must give France's German name second with its raw weighting, the
       # culture the response gives and the three names of its list of every
-      # country. Then a Rust line with a changed raw weighting must fail.
+      # country. The reasons a property is missing must be the same apart
+      # from the link's tags. Then a Rust line with a changed raw
+      # weighting must fail.
       - name: Check the cloud translation cases read the response
         if: matrix.data == 'lite'
         working-directory: parity
@@ -496,6 +498,26 @@ jobs:
               exit 1
             fi
           done
+          # A property the response does not give is missing on both sides,
+          # and the two reasons must be the same once the configurator
+          # link's campaign tags are removed. The empty section has seven.
+          for side in dotnet rust; do
+            jq -c 'select(.id | startswith("cloud-translation-"))
+              | [.id, ((.properties.countrynamestranslated // {}) | to_entries
+                | map(select(.value.missing != null)
+                  | [.key, (.value.missing | sub("[?]utm_[^ ]*"; ""))])
+                | sort)]' "out/$side.jsonl" > "out/cloud-missing-$side.jsonl"
+          done
+          if ! diff out/cloud-missing-dotnet.jsonl out/cloud-missing-rust.jsonl; then
+            echo "::error::The reasons for a missing cloud translation property differ by more than the link's tags"
+            exit 1
+          fi
+          count=$(jq -r 'select(.[0] == "cloud-translation-section-empty") | .[1] | length' \
+            out/cloud-missing-rust.jsonl)
+          if [ "$count" != 7 ]; then
+            echo "::error::The empty section case has $count missing properties, not 7"
+            exit 1
+          fi
           jq -c 'if .id == "cloud-translation-any-case" then
               .properties.countrynamestranslated.countrynamesgeographicaltranslated.value[0].rawWeighting = 30001
             else . end' out/rust.jsonl > out/rust-cloud.jsonl
