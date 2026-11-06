@@ -78,11 +78,43 @@ pub struct CountriesTranslationEngine {
     all_countries: Vec<(String, String)>,
     /// The code of every country, in capitals.
     known_codes: HashSet<String>,
-    /// The collator for each locale the engine holds.
-    collators: Vec<(String, CollatorBorrowed<'static>)>,
-    /// Compares names ignoring case, for when no locale is asked for.
-    ignoring_case: CollatorBorrowed<'static>,
+    /// The collator and sorted countries for each locale the engine holds.
+    locales: Vec<(String, SortedCountries)>,
+    /// The English names, sorted ignoring case, for when no locale is found.
+    english: SortedCountries,
     properties: Vec<PropertyMetaData>,
+}
+
+/// A collator, and every country sorted by name with it.
+struct SortedCountries {
+    collator: CollatorBorrowed<'static>,
+    /// Every country's code and name, in the collator's language, sorted by
+    /// name. The sort is stable, so taking some countries out leaves the
+    /// rest in the order sorting them alone would give.
+    countries: Vec<(String, String)>,
+}
+
+impl SortedCountries {
+    fn new(
+        all_countries: &[(String, String)],
+        translator: Option<&Translator>,
+        collator: CollatorBorrowed<'static>,
+    ) -> Self {
+        let mut countries: Vec<(String, String)> = all_countries
+            .iter()
+            .map(|(code, name)| {
+                let name = translator
+                    .and_then(|translator| translator.translate(name, &mut Vec::new()))
+                    .unwrap_or_else(|| name.clone());
+                (code.clone(), name)
+            })
+            .collect();
+        countries.sort_by(|a, b| collator.compare(&a.1, &b.1));
+        SortedCountries {
+            collator,
+            countries,
+        }
+    }
 }
 
 impl CountriesTranslationEngine {
@@ -123,11 +155,11 @@ impl CountriesTranslationEngine {
         Ok(None)
     }
 
-    fn collator(&self, locale: &str) -> &CollatorBorrowed<'static> {
-        self.collators
+    fn sorted(&self, locale: &str) -> &SortedCountries {
+        self.locales
             .iter()
             .find(|(held, _)| held == locale)
-            .map_or(&self.ignoring_case, |(_, collator)| collator)
+            .map_or(&self.english, |(_, sorted)| sorted)
     }
 
     /// The codes and names of every country, led by the weighted countries.
@@ -135,37 +167,30 @@ impl CountriesTranslationEngine {
         &self,
         names: &[(u16, String)],
         codes: &[String],
-        translator: Option<&Translator>,
-        collator: &CollatorBorrowed<'static>,
+        sorted: &SortedCountries,
     ) -> (Vec<String>, Vec<String>) {
         // Each name is paired with the code at the same place, as far as the
-        // shorter list goes. Both sorts are stable, so countries that compare
+        // shorter list goes. The sort is stable, so countries that compare
         // equal keep the order they had.
         let mut weighted: Vec<(u16, &str, &str)> = names
             .iter()
             .zip(codes)
             .map(|((weighting, name), code)| (*weighting, name.as_str(), code.as_str()))
             .collect();
-        weighted.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| collator.compare(a.1, b.1)));
+        weighted.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| sorted.collator.compare(a.1, b.1))
+        });
         weighted.retain(|(_, _, code)| self.known_codes.contains(&code.to_ascii_uppercase()));
 
-        let mut rest: Vec<(&str, String)> = self
-            .all_countries
+        let rest = sorted
+            .countries
             .iter()
-            .filter(|(code, _)| !weighted.iter().any(|&(_, _, held)| held == code.as_str()))
-            .map(|(code, name)| {
-                let name = translator
-                    .and_then(|translator| translator.translate(name, &mut Vec::new()))
-                    .unwrap_or_else(|| name.clone());
-                (code.as_str(), name)
-            })
-            .collect();
-        rest.sort_by(|a, b| collator.compare(&a.1, &b.1));
-
+            .filter(|(code, _)| !weighted.iter().any(|&(_, _, held)| held == code.as_str()));
         weighted
-            .into_iter()
-            .map(|(_, name, code)| (code.to_owned(), name.to_owned()))
-            .chain(rest.into_iter().map(|(code, name)| (code.to_owned(), name)))
+            .iter()
+            .map(|&(_, name, code)| (code.to_owned(), name.to_owned()))
+            .chain(rest.cloned())
             .unzip()
     }
 }
@@ -183,27 +208,21 @@ impl FlowElement for CountriesTranslationEngine {
     fn process(&self, data: &mut FlowData) -> Result<()> {
         self.engine.process(data)?;
 
-        let (translator, collator, culture) = match self.resolve(data.evidence())? {
-            Some((locale, translator)) => (
-                Some(translator),
-                self.collator(locale),
-                locale.replace('_', "-"),
-            ),
-            None => (None, &self.ignoring_case, String::new()),
+        let (sorted, culture) = match self.resolve(data.evidence())? {
+            Some((locale, _)) => (self.sorted(locale), locale.replace('_', "-")),
+            None => (&self.english, String::new()),
         };
 
         let own = data.get(self.engine.typed_key());
         let geographical = self.all_countries_for(
             &weighted_names(own, COUNTRY_NAMES_GEOGRAPHICAL_TRANSLATED),
             &weighted_codes(data, COUNTRY_CODES_GEOGRAPHICAL),
-            translator,
-            collator,
+            sorted,
         );
         let population = self.all_countries_for(
             &weighted_names(own, COUNTRY_NAMES_POPULATION_TRANSLATED),
             &weighted_codes(data, COUNTRY_CODES_POPULATION),
-            translator,
-            collator,
+            sorted,
         );
 
         let output = data.get_or_add(self.engine.typed_key(), TranslationData::new)?;
@@ -322,14 +341,24 @@ impl CountriesTranslationEngineBuilder {
             .map(|(code, _)| code.to_ascii_uppercase())
             .collect();
 
-        let mut collators = Vec::new();
-        for locale in engine.languages().locales() {
-            collators.push((locale.to_owned(), locale_collator(locale)?));
+        // Which countries lead a list changes with each request, but the
+        // order of the rest depends only on the locale, so each locale's
+        // order is found once here.
+        let languages = engine.languages();
+        let mut locales = Vec::new();
+        for locale in languages.locales() {
+            let sorted = SortedCountries::new(
+                &all_countries,
+                languages.translator(locale),
+                locale_collator(locale)?,
+            );
+            locales.push((locale.to_owned(), sorted));
         }
         let mut options = CollatorOptions::default();
         options.strength = Some(Strength::Secondary);
         let ignoring_case = Collator::try_new(CollatorPreferences::default(), options)
             .map_err(|error| collator_error("the root locale", error))?;
+        let english = SortedCountries::new(&all_countries, None, ignoring_case);
 
         let data_key = COUNTRY_NAMES_TRANSLATED_KEY_NAME;
         let properties = [
@@ -363,8 +392,8 @@ impl CountriesTranslationEngineBuilder {
             engine,
             all_countries,
             known_codes,
-            collators,
-            ignoring_case,
+            locales,
+            english,
             properties,
         })
     }
