@@ -1168,5 +1168,40 @@
       "query.parity-population": "FR:40000,GB:25535",
       "header.accept-language": "fr-FR"
     }
+  },
+  {
+    "id": "translation-lower-case-code",
+    "about": "A weighted country code in lower case, which the lists of every country keep first and list again in upper case, giving 251 countries.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-lower-case-code",
+      "query.parity-geographical": "gb:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "fr-FR"
+    }
+  },
+  {
+    "id": "translation-unreadable-after-unresolved",
+    "about": "The translation query parameter names a language that is not held and the Accept-Language header that follows cannot be read, so the weighted names are written and the lists of every country are not.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-unreadable-after-unresolved",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "query.translation": "xx_XX",
+      "header.accept-language": "fr;q=2"
+    }
+  },
+  {
+    "id": "translation-query-accept-language-before-header",
+    "about": "The accept-language query parameter and the Accept-Language header name different languages, and the query parameter is used.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-query-accept-language-before-header",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "query.accept-language": "es",
+      "header.accept-language": "fr-FR"
+    }
   }
 ]

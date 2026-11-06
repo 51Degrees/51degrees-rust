@@ -325,9 +325,9 @@
   {
     "path": "properties.countrynames*",
     "kind": "state",
-    "cases": ["translation-no-ip-data", "translation-bad-item"],
+    "cases": ["translation-no-ip-data", "translation-bad-item", "translation-unreadable-after-unresolved"],
     "dotnet": {"value": [null]},
     "rust": {"noValue": true},
-    "reason": "A property no engine set reads as null in .NET, because its data gives null for a key it does not hold. The crates' data cannot hold null, so such a property has no value, with the reason No value for property and its name. In translation-no-ip-data the country codes engine sets no property, and in translation-bad-item the countries engine fails before it sets any, on both sides, and the errors and the JSON are the same."
+    "reason": "A property no engine set reads as null in .NET, because its data gives null for a key it does not hold. The crates' data cannot hold null, so such a property has no value, with the reason No value for property and its name. In translation-no-ip-data the country codes engine sets no property. In translation-bad-item the countries engine fails before it sets any, and in translation-unreadable-after-unresolved it fails after setting the weighted names and before the lists of every country. Each happens on both sides, and the errors and the JSON are the same."
   }
 ]
