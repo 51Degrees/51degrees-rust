@@ -20,7 +20,7 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! End-to-end tests for the cloud 51Degrees-identifier (51Did / FODid) engine.
+//! End-to-end tests for the cloud 51Did engine.
 //!
 //! These drive a real pipeline (cloud request engine followed by the identifier
 //! cloud engine) against a fake HTTP transport, so no network is touched. A

@@ -135,7 +135,7 @@ const ABSENT_MESSAGE: &str = "The property was not present in the 51Degrees iden
 const WRONG_TYPE_MESSAGE: &str =
     "The property was present but its stored value was not a 51Did string.";
 
-/// Strongly-typed accessors for a 51Degrees-identifier (51Did / FODid) result.
+/// Strongly-typed accessors for a 51Did result.
 ///
 /// This trait extends [`AspectData`] (and so [`ElementData`]) with named
 /// accessors for the six identifier properties ([`IDENTIFIER_PROPERTIES`]), each

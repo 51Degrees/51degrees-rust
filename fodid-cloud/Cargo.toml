@@ -1,7 +1,7 @@
 [package]
 name = "fiftyone-fodid-cloud"
 version = "4.5.3"
-description = "Cloud engine that unpacks the 51Degrees identifier (51Did / FODid) block from the cloud JSON response into typed data."
+description = "Cloud engine that maps the 51Did values in the 51Degrees cloud JSON response into typed data."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

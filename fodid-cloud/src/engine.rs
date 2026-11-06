@@ -51,9 +51,8 @@ const ENGINE_NAME: &str = "FodIdCloudEngine";
 /// The engine consumes the JSON response stored by a [`CloudRequestEngine`]
 /// earlier in the same pipeline, slices out the `fodid` member it owns and maps
 /// it into a [`FodIdDataBase`], stored under [`FODID_DATA_KEY`]. That data
-/// carries the two probabilistic identifiers (`IdProbGlobal` and `IdProbLic`) as
-/// raw base64 OWID strings and, on demand, as parsed
-/// [`FodId`](fodid::FodId) values.
+/// carries each of the six 51Dids the response gave as a raw base64 OWID string
+/// and, on demand, as a parsed [`FodId`](fodid::FodId) value.
 ///
 /// # Where it sits
 ///
@@ -426,7 +425,7 @@ mod tests {
     /// A request engine wired to a stub HTTP client, so no network is touched.
     ///
     /// An empty state is supplied so the builder resolves without a discovery
-    /// fetch (the stub would otherwise error). The FODid engine reports its six
+    /// fetch (the stub would otherwise error). The 51Did engine reports its six
     /// fixed identifier properties regardless of the cloud metadata, so an empty
     /// accessible-properties set is fine here.
     fn request_engine() -> Arc<CloudRequestEngine> {

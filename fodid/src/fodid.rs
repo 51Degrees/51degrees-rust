@@ -509,7 +509,16 @@ impl FodId {
         self.flags & 0b1000 != 0
     }
 
-    /// The 4-byte little endian License Id from the payload.
+    /// The 4-byte little endian License Id from the payload, as the raw value
+    /// of the field.
+    ///
+    /// On an identifier carrying a creator context these four bytes hold an
+    /// encrypted value that only the issuer can turn back into a license, so
+    /// the value identifies nothing outside 51Degrees, and two identifiers
+    /// issued under one license need not carry the same value. A caller must
+    /// not use it as a grouping or lookup key, as
+    /// <https://github.com/51Degrees/specifications/blob/main/did-specification/identifier-layout.md#license-id>
+    /// says.
     pub fn license_id(&self) -> u32 {
         self.license_id
     }
