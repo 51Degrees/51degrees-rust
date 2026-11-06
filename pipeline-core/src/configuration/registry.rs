@@ -143,6 +143,9 @@ struct Setting<B> {
     name: String,
     alternate_names: Vec<String>,
     type_name: &'static str,
+    /// How many values the method takes. Only a method taking one is a
+    /// setting a configuration can call.
+    parameters: usize,
     prepare: Prepare<B>,
 }
 
@@ -157,6 +160,7 @@ impl<B: Send + 'static> Setting<B> {
             name,
             alternate_names: Vec::new(),
             type_name: T::TYPE_NAME,
+            parameters: 1,
             prepare: Box::new(
                 move |value: &ConfigValue| -> std::result::Result<Pending<B>, ParseFailure> {
                     let parsed = T::parse_value(value)?;
@@ -200,7 +204,9 @@ type Finish<B> = Box<dyn Fn(B, &mut BuildContext) -> Result<Arc<dyn FlowElement>
 /// any name that is not a setting is taken as a build method's parameter.
 /// Settings that share a name are tried in the order they were added, as
 /// .NET tries a method's overloads, until one reads the value. A list given
-/// for a text setting ends the search, as .NET's call refuses it.
+/// for a text setting ends the search, as .NET's call refuses it, and so
+/// does reaching a method that takes no value or several
+/// ([`method_with_parameters`](Self::method_with_parameters)).
 /// The build method whose parameters are exactly those names is chosen,
 /// it makes the builder, the settings are applied to it in order, and the
 /// last step makes the element.
@@ -268,10 +274,34 @@ impl<B: Send + 'static> BuilderDefinition<B> {
             name: name.into(),
             alternate_names: Vec::new(),
             type_name,
+            parameters: 1,
             prepare: Box::new(|value: &ConfigValue| match value {
                 ConfigValue::Text(_) => Err(ParseFailure::no_text_form()),
                 ConfigValue::List(_) => Err(ParseFailure::list()),
             }),
+        });
+        self
+    }
+
+    /// A method called `name` taking `parameters` values rather than one,
+    /// such as .NET's `AddScript(string name, string content)`. .NET finds
+    /// a builder's methods by name whatever they take, and refuses one that
+    /// does not take one value as soon as its search reaches it, so naming
+    /// it fails with .NET's message. A setting of the same name added
+    /// before it is still tried first, and one added after it never is.
+    ///
+    /// # Panics
+    ///
+    /// When `parameters` is 1, because a method taking one value is a
+    /// setting.
+    pub fn method_with_parameters(mut self, name: impl Into<String>, parameters: usize) -> Self {
+        assert_ne!(parameters, 1, "a method taking one value is a setting");
+        self.settings.push(Setting {
+            name: name.into(),
+            alternate_names: Vec::new(),
+            type_name: "",
+            parameters,
+            prepare: Box::new(|_: &ConfigValue| Err(ParseFailure::text())),
         });
         self
     }
@@ -377,6 +407,18 @@ fn read_settings<B>(
         }
         let mut failure = None;
         for setting in &candidates {
+            if setting.parameters != 1 {
+                let takes = if setting.parameters == 0 {
+                    "no parameters "
+                } else {
+                    "more than one parameter. "
+                };
+                return Err(ElementError::new(format!(
+                    "Method '{}' on builder '{full_name}' for {location} takes {takes}This is \
+                     not supported.",
+                    setting.name
+                )));
+            }
             match (setting.prepare)(value) {
                 Ok(ready) => {
                     pending.push(ready);
@@ -468,6 +510,7 @@ impl<B: Send + 'static> ElementFactory for BuilderDefinition<B> {
                 let setting_signatures: String = self
                     .settings
                     .iter()
+                    .filter(|s| s.parameters == 1)
                     .map(|s| format!("{} ({})\n", s.name, s.type_name))
                     .collect();
                 return Err(ElementError::new(format!(

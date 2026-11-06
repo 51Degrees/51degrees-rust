@@ -695,6 +695,95 @@ fn a_setting_taken_in_code_only_refuses_every_value() {
     );
 }
 
+/// Methods such as .NET's `DerivedPropertyElementBuilder.AddScript(string,
+/// string)`, which .NET finds by name and refuses because they do not take
+/// one value. The messages are those .NET 4.5.129 gave for `AddScript` and
+/// `Build` on that builder, where an `AddScript` taking one value comes
+/// first and is tried first.
+#[test]
+fn a_method_taking_no_value_or_several_is_refused_when_reached() {
+    struct Names(Vec<i32>);
+    let registry = BuilderRegistry::new().with(
+        BuilderDefinition::new("NamingElementBuilder", |b: Names, context| {
+            finish(Element::new("naming", b.0), context)
+        })
+        .setting("AddName", |mut b: Names, name: i32| {
+            b.0.push(name);
+            b
+        })
+        .method_with_parameters("AddName", 2)
+        .method_with_parameters("Reset", 0)
+        .method_with_parameters("SetLimit", 2)
+        .setting("SetLimit", |b: Names, _: i32| b)
+        .build_method(vec![], |_, _| Ok(Names(Vec::new()))),
+    );
+    let make = |element: ElementOptions| {
+        PipelineBuilder::new().build_from_configuration(&registry, &one(element))
+    };
+    let named = || ElementOptions::new("NamingElementBuilder");
+    let builder = type_name::<Names>();
+    let refused = |method: &str, takes: &str| {
+        failed(
+            "NamingElementBuilder",
+            "No SubElements",
+            &format!(
+                "Method '{method}' on builder '{builder}' for element 0 takes {takes}This is not \
+                 supported."
+            ),
+            NO_INNER,
+        )
+    };
+
+    // The setting taking one value comes first and reads the value.
+    let pipeline = make(named().parameter("AddName", "7")).unwrap();
+    let element = pipeline.resource::<Element<Vec<i32>>>().unwrap();
+    assert_eq!(element.settings, [7]);
+
+    // A value it cannot read reaches the method taking two.
+    for value in [ConfigValue::from("x"), ConfigValue::from(vec!["7"])] {
+        assert_eq!(
+            message(make(named().parameter("AddName", value.clone()))),
+            refused("AddName", "more than one parameter. "),
+            "{value:?}"
+        );
+    }
+    assert_eq!(
+        message(make(named().parameter("Reset", "x"))),
+        refused("Reset", "no parameters ")
+    );
+    // A setting added after such a method is never reached.
+    assert_eq!(
+        message(make(named().parameter("Limit", "1"))),
+        refused("SetLimit", "more than one parameter. ")
+    );
+
+    // Only the settings taking one value are listed.
+    assert_eq!(
+        message(make(named().parameter("Unknown", "1"))),
+        failed(
+            "NamingElementBuilder",
+            "No SubElements",
+            &format!(
+                "Builder '{builder}' for element 0 has no 'Set' methods or 'Build' methods \
+                 that match (case-insensitively) the following parameters: UNKNOWN. The \
+                 available configuration methods on this builder are: \nAddName (Int32)\n\
+                 SetLimit (Int32)\nThe available 'Build' methods have the following \
+                 signatures: \n\n"
+            ),
+            NO_INNER,
+        )
+    );
+}
+
+#[test]
+#[should_panic(expected = "a method taking one value is a setting")]
+fn a_method_taking_one_value_is_not_added_as_one_taking_several() {
+    let _ = BuilderDefinition::new("NamingElementBuilder", |_: (), _: &mut BuildContext| {
+        Err(Error::configuration("not made"))
+    })
+    .method_with_parameters("AddName", 1);
+}
+
 #[test]
 fn elements_are_made_in_the_order_given() {
     let pipeline = build(
