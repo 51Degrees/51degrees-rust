@@ -80,10 +80,10 @@ fn weighted_codes(text: &str) -> Result<Option<Vec<WeightedValue<String>>>> {
 }
 
 /// Writes the country codes the evidence gives as the crates' IP
-/// Intelligence data, with a missing property source as both IP Intelligence
-/// engines add one, so the translation engines read each code as a record of
-/// `value` and `weight` and find a property the evidence did not give
-/// missing, as in a deployment. It writes no data when neither evidence key
+/// Intelligence data, with a missing property source as the on-premise IP
+/// Intelligence engine adds one, so the translation engines read each code as
+/// a record of `value` and `weight` and find a property the evidence did not
+/// give missing, as in a deployment. It writes no data when neither evidence key
 /// is present. It lists no properties, so the line leaves it out and only the
 /// JSON shows its data.
 struct CountriesElement {
