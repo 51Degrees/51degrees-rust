@@ -51,6 +51,17 @@ fn render(evidence: &[(&str, &str)]) -> String {
     )
 }
 
+/// Render the script for the supplied evidence with errors suppressed, so a
+/// sequence the Sequence element cannot read still gives a script.
+fn render_suppressed(evidence: &[(&str, &str)]) -> String {
+    render_on(
+        Pipeline::builder()
+            .suppress_process_exceptions(true)
+            .add_element(Arc::new(SequenceElement::new())),
+        evidence,
+    )
+}
+
 /// Render the script for the supplied evidence with no Sequence element. The
 /// JSON builder fails without one, so errors are suppressed, as these tests
 /// look only at the JavaScript builder's script.
@@ -212,9 +223,10 @@ fn without_a_sequence_element_the_evidence_is_not_rendered() {
 
 #[test]
 fn unusable_sequence_is_rendered_as_one() {
-    // The Sequence element adds one to each number, so the first four give
-    // 0, -4, 2147483648 and 100000000000, and the last 2147483649. It gives 1
-    // for "0" and for the text it cannot read.
+    // The Sequence element adds one to a 32-bit integer, so "-1", "-5" and
+    // "2147483647" give 0, -4 and -2147483648, which the script cannot use,
+    // and "0" gives 1. The rest are not 32-bit integers, so the Sequence
+    // element records an error and gives no sequence.
     for value in [
         "-1",
         "-5",
@@ -227,7 +239,7 @@ fn unusable_sequence_is_rendered_as_one() {
         "1.5",
         "2147483648",
     ] {
-        let script = render(&[("query.session-id", "abc"), ("query.sequence", value)]);
+        let script = render_suppressed(&[("query.session-id", "abc"), ("query.sequence", value)]);
 
         assert_eq!(
             lines(&script, "sequence"),

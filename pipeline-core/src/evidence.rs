@@ -20,7 +20,7 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! Evidence: the immutable, case-insensitive input to a flow data instance.
+//! Evidence: the case-insensitive input to a flow data instance.
 //!
 //! This module implements the
 //! [evidence specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/evidence.md).
@@ -35,9 +35,11 @@
 //! - Keys are usually `prefix.field`. [`EvidencePrefix`] models the known
 //!   prefixes and their precedence: `query` > `header` > `cookie` > `server` >
 //!   `fiftyone` > `location`, then any other prefix in alphabetical order.
-//! - Once built, an [`Evidence`] is immutable, so concurrent `&` reads are safe
-//!   with no locking (see the
+//! - Once built, an [`Evidence`] cannot be changed by whoever holds it, so
+//!   concurrent `&` reads are safe with no locking (see the
 //!   [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#evidence)).
+//!   A flow data's own evidence gains the values its elements add with
+//!   [`crate::FlowData::add_evidence`], which needs the flow data mutably.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -184,8 +186,10 @@ fn insert(entries: &mut EntryMap, key: &str, value: String) {
 /// Build one with an [`EvidenceBuilder`] (via [`Evidence::builder`]). Keys are
 /// lowercased on insertion for lookups, and each is also kept as first
 /// spelled. Entries keep the order their keys were first added in. Values are
-/// stored verbatim. Once built the store cannot change, so it is cheap to
-/// share by reference across threads during processing.
+/// stored verbatim. Once built the store cannot be changed by whoever holds
+/// it, so it is cheap to share by reference across threads during processing.
+/// Only a flow data adds to its own evidence, through
+/// [`crate::FlowData::add_evidence`].
 #[derive(Debug, Clone, Default)]
 pub struct Evidence {
     entries: EntryMap,
@@ -203,6 +207,13 @@ impl Evidence {
         Evidence {
             entries: IndexMap::with_hasher(self.entries.hasher().clone()),
         }
+    }
+
+    /// Add one entry as [`EvidenceBuilder::add`] does, for
+    /// [`crate::FlowData::add_evidence`]. A key already present in any case
+    /// keeps its first spelling and position and takes the new value.
+    pub(crate) fn insert(&mut self, key: &str, value: String) {
+        insert(&mut self.entries, key, value);
     }
 
     /// The hasher of the entries, so a test can check that a copy has it.

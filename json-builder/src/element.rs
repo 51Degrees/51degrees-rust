@@ -98,11 +98,11 @@ const SEQUENCE_NUMBER_NOT_PRESENT: &str = "The value for the 'sequence' paramete
 ///
 /// The builder needs the request's sequence number, taken from the data of
 /// the [`SequenceElement`], so put a Sequence element before the builder, as
-/// the web integration does. Without one, processing fails with
+/// the web integration does. Without one, or when the Sequence element could
+/// not read the request's sequence, processing fails with
 /// [`Error::Pipeline`](fiftyone_pipeline_core::Error::Pipeline) and no JSON
-/// is written. The `query.sequence` evidence is not read, because evidence
-/// holds text and a request's own query string can carry that key, so a
-/// value there is the Sequence element's input rather than a sequence
+/// is written. The `query.sequence` evidence is not read, because without a
+/// Sequence element it holds the request's own text rather than a sequence
 /// number. [`json_for`](Self::json_for) writes JSON without one, taking the
 /// request as the first.
 ///
@@ -212,11 +212,11 @@ impl JsonBuilderElement {
 
     /// The request sequence number that the `javascriptProperties` cap is
     /// compared against, being the one in the Sequence element's data, or
-    /// `None` when no Sequence element ran.
+    /// `None` when no Sequence element ran or it could not read the
+    /// request's sequence.
     ///
-    /// The Sequence element has already added one to the request's
-    /// `query.sequence`. That evidence is never read here, as it holds the
-    /// request's own text rather than a sequence number.
+    /// The `query.sequence` evidence is not read, because without a Sequence
+    /// element it holds the request's own text rather than a sequence number.
     pub fn sequence_number(data: &FlowData) -> Option<i64> {
         data.get(SequenceElement::KEY)
             .and_then(|sequence| sequence.sequence())
