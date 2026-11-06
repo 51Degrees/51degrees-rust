@@ -287,5 +287,20 @@
     "dotnet": {"value": ["PayloadTooShort"]},
     "rust": {"value": ["UnsupportedPayloadVersion"]},
     "reason": "identifier-layout.md asks a reader to refuse a payload version it does not know, naming the version it found, and the 5 byte header is part of the version 0 layout. So the crates read the version first and refuse a 4 byte payload naming version 2 as that version, where .NET checks the length first and gives PayloadTooShort."
+  },
+  {
+    "path": "fodid.status",
+    "kind": "value",
+    "cases": ["*-domain-not-ascii", "*-domain-not-utf8"],
+    "dotnet": {"value": ["Parsed"]},
+    "rust": {"value": ["InvalidDomainEncoding"]},
+    "reason": "identifier-layout.md gives the creator domain as ASCII text, so the crates refuse a domain holding a byte above 7f with InvalidDomainEncoding, the status the OWID reader gives a domain that is not UTF-8. .NET reads each such byte as a question mark and reads the 51Did."
+  },
+  {
+    "path": "fodid.*",
+    "kind": "presence",
+    "cases": ["*-domain-not-ascii", "*-domain-not-utf8"],
+    "rust": {"value": [null]},
+    "reason": "The crates refuse a creator domain that is not ASCII, so every field but the status is null, where .NET reads the 51Did and gives each field."
   }
 ]

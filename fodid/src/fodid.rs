@@ -27,7 +27,7 @@ use base64::alphabet;
 use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 use base64::Engine as _;
 
-use crate::owid::{Owid, ParseError, ParseStatus};
+use crate::owid::{Owid, ParseDetail, ParseError, ParseStatus};
 
 use crate::error::{Error, Result};
 
@@ -358,7 +358,9 @@ impl FodId {
     ///
     /// Returns [`Error::Parse`] carrying the OWID status if the string is not
     /// a valid OWID envelope (for example
-    /// [`ParseStatus::InvalidBase64`](crate::ParseStatus::InvalidBase64)),
+    /// [`ParseStatus::InvalidBase64`](crate::ParseStatus::InvalidBase64)) or
+    /// its creator domain is not ASCII
+    /// ([`ParseStatus::InvalidDomainEncoding`](crate::ParseStatus::InvalidDomainEncoding)),
     /// [`Error::UnsupportedPayloadVersion`] if the flags byte names a payload
     /// version other than 0, [`Error::PayloadTooShort`] if the payload is
     /// empty or cannot hold the 51Did header, [`Error::NoUsage`] if the flags
@@ -385,12 +387,13 @@ impl FodId {
     /// # Errors
     ///
     /// Returns [`Error::Parse`] carrying the OWID status if the bytes are not
-    /// a valid OWID envelope, [`Error::UnsupportedPayloadVersion`] if the
-    /// flags byte names a payload version other than 0,
-    /// [`Error::PayloadTooShort`] if the payload is empty or cannot hold the
-    /// 51Did header, [`Error::NoUsage`] if the flags byte sets no usage bit,
-    /// or [`Error::InvalidTypePayloadLength`] if the payload is shorter than
-    /// the minimum for its identifier type.
+    /// a valid OWID envelope or its creator domain is not ASCII
+    /// ([`ParseStatus::InvalidDomainEncoding`](crate::ParseStatus::InvalidDomainEncoding)),
+    /// [`Error::UnsupportedPayloadVersion`] if the flags byte names a payload
+    /// version other than 0, [`Error::PayloadTooShort`] if the payload is
+    /// empty or cannot hold the 51Did header, [`Error::NoUsage`] if the flags
+    /// byte sets no usage bit, or [`Error::InvalidTypePayloadLength`] if the
+    /// payload is shorter than the minimum for its identifier type.
     pub fn from_byte_array(buffer: &[u8]) -> Result<Self> {
         Self::from_owid(Owid::from_byte_array(buffer)?)
     }
@@ -399,9 +402,11 @@ impl FodId {
     /// fields. The OWID is moved into the returned value and remains reachable
     /// through [`owid`](FodId::owid) and the [`Deref`].
     ///
-    /// This is the one place the 51Did payload rules live. The payload
-    /// version in the flags byte is read first, because the header's length
-    /// and every field after the version belong to the version 0 layout.
+    /// This is the one place the 51Did rules live. The creator domain is
+    /// checked first, because the 51Did layout gives it as ASCII text where
+    /// the OWID reader accepts any UTF-8. The payload version in the flags
+    /// byte is read next, because the header's length and every field after
+    /// the version belong to the version 0 layout.
     /// The payload must then hold the five byte header before the type can
     /// be read, and then the value length that type requires, being 16 GUID
     /// bytes for [`IdType::Random`] and a 32 byte hash for
@@ -414,13 +419,24 @@ impl FodId {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::UnsupportedPayloadVersion`] if the flags byte names a
+    /// Returns [`Error::Parse`] carrying
+    /// [`ParseStatus::InvalidDomainEncoding`](crate::ParseStatus::InvalidDomainEncoding)
+    /// if the creator domain is not ASCII,
+    /// [`Error::UnsupportedPayloadVersion`] if the flags byte names a
     /// payload version other than 0, whatever the payload's length,
     /// [`Error::PayloadTooShort`] if the payload is empty or shorter than the
     /// header, [`Error::NoUsage`] if the flags byte sets no usage bit, or
     /// [`Error::InvalidTypePayloadLength`] if the payload is shorter than the
     /// header plus the value length the type requires.
     pub fn from_owid(owid: Owid) -> Result<Self> {
+        // The OWID reader refuses a domain that is not UTF-8 with this
+        // status, so a domain that is UTF-8 but not ASCII gets the same one.
+        if !owid.domain().is_ascii() {
+            return Err(Error::Parse(ParseError::new(
+                ParseStatus::InvalidDomainEncoding,
+                Some(ParseDetail::Field("the creator domain")),
+            )));
+        }
         let payload = owid.payload();
         let Some(&flags) = payload.get(FLAGS_OFFSET) else {
             return Err(Error::PayloadTooShort {

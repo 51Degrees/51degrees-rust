@@ -58,6 +58,10 @@ pub enum Error {
     /// [`ParseError::status`] names the OWID reason, for example
     /// [`ParseStatus::InvalidBase64`](crate::ParseStatus::InvalidBase64) or
     /// [`ParseStatus::ByteCountMismatch`](crate::ParseStatus::ByteCountMismatch).
+    /// An envelope whose creator domain is not ASCII is refused here too,
+    /// with
+    /// [`ParseStatus::InvalidDomainEncoding`](crate::ParseStatus::InvalidDomainEncoding),
+    /// because the 51Did layout gives the domain as ASCII text.
     Parse(ParseError),
     /// The OWID envelope is well formed, but the payload is empty, or names
     /// payload version 0 and is shorter than the 51Did header (the flags byte

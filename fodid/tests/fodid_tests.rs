@@ -28,7 +28,9 @@
 //! no value came back, and the status names the reason. Reading never
 //! touches a key, so none of the failure cases here constructs one.
 
-use fodid::{Creator, Crypto, Error, FodId, IdType, Owid, ParseStatus, SignatureStatus, Usage};
+use fodid::{
+    Creator, Crypto, Error, FodId, IdType, Owid, ParseDetail, ParseStatus, SignatureStatus, Usage,
+};
 
 mod layout;
 
@@ -681,6 +683,67 @@ fn truncated_envelope_is_the_owid_unexpected_end_status() {
 fn unsupported_version_is_the_owid_unsupported_version_status() {
     let result = FodId::from_byte_array(&[9, 9, 9]);
     assert_failed(&result, Status::Owid(ParseStatus::UnsupportedVersion));
+}
+
+/// The bytes of a signed 51Did under the test domain, with the first bytes
+/// of the domain replaced after signing. Reading never looks at the
+/// signature, so the bytes still read as an envelope.
+fn with_domain_starting(fixture: &Fixture, replacement: &[u8]) -> Vec<u8> {
+    let mut bytes = fixture
+        .signed_owid(canonical_payload())
+        .as_byte_array()
+        .unwrap();
+    // The domain starts after the version byte.
+    bytes[1..1 + replacement.len()].copy_from_slice(replacement);
+    bytes
+}
+
+#[test]
+fn a_creator_domain_that_is_not_ascii_is_invalid_domain_encoding() {
+    // identifier-layout.md gives the creator domain as ASCII text. The OWID
+    // reader accepts any UTF-8, so the 51Did reader refuses a domain that is
+    // UTF-8 but not ASCII, with the status the OWID reader gives a domain
+    // that is not UTF-8, on every reading route.
+    use base64::Engine as _;
+
+    let fixture = Fixture::new();
+    // "é" as UTF-8 in place of the "51" of the test domain.
+    let bytes = with_domain_starting(&fixture, &[0xC3, 0xA9]);
+    let owid = Owid::from_byte_array(&bytes).expect("the OWID reader takes UTF-8");
+    assert_eq!(owid.domain(), "édegrees.com");
+    let base64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+    for result in [
+        FodId::from_byte_array(&bytes),
+        FodId::from_base64(&base64),
+        base64.parse::<FodId>(),
+        FodId::try_from(bytes.as_slice()),
+        FodId::from_owid(owid.clone()),
+        FodId::try_from(owid),
+    ] {
+        assert_failed(&result, Status::Owid(ParseStatus::InvalidDomainEncoding));
+        let Err(Error::Parse(error)) = result else {
+            panic!("expected the OWID parse error");
+        };
+        assert_eq!(
+            error.detail(),
+            Some(ParseDetail::Field("the creator domain"))
+        );
+    }
+}
+
+#[test]
+fn a_creator_domain_reads_up_to_the_last_ascii_byte() {
+    // 7F is the last ASCII byte, so a domain holding it reads. 80 is not
+    // UTF-8 on its own, so the OWID reader refuses it with the same status
+    // as a domain that is UTF-8 but not ASCII.
+    let fixture = Fixture::new();
+
+    let result = FodId::from_byte_array(&with_domain_starting(&fixture, &[0x7F]));
+    assert_eq!(assert_parsed(&result).domain(), "\u{7f}1degrees.com");
+
+    let result = FodId::from_byte_array(&with_domain_starting(&fixture, &[0x80]));
+    assert_failed(&result, Status::Owid(ParseStatus::InvalidDomainEncoding));
 }
 
 #[test]

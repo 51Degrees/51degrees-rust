@@ -186,7 +186,7 @@ this order.
 
 | Status | Meaning |
 |---|---|
-| `Error::Parse` | The bytes are not an OWID envelope. The OWID reason is kept unchanged inside and read with `.status()`, for example `ParseStatus::MissingInput`, `InvalidBase64`, `UnexpectedEnd` or `ByteCountMismatch`. |
+| `Error::Parse` | The bytes are not an OWID envelope. The OWID reason is kept unchanged inside and read with `.status()`, for example `ParseStatus::MissingInput`, `InvalidBase64`, `UnexpectedEnd` or `ByteCountMismatch`. A creator domain that is not ASCII is `InvalidDomainEncoding`, because the 51Did layout gives the domain as ASCII text. |
 | `Error::UnsupportedPayloadVersion` | The flags byte names a payload version other than 0, and the variant names the version found. The version is read before the length, because the header's length is part of the version 0 layout. |
 | `Error::PayloadTooShort` | The envelope is fine, but the payload is empty, or names version 0 and cannot hold the 5 byte 51Did header, so the identifier type cannot be read. |
 | `Error::NoUsage` | The flags byte sets none of usage bits 0 to 2. |

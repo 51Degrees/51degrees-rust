@@ -263,6 +263,21 @@
     "text": "A3Bhcml0eS50ZXN0AP70NgAWAAAAQyoAAADw4dLDtKWWh3hpWks8LR4PAX-365Ks7NHGDHOc8p-HthRQLcCS1M-lvbW273-vslQ3rgRWjlrByWT32mFp9LBGm30cHtHLTvqBNRLdueLgF01"
   },
   {
+    "id": "domain-not-ascii",
+    "about": "A random 51Did from an earlier run in the standard alphabet, its creator domain changed after signing by putting the UTF-8 bytes c3 a9, a letter e with an acute accent, in place of the es of parity.test. Reading does not check the signature.",
+    "text": "A3Bhcml0eS50w6l0AP70NgAWAAAAQyoAAADw4dLDtKWWh3hpWks8LR4PAX+365Ks7NHGDHOc8p+HthRQLcCS1M+lvbW273+vslQ3rgRWjlrByWT32mFp9LBGm30cHtHLTvqBNRLdueLgF00="
+  },
+  {
+    "id": "domain-not-utf8",
+    "about": "A random 51Did from an earlier run in the standard alphabet, its creator domain changed after signing by putting the byte ff, which is not UTF-8, in place of the e of parity.test. Reading does not check the signature.",
+    "text": "A3Bhcml0eS50/3N0AP70NgAWAAAAQyoAAADw4dLDtKWWh3hpWks8LR4PAX+365Ks7NHGDHOc8p+HthRQLcCS1M+lvbW273+vslQ3rgRWjlrByWT32mFp9LBGm30cHtHLTvqBNRLdueLgF00="
+  },
+  {
+    "id": "domain-last-ascii",
+    "about": "A random 51Did from an earlier run in the standard alphabet, its creator domain changed after signing by putting the byte 7f, the last ASCII character, in place of the e of parity.test. Reading does not check the signature.",
+    "text": "A3Bhcml0eS50f3N0AP70NgAWAAAAQyoAAADw4dLDtKWWh3hpWks8LR4PAX+365Ks7NHGDHOc8p+HthRQLcCS1M+lvbW273+vslQ3rgRWjlrByWT32mFp9LBGm30cHtHLTvqBNRLdueLgF00="
+  },
+  {
     "id": "metadata",
     "about": "The 51Did component and the six properties as each language describes them.",
     "metadata": true
