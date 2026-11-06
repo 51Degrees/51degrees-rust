@@ -198,9 +198,11 @@ dotnet build dotnet -c Release -p:DeviceDetectionVersion=<version> -p:IpIntellig
 
 ## Running it
 
-From this folder, with the submodules checked out, the Lite files pulled
-from Git LFS and `pwsh ../ci/copy-owid-source.ps1` run once, as
-[AGENTS.md](../AGENTS.md) describes:
+From this folder, with the submodules checked out, the Lite files
+downloaded with `pwsh ../cxx/data/get-data-files.ps1 51Degrees-LiteV4.1.hash
+51Degrees-IPIV4AsnIpiV41.ipi` as the lite job does, and
+`pwsh ../ci/copy-owid-source.ps1` run once, as [AGENTS.md](../AGENTS.md)
+describes:
 
 ```
 cargo build -p parity-rust -p parity-compare

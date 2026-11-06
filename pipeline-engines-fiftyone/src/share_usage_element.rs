@@ -782,8 +782,8 @@ impl FlowElement for ShareUsageElement {
     /// has been dropped.
     fn add_pipeline(&self, pipeline: &Arc<Pipeline>) -> Result<()> {
         let mut current = self.pipeline.lock().unwrap_or_else(PoisonError::into_inner);
-        // A dropped pipeline's address can be reused, so the address is only
-        // compared while the pipeline it was taken from is alive.
+        // A pipeline that has been dropped no longer holds the element, so
+        // only a live pipeline can be this one again.
         if current.strong_count() > 0 && std::ptr::eq(current.as_ptr(), Arc::as_ptr(pipeline)) {
             return Err(Error::configuration(
                 "A ShareUsageElement can be in only one pipeline at a time, and \

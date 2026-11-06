@@ -34,10 +34,11 @@
 //! [`serve_javascript`] / [`serve_json`] functions in one task on the blocking
 //! thread pool, through [`crate::process::process_then`], because when a
 //! builder left no data, serving builds the body again, which for the script
-//! means rendering and minifying it. The resulting [`fiftyone_pipeline_web::WebResponse`] is mapped onto an axum
-//! response, including the `If-None-Match` short circuit those functions
-//! implement, being `304 Not Modified` for the JavaScript endpoint's `GET` (or
-//! `HEAD`) and `412 Precondition Failed` for the JSON endpoint's `POST`.
+//! means rendering and minifying it. The resulting
+//! [`fiftyone_pipeline_web::WebResponse`] is mapped onto an axum response,
+//! including the `If-None-Match` short circuit those functions implement,
+//! being `304 Not Modified` for the JavaScript endpoint's `GET` (or `HEAD`)
+//! and `412 Precondition Failed` for the JSON endpoint's `POST`.
 
 use std::net::SocketAddr;
 
