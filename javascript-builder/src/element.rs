@@ -271,6 +271,12 @@ impl JavaScriptBuilderElement {
         self.enable_cookies
     }
 
+    /// Whether the script is minified, as configured. It only is when the
+    /// crate's `minify` feature is enabled.
+    pub fn minify(&self) -> bool {
+        self.minify
+    }
+
     /// Internal constructor used by the builder.
     pub(crate) fn from_builder(builder: JavaScriptBuilderElementBuilder) -> Self {
         // The template is parsed once at construction. The embedded source is a

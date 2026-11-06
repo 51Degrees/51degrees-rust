@@ -475,7 +475,7 @@ fn dropping_the_service_stops_a_download_in_progress() {
     let data_file = Arc::new(AspectEngineDataFile::new(config));
     let engine: Arc<dyn OnPremiseAspectEngine> = Arc::new(TestEngine::new(Arc::clone(&data_file)));
     let service = DataUpdateService::new();
-    service.register(engine, data_file).unwrap();
+    service.register(Arc::clone(&engine), data_file).unwrap();
     std::thread::sleep(std::time::Duration::from_secs(1));
 
     let dropping = std::time::Instant::now();

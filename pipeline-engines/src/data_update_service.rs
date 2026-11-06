@@ -71,7 +71,7 @@ use std::hash::{Hash, Hasher};
 use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -85,12 +85,21 @@ use crate::on_premise_aspect_engine::OnPremiseAspectEngine;
 
 /// One registered data file together with the engine that owns it.
 struct Registration {
-    engine: Arc<dyn OnPremiseAspectEngine>,
+    /// Held weakly, so dropping the engine frees its data set and ends the
+    /// registration.
+    engine: Weak<dyn OnPremiseAspectEngine>,
     data_file: Arc<AspectEngineDataFile>,
     /// The next time the scheduler should poll this file's update URL.
     next_poll: Mutex<Option<Instant>>,
     /// The file-system watcher kept alive for this file, if watching is on.
     watcher: Mutex<Option<Box<dyn notify::Watcher + Send>>>,
+}
+
+impl Registration {
+    /// The engine, unless it has been dropped.
+    fn engine(&self) -> Option<Arc<dyn OnPremiseAspectEngine>> {
+        self.engine.upgrade()
+    }
 }
 
 /// The shared inner state of the service, behind one lock plus a condition
@@ -104,12 +113,39 @@ struct Inner {
     shutting_down: Mutex<bool>,
 }
 
+impl Inner {
+    /// The registrations whose engines are still alive, after removing the
+    /// others. A removed registration is dropped after the lock is released,
+    /// which stops its watcher.
+    fn live_registrations(&self) -> Vec<Arc<Registration>> {
+        let mut ended = Vec::new();
+        let live = {
+            let mut registrations = self.registrations.lock().unwrap_or_else(|e| e.into_inner());
+            registrations.retain(|registration| {
+                let alive = registration.engine.strong_count() > 0;
+                if !alive {
+                    ended.push(Arc::clone(registration));
+                }
+                alive
+            });
+            registrations.clone()
+        };
+        drop(ended);
+        live
+    }
+}
+
 /// Keeps on-premise engine data files current.
 ///
 /// Construct one with [`DataUpdateService::new`], then register each data file
 /// with [`DataUpdateService::register`]. The background scheduler starts on the
 /// first registration. Dropping the service stops the scheduler and releases the
 /// watchers.
+///
+/// The service holds each engine weakly, as a .NET engine unregisters its data
+/// files when it is disposed. Dropping an engine, or the pipeline holding it,
+/// frees its data set and ends its registration, so the caller keeps the
+/// engine for as long as it is to be updated.
 pub struct DataUpdateService {
     inner: Arc<Inner>,
     client: reqwest::blocking::Client,
@@ -166,6 +202,8 @@ impl DataUpdateService {
     /// engine on the data it loaded, as the specification says. It is logged
     /// and returned as an error, and the file is registered all the same, so
     /// the updates that follow still run.
+    ///
+    /// The registration lasts as long as the caller keeps `engine`.
     pub fn register(
         &self,
         engine: Arc<dyn OnPremiseAspectEngine>,
@@ -174,9 +212,10 @@ impl DataUpdateService {
         let config = data_file.configuration();
         let already_registered = data_file.is_registered();
         data_file.set_registered(true);
+        self.inner.live_registrations();
 
         let registration = Arc::new(Registration {
-            engine: Arc::clone(&engine),
+            engine: Arc::downgrade(&engine),
             data_file: Arc::clone(&data_file),
             next_poll: Mutex::new(None),
             watcher: Mutex::new(None),
@@ -193,7 +232,7 @@ impl DataUpdateService {
                 log::warn!(
                     "An error occurred while updating the data file for {} on start-up. \
                      The data it has is used. Error detail: {error}",
-                    registration.engine.data_key()
+                    engine.data_key()
                 );
             }
         }
@@ -250,7 +289,7 @@ impl DataUpdateService {
                 let data_file = engine.data_file_meta_data(data_file_identifier).cloned();
                 match data_file {
                     Some(data_file) => Arc::new(Registration {
-                        engine: Arc::clone(engine),
+                        engine: Arc::downgrade(engine),
                         data_file,
                         next_poll: Mutex::new(None),
                         watcher: Mutex::new(None),
@@ -264,7 +303,7 @@ impl DataUpdateService {
             self.check_for_update_from_url(&registration)
         } else if registration.data_file.data_file_path().is_some() {
             // No URL: refresh from the file on disk.
-            self.refresh_engine(&registration)
+            Self::refresh_engine(engine, &registration)
         } else {
             Ok(AutoUpdateStatus::NoConfiguration)
         }
@@ -287,13 +326,10 @@ impl DataUpdateService {
             .map_err(|e| DataUpdateError::new(AutoUpdateStatus::RefreshFailed, e.to_string()))
     }
 
-    /// The number of data files currently registered.
+    /// The number of data files currently registered, whose engines have
+    /// not been dropped.
     pub fn registered_count(&self) -> usize {
-        self.inner
-            .registrations
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .len()
+        self.inner.live_registrations().len()
     }
 
     // ----- internal -----
@@ -346,20 +382,13 @@ impl DataUpdateService {
         engine: &Arc<dyn OnPremiseAspectEngine>,
         data_file_identifier: Option<&str>,
     ) -> Option<Arc<Registration>> {
-        let regs = self
-            .inner
-            .registrations
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        regs.iter()
-            .find(|r| {
-                Arc::ptr_eq(&r.engine, engine)
-                    && match data_file_identifier {
-                        Some(id) => r.data_file.identifier() == id,
-                        None => true,
-                    }
-            })
-            .cloned()
+        self.inner.live_registrations().into_iter().find(|r| {
+            std::ptr::addr_eq(r.engine.as_ptr(), Arc::as_ptr(engine))
+                && match data_file_identifier {
+                    Some(id) => r.data_file.identifier() == id,
+                    None => true,
+                }
+        })
     }
 
     /// Install a file-system watcher that refreshes the engine when the data
@@ -427,10 +456,12 @@ impl DataUpdateService {
         handle.check_for_update_from_url(registration)
     }
 
-    /// Refresh the engine from the data file currently on disk.
-    fn refresh_engine(&self, registration: &Arc<Registration>) -> DataUpdateResult {
-        registration
-            .engine
+    /// Refresh `engine` from its data file currently on disk.
+    fn refresh_engine(
+        engine: &Arc<dyn OnPremiseAspectEngine>,
+        registration: &Registration,
+    ) -> DataUpdateResult {
+        engine
             .refresh(Some(registration.data_file.identifier()))
             .map(|_| AutoUpdateStatus::Success)
             .map_err(|e| DataUpdateError::new(AutoUpdateStatus::RefreshFailed, e.to_string()))
@@ -525,13 +556,7 @@ impl ServiceHandle {
     /// Run every poll that is currently due and return how long to sleep before
     /// the next one.
     fn run_due_polls(&self) -> Duration {
-        let registrations: Vec<Arc<Registration>> = {
-            self.inner
-                .registrations
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone()
-        };
+        let registrations = self.inner.live_registrations();
 
         let now = Instant::now();
         let mut next_wait = Duration::from_secs(60 * 60);
@@ -552,9 +577,13 @@ impl ServiceHandle {
             };
 
             if due <= now {
-                // Poll now. A failure is logged, and the next interval retries.
+                // Poll now, keeping the engine for the poll. A failure is
+                // logged, and the next interval retries.
+                let Some(engine) = registration.engine() else {
+                    continue;
+                };
                 let result = self.check_for_update_from_url(&registration);
-                log_poll(&registration, result);
+                log_poll(engine.data_key(), &registration, result);
                 let interval = DataUpdateService::poll_interval(&registration.data_file);
                 let next = now + interval;
                 *registration
@@ -587,18 +616,18 @@ impl ServiceHandle {
                 return;
             }
         }
+        let Some(engine) = registration.engine() else {
+            return;
+        };
         registration.data_file.set_last_applied_modified(modified);
-        let engine = registration.engine.data_key();
-        match registration
-            .engine
-            .refresh(Some(registration.data_file.identifier()))
-        {
+        let key = engine.data_key();
+        match engine.refresh(Some(registration.data_file.identifier())) {
             Ok(()) => log::info!(
-                "The data file for {engine} was refreshed from '{}'.",
+                "The data file for {key} was refreshed from '{}'.",
                 path.display()
             ),
             Err(error) => log::warn!(
-                "An error occurred while refreshing {engine} from '{}'. Error detail: {error}",
+                "An error occurred while refreshing {key} from '{}'. Error detail: {error}",
                 path.display()
             ),
         }
@@ -629,12 +658,16 @@ impl ServiceHandle {
     }
 
     /// Poll the remote update URL, verify, decompress, write and refresh.
+    /// An engine that has been dropped needs no update.
     fn poll_update_url(&self, registration: &Arc<Registration>) -> DataUpdateResult {
         let data_file = &registration.data_file;
         let config = data_file.configuration();
         let url = match data_file.data_update_url() {
             Some(u) => u.to_owned(),
             None => return Ok(AutoUpdateStatus::NotNeeded),
+        };
+        let Some(engine) = registration.engine() else {
+            return Ok(AutoUpdateStatus::NotNeeded);
         };
 
         // The formatter adds the Distributor's query parameters, the licence
@@ -727,8 +760,7 @@ impl ServiceHandle {
             } else {
                 compressed
             };
-            registration
-                .engine
+            engine
                 .refresh_from_memory(Some(data_file.identifier()), &data)
                 .map_err(|e| {
                     DataUpdateError::new(AutoUpdateStatus::RefreshFailed, e.to_string())
@@ -766,8 +798,7 @@ impl ServiceHandle {
                 format!("error replacing data file '{}': {e}", path.display()),
             )
         })?;
-        registration
-            .engine
+        engine
             .refresh(Some(data_file.identifier()))
             .map_err(|e| DataUpdateError::new(AutoUpdateStatus::RefreshFailed, e.to_string()))?;
 
@@ -785,8 +816,7 @@ impl ServiceHandle {
 /// Log the outcome of a scheduled poll, with the messages the specification's
 /// logging section gives. The URL logged is the configured one, which carries
 /// no licence key.
-fn log_poll(registration: &Arc<Registration>, result: DataUpdateResult) {
-    let engine = registration.engine.data_key();
+fn log_poll(engine: &str, registration: &Registration, result: DataUpdateResult) {
     let url = registration.data_file.data_update_url().unwrap_or("");
     match result {
         Ok(AutoUpdateStatus::Success) => {
@@ -1149,9 +1179,10 @@ mod tests {
             }),
         };
         let due = Instant::now();
+        let mut engines = Vec::new();
         for _ in 0..5 {
             let data_file = Arc::new(polled_file(INTERVAL_SECONDS, INTERVAL_SECONDS));
-            let engine = Arc::new(IdleEngine {
+            let engine: Arc<dyn OnPremiseAspectEngine> = Arc::new(IdleEngine {
                 filter: fiftyone_pipeline_core::EvidenceKeyFilterWhitelist::new(
                     Vec::<String>::new(),
                 ),
@@ -1163,11 +1194,12 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(Arc::new(Registration {
-                    engine,
+                    engine: Arc::downgrade(&engine),
                     data_file,
                     next_poll: Mutex::new(Some(due)),
                     watcher: Mutex::new(None),
                 }));
+            engines.push(engine);
         }
 
         handle.run_due_polls();

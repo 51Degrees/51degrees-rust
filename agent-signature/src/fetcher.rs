@@ -123,6 +123,11 @@ impl Fetcher {
         }
     }
 
+    /// The most read from one document.
+    pub(crate) fn max_response_bytes(&self) -> usize {
+        self.max_response_bytes
+    }
+
     /// Fetch the keys at `url` for a member of type `agent_type`, abandoning
     /// the fetch at `deadline`. Never panics on what the response holds, and
     /// gives a failed entry for anything that goes wrong.
