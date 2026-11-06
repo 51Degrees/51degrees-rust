@@ -54,18 +54,21 @@
   {
     "path": "errors",
     "kind": "value",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "reason": "The crates' IP Intelligence engine gives an error when the evidence holds no address it can read. .NET gives none.",
     "issue": 226
   },
   {
     "path": "json.errors",
     "kind": "onlyInRust",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "reason": "The JSON builder writes the IP Intelligence error the crates give when the evidence holds no address it can read.",
     "issue": 226
   },
   {
     "path": "json.ip",
     "kind": "onlyInDotnet",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "reason": "The crates' IP Intelligence engine writes no data when the evidence holds no address it can read, so the JSON has no ip object.",
     "issue": 226
   },
@@ -110,6 +113,7 @@
   {
     "path": "json.ip.*].rawweighting",
     "kind": "onlyInDotnet",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "data": "enterprise",
     "reason": "The crates write a weighted value as value and weight, where the published .NET packages write rawweighting and value.",
     "issue": 226
@@ -117,6 +121,7 @@
   {
     "path": "json.ip.*].weight",
     "kind": "onlyInRust",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "data": "enterprise",
     "reason": "The crates write a weighted value as value and weight, where the published .NET packages write rawweighting and value.",
     "issue": 226
@@ -246,6 +251,7 @@
   {
     "path": "json.ip",
     "kind": "order",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "data": "enterprise",
     "reason": "The crates' IP Intelligence engine reads a fixed list of property names in name order, so the JSON lists them in that order. .NET lists them in the data file's order.",
     "issue": 223

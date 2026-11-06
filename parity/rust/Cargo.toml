@@ -21,6 +21,8 @@ fiftyone-device-detection-onpremise = { path = "../../device-detection-onpremise
 fiftyone-ip-intelligence-onpremise = { path = "../../ip-intelligence-onpremise" }
 fiftyone-ip-intelligence-shared = { path = "../../ip-intelligence-shared" }
 fiftyone-json-builder = { path = "../../json-builder" }
+fiftyone-pipeline-translation = { path = "../../pipeline-translation" }
+fiftyone-ip-intelligence-translation = { path = "../../ip-intelligence-translation" }
 # The comparison is made before minification, so the minifier is left out.
 fiftyone-javascript-builder = { path = "../../javascript-builder", default-features = false }
 # The 51Did cases sign their own payloads, so the reader's creator is on.

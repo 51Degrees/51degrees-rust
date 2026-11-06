@@ -829,5 +829,344 @@
       "query.signature-agent": "agent1=\"https://agent.parity.test\"",
       "query.session-id": "parity-agent-signature-query-string"
     }
+  },
+  {
+    "id": "translation-header-fr",
+    "about": "The translation pipeline with GB then FR, asking for French in the Accept-Language header.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-fr",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "fr-FR"
+    }
+  },
+  {
+    "id": "translation-query-de",
+    "about": "The translation pipeline asking for German in the translation query parameter.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-query-de",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "query.translation": "de_DE"
+    }
+  },
+  {
+    "id": "translation-query-accept-language-es",
+    "about": "The translation pipeline asking for Spanish by its two letter code in the accept-language query parameter.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-query-accept-language-es",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "query.accept-language": "es"
+    }
+  },
+  {
+    "id": "translation-no-language",
+    "about": "The translation pipeline with no language asked for, so the names stay in English and every other country is sorted ignoring case.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-no-language",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535"
+    }
+  },
+  {
+    "id": "translation-header-cs-cz",
+    "about": "The translation pipeline asking for Czech, so every country is sorted as Czech sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-cs-cz",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "cs-CZ"
+    }
+  },
+  {
+    "id": "translation-header-hu-hu",
+    "about": "The translation pipeline asking for Hungarian, so every country is sorted as Hungarian sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-hu-hu",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "hu-HU"
+    }
+  },
+  {
+    "id": "translation-header-it-it",
+    "about": "The translation pipeline asking for Italian, so every country is sorted as Italian sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-it-it",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "it-IT"
+    }
+  },
+  {
+    "id": "translation-header-ja-jp",
+    "about": "The translation pipeline asking for Japanese, so every country is sorted as Japanese sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-ja-jp",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "ja-JP"
+    }
+  },
+  {
+    "id": "translation-header-nl-nl",
+    "about": "The translation pipeline asking for Dutch, so every country is sorted as Dutch sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-nl-nl",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "nl-NL"
+    }
+  },
+  {
+    "id": "translation-header-pl-pl",
+    "about": "The translation pipeline asking for Polish, so every country is sorted as Polish sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-pl-pl",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "pl-PL"
+    }
+  },
+  {
+    "id": "translation-header-pt-pt",
+    "about": "The translation pipeline asking for Portuguese, so every country is sorted as Portuguese sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-pt-pt",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "pt-PT"
+    }
+  },
+  {
+    "id": "translation-header-ro-ro",
+    "about": "The translation pipeline asking for Romanian, so every country is sorted as Romanian sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-ro-ro",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "ro-RO"
+    }
+  },
+  {
+    "id": "translation-header-sk-sk",
+    "about": "The translation pipeline asking for Slovak, so every country is sorted as Slovak sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-sk-sk",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "sk-SK"
+    }
+  },
+  {
+    "id": "translation-header-sv-se",
+    "about": "The translation pipeline asking for Swedish, so every country is sorted as Swedish sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-sv-se",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "sv-SE"
+    }
+  },
+  {
+    "id": "translation-header-tr-tr",
+    "about": "The translation pipeline asking for Turkish, so every country is sorted as Turkish sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-tr-tr",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "tr-TR"
+    }
+  },
+  {
+    "id": "translation-header-uk-ua",
+    "about": "The translation pipeline asking for Ukrainian, so every country is sorted as Ukrainian sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-uk-ua",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "uk-UA"
+    }
+  },
+  {
+    "id": "translation-header-vi-vn",
+    "about": "The translation pipeline asking for Vietnamese, so every country is sorted as Vietnamese sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-vi-vn",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "vi-VN"
+    }
+  },
+  {
+    "id": "translation-english-first",
+    "about": "English is most preferred, so no other language is tried and the names stay in English.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-english-first",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "en-GB, fr"
+    }
+  },
+  {
+    "id": "translation-english",
+    "about": "English alone.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-english",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "en"
+    }
+  },
+  {
+    "id": "translation-unknown-language",
+    "about": "A language the engines hold no translation for.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-unknown-language",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "xx-XX"
+    }
+  },
+  {
+    "id": "translation-bad-item",
+    "about": "An Accept-Language item whose quality is over 1, which cannot be read.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-bad-item",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "fr;q=2"
+    }
+  },
+  {
+    "id": "translation-quality-order",
+    "about": "Two languages whose quality puts the second first.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-quality-order",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "de;q=0.5, fr;q=0.8"
+    }
+  },
+  {
+    "id": "translation-region-then-two-letters",
+    "about": "A region the engines do not hold, then a language of two letters they do.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-region-then-two-letters",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "fr-CA, de"
+    }
+  },
+  {
+    "id": "translation-case",
+    "about": "A language given in the opposite case to the locale it matches.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-case",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "FR-fr"
+    }
+  },
+  {
+    "id": "translation-query-before-header",
+    "about": "The translation query parameter and the Accept-Language header name different languages, and the query parameter is used.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-query-before-header",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "query.translation": "it_IT",
+      "header.accept-language": "fr-FR"
+    }
+  },
+  {
+    "id": "translation-query-unresolved",
+    "about": "The translation query parameter names a language the engines do not hold, so the names are not translated, and the Accept-Language header still decides how every country is sorted.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-query-unresolved",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "query.translation": "xx_XX",
+      "header.accept-language": "fr-FR"
+    }
+  },
+  {
+    "id": "translation-unknown-code",
+    "about": "The code IP Intelligence gives when it has no country, which is given as it is and left out of the lists of every country.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-unknown-code",
+      "query.parity-geographical": "Unknown:65535",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "fr-FR"
+    }
+  },
+  {
+    "id": "translation-equal-weights",
+    "about": "Countries of equal weight, which the lists of every country order by their French names.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-equal-weights",
+      "query.parity-geographical": "FR:32767,DE:32767,GB:1",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "fr-FR"
+    }
+  },
+  {
+    "id": "translation-no-ip-data",
+    "about": "No country codes at all, so there is no IP Intelligence data.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-no-ip-data",
+      "header.accept-language": "fr-FR"
+    }
+  },
+  {
+    "id": "translation-one-property",
+    "about": "Codes for the geographical list only, so the population list is not in the IP Intelligence data.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-one-property",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "header.accept-language": "fr-FR"
+    }
+  },
+  {
+    "id": "translation-no-value",
+    "about": "The geographical list has no value, and its reason is kept.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-no-value",
+      "query.parity-geographical": "",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "fr-FR"
+    }
   }
 ]
