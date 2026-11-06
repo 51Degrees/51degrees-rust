@@ -125,27 +125,37 @@ fn usage_sharing_follows_the_feature_unless_the_configuration_sets_it() {
     );
 }
 
+/// The ASN file `51DEGREES_IPI_PATH` names, or the one under `cxx/data`, or
+/// `None` with a note that the test is skipped.
 #[cfg(feature = "on-premise")]
-#[test]
-fn the_on_premise_engine_runs_between_the_sequence_and_usage_sharing() {
+fn asn_file() -> Option<String> {
     use std::path::{Path, PathBuf};
 
     let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi");
-    let Some(asn) = std::env::var("51DEGREES_IPI_PATH")
+    let found = std::env::var("51DEGREES_IPI_PATH")
         .ok()
         .map(PathBuf::from)
         .into_iter()
         .chain([bundled])
         .find(|path| path.is_file())
-    else {
+        .map(|path| path.to_string_lossy().into_owned());
+    if found.is_none() {
         eprintln!("skipped: no ASN data file at 51DEGREES_IPI_PATH or cxx/data");
+    }
+    found
+}
+
+#[cfg(feature = "on-premise")]
+#[test]
+fn the_on_premise_engine_runs_between_the_sequence_and_usage_sharing() {
+    let Some(asn) = asn_file() else {
         return;
     };
     let engine = || {
         PipelineOptions::new().element(
             ElementOptions::new("IpiOnPremiseEngineBuilder")
-                .parameter("DataFile", asn.to_string_lossy().into_owned())
+                .parameter("DataFile", asn.as_str())
                 .parameter("CreateTempDataCopy", "false")
                 .parameter("AutoUpdate", "false")
                 .parameter("DataFileSystemWatcher", "false"),
@@ -158,6 +168,60 @@ fn the_on_premise_engine_runs_between_the_sequence_and_usage_sharing() {
     );
     let off = engine().parameter("SetShareUsage", "false");
     assert_eq!(data_keys(&build(&off).unwrap()), ["sequence", "ip"]);
+}
+
+/// The configuration in the README, with `path` where it names the data
+/// file `file_name`.
+#[cfg(feature = "on-premise")]
+fn readme_configuration(file_name: &str, path: &str) -> PipelineOptions {
+    let readme = include_str!("../README.md");
+    let (_, rest) = readme
+        .split_once("```jsonc")
+        .expect("a configuration in the README");
+    let (json, _) = rest.split_once("```").expect("the configuration's end");
+    let named = format!("\"{file_name}\"");
+    assert_eq!(json.matches(&named).count(), 1, "{json}");
+    let given = format!("\"{}\"", path.replace('\\', "\\\\"));
+    PipelineOptions::from_json(&json.replace(&named, &given)).unwrap()
+}
+
+#[cfg(feature = "on-premise")]
+#[test]
+fn the_readme_configuration_makes_the_pipeline_it_describes() {
+    use fiftyone_ip_intelligence::{
+        IpIntelligenceData, IpIntelligenceOnPremiseEngine, PerformanceProfile, IP_DATA_KEY,
+    };
+    use fiftyone_pipeline_core::Evidence;
+
+    let Some(asn) = asn_file() else {
+        return;
+    };
+    let options = readme_configuration("51Degrees-IPIV4AsnIpiV41.ipi", &asn);
+    let pipeline = build(&options).unwrap();
+    let expected: &[&str] = if cfg!(feature = "share-usage") {
+        &["sequence", "ip", "shareusage"]
+    } else {
+        &["sequence", "ip"]
+    };
+    assert_eq!(data_keys(&pipeline), expected);
+    let engine = pipeline
+        .resource::<IpIntelligenceOnPremiseEngine>()
+        .expect("the IP Intelligence engine");
+    assert_eq!(engine.performance_profile(), PerformanceProfile::LowMemory);
+
+    // Processed without usage sharing, so the test sends nothing.
+    let pipeline = build(&options.parameter("SetShareUsage", "false")).unwrap();
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("server.client-ip", "1.1.1.1")
+            .build(),
+    );
+    data.process().unwrap();
+    let ip = data.get(IP_DATA_KEY).expect("the IP data");
+    assert_eq!(
+        ip.asn_name().value().ok().map(String::as_str),
+        Some("CLOUDFLARENET")
+    );
 }
 
 #[cfg(feature = "cloud")]
@@ -204,5 +268,54 @@ mod cloud {
             .build_from_configuration(&configuration::registry(), &options)
             .unwrap();
         assert_eq!(data_keys(&pipeline), ["sequence", "cloud-response", "ip"]);
+    }
+
+    /// The configuration of .NET's IP Intelligence cloud
+    /// `GettingStarted-Console` example at 51degrees-dotnet 4d7152bf, with its
+    /// comments shortened. It names the builders without `Builder` and turns
+    /// usage sharing off under the older `PipelineBuilderParameters`.
+    const DOTNET_CLOUD_EXAMPLE: &str = r#"{
+  // For a sample configuration file demonstrating all available options, see
+  // the sample configuration in .NET's examples.
+  "PipelineOptions": {
+    "Elements": [
+      {
+        "BuilderName": "CloudRequestEngine",
+        // A resource key created with the Configurator.
+        "BuildParameters": {
+          "ResourceKey": "!!ENTER_YOUR_RESOURCE_KEY_HERE!!",
+          "CloudRequestOrigin": "51Degrees.example.com",
+          // The default is 2 seconds, which a cold connection can exceed.
+          "TimeOutSeconds": 10
+        }
+      },
+      {
+        "BuilderName": "IpiCloudEngine"
+      }
+    ],
+    "PipelineBuilderParameters": {
+      // Set this to true in production in order to share your usage data
+      // with 51Degrees.
+      "ShareUsage": false
+    }
+  }
+}"#;
+
+    #[test]
+    fn dotnets_cloud_example_configuration_is_read() {
+        use fiftyone_ip_intelligence::CloudRequestEngine;
+
+        let client: Arc<dyn CloudHttpClient> = Arc::new(StandIn);
+        let options = PipelineOptions::from_json(DOTNET_CLOUD_EXAMPLE).unwrap();
+        let pipeline = PipelineBuilder::new()
+            .add_resource(Arc::new(client))
+            .build_from_configuration(&configuration::registry(), &options)
+            .unwrap();
+        assert_eq!(data_keys(&pipeline), ["sequence", "cloud-response", "ip"]);
+        let engine = pipeline
+            .resource::<CloudRequestEngine>()
+            .expect("the cloud request engine");
+        assert_eq!(engine.timeout(), std::time::Duration::from_secs(10));
+        assert_eq!(engine.cloud_request_origin(), Some("51Degrees.example.com"));
     }
 }

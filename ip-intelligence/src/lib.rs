@@ -138,6 +138,12 @@ pub use fiftyone_ip_intelligence_onpremise::{
 
 pub mod configuration;
 
+/// The examples in the README are compiled as documentation tests, so the
+/// documented way to use this crate cannot quietly stop working.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeExamples;
+
 #[cfg(feature = "cloud")]
 mod cloud;
 #[cfg(feature = "on-premise")]

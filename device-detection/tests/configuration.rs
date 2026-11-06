@@ -88,6 +88,17 @@ fn the_registry_gives_the_builders_dotnets_package_gives() {
     );
 }
 
+/// The message for a configuration whose only element names `name`, which
+/// the registry does not hold.
+fn not_found(name: &str) -> String {
+    format!(
+        "Configuration failed to build.\nBuilderName: {name}\nSubElement Builder Names: \
+         No SubElements\nCould not find builder matching '{name}' for element 0. \
+         Available builders are: {}\n{NO_INNER}\n",
+        expected_builders().join(",")
+    )
+}
+
 #[test]
 fn a_builder_dotnets_package_lacks_is_not_found() {
     // .NET's sample configuration names the first, which no .NET 4.5
@@ -97,16 +108,15 @@ fn a_builder_dotnets_package_lacks_is_not_found() {
         "JsonBuilderElementBuilder",
     ] {
         let options = PipelineOptions::new().element(ElementOptions::new(name));
-        assert_eq!(
-            message(build(&options)),
-            format!(
-                "Configuration failed to build.\nBuilderName: {name}\nSubElement Builder Names: \
-                 No SubElements\nCould not find builder matching '{name}' for element 0. \
-                 Available builders are: {}\n{NO_INNER}\n",
-                expected_builders().join(",")
-            )
-        );
+        assert_eq!(message(build(&options)), not_found(name));
     }
+}
+
+#[test]
+fn a_builder_dotnets_package_has_and_the_crates_lack_is_not_found() {
+    let name = "AppleProfileEngineBuilder";
+    let options = PipelineOptions::new().element(ElementOptions::new(name));
+    assert_eq!(message(build(&options)), not_found(name));
 }
 
 #[test]
@@ -183,6 +193,58 @@ mod on_premise {
         );
         let off = hash().parameter("SetShareUsage", "false");
         assert_eq!(data_keys(&build(&off).unwrap()), ["sequence", "device"]);
+    }
+
+    /// The configuration in the README, with `path` where it names the data
+    /// file `file_name`.
+    fn readme_configuration(file_name: &str, path: &str) -> PipelineOptions {
+        let readme = include_str!("../README.md");
+        let (_, rest) = readme
+            .split_once("```jsonc")
+            .expect("a configuration in the README");
+        let (json, _) = rest.split_once("```").expect("the configuration's end");
+        let named = format!("\"{file_name}\"");
+        assert_eq!(json.matches(&named).count(), 1, "{json}");
+        let given = format!("\"{}\"", path.replace('\\', "\\\\"));
+        PipelineOptions::from_json(&json.replace(&named, &given)).unwrap()
+    }
+
+    #[test]
+    fn the_readme_configuration_makes_the_pipeline_it_describes() {
+        use fiftyone_device_detection::{
+            DeviceData, DeviceDetectionOnPremiseEngine, Evidence, PerformanceProfile,
+            DEVICE_DATA_KEY,
+        };
+
+        const MOBILE: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) \
+            AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+
+        let Some(lite) = data_file(
+            "51DEGREES_DD_PATH",
+            "device-detection/51Degrees-LiteV4.1.hash",
+        ) else {
+            return;
+        };
+        let options = readme_configuration("51Degrees-LiteV4.1.hash", &lite);
+        let pipeline = build(&options).unwrap();
+        let expected: &[&str] = if cfg!(feature = "share-usage") {
+            &["sequence", "device", "shareusage"]
+        } else {
+            &["sequence", "device"]
+        };
+        assert_eq!(data_keys(&pipeline), expected);
+        let engine = pipeline
+            .resource::<DeviceDetectionOnPremiseEngine>()
+            .expect("the Device Detection engine");
+        assert_eq!(engine.performance_profile(), PerformanceProfile::LowMemory);
+
+        // Processed without usage sharing, so the test sends nothing.
+        let pipeline = build(&options.parameter("SetShareUsage", "false")).unwrap();
+        let mut data = pipeline
+            .create_flow_data_with(Evidence::builder().add("header.user-agent", MOBILE).build());
+        data.process().unwrap();
+        let device = data.get(DEVICE_DATA_KEY).expect("the device data");
+        assert_eq!(device.is_mobile().value().ok(), Some(&true));
     }
 
     #[test]
@@ -276,5 +338,58 @@ mod cloud {
             data_keys(&pipeline),
             ["sequence", "cloud-response", "device", "hardware"]
         );
+    }
+
+    /// The configuration of .NET's Device Detection cloud
+    /// `GettingStarted-Console` example at 51degrees-dotnet 4d7152bf, with its
+    /// comments shortened. It names the builders without `Builder` and turns
+    /// usage sharing off under the older `PipelineBuilderParameters`.
+    const DOTNET_CLOUD_EXAMPLE: &str = r#"{
+  // For a sample configuration file demonstrating all available options, see
+  // the sample configuration in .NET's examples.
+  "PipelineOptions": {
+    "Elements": [
+      {
+        "BuilderName": "CloudRequestEngine",
+        // A resource key created with the Configurator.
+        "BuildParameters": {
+          "ResourceKey": "!!ENTER_YOUR_RESOURCE_KEY_HERE!!",
+          "CloudRequestOrigin": "51Degrees.example.com"
+        }
+      },
+      {
+        "BuilderName": "DeviceDetectionCloudEngine"
+      }
+    ],
+    "PipelineBuilderParameters": {
+      // Set this to true in production in order to share your usage data
+      // with 51Degrees.
+      "ShareUsage": false
+    }
+  }
+}"#;
+
+    #[test]
+    fn dotnets_cloud_example_configuration_is_read() {
+        use fiftyone_device_detection::CloudRequestEngine;
+
+        let client: Arc<dyn CloudHttpClient> = Arc::new(StandIn);
+        let options = PipelineOptions::from_json(DOTNET_CLOUD_EXAMPLE).unwrap();
+        let pipeline = PipelineBuilder::new()
+            .add_resource(Arc::new(client))
+            .build_from_configuration(&configuration::registry(), &options)
+            .unwrap();
+        assert_eq!(
+            data_keys(&pipeline),
+            ["sequence", "cloud-response", "device"]
+        );
+        let engine = pipeline
+            .resource::<CloudRequestEngine>()
+            .expect("the cloud request engine");
+        assert_eq!(
+            engine.resource_key(),
+            Some("!!ENTER_YOUR_RESOURCE_KEY_HERE!!")
+        );
+        assert_eq!(engine.cloud_request_origin(), Some("51Degrees.example.com"));
     }
 }

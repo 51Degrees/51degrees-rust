@@ -175,6 +175,12 @@ pub use fiftyone_cloud_request_engine::{
 
 pub mod configuration;
 
+/// The examples in the README are compiled as documentation tests, so the
+/// documented way to use this crate cannot quietly stop working.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeExamples;
+
 // ---------------------------------------------------------------------------
 // The convenience top-level pipeline builder.
 // ---------------------------------------------------------------------------
