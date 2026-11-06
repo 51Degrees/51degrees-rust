@@ -348,7 +348,34 @@ fn updates_with_an_update_service_register_the_data_file() {
         ))
     );
     assert_eq!(look_up(&pipeline, IPV4), cloudflare());
+    assert_eq!(service.registered_count(), 1);
+    drop(made);
     drop(pipeline);
+
+    // Dropping the pipeline, or failing to build it after the engine was
+    // made, releases the engine and ends its registration, as a .NET engine
+    // unregisters its data file when it is disposed.
+    assert_eq!(service.registered_count(), 0);
+    let updated = element(
+        BUILDER,
+        &[
+            ("DataFile", &asn),
+            ("CreateTempDataCopy", "false"),
+            ("DataUpdateLicenseKey", "KEY1"),
+            ("DataFileSystemWatcher", "false"),
+        ],
+    );
+    let missing_file = base("no-such-51Degrees.ipi", &[]);
+    for second in [ElementOptions::new("NoSuchBuilder"), missing_file] {
+        let options = PipelineOptions::new()
+            .element(updated.clone())
+            .element(second);
+        let result = PipelineBuilder::new()
+            .add_resource(Arc::clone(&service) as _)
+            .build_from_configuration(&registry(), &options);
+        assert!(result.is_err());
+        assert_eq!(service.registered_count(), 0);
+    }
 
     for key in [None, Some("")] {
         let mut parameters = vec![("DataFile", asn.as_str()), ("CreateTempDataCopy", "false")];
