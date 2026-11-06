@@ -84,6 +84,12 @@ impl ParseFailure {
         }
     }
 
+    /// True when the method itself refused the value, rather than .NET's
+    /// reading of it, so .NET tries no other method of the same name.
+    pub(crate) fn ends_search(&self) -> bool {
+        self.kind == FailureKind::ListForText
+    }
+
     /// The message .NET gives, after `prefix`, which says which setting
     /// expects which type. The second part is the message of the cause, as
     /// .NET's inner exception gives it, if there is one.
@@ -130,8 +136,9 @@ impl ParseFailure {
 /// A type a setting can take, read from the text a configuration gives.
 ///
 /// Implemented for `String`, `bool`, the integer types .NET builders take,
-/// `f64` and `Vec<String>`. A crate implements it for its own enumeration
-/// with [`parse_enum`].
+/// `f64`, and `Vec<String>` and `Box<[String]>` for .NET's ``List`1`` and
+/// `String[]`. A crate implements it for its own enumeration with
+/// [`parse_enum`].
 pub trait ConfigType: Sized + Send + 'static {
     /// The name of the matching .NET type, such as `Int32` or `Boolean`,
     /// which configuration errors give.
@@ -192,6 +199,18 @@ impl ConfigType for Vec<String> {
 
     fn parse_list(list: &[String]) -> Result<Self, ParseFailure> {
         Ok(list.to_vec())
+    }
+}
+
+impl ConfigType for Box<[String]> {
+    const TYPE_NAME: &'static str = "String[]";
+
+    fn parse_text(text: &str) -> Result<Self, ParseFailure> {
+        Ok(parse_csv(text).into_boxed_slice())
+    }
+
+    fn parse_list(list: &[String]) -> Result<Self, ParseFailure> {
+        Ok(list.into())
     }
 }
 

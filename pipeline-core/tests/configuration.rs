@@ -1385,3 +1385,195 @@ fn a_json_null_is_given_as_empty_text() {
         )
     );
 }
+
+/// A builder whose settings share names, as .NET's on-premise engine
+/// builders take `SetUpdatePollingInterval` as an `Int32` and as a
+/// `TimeSpan`, and `SetPerformanceProfile` as text and as an enumeration.
+#[derive(Debug, Clone, PartialEq, Default)]
+struct Overloaded {
+    number: Option<i32>,
+    fraction: Option<f64>,
+    text: Option<String>,
+}
+
+fn overloaded_registry() -> BuilderRegistry {
+    BuilderRegistry::new().with(
+        BuilderDefinition::new("OverloadedElementBuilder", |o: Overloaded, context| {
+            finish(Element::new("overloaded", o), context)
+        })
+        .setting("SetValue", |mut o: Overloaded, number: i32| {
+            o.number = Some(number);
+            o
+        })
+        .setting("SetValue", |mut o: Overloaded, fraction: f64| {
+            o.fraction = Some(fraction);
+            o
+        })
+        .setting("SetName", |mut o: Overloaded, text: String| {
+            o.text = Some(text);
+            o
+        })
+        .code_only_setting("SetName", "PerformanceProfiles")
+        .build_method(vec![], |_, _| Ok(Overloaded::default())),
+    )
+}
+
+fn overloaded(element: ElementOptions) -> Result<Overloaded> {
+    let pipeline =
+        PipelineBuilder::new().build_from_configuration(&overloaded_registry(), &one(element))?;
+    Ok(pipeline
+        .resource::<Element<Overloaded>>()
+        .expect("the element")
+        .settings
+        .clone())
+}
+
+/// .NET tries a method's overloads in turn until one reads the value, and
+/// gives the last one's message when none does, as .NET 4.5.180's Hash
+/// engine builder did for `UpdatePollingInterval`, read as an `Int32` and
+/// then as a `TimeSpan`.
+#[test]
+fn settings_sharing_a_name_are_tried_in_turn() {
+    let named = || ElementOptions::new("OverloadedElementBuilder");
+    assert_eq!(
+        overloaded(named().parameter("Value", "2")).unwrap(),
+        Overloaded {
+            number: Some(2),
+            ..Overloaded::default()
+        }
+    );
+    assert_eq!(
+        overloaded(named().parameter("Value", "2.5")).unwrap(),
+        Overloaded {
+            fraction: Some(2.5),
+            ..Overloaded::default()
+        }
+    );
+    let builder = type_name::<Overloaded>();
+    assert_eq!(
+        message(overloaded(named().parameter("Value", "x")).map(|_| unreachable_pipeline())),
+        failed(
+            "OverloadedElementBuilder",
+            "No SubElements",
+            &format!(
+                "Method 'SetValue' on builder '{builder}' for element 0 expects a parameter of \
+                 type 'Double'. Failed to parse value 'x' using the static 'TryParse' method."
+            ),
+            NO_INNER
+        )
+    );
+}
+
+/// .NET passes a list to a method taking text as it is, and the call's
+/// refusal ends the search, so the overload after it is not tried, as .NET
+/// 4.5.180's Hash engine builder showed for `PerformanceProfile`, taken as
+/// text and as an enumeration.
+#[test]
+fn a_list_refused_by_a_text_setting_ends_the_search() {
+    let named = || ElementOptions::new("OverloadedElementBuilder");
+    assert_eq!(
+        overloaded(named().parameter("Name", "a")).unwrap().text,
+        Some("a".to_string())
+    );
+    assert_eq!(
+        message(overloaded(named().parameter("Name", vec!["a"])).map(|_| unreachable_pipeline())),
+        failed(
+            "OverloadedElementBuilder",
+            "No SubElements",
+            "Object of type 'System.String[]' cannot be converted to type 'System.String'.",
+            NO_INNER
+        )
+    );
+}
+
+/// Stands in for a pipeline where a test expects an error, so the result
+/// keeps the type `message` takes.
+fn unreachable_pipeline() -> Arc<Pipeline> {
+    panic!("the element was made")
+}
+
+/// .NET casts a build parameter's value to text before reading it as any
+/// other type, so a list given in code fails the cast, as .NET 4.5.180's
+/// Hash engine builder gave for `createTempDataCopy`.
+#[test]
+fn a_list_given_for_a_build_parameter_that_is_not_text_fails_the_cast() {
+    assert_eq!(
+        message(build(&one(ElementOptions::new("DataFileEngine")
+            .parameter("DataFile", "51Degrees.hash")
+            .parameter("CreateTempDataCopy", vec!["true"])))),
+        failed(
+            "DataFileEngine",
+            "No SubElements",
+            "Unable to cast object of type 'System.String[]' to type 'System.String'.",
+            NO_INNER
+        )
+    );
+}
+
+/// A build method whose parameter only code can give, as .NET's on-premise
+/// engine builders have `Build(Stream data)`. The messages are those .NET
+/// 4.5.180's Hash engine builder gave.
+#[test]
+fn a_build_parameter_taken_in_code_only_refuses_every_value() {
+    struct Streamed;
+    let registry = BuilderRegistry::new().with(
+        BuilderDefinition::new("StreamedElementBuilder", |_: Streamed, context| {
+            finish(Element::new("streamed", ()), context)
+        })
+        .build_method(vec![Parameter::new::<String>("datafile")], |_, _| {
+            Ok(Streamed)
+        })
+        .build_method(vec![Parameter::code_only("data", "Stream")], |_, _| {
+            panic!("no configuration can give a stream")
+        }),
+    );
+    let make = |element: ElementOptions| {
+        PipelineBuilder::new().build_from_configuration(&registry, &one(element))
+    };
+    let named = || ElementOptions::new("StreamedElementBuilder");
+    let builder = type_name::<Streamed>();
+    let refused = |text: &str| failed("StreamedElementBuilder", "No SubElements", text, NO_INNER);
+
+    assert_eq!(
+        message(make(named().parameter("Data", "x"))),
+        refused(&format!(
+            "Method 'Build' on builder '{builder}' for element 0 expects a parameter of type \
+             'Stream' but this type does not have the expected 'TryParse' method (or has \
+             multiples that cannot be resolved)."
+        ))
+    );
+    assert_eq!(
+        message(make(named().parameter("Data", vec!["x"]))),
+        refused("Unable to cast object of type 'System.String[]' to type 'System.String'.")
+    );
+    assert_eq!(
+        message(make(
+            named().parameter("Data", "x").parameter("DataFile", "y")
+        )),
+        refused(&format!(
+            "Builder '{builder}' for element 0 has no 'Set' methods or 'Build' methods that \
+             match (case-insensitively) the following parameters: DATA,DATAFILE. The available \
+             configuration methods on this builder are: \nThe available 'Build' methods have \
+             the following signatures: \ndatafile (String)\ndata (Stream)\n"
+        ))
+    );
+    assert_eq!(
+        keys(&make(named().parameter("DataFile", "y")).unwrap()),
+        ["streamed"]
+    );
+}
+
+/// `Box<[String]>` reads as .NET's `String[]`, from comma separated text or
+/// from a list given in code.
+#[test]
+fn a_string_array_setting_reads_text_and_lists() {
+    assert_eq!(<Box<[String]> as ConfigType>::TYPE_NAME, "String[]");
+    assert_eq!(
+        &*<Box<[String]> as ConfigType>::parse_text("a,\"b,c\"").unwrap(),
+        ["a", "b,c"]
+    );
+    assert_eq!(
+        &*<Box<[String]> as ConfigType>::parse_value(&ConfigValue::List(vec!["x".into()])).unwrap(),
+        ["x"]
+    );
+}

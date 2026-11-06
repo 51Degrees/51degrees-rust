@@ -91,6 +91,18 @@ impl Parameter {
         }
     }
 
+    /// A parameter called `name` that takes its value in code only, such as
+    /// a stream. .NET lists a build method with such a parameter and refuses
+    /// any text a configuration gives it, because the type has no
+    /// `TryParse`. `type_name` is the .NET type's name, such as `Stream`.
+    pub fn code_only(name: impl Into<String>, type_name: &'static str) -> Self {
+        Parameter {
+            name: name.into(),
+            type_name,
+            parse: |_| Err(ParseFailure::no_text_form()),
+        }
+    }
+
     fn signature(&self) -> String {
         format!("{} ({})", self.name, self.type_name)
     }
@@ -186,6 +198,9 @@ type Finish<B> = Box<dyn Fn(B, &mut BuildContext) -> Result<Arc<dyn FlowElement>
 ///
 /// Settings are read first, in the order the configuration gives them, and
 /// any name that is not a setting is taken as a build method's parameter.
+/// Settings that share a name are tried in the order they were added, as
+/// .NET tries a method's overloads, until one reads the value. A list given
+/// for a text setting ends the search, as .NET's call refuses it.
 /// The build method whose parameters are exactly those names is chosen,
 /// it makes the builder, the settings are applied to it in order, and the
 /// last step makes the element.
@@ -368,7 +383,13 @@ fn read_settings<B>(
                     failure = None;
                     break;
                 }
-                Err(refused) => failure = Some((setting, refused)),
+                Err(refused) => {
+                    let ends_search = refused.ends_search();
+                    failure = Some((setting, refused));
+                    if ends_search {
+                        break;
+                    }
+                }
             }
         }
         if let Some((setting, refused)) = failure {
@@ -474,6 +495,13 @@ impl<B: Send + 'static> ElementFactory for BuilderDefinition<B> {
                 .iter()
                 .find(|(key, _)| equal_ignoring_case(key, &parameter.name))
                 .expect("every parameter of the chosen build method was given");
+            // .NET casts a build parameter's value to text before reading
+            // it as any other type, and a list given in code fails the cast.
+            if matches!(value, ConfigValue::List(_)) && parameter.type_name != String::TYPE_NAME {
+                return Err(ElementError::new(
+                    "Unable to cast object of type 'System.String[]' to type 'System.String'.",
+                ));
+            }
             let parsed = (parameter.parse)(value).map_err(|refused| {
                 let prefix = format!(
                     "Method 'Build' on builder '{full_name}' for {location} expects a \
