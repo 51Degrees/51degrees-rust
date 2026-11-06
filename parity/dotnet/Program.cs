@@ -47,6 +47,8 @@ using System.Xml;
 using System.Xml.Linq;
 using FiftyOne.DeviceDetection.Hash.Engine.OnPremise.FlowElements;
 using FiftyOne.IpIntelligence.Engine.OnPremise.FlowElements;
+using FiftyOne.IpIntelligence.Shared;
+using FiftyOne.IpIntelligence.Translation.FlowElements;
 using FiftyOne.Pipeline.AgentSignature.FlowElement;
 using FiftyOne.Pipeline.Core.Data;
 using FiftyOne.Pipeline.Core.Data.Types;
@@ -66,16 +68,20 @@ namespace FiftyOne.Parity
 {
     public static class Program
     {
-        // The element whose data also gets the match metrics read.
-        private const string DeviceDataKey = "device";
-
-        // Match metrics, read whether or not the engine lists them as
-        // properties.
-        private static readonly string[] MatchMetrics =
-        {
-            "DeviceId", "Difference", "Drift", "Iterations", "MatchedNodes",
-            "Method", "UserAgents"
-        };
+        // The values read beside an element's listed properties, by the
+        // element's data key. Device Detection's match metrics, and the
+        // culture the countries translation engine sorted with, which it
+        // writes without listing.
+        private static readonly Dictionary<string, string[]> ExtraProperties =
+            new Dictionary<string, string[]>
+            {
+                ["device"] = new[]
+                {
+                    "DeviceId", "Difference", "Drift", "Iterations",
+                    "MatchedNodes", "Method", "UserAgents"
+                },
+                ["countrynamestranslated"] = new[] { "SortingCultureUsed" }
+            };
 
         // The evidence the Sequence element reads and writes back.
         private const string SessionIdKey = "query.session-id";
@@ -91,6 +97,9 @@ namespace FiftyOne.Parity
         // The pipeline of a case that runs through the agent signature
         // pipeline.
         private const string AgentSignaturePipeline = "agent-signature";
+
+        // The pipeline of a case that runs through the translation pipeline.
+        private const string TranslationPipeline = "translation";
 
         // Long enough that the first fetch of a directory the handler serves
         // at once never runs out, and shorter than the slow agent's delay.
@@ -186,6 +195,19 @@ namespace FiftyOne.Parity
                     .Build())
                 .SetSuppressProcessExceptions(true)
                 .Build();
+            // Sequence, an element writing the country codes the case's
+            // evidence gives, the two country translation engines and the
+            // JSON builder.
+            var translation = new PipelineBuilder(loggerFactory)
+                .AddFlowElement(new SequenceElementBuilder(loggerFactory).Build())
+                .AddFlowElement(new CountriesElement())
+                .AddFlowElement(new CountryCodeTranslationEngineBuilder(
+                    loggerFactory).Build())
+                .AddFlowElement(new CountriesTranslationEngineBuilder(
+                    loggerFactory).Build())
+                .AddFlowElement(new JsonBuilderElementBuilder(loggerFactory).Build())
+                .SetSuppressProcessExceptions(true)
+                .Build();
             var skipped = new HashSet<string>
             {
                 json.ElementDataKey, javascript.ElementDataKey
@@ -203,6 +225,7 @@ namespace FiftyOne.Parity
                     null => pipeline,
                     ValuesPipeline => values,
                     AgentSignaturePipeline => agentSignature,
+                    TranslationPipeline => translation,
                     var other => throw new ArgumentException(
                         $"{item["id"]}: unknown pipeline {other}")
                 };
@@ -246,6 +269,7 @@ namespace FiftyOne.Parity
                 $"{lines.Count} cases written to {args.Out}, " +
                 $"{records.Count} usage records and " +
                 $"{customRecords.Count} custom usage records captured");
+            translation.Dispose();
             agentSignature.Dispose();
             values.Dispose();
             pipeline.Dispose();
@@ -373,9 +397,9 @@ namespace FiftyOne.Parity
                 {
                     continue;
                 }
-                if (key == DeviceDataKey)
+                if (ExtraProperties.TryGetValue(key, out var extra))
                 {
-                    names.AddRange(MatchMetrics.Where(m => names.Any(n =>
+                    names.AddRange(extra.Where(m => names.Any(n =>
                         string.Equals(n, m, StringComparison.OrdinalIgnoreCase))
                         == false));
                 }
@@ -643,6 +667,119 @@ namespace FiftyOne.Parity
     {
         public ValuesData(IPipeline pipeline)
             : base(NullLogger<ElementDataBase>.Instance, pipeline)
+        {
+        }
+    }
+
+    // Writes the IP Intelligence country codes the case's evidence gives,
+    // under IP Intelligence's data key, and nothing when the evidence gives
+    // none. Each property's evidence is code:raw weighting items separated
+    // by commas. A property whose evidence is absent is not set, and one
+    // whose evidence is empty has no value. The codes come from the evidence
+    // rather than a data file, so both languages translate the same codes
+    // and weightings. It lists no properties, so the line leaves it out and
+    // only the JSON shows its data. The Rust producer's element writes the
+    // same codes as the crates' IP Intelligence data.
+    internal sealed class CountriesElement :
+        FlowElementBase<CountriesData, IElementPropertyMetaData>
+    {
+        private const string Key = "ip";
+
+        // Each property and the evidence holding its codes.
+        private static readonly (string Name, string Evidence)[] Codes =
+        {
+            ("CountryCodesGeographical", "query.parity-geographical"),
+            ("CountryCodesPopulation", "query.parity-population")
+        };
+
+        // The reason a property with empty evidence gives.
+        private const string NoCodesReason =
+            "The evidence gave no country codes.";
+
+        private readonly IEvidenceKeyFilter _filter =
+            new EvidenceKeyFilterWhitelist(
+                Codes.Select(c => c.Evidence).ToList());
+
+        private readonly IList<IElementPropertyMetaData> _properties =
+            new List<IElementPropertyMetaData>();
+
+        public CountriesElement() : base(
+            NullLogger<FlowElementBase<CountriesData, IElementPropertyMetaData>>
+                .Instance)
+        {
+        }
+
+        public override string ElementDataKey => Key;
+
+        public override IEvidenceKeyFilter EvidenceKeyFilter => _filter;
+
+        public override IList<IElementPropertyMetaData> Properties =>
+            _properties;
+
+        protected override void ProcessInternal(IFlowData data)
+        {
+            var entries = new List<(string, object)>();
+            foreach (var (name, evidence) in Codes)
+            {
+                if (data.TryGetEvidence(evidence, out string text))
+                {
+                    entries.Add((name, WeightedCodes(text)));
+                }
+            }
+            if (entries.Count == 0)
+            {
+                return;
+            }
+            var countries = data.GetOrAdd(
+                ElementDataKeyTyped,
+                pipeline => new CountriesData(pipeline));
+            foreach (var (name, value) in entries)
+            {
+                countries[name] = value;
+            }
+        }
+
+        private static IAspectPropertyValue<IReadOnlyList<IWeightedValue<string>>>
+            WeightedCodes(string text)
+        {
+            if (text.Length == 0)
+            {
+                return new AspectPropertyValue<
+                    IReadOnlyList<IWeightedValue<string>>>
+                {
+                    NoValueMessage = NoCodesReason
+                };
+            }
+            var codes = new List<IWeightedValue<string>>();
+            foreach (var item in text.Split(','))
+            {
+                var colon = item.IndexOf(':');
+                if (colon < 0)
+                {
+                    throw new ArgumentException(
+                        $"{item} is not code:raw weighting");
+                }
+                codes.Add(new WeightedValue<string>(
+                    ushort.Parse(item.Substring(colon + 1),
+                        NumberStyles.None, CultureInfo.InvariantCulture),
+                    item.Substring(0, colon)));
+            }
+            return new AspectPropertyValue<
+                IReadOnlyList<IWeightedValue<string>>>(codes);
+        }
+
+        protected override void ManagedResourcesCleanup() { }
+
+        protected override void UnmanagedResourcesCleanup() { }
+    }
+
+    // The country codes, as IP Intelligence data, so the countries
+    // translation engine finds them as it finds an IP Intelligence engine's.
+    // No engine made them, so a property that was not set reads as null.
+    internal sealed class CountriesData : IpIntelligenceData
+    {
+        public CountriesData(IPipeline pipeline)
+            : base(NullLogger<AspectDataBase>.Instance, pipeline, null, null)
         {
         }
     }

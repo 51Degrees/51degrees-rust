@@ -136,9 +136,11 @@ workspace of runnable examples.
 
 - **Library workspace** (repository root): the pipeline core and engines,
   Device Detection and IP Intelligence (cloud and on-premise), the cloud
-  request engine, the JSON and JavaScript builders, the axum web integration,
-  the `fodid` 51Did reader and the 51Did data model and cloud engine. Each
-  concern is its own crate so a consumer depends only on what it uses.
+  request engine, the translation engine and the IP Intelligence country
+  translation engines, the JSON and JavaScript builders, the axum web
+  integration, the `fodid` 51Did reader and the 51Did data model and cloud
+  engine. Each concern is its own crate so a consumer depends only on what it
+  uses.
 - **Example workspace** (`examples/`): excluded from the root workspace
   (`exclude = ["examples"]`). It depends on the **published** crates from
   crates.io by default, so a fresh checkout of `examples/` builds the way a
@@ -289,13 +291,17 @@ workspace reads the submodule and never needs the copy.
 ## CI gates
 
 - `pull-request.yml` runs fmt, build, test, clippy and doc on Windows, Linux
-  (two LTS) and macOS (Apple Silicon), plus a wasm32-wasip1 job for the cloud
-  crates, on pushes to `main` and on PRs into `main`, `rc` and `release/**`.
-  It builds the C sources and restores the data files into `cxx/data` from
-  the entry `data-files.yml` keeps in the Actions cache, downloading with the
-  data repository's script only a file it lacks. It also runs
+  (two LTS) and macOS (Apple Silicon), plus a wasm32-wasip1 job, on pushes to
+  `main` and on PRs into `main`, `rc` and `release/**`. It builds the C
+  sources and restores the data files into `cxx/data` from the entry
+  `data-files.yml` keeps in the Actions cache, downloading with the data
+  repository's script only a file it lacks. It also runs
   `ci/check-native-symbols.ps1` and the property lookup scaling test in
-  release.
+  release. The wasm job builds the crates in its build list and runs the
+  tests of those in its test list under wasmtime, with crates for the cloud,
+  51Did, derived properties and translation among them. It then runs
+  `ci/measure-wasm-size.sh` over the separate `ci/wasm-size` workspace, which
+  gives the module size in `ip-intelligence-translation/README.md`.
 - `data-files.yml` runs each day on `main` and keeps the free data files in
   one Actions cache entry. It restores the newest entry, asks the Distributor
   only whether each file has changed (`-Update`), and saves the files under a

@@ -58,8 +58,8 @@ minification opt-in.
 
 ## Crates
 
-The workspace has 29 members, arranged in dependency order from the
-pure-Rust core up to the runnable examples.
+The library workspace has 29 members and the examples workspace 7, listed
+below in dependency order from the pure-Rust core up to the runnable examples.
 
 ### Core
 
@@ -78,6 +78,8 @@ pure-Rust core up to the runnable examples.
 | [`fiftyone-json-builder`](json-builder) | JSON serialization element. |
 | [`fiftyone-javascript-builder`](javascript-builder) | JavaScript snippet builder element with the bundled Mustache asset. Minification is an opt-in feature (see below). |
 | [`fiftyone-agent-signature`](agent-signature) | Agent Signature element, which checks the HTTP Message Signature an automated agent sends under the IETF Web Bot Auth protocol. |
+| [`fiftyone-derived-properties`](derived-properties) | Derived property element, which computes a property from properties earlier elements have already produced, using the shared script format every language implementation reads. |
+| [`fiftyone-pipeline-translation`](pipeline-translation) | Translation engine, which translates the values another element produced into the language the request asks for, from YAML sources of `value: translation` lines. |
 
 ### Native FFI
 
@@ -108,6 +110,7 @@ path, so cloud-only users and most of CI build without a C compiler.
 | [`fiftyone-ip-intelligence-onpremise`](ip-intelligence-onpremise) | On-premise Ipi engine over the safe fiftyone-native wrapper. | on-premise |
 | [`fiftyone-ip-intelligence-cloud`](ip-intelligence-cloud) | Cloud engine that maps the cloud JSON response to IpIntelligenceData. | cloud |
 | [`fiftyone-ip-intelligence`](ip-intelligence) | Facade: re-exports plus a builder that selects cloud or on-premise. `cloud` and `on-premise` are both default-on features. | both |
+| [`fiftyone-ip-intelligence-translation`](ip-intelligence-translation) | Country translation engines: the English names of the countries IP Intelligence gives, those names in the language the request asks for, and every country in that language's order. | both |
 
 ### Web
 
@@ -121,6 +124,7 @@ path, so cloud-only users and most of CI build without a C compiler.
 | Crate | Responsibility |
 |-------|----------------|
 | [`examples-shared`](examples/examples-shared) | Shared example helpers: file-finder, resource-key-from-env, the DD/IPI data-path resolvers, the data-file-age warning, property-as-string and the sample evidence. |
+| [`examples-web-shared`](examples/examples-web-shared) | Shared HTML and static-asset helpers for the web examples: the vendored design-system assets, asset-serving handlers, HTML escaping and the common table helpers. |
 | [`device-detection-examples`](examples/device-detection-examples) | Runnable device-detection examples (cloud, on-premise and web). |
 | [`ip-intelligence-examples`](examples/ip-intelligence-examples) | Runnable IP-intelligence examples (cloud, on-premise and web). |
 | [`pipeline-examples`](examples/pipeline-examples) | Runnable pipeline examples: custom flow elements, caching, usage sharing and the combined-pipeline server-side examples. |

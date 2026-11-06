@@ -23,9 +23,9 @@ when the license keys are available to the run, over the Enterprise files.
 
 ## The pipelines
 
-Both programs build the same three pipelines, with process errors collected
+Both programs build the same four pipelines, with process errors collected
 rather than thrown. A case runs through the first unless its `pipeline` is
-`values` or `agent-signature`.
+`values`, `agent-signature` or `translation`.
 
 1. The Sequence element.
 2. Usage sharing, twice, with the same settings on both sides. The first
@@ -80,6 +80,32 @@ budget is two seconds on both sides. The cases were signed with the private
 part of that key, so the signatures are fixed in the corpus. Each is valid
 from 2025 until 2124, so no clock has to be set.
 
+The translation pipeline has the Sequence element, an element that writes
+IP Intelligence country codes, the country codes translation engine, the
+countries translation engine and the JSON builder
+([#227](https://github.com/51Degrees/51degrees-rust/issues/227)). .NET's
+engines come from the FiftyOne.IpIntelligence.Translation package at the IP
+Intelligence version. The codes come from the case's evidence rather than a
+data file, so both sides translate the same codes and weightings whatever the
+file. `query.parity-geographical` gives `CountryCodesGeographical` and
+`query.parity-population` gives `CountryCodesPopulation`, each as codes and
+raw weightings such as `GB:35535,FR:30000`. A property whose evidence is
+absent is not set, one whose evidence is empty has no value, and with neither
+there is no IP Intelligence data. The element is part of each program, and on
+each side it writes that side's IP Intelligence data, so the engines read the
+codes as they read an IP Intelligence engine's. In the crates that is
+`IpIntelligenceDataBase` with a missing property source, as both IP
+Intelligence engines write it, so a weighted record is a `value` and a
+`weight` and a property the evidence did not give is missing. .NET's JSON
+writes a record as `rawweighting` and `value`, which the
+[#226](https://github.com/51Degrees/51degrees-rust/issues/226) entries in
+`allowed-differences.json` allow. It lists no properties, so only the JSON
+shows its data. The JSON builder leaves the crates' Sequence element's data
+out, as in the values pipeline. The countries engine sorts every country by
+the collation of the language asked for, being the ICU on the runner in .NET
+and ICU4X's compiled data in the crates, so any difference in how the two sort
+shows in the lists of every country.
+
 ## The line
 
 Each program writes one JSON object per case.
@@ -88,7 +114,7 @@ Each program writes one JSON object per case.
 | --- | --- |
 | `id` | The case id. |
 | `processError` | The error processing gave, or null. |
-| `properties` | For each element that lists properties, apart from the two builders, every property it lists and, for `device`, the match metrics. Each is keyed by its lowercase name and holds its `name` with either a `type` and `value`, a `noValue` reason, or a `missing` message when reading it failed. |
+| `properties` | For each element that lists properties, apart from the two builders, every property it lists, with the match metrics for `device` and `SortingCultureUsed`, which the engine writes without listing, for `countrynamestranslated`. Each is keyed by its lowercase name and holds its `name` with either a `type` and `value`, a `noValue` reason, or a `missing` message when reading it failed. |
 | `session` | The session id and sequence the pipeline used. |
 | `evidenceAfter` | `query.session-id` and `query.sequence` as the evidence holds them after processing. |
 | `errors` | The errors in the flow data, each with its element's data key and its message. |
@@ -354,8 +380,8 @@ target/debug/parity-compare --corpus corpus/evidence.json $SIGNED \
 ## Adding a case
 
 Add it to `corpus/evidence.json` with an id no other case has and a
-sentence saying what it covers, and with `"pipeline": "values"` if it runs
-through the values pipeline. Give it a `query.session-id` unless it is
+sentence saying what it covers, and with its `pipeline` if it runs through
+the values, agent signature or translation pipeline. Give it a `query.session-id` unless it is
 about a generated one, because usage records are matched to cases by
 session id. Only the engines' pipeline shares usage, so a values case never
 has a usage record, even when it gives an engines' case's session id, and an

@@ -39,6 +39,7 @@
 mod agent_signature;
 mod configuration;
 mod fodid_cases;
+mod translation;
 mod usage;
 mod values;
 
@@ -67,22 +68,28 @@ use fiftyone_pipeline_core::{
     ElementData, Evidence, FlowData, FlowElement, Pipeline, PropertyValue,
 };
 use fiftyone_pipeline_engines_fiftyone::{SequenceElement, ShareUsageElement};
+use fiftyone_pipeline_translation::{TranslationData, TranslationValue};
 
 use usage::{CustomUsageCapture, UsageCapture};
 use values::ValuesElement;
 
-/// The element whose data also gets the match metrics read.
-const DEVICE_DATA_KEY: &str = "device";
-
-/// Match metrics, read whether or not the engine lists them as properties.
-const MATCH_METRICS: &[&str] = &[
-    "DeviceId",
-    "Difference",
-    "Drift",
-    "Iterations",
-    "MatchedNodes",
-    "Method",
-    "UserAgents",
+/// The values read beside an element's listed properties, by the element's
+/// data key. Device Detection's match metrics, and the culture the countries
+/// translation engine sorted with, which it writes without listing.
+const EXTRA_PROPERTIES: &[(&str, &[&str])] = &[
+    (
+        "device",
+        &[
+            "DeviceId",
+            "Difference",
+            "Drift",
+            "Iterations",
+            "MatchedNodes",
+            "Method",
+            "UserAgents",
+        ],
+    ),
+    ("countrynamestranslated", &["SortingCultureUsed"]),
 ];
 
 /// The evidence the Sequence element reads, and in .NET writes back.
@@ -130,6 +137,7 @@ fn main() -> Result<()> {
     let pipeline = build_pipeline(&args, &capture, &custom_capture)?;
     let values = build_values_pipeline()?;
     let signatures = agent_signature::build_pipeline()?;
+    let translation = translation::build_pipeline()?;
 
     let mut lines = Vec::with_capacity(cases.len());
     // The lines whose case ran through usage sharing. A values case may give
@@ -141,6 +149,7 @@ fn main() -> Result<()> {
             None => &pipeline,
             Some(VALUES_PIPELINE) => &values,
             Some(agent_signature::PIPELINE) => &signatures,
+            Some(translation::PIPELINE) => &translation,
             Some(other) => bail!("{}: unknown pipeline {other}", case.id),
         };
         if Arc::ptr_eq(chosen, &pipeline) {
@@ -337,11 +346,13 @@ fn properties(data: &FlowData) -> Value {
         if names.is_empty() {
             continue;
         }
-        if key == DEVICE_DATA_KEY {
-            for metric in MATCH_METRICS {
-                if !names.iter().any(|name| name.eq_ignore_ascii_case(metric)) {
-                    names.push((*metric).to_owned());
-                }
+        let extra = EXTRA_PROPERTIES
+            .iter()
+            .filter(|(element, _)| *element == key)
+            .flat_map(|(_, extra)| extra.iter());
+        for name in extra {
+            if !names.iter().any(|listed| listed.eq_ignore_ascii_case(name)) {
+                names.push((*name).to_owned());
             }
         }
         let Some(element_data) = data.get_str(key) else {
@@ -374,17 +385,28 @@ fn read(data: &dyn ElementData, name: &str) -> Value {
     }
 }
 
-/// An IP Intelligence weighted list with its raw weightings, which the
-/// property bag only carries as fractions.
+/// A weighted list with its raw weightings. The IP Intelligence property bag
+/// only carries them as fractions, and a translation engine's leaves out an
+/// item with no translation, so each is read from its own data.
 fn weighted(data: &dyn ElementData, name: &str) -> Option<Value> {
-    let ip = data.as_any().downcast_ref::<IpIntelligenceDataBase>()?;
-    let list = ip.weighted_string(name);
-    let list = list.value().ok()?;
-    Some(Value::Array(
-        list.iter()
-            .map(|item| json!({"rawWeighting": item.raw_weighting, "value": item.value}))
-            .collect(),
-    ))
+    if let Some(ip) = data.as_any().downcast_ref::<IpIntelligenceDataBase>() {
+        let list = ip.weighted_string(name);
+        let list = list.value().ok()?;
+        return Some(Value::Array(
+            list.iter()
+                .map(|item| json!({"rawWeighting": item.raw_weighting, "value": item.value}))
+                .collect(),
+        ));
+    }
+    let translation = data.as_any().downcast_ref::<TranslationData>()?;
+    match translation.value(name)?.value().ok()? {
+        TranslationValue::WeightedList(list) => Some(Value::Array(
+            list.iter()
+                .map(|item| json!({"rawWeighting": item.raw_weighting, "value": item.value}))
+                .collect(),
+        )),
+        _ => None,
+    }
 }
 
 fn typed(value: PropertyValue) -> (&'static str, Value) {
