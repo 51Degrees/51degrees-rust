@@ -50,30 +50,21 @@ use fiftyone_pipeline_web_axum::{register, FiftyOneState};
 use tower::ServiceExt;
 
 /// Build a router with the minimal web pipeline mounted: sequence, JSON builder
-/// and JavaScript builder. `WebPipeline` inserts the set-headers element too;
-/// the builders give the two endpoints content to serve without needing a
+/// and JavaScript builder. `WebPipeline` inserts the set-headers element too.
+/// The builders give the two endpoints content to serve without needing a
 /// detection engine or data file.
 fn app() -> Router {
-    // Pass the JSON and JavaScript builders as application elements. WebPipeline
-    // prepends the sequence element and (because the default options enable it)
-    // a set-headers element, so the ordered pipeline is
-    // sequence -> json-builder -> javascript-builder -> set-headers -> json ...
-    // The explicit builders here mean the test exercises the real client-side
-    // assets rather than relying on WebPipeline re-adding them.
+    // The application gives the sequence element and both builders, so
+    // WebPipeline adds none of them again and adds only the set-headers
+    // element after them.
     let elements: Vec<Arc<dyn FlowElement>> = vec![
         Arc::new(SequenceElement::new()),
         Arc::new(JsonBuilderElement::new()),
         Arc::new(JavaScriptBuilderElement::new()),
     ];
 
-    // Disable WebPipeline's own client-side builders so they are not added a
-    // second time; the application supplies them explicitly above.
-    let options = WebIntegrationOptions {
-        client_side_evidence_enabled: false,
-        ..WebIntegrationOptions::default()
-    };
-
-    let web = WebPipeline::build(elements, options).expect("web pipeline builds");
+    let web = WebPipeline::build(elements, WebIntegrationOptions::default())
+        .expect("web pipeline builds");
     let state = FiftyOneState::from_web_pipeline(&web);
 
     register(Router::new().route("/", get(|| async { "home" })), state)

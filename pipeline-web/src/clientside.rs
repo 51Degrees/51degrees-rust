@@ -87,8 +87,8 @@
 //! `private, no-cache`, and builds the body again from the flow data with the
 //! builder the pipeline holds as a resource (see
 //! [`fiftyone_pipeline_core::Pipeline::resource`]), used only when it is the
-//! same `Arc` as the builder element, as [`crate::WebPipeline`] adds its own
-//! builders. The JavaScript is built around the JSON builder's output, itself
+//! same `Arc` as the builder element, as [`crate::WebPipeline`] holds the
+//! builders it runs. The JavaScript is built around the JSON builder's output, itself
 //! built again if that builder left no data too. When only the JSON builder
 //! left no data, the JavaScript builder's script holds placeholder JSON, so it
 //! is treated as left out and built again too. With no such resource the body
