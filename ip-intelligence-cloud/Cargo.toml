@@ -25,6 +25,13 @@ once_cell.workspace = true
 # until the application installs a logger.
 log = "0.4"
 
+[dev-dependencies]
+# Set Headers, the JSON builder and the Sequence element the JSON builder
+# needs, so a test can check what each does with cloud data. Neither crate
+# carries reqwest by default.
+fiftyone-json-builder = { version = "4.5.2", path = "../json-builder" }
+fiftyone-pipeline-engines-fiftyone = { version = "4.5.2", path = "../pipeline-engines-fiftyone" }
+
 [features]
 # Forward the cloud request engine's built-in reqwest client. Off by default so
 # this crate builds without reqwest (and so for wasm32-wasip1). A native consumer
