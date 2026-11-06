@@ -606,6 +606,26 @@ fn a_list_is_refused_where_one_value_is_taken() {
     );
 }
 
+/// .NET passes a list to a method taking text as it is, so the call gives
+/// the message, as it did for the JavaScript builder's `SetHost` in .NET
+/// 4.5.129. A build method's text parameter is passed the same way.
+#[test]
+fn a_list_given_for_text_cannot_be_converted() {
+    let cannot = "Object of type 'System.String[]' cannot be converted to type 'System.String'.";
+    assert_eq!(
+        message(build(&one(
+            ElementOptions::new("ListSplitterElement").parameter("Delimiter", vec!["|"])
+        ))),
+        failed("ListSplitterElement", "No SubElements", cannot, NO_INNER)
+    );
+    assert_eq!(
+        message(build(&one(ElementOptions::new("DataFileEngine")
+            .parameter("DataFile", vec!["51Degrees.hash"])
+            .parameter("CreateTempDataCopy", "true")))),
+        failed("DataFileEngine", "No SubElements", cannot, NO_INNER)
+    );
+}
+
 /// A setting such as .NET's `JsonBuilderElementBuilder.SetJsonConverters`,
 /// whose value only code can give. The messages are those .NET 4.5.129 gave
 /// for that setting.

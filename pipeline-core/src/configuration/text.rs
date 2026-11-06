@@ -38,6 +38,7 @@ enum FailureKind {
     Text,
     Enumeration(Vec<String>),
     List,
+    ListForText,
     NoTextForm,
 }
 
@@ -64,6 +65,14 @@ impl ParseFailure {
     pub fn list() -> Self {
         ParseFailure {
             kind: FailureKind::List,
+        }
+    }
+
+    /// A list was given where the type is text. .NET passes it to the
+    /// method as it is, and the call refuses it.
+    pub(crate) fn list_for_text() -> Self {
+        ParseFailure {
+            kind: FailureKind::ListForText,
         }
     }
 
@@ -100,6 +109,11 @@ impl ParseFailure {
             ),
             FailureKind::List => (
                 format!("{prefix} but supplied object is of type 'String[]'."),
+                None,
+            ),
+            FailureKind::ListForText => (
+                "Object of type 'System.String[]' cannot be converted to type 'System.String'."
+                    .to_string(),
                 None,
             ),
             FailureKind::NoTextForm => (
@@ -146,6 +160,10 @@ impl ConfigType for String {
 
     fn parse_text(text: &str) -> Result<Self, ParseFailure> {
         Ok(text.to_string())
+    }
+
+    fn parse_list(_list: &[String]) -> Result<Self, ParseFailure> {
+        Err(ParseFailure::list_for_text())
     }
 }
 
@@ -502,7 +520,10 @@ mod tests {
     fn a_list_is_refused_where_one_value_is_taken() {
         let list = ConfigValue::List(vec!["1".into()]);
         assert_eq!(i32::parse_value(&list), Err(ParseFailure::list()));
-        assert_eq!(String::parse_value(&list), Err(ParseFailure::list()));
+        assert_eq!(
+            String::parse_value(&list),
+            Err(ParseFailure::list_for_text())
+        );
         assert_eq!(Vec::<String>::parse_value(&list), Ok(vec!["1".to_string()]));
     }
 }

@@ -109,11 +109,19 @@
 //! let js = data.get(JAVASCRIPT_BUILDER_DATA_KEY).unwrap().javascript().to_owned();
 //! assert!(js.contains("fiftyoneDegreesManager"));
 //! ```
+//!
+//! ## Configuration
+//!
+//! [`configuration::add_builders`] adds the JavaScript builder to a
+//! [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the name
+//! .NET gives it, with .NET's settings, so a configuration file written for
+//! .NET makes the same element here.
 
 #![warn(missing_docs)]
 
 mod builder;
 mod callback_url;
+pub mod configuration;
 mod constants;
 mod data;
 pub mod default_steps;
