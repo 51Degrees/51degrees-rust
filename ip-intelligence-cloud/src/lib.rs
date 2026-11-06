@@ -83,9 +83,17 @@
 //! as Set Headers, can tell it from one the response gave as null. With a
 //! license key alone the granted properties are not listed, so every property
 //! counts as held.
+//!
+//! # Configuration
+//!
+//! [`configuration::add_builders`] adds the engine's builder to a
+//! [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the name
+//! .NET gives it, with .NET's settings, so a configuration file written for
+//! .NET makes the same engine here.
 
 #![warn(missing_docs)]
 
+pub mod configuration;
 mod engine;
 mod parse;
 
