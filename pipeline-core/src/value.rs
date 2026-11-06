@@ -326,7 +326,7 @@ mod tests {
             let value = f64::from(sixteenths) / 16.0;
             // In thousandths the value is an odd number of halves, so its
             // size rounded away from zero is one more half.
-            let size = (sixteenths.unsigned_abs() * 125 + 1) / 2;
+            let size = (sixteenths.unsigned_abs() * 125).div_ceil(2);
             let sign = if sixteenths < 0 { "-" } else { "" };
             let text = format!("{sign}{}.{:03}", size / 1000, size % 1000);
             assert_eq!(round_angle(value), text.parse::<f32>().unwrap(), "{value}");
