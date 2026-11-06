@@ -83,7 +83,10 @@ let country = data
 
 Engines that share the data key `translation` write to the same data, so one
 engine can translate what another wrote, such as a country code to its
-English name and then the name to the language asked for.
+English name and then the name to the language asked for. Add such engines
+one after another. Each element of a parallel group writes data of its own,
+so the pipeline builder refuses two engines with one data key in the same
+group.
 
 ## Links
 

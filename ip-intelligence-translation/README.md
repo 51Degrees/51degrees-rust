@@ -42,6 +42,12 @@ request that prefers English, or asks for no language the engine holds,
 gets the English names, and the lists of every country are then sorted
 ignoring case.
 
+Each language's order comes from the Unicode CLDR collation data (the rules
+each language uses to put text in order) in the version of `icu_collator`
+that the build resolves, much as .NET's order comes from the ICU library on
+the host it runs on. A build that resolves a newer version can order a few
+names differently where that data changed.
+
 The translated weighted names use the first of those evidence values that is
 not blank. The lists of every country try each in turn until one names a
 language the engine holds.

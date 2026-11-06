@@ -71,6 +71,10 @@ use crate::resources::{COUNTRY_CODE_SOURCES, COUNTRY_SOURCES};
 /// until one names a language the engine holds. The names are then in that
 /// language and sorted as it sorts them. When none does, the names are in
 /// English and sorted ignoring case.
+///
+/// Each language's order comes from the Unicode CLDR collation data in the
+/// version of `icu_collator` the build resolves, so a newer version can
+/// order a few names differently.
 pub struct CountriesTranslationEngine {
     engine: TranslationEngine,
     /// Every country's code and English name, in the order of the country

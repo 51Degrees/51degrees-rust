@@ -38,7 +38,8 @@ use crate::languages::Languages;
 use crate::translator::Translator;
 
 /// The data key a translation engine stores its data under unless it is
-/// given another. Engines that share it write to the same data.
+/// given another. Engines that share it write to the same data, so they run
+/// one after another rather than in one parallel group.
 pub const TRANSLATION_DATA_KEY: &str = "translation";
 
 /// The typed key for the data of engines under [`TRANSLATION_DATA_KEY`].

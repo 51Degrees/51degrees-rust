@@ -66,8 +66,9 @@ impl TranslationEngineBuilder {
     }
 
     /// Set the data key the engine stores its data under. Engines that share
-    /// a key write to the same data. The default is
-    /// [`TRANSLATION_DATA_KEY`](crate::TRANSLATION_DATA_KEY).
+    /// a key write to the same data, so add them one after another rather
+    /// than in one parallel group, which the pipeline builder refuses. The
+    /// default is [`TRANSLATION_DATA_KEY`](crate::TRANSLATION_DATA_KEY).
     pub fn set_element_data_key(mut self, key: &'static str) -> Self {
         self.data_key = Some(key);
         self

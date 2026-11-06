@@ -537,6 +537,24 @@ fn two_engines_can_be_chained() {
     assert!(data.errors().is_empty());
 }
 
+/// Each element of a parallel group writes data of its own, so engines that
+/// share a data key are refused there and run one after another instead.
+#[test]
+fn engines_sharing_a_data_key_are_refused_in_one_parallel_group() {
+    let outcome = Pipeline::builder()
+        .add_element(element(Source::new(SOURCE_KEY, animal("Dog"))))
+        .add_parallel_elements([
+            element(french_animals(MissingTranslationBehavior::Original, "")),
+            element(french_animals(MissingTranslationBehavior::Original, "")),
+        ])
+        .build();
+    assert_eq!(
+        outcome.err().expect("the build fails").message(),
+        "Two elements of a parallel group have the data key 'translation', so \
+         only one of them could keep its data. Add one of them on its own."
+    );
+}
+
 #[test]
 fn english_preferred_gives_no_translation() {
     let engine = french_animals(MissingTranslationBehavior::Original, "");
