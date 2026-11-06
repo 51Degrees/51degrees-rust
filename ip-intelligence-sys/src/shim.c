@@ -343,3 +343,43 @@ uint16_t fiftyoneDegreesShimIpiGetFileHandleCount(
     fiftyoneDegreesDataSetIpiRelease(dataSet);
     return count;
 }
+
+/*
+ * Returns the type the data file stores the values of the required property
+ * at `requiredPropertyIndex` as, read from the data set `results` was created
+ * from. A latitude, for example, is stored as a Declination. Returns -1 when
+ * the index is out of range, the data set does not have the property or the
+ * type cannot be read.
+ */
+int fiftyoneDegreesShimIpiGetStoredValueType(
+    fiftyoneDegreesResultsIpi *results,
+    int requiredPropertyIndex) {
+    if (results == NULL || results->b.dataSet == NULL) {
+        return -1;
+    }
+    fiftyoneDegreesDataSetIpi *dataSet =
+        (fiftyoneDegreesDataSetIpi *)results->b.dataSet;
+    fiftyoneDegreesPropertiesAvailable *available = dataSet->b.b.available;
+    if (available == NULL ||
+        requiredPropertyIndex < 0 ||
+        (uint32_t)requiredPropertyIndex >=
+            fiftyoneDegreesPropertiesGetRequiredPropertyCount(available)) {
+        return -1;
+    }
+    const int propertyIndex =
+        fiftyoneDegreesPropertiesGetPropertyIndexFromRequiredIndex(
+            available, requiredPropertyIndex);
+    if (propertyIndex < 0) {
+        return -1;
+    }
+    FIFTYONE_DEGREES_EXCEPTION_CREATE;
+    const fiftyoneDegreesPropertyValueType storedType =
+        fiftyoneDegreesPropertyGetStoredTypeByIndex(
+            dataSet->propertyTypes,
+            (uint32_t)propertyIndex,
+            exception);
+    if (FIFTYONE_DEGREES_EXCEPTION_FAILED) {
+        return -1;
+    }
+    return (int)storedType;
+}

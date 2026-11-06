@@ -465,10 +465,10 @@ impl IpIntelligenceDataBase {
     }
 
     /// Store a plain single-precision float property (`Latitude`, `Longitude`)
-    /// and its dynamic-bag mirror.
+    /// and its dynamic-bag mirror, which is a [`PropertyValue::Float`] so the
+    /// value is written with a 32-bit float's own digits.
     pub fn set_float(&mut self, name: impl AsRef<str>, value: f32) {
-        self.base
-            .insert(name.as_ref(), PropertyValue::Double(f64::from(value)));
+        self.base.insert(name.as_ref(), PropertyValue::Float(value));
         self.floats
             .insert(key(name.as_ref()), ValueStore::Value(value));
     }
@@ -811,6 +811,17 @@ mod tests {
         assert_eq!(data.get("IsVPN").unwrap(), PropertyValue::Bool(true));
     }
 
+    /// A float is mirrored into the dynamic bag as a 32-bit float rather than
+    /// widened to a double, which would add digits it never had, and reads as
+    /// a double as the double nearest the same decimal.
+    #[test]
+    fn a_float_is_mirrored_as_a_32_bit_float() {
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        data.set_float("Latitude", 18.543);
+        assert_eq!(data.get("Latitude").unwrap(), PropertyValue::Float(18.543));
+        assert_eq!(data.get("latitude").unwrap().as_double(), Some(18.543));
+    }
+
     #[test]
     fn explicit_no_value_carries_message() {
         let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
@@ -877,7 +888,7 @@ mod tests {
         let meta = default_property_metadata();
         assert_eq!(meta.len(), GENERATED_PROPERTY_TYPES.len());
         let lat = meta.iter().find(|m| m.name == "Latitude").unwrap();
-        assert_eq!(lat.value_type, PropertyValueType::Double);
+        assert_eq!(lat.value_type, PropertyValueType::Float);
         let tz = meta.iter().find(|m| m.name == "TimeZoneOffset").unwrap();
         assert_eq!(tz.value_type, PropertyValueType::Integer);
         let vpn = meta.iter().find(|m| m.name == "IsVPN").unwrap();

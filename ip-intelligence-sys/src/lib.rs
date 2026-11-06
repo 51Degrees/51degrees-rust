@@ -1300,6 +1300,21 @@ extern "C" {
     /// # Safety
     /// `manager` must be initialized.
     pub fn fiftyoneDegreesShimIpiGetFileHandleCount(manager: *mut ResourceManager) -> u16;
+
+    /// Returns the [`PropertyValueType`] discriminant the data file stores the
+    /// values of the required property at `required_property_index` as, read
+    /// from the data set `results` was created from. A latitude, for example,
+    /// is stored as [`PropertyValueType::Declination`]. Returns `-1` when the
+    /// index is out of range, the data set does not have the property or the
+    /// type cannot be read. Defined by this crate's `src/shim.c`.
+    ///
+    /// # Safety
+    /// `results` must be null or point to results created by
+    /// [`fiftyoneDegreesResultsIpiCreate`] and not yet freed.
+    pub fn fiftyoneDegreesShimIpiGetStoredValueType(
+        results: *mut ResultsIpi,
+        required_property_index: c_int,
+    ) -> c_int;
 }
 
 #[cfg(test)]
@@ -1402,6 +1417,70 @@ mod tests {
                 checked += 1;
             }
             assert!(checked > 0, "some property should have values");
+
+            fiftyoneDegreesResultsIpiFree(results);
+            fiftyoneDegreesResourceManagerFree(&mut manager);
+        }
+    }
+
+    /// Every required property has a stored value type, and an index outside
+    /// the required properties, or no results, gives -1.
+    #[test]
+    fn the_stored_value_type_is_read_for_each_required_property() {
+        let Some(data_file) = named_or_asn_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping the stored types");
+            return;
+        };
+        let file = CString::new(data_file.to_string_lossy().as_ref()).expect("no nul");
+        unsafe {
+            let mut manager = ResourceManager::zeroed();
+            let mut exception = Exception::cleared();
+            let status = fiftyoneDegreesIpiInitManagerFromFile(
+                &mut manager,
+                std::ptr::addr_of_mut!(fiftyoneDegreesIpiInMemoryConfig),
+                std::ptr::null_mut(),
+                file.as_ptr(),
+                &mut exception,
+            );
+            assert_eq!(
+                status,
+                StatusCode::Success,
+                "{}",
+                exception_message(&mut exception)
+            );
+            let results = fiftyoneDegreesResultsIpiCreate(&mut manager);
+            assert!(!results.is_null(), "results should be allocated");
+
+            let count = fiftyoneDegreesShimIpiGetRequiredPropertyCount(&mut manager);
+            assert!(count > 0, "the data set has properties");
+            for index in 0..count as c_int {
+                let stored = fiftyoneDegreesShimIpiGetStoredValueType(results, index);
+                assert!(
+                    (0..=PropertyValueType::WeightedWkbReduced as c_int).contains(&stored),
+                    "property {index} is stored as {stored}"
+                );
+            }
+            assert_eq!(fiftyoneDegreesShimIpiGetStoredValueType(results, -1), -1);
+            assert_eq!(
+                fiftyoneDegreesShimIpiGetStoredValueType(results, count as c_int),
+                -1
+            );
+            assert_eq!(
+                fiftyoneDegreesShimIpiGetStoredValueType(std::ptr::null_mut(), 0),
+                -1
+            );
+
+            let latitude = CString::new("Latitude").expect("no nul");
+            let index = fiftyoneDegreesShimIpiGetRequiredPropertyIndexFromName(
+                &mut manager,
+                latitude.as_ptr(),
+            );
+            if index >= 0 {
+                assert_eq!(
+                    fiftyoneDegreesShimIpiGetStoredValueType(results, index),
+                    PropertyValueType::Declination as c_int
+                );
+            }
 
             fiftyoneDegreesResultsIpiFree(results);
             fiftyoneDegreesResourceManagerFree(&mut manager);
