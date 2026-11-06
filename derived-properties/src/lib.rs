@@ -70,6 +70,13 @@
 //! properties its scripts name, then read the result from the flow data under
 //! the key `derived`.
 //!
+//! ## Configuration
+//!
+//! [`configuration::add_builders`] adds the element's builder to a
+//! [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the name
+//! .NET gives it, so a configuration file written for .NET makes the same
+//! element here, with its `Scripts` and `ScriptFiles` settings.
+//!
 //! ## Without a pipeline
 //!
 //! A script runs over any [`PropertySource`], so a host that already holds the
@@ -115,6 +122,7 @@
 #![warn(missing_docs)]
 
 mod canonical;
+pub mod configuration;
 mod element;
 mod evaluate;
 mod fault;

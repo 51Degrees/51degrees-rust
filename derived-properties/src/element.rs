@@ -44,7 +44,7 @@ use crate::canonical::FORMAT;
 use crate::evaluate::Outcome;
 use crate::fault::{Fault, Faults};
 use crate::model::{Literal, Script, ValueType};
-use crate::scripts::{built_in_scripts_commit, BuiltInScript, BUILT_IN_SOURCE};
+use crate::scripts::{built_in_names, built_in_scripts_commit, BuiltInScript, BUILT_IN_SOURCE};
 use crate::source::{Lookup, PropertySource, SourceValue, WeightedSourceValue};
 
 /// The element data key every script writes into, one property per script,
@@ -270,6 +270,48 @@ impl DerivedPropertyElementBuilder {
     pub fn add_compiled(mut self, script: Script) -> Self {
         self.scripts.push(script);
         self
+    }
+
+    /// Add the shipped script called `name`, matched ignoring case, as a
+    /// configuration names one. An empty name, or one no shipped script
+    /// has, is a fault.
+    pub(crate) fn add_built_in_named(mut self, name: &str) -> Self {
+        if name.trim().is_empty() {
+            self.faults.push(Fault {
+                script: None,
+                source: BUILT_IN_SOURCE.to_owned(),
+                path: String::new(),
+                line: None,
+                message: "a built in script name is empty".to_owned(),
+            });
+            return self;
+        }
+        let Some(script) = BuiltInScript::named(name) else {
+            self.faults.push(Fault {
+                script: Some(name.to_owned()),
+                source: BUILT_IN_SOURCE.to_owned(),
+                path: String::new(),
+                line: None,
+                message: format!(
+                    "there is no script called '{name}' in this package. The scripts in this \
+                     package are {}. A script from your own environment is added with \
+                     ScriptFiles rather than Scripts.",
+                    built_in_names()
+                ),
+            });
+            return self;
+        };
+        let source = format!("{BUILT_IN_SOURCE} {name}");
+        match Script::compile_named(script.text(), Some(script.name()), &source) {
+            Ok(script) => self.scripts.push(script),
+            Err(faults) => self.faults.extend(faults.into_inner()),
+        }
+        self
+    }
+
+    /// True when nothing has been added, neither a script nor a fault.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.scripts.is_empty() && self.faults.is_empty()
     }
 
     /// Build the element, or report everything wrong with the scripts.
