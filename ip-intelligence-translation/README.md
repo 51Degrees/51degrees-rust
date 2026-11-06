@@ -80,6 +80,31 @@ if let Some(countries) = data.get(COUNTRY_NAMES_TRANSLATED_KEY) {
 }
 ```
 
+## Size in a WebAssembly build
+
+`CountriesTranslationEngine` sorts for the language each request asks for,
+so a build cannot know which locales it needs, and `icu_collator` compiles in
+the Unicode collation data for every locale it holds. Edge platforms limit
+the size of a deployed module, so the figures are given here.
+
+In a release `wasm32-wasip1` build with link time optimisation, one codegen
+unit and symbols stripped, a pipeline holding both engines gave a module of
+1,764,151 bytes, against 377,472 bytes for `CountryCodeTranslationEngine`
+alone. So `CountriesTranslationEngine` added 1,386,679 bytes. Of that, the 16
+languages' country names are 99,380 bytes of text, and the rest is the
+engine's code and the ICU4X code and data it links. This was measured with
+Rust 1.99.1 and `icu_collator` 2.4.0.
+
+The repository's Pull Request workflow measures this on every run with
+`ci/measure-wasm-size.sh`, and writes the figures to the run's summary.
+
+A deployment that needs a smaller module can generate ICU4X data for the 16
+locales alone with `icu4x-datagen`, and set `ICU4X_DATA_DIR` to it when
+building, as ICU4X's
+[data management tutorial](https://github.com/unicode-org/icu4x/blob/031d9e89f6a3fd26a14491e090729d46094328fd/tutorials/data-management.md#3-using-the-generated-data)
+describes. Every ICU4X data crate in the build then reads that data in place
+of its own. That route is not measured here.
+
 ## Links
 
 - Source and issues: [github.com/51Degrees/51degrees-rust](https://github.com/51Degrees/51degrees-rust)
