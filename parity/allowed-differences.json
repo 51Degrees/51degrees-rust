@@ -317,5 +317,21 @@
     "cases": ["*-encoding-url-spaced", "*-text-url-space-1", "*-text-url-tabs", "*-text-url-line-breaks", "*-text-url-unpadded-space-1", "*-text-url-unpadded-space-2", "*-text-url-unpadded-space-4", "*-text-standard-space-1"],
     "rust": {"value": [null]},
     "reason": "The crates refuse a text with white space inside it, so every field but the status is null, where .NET reads the 51Did and gives each field."
+  },
+  {
+    "path": "configuration.error",
+    "kind": "value",
+    "cases": ["configuration-unknown-builder", "configuration-unknown-builder-in-group"],
+    "dotnet": {"value": ["Configuration failed to build.\nBuilderName: NoSuchElementBuilder\nSubElement Builder Names: No SubElements\nCould not find builder matching 'NoSuchElementBuilder' for element 2. Available builders are: CustomShareUsageBuilder,SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,AgentSignatureElementBuilder\nNo Inner Exception.\n", "Configuration failed to build.\nBuilderName: BuilderName not set\nSubElement Builder Names: DeviceDetectionHashEngineBuilder,NoSuchEngineBuilder\nCould not find builder matching 'NoSuchEngineBuilder' for element 1 in element 1. Available builders are: CustomShareUsageBuilder,SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,AgentSignatureElementBuilder\nNo Inner Exception.\n"]},
+    "rust": {"value": ["Configuration failed to build.\nBuilderName: NoSuchElementBuilder\nSubElement Builder Names: No SubElements\nCould not find builder matching 'NoSuchElementBuilder' for element 2. Available builders are: SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,AgentSignatureElementBuilder\nNo Inner Exception.\n", "Configuration failed to build.\nBuilderName: BuilderName not set\nSubElement Builder Names: DeviceDetectionHashEngineBuilder,NoSuchEngineBuilder\nCould not find builder matching 'NoSuchEngineBuilder' for element 1 in element 1. Available builders are: SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,AgentSignatureElementBuilder\nNo Inner Exception.\n"]},
+    "reason": "A builder name that matches no builder. .NET also lists CustomShareUsageBuilder, the builder of the .NET program's own usage sharing element, which is in the program's own assembly, and .NET looks for builders in every loaded assembly. The crates list the builders added to the registry."
+  },
+  {
+    "path": "configuration.concurrent",
+    "kind": "value",
+    "cases": ["configuration-no-group"],
+    "dotnet": {"value": [false]},
+    "rust": {"value": [true]},
+    "reason": "The crates' usage sharing element says it is concurrent, because it sends from a thread of its own, so a pipeline holding it is concurrent with no parallel group. .NET's ShareUsageElement says it is not."
   }
 ]

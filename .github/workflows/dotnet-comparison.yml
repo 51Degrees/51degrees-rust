@@ -210,6 +210,13 @@ jobs:
           signed=(--corpus out/fodid-rust.json --corpus out/fodid-dotnet.json)
           target/debug/parity-rust fodid "${signed[@]}" --out out/fodid-rust.jsonl
           dotnet out/dotnet/Parity.dll fodid "${signed[@]}" --out out/fodid-dotnet.jsonl
+          # Each side builds the pipeline each configuration case describes
+          # and writes what it built, or the error.
+          config=(--cases corpus/configuration.json --dd "$DD_FILE" --ipi "$IPI_FILE")
+          dotnet out/dotnet/Parity.dll configuration "${config[@]}" \
+            --out out/configuration-dotnet.jsonl
+          target/debug/parity-rust configuration "${config[@]}" \
+            --out out/configuration-rust.jsonl
 
       - name: Compare
         if: env.RUN == 'true'
@@ -218,8 +225,11 @@ jobs:
           set +e
           target/debug/parity-compare --corpus corpus/evidence.json \
             --corpus out/fodid-rust.json --corpus out/fodid-dotnet.json \
+            --corpus corpus/configuration.json \
             --dotnet out/dotnet.jsonl --dotnet out/fodid-dotnet.jsonl \
+            --dotnet out/configuration-dotnet.jsonl \
             --rust out/rust.jsonl --rust out/fodid-rust.jsonl \
+            --rust out/configuration-rust.jsonl \
             --allowed allowed-differences.json --data ${{ matrix.data }} \
             --report out/report.md --strict > /dev/null
           status=$?
@@ -376,6 +386,41 @@ jobs:
           fi
           grep -q '`usage-evidence`.* at `usage`: ' out/report-usage.md
           grep -q '`ua-iphone`.* at `usageCustom`: ' out/report-usage.md
+
+      # The two configuration cases that build must build on both sides, and
+      # the others fail, so the two cannot agree by both failing. Then a Rust
+      # line with a setting read back differently, or with two elements in
+      # the other order, must fail.
+      - name: Check that a changed configuration answer fails
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          want='configuration-pipeline configuration-no-group'
+          for side in dotnet rust; do
+            got=$(jq -r 'select(.configuration.error == null) | .id' \
+              "out/configuration-$side.jsonl" | paste -sd ' ')
+            if [ "$got" != "$want" ]; then
+              echo "::error::The $side configuration cases that built are: $got"
+              exit 1
+            fi
+          done
+          jq -c 'if .id == "configuration-pipeline" then
+              .configuration.elements[2].settings.sharePercentage = 1
+            elif .id == "configuration-no-group" then
+              .configuration.elements |= [.[0], .[2], .[1]] + .[3:]
+            else . end' out/configuration-rust.jsonl > out/configuration-rust-changed.jsonl
+          if target/debug/parity-compare --corpus corpus/configuration.json \
+            --dotnet out/configuration-dotnet.jsonl \
+            --rust out/configuration-rust-changed.jsonl \
+            --allowed allowed-differences.json --data lite \
+            --report out/report-configuration.md > /dev/null; then
+            echo "::error::The comparison passed with a changed configuration answer"
+            exit 1
+          fi
+          grep -q '`configuration-pipeline`.* at `configuration.elements\[2\].settings.sharePercentage`: ' \
+            out/report-configuration.md
+          grep -q '`configuration-no-group`.* at `configuration.elements\[1\].dataKey`: ' \
+            out/report-configuration.md
 
       # Each side must read the signed 51Dids of both lists and verify each
       # signature, or the two could agree by both failing. Of the 31 signed

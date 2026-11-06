@@ -494,6 +494,7 @@ dependencies = [
  "fiftyone-native",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "log",
 ]
 
 [[package]]
@@ -1318,6 +1319,7 @@ dependencies = [
  "fiftyone-json-builder",
  "fiftyone-native",
  "fiftyone-pipeline-core",
+ "fiftyone-pipeline-engines",
  "fiftyone-pipeline-engines-fiftyone",
  "fodid",
  "serde",

@@ -26,15 +26,18 @@
 //! parity-rust --corpus <json> --dd <hash file> --ipi <ipi file> --out <jsonl>
 //! parity-rust fodid-sign --cases <json> --prefix <text> --out <json>
 //! parity-rust fodid --corpus <json> [--corpus <json>] --out <jsonl>
+//! parity-rust configuration --cases <json> --dd <hash file> --ipi <ipi file> --out <jsonl>
 //! ```
 //!
 //! The first form runs the evidence cases through the pipelines. The
 //! pipelines and the line format are the same as the .NET producer's, as
 //! `parity/README.md` describes. Usage records go to sinks inside this
-//! program, so nothing is sent anywhere. The other two forms are the 51Did
-//! cases, described in `fodid_cases`.
+//! program, so nothing is sent anywhere. The next two forms are the 51Did
+//! cases, described in `fodid_cases`, and the last builds pipelines from
+//! configuration files, described in `configuration`.
 
 mod agent_signature;
+mod configuration;
 mod fodid_cases;
 mod usage;
 mod values;
@@ -115,6 +118,7 @@ fn main() -> Result<()> {
     match args.first().map(String::as_str) {
         Some(fodid_cases::SIGN) => return fodid_cases::sign(&args[1..]),
         Some(fodid_cases::READ) => return fodid_cases::read(&args[1..]),
+        Some(configuration::RUN) => return configuration::run(&args[1..]),
         _ => {}
     }
     let args = parse_args(&args)?;
