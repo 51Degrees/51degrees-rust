@@ -379,14 +379,17 @@ jobs:
 
       # Each side must read the signed 51Dids of both lists and verify each
       # signature, or the two could agree by both failing. Of the 31 signed
-      # cases, 19 are meant to read and verify. The rest are the tampered
-      # case, nine whose payload a reader refuses and two with bytes after
-      # the envelope. A new signed case that reads changes the number.
+      # cases, 19 are meant to read and verify in .NET and 18 in the crates.
+      # The rest are the tampered case, nine whose payload a reader refuses
+      # and two with bytes after the envelope. The crates also refuse
+      # encoding-url-spaced, whose text has white space inside it, a
+      # difference allowed-differences.json records. A new signed case that
+      # reads changes the numbers.
       - name: Check every signed 51Did verifies
         if: matrix.data == 'lite'
         working-directory: parity
         run: |
-          want=19
+          declare -A want=([dotnet]=19 [rust]=18)
           for side in dotnet rust; do
             for list in rust dotnet; do
               # One row per signed case, its id, whether it was tampered,
@@ -404,8 +407,8 @@ jobs:
                 echo "::error::$side read these signed 51Dids of the $list list wrongly: $wrong"
                 exit 1
               fi
-              if [ "$valid" -ne "$want" ]; then
-                echo "::error::$side verified $valid of the $list list's signed 51Dids, not $want"
+              if [ "$valid" -ne "${want[$side]}" ]; then
+                echo "::error::$side verified $valid of the $list list's signed 51Dids, not ${want[$side]}"
                 exit 1
               fi
             done

@@ -386,15 +386,12 @@ impl FodId {
     /// payload is shorter than the minimum for its identifier type.
     /// Either base64 alphabet is accepted, standard or URL-safe, with or
     /// without padding, because a 51Did travels in URLs and comes back in
-    /// the alphabet whoever sent it chose. Leading and trailing white space
-    /// is stripped first, so a value carrying a trailing newline from a
-    /// file, a header or a copied link reads back to the same envelope as
-    /// the clean form. White space inside the text is read as the .NET
-    /// package reads it, so every text gets the same answer in both. Spaces,
-    /// tabs and line breaks are skipped, but padding is first added for a
-    /// length that counts them, so two or three of them inside a text can
-    /// add padding the text does not need, and the text is then refused.
-    /// Other white space inside the text is refused.
+    /// the alphabet whoever sent it chose. White space before and after the
+    /// text is ignored, so a value carrying a trailing newline from a file,
+    /// a header or a copied link reads back to the same envelope as the
+    /// clean form. Any other character outside the alphabet is refused with
+    /// [`ParseStatus::InvalidBase64`](crate::ParseStatus::InvalidBase64),
+    /// white space inside the text included.
     pub fn from_base64(base64: &str) -> Result<Self> {
         Self::from_owid(Owid::from_byte_array(&decode_base64(base64)?)?)
     }
@@ -748,43 +745,28 @@ const BASE64: GeneralPurpose = GeneralPurpose::new(
         .with_decode_allow_trailing_bits(true),
 );
 
-/// Reads the base64 text of an envelope in either alphabet into its bytes,
-/// in the same three steps as the .NET package.
+/// Reads the base64 text of an envelope in either alphabet into its bytes.
 ///
-/// 1. Surrounding white space is trimmed, `-` and `_` become `+` and `/`,
-///    and `==` or `=` is added when the trimmed length modulo 4 is 2 or 3.
-///    White space inside the text counts towards that length.
-/// 2. `=` is added again when the characters that are not white space are
-///    2 or 3 over a group of four. A text 1 over is refused.
-/// 3. Space, tab, carriage return and line feed are skipped and the rest is
-///    decoded. Any other white space inside the text is refused.
-///
-/// Because step 1 counts white space inside the text, two or three spaces
-/// inside can add padding the text does not need, and the text is then
-/// refused. Lengths are counted in UTF-16 code units, as .NET counts them.
+/// White space before and after the text is ignored, being any character
+/// with the Unicode White_Space property, which is what [`str::trim`]
+/// removes. `-` and `_` then become `+` and `/`, and the rest is decoded,
+/// so any other character outside the alphabet is refused, white space
+/// inside the text included. The issuer never writes white space inside an
+/// identifier, so white space there is a sign of damage, such as a `+`
+/// turned into a space by a form decoder, and skipping it would read bytes
+/// other than the ones issued. Padding is optional, and a text one
+/// character over a group of four is refused because it encodes no whole
+/// byte.
 fn decode_base64(value: &str) -> std::result::Result<Vec<u8>, ParseError> {
     let invalid = || ParseError::new(ParseStatus::InvalidBase64, None);
     let trimmed = value.trim();
-    let mut text = trimmed.replace('-', "+").replace('_', "/");
-    match trimmed.encode_utf16().count() % 4 {
-        2 => text.push_str("=="),
-        3 => text.push('='),
-        _ => {}
-    }
-    if text.is_empty() {
+    if trimmed.is_empty() {
         return Err(ParseError::new(ParseStatus::MissingInput, None));
     }
-    let significant: usize = text
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .map(char::len_utf16)
-        .sum();
-    match significant % 4 {
-        0 => {}
-        1 => return Err(invalid()),
-        over => text.extend(std::iter::repeat_n('=', 4 - over)),
+    if trimmed.contains(char::is_whitespace) {
+        return Err(invalid());
     }
-    text.retain(|c| !matches!(c, ' ' | '\t' | '\r' | '\n'));
+    let text = trimmed.replace('-', "+").replace('_', "/");
     BASE64.decode(text).map_err(|_| invalid())
 }
 
