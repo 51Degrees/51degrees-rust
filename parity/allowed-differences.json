@@ -48,40 +48,47 @@
   {
     "path": "properties.ip",
     "kind": "presence",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "reason": "With no address in the evidence the crates' IP Intelligence engine gives an error and no data, where .NET gives data in which no property has a value.",
     "issue": 226
   },
   {
     "path": "errors",
     "kind": "value",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "reason": "The crates' IP Intelligence engine gives an error when the evidence holds no address it can read. .NET gives none.",
     "issue": 226
   },
   {
     "path": "json.errors",
     "kind": "onlyInRust",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "reason": "The JSON builder writes the IP Intelligence error the crates give when the evidence holds no address it can read.",
     "issue": 226
   },
   {
     "path": "json.ip",
     "kind": "onlyInDotnet",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "reason": "The crates' IP Intelligence engine writes no data when the evidence holds no address it can read, so the JSON has no ip object.",
     "issue": 226
   },
   {
     "path": "*ip.ip",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "reason": "The crates do not fill the Ip property with the address looked up, as .NET does.",
     "issue": 226
   },
   {
     "path": "*ip.ipv6",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "reason": "The crates do not fill the IpV6 property with the address looked up, as .NET does.",
     "issue": 226
   },
   {
     "path": "*ip.*geonameid*",
     "kind": "onlyInDotnet",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "data": "enterprise",
     "reason": "The crates' model lacks the GeoNameId properties .NET declares.",
     "issue": 226
@@ -89,6 +96,7 @@
   {
     "path": "*ip.areas",
     "kind": "type",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "data": "enterprise",
     "reason": "The crates give Areas as a string, where .NET gives it as a WKT value, which its JSON writes as an object.",
     "issue": 226
@@ -96,6 +104,7 @@
   {
     "path": "properties.ip.iprange*",
     "kind": "type",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "data": "enterprise",
     "reason": "The crates give IpRangeStart and IpRangeEnd as strings, where .NET gives IP addresses.",
     "issue": 226
@@ -103,6 +112,7 @@
   {
     "path": "*ip.iprange*",
     "kind": "value",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "data": "enterprise",
     "reason": "The crates give an IPv6 range in full, 2a00:23c0:0000:0000:0000:0000:0000:0000, where .NET gives the compressed form RFC 5952 recommends, 2a00:23c0::, in the properties and in the JSON.",
     "issue": 226
@@ -110,20 +120,21 @@
   {
     "path": "json.ip.*].rawweighting",
     "kind": "onlyInDotnet",
-    "data": "enterprise",
-    "reason": "The crates write a weighted value as value and weight, where the published .NET packages write rawweighting and value.",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*", "translation-*"],
+    "reason": "The crates write a weighted value as value and weight, where the published .NET packages write rawweighting and value. The translation cases write their codes as each side's IP Intelligence data, whichever data file the job uses.",
     "issue": 226
   },
   {
     "path": "json.ip.*].weight",
     "kind": "onlyInRust",
-    "data": "enterprise",
-    "reason": "The crates write a weighted value as value and weight, where the published .NET packages write rawweighting and value.",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*", "translation-*"],
+    "reason": "The crates write a weighted value as value and weight, where the published .NET packages write rawweighting and value. The translation cases write their codes as each side's IP Intelligence data, whichever data file the job uses.",
     "issue": 226
   },
   {
     "path": "properties.ip.*",
     "kind": "onlyInRust",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "data": "lite",
     "reason": "The crates' IP Intelligence engine lists a fixed set of property names whatever the data file holds. The ASN file holds few of them.",
     "issue": 223
@@ -246,6 +257,7 @@
   {
     "path": "json.ip",
     "kind": "order",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "data": "enterprise",
     "reason": "The crates' IP Intelligence engine reads a fixed list of property names in name order, so the JSON lists them in that order. .NET lists them in the data file's order.",
     "issue": 223
@@ -317,5 +329,13 @@
     "cases": ["*-encoding-url-spaced", "*-text-url-space-1", "*-text-url-tabs", "*-text-url-line-breaks", "*-text-url-unpadded-space-1", "*-text-url-unpadded-space-2", "*-text-url-unpadded-space-4", "*-text-standard-space-1"],
     "rust": {"value": [null]},
     "reason": "The crates refuse a text with white space inside it, so every field but the status is null, where .NET reads the 51Did and gives each field."
+  },
+  {
+    "path": "properties.countrynames*",
+    "kind": "state",
+    "cases": ["translation-no-ip-data", "translation-bad-item", "translation-unreadable-after-unresolved"],
+    "dotnet": {"value": [null]},
+    "rust": {"noValue": true},
+    "reason": "A property no engine set reads as null in .NET, because its data gives null for a key it does not hold. The crates' data cannot hold null, so such a property has no value, with the reason No value for property and its name. In translation-no-ip-data the country codes engine sets no property. In translation-bad-item the countries engine fails before it sets any, and in translation-unreadable-after-unresolved it fails after setting the weighted names and before the lists of every country. Each happens on both sides, and the errors and the JSON are the same."
   }
 ]

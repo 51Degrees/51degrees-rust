@@ -159,6 +159,24 @@ jobs:
           cargo clippy --all-targets -- -D warnings
           cargo test -p parity-compare
 
+      # The parity workspace resolves its own lock. The comparison proves
+      # .NET's order for the collation data that lock holds, so it must be
+      # the data the library's lock, and so the crate's tests, use.
+      - name: Check both locks hold the same collation data
+        if: matrix.data == 'lite'
+        run: |
+          for crate in icu_collator icu_collator_data; do
+            library=$(grep -A1 "^name = \"$crate\"$" Cargo.lock |
+              sed -n 's/^version = "\(.*\)"$/\1/p')
+            parity=$(grep -A1 "^name = \"$crate\"$" parity/Cargo.lock |
+              sed -n 's/^version = "\(.*\)"$/\1/p')
+            echo "$crate: $library in Cargo.lock, $parity in parity/Cargo.lock"
+            if [ -z "$library" ] || [ "$library" != "$parity" ]; then
+              echo "::error::$crate differs between the two locks"
+              exit 1
+            fi
+          done
+
       - name: Build
         if: env.RUN == 'true'
         working-directory: parity
@@ -376,6 +394,41 @@ jobs:
           fi
           grep -q '`usage-evidence`.* at `usage`: ' out/report-usage.md
           grep -q '`ua-iphone`.* at `usageCustom`: ' out/report-usage.md
+
+      # The translation cases must translate and sort on both sides, or the
+      # two could agree by both failing. French must give the United
+      # Kingdom's French name first and list all 250 countries sorted for
+      # fr-FR. Then a Rust line with two countries of a sorted list swapped
+      # must fail.
+      - name: Check the translation cases translate and sort
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          want='Royaume-Uni fr-FR 250'
+          for side in dotnet rust; do
+            got=$(jq -r 'select(.id == "translation-header-fr")
+              | .properties.countrynamestranslated
+              | "\(.countrynamesgeographicaltranslated.value[0].value) \(.sortingcultureused.value) \(.countrynamesgeographicalalltranslated.value | length)"' \
+              "out/$side.jsonl")
+            echo "$side: $got"
+            if [ "$got" != "$want" ]; then
+              echo "::error::The $side translation case gave $got, not $want"
+              exit 1
+            fi
+          done
+          jq -c 'if .id == "translation-header-ja-jp" then
+              .properties.countrynamestranslated.countrynamesgeographicalalltranslated.value
+                |= (.[0:2] + [.[3], .[2]] + .[4:])
+            else . end' out/rust.jsonl > out/rust-sorted.jsonl
+          if target/debug/parity-compare --corpus corpus/evidence.json \
+            --dotnet out/dotnet.jsonl --rust out/rust-sorted.jsonl \
+            --allowed allowed-differences.json --data lite \
+            --report out/report-sorted.md > /dev/null; then
+            echo "::error::The comparison passed with a changed sort"
+            exit 1
+          fi
+          grep -q 'translation-header-ja-jp.*properties.countrynamestranslated.countrynamesgeographicalalltranslated' \
+            out/report-sorted.md
 
       # Each side must read the signed 51Dids of both lists and verify each
       # signature, or the two could agree by both failing. Of the 31 signed

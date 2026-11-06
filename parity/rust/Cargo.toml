@@ -14,6 +14,7 @@ anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 fiftyone-pipeline-core = { path = "../../pipeline-core" }
+fiftyone-pipeline-engines = { path = "../../pipeline-engines", default-features = false }
 fiftyone-agent-signature = { path = "../../agent-signature" }
 fiftyone-pipeline-engines-fiftyone = { path = "../../pipeline-engines-fiftyone" }
 fiftyone-native = { path = "../../native" }
@@ -21,6 +22,8 @@ fiftyone-device-detection-onpremise = { path = "../../device-detection-onpremise
 fiftyone-ip-intelligence-onpremise = { path = "../../ip-intelligence-onpremise" }
 fiftyone-ip-intelligence-shared = { path = "../../ip-intelligence-shared" }
 fiftyone-json-builder = { path = "../../json-builder" }
+fiftyone-pipeline-translation = { path = "../../pipeline-translation" }
+fiftyone-ip-intelligence-translation = { path = "../../ip-intelligence-translation" }
 # The comparison is made before minification, so the minifier is left out.
 fiftyone-javascript-builder = { path = "../../javascript-builder", default-features = false }
 # The 51Did cases sign their own payloads, so the reader's creator is on.
