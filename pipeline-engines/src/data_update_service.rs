@@ -203,12 +203,23 @@ impl DataUpdateService {
     /// and returned as an error, and the file is registered all the same, so
     /// the updates that follow still run.
     ///
-    /// The registration lasts as long as the caller keeps `engine`.
+    /// The registration lasts as long as the caller keeps `engine`. Given the
+    /// only reference, the registration ends as this returns, which is logged
+    /// as a warning.
     pub fn register(
         &self,
         engine: Arc<dyn OnPremiseAspectEngine>,
         data_file: Arc<AspectEngineDataFile>,
     ) -> DataUpdateResult {
+        if Arc::strong_count(&engine) == 1 {
+            log::warn!(
+                "The data file for {} will not be updated, because the data update \
+                 service was given the only reference to its engine, which is dropped \
+                 when registration ends. Keep a reference to the engine for as long as \
+                 it is to be updated.",
+                engine.data_key()
+            );
+        }
         let config = data_file.configuration();
         let already_registered = data_file.is_registered();
         data_file.set_registered(true);
