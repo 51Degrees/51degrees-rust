@@ -432,6 +432,15 @@ impl PipelineBuilder {
         self
     }
 
+    /// Discard the elements added so far and take the resources, for
+    /// [`PipelineBuilder::build_from_configuration`], which makes the
+    /// elements from a configuration.
+    pub(crate) fn reset_for_configuration(&mut self) -> Vec<Arc<dyn Any + Send + Sync>> {
+        self.elements.clear();
+        self.steps.clear();
+        std::mem::take(&mut self.resources)
+    }
+
     /// Set whether processing exceptions are suppressed. See
     /// [`Pipeline::is_suppress_process_exceptions`]. Returns `self` for
     /// chaining.

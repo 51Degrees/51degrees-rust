@@ -35,16 +35,18 @@ use fiftyone_pipeline_engines::DataFileConfiguration;
 /// lives, and Windows refuses to replace a file that is open. With automatic
 /// updates on, the engine therefore reads a copy in its temporary folder,
 /// which the specification calls the operational data copy, and an update can
-/// replace the data file itself. Drop the copy after the data set read from
-/// it, which closes it.
+/// replace the data file itself. A builder can also ask for the copy under
+/// every profile, as .NET's `createTempDataCopy` does. Drop the copy after
+/// the data set read from it, which closes it.
 pub(crate) struct OperationalCopy {
     path: PathBuf,
 }
 
 impl OperationalCopy {
     /// A copy of `data_file` in `temp_dir`, or in the system's temporary
-    /// folder when that is `None`, when `profile` keeps the data file open and
-    /// automatic updates are on, otherwise `None`.
+    /// folder when that is `None`, when `always` is true, or when `profile`
+    /// keeps the data file open and automatic updates are on, otherwise
+    /// `None`.
     ///
     /// When the copy cannot be made the engine reads the data file itself, so
     /// a full temporary folder does not stop it from building, and on Windows
@@ -54,8 +56,11 @@ impl OperationalCopy {
         temp_dir: Option<&Path>,
         profile: PerformanceProfile,
         config: &DataFileConfiguration,
+        always: bool,
     ) -> Option<OperationalCopy> {
-        if profile == PerformanceProfile::InMemory || !config.automatic_updates_enabled {
+        let for_updates =
+            profile != PerformanceProfile::InMemory && config.automatic_updates_enabled;
+        if !always && !for_updates {
             return None;
         }
         let temp_dir = temp_dir.map_or_else(std::env::temp_dir, Path::to_path_buf);

@@ -75,6 +75,13 @@
 //! follows no redirects. Without the feature, supply an [`HttpClient`] with
 //! [`AgentSignatureElementBuilder::set_http_client`].
 //!
+//! ## Configuration
+//!
+//! [`configuration::add_builders`] adds the element's builder to a
+//! [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the name
+//! .NET gives it, so a configuration file written for .NET makes the same
+//! element here, with the same settings.
+//!
 //! ## Example
 //!
 //! ```
@@ -120,6 +127,7 @@
 mod builder;
 mod cache;
 mod codec;
+pub mod configuration;
 pub mod constants;
 mod data;
 mod element;

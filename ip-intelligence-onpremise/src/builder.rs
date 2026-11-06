@@ -86,8 +86,12 @@ pub struct IpIntelligenceOnPremiseEngineBuilder {
     max_randomisation_seconds: Option<u64>,
     data_update_service: Option<Arc<DataUpdateService>>,
     temp_dir: Option<PathBuf>,
+    temp_data_copy: bool,
     /// The expected concurrency, or [`None`] to keep the profile's own.
     concurrency: Option<u16>,
+    /// The whole data file configuration a pipeline configuration gave, used
+    /// in place of the update options above when set.
+    data_file_settings: Option<DataFileConfiguration>,
 }
 
 impl IpIntelligenceOnPremiseEngineBuilder {
@@ -115,7 +119,9 @@ impl IpIntelligenceOnPremiseEngineBuilder {
             max_randomisation_seconds: None,
             data_update_service: None,
             temp_dir: None,
+            temp_data_copy: false,
             concurrency: None,
+            data_file_settings: None,
         }
     }
 
@@ -147,10 +153,28 @@ impl IpIntelligenceOnPremiseEngineBuilder {
 
     /// Set the folder for the engine's temporary files. With automatic updates
     /// on, every profile but [`PerformanceProfile::InMemory`] reads a copy of
-    /// the data file made there, so an update can replace the data file itself.
-    /// Defaults to the system's temporary folder, [`std::env::temp_dir`].
+    /// the data file made there, so an update can replace the data file itself,
+    /// and with [`Self::create_temp_data_copy`] every profile does. Defaults to
+    /// the system's temporary folder, [`std::env::temp_dir`].
     pub fn temp_dir_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.temp_dir = Some(path.into());
+        self
+    }
+
+    /// Read a copy of the data file made in the temporary folder under every
+    /// profile, as .NET's `createTempDataCopy` does, rather than only where
+    /// automatic updates need one. The copy is removed when the engine no
+    /// longer reads it. Defaults to false.
+    pub fn create_temp_data_copy(mut self, create: bool) -> Self {
+        self.temp_data_copy = create;
+        self
+    }
+
+    /// Use `configuration` for the data file in place of the update options
+    /// set on this builder, filling in the Distributor as the update source
+    /// where it names none. The data file path stays this builder's.
+    pub(crate) fn data_file_settings(mut self, configuration: DataFileConfiguration) -> Self {
+        self.data_file_settings = Some(configuration);
         self
     }
 
@@ -322,6 +346,7 @@ impl IpIntelligenceOnPremiseEngineBuilder {
             self.temp_dir.as_deref(),
             self.profile,
             &configuration,
+            self.temp_data_copy,
         );
         let manager = Manager::open_with_options(
             copy.as_ref()
@@ -342,15 +367,31 @@ impl IpIntelligenceOnPremiseEngineBuilder {
             self.data_source_tier,
             data_file,
         )
-        .with_temp_dir(self.temp_dir)
+        .with_temp_dir(self.temp_dir, self.temp_data_copy)
         .with_concurrency(self.concurrency))
     }
 
     /// Build the data-file configuration that captures the update options. The
     /// update source is the Distributor unless a URL was given, with the
     /// Distributor's URL formatter and the IP Intelligence download type, as the
-    /// other 51Degrees implementations have it.
+    /// other 51Degrees implementations have it. A configuration given to
+    /// [`Self::data_file_settings`] replaces the update options, with the same
+    /// Distributor defaults where it names none.
     fn data_file_configuration(&self) -> DataFileConfiguration {
+        if let Some(settings) = &self.data_file_settings {
+            let mut config = settings.clone();
+            config.data_file_path = Some(self.data_file_path.clone());
+            if config.data_update_url.is_none() {
+                config.data_update_url = Some(DISTRIBUTOR_URL.to_owned());
+            }
+            if config.url_formatter.is_none() {
+                config.url_formatter = Some(Arc::new(FiftyOneUrlFormatter));
+            }
+            if config.data_download_type.is_none() {
+                config.data_download_type = Some(DATA_DOWNLOAD_TYPE.to_owned());
+            }
+            return config;
+        }
         let mut config = DataFileConfiguration::builder(self.data_file_path.clone())
             .automatic_updates_enabled(self.auto_update_enabled)
             .file_system_watcher_enabled(self.file_system_watcher_enabled)

@@ -234,6 +234,10 @@ pub struct DeviceDetectionOnPremiseEngine {
     /// system's temporary folder.
     temp_dir: Option<PathBuf>,
 
+    /// Whether a refresh reads a copy of the data file under every profile,
+    /// as the builder's `create_temp_data_copy` asked.
+    temp_data_copy: bool,
+
     /// The single data file's run-time state, shared with the update service.
     data_files: Vec<Arc<AspectEngineDataFile>>,
 }
@@ -383,14 +387,17 @@ impl DeviceDetectionOnPremiseEngine {
             evidence_key_filter,
             options,
             temp_dir: None,
+            temp_data_copy: false,
             data_files: vec![data_file],
         })
     }
 
     /// Copy the data file into `temp_dir` on refresh, the folder the builder
-    /// copied it into, or the system's temporary folder when `None`.
-    pub(crate) fn with_temp_dir(mut self, temp_dir: Option<PathBuf>) -> Self {
+    /// copied it into, or the system's temporary folder when `None`, and
+    /// under every profile when `always` is true.
+    pub(crate) fn with_temp_dir(mut self, temp_dir: Option<PathBuf>, always: bool) -> Self {
         self.temp_dir = temp_dir;
+        self.temp_data_copy = always;
         self
     }
 
@@ -680,6 +687,7 @@ impl DeviceDetectionOnPremiseEngine {
                 self.temp_dir.as_deref(),
                 self.profile,
                 file.configuration(),
+                self.temp_data_copy,
             )
         });
         let manager = open_manager(

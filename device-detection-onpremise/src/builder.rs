@@ -75,6 +75,7 @@ pub struct DeviceDetectionOnPremiseEngineBuilder {
     auto_update: Option<AutoUpdate>,
     options: HashOptions,
     temp_dir: Option<PathBuf>,
+    temp_data_copy: bool,
 }
 
 /// The optional automatic-update settings captured by the builder.
@@ -99,6 +100,7 @@ impl DeviceDetectionOnPremiseEngineBuilder {
             auto_update: None,
             options: HashOptions::default(),
             temp_dir: None,
+            temp_data_copy: false,
         }
     }
 
@@ -177,10 +179,20 @@ impl DeviceDetectionOnPremiseEngineBuilder {
 
     /// Set the folder for the engine's temporary files. With automatic updates
     /// on, every profile but [`PerformanceProfile::InMemory`] reads a copy of
-    /// the data file made there, so an update can replace the data file itself.
-    /// Defaults to the system's temporary folder, [`std::env::temp_dir`].
+    /// the data file made there, so an update can replace the data file itself,
+    /// and with [`Self::create_temp_data_copy`] every profile does. Defaults to
+    /// the system's temporary folder, [`std::env::temp_dir`].
     pub fn temp_dir_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.temp_dir = Some(path.into());
+        self
+    }
+
+    /// Read a copy of the data file made in the temporary folder under every
+    /// profile, as .NET's `createTempDataCopy` does, rather than only where
+    /// automatic updates need one. The copy is removed when the engine no
+    /// longer reads it. Defaults to false.
+    pub fn create_temp_data_copy(mut self, create: bool) -> Self {
+        self.temp_data_copy = create;
         self
     }
 
@@ -303,6 +315,7 @@ impl DeviceDetectionOnPremiseEngineBuilder {
             self.temp_dir.as_deref(),
             self.profile,
             &data_file_config,
+            self.temp_data_copy,
         );
         let manager = open_manager(
             copy.as_ref()
@@ -322,7 +335,7 @@ impl DeviceDetectionOnPremiseEngineBuilder {
                 self.data_source_tier,
                 options,
             )?
-            .with_temp_dir(self.temp_dir),
+            .with_temp_dir(self.temp_dir, self.temp_data_copy),
         );
 
         // Register the data file with the update service if one was supplied.

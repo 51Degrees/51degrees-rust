@@ -159,9 +159,17 @@
 //! transport backed by `reqwest` is available behind the `reqwest-client`
 //! feature; without it a consumer supplies its own [`CloudHttpClient`] (for
 //! example on `wasm32-wasip1`).
+//!
+//! ## Configuration
+//!
+//! [`configuration::add_builders`] adds the engine's builder to a
+//! [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the name
+//! .NET gives it, with .NET's settings, so a configuration file written for
+//! .NET makes the same engine here.
 
 #![warn(missing_docs)]
 
+pub mod configuration;
 mod constants;
 mod data;
 mod engine;
