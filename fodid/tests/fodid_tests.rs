@@ -1508,18 +1508,15 @@ fn insert_after(text: &str, positions: &[usize], fill: &str) -> String {
     out
 }
 
-/// White space inside the text is read in the .NET package's three steps,
-/// so each row gets the status .NET gives the case of the same name in
-/// `parity/corpus/fodid.json`. Spaces, tabs and line breaks are skipped,
-/// but padding is first added for a length that counts them. So two spaces
-/// inside a text that is a whole number of groups add `==` the text does
-/// not need, and three leave one character over a group. Other white space
-/// inside the text is refused.
+/// White space inside the text is refused, whatever its kind, how much of
+/// it there is and how long the text is, whilst white space only before
+/// and after the text is ignored. Each row is the case of the same name in
+/// `parity/corpus/fodid.json`.
 #[test]
-fn white_space_inside_the_text_reads_as_the_dotnet_package_reads_it() {
+fn white_space_inside_the_text_is_refused() {
     let fixture = Fixture::new();
     let (whole, whole_read) = url_safe_text_over_a_group_of_four(&fixture, 0);
-    let (short, short_read) = url_safe_text_over_a_group_of_four(&fixture, 3);
+    let (short, _) = url_safe_text_over_a_group_of_four(&fixture, 3);
     let standard = format!("{}=", short.replace('-', "+").replace('_', "/"));
     let (w, s) = (whole.len(), short.len());
     let invalid = Err(Status::Owid(ParseStatus::InvalidBase64));
@@ -1528,7 +1525,7 @@ fn white_space_inside_the_text_reads_as_the_dotnet_package_reads_it() {
         (
             "text-url-space-1",
             insert_after(&whole, &[w / 2], " "),
-            Ok(&whole_read),
+            invalid,
         ),
         (
             "text-url-space-2",
@@ -1543,12 +1540,12 @@ fn white_space_inside_the_text_reads_as_the_dotnet_package_reads_it() {
         (
             "text-url-tabs",
             insert_after(&whole, &[w / 5, 2 * w / 5, 3 * w / 5, 4 * w / 5], "\t"),
-            Ok(&whole_read),
+            invalid,
         ),
         (
             "text-url-line-breaks",
             insert_after(&whole, &[w / 3, 2 * w / 3], "\r\n"),
-            Ok(&whole_read),
+            invalid,
         ),
         (
             "text-url-no-break-spaces",
@@ -1563,12 +1560,12 @@ fn white_space_inside_the_text_reads_as_the_dotnet_package_reads_it() {
         (
             "text-url-unpadded-space-1",
             insert_after(&short, &[s / 2], " "),
-            Ok(&short_read),
+            invalid,
         ),
         (
             "text-url-unpadded-space-2",
             insert_after(&short, &[s / 3, 2 * s / 3], " "),
-            Ok(&short_read),
+            invalid,
         ),
         (
             "text-url-unpadded-space-3",
@@ -1578,12 +1575,12 @@ fn white_space_inside_the_text_reads_as_the_dotnet_package_reads_it() {
         (
             "text-url-unpadded-space-4",
             insert_after(&short, &[s / 5, 2 * s / 5, 3 * s / 5, 4 * s / 5], " "),
-            Ok(&short_read),
+            invalid,
         ),
         (
             "text-standard-space-1",
             insert_after(&standard, &[standard.len() / 2], " "),
-            Ok(&short_read),
+            invalid,
         ),
         (
             "text-url-vertical-tab",

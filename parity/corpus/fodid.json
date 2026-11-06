@@ -133,7 +133,7 @@
   },
   {
     "id": "encoding-url-spaced",
-    "about": "The URL-safe form with a space after every 20th character.",
+    "about": "The URL-safe form with a space between each group of 20 characters, which the specification refuses.",
     "payload": "03 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01",
     "encoding": "url-spaced"
   },

@@ -302,5 +302,20 @@
     "cases": ["*-domain-not-ascii", "*-domain-not-utf8"],
     "rust": {"value": [null]},
     "reason": "The crates refuse a creator domain that is not ASCII, so every field but the status is null, where .NET reads the 51Did and gives each field."
+  },
+  {
+    "path": "fodid.status",
+    "kind": "value",
+    "cases": ["*-encoding-url-spaced", "*-text-url-space-1", "*-text-url-tabs", "*-text-url-line-breaks", "*-text-url-unpadded-space-1", "*-text-url-unpadded-space-2", "*-text-url-unpadded-space-4", "*-text-standard-space-1"],
+    "dotnet": {"value": ["Parsed"]},
+    "rust": {"value": ["InvalidBase64"]},
+    "reason": "identifier-layout.md asks a reader to refuse a text with any character outside the base64 alphabet, white space inside the text included, as RFC 4648 section 3.3 requires when the referring specification says nothing else. The crates refuse these texts with InvalidBase64. .NET skips spaces, tabs and line breaks inside the text in its OWID reader and reads them."
+  },
+  {
+    "path": "fodid.*",
+    "kind": "presence",
+    "cases": ["*-encoding-url-spaced", "*-text-url-space-1", "*-text-url-tabs", "*-text-url-line-breaks", "*-text-url-unpadded-space-1", "*-text-url-unpadded-space-2", "*-text-url-unpadded-space-4", "*-text-standard-space-1"],
+    "rust": {"value": [null]},
+    "reason": "The crates refuse a text with white space inside it, so every field but the status is null, where .NET reads the 51Did and gives each field."
   }
 ]
