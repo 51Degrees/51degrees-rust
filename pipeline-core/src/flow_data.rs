@@ -165,6 +165,12 @@ impl FlowData {
     /// elements were given, so of two elements adding one key the later one's
     /// value is kept, as in sequence.
     ///
+    /// It can also be called after processing, as .NET's and Java's
+    /// `AddEvidence` can. Evidence added then changes no element's results,
+    /// but it does change what a later reader sees, being
+    /// [`FlowData::evidence`], [`FlowData::generate_key`] and so the ETag a
+    /// web integration works out from that key.
+    ///
     /// The key is logged at debug level. The value is not, because evidence
     /// can carry credentials.
     pub fn add_evidence(&mut self, key: impl AsRef<str>, value: impl Into<String>) {

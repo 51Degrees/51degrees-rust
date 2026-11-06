@@ -30,11 +30,11 @@
 //! shape, so this element decodes that evidence and emits the equivalent
 //! `sec-ch-ua*` header values.
 //!
-//! Core evidence is immutable, so (as the specification anticipates for ports
-//! where evidence cannot be mutated) this element writes the converted values
-//! into its own element data rather than back into evidence. The device-detection
-//! engines prefer these element-data values and fall back to raw evidence when
-//! they are absent.
+//! This element writes the converted values into its own element data rather
+//! than back into evidence, as the specification's Element Data section and
+//! its "Adding Evidence values" section suggest. The device-detection engines
+//! prefer these element-data values and fall back to raw evidence when they
+//! are absent.
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
