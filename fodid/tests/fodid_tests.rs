@@ -185,9 +185,9 @@ fn assert_parsed(result: &fodid::Result<FodId>) -> &FodId {
         .expect("a successful read hands back the value")
 }
 
-/// `owid()`, `into_owid()` and the `Deref` are deprecated rather than
-/// removed, so code written against earlier releases still compiles and
-/// still reaches the same envelope.
+/// `owid()` and `into_owid()` are deprecated and the `Deref` is kept, so
+/// code written against earlier releases still compiles and still reaches
+/// the same envelope.
 #[test]
 #[allow(deprecated)]
 fn fod_id_still_derefs_to_owid() {

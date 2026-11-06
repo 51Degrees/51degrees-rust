@@ -141,13 +141,13 @@ const WRONG_TYPE_MESSAGE: &str =
 /// accessors for the six identifier properties ([`IDENTIFIER_PROPERTIES`]), each
 /// available both as the raw base64 envelope and as a parsed [`FodId`]. Each
 /// accessor returns an
-/// [`AspectPropertyValue<T>`] so the caller can tell "the cloud issued an
+/// [`AspectPropertyValue<T>`] so the caller can tell "the engine issued an
 /// identifier" from "no identifier was available" (and, for the parsed form,
 /// from "the value could not be read as a 51Did") without losing the
 /// explanation.
 pub trait FodIdData: AspectData {
     /// The globally-scoped 51Did as the raw base64 OWID envelope string, as the
-    /// cloud sent it. Property name [`ID_PROB_GLOBAL_PROPERTY`].
+    /// engine stored it. Property name [`ID_PROB_GLOBAL_PROPERTY`].
     ///
     /// This value is unique across all callers observing the same device and
     /// network. Store or forward it unchanged; compare two identifiers by their

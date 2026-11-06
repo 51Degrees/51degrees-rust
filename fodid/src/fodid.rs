@@ -648,7 +648,7 @@ impl FodId {
     }
 
     /// The envelope's bytes, which
-    /// [`from_byte_array`](FodId::from_byte_array) reads back to an equal
+    /// [`from_byte_array`](FodId::from_byte_array) reads back to the same
     /// envelope.
     ///
     /// # Errors
