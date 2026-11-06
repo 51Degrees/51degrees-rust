@@ -48,6 +48,7 @@
   {
     "path": "properties.ip",
     "kind": "presence",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "reason": "With no address in the evidence the crates' IP Intelligence engine gives an error and no data, where .NET gives data in which no property has a value.",
     "issue": 226
   },
@@ -74,17 +75,20 @@
   },
   {
     "path": "*ip.ip",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "reason": "The crates do not fill the Ip property with the address looked up, as .NET does.",
     "issue": 226
   },
   {
     "path": "*ip.ipv6",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "reason": "The crates do not fill the IpV6 property with the address looked up, as .NET does.",
     "issue": 226
   },
   {
     "path": "*ip.*geonameid*",
     "kind": "onlyInDotnet",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "data": "enterprise",
     "reason": "The crates' model lacks the GeoNameId properties .NET declares.",
     "issue": 226
@@ -92,6 +96,7 @@
   {
     "path": "*ip.areas",
     "kind": "type",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "data": "enterprise",
     "reason": "The crates give Areas as a string, where .NET gives it as a WKT value, which its JSON writes as an object.",
     "issue": 226
@@ -99,6 +104,7 @@
   {
     "path": "properties.ip.iprange*",
     "kind": "type",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "data": "enterprise",
     "reason": "The crates give IpRangeStart and IpRangeEnd as strings, where .NET gives IP addresses.",
     "issue": 226
@@ -106,6 +112,7 @@
   {
     "path": "*ip.iprange*",
     "kind": "value",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "data": "enterprise",
     "reason": "The crates give an IPv6 range in full, 2a00:23c0:0000:0000:0000:0000:0000:0000, where .NET gives the compressed form RFC 5952 recommends, 2a00:23c0::, in the properties and in the JSON.",
     "issue": 226
@@ -127,6 +134,7 @@
   {
     "path": "properties.ip.*",
     "kind": "onlyInRust",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "data": "lite",
     "reason": "The crates' IP Intelligence engine lists a fixed set of property names whatever the data file holds. The ASN file holds few of them.",
     "issue": 223
