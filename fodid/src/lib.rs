@@ -121,10 +121,23 @@
 //! place. There is no upper bound on a 51Did in this crate, so a reader
 //! built today keeps reading identifiers issued in a newer, longer shape.
 //!
-//! [`FodId`] [`Deref`](std::ops::Deref)s to the underlying [`Owid`], so
-//! a `FodId` can be used directly for all OWID level concerns (domain, date,
-//! payload bytes, signature, base64 round tripping and signature
-//! verification) and adds typed accessors for the payload fields on top.
+//! The envelope's own fields and operations (version, domain, date,
+//! signature, base64 round tripping and signature verification) are
+//! methods of [`FodId`] too. The payload bytes are not, because every field
+//! in them has a typed accessor. [`FodId`] still
+//! [`Deref`](std::ops::Deref)s to the underlying [`Owid`], and the
+//! deprecated [`FodId::owid`] and [`FodId::into_owid`] still return it, only
+//! so that code written against earlier releases compiles.
+//!
+//! ## Comparing two 51Dids
+//!
+//! `==` on two [`FodId`] values compares their type and match key, which is
+//! how the specification asks whether two identifiers stand for the same
+//! thing. Two 51Dids issued for the same inputs are equal even though their
+//! envelopes differ, because the date and signature change every time one is
+//! issued. The usage, License Id and terms are not compared either. To ask
+//! whether two values are the same envelope, compare
+//! [`FodId::as_byte_array`].
 //!
 //! ## Reading and verifying are two separate questions
 //!
@@ -133,7 +146,7 @@
 //! that comes back from either is therefore **not necessarily
 //! cryptographically valid**, and the second question, whether its signature
 //! is genuine, is answered separately by
-//! [`verify_status_with_public_key`](Owid::verify_status_with_public_key)
+//! [`verify_status_with_public_key`](FodId::verify_status_with_public_key)
 //! on the parsed value. That answer is a [`SignatureStatus`], and only
 //! [`SignatureStatus::Invalid`] means the identifier should be distrusted.
 //! A key that could not be obtained or read is
@@ -195,7 +208,7 @@
 //! // and None where it names none this crate knows.
 //! let terms: Option<&str> = fod_id.terms();
 //!
-//! // Inherited OWID level fields and operations, available through Deref.
+//! // The envelope's own fields and operations.
 //! let domain = fod_id.domain();
 //! let round_trip = fod_id.as_base64()?;
 //!
@@ -248,9 +261,11 @@
 //! // Before                                // After
 //! let domain = &fod_id.domain;             let domain = fod_id.domain();
 //! let issued = fod_id.date;                let issued = fod_id.date();
-//! let bytes = &fod_id.payload;             let bytes = fod_id.payload();
 //! let sig = &fod_id.signature;             let sig = fod_id.signature();
 //! ```
+//!
+//! The payload bytes are not read whole. Each field in them has its own
+//! accessor on [`FodId`].
 //!
 //! A failed read is [`Error::Parse`] carrying a [`ParseError`] with a named
 //! status, where it used to be `Error::Owid` carrying an [`OwidError`] whose
@@ -294,9 +309,8 @@
 //!
 //! - **Signature verification on construction.** Reading a [`FodId`] does not
 //!   check the signature. Call
-//!   [`verify_status_with_public_key`](Owid::verify_status_with_public_key)
-//!   (inherited from [`Owid`] through [`Deref`](std::ops::Deref)) when
-//!   needed.
+//!   [`verify_status_with_public_key`](FodId::verify_status_with_public_key)
+//!   when needed.
 //! - **Construction of new 51Dids.** This is a reader. New 51Dids are issued
 //!   by the 51Degrees cloud, which alone holds the signing key. The `creator`
 //!   feature exists so tests and tools can stand in for the cloud, and is
@@ -360,13 +374,13 @@ mod owid;
 
 // Re-exported so callers can name every OWID type this crate's public
 // surface returns or accepts, because the OWID module itself is private.
-// `Owid` is the `Deref` target of `FodId`, `ParseError` and `ParseStatus`
+// `Owid` is what `FodId::from_owid` reads, `ParseError` and `ParseStatus`
 // name the reason a read failed, `SignatureStatus` is the outcome of a
 // signature check, `Crypto` carries the public key `verify_status_with_crypto`
-// checks against, `Version` and `ParseDetail` come back from `Owid::version`
+// checks against, `Version` and `ParseDetail` come back from `FodId::version`
 // and `ParseError::detail`, `SIGNATURE_LENGTH` is the fixed length of the
 // signature every envelope ends with, and `OwidError` is what `Error::Owid`
-// carries.
+// and the envelope methods that write or verify carry.
 pub use owid::{
     Crypto, Error as OwidError, Owid, ParseDetail, ParseError, ParseStatus, SignatureStatus,
     Version, SIGNATURE_LENGTH,

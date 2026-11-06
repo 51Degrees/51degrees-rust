@@ -26,8 +26,12 @@ use std::str::FromStr;
 use base64::alphabet;
 use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 use base64::Engine as _;
+use chrono::{DateTime, Utc};
 
-use crate::owid::{Owid, ParseDetail, ParseError, ParseStatus};
+use crate::owid::{
+    Crypto, Error as OwidError, Owid, ParseDetail, ParseError, ParseStatus, SignatureStatus,
+    Version,
+};
 
 use crate::error::{Error, Result};
 
@@ -323,19 +327,33 @@ impl Terms {
 /// because a caller has nothing to decide with it.
 ///
 /// Those lengths are minimums. A payload may carry more bytes after the match
-/// key, which this reader accepts and leaves in place, reachable through
-/// [`payload`](Owid::payload). There is no upper bound in this crate.
+/// key, which this reader accepts and keeps in the envelope, so
+/// [`as_byte_array`](FodId::as_byte_array) writes them out again. There is
+/// no upper bound in this crate.
 ///
-/// `FodId` [`Deref`]s to [`Owid`], so the OWID level fields and operations
-/// (`domain()`, `date()`, `payload()`, `signature()`, `as_base64`,
-/// `verify_with_public_key`, ...) are available directly on a `FodId` value.
+/// The envelope's own fields and operations are methods of `FodId`, being
+/// [`version`](FodId::version), [`domain`](FodId::domain),
+/// [`date`](FodId::date), [`signature`](FodId::signature),
+/// [`age_minutes`](FodId::age_minutes),
+/// [`as_byte_array`](FodId::as_byte_array),
+/// [`as_base64`](FodId::as_base64), [`as_base64_url`](FodId::as_base64_url)
+/// and the four verify methods. The payload is not among them, because
+/// every field in it has a named accessor. `FodId` still [`Deref`]s to
+/// [`Owid`], and the deprecated [`owid`](FodId::owid) and
+/// [`into_owid`](FodId::into_owid) still return it, only so that code
+/// written against earlier releases compiles. The `Deref` goes in the next
+/// release that may break the API.
+///
+/// Two values are equal when they have the same type and the same match key,
+/// as the [`PartialEq`] implementation says, so `==` asks whether two
+/// identifiers stand for the same thing and not whether they are the same
+/// envelope.
 ///
 /// A parsed `FodId` is not necessarily cryptographically valid. Reading
 /// does **not** verify the OWID signature. Call
-/// [`verify_status_with_public_key`](Owid::verify_status_with_public_key)
-/// (reached through the [`Deref`]) when cryptographic verification is
-/// required.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// [`verify_status_with_public_key`](FodId::verify_status_with_public_key)
+/// when cryptographic verification is required.
+#[derive(Debug, Clone)]
 pub struct FodId {
     owid: Owid,
     flags: u8,
@@ -399,8 +417,8 @@ impl FodId {
     }
 
     /// Promotes an already parsed [`Owid`] into a 51Did by unpacking its payload
-    /// fields. The OWID is moved into the returned value and remains reachable
-    /// through [`owid`](FodId::owid) and the [`Deref`].
+    /// fields. The OWID is moved into the returned value, and its envelope
+    /// fields are read through the methods of the same names on `FodId`.
     ///
     /// This is the one place the 51Did rules live. The creator domain is
     /// checked first, because the 51Did layout gives it as ASCII text where
@@ -603,16 +621,121 @@ impl FodId {
     pub fn terms(&self) -> Option<&'static str> {
         Terms::from_index(self.terms_index).url()
     }
+
+    /// The version of the OWID envelope, read from its first byte. This is
+    /// not the payload version, which a reader never exposes.
+    pub fn version(&self) -> Version {
+        self.owid.version()
+    }
+
+    /// The domain of the creator that signed the envelope.
+    pub fn domain(&self) -> &str {
+        self.owid.domain()
+    }
+
+    /// The minute, in UTC, the issuer created the envelope.
+    pub fn date(&self) -> DateTime<Utc> {
+        self.owid.date()
+    }
+
+    /// The signature over the rest of the envelope.
+    pub fn signature(&self) -> &[u8] {
+        self.owid.signature()
+    }
+
+    /// The whole minutes since the issuer created the envelope.
+    pub fn age_minutes(&self) -> i64 {
+        self.owid.age_minutes()
+    }
+
+    /// The envelope's bytes, which
+    /// [`from_byte_array`](FodId::from_byte_array) reads back to an equal
+    /// envelope.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`OwidError`] [`Owid::as_byte_array`] gives when the
+    /// envelope cannot be written.
+    pub fn as_byte_array(&self) -> std::result::Result<Vec<u8>, OwidError> {
+        self.owid.as_byte_array()
+    }
+
+    /// The envelope in the standard base64 alphabet with padding, the form
+    /// the cloud service issues.
+    ///
+    /// # Errors
+    ///
+    /// As [`as_byte_array`](FodId::as_byte_array).
+    pub fn as_base64(&self) -> std::result::Result<String, OwidError> {
+        self.owid.as_base64()
+    }
+
+    /// Checks the signature with the crypto instance given.
+    ///
+    /// # Errors
+    ///
+    /// As [`Owid::verify_with_crypto`].
+    pub fn verify_with_crypto(&self, crypto: &Crypto) -> std::result::Result<bool, OwidError> {
+        self.owid.verify_with_crypto(crypto)
+    }
+
+    /// Checks the signature with the public key given in SPKI PEM form.
+    ///
+    /// # Errors
+    ///
+    /// As [`Owid::verify_with_public_key`].
+    pub fn verify_with_public_key(&self, public_pem: &str) -> std::result::Result<bool, OwidError> {
+        self.owid.verify_with_public_key(public_pem)
+    }
+
+    /// The same check as [`verify_with_crypto`](FodId::verify_with_crypto),
+    /// answered with the status that names the outcome.
+    pub fn verify_status_with_crypto(&self, crypto: &Crypto) -> SignatureStatus {
+        self.owid.verify_status_with_crypto(crypto)
+    }
+
+    /// The same check as
+    /// [`verify_with_public_key`](FodId::verify_with_public_key), answered
+    /// with the status that names the outcome. Only
+    /// [`SignatureStatus::Invalid`] means the identifier should be
+    /// distrusted, and a key that cannot be read is
+    /// [`SignatureStatus::InvalidKey`].
+    pub fn verify_status_with_public_key(&self, public_pem: &str) -> SignatureStatus {
+        self.owid.verify_status_with_public_key(public_pem)
+    }
+
     /// A reference to the underlying OWID envelope.
+    #[deprecated(note = "the payload is not part of a 51Did's public surface, so use \
+                the envelope methods of FodId, such as domain, date, \
+                as_base64 and verify_status_with_public_key")]
     pub fn owid(&self) -> &Owid {
         &self.owid
     }
 
     /// Consumes the 51Did and returns the underlying OWID envelope.
+    #[deprecated(note = "the payload is not part of a 51Did's public surface, so use \
+                the envelope methods of FodId, such as as_byte_array and \
+                as_base64")]
     pub fn into_owid(self) -> Owid {
         self.owid
     }
 }
+
+/// Two 51Dids are equal when they have the same type and the same match key,
+/// because the specification compares match keys to ask whether two
+/// identifiers stand for the same thing. Nothing else is compared. The
+/// envelope's date and signature differ every time an identifier is issued,
+/// and the usage, License Id and terms say how an identifier may be used
+/// rather than what it stands for. Compare
+/// [`as_byte_array`](FodId::as_byte_array) to ask whether two values are the
+/// same envelope.
+impl PartialEq for FodId {
+    fn eq(&self, other: &Self) -> bool {
+        self.id_type() == other.id_type() && self.match_key == other.match_key
+    }
+}
+
+impl Eq for FodId {}
 
 /// Standard base64 with or without padding. The unused low bits of the last
 /// group are ignored rather than refused, as the .NET decoder ignores them.
@@ -673,6 +796,10 @@ pub(crate) fn to_base64_url(standard: &str) -> String {
         .to_owned()
 }
 
+/// Kept so that code written against earlier releases compiles. It reaches
+/// the payload, which a 51Did package does not expose, so it goes in the
+/// next release that may break the API. Use the envelope methods of
+/// `FodId` instead.
 impl Deref for FodId {
     type Target = Owid;
 

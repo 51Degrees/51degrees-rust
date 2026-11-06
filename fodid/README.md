@@ -130,10 +130,12 @@ crate accepts and leaves in place. There is no upper bound on a 51Did in this
 crate, so a reader built today keeps reading identifiers issued in a newer,
 longer shape.
 
-`FodId` derefs to the underlying `owid::Owid`, so a `FodId` value can be used
-directly for all OWID level concerns (domain, date, payload bytes, signature,
-base64 round tripping and signature verification) and adds typed accessors
-for the payload fields on top.
+The envelope's own fields and operations (version, domain, date, signature,
+base64 round tripping and signature verification) are methods of `FodId`
+too. The payload bytes are not, because every field in them has a typed
+accessor. `FodId` still derefs to the underlying `fodid::Owid`, and the
+deprecated `owid()` and `into_owid()` still return it, only so that code
+written against earlier releases compiles.
 
 ## Usage
 
@@ -159,7 +161,7 @@ fn read(base64_from_cloud_service: &str, public_pem: &str) -> Result<(), fodid::
     // document where this crate knows the index.
     let terms = fod_id.terms();             // Option<&'static str>
 
-    // Inherited OWID level fields and operations, available through Deref.
+    // The envelope's own fields and operations.
     let domain = fod_id.domain();
     let round_trip = fod_id.as_base64()?;
 
@@ -227,6 +229,11 @@ byte-level difference is in the **envelope**. The **match key** carried inside
 is stable. To decide whether two 51Dids refer to the same browser instance,
 compare the match keys, never the full base64 envelopes.
 
+`==` on two `FodId` values does exactly that, comparing the identifier type
+and the match key and nothing else. The usage, License Id and terms are not
+compared either. To ask whether two values are the same envelope, compare
+`as_byte_array()`.
+
 ```rust
 use fodid::FodId;
 
@@ -235,13 +242,14 @@ fn same_browser(idprobglobal_a: &str, idprobglobal_b: &str) -> Result<bool, fodi
     let b = FodId::from_base64(idprobglobal_b)?;
 
     // a.date() and a.signature() differ from b's on every issue, because the
-    // envelope is fresh each time. The match key is what stays the same.
-    Ok(a.match_key() == b.match_key())
+    // envelope is fresh each time. The type and match key stay the same.
+    Ok(a == b)
 }
 ```
 
-Use `match_key()` (a 32-byte SHA-256 or 16-byte GUID) as the cache /
-dedup key.
+Use `match_key()` (a 32-byte SHA-256 or 16-byte GUID), with the type where
+identifiers of more than one type are kept together, as the cache / dedup
+key.
 
 ## Migrating from the `owid` 1.0 crate surface
 
@@ -269,9 +277,11 @@ an OWID can no longer be altered after it was read or signed.
 // Before                                // After
 let domain = &fod_id.domain;             let domain = fod_id.domain();
 let issued = fod_id.date;                let issued = fod_id.date();
-let bytes = &fod_id.payload;             let bytes = fod_id.payload();
 let sig = &fod_id.signature;             let sig = fod_id.signature();
 ```
+
+The payload bytes are not read whole. Each field in them has its own accessor
+on `FodId`.
 
 A failed read is `Error::Parse` carrying a `ParseError` with a named status,
 where it used to be `Error::Owid` carrying the OWID error type (re-exported as
@@ -312,8 +322,7 @@ fod_id.verify_with_public_key(pem, &[])  fod_id.verify_with_public_key(pem)
 ## Non goals
 
 - **Signature verification on construction.** Reading a `FodId` does not check
-  the signature. Call `verify_status_with_public_key` (inherited from
-  `fodid::Owid` through `Deref`) when needed.
+  the signature. Call `verify_status_with_public_key` when needed.
 - **Construction of new 51Dids.** This is a reader. New 51Dids are issued by
   the 51Degrees cloud, which alone holds the signing key. The `creator`
   feature exists so tests and tools can stand in for the cloud, and is off by

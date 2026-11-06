@@ -185,14 +185,120 @@ fn assert_parsed(result: &fodid::Result<FodId>) -> &FodId {
         .expect("a successful read hands back the value")
 }
 
+/// `owid()`, `into_owid()` and the `Deref` are deprecated rather than
+/// removed, so code written against earlier releases still compiles and
+/// still reaches the same envelope.
 #[test]
-fn fod_id_derefs_to_owid() {
+#[allow(deprecated)]
+fn fod_id_still_derefs_to_owid() {
     let fixture = Fixture::new();
-    let fod_id = FodId::from_base64(&fixture.signed_owid_base64(canonical_payload())).unwrap();
+    let owid = fixture.signed_owid(canonical_payload());
+    let fod_id = FodId::from_owid(owid.clone()).unwrap();
 
-    // The OWID envelope is reachable both explicitly and through Deref.
     let via_deref: &Owid = &fod_id;
-    assert_eq!(via_deref, fod_id.owid());
+    assert_eq!(via_deref, &owid);
+    assert_eq!(fod_id.owid(), &owid);
+    assert_eq!(fod_id.into_owid(), owid);
+}
+
+/// Each envelope method of `FodId` answers as the same method of the
+/// envelope it was read from.
+#[test]
+fn the_envelope_methods_answer_as_the_envelope() {
+    let fixture = Fixture::new();
+    let owid = fixture.signed_owid(canonical_payload());
+    let fod_id = FodId::from_owid(owid.clone()).unwrap();
+    let crypto = Crypto::new_verify_only(&fixture.public_pem).unwrap();
+    let someone_else = Fixture::new();
+
+    assert_eq!(fod_id.version(), owid.version());
+    assert_eq!(fod_id.domain(), TEST_DOMAIN);
+    assert_eq!(fod_id.date(), owid.date());
+    assert_eq!(fod_id.signature(), owid.signature());
+    assert_eq!(fod_id.signature().len(), fodid::SIGNATURE_LENGTH);
+    // Each call reads the clock, so a minute can turn between the two.
+    let age = fod_id.age_minutes();
+    assert!((0..=1).contains(&(owid.age_minutes() - age)));
+    assert_eq!(
+        fod_id.as_byte_array().unwrap(),
+        owid.as_byte_array().unwrap()
+    );
+    assert_eq!(fod_id.as_base64().unwrap(), owid.as_base64().unwrap());
+    assert!(fod_id.verify_with_crypto(&crypto).unwrap());
+    assert!(fod_id.verify_with_public_key(&fixture.public_pem).unwrap());
+    assert_eq!(
+        fod_id.verify_status_with_crypto(&crypto),
+        SignatureStatus::Valid
+    );
+    assert_eq!(
+        fod_id.verify_status_with_public_key(&fixture.public_pem),
+        SignatureStatus::Valid
+    );
+    assert_eq!(
+        fod_id.verify_status_with_public_key(&someone_else.public_pem),
+        SignatureStatus::Invalid
+    );
+}
+
+/// Two 51Dids for the same inputs carry the same type and match key in
+/// envelopes that differ, so `==` compares the type and match key and
+/// nothing else.
+#[test]
+fn equal_when_the_type_and_match_key_are_equal() {
+    let fixture = Fixture::new();
+    let first = fixture.signed_owid(canonical_payload());
+
+    // The same type and match key, with every other field changed. The
+    // flags keep the hashed email type and set a lower usage, indirect,
+    // the License Id differs and the payload ends at the match key.
+    let mut payload = payload_ending_at_match_key();
+    payload[layout::FLAGS_OFFSET] = 0b1000_1001;
+    payload[layout::LICENSE_ID_OFFSET..layout::LICENSE_ID_OFFSET + layout::LICENSE_ID_LENGTH]
+        .copy_from_slice(&0x0BAD_F00Du32.to_le_bytes());
+    let domain = "example.com";
+    let mut second = fixture
+        .signed_owid_for(domain, payload)
+        .as_byte_array()
+        .unwrap();
+    // A different date, written after signing, which reading never checks.
+    let at = 1 + domain.len() + 1;
+    second[at..at + 4].copy_from_slice(&1u32.to_le_bytes());
+
+    let a = FodId::from_owid(first).unwrap();
+    let b = FodId::from_byte_array(&second).unwrap();
+    assert_ne!(a.as_byte_array().unwrap(), b.as_byte_array().unwrap());
+    assert_ne!(a.domain(), b.domain());
+    assert_ne!(a.date(), b.date());
+    assert_ne!(a.usage(), b.usage());
+    assert_ne!(a.usage_is_indirect(), b.usage_is_indirect());
+    assert_ne!(a.license_id(), b.license_id());
+    assert_ne!(a.terms(), b.terms());
+    assert_eq!(a.id_type(), b.id_type());
+    assert_eq!(a.match_key(), b.match_key());
+    assert_eq!(a, b);
+    assert_eq!(b, a);
+}
+
+#[test]
+fn not_equal_when_the_type_or_match_key_differs() {
+    let fixture = Fixture::new();
+    let read = |payload: Vec<u8>| FodId::from_owid(fixture.signed_owid(payload)).unwrap();
+    let hashed_email = read(canonical_payload());
+
+    // The same 32 match key bytes under the probabilistic type.
+    let mut payload = canonical_payload();
+    payload[layout::FLAGS_OFFSET] = CANONICAL_FLAGS & 0b0011_1111;
+    let probabilistic = read(payload);
+    assert_eq!(probabilistic.id_type(), IdType::Probabilistic);
+    assert_eq!(probabilistic.match_key(), hashed_email.match_key());
+    assert_ne!(probabilistic, hashed_email);
+
+    // The same type with the last match key byte changed.
+    let mut payload = canonical_payload();
+    payload[layout::MATCH_KEY_OFFSET + layout::MATCH_KEY_LENGTH - 1] ^= 1;
+    let other_key = read(payload);
+    assert_eq!(other_key.id_type(), hashed_email.id_type());
+    assert_ne!(other_key, hashed_email);
 }
 
 #[test]
@@ -242,7 +348,10 @@ fn constructor_from_owid_unpacks_all_three_fields() {
     assert_eq!(expected.date(), fod_id.date());
     assert_eq!(expected.version(), fod_id.version());
     // The whole envelope is preserved, not just the parsed fields.
-    assert_eq!(&expected, fod_id.owid());
+    assert_eq!(
+        expected.as_byte_array().unwrap(),
+        fod_id.as_byte_array().unwrap()
+    );
 }
 
 #[test]
@@ -917,7 +1026,10 @@ fn base64_roundtrip_preserves_all_fields() {
     assert_eq!(fod_id1.license_id(), fod_id2.license_id());
     assert_eq!(fod_id1.match_key(), fod_id2.match_key());
     assert_eq!(fod_id1.domain(), fod_id2.domain());
-    assert_eq!(fod_id1.owid(), fod_id2.owid());
+    assert_eq!(
+        fod_id1.as_byte_array().unwrap(),
+        fod_id2.as_byte_array().unwrap()
+    );
 }
 
 #[test]
@@ -1348,7 +1460,9 @@ fn from_base64_ignores_surrounding_whitespace() {
         .trim_end_matches('=')
         .to_owned();
 
-    let expected = FodId::from_base64(&standard).unwrap();
+    // Compared as bytes, because `==` compares only the type and match key.
+    let envelope = |text: &str| FodId::from_base64(text).unwrap().as_byte_array().unwrap();
+    let expected = envelope(&standard);
     for clean in [&standard, &url_safe] {
         for spaced in [
             format!("{clean}\n"),
@@ -1356,7 +1470,7 @@ fn from_base64_ignores_surrounding_whitespace() {
             format!("{clean} "),
             format!("\r\n\t {clean} \t\r\n"),
         ] {
-            assert_eq!(FodId::from_base64(&spaced).unwrap(), expected);
+            assert_eq!(envelope(&spaced), expected);
         }
     }
 }
@@ -1545,14 +1659,14 @@ fn from_base64_accepts_both_alphabets_with_or_without_padding() {
     let url_safe = url_safe_padded.trim_end_matches('=').to_owned();
     assert_ne!(url_safe, standard);
 
-    let expected = FodId::from_base64(&standard).unwrap();
-    assert_eq!(FodId::from_base64(&url_safe_padded).unwrap(), expected);
-    assert_eq!(FodId::from_base64(&url_safe).unwrap(), expected);
+    // Each form reads back to the same envelope, compared as bytes because
+    // `==` compares only the type and match key.
+    let envelope = |text: &str| FodId::from_base64(text).unwrap().as_byte_array().unwrap();
+    let expected = envelope(&standard);
+    assert_eq!(envelope(&url_safe_padded), expected);
+    assert_eq!(envelope(&url_safe), expected);
     // Padding stripped from the standard alphabet is restored too.
-    assert_eq!(
-        FodId::from_base64(standard.trim_end_matches('=')).unwrap(),
-        expected
-    );
+    assert_eq!(envelope(standard.trim_end_matches('=')), expected);
 }
 
 #[test]
@@ -1577,5 +1691,11 @@ fn as_base64_url_round_trips_and_carries_no_padding_or_standard_symbols() {
             .replace('/', "_")
             .trim_end_matches('=')
     );
-    assert_eq!(FodId::from_base64(&url_safe).unwrap(), fod_id);
+    assert_eq!(
+        FodId::from_base64(&url_safe)
+            .unwrap()
+            .as_byte_array()
+            .unwrap(),
+        fod_id.as_byte_array().unwrap()
+    );
 }
