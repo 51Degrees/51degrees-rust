@@ -33,6 +33,12 @@ use crate::error::{Error, Result};
 use crate::flow_element::FlowElement;
 use crate::pipeline::{Pipeline, PipelineBuilder};
 
+/// The names a configuration can find a setting by.
+trait SettingNames {
+    fn name(&self) -> &str;
+    fn alternate_names(&self) -> &[String];
+}
+
 /// What the builders of one pipeline share while it is made from a
 /// configuration.
 ///
@@ -169,6 +175,16 @@ impl<B: Send + 'static> Setting<B> {
                 },
             ),
         }
+    }
+}
+
+impl<B> SettingNames for Setting<B> {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn alternate_names(&self) -> &[String] {
+        &self.alternate_names
     }
 }
 
@@ -337,6 +353,146 @@ impl<B: Send + 'static> BuilderDefinition<B> {
     }
 }
 
+/// The elements of a pipeline made from a configuration, in the order they
+/// run, as a [`PipelineDefinition`] sees them just before the pipeline is
+/// built. Each is an element on its own or a parallel group.
+pub struct PipelineElements {
+    steps: Vec<Vec<Arc<dyn FlowElement>>>,
+}
+
+impl PipelineElements {
+    /// True if an element on its own, outside a parallel group, is an `E`,
+    /// as [`FlowElement::type_name`] names it. An element in a group is not
+    /// found, as .NET's `FiftyOnePipelineBuilder` does not find one. A group
+    /// of one element is that element on its own.
+    pub fn contains<E: FlowElement>(&self) -> bool {
+        let wanted = type_name::<E>();
+        self.steps
+            .iter()
+            .any(|step| matches!(step.as_slice(), [element] if element.type_name() == wanted))
+    }
+
+    /// Add `element` to run before the others.
+    pub fn insert_first(&mut self, element: Arc<dyn FlowElement>) {
+        self.steps.insert(0, vec![element]);
+    }
+
+    /// Add `element` to run after the others.
+    pub fn push(&mut self, element: Arc<dyn FlowElement>) {
+        self.steps.push(vec![element]);
+    }
+}
+
+type BeforeBuild<S> =
+    Box<dyn Fn(S, &mut PipelineElements, &mut BuildContext) -> Result<()> + Send + Sync>;
+
+/// The pipeline builder a configuration's own settings are given to, as
+/// .NET gives them to the class `BuildFromConfiguration` is called on.
+///
+/// .NET's `FiftyOnePipelineBuilder`, for example, adds the setting
+/// `SetShareUsage` to every pipeline's settings, and adds the elements it
+/// needs that the configuration left out before it builds. `S` holds the
+/// values of the settings this builder adds. A setting is found as an
+/// element builder's is (see [`BuilderDefinition`]), among these and every
+/// pipeline's own. Once the elements are made and the settings read,
+/// `before_build` runs, as .NET's `OnPreBuild` does.
+pub struct PipelineDefinition<S> {
+    full_name: String,
+    new: Box<dyn Fn() -> S + Send + Sync>,
+    settings: Vec<Setting<S>>,
+    before_build: BeforeBuild<S>,
+}
+
+impl<S: Send + 'static> PipelineDefinition<S> {
+    /// A pipeline builder whose settings start as `new` gives them, and
+    /// whose `before_build` can add elements and resources. Its full name in
+    /// errors is the Rust name of `S`.
+    pub fn new<N, F>(new: N, before_build: F) -> Self
+    where
+        N: Fn() -> S + Send + Sync + 'static,
+        F: Fn(S, &mut PipelineElements, &mut BuildContext) -> Result<()> + Send + Sync + 'static,
+    {
+        PipelineDefinition {
+            full_name: type_name::<S>().to_string(),
+            new: Box::new(new),
+            settings: Vec::new(),
+            before_build: Box::new(before_build),
+        }
+    }
+
+    /// A setting called `name`, which reads its value as `T` and gives it
+    /// to `apply`.
+    pub fn setting<T, F>(mut self, name: impl Into<String>, apply: F) -> Self
+    where
+        T: ConfigType,
+        F: Fn(S, T) -> S + Send + Sync + 'static,
+    {
+        self.settings
+            .push(Setting::new(name.into(), move |state, value| {
+                Ok(apply(state, value))
+            }));
+        self
+    }
+}
+
+impl PipelineDefinition<()> {
+    /// .NET's `PipelineBuilder`, which adds no settings and nothing before
+    /// it builds.
+    fn core() -> Self {
+        PipelineDefinition {
+            full_name: type_name::<PipelineBuilder>().to_string(),
+            new: Box::new(|| ()),
+            settings: Vec::new(),
+            before_build: Box::new(|_, _, _| Ok(())),
+        }
+    }
+}
+
+/// A setting of the pipeline, being one every pipeline has or one the
+/// registry's [`PipelineDefinition`] adds.
+enum PipelineSetting<'a, S> {
+    Core(&'a Setting<PipelineBuilder>),
+    Added(&'a Setting<S>),
+}
+
+/// A pipeline setting whose value has been read, waiting for the builder.
+enum PipelineReady<S> {
+    Core(Pending<PipelineBuilder>),
+    Added(Pending<S>),
+}
+
+impl<S> PipelineSetting<'_, S> {
+    fn type_name(&self) -> &'static str {
+        match self {
+            PipelineSetting::Core(setting) => setting.type_name,
+            PipelineSetting::Added(setting) => setting.type_name,
+        }
+    }
+
+    fn prepare(&self, value: &ConfigValue) -> std::result::Result<PipelineReady<S>, ParseFailure> {
+        match self {
+            PipelineSetting::Core(setting) => (setting.prepare)(value).map(PipelineReady::Core),
+            PipelineSetting::Added(setting) => (setting.prepare)(value).map(PipelineReady::Added),
+        }
+    }
+}
+
+impl<S> SettingNames for PipelineSetting<'_, S> {
+    fn name(&self) -> &str {
+        match self {
+            PipelineSetting::Core(setting) => &setting.name,
+            PipelineSetting::Added(setting) => &setting.name,
+        }
+    }
+
+    fn alternate_names(&self) -> &[String] {
+        match self {
+            PipelineSetting::Core(setting) => &setting.alternate_names,
+            PipelineSetting::Added(setting) => &setting.alternate_names,
+        }
+    }
+}
+
 /// An error making one element, with the cause .NET would give as the
 /// inner exception.
 struct ElementError {
@@ -370,13 +526,13 @@ type SettingsRead<B> = (Vec<Pending<B>>, Vec<String>);
 /// builder's methods. The first of these to match anything wins, being the
 /// name itself, the name with `Set` before it, and an alternate name equal
 /// to either, all ignoring case.
-fn matching_settings<'a, B>(settings: &'a [Setting<B>], key: &str) -> Vec<&'a Setting<B>> {
+fn matching_settings<'a, T: SettingNames>(settings: &'a [T], key: &str) -> Vec<&'a T> {
     let with_set = format!("Set{key}");
-    let stages: [Matches<Setting<B>>; 3] = [
-        &|s| equal_ignoring_case(&s.name, key),
-        &|s| equal_ignoring_case(&s.name, &with_set),
+    let stages: [Matches<T>; 3] = [
+        &|s| equal_ignoring_case(s.name(), key),
+        &|s| equal_ignoring_case(s.name(), &with_set),
         &|s| {
-            s.alternate_names
+            s.alternate_names()
                 .iter()
                 .any(|a| equal_ignoring_case(a, key) || equal_ignoring_case(a, &with_set))
         },
@@ -565,6 +721,84 @@ impl<B: Send + 'static> ElementFactory for BuilderDefinition<B> {
     }
 }
 
+trait PipelineFactory: Send + Sync {
+    /// Apply `parameters` to the pipeline's settings, `core` being those
+    /// every pipeline has, then run the step before building, and build.
+    fn build(
+        &self,
+        core: &[Setting<PipelineBuilder>],
+        parameters: &[(String, ConfigValue)],
+        builder: PipelineBuilder,
+        elements: PipelineElements,
+        context: BuildContext,
+    ) -> Result<Arc<Pipeline>>;
+}
+
+impl<S: Send + 'static> PipelineFactory for PipelineDefinition<S> {
+    fn build(
+        &self,
+        core: &[Setting<PipelineBuilder>],
+        parameters: &[(String, ConfigValue)],
+        mut builder: PipelineBuilder,
+        mut elements: PipelineElements,
+        mut context: BuildContext,
+    ) -> Result<Arc<Pipeline>> {
+        let settings: Vec<PipelineSetting<S>> = self
+            .settings
+            .iter()
+            .map(PipelineSetting::Added)
+            .chain(core.iter().map(PipelineSetting::Core))
+            .collect();
+        let mut state = (self.new)();
+        for (key, value) in parameters {
+            let candidates = matching_settings(&settings, key);
+            if candidates.is_empty() {
+                log::warn!(
+                    "The pipeline has no setting matching the build parameter '{key}', so it is \
+                     ignored."
+                );
+                continue;
+            }
+            let mut ready = None;
+            let mut failure = None;
+            for setting in candidates {
+                match setting.prepare(value) {
+                    Ok(prepared) => {
+                        ready = Some(prepared);
+                        break;
+                    }
+                    Err(refused) => failure = Some((setting, refused)),
+                }
+            }
+            match (ready, failure) {
+                (Some(PipelineReady::Core(apply)), _) => builder = apply(builder)?,
+                (Some(PipelineReady::Added(apply)), _) => state = apply(state)?,
+                (None, Some((setting, refused))) => {
+                    let prefix = format!(
+                        "Method '{}' on builder '{}' for pipeline expects a parameter of type \
+                         '{}'",
+                        setting.name(),
+                        self.full_name,
+                        setting.type_name()
+                    );
+                    let (message, _) = refused.describe(&prefix, value);
+                    return Err(Error::configuration(message));
+                }
+                (None, None) => unreachable!("a candidate setting either applies or refuses"),
+            }
+        }
+
+        (self.before_build)(state, &mut elements, &mut context)?;
+        for step in elements.steps {
+            builder = builder.add_parallel_elements(step);
+        }
+        for resource in context.resources {
+            builder = builder.add_resource(resource);
+        }
+        builder.build()
+    }
+}
+
 /// The element builders a configuration can name, and the settings of the
 /// pipeline itself.
 ///
@@ -574,12 +808,18 @@ impl<B: Send + 'static> ElementFactory for BuilderDefinition<B> {
 /// [`PipelineBuilder::build_from_configuration`] then makes a pipeline from
 /// [`PipelineOptions`] with them.
 ///
-/// The pipeline's own settings are `SetSuppressProcessException`, and
+/// The pipeline's own settings are `SetSuppressProcessException` and
+/// `SetSuppressProcessExceptions`, which both set
+/// [`PipelineBuilder::suppress_process_exceptions`], and
 /// `SetAutoDisposeElements`, which is read and has no effect because a
-/// pipeline always releases its elements when it is dropped.
+/// pipeline always releases its elements when it is dropped. These are
+/// .NET's `PipelineBuilder` settings. A [`PipelineDefinition`] given to
+/// [`BuilderRegistry::set_pipeline`] adds its own, as a .NET class derived
+/// from `PipelineBuilder`, such as `FiftyOnePipelineBuilder`, does.
 pub struct BuilderRegistry {
     builders: Vec<Box<dyn ElementFactory>>,
     pipeline_settings: Vec<Setting<PipelineBuilder>>,
+    pipeline: Box<dyn PipelineFactory>,
 }
 
 impl Default for BuilderRegistry {
@@ -602,11 +842,30 @@ impl BuilderRegistry {
                     },
                 ),
                 Setting::new(
+                    "SetSuppressProcessExceptions".to_string(),
+                    |builder: PipelineBuilder, suppress: bool| {
+                        Ok(builder.suppress_process_exceptions(suppress))
+                    },
+                ),
+                Setting::new(
                     "SetAutoDisposeElements".to_string(),
                     |builder: PipelineBuilder, _: bool| Ok(builder),
                 ),
             ],
+            pipeline: Box::new(PipelineDefinition::core()),
         }
+    }
+
+    /// Make each pipeline as `definition` describes, adding its settings to
+    /// the pipeline's own and running its step before the pipeline is
+    /// built. It replaces any definition set before. Returns `self` for
+    /// chaining.
+    pub fn set_pipeline<S: Send + 'static>(
+        &mut self,
+        definition: PipelineDefinition<S>,
+    ) -> &mut Self {
+        self.pipeline = Box::new(definition);
+        self
     }
 
     /// Add an element builder. Returns `self` for chaining.
@@ -773,7 +1032,9 @@ impl PipelineBuilder {
     /// [`PipelineBuilder::add_parallel_elements`], and a group cannot hold
     /// another. The pipeline's own settings are applied after the elements
     /// are made, and one the registry does not have is ignored, as .NET
-    /// ignores it, with a warning logged.
+    /// ignores it, with a warning logged. Then the step of the
+    /// [`PipelineDefinition`] given to [`BuilderRegistry::set_pipeline`]
+    /// runs, if there is one, and the pipeline is built.
     ///
     /// An element that cannot be made fails the build with a
     /// [`Error::PipelineConfiguration`] whose message is the one .NET gives,
@@ -786,6 +1047,9 @@ impl PipelineBuilder {
         let mut context = BuildContext {
             resources: self.reset_for_configuration(),
         };
+        let mut elements = PipelineElements {
+            steps: Vec::with_capacity(options.elements.len()),
+        };
         for (index, element) in options.elements.iter().enumerate() {
             let made = if element.sub_elements.is_empty() {
                 registry
@@ -795,52 +1059,18 @@ impl PipelineBuilder {
                 registry.create_group(element, index, &mut context)
             };
             match made {
-                Ok(made) => self = self.add_parallel_elements(made),
+                Ok(made) => elements.steps.push(made),
                 Err(error) => {
                     return Err(Error::configuration(informative_message(element, error)));
                 }
             }
         }
-        for resource in context.resources {
-            self = self.add_resource(resource);
-        }
-
-        for (key, value) in &options.build_parameters {
-            let candidates = matching_settings(&registry.pipeline_settings, key);
-            if candidates.is_empty() {
-                log::warn!(
-                    "The pipeline has no setting matching the build parameter '{key}', so it is \
-                     ignored."
-                );
-                continue;
-            }
-            let mut applied = None;
-            let mut failure = None;
-            for setting in &candidates {
-                match (setting.prepare)(value) {
-                    Ok(ready) => {
-                        applied = Some(ready);
-                        break;
-                    }
-                    Err(refused) => failure = Some((setting, refused)),
-                }
-            }
-            match (applied, failure) {
-                (Some(ready), _) => self = ready(self)?,
-                (None, Some((setting, refused))) => {
-                    let prefix = format!(
-                        "Method '{}' on builder '{}' for pipeline expects a parameter of type \
-                         '{}'",
-                        setting.name,
-                        type_name::<PipelineBuilder>(),
-                        setting.type_name
-                    );
-                    let (message, _) = refused.describe(&prefix, value);
-                    return Err(Error::configuration(message));
-                }
-                (None, None) => unreachable!("a candidate setting either applies or refuses"),
-            }
-        }
-        self.build()
+        registry.pipeline.build(
+            &registry.pipeline_settings,
+            &options.build_parameters,
+            self,
+            elements,
+            context,
+        )
     }
 }

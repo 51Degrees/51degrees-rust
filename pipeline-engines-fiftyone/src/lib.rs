@@ -91,7 +91,10 @@
 //! [`configuration::add_builders`] adds the builders of these three elements
 //! to a [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the
 //! names .NET gives them, so a configuration file written for .NET makes the
-//! same elements here.
+//! same elements here. [`configuration::use_fiftyone_pipeline_builder`] makes
+//! the registry's pipelines as .NET's `FiftyOnePipelineBuilder` does, adding
+//! the Sequence element and usage sharing unless the configuration has them
+//! or turns usage sharing off with `SetShareUsage`.
 //!
 //! ## A worked example
 //!

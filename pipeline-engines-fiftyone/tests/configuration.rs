@@ -30,7 +30,9 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use fiftyone_pipeline_core::configuration::{BuilderRegistry, ElementOptions, PipelineOptions};
+use fiftyone_pipeline_core::configuration::{
+    BuilderRegistry, ConfigValue, ElementOptions, PipelineOptions,
+};
 use fiftyone_pipeline_core::{Error, Pipeline, PipelineBuilder, Result};
 use fiftyone_pipeline_engines_fiftyone::constants::SHARE_USAGE_DEFAULT_URL;
 use fiftyone_pipeline_engines_fiftyone::{configuration, ShareUsageConfig};
@@ -741,4 +743,324 @@ fn a_json_file_written_for_dotnet_makes_the_same_elements() {
     assert_eq!(config.minimum_entries_per_message(), 200);
     assert_eq!(config.maximum_queue_size(), 2000);
     assert_eq!(logged(), [ignored("SetTrackSession")]);
+}
+
+// The pipeline .NET's `FiftyOnePipelineBuilder` makes from a configuration.
+// .NET 4.5.129 lists a parallel group's elements after the others in
+// `FlowElements`, as `Pipeline::flow_elements` does, so each expected list
+// below is in that order.
+
+const FIFTYONE_PIPELINE: &str =
+    "fiftyone_pipeline_engines_fiftyone::configuration::FiftyOnePipelineBuilder";
+
+fn build_fiftyone(options: &PipelineOptions) -> Result<Arc<Pipeline>> {
+    let mut registry = registry();
+    configuration::use_fiftyone_pipeline_builder(&mut registry);
+    PipelineBuilder::new().build_from_configuration(&registry, options)
+}
+
+fn data_keys(pipeline: &Pipeline) -> Vec<&str> {
+    pipeline
+        .flow_elements()
+        .iter()
+        .map(|e| e.data_key())
+        .collect()
+}
+
+fn set_headers() -> PipelineOptions {
+    PipelineOptions::new().element(ElementOptions::new("SetHeadersElementBuilder"))
+}
+
+#[test]
+fn the_fiftyone_pipeline_adds_the_sequence_first_and_usage_sharing_last() {
+    let _serial = start();
+    let pipeline = build_fiftyone(&set_headers()).unwrap();
+    assert_eq!(
+        data_keys(&pipeline),
+        ["sequence", "set-headers", "shareusage"]
+    );
+
+    // The usage sharing element added has the settings a usage sharing
+    // builder given none has, which are .NET's.
+    let added = pipeline.resource::<ShareUsageConfig>().unwrap();
+    let configured = config(share_usage(&[]));
+    assert_eq!(format!("{added:?}"), format!("{configured:?}"));
+    assert_eq!(added.share_percentage(), 1.0);
+    assert_eq!(added.minimum_entries_per_message(), 50);
+    assert_eq!(added.share_usage_url(), SHARE_USAGE_DEFAULT_URL);
+    assert!(logged().is_empty(), "{:?}", logged());
+
+    // A registry without it makes the pipeline .NET's `PipelineBuilder`
+    // makes, adding nothing.
+    assert_eq!(data_keys(&build(&set_headers()).unwrap()), ["set-headers"]);
+}
+
+#[test]
+fn share_usage_false_leaves_usage_sharing_out() {
+    let _serial = start();
+    for (name, value, expected) in [
+        ("SetShareUsage", "false", &["sequence", "set-headers"][..]),
+        ("ShareUsage", "False", &["sequence", "set-headers"]),
+        (
+            "shareusage",
+            "true",
+            &["sequence", "set-headers", "shareusage"],
+        ),
+        (
+            "SetShareUsage",
+            " true ",
+            &["sequence", "set-headers", "shareusage"],
+        ),
+    ] {
+        let pipeline = build_fiftyone(&set_headers().parameter(name, value)).unwrap();
+        assert_eq!(data_keys(&pipeline), expected, "{name} {value}");
+    }
+}
+
+#[test]
+fn share_usage_that_is_not_a_boolean_fails() {
+    let _serial = start();
+    for (value, ending) in [
+        (
+            ConfigValue::from("yes"),
+            ". Failed to parse value 'yes' using the static 'TryParse' method.",
+        ),
+        (
+            ConfigValue::from(""),
+            ". Failed to parse value '' using the static 'TryParse' method.",
+        ),
+        // .NET names the `List<string>` the probe gave in code as List`1.
+        (
+            ConfigValue::from(vec!["true"]),
+            " but supplied object is of type 'String[]'.",
+        ),
+    ] {
+        let options = set_headers().parameter("SetShareUsage", value);
+        assert_eq!(
+            message(build_fiftyone(&options)),
+            format!(
+                "Method 'SetShareUsage' on builder '{FIFTYONE_PIPELINE}' for pipeline expects a \
+                 parameter of type 'Boolean'{ending}"
+            )
+        );
+    }
+}
+
+#[test]
+fn share_usage_is_not_a_setting_of_the_core_pipeline() {
+    let _serial = start();
+    for value in ["false", "yes"] {
+        let pipeline = build(&set_headers().parameter("SetShareUsage", value)).unwrap();
+        assert_eq!(data_keys(&pipeline), ["set-headers"], "{value}");
+    }
+}
+
+#[test]
+fn a_sequence_or_usage_sharing_element_on_its_own_is_kept_where_it_is() {
+    let _serial = start();
+    let element = ElementOptions::new;
+    let share_quarter = || element("ShareUsageBuilder").parameter("SharePercentage", "0.25");
+    for (options, expected) in [
+        (
+            set_headers().element(element("SequenceElementBuilder")),
+            &["set-headers", "sequence", "shareusage"][..],
+        ),
+        (
+            set_headers().element(element("SequenceElement")),
+            &["set-headers", "sequence", "shareusage"],
+        ),
+        (
+            PipelineOptions::new().element(share_quarter()),
+            &["sequence", "shareusage"],
+        ),
+        (
+            PipelineOptions::new()
+                .element(share_quarter())
+                .parameter("SetShareUsage", "false"),
+            &["sequence", "shareusage"],
+        ),
+        (
+            PipelineOptions::new()
+                .element(element("SequenceElementBuilder"))
+                .element(element("SetHeadersElementBuilder"))
+                .element(element("ShareUsageBuilder")),
+            &["sequence", "set-headers", "shareusage"],
+        ),
+        (
+            PipelineOptions::new()
+                .element(element("ShareUsageBuilder"))
+                .element(element("SequenceElementBuilder")),
+            &["shareusage", "sequence"],
+        ),
+    ] {
+        let pipeline = build_fiftyone(&options).unwrap();
+        assert_eq!(data_keys(&pipeline), expected, "{options:?}");
+    }
+
+    // The usage sharing element the configuration names keeps its settings.
+    let pipeline = build_fiftyone(&PipelineOptions::new().element(share_quarter())).unwrap();
+    let config = pipeline.resource::<ShareUsageConfig>().unwrap();
+    assert_eq!(config.share_percentage(), 0.25);
+}
+
+#[test]
+fn an_element_in_a_parallel_group_is_not_counted() {
+    let _serial = start();
+    let group = |first: &str, second: &str| {
+        PipelineOptions::new().element(ElementOptions::group([
+            ElementOptions::new(first),
+            ElementOptions::new(second),
+        ]))
+    };
+
+    // .NET adds a second usage sharing element, and so do the crates.
+    let pipeline = build_fiftyone(&group("ShareUsageBuilder", "SetHeadersElementBuilder")).unwrap();
+    assert_eq!(
+        data_keys(&pipeline),
+        ["sequence", "shareusage", "shareusage", "set-headers"]
+    );
+
+    // .NET adds a second Sequence element before the group and builds. The
+    // crates refuse a group whose element has the data key of one before it.
+    let refused = "An element of a parallel group has the data key 'sequence' of an element \
+                   that runs before the group, so it could not add its data once that element \
+                   had. Add it on its own.";
+    for second in ["SetHeadersElementBuilder", "ShareUsageBuilder"] {
+        let options = group("SequenceElementBuilder", second);
+        assert_eq!(message(build_fiftyone(&options)), refused, "{second}");
+    }
+
+    // A group of one element is that element on its own here, so it is
+    // counted. .NET adds a second, as its group of one is still a group.
+    let sequence = ElementOptions::new("SequenceElementBuilder");
+    let options = PipelineOptions::new()
+        .element(ElementOptions::group([sequence]))
+        .element(ElementOptions::new("SetHeadersElementBuilder"));
+    assert_eq!(
+        data_keys(&build_fiftyone(&options).unwrap()),
+        ["sequence", "set-headers", "shareusage"]
+    );
+    let quarter = ElementOptions::new("ShareUsageBuilder").parameter("SharePercentage", "0.25");
+    let options = set_headers().element(ElementOptions::group([quarter]));
+    let pipeline = build_fiftyone(&options).unwrap();
+    assert_eq!(
+        data_keys(&pipeline),
+        ["sequence", "set-headers", "shareusage"]
+    );
+    let config = pipeline.resource::<ShareUsageConfig>().unwrap();
+    assert_eq!(config.share_percentage(), 0.25);
+}
+
+#[test]
+fn with_no_elements_the_fiftyone_pipeline_adds_its_own() {
+    let _serial = start();
+    let pipeline = build_fiftyone(&PipelineOptions::new()).unwrap();
+    assert_eq!(data_keys(&pipeline), ["sequence", "shareusage"]);
+    let options = PipelineOptions::new().parameter("SetShareUsage", "false");
+    assert_eq!(data_keys(&build_fiftyone(&options).unwrap()), ["sequence"]);
+}
+
+#[test]
+fn an_element_that_fails_stops_the_build_before_the_pipeline_settings() {
+    let _serial = start();
+    let element = ElementOptions::new("ShareUsageBuilder").parameter("ShareUsageUrl", "not a url");
+    let expected = failed(
+        "ShareUsageBuilder",
+        "Invalid URI: The format of the URI could not be determined.",
+    );
+    for options in [
+        PipelineOptions::new().element(element.clone()),
+        PipelineOptions::new()
+            .element(element.clone())
+            .parameter("SetShareUsage", "yes"),
+    ] {
+        assert_eq!(message(build_fiftyone(&options)), expected);
+    }
+}
+
+#[test]
+fn the_core_pipeline_settings_name_the_fiftyone_pipeline_builder() {
+    let _serial = start();
+    for name in [
+        "SuppressProcessException",
+        "SetSuppressProcessExceptions",
+        "SuppressProcessExceptions",
+    ] {
+        let pipeline = build_fiftyone(&set_headers().parameter(name, "True")).unwrap();
+        assert!(pipeline.is_suppress_process_exceptions(), "{name}");
+    }
+    for method in ["SetSuppressProcessException", "SetAutoDisposeElements"] {
+        let options = set_headers().parameter(method, "maybe");
+        assert_eq!(
+            message(build_fiftyone(&options)),
+            format!(
+                "Method '{method}' on builder '{FIFTYONE_PIPELINE}' for pipeline expects a \
+                 parameter of type 'Boolean'. Failed to parse value 'maybe' using the static \
+                 'TryParse' method."
+            )
+        );
+    }
+    let options = set_headers()
+        .parameter("SetShareUsage", "false")
+        .parameter("SetSuppressProcessException", "true");
+    let pipeline = build_fiftyone(&options).unwrap();
+    assert_eq!(data_keys(&pipeline), ["sequence", "set-headers"]);
+    assert!(pipeline.is_suppress_process_exceptions());
+
+    // .NET ignores an unknown pipeline setting and logs nothing, where the
+    // crates log a warning.
+    assert!(logged().is_empty(), "{:?}", logged());
+    let pipeline = build_fiftyone(&set_headers().parameter("SetNoSuchSetting", "1")).unwrap();
+    assert_eq!(
+        data_keys(&pipeline),
+        ["sequence", "set-headers", "shareusage"]
+    );
+    assert_eq!(
+        logged(),
+        [
+            "WARN The pipeline has no setting matching the build parameter 'SetNoSuchSetting', so \
+          it is ignored."
+        ]
+    );
+}
+
+#[test]
+fn a_json_file_for_dotnets_fiftyone_pipeline_builder_makes_the_same_pipeline() {
+    let _serial = start();
+    let options = PipelineOptions::from_json(
+        r#"{
+          "PipelineOptions": {
+            "Elements": [ { "BuilderName": "SetHeadersElementBuilder" } ],
+            "BuildParameters": {
+              "SetShareUsage": false,
+              "SuppressProcessExceptions": true
+            }
+          }
+        }"#,
+    )
+    .unwrap();
+    let pipeline = build_fiftyone(&options).unwrap();
+    assert_eq!(data_keys(&pipeline), ["sequence", "set-headers"]);
+    assert!(pipeline.is_suppress_process_exceptions());
+
+    let options = PipelineOptions::from_json(
+        r#"{
+          "PipelineOptions": {
+            "Elements": [
+              { "BuilderName": "SetHeadersElementBuilder" },
+              { "BuilderName": "ShareUsageBuilder", "BuildParameters": { "SharePercentage": 0.5 } }
+            ],
+            "BuildParameters": { "ShareUsage": "true" }
+          }
+        }"#,
+    )
+    .unwrap();
+    let pipeline = build_fiftyone(&options).unwrap();
+    assert_eq!(
+        data_keys(&pipeline),
+        ["sequence", "set-headers", "shareusage"]
+    );
+    assert!(!pipeline.is_suppress_process_exceptions());
+    let config = pipeline.resource::<ShareUsageConfig>().unwrap();
+    assert_eq!(config.share_percentage(), 0.5);
 }

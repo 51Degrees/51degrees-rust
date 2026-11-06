@@ -53,6 +53,11 @@
 //! The pipeline holds the [`ShareUsageConfig`] the usage sharing element
 //! was made with, so what a configuration set can be read back.
 //!
+//! [`use_fiftyone_pipeline_builder`] makes pipelines as .NET's
+//! `FiftyOnePipelineBuilder` does, adding the Sequence element and usage
+//! sharing that a configuration leaves out, with the pipeline setting
+//! `SetShareUsage` to turn usage sharing off.
+//!
 //! ```
 //! use fiftyone_pipeline_core::configuration::{BuilderRegistry, PipelineOptions};
 //! use fiftyone_pipeline_core::PipelineBuilder;
@@ -90,7 +95,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use fiftyone_pipeline_core::configuration::{BuildContext, BuilderDefinition, BuilderRegistry};
+use fiftyone_pipeline_core::configuration::{
+    BuildContext, BuilderDefinition, BuilderRegistry, PipelineDefinition, PipelineElements,
+};
 use fiftyone_pipeline_core::{Error, FlowElement, Result};
 
 use crate::constants::{
@@ -122,6 +129,9 @@ const SECONDS_PER_MINUTE: u64 = 60;
 /// in its warning.
 const IGNORE_FILTER_SETTING: &str = "IgnoreFlowDataEvidenceFilter";
 
+/// Usage sharing is on unless a configuration turns it off, as in .NET.
+const SHARE_USAGE_ENABLED_BY_DEFAULT: bool = true;
+
 /// Add this crate's element builders to `registry`, being
 /// `SequenceElementBuilder`, `SetHeadersElementBuilder` and
 /// `ShareUsageBuilder`. Returns `registry` for chaining.
@@ -130,6 +140,80 @@ pub fn add_builders(registry: &mut BuilderRegistry) -> &mut BuilderRegistry {
         .add(sequence_element_builder())
         .add(set_headers_element_builder())
         .add(share_usage_builder())
+}
+
+/// Make pipelines from `registry` as .NET's `FiftyOnePipelineBuilder` makes
+/// them, so usage sharing is on unless the configuration turns it off.
+/// Returns `registry` for chaining.
+///
+/// The pipeline setting `SetShareUsage` (a boolean, true by default) is
+/// added to the pipeline's own. Before the pipeline is built, a
+/// [`SequenceElement`] is added to run first unless one is in the
+/// configuration on its own, and while usage sharing is on, a
+/// [`ShareUsageElement`] with the default settings is added to run last
+/// unless one is in the configuration on its own. An element in a parallel
+/// group of two or more is not counted, as .NET does not count one. The
+/// pipeline holds the [`ShareUsageConfig`] of an element added this way, as
+/// it does for one the configuration names.
+///
+/// The element sends usage only when this crate's `share-usage-transport`
+/// feature is on, which it is not by default (see [`ShareUsageElement`]).
+///
+/// ```
+/// use fiftyone_pipeline_core::configuration::{BuilderRegistry, PipelineOptions};
+/// use fiftyone_pipeline_core::PipelineBuilder;
+/// use fiftyone_pipeline_engines_fiftyone::configuration;
+///
+/// let mut registry = BuilderRegistry::new();
+/// configuration::add_builders(&mut registry);
+/// configuration::use_fiftyone_pipeline_builder(&mut registry);
+/// let options = PipelineOptions::from_json(
+///     r#"{
+///         "PipelineOptions": {
+///             "Elements": [ { "BuilderName": "SetHeadersElementBuilder" } ],
+///             "BuildParameters": { "SetShareUsage": false }
+///         }
+///     }"#,
+/// )?;
+/// let pipeline = PipelineBuilder::new().build_from_configuration(&registry, &options)?;
+///
+/// let keys: Vec<&str> = pipeline.flow_elements().iter().map(|e| e.data_key()).collect();
+/// assert_eq!(keys, ["sequence", "set-headers"]);
+/// # Ok::<(), fiftyone_pipeline_core::Error>(())
+/// ```
+pub fn use_fiftyone_pipeline_builder(registry: &mut BuilderRegistry) -> &mut BuilderRegistry {
+    registry.set_pipeline(fiftyone_pipeline_builder())
+}
+
+/// The setting .NET's `FiftyOnePipelineBuilder` adds to the pipeline's own.
+struct FiftyOnePipelineBuilder {
+    share_usage: bool,
+}
+
+fn fiftyone_pipeline_builder() -> PipelineDefinition<FiftyOnePipelineBuilder> {
+    PipelineDefinition::new(
+        || FiftyOnePipelineBuilder {
+            share_usage: SHARE_USAGE_ENABLED_BY_DEFAULT,
+        },
+        |builder: FiftyOnePipelineBuilder,
+         elements: &mut PipelineElements,
+         context: &mut BuildContext| {
+            if !elements.contains::<SequenceElement>() {
+                elements.insert_first(Arc::new(SequenceElement::new()));
+            }
+            if builder.share_usage && !elements.contains::<ShareUsageElement>() {
+                elements.push(share_usage_element(ShareUsageBuilder::new(), context)?);
+            }
+            Ok(())
+        },
+    )
+    .setting(
+        "SetShareUsage",
+        |mut builder: FiftyOnePipelineBuilder, enabled: bool| {
+            builder.share_usage = enabled;
+            builder
+        },
+    )
 }
 
 /// Makes the [`SequenceElement`]. It has no settings.
@@ -300,15 +384,24 @@ fn ignored(setting: &str) {
     log::warn!("The usage sharing setting '{setting}' has no effect here and is ignored.");
 }
 
+/// The usage sharing element `builder` describes, with its configuration
+/// given to the pipeline.
+fn share_usage_element(
+    builder: ShareUsageBuilder,
+    context: &mut BuildContext,
+) -> Result<Arc<dyn FlowElement>> {
+    let config = builder.config()?;
+    context.add_resource(Arc::new(config.clone()));
+    Ok(Arc::new(ShareUsageElement::new(config)))
+}
+
 /// The usage sharing builder, with its settings in the order .NET's
 /// `ShareUsageBuilder` declares them.
 fn share_usage_builder() -> BuilderDefinition<ShareUsageBuilder> {
     BuilderDefinition::new(
         "ShareUsageBuilder",
         |builder: ShareUsageBuilder, context: &mut BuildContext| {
-            let config = builder.config()?;
-            context.add_resource(Arc::new(config.clone()));
-            Ok(Arc::new(ShareUsageElement::new(config)) as Arc<dyn FlowElement>)
+            share_usage_element(builder, context)
         },
     )
     .setting(

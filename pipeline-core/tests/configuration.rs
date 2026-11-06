@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use fiftyone_pipeline_core::configuration::{
     parse_enum, BuildContext, BuilderDefinition, BuilderRegistry, ConfigType, ConfigValue,
-    ElementOptions, Parameter, ParseFailure, PipelineOptions,
+    ElementOptions, Parameter, ParseFailure, PipelineDefinition, PipelineElements, PipelineOptions,
 };
 use fiftyone_pipeline_core::{
     ElementData, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
@@ -1162,10 +1162,13 @@ fn elements_added_in_code_are_replaced_by_the_configuration() {
 
 #[test]
 fn the_pipeline_settings_are_applied() {
+    // .NET 4.5.129 has both forms of the suppress setting.
     for name in [
         "SetSuppressProcessException",
         "SuppressProcessException",
         "suppressprocessexception",
+        "SetSuppressProcessExceptions",
+        "SuppressProcessExceptions",
     ] {
         let pipeline = build(
             &one(ElementOptions::new("ListSplitterElement"))
@@ -1206,14 +1209,207 @@ fn a_pipeline_setting_of_the_wrong_type_fails() {
             type_name::<PipelineBuilder>()
         )
     );
+    let found = message(build(
+        &one(ElementOptions::new("ListSplitterElement"))
+            .parameter("SuppressProcessExceptions", "maybe"),
+    ));
+    assert_eq!(
+        found,
+        format!(
+            "Method 'SetSuppressProcessExceptions' on builder '{}' for pipeline expects a \
+             parameter of type 'Boolean'. Failed to parse value 'maybe' using the static \
+             'TryParse' method.",
+            type_name::<PipelineBuilder>()
+        )
+    );
 }
 
+/// .NET's `PipelineBuilder` builds a pipeline with no elements from a
+/// configuration with none, where `PipelineBuilder::build` refuses one.
 #[test]
 fn a_configuration_with_no_elements_fails() {
     assert_eq!(
         message(build(&PipelineOptions::new())),
         "A pipeline must contain at least one flow element."
     );
+}
+
+/// The settings of a pipeline builder that adds an element called `first`
+/// to run first when `SetFirst` is true, and one called `last` to run last
+/// unless `SetLast` is false, as .NET's `FiftyOnePipelineBuilder` adds the
+/// Sequence and usage sharing elements.
+struct Wrapper {
+    first: bool,
+    last: bool,
+}
+
+/// Whether the wrapper's step found a list splitter on its own.
+struct SplitterFound(bool);
+
+fn wrapper_definition() -> PipelineDefinition<Wrapper> {
+    PipelineDefinition::new(
+        || Wrapper {
+            first: false,
+            last: true,
+        },
+        |wrapper: Wrapper, elements: &mut PipelineElements, context: &mut BuildContext| {
+            let found = elements.contains::<Element<Splitter>>();
+            context.add_resource(Arc::new(SplitterFound(found)));
+            if wrapper.first {
+                elements.insert_first(Arc::new(Element::new("first", ())));
+            }
+            if wrapper.last {
+                elements.push(Arc::new(Element::new("last", ())));
+            }
+            Ok(())
+        },
+    )
+    .setting("SetFirst", |mut wrapper: Wrapper, first: bool| {
+        wrapper.first = first;
+        wrapper
+    })
+    .setting("SetLast", |mut wrapper: Wrapper, last: bool| {
+        wrapper.last = last;
+        wrapper
+    })
+}
+
+fn build_wrapped(options: &PipelineOptions) -> Result<Arc<Pipeline>> {
+    let mut registry = registry();
+    registry.set_pipeline(wrapper_definition());
+    PipelineBuilder::new().build_from_configuration(&registry, options)
+}
+
+#[test]
+fn a_pipeline_definition_adds_elements_before_the_pipeline_is_built() {
+    let splitter = || one(ElementOptions::new("ListSplitterElement"));
+    let built = |options: &PipelineOptions| build_wrapped(options).unwrap();
+    assert_eq!(keys(&built(&splitter())), ["listsplitter", "last"]);
+    for (first, last) in [
+        ("SetFirst", "SetLast"),
+        ("First", "Last"),
+        ("first", "LAST"),
+    ] {
+        let options = splitter().parameter(first, "True").parameter(last, "false");
+        assert_eq!(keys(&built(&options)), ["first", "listsplitter"], "{first}");
+    }
+    let options = splitter().parameter("SetFirst", " true ");
+    assert_eq!(keys(&built(&options)), ["first", "listsplitter", "last"]);
+
+    // A configuration with no elements builds when the step adds one.
+    assert_eq!(keys(&built(&PipelineOptions::new())), ["last"]);
+
+    // The registry without the definition has neither the settings nor the
+    // step, so the setting is ignored.
+    let options = splitter().parameter("SetFirst", "true");
+    assert_eq!(keys(&build(&options).unwrap()), ["listsplitter"]);
+}
+
+#[test]
+fn a_pipeline_definition_finds_an_element_only_on_its_own() {
+    let splitter = || ElementOptions::new("ListSplitterElement");
+    let multiply = || ElementOptions::new("MultiplyByElementBuilder").parameter("Multiple", "3");
+    for (options, expected) in [
+        (PipelineOptions::new().element(splitter()), true),
+        (PipelineOptions::new().element(multiply()), false),
+        (
+            PipelineOptions::new()
+                .element(multiply())
+                .element(splitter()),
+            true,
+        ),
+        (
+            PipelineOptions::new().element(ElementOptions::group([multiply(), splitter()])),
+            false,
+        ),
+        // A group of one element is that element on its own.
+        (
+            PipelineOptions::new().element(ElementOptions::group([splitter()])),
+            true,
+        ),
+    ] {
+        let pipeline = build_wrapped(&options).unwrap();
+        let found = pipeline.resource::<SplitterFound>().unwrap();
+        assert_eq!(found.0, expected, "{options:?}");
+    }
+}
+
+#[test]
+fn a_pipeline_definition_names_itself_for_every_pipeline_setting() {
+    let splitter = || one(ElementOptions::new("ListSplitterElement"));
+    for (name, method) in [
+        ("Last", "SetLast"),
+        ("SuppressProcessException", "SetSuppressProcessException"),
+        ("SuppressProcessExceptions", "SetSuppressProcessExceptions"),
+        ("AutoDisposeElements", "SetAutoDisposeElements"),
+    ] {
+        let found = message(build_wrapped(&splitter().parameter(name, "maybe")));
+        assert_eq!(
+            found,
+            format!(
+                "Method '{method}' on builder '{}' for pipeline expects a parameter of type \
+                 'Boolean'. Failed to parse value 'maybe' using the static 'TryParse' method.",
+                type_name::<Wrapper>()
+            ),
+            "{name}"
+        );
+    }
+
+    // Every pipeline's own settings are still found, and an unknown one is
+    // ignored.
+    let pipeline = build_wrapped(
+        &splitter()
+            .parameter("SuppressProcessExceptions", "true")
+            .parameter("SetNoSuchSetting", "1"),
+    )
+    .unwrap();
+    assert!(pipeline.is_suppress_process_exceptions());
+    assert_eq!(keys(&pipeline), ["listsplitter", "last"]);
+}
+
+/// How many times the refusing definition's step has run.
+static REFUSING_STEPS: AtomicUsize = AtomicUsize::new(0);
+
+#[test]
+fn a_pipeline_definition_step_runs_last_and_can_fail_the_build() {
+    let mut registry = registry();
+    registry.set_pipeline(wrapper_definition());
+    // A second definition replaces the first, so `SetLast` is unknown.
+    registry.set_pipeline(
+        PipelineDefinition::new(
+            || false,
+            |refuse: bool, _: &mut PipelineElements, _: &mut BuildContext| {
+                REFUSING_STEPS.fetch_add(1, Ordering::SeqCst);
+                if refuse {
+                    return Err(Error::configuration("The step refused."));
+                }
+                Ok(())
+            },
+        )
+        .setting("SetRefuse", |_: bool, refuse: bool| refuse),
+    );
+    let build = |options: &PipelineOptions| {
+        PipelineBuilder::new().build_from_configuration(&registry, options)
+    };
+    let splitter = || one(ElementOptions::new("ListSplitterElement"));
+
+    let pipeline = build(&splitter().parameter("SetLast", "true")).unwrap();
+    assert_eq!(keys(&pipeline), ["listsplitter"]);
+    assert_eq!(REFUSING_STEPS.load(Ordering::SeqCst), 1);
+
+    assert_eq!(
+        message(build(&splitter().parameter("Refuse", "true"))),
+        "The step refused."
+    );
+    assert_eq!(REFUSING_STEPS.load(Ordering::SeqCst), 2);
+
+    // A setting that cannot be read fails before the step runs, and an
+    // element that cannot be made fails before the settings are read.
+    assert!(message(build(&splitter().parameter("Refuse", "maybe")))
+        .starts_with("Method 'SetRefuse' on builder 'bool' for pipeline"));
+    let options = one(ElementOptions::new("NoSuchBuilder")).parameter("Refuse", "maybe");
+    assert!(message(build(&options)).starts_with("Configuration failed to build."));
+    assert_eq!(REFUSING_STEPS.load(Ordering::SeqCst), 2);
 }
 
 /// A configuration file in the shape .NET reads, with comments, every value

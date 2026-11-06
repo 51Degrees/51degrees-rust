@@ -31,7 +31,8 @@
 //! builder a configuration can name, and
 //! [`crate::PipelineBuilder::build_from_configuration`] makes the pipeline,
 //! finding builders and their settings by name and reading each value from
-//! text as .NET does.
+//! text as .NET does. A [`PipelineDefinition`] adds pipeline settings and
+//! elements, as a .NET class derived from `PipelineBuilder` does.
 //!
 //! ```
 //! use std::sync::Arc;
@@ -94,6 +95,9 @@ mod text;
 mod time_span;
 
 pub use options::{ConfigValue, ElementOptions, PipelineOptions};
-pub use registry::{BuildArguments, BuildContext, BuilderDefinition, BuilderRegistry, Parameter};
+pub use registry::{
+    BuildArguments, BuildContext, BuilderDefinition, BuilderRegistry, Parameter,
+    PipelineDefinition, PipelineElements,
+};
 pub use text::{parse_csv, parse_enum, ConfigType, ParseFailure};
 pub use time_span::TimeSpan;
