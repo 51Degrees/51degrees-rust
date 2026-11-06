@@ -193,6 +193,56 @@
     "text": "Aw=="
   },
   {
+    "id": "text-url-space-1",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 164 characters, with one space after the 82nd.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAAAAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHwGAqQ auUk8NJ-aquIsU1xtVk8PJYp4R4eKNCJzGLavXhKb-G619iLKv7KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF"
+  },
+  {
+    "id": "text-url-space-2",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 164 characters, with a space after the 41st and the 123rd.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAAAAAAQIDB AUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHwGAqQauUk8NJ-aquIsU1xtVk8PJYp4R4eKNCJzGLavXhKb -G619iLKv7KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF"
+  },
+  {
+    "id": "text-url-space-3",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 164 characters, with a space after the 41st, 82nd and 123rd.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAAAAAAQIDB AUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHwGAqQ auUk8NJ-aquIsU1xtVk8PJYp4R4eKNCJzGLavXhKb -G619iLKv7KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF"
+  },
+  {
+    "id": "text-url-tabs",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 164 characters, with a tab after the 33rd, 66th, 99th and 132nd.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAA\tAAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFh\tcYGRobHB0eHwGAqQauUk8NJ-aquIsU1xt\tVk8PJYp4R4eKNCJzGLavXhKb-G619iLKv\t7KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF"
+  },
+  {
+    "id": "text-url-line-breaks",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 164 characters, with a carriage return and line feed after the 55th and the 110th.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAAAAAAQIDBAUGBwgJCgsMDQ4\r\nPEBESExQVFhcYGRobHB0eHwGAqQauUk8NJ-aquIsU1xtVk8PJYp4R4e\r\nKNCJzGLavXhKb-G619iLKv7KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF"
+  },
+  {
+    "id": "text-url-no-break-spaces",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 164 characters, with a no-break space (U+00A0) after the 33rd, 66th, 99th and 132nd.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAA\u00a0AAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFh\u00a0cYGRobHB0eHwGAqQauUk8NJ-aquIsU1xt\u00a0Vk8PJYp4R4eKNCJzGLavXhKb-G619iLKv\u00a07KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF"
+  },
+  {
+    "id": "text-url-no-break-space-surrounded",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet with a no-break space (U+00A0) before and after it.",
+    "text": "\u00a0A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAAAAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHwGAqQauUk8NJ-aquIsU1xtVk8PJYp4R4eKNCJzGLavXhKb-G619iLKv7KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF\u00a0"
+  },
+  {
+    "id": "text-url-unpadded-space-1",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 143 characters so one padding character is left out, with one space after the 72nd.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAWAAAAQyoAAADw4dLDtKWWh3hpWks8LR4PAX-365Ks7NHGDHOc 8p-HthRQLcCS1M-lvbW273-vslQ3rgRWjlrByWT32mFp9LBGm30cHtHLTvqBNRLdueLgF00"
+  },
+  {
+    "id": "text-url-unpadded-space-4",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 143 characters so one padding character is left out, with a space after the 28th, 56th, 84th and 112th.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAWAAAA QyoAAADw4dLDtKWWh3hpWks8LR4P AX-365Ks7NHGDHOc8p-HthRQLcCS 1M-lvbW273-vslQ3rgRWjlrByWT3 2mFp9LBGm30cHtHLTvqBNRLdueLgF00"
+  },
+  {
+    "id": "text-standard-space-1",
+    "about": "A 51Did from an earlier run in the standard alphabet with padding, 144 characters, with one space after the 72nd.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAWAAAAQyoAAADw4dLDtKWWh3hpWks8LR4PAX+365Ks7NHGDHOc 8p+HthRQLcCS1M+lvbW273+vslQ3rgRWjlrByWT32mFp9LBGm30cHtHLTvqBNRLdueLgF00="
+  },
+  {
     "id": "metadata",
     "about": "The 51Did component and the six properties as each language describes them.",
     "metadata": true
