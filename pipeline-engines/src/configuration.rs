@@ -49,6 +49,9 @@
 //! The engine's builder then calls [`DataFileSettings::check`], which
 //! refuses updates that cannot run as .NET refuses them, and makes its data
 //! file with [`DataFileSettings::configuration`].
+//!
+//! [`performance_profile_number`] reads the text of an on-premise engine's
+//! `SetPerformanceProfile` as .NET does.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -349,6 +352,62 @@ fn data_update_url(url: String) -> Result<String> {
     Ok(url)
 }
 
+/// .NET's performance profiles, with their numbers, in number order.
+const PERFORMANCE_PROFILES: [(&str, i64); 5] = [
+    ("LowMemory", 0),
+    ("MaxPerformance", 1),
+    ("HighPerformance", 2),
+    ("Balanced", 3),
+    ("BalancedTemp", 4),
+];
+
+/// The number .NET's `Enum.TryParse` gives `text` for the performance
+/// profiles, being a whole number, or names matched exactly and joined by
+/// commas, whose numbers are combined, with space around each allowed.
+fn profile_number(text: &str) -> Option<i64> {
+    let trimmed = text.trim_matches(char::is_whitespace);
+    if trimmed.starts_with(|c: char| c.is_ascii_digit() || c == '+' || c == '-') {
+        let digits = trimmed.strip_prefix('+').unwrap_or(trimmed);
+        return digits.parse::<i32>().ok().map(i64::from);
+    }
+    trimmed.split(',').try_fold(0, |number, name| {
+        let name = name.trim_matches(char::is_whitespace);
+        PERFORMANCE_PROFILES
+            .iter()
+            .find(|(profile, _)| *profile == name)
+            .map(|(_, value)| number | value)
+    })
+}
+
+/// The performance profile the text of `SetPerformanceProfile` names, as
+/// .NET's on-premise engine builders read it, being .NET's number for it:
+/// `0` `LowMemory`, `1` `MaxPerformance`, `2` `HighPerformance`, `3`
+/// `Balanced` or `4` `BalancedTemp`. The text is a number or the exact
+/// names, names joined by commas being combined. Text naming no profile is
+/// refused with .NET's message, and a number that is none of the five with
+/// .NET's message for the engine called `engine`.
+pub fn performance_profile_number(text: &str, engine: &str) -> Result<u8> {
+    let Some(number) = profile_number(text) else {
+        let available: Vec<String> = PERFORMANCE_PROFILES
+            .iter()
+            .map(|(name, _)| format!("'{name}'"))
+            .collect();
+        return Err(Error::configuration(format!(
+            "'{text}' is not a valid performance profile. Available profiles are {}.",
+            available.join(", ")
+        )));
+    };
+    u8::try_from(number)
+        .ok()
+        .filter(|number| *number <= 4)
+        .ok_or_else(|| {
+            Error::configuration(format!(
+                "The performance profile '{number}' is not valid for a {engine}. (Parameter \
+                 'profile')"
+            ))
+        })
+}
+
 /// Add the data file settings to `definition`, in the order .NET's
 /// `SingleFileAspectEngineBuilderBase` and `OnPremiseAspectEngineBuilderBase`
 /// declare them. `settings` gives the [`DataFileSettings`] the builder `B`
@@ -622,6 +681,65 @@ mod tests {
                 data_update_url(url.to_string()).unwrap_err().message(),
                 "Invalid URI: The format of the URI could not be determined.",
                 "{url}"
+            );
+        }
+    }
+
+    /// The number each text gave in .NET 4.5.180's Hash engine and 4.5.155's
+    /// IP Intelligence engine, or the message it refused the text with.
+    #[test]
+    fn a_performance_profile_is_read_as_dotnet_reads_it() {
+        for (text, number) in [
+            ("LowMemory", 0),
+            ("MaxPerformance", 1),
+            ("HighPerformance", 2),
+            ("Balanced", 3),
+            ("BalancedTemp", 4),
+            (" HighPerformance ", 2),
+            ("0", 0),
+            ("4", 4),
+            ("+2", 2),
+            ("LowMemory,Balanced", 3),
+            ("LowMemory, Balanced", 3),
+        ] {
+            assert_eq!(
+                performance_profile_number(text, "Engine").unwrap(),
+                number,
+                "{text}"
+            );
+        }
+        for text in [
+            "maxperformance",
+            "Bogus",
+            "",
+            "Default",
+            "InMemory",
+            "1,Balanced",
+            "LowMemory,",
+            "99999999999",
+        ] {
+            assert_eq!(
+                performance_profile_number(text, "Engine")
+                    .unwrap_err()
+                    .message(),
+                format!(
+                    "'{text}' is not a valid performance profile. Available profiles are \
+                     'LowMemory', 'MaxPerformance', 'HighPerformance', 'Balanced', \
+                     'BalancedTemp'."
+                ),
+                "{text}"
+            );
+        }
+        for (text, number) in [("5", 5), ("-1", -1), ("Balanced,BalancedTemp", 7)] {
+            assert_eq!(
+                performance_profile_number(text, "IpiOnPremiseEngine")
+                    .unwrap_err()
+                    .message(),
+                format!(
+                    "The performance profile '{number}' is not valid for a \
+                     IpiOnPremiseEngine. (Parameter 'profile')"
+                ),
+                "{text}"
             );
         }
     }

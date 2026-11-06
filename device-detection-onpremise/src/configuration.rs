@@ -100,22 +100,15 @@ use fiftyone_pipeline_core::configuration::{
     BuildContext, BuilderDefinition, BuilderRegistry, Parameter,
 };
 use fiftyone_pipeline_core::{Error, FlowElement, Result};
-use fiftyone_pipeline_engines::configuration::{add_data_file_settings, DataFileSettings};
+use fiftyone_pipeline_engines::configuration::{
+    add_data_file_settings, performance_profile_number, DataFileSettings,
+};
 use fiftyone_pipeline_engines::DataUpdateService;
 
 use crate::DeviceDetectionOnPremiseEngineBuilder;
 
 /// The name of the engine in the messages .NET gives.
 const ENGINE_NAME: &str = "DeviceDetectionHashEngine";
-
-/// .NET's performance profiles, with their numbers, in number order.
-const PROFILES: [(&str, i64); 5] = [
-    ("LowMemory", 0),
-    ("MaxPerformance", 1),
-    ("HighPerformance", 2),
-    ("Balanced", 3),
-    ("BalancedTemp", 4),
-];
 
 /// Add the Hash engine's builder to `registry`, as
 /// `DeviceDetectionHashEngineBuilder`. Returns `registry` for chaining.
@@ -196,46 +189,14 @@ impl DeviceDetectionHashEngineSettings {
     }
 }
 
-/// The number .NET's `Enum.TryParse` gives `text` for the performance
-/// profiles, being a whole number, or names matched exactly and joined by
-/// commas, whose numbers are combined, with space around each allowed.
-fn profile_number(text: &str) -> Option<i64> {
-    let trimmed = text.trim_matches(char::is_whitespace);
-    if trimmed.starts_with(|c: char| c.is_ascii_digit() || c == '+' || c == '-') {
-        let digits = trimmed.strip_prefix('+').unwrap_or(trimmed);
-        return digits.parse::<i32>().ok().map(i64::from);
-    }
-    trimmed.split(',').try_fold(0, |number, name| {
-        let name = name.trim_matches(char::is_whitespace);
-        PROFILES
-            .iter()
-            .find(|(profile, _)| *profile == name)
-            .map(|(_, value)| number | value)
-    })
-}
-
 /// The profile `SetPerformanceProfile` names, refused with .NET's messages.
 fn performance_profile(text: &str) -> Result<PerformanceProfile> {
-    let Some(number) = profile_number(text) else {
-        let available: Vec<String> = PROFILES
-            .iter()
-            .map(|(name, _)| format!("'{name}'"))
-            .collect();
-        return Err(Error::configuration(format!(
-            "'{text}' is not a valid performance profile. Available profiles are {}.",
-            available.join(", ")
-        )));
-    };
-    match number {
-        0 => Ok(PerformanceProfile::LowMemory),
-        1 => Ok(PerformanceProfile::InMemory),
-        2 => Ok(PerformanceProfile::HighPerformance),
-        3 | 4 => Ok(PerformanceProfile::Balanced),
-        other => Err(Error::configuration(format!(
-            "The performance profile '{other}' is not valid for a {ENGINE_NAME}. (Parameter \
-             'profile')"
-        ))),
-    }
+    Ok(match performance_profile_number(text, ENGINE_NAME)? {
+        0 => PerformanceProfile::LowMemory,
+        1 => PerformanceProfile::InMemory,
+        2 => PerformanceProfile::HighPerformance,
+        _ => PerformanceProfile::Balanced,
+    })
 }
 
 /// Log that the setting `setting` has no effect, and why.
