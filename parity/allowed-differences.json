@@ -86,14 +86,6 @@
     "issue": 226
   },
   {
-    "path": "*ip.*geonameid*",
-    "kind": "onlyInDotnet",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "data": "enterprise",
-    "reason": "The crates' model lacks the GeoNameId properties .NET declares.",
-    "issue": 226
-  },
-  {
     "path": "*ip.areas",
     "kind": "type",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],

@@ -752,21 +752,25 @@ struct ReadableNames {
     lowercase_names: Vec<String>,
     /// Each property's required property index in the data set.
     indexes: Vec<c_int>,
+    /// Each property's type, as the engine's metadata gives it from the data
+    /// file.
+    value_types: Vec<PropertyValueType>,
     /// The position of each property in `names`, by lowercase name.
     by_name: HashMap<String, usize>,
 }
 
 impl ReadableNames {
     fn new(file_properties: &[DataFileProperty]) -> Self {
-        let (names, indexes): (Vec<String>, Vec<c_int>) = file_properties
-            .iter()
-            .filter(|property| property.available)
-            .filter_map(|property| {
-                property
-                    .required_property_index
-                    .map(|index| (property.name.clone(), index))
-            })
-            .unzip();
+        let mut names = Vec::new();
+        let mut indexes = Vec::new();
+        let mut value_types = Vec::new();
+        for property in file_properties.iter().filter(|property| property.available) {
+            if let Some(index) = property.required_property_index {
+                names.push(property.name.clone());
+                indexes.push(index);
+                value_types.push(metadata_value_type(&property.name, property.value_type));
+            }
+        }
         let lowercase_names: Vec<String> = names.iter().map(|name| name.to_lowercase()).collect();
         ReadableNames {
             by_name: lowercase_names
@@ -777,6 +781,7 @@ impl ReadableNames {
             names,
             lowercase_names,
             indexes,
+            value_types,
         }
     }
 }
@@ -806,15 +811,19 @@ impl IpIntelligencePropertyReader for LookupReader {
         position: usize,
         data: &mut IpIntelligenceDataBase,
     ) -> std::result::Result<(), String> {
-        let name = &self.loaded.readable.names[position];
-        let index = self.loaded.readable.indexes[position];
+        let readable = &self.loaded.readable;
+        let name = &readable.names[position];
+        let index = readable.indexes[position];
+        let value_type = readable.value_types[position];
         let results = self.results.lock().unwrap_or_else(PoisonError::into_inner);
-        populate_property(data, &results, name, index).map_err(|error| error.to_string())
+        populate_property(data, &results, name, index, value_type)
+            .map_err(|error| error.to_string())
     }
 }
 
 /// Read one property from the results and store it on `ip_data`, typed by the
-/// property's declared value type.
+/// property's declared value type, or by `value_type`, the type the data file
+/// names for it, when the shared model declares none.
 ///
 /// The native [`Results::read_property`] decides plain versus weighted from the
 /// value type the data file stores, so a weighted property is stored as a
@@ -830,15 +839,16 @@ fn populate_property(
     results: &Results,
     name: &str,
     index: c_int,
+    value_type: PropertyValueType,
 ) -> Result<()> {
-    let declared = declared_property_value_type(name);
+    let declared = declared_property_value_type(name).unwrap_or(value_type);
 
     // A property declared weighted (the country-code distributions and `Mcc`) is
     // always read through the weighted collection, even when the data file stores
     // its candidates as plain strings (their `StoredValueType` is `string`, so the
     // native value type alone would misclassify them as plain). The declared
     // metadata type is the source of truth for weighted-ness.
-    if declared == Some(WEIGHTED_PROPERTY_VALUE_TYPE) {
+    if declared == WEIGHTED_PROPERTY_VALUE_TYPE {
         let pairs = results.values_weighted_by_index(index)?;
         if !pairs.is_empty() {
             let values = pairs
@@ -861,7 +871,7 @@ fn populate_property(
         }
         PropertyRead::Boolean(value) => ip_data.set_boolean(name, value),
         PropertyRead::Integer(value) => {
-            if declared == Some(PropertyValueType::Bool) {
+            if declared == PropertyValueType::Bool {
                 ip_data.set_boolean(name, value != 0);
             } else {
                 ip_data.set_integer(name, value);
@@ -874,17 +884,17 @@ fn populate_property(
         // typed accessor could not return. A string property keeps its value
         // verbatim, including such a sentinel, matching the other SDKs.
         PropertyRead::String(value) => match declared {
-            Some(PropertyValueType::Bool) => {
+            PropertyValueType::Bool => {
                 if let Some(flag) = parse_bool(&value) {
                     ip_data.set_boolean(name, flag);
                 }
             }
-            Some(PropertyValueType::Integer) => {
+            PropertyValueType::Integer => {
                 if let Ok(int) = value.trim().parse::<i32>() {
                     ip_data.set_integer(name, int);
                 }
             }
-            Some(PropertyValueType::Float) => {
+            PropertyValueType::Float => {
                 if let Some(float) = float_from_text(&value) {
                     ip_data.set_float(name, float);
                 }

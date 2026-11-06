@@ -32,7 +32,7 @@ use fiftyone_ip_intelligence_onpremise::{
     IpIntelligenceData, IpIntelligenceOnPremiseEngine, IP_DATA_KEY,
 };
 use fiftyone_native::PerformanceProfile;
-use fiftyone_pipeline_core::{ElementData, Evidence, FlowElement, Pipeline};
+use fiftyone_pipeline_core::{ElementData, Evidence, FlowElement, Pipeline, PropertyValue};
 use fiftyone_pipeline_engines::{AspectEngine, MissingPropertyReason, OnPremiseAspectEngine};
 use fiftyone_pipeline_engines_fiftyone::ValueMetaData;
 
@@ -295,6 +295,39 @@ fn a_property_left_out_by_configuration_is_excluded() {
     let data = lookup(engine, "1.1.1.1");
     assert_eq!(data.asn_name().no_value_message(), Some(expected));
     assert_eq!(data.get("AsnName").unwrap_err().message, expected);
+}
+
+/// A property the shared model does not declare is read as the type the data
+/// file names for it, so on an Enterprise file `StateGeoNameIdsGeographical`
+/// is a weighted list and `ContinentGeoNameId` a string.
+#[test]
+fn a_property_the_shared_model_does_not_declare_is_read_as_the_data_file_types_it() {
+    let Some(engine) = engine(&[]) else {
+        eprintln!("no IP Intelligence data file found; skipping undeclared properties");
+        return;
+    };
+    if !engine
+        .populated_property_names()
+        .iter()
+        .any(|name| name == "StateGeoNameIdsGeographical")
+    {
+        eprintln!("the data file is not an Enterprise file; skipping undeclared properties");
+        return;
+    }
+    let data = lookup(engine, "1.1.1.1");
+    assert!(
+        matches!(
+            data.get("StateGeoNameIdsGeographical"),
+            Ok(PropertyValue::KeyValueList(_))
+        ),
+        "{:?}",
+        data.get("StateGeoNameIdsGeographical")
+    );
+    assert!(
+        matches!(data.get("ContinentGeoNameId"), Ok(PropertyValue::String(_))),
+        "{:?}",
+        data.get("ContinentGeoNameId")
+    );
 }
 
 /// A refresh reads the metadata of the data file again into new lists.
