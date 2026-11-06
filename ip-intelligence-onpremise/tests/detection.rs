@@ -368,8 +368,7 @@ fn every_present_property_unpacks_as_its_declared_type() {
             let unpacks = match declared {
                 PropertyValueType::Bool => ip_data.boolean(name).value().is_ok(),
                 PropertyValueType::Integer => ip_data.integer(name).value().is_ok(),
-                // Single-precision floats are published as Double but read as f32.
-                PropertyValueType::Double => ip_data.float(name).value().is_ok(),
+                PropertyValueType::Float => ip_data.float(name).value().is_ok(),
                 // The weighted properties are published as a key-value list.
                 PropertyValueType::KeyValueList => ip_data.weighted_string(name).value().is_ok(),
                 _ => ip_data.string(name).value().is_ok(),
@@ -469,8 +468,8 @@ fn enterprise_resolves_location_for_a_public_ip() {
 /// A property the engine was not built with, but that `IpIntelligenceData`
 /// has an accessor for, is not in the engine's metadata, so the
 /// specification's typed accessor rule gives a data file upgrade and the
-/// message names no tiers. .NET gives `Unknown` here, because
-/// `IIpDataOnPremise` declares no properties of its own.
+/// message leaves out the tier sentence. The rule counts the accessors of the
+/// shared `IpIntelligenceData`.
 #[test]
 fn an_unlisted_property_with_an_accessor_needs_a_data_file_upgrade() {
     let Some(file) = asn_data_file() else {
@@ -491,9 +490,8 @@ fn an_unlisted_property_with_an_accessor_needs_a_data_file_upgrade() {
     assert!(
         result.description.starts_with(
             "Property 'CountryCode' not found in data for element 'ip'. This is because \
-             your license or data file does not include this property. It is available \
-             with the Unknown license/data for the IpIntelligenceOnPremiseEngine. To \
-             upgrade, see "
+             your license or data file does not include this property. To see which \
+             licenses include it, see "
         ),
         "{}",
         result.description
@@ -574,13 +572,18 @@ fn a_listed_property_the_asn_file_lacks_has_an_unknown_reason() {
         eprintln!("no ASN data file found; skipping missing property test");
         return;
     };
-    if file.file_name().and_then(|name| name.to_str()) != Some(ASN_FILE_NAME) {
-        eprintln!("{} is not the ASN file; skipping", file.display());
+    let engine = build_engine(&file, PerformanceProfile::HighPerformance, &[])
+        .expect("the ASN data file builds an engine");
+    if lookup(Arc::clone(&engine), CLOUDFLARE_IPV4)
+        .country_code()
+        .has_value()
+    {
+        eprintln!(
+            "{} holds CountryCode, so it is not the ASN file; skipping",
+            file.display()
+        );
         return;
     }
-    let Some(engine) = build_engine(&file, PerformanceProfile::HighPerformance, &[]) else {
-        return;
-    };
     assert!(
         engine
             .aspect_properties()

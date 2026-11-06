@@ -64,7 +64,7 @@ use std::ptr::NonNull;
 use std::sync::{Arc, OnceLock};
 
 use fiftyone_ip_intelligence_sys as sys;
-use fiftyone_pipeline_core::{constants, Error, Evidence, Result};
+use fiftyone_pipeline_core::{constants, round_angle, Error, Evidence, Result};
 
 use crate::buffer::with_value_string;
 use crate::evidence::parse_client_ip;
@@ -699,6 +699,10 @@ impl Results {
     /// the Phase 3 on-premise engine surfaces as
     /// `AspectPropertyValue<Vec<WeightedValue<T>>>`.
     ///
+    /// A value the data file stores as an Azimuth or Declination, such as a
+    /// latitude or a longitude, is given to 3 decimal places, as
+    /// [`Results::value_as_string`] gives it.
+    ///
     /// Returns an empty vector when the property is not one of the required
     /// properties or the results carry no value for it, mirroring how
     /// [`Results::value_as_string`] reports an absent value as [`None`].
@@ -765,12 +769,15 @@ impl Results {
                 &mut exception,
             )
         };
+        // Safety: `results` is valid, and the shim checks the index.
+        let stored_type =
+            unsafe { sys::fiftyoneDegreesShimIpiGetStoredValueType(self.as_ptr(), index) };
 
         // Read the collection while it is alive, then release it regardless of
         // whether reading raised an exception, so no native memory leaks.
         let read = if exception.is_okay() {
             // Safety: the collection came from the getter above and is intact.
-            unsafe { collect_weighted(&collection) }
+            unsafe { collect_weighted(&collection, stored_type) }
         } else {
             Vec::new()
         };
@@ -890,13 +897,16 @@ pub(crate) fn parse_bool(text: &str) -> Option<bool> {
 /// reinterpreted as the concrete `Weighted*` structure its `value_type`
 /// selects. The raw weighting is a native `u32`, scaled into a `u16` for the
 /// pipeline weighted value width. Items whose value type is not one of the
-/// supported weighted leaf types are skipped.
+/// supported weighted leaf types are skipped. `stored_type` is the type the
+/// data file stores the property's values as, which decides how a double is
+/// rendered.
 ///
 /// # Safety
 /// `collection` must be an intact collection returned by
 /// [`sys::fiftyoneDegreesResultsIpiGetValuesCollection`] and not yet released.
 unsafe fn collect_weighted(
     collection: &sys::WeightedValuesCollection,
+    stored_type: c_int,
 ) -> Vec<(sys::PropertyValueType, String, u16)> {
     use sys::PropertyValueType as Ty;
 
@@ -931,7 +941,7 @@ unsafe fn collect_weighted(
             }
             Ty::WeightedDouble | Ty::Double => {
                 let wd = header as *const sys::WeightedDouble;
-                Some((*wd).value.to_string())
+                Some(double_text((*wd).value, stored_type))
             }
             Ty::WeightedBool | Ty::Boolean => {
                 let wb = header as *const sys::WeightedBool;
@@ -950,6 +960,25 @@ unsafe fn collect_weighted(
         }
     }
     out
+}
+
+/// Render a double from a value collection, given the type the data file
+/// stores it as.
+///
+/// A value converted from an Azimuth or Declination is given to 3 decimal
+/// places by [`round_angle`], as the specification requires, so it reads as
+/// the `f32` nearest the rounded decimal. A stored 32-bit float is given with
+/// the float's own digits, as the double holds it exactly. Any other double
+/// keeps every place it has.
+fn double_text(value: f64, stored_type: c_int) -> String {
+    use sys::PropertyValueType as Ty;
+    if stored_type == Ty::Declination as c_int || stored_type == Ty::Azimuth as c_int {
+        round_angle(value).to_string()
+    } else if stored_type == Ty::SinglePrecisionFloat as c_int {
+        (value as f32).to_string()
+    } else {
+        value.to_string()
+    }
 }
 
 /// Whether a property value type is one of the weighted list variants
@@ -1230,6 +1259,58 @@ mod tests {
         assert!(results.value_as_string_by_index(count, c"|").is_err());
         assert!(results.value_as_string_by_index(-1, c"|").is_err());
         assert!(results.values_weighted_by_index(count).is_err());
+    }
+
+    /// A double converted from an Azimuth or Declination is given to 3
+    /// decimal places, so a plain float reads as the `f32` nearest the
+    /// rounded decimal.
+    #[test]
+    fn an_angle_is_given_to_three_decimal_places() {
+        use sys::PropertyValueType as Ty;
+        let declination = Ty::Declination as c_int;
+        let azimuth = Ty::Azimuth as c_int;
+        // A stored Declination of 7723 converts to 21.21250038148137.
+        let latitude = 7723.0 * 90.0 / 32767.0;
+        assert_eq!(double_text(latitude, declination), "21.213");
+        assert_eq!(double_text(-latitude, declination), "-21.213");
+        assert_eq!(double_text(180.0, azimuth), "180");
+        // A stored Azimuth of 4274 converts to 23.47849971007416.
+        assert_eq!(double_text(4274.0 * 180.0 / 32767.0, azimuth), "23.478");
+        assert_eq!(
+            property_read_from(vec![(
+                Ty::Double,
+                double_text(latitude, declination),
+                u16::MAX,
+            )]),
+            PropertyRead::Float(21.213)
+        );
+    }
+
+    /// A double the data file does not store as an Azimuth or Declination
+    /// keeps its places, whether stored as a double, a string or an integer,
+    /// and a stored 32-bit float keeps the float's own digits.
+    #[test]
+    fn a_double_that_is_not_an_angle_keeps_its_places() {
+        use sys::PropertyValueType as Ty;
+        let latitude = 7723.0 * 90.0 / 32767.0;
+        assert_eq!(
+            double_text(latitude, Ty::Double as c_int),
+            "21.21250038148137"
+        );
+        assert_eq!(double_text(0.0004, Ty::Double as c_int), "0.0004");
+        assert_eq!(double_text(0.0004, Ty::String as c_int), "0.0004");
+        assert_eq!(double_text(-0.0001, Ty::String as c_int), "-0.0001");
+        assert_eq!(double_text(42.0, Ty::Integer as c_int), "42");
+        assert_eq!(
+            double_text(f64::from(0.1_f32), Ty::SinglePrecisionFloat as c_int),
+            "0.1"
+        );
+        assert_eq!(
+            double_text(f64::from(18.5427_f32), Ty::SinglePrecisionFloat as c_int),
+            "18.5427"
+        );
+        // The type could not be read.
+        assert_eq!(double_text(0.0004, -1), "0.0004");
     }
 
     #[test]

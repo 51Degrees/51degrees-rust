@@ -276,7 +276,11 @@ impl FiftyOneAspectPropertyMetaData {
         self.default_value.as_ref()
     }
 
-    /// Find the value with the given name, matched case-insensitively.
+    /// Find the value with the given name among [`Self::values`], matched
+    /// case-insensitively. So this finds nothing for a property whose engine
+    /// leaves [`Self::values`] empty. Such an engine gives one value when it
+    /// is asked for, as the on-premise Device Detection engine's
+    /// `property_value` does.
     pub fn value(&self, name: &str) -> Option<&ValueMetaData> {
         self.values
             .iter()

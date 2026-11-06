@@ -40,10 +40,11 @@ use fiftyone_pipeline_core::{
     TypedKey,
 };
 
+use crate::canonical::FORMAT;
 use crate::evaluate::Outcome;
 use crate::fault::{Fault, Faults};
 use crate::model::{Literal, Script, ValueType};
-use crate::scripts::BuiltInScript;
+use crate::scripts::{built_in_scripts_commit, BuiltInScript, BUILT_IN_SOURCE};
 use crate::source::{Lookup, PropertySource, SourceValue, WeightedSourceValue};
 
 /// The element data key every script writes into, one property per script,
@@ -309,13 +310,7 @@ impl DerivedPropertyElementBuilder {
         if !self.faults.is_empty() {
             return Err(Faults::new(self.faults));
         }
-        for script in self.scripts.iter().filter(|script| script.is_deprecated()) {
-            log::warn!(
-                "Derived property script '{}' is deprecated. {}",
-                script.name(),
-                script.deprecation_note().unwrap_or_default()
-            );
-        }
+        log_scripts(&self.scripts);
         let reported = self
             .scripts
             .iter()
@@ -342,6 +337,50 @@ impl DerivedPropertyElementBuilder {
             // reads is the element data earlier elements produced.
             filter: EvidenceKeyFilterWhitelist::new(Vec::<&str>::new()),
         })
+    }
+}
+
+/// Log each script at build. One information line per script gives its name,
+/// version, format, source and output, a deprecated script adds a warning
+/// carrying its note, and at debug level the compiled script follows as
+/// canonical JSON, so anyone holding the log can see what was evaluated without
+/// the file. Where any script is shipped in this crate, one line first names
+/// the derived-properties commit the shipped scripts came from.
+fn log_scripts(scripts: &[Script]) {
+    if scripts
+        .iter()
+        .any(|script| script.source().starts_with(BUILT_IN_SOURCE))
+    {
+        log::info!(
+            "Built in derived property scripts came from derived-properties commit {}.",
+            built_in_scripts_commit()
+        );
+    }
+    for script in scripts {
+        let output = script.output();
+        log::info!(
+            "Derived property script '{}' version {} (format {}) from {} produces '{}' as {}.",
+            script.name(),
+            script.version(),
+            FORMAT,
+            script.source(),
+            output.name,
+            output.value_type
+        );
+        if script.is_deprecated() {
+            log::warn!(
+                "Derived property script '{}' is deprecated. {}",
+                script.name(),
+                script.deprecation_note().unwrap_or_default()
+            );
+        }
+        if log::log_enabled!(log::Level::Debug) {
+            log::debug!(
+                "Derived property script '{}' compiled to {}",
+                script.name(),
+                script.to_canonical_json()
+            );
+        }
     }
 }
 
@@ -483,7 +522,7 @@ fn lookup_of(value: PropertyValue) -> Lookup {
         PropertyValue::Bool(flag) => Lookup::Value(SourceValue::Bool(flag)),
         PropertyValue::Integer(number) => Lookup::Value(SourceValue::Int(number)),
         PropertyValue::Double(number) => Lookup::Value(SourceValue::Double(number)),
-        PropertyValue::Float(number) => Lookup::Value(SourceValue::Double(f64::from(number))),
+        PropertyValue::Float(number) => Lookup::Value(SourceValue::Double(float_as_double(number))),
         PropertyValue::StringList(_) => Lookup::List,
         // A list of weighted values takes the value with the highest weight. A
         // list of anything else, where a single value is needed, cannot be
@@ -523,9 +562,18 @@ fn single_value(value: &PropertyValue) -> Option<SourceValue> {
         PropertyValue::Bool(flag) => Some(SourceValue::Bool(*flag)),
         PropertyValue::Integer(number) => Some(SourceValue::Int(*number)),
         PropertyValue::Double(number) => Some(SourceValue::Double(*number)),
-        PropertyValue::Float(number) => Some(SourceValue::Double(f64::from(*number))),
+        PropertyValue::Float(number) => Some(SourceValue::Double(float_as_double(*number))),
         _ => None,
     }
+}
+
+/// A 32-bit float as the `f64` nearest its decimal, as
+/// [`PropertyValue::as_double`] gives it, so a latitude of 18.543 compares
+/// equal to the 18.543 a script holds.
+fn float_as_double(number: f32) -> f64 {
+    PropertyValue::Float(number)
+        .as_double()
+        .unwrap_or(f64::from(number))
 }
 
 /// A value one script produced, as the next script reads it.

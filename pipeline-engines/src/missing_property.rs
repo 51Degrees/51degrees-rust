@@ -24,17 +24,19 @@
 //!
 //! When a property an engine advertises is requested but is not present in its
 //! results, the caller wants to know why. The [`MissingPropertyService`] applies
-//! the resolution rules from the
+//! the rules and messages of the
 //! [missing-properties section](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#missing-properties)
-//! of the properties specification, in the order and with the messages the
-//! .NET `MissingPropertyService` uses.
+//! of the properties specification.
 //!
 //! The outcome is a core [`MissingPropertyReason`] plus a developer-facing
 //! description. An aspect engine surfaces this through
-//! [`crate::AspectEngine::missing_property_reason`], which builds an
+//! [`crate::AspectEngine::missing_property_reason`].
+//! [`crate::AspectEngine::property_missing_error`] builds an
 //! [`Error::PropertyMissing`](fiftyone_pipeline_core::Error::PropertyMissing)
-//! from the result. [`missing_property_reason_for_engines`] resolves the reason
-//! across every engine that writes to one aspect data.
+//! from the reason alone, so that error's text is the reason's general
+//! wording rather than the description.
+//! [`missing_property_reason_for_engines`] resolves the reason across every
+//! engine that writes to one aspect data.
 //!
 //! An aspect data gives the reason for a property it does not hold through a
 //! [`MissingPropertySource`] that the engine attached when it wrote the data.
@@ -69,9 +71,6 @@ const MESSAGE_CLOUD_REQUEST_FAILED: &str = "This is because an upstream cloud re
 /// names no engine.
 const UNKNOWN_ELEMENT: &str = "Unknown";
 
-/// The tier list written when the property is not in the engine's metadata.
-const UNKNOWN_TIERS: &str = "Unknown";
-
 /// The deployment kind of an engine, used to pick the correct missing-property
 /// rules.
 ///
@@ -105,9 +104,11 @@ pub struct MissingPropertyResult {
 /// isolation and so a cloud engine that has not yet loaded its metadata can
 /// pass `properties_loaded = false`.
 ///
-/// A context carries neither the engine's type name nor its typed accessors,
-/// so a description built from one names the element data key where the
-/// engine's type name would go, and the typed accessor rule never applies.
+/// A context carries neither the engine's type name, its typed accessors, nor
+/// whether its property list request failed. So a description built from one
+/// names the element data key where the engine's type name would go, the
+/// typed accessor rule never applies, and a cloud engine without metadata
+/// gives [`MissingPropertyReason::Unknown`].
 /// [`crate::AspectEngine::missing_property_reason`] applies every rule.
 pub struct EngineMissingPropertyContext<'a> {
     /// The engine's string data key, used in the message.
@@ -137,10 +138,13 @@ pub(crate) struct EngineView<'a> {
     pub(crate) data_source_tier: &'a str,
     /// True if the engine has loaded its property metadata.
     pub(crate) properties_loaded: bool,
+    /// True if a cloud engine has no metadata because its request for the
+    /// property list failed.
+    pub(crate) property_list_request_failed: bool,
     /// The engine's aspect property metadata.
     pub(crate) properties: &'a [AspectPropertyMetaData],
-    /// Whether the engine's data type has a typed accessor for a name, or
-    /// [`None`] when the typed accessors are not known.
+    /// Whether the engine's data type has a typed accessor for a lowercased
+    /// name, or [`None`] when the typed accessors are not known.
     pub(crate) has_typed_property: Option<&'a dyn Fn(&str) -> bool>,
 }
 
@@ -153,6 +157,7 @@ impl<'a> EngineView<'a> {
             deployment: engine.deployment,
             data_source_tier: engine.data_source_tier,
             properties_loaded: engine.properties_loaded,
+            property_list_request_failed: false,
             properties: engine.properties,
             has_typed_property: None,
         }
@@ -269,7 +274,7 @@ pub fn missing_property_reason_for_engines(
 ///     MissingPropertyReason::Unknown
 /// );
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MissingPropertySource {
     element_data_key: String,
     type_name: String,
@@ -277,6 +282,21 @@ pub struct MissingPropertySource {
     data_source_tier: String,
     properties: Vec<AspectPropertyMetaData>,
     has_typed_property: Option<fn(&str) -> bool>,
+}
+
+/// Written by hand so that printing data that holds a source prints the
+/// number of properties rather than the engine's whole property metadata.
+impl std::fmt::Debug for MissingPropertySource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MissingPropertySource")
+            .field("element_data_key", &self.element_data_key)
+            .field("type_name", &self.type_name)
+            .field("deployment", &self.deployment)
+            .field("data_source_tier", &self.data_source_tier)
+            .field("properties", &self.properties.len())
+            .field("has_typed_property", &self.has_typed_property.is_some())
+            .finish()
+    }
 }
 
 impl MissingPropertySource {
@@ -315,6 +335,7 @@ impl MissingPropertySource {
             deployment: self.deployment,
             data_source_tier: &self.data_source_tier,
             properties_loaded: true,
+            property_list_request_failed: false,
             properties: &self.properties,
             has_typed_property: self
                 .has_typed_property
@@ -359,31 +380,41 @@ pub(crate) fn resolve(property_name: &str, engine: &EngineView<'_>) -> MissingPr
 /// Apply the resolution rules, first match wins, returning the reason and the
 /// engine's metadata for the property when it has some.
 ///
-/// 1. When the engine has loaded its metadata and lists the property under
-///    exactly this name, an on-premise engine whose data tier is not one of the
-///    property's tiers gives [`MissingPropertyReason::DataFileUpgradeRequired`],
-///    and a property marked unavailable gives
+/// Names are compared once lowercased, as element data compares them, so a
+/// property has one reason however it is spelt.
+///
+/// 1. When the engine has loaded its metadata and lists the property, an
+///    on-premise engine whose data tier is not one of the property's tiers
+///    gives [`MissingPropertyReason::DataFileUpgradeRequired`], and a property
+///    marked unavailable gives
 ///    [`MissingPropertyReason::PropertyExcludedFromConfig`]. Cloud engines do
 ///    not publish tiers, so the tier check is skipped for them.
 /// 2. A cloud engine that has loaded its metadata gives
 ///    [`MissingPropertyReason::ProductNotAccessibleWithResourceKey`] when it
 ///    lists no properties, and otherwise
-///    [`MissingPropertyReason::PropertyNotAccessibleWithResourceKey`].
-/// 3. When the engine's metadata does not list the property and the engine's
-///    data type has a typed accessor for the name, ignoring case, the property
-///    is one another data file would supply, so the reason is
-///    [`MissingPropertyReason::DataFileUpgradeRequired`]. A listed property
-///    has passed rule 1's tier check, so an upgrade would name the tier the
-///    engine already has.
+///    [`MissingPropertyReason::PropertyNotAccessibleWithResourceKey`]. One
+///    without metadata gives [`MissingPropertyReason::CloudRequestFailed`]
+///    when its property list request failed, and otherwise
+///    [`MissingPropertyReason::Unknown`].
+/// 3. When an on-premise engine's metadata does not list the property and the
+///    engine's data type has a typed accessor for the name, the property is
+///    one another data file would supply, so the reason is
+///    [`MissingPropertyReason::DataFileUpgradeRequired`] with no tiers. A
+///    listed property has passed rule 1's tier check, so an upgrade would
+///    name the tier the engine already has.
 /// 4. Otherwise [`MissingPropertyReason::Unknown`].
 fn determine_reason<'a>(
     property_name: &str,
     engine: &EngineView<'a>,
 ) -> (MissingPropertyReason, Option<&'a AspectPropertyMetaData>) {
     let is_cloud = engine.deployment == EngineDeployment::Cloud;
+    let lowered = property_name.to_lowercase();
 
     let property = if engine.properties_loaded {
-        engine.properties.iter().find(|p| p.name() == property_name)
+        engine
+            .properties
+            .iter()
+            .find(|p| p.name().to_lowercase() == lowered)
     } else {
         None
     };
@@ -408,8 +439,14 @@ fn determine_reason<'a>(
         }
     }
 
-    if is_cloud && engine.properties_loaded {
-        let reason = if engine.properties.is_empty() {
+    if is_cloud {
+        let reason = if !engine.properties_loaded {
+            if engine.property_list_request_failed {
+                MissingPropertyReason::CloudRequestFailed
+            } else {
+                MissingPropertyReason::Unknown
+            }
+        } else if engine.properties.is_empty() {
             MissingPropertyReason::ProductNotAccessibleWithResourceKey
         } else {
             MissingPropertyReason::PropertyNotAccessibleWithResourceKey
@@ -420,9 +457,9 @@ fn determine_reason<'a>(
     if property.is_none()
         && engine
             .has_typed_property
-            .is_some_and(|has_typed_property| has_typed_property(property_name))
+            .is_some_and(|has_typed_property| has_typed_property(&lowered))
     {
-        return (MissingPropertyReason::DataFileUpgradeRequired, property);
+        return (MissingPropertyReason::DataFileUpgradeRequired, None);
     }
 
     (MissingPropertyReason::Unknown, property)
@@ -441,16 +478,22 @@ fn build_description(
 
     let detail = match reason {
         MissingPropertyReason::DataFileUpgradeRequired => {
-            let tiers = property.map_or_else(
-                || UNKNOWN_TIERS.to_owned(),
-                |p| p.data_tiers_where_present().join(","),
-            );
-            format!(
-                "This is because your license or data file does not include this \
-                 property. It is available with the {tiers} license/data for the {}. \
-                 To upgrade, see {PRICING_URL}.",
-                engine.type_name
-            )
+            let tiers = property
+                .map(AspectPropertyMetaData::data_tiers_where_present)
+                .filter(|tiers| !tiers.is_empty());
+            match tiers {
+                Some(tiers) => format!(
+                    "This is because your license or data file does not include this \
+                     property. It is available with the {} license/data for the {}. \
+                     To upgrade, see {PRICING_URL}.",
+                    tiers.join(","),
+                    engine.type_name
+                ),
+                None => format!(
+                    "This is because your license or data file does not include this \
+                     property. To see which licenses include it, see {PRICING_URL}."
+                ),
+            }
         }
         MissingPropertyReason::PropertyExcludedFromConfig => MESSAGE_PROPERTY_EXCLUDED.to_owned(),
         MissingPropertyReason::ProductNotAccessibleWithResourceKey => format!(
@@ -498,6 +541,7 @@ mod tests {
             deployment: EngineDeployment::OnPremise,
             data_source_tier: "Lite",
             properties_loaded: true,
+            property_list_request_failed: false,
             properties,
             has_typed_property: None,
         }
@@ -550,17 +594,24 @@ mod tests {
         );
     }
 
+    /// The upgrade message for a property whose tiers are not known.
+    fn upgrade_without_tiers(property_name: &str) -> String {
+        format!(
+            "Property '{property_name}' not found in data for element 'device'. This is \
+             because your license or data file does not include this property. To see \
+             which licenses include it, see {PRICING_URL}."
+        )
+    }
+
     #[test]
-    fn a_listed_property_with_no_tiers_names_none() {
+    fn a_listed_property_with_no_tiers_leaves_out_the_tier_sentence() {
         let props = vec![prop("IsMobile")];
         let result = resolve("IsMobile", &on_premise(&props));
         assert_eq!(
             result.reason,
             MissingPropertyReason::DataFileUpgradeRequired
         );
-        assert!(result
-            .description
-            .contains("It is available with the  license/data for the TestEngine."));
+        assert_eq!(result.description, upgrade_without_tiers("IsMobile"));
     }
 
     #[test]
@@ -583,18 +634,49 @@ mod tests {
     }
 
     #[test]
-    fn names_are_matched_exactly() {
-        let props = vec![prop("IsMobile")
-            .with_data_tiers(["Lite"])
-            .map_core(|c| c.with_available(false))];
+    fn names_are_matched_ignoring_case() {
+        let props = vec![
+            prop("IsMobile")
+                .with_data_tiers(["Lite"])
+                .map_core(|c| c.with_available(false)),
+            prop("ÄrgerLevel")
+                .with_data_tiers(["Lite"])
+                .map_core(|c| c.with_available(false)),
+        ];
+        for name in [
+            "IsMobile",
+            "ismobile",
+            "ISMOBILE",
+            "ärgerlevel",
+            "ÄRGERLEVEL",
+        ] {
+            assert_eq!(
+                resolve(name, &on_premise(&props)).reason,
+                MissingPropertyReason::PropertyExcludedFromConfig,
+                "{name}"
+            );
+            assert_eq!(
+                resolve(name, &cloud(&props)).reason,
+                MissingPropertyReason::PropertyExcludedFromConfig,
+                "{name}"
+            );
+        }
         let result = resolve("ismobile", &on_premise(&props));
-        assert_eq!(result.reason, MissingPropertyReason::Unknown);
+        assert!(
+            result
+                .description
+                .starts_with("Property 'ismobile' not found"),
+            "the message keeps the caller's spelling: {}",
+            result.description
+        );
     }
 
     #[test]
     fn a_typed_accessor_means_upgrade_required() {
         let props = vec![prop("ScreenWidth").with_data_tiers(["Lite"])];
-        let typed = |name: &str| name.eq_ignore_ascii_case("ismobile");
+        // The rules pass the lowercased name, so this accessor check need not
+        // ignore case itself.
+        let typed = |name: &str| name == "ismobile";
         let view = EngineView {
             has_typed_property: Some(&typed),
             ..on_premise(&props)
@@ -604,11 +686,7 @@ mod tests {
             result.reason,
             MissingPropertyReason::DataFileUpgradeRequired
         );
-        assert!(result.description.starts_with(
-            "Property 'isMobile' not found in data for element 'device'. This is because \
-             your license or data file does not include this property. It is available \
-             with the Unknown license/data for the TestEngine."
-        ));
+        assert_eq!(result.description, upgrade_without_tiers("isMobile"));
         assert_eq!(
             resolve("NotAProperty", &view).reason,
             MissingPropertyReason::Unknown
@@ -696,17 +774,56 @@ mod tests {
     }
 
     #[test]
-    fn a_cloud_engine_without_metadata_uses_its_typed_accessors() {
+    fn a_cloud_engine_without_metadata_ignores_its_typed_accessors() {
         let typed = |_: &str| true;
         let view = EngineView {
             properties_loaded: false,
             has_typed_property: Some(&typed),
             ..cloud(&[])
         };
-        let result = resolve("IsMobile", &view);
         assert_eq!(
-            result.reason,
-            MissingPropertyReason::DataFileUpgradeRequired
+            resolve("IsMobile", &view).reason,
+            MissingPropertyReason::Unknown
+        );
+    }
+
+    #[test]
+    fn a_cloud_engine_whose_property_list_request_failed_says_so() {
+        let props = vec![prop("IsMobile")];
+        let view = EngineView {
+            properties_loaded: false,
+            property_list_request_failed: true,
+            ..cloud(&props)
+        };
+        assert_eq!(
+            resolve("IsMobile", &view),
+            cloud_request_failed("IsMobile", Some("device"))
+        );
+        assert_eq!(
+            resolve("NotAProperty", &view).reason,
+            MissingPropertyReason::CloudRequestFailed
+        );
+        // Metadata that has loaded decides, whatever the request did earlier.
+        let loaded = EngineView {
+            properties_loaded: true,
+            ..view
+        };
+        assert_eq!(
+            resolve("ScreenWidth", &loaded).reason,
+            MissingPropertyReason::PropertyNotAccessibleWithResourceKey
+        );
+    }
+
+    #[test]
+    fn an_on_premise_engine_never_blames_the_property_list_request() {
+        let view = EngineView {
+            properties_loaded: false,
+            property_list_request_failed: true,
+            ..on_premise(&[])
+        };
+        assert_eq!(
+            resolve("IsMobile", &view).reason,
+            MissingPropertyReason::Unknown
         );
     }
 
@@ -786,9 +903,7 @@ mod tests {
             result.reason,
             MissingPropertyReason::DataFileUpgradeRequired
         );
-        assert!(result
-            .description
-            .contains("It is available with the Unknown license/data for the TestEngine."));
+        assert_eq!(result.description, upgrade_without_tiers("IsMobile"));
     }
 
     fn result(reason: MissingPropertyReason, description: &str) -> MissingPropertyResult {

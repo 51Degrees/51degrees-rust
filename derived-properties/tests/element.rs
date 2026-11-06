@@ -367,6 +367,64 @@ fn a_32_bit_float_is_read_as_a_number() {
 }
 
 #[test]
+fn a_32_bit_float_equals_the_decimal_it_holds() {
+    // A latitude given to 3 decimal places is the f32 nearest 18.543. Widened
+    // to a double it is 18.542999267578125, so it would be neither equal to
+    // nor at least the 18.543 a script holds.
+    let script = |name: &str, property: &str, test: &str| {
+        format!(
+            "Format: 1\n\
+             Name: {name}\n\
+             Version: \"1.0.0\"\n\
+             Output:\n\
+             \x20 Name: {name}\n\
+             \x20 Description: Whether the latitude is 18.543.\n\
+             \x20 ValueType: string\n\
+             \x20 IsList: false\n\
+             Rules:\n\
+             \x20 - When: {{ Property: ip.{property}, {test}: 18.543 }}\n\
+             \x20   Then: Yes\n\
+             \x20 - Else: No\n"
+        )
+    };
+    let weighted = |value: f32, weight: i64| {
+        let mut record = std::collections::BTreeMap::new();
+        record.insert("value".to_owned(), PropertyValue::Float(value));
+        record.insert("weight".to_owned(), PropertyValue::Integer(weight));
+        record
+    };
+    let ip = StubData::default()
+        .with("Latitude", PropertyValue::Float(18.543))
+        .with(
+            "Weighted",
+            PropertyValue::KeyValueList(vec![weighted(18.543, 2), weighted(51.5, 1)]),
+        );
+    let derived = DerivedPropertyElement::builder()
+        .add_script("LatitudeEq", &script("LatitudeEq", "Latitude", "Eq"))
+        .add_script("LatitudeGe", &script("LatitudeGe", "Latitude", "Ge"))
+        .add_script("LatitudeLe", &script("LatitudeLe", "Latitude", "Le"))
+        .add_script("WeightedEq", &script("WeightedEq", "Weighted", "Eq"))
+        .build()
+        .expect("every script");
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(StubElement::new("ip", ip)))
+        .add_element(Arc::new(derived))
+        .build()
+        .unwrap();
+    let mut data = pipeline.create_flow_data();
+    data.process().unwrap();
+
+    let derived = data.get_str(DERIVED_DEFAULT_ELEMENT_DATA_KEY).unwrap();
+    for name in ["LatitudeEq", "LatitudeGe", "LatitudeLe", "WeightedEq"] {
+        assert_eq!(
+            derived.get(name).unwrap(),
+            PropertyValue::String("Yes".to_owned()),
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn the_element_publishes_metadata_for_every_script() {
     let element = DerivedPropertyElement::builder()
         .add_built_in(BuiltInScript::HumanConfidence)

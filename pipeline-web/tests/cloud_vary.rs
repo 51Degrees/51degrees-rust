@@ -107,7 +107,7 @@ fn vary_gains_the_cloud_headers_once_discovery_recovers() {
     };
 
     let failed = serve();
-    assert_eq!(failed.header("Cache-Control"), Some("no-cache"));
+    assert_eq!(failed.header("Cache-Control"), Some("private, no-cache"));
     let before = names(failed.header("Vary"));
     assert!(before.iter().any(|h| h == "host"), "{before:?}");
     assert!(!before.iter().any(|h| h == "user-agent"), "{before:?}");

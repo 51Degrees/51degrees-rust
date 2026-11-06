@@ -53,6 +53,10 @@ const REGISTERED_NAME_READ: &str = "INFO Property 'RegisteredName' missing from 
      'IpIntelligenceDataBase' because the upstream cloud request failed for this request \
      (CloudRequestFailed). See FlowData::errors for details.";
 
+/// The target of the info record below, the engine's own module, as .NET
+/// logs it through the engine's own logger.
+const NOT_PROCESSED_TARGET: &str = "fiftyone_ip_intelligence_cloud::engine";
+
 /// The info record .NET's cloud aspect engines log when they did not process.
 const NOT_PROCESSED_LOG: &str = "INFO The 'IpIntelligenceCloudEngine' did not process as the \
      JSON response from the CloudRequestEngine was null or empty. Please refer to errors \
@@ -65,8 +69,8 @@ const NOT_PROCESSED: &str = "pipeline error: The 'IpIntelligenceCloudEngine' did
      indicates that the cloud request failed.";
 
 /// Records at info level or above from the cloud crates and the aspect data,
-/// as "LEVEL message".
-static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// each as its target and "LEVEL message".
+static LOGGED: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
 
 /// Held by each test for its whole run.
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -85,10 +89,10 @@ impl log::Log for TestLogger {
 
     fn log(&self, record: &log::Record) {
         if self.enabled(record.metadata()) {
-            LOGGED
-                .lock()
-                .unwrap()
-                .push(format!("{} {}", record.level(), record.args()));
+            LOGGED.lock().unwrap().push((
+                record.target().to_owned(),
+                format!("{} {}", record.level(), record.args()),
+            ));
         }
     }
 
@@ -109,9 +113,16 @@ fn start() -> MutexGuard<'static, ()> {
     guard
 }
 
-/// Take the records logged since [`start`] or the last call.
-fn take_logged() -> Vec<String> {
+/// Take the records logged since [`start`] or the last call, each with its
+/// target.
+fn take_records() -> Vec<(String, String)> {
     std::mem::take(&mut *LOGGED.lock().unwrap())
+}
+
+/// Take the records logged since [`start`] or the last call, as
+/// "LEVEL message".
+fn take_logged() -> Vec<String> {
+    take_records().into_iter().map(|(_, line)| line).collect()
 }
 
 /// A fake cloud granting the IP product and answering every data request
@@ -218,10 +229,17 @@ fn a_failed_request_gives_ip_data_that_says_why() {
         .collect();
     assert_eq!(recorded, vec![(CLOUD_KEY, true), ("ip", false)]);
     assert_eq!(data.errors()[1].source.to_string(), NOT_PROCESSED);
-    let logged = take_logged();
-    assert!(logged.contains(&NOT_PROCESSED_LOG.to_owned()), "{logged:?}");
+    let logged = take_records();
+    assert!(
+        logged.contains(&(
+            NOT_PROCESSED_TARGET.to_owned(),
+            NOT_PROCESSED_LOG.to_owned()
+        )),
+        "{logged:?}"
+    );
     let errors: Vec<&String> = logged
         .iter()
+        .map(|(_, record)| record)
         .filter(|record| record.starts_with("ERROR "))
         .collect();
     assert_eq!(
@@ -300,28 +318,26 @@ fn a_successful_request_is_unchanged() {
     assert_eq!(take_logged(), Vec::<String>::new());
 }
 
+/// A cloud engine with no metadata because its property list request failed
+/// gives `CloudRequestFailed`, typed accessor or not, as step 3.2 of "Deciding
+/// the reason" in the properties specification says.
 #[test]
-fn before_discovery_a_typed_property_needs_a_data_file_upgrade() {
+fn while_the_property_list_request_has_failed_a_missing_property_says_so() {
     let _serial = start();
     let down = Arc::new(AtomicBool::new(true));
     let (request, engine) = engines(r#"{"ip":{}}"#, false, Arc::clone(&down));
     assert!(!engine.has_loaded_properties());
+    assert!(engine.property_list_request_failed());
 
     let registered_name = engine.missing_property_reason("RegisteredName");
     assert_eq!(
         registered_name.reason,
-        MissingPropertyReason::DataFileUpgradeRequired
+        MissingPropertyReason::CloudRequestFailed
     );
-    assert!(
-        registered_name.description.contains(
-            "It is available with the Unknown license/data for the IpIntelligenceCloudEngine."
-        ),
-        "{}",
-        registered_name.description
-    );
+    assert_eq!(registered_name.description, REGISTERED_NAME_FAILED);
     assert_eq!(
         engine.missing_property_reason("NotAProperty").reason,
-        MissingPropertyReason::Unknown
+        MissingPropertyReason::CloudRequestFailed
     );
 
     // Once discovery completes, the key's properties decide.
@@ -334,4 +350,5 @@ fn before_discovery_a_typed_property_needs_a_data_file_upgrade() {
         MissingPropertyReason::PropertyNotAccessibleWithResourceKey
     );
     assert!(engine.has_loaded_properties());
+    assert!(!engine.property_list_request_failed());
 }

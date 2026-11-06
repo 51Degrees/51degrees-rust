@@ -24,10 +24,12 @@
 //!
 //! The .NET engine builders and facades throw for a missing data file and log
 //! nothing at warning level or above, so the builders here return the error
-//! and log nothing at those levels either. Kept in its own test binary because
-//! a logger is installed once for the whole process.
+//! and log nothing at those levels either. Each error is the native library's
+//! file-not-found status, so a build that fails for any other reason fails the
+//! test. Kept in its own test binary because a logger is installed once for the
+//! whole process.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use fiftyone_device_detection::{
@@ -36,6 +38,7 @@ use fiftyone_device_detection::{
 use fiftyone_ip_intelligence::{
     IpIntelligenceOnPremiseEngineBuilder, IpIntelligencePipelineBuilder,
 };
+use fiftyone_pipeline_core::Error;
 
 /// Log records at warning level or above, as "LEVEL message".
 static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -72,8 +75,32 @@ fn missing(extension: &str) -> PathBuf {
     path
 }
 
-/// Each build fails, and none logs at warning level or above. One test, so
-/// the records cannot come from another test running at the same time.
+/// Checks that `build` failed because the data file at `path` does not exist,
+/// being the native status `FileNotFound` with a message that names the file.
+fn assert_file_not_found<T>(build: &str, result: Result<T, Error>, path: &Path) {
+    let name = path
+        .file_name()
+        .expect("the path names a file")
+        .to_string_lossy()
+        .into_owned();
+    match result {
+        Err(Error::Native { status, message }) => {
+            assert_eq!(status, "FileNotFound", "{build}: {message}");
+            assert!(
+                message.contains(&name),
+                "{build}: {message:?} does not name {name}"
+            );
+        }
+        Err(other) => panic!("{build} failed for another reason: {other}"),
+        Ok(_) => panic!("{build} built with no data file"),
+    }
+}
+
+/// Each build fails with the native file-not-found status, and none logs at
+/// warning level or above. Updates are off wherever they are on by default,
+/// because with them on and no licence key a build refuses before it opens the
+/// file. One test, so the records cannot come from another test running at the
+/// same time.
 #[test]
 fn a_missing_data_file_is_returned_and_not_logged() {
     let _ = log::set_logger(&LOGGER);
@@ -84,22 +111,36 @@ fn a_missing_data_file_is_returned_and_not_logged() {
         vec!["WARN logger check"]
     );
 
-    assert!(DeviceDetectionOnPremiseEngineBuilder::new(missing("hash"))
-        .build()
-        .is_err());
-    assert!(DeviceDetectionPipelineBuilder::on_premise(missing("hash"))
-        .auto_update(false)
-        .share_usage(false)
-        .build()
-        .is_err());
-    assert!(IpIntelligenceOnPremiseEngineBuilder::new(missing("ipi"))
-        .build()
-        .is_err());
-    assert!(IpIntelligencePipelineBuilder::on_premise(missing("ipi"))
-        .auto_update(false)
-        .share_usage(false)
-        .build()
-        .is_err());
+    let hash = missing("hash");
+    let ipi = missing("ipi");
+    assert_file_not_found(
+        "the Device Detection engine",
+        DeviceDetectionOnPremiseEngineBuilder::new(hash.clone()).build(),
+        &hash,
+    );
+    assert_file_not_found(
+        "the Device Detection pipeline",
+        DeviceDetectionPipelineBuilder::on_premise(hash.clone())
+            .auto_update(false)
+            .share_usage(false)
+            .build(),
+        &hash,
+    );
+    assert_file_not_found(
+        "the IP Intelligence engine",
+        IpIntelligenceOnPremiseEngineBuilder::new(ipi.clone())
+            .auto_update(false)
+            .build(),
+        &ipi,
+    );
+    assert_file_not_found(
+        "the IP Intelligence pipeline",
+        IpIntelligencePipelineBuilder::on_premise(ipi.clone())
+            .auto_update(false)
+            .share_usage(false)
+            .build(),
+        &ipi,
+    );
 
     assert_eq!(*LOGGED.lock().unwrap(), Vec::<String>::new());
 }

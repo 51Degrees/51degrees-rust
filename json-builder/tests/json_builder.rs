@@ -757,7 +757,12 @@ fn a_failed_cloud_request_lists_no_javascript_property_and_writes_the_message() 
                 device.mark_cloud_request_failed();
                 device
             })?;
-            CloudRequestEngine::record_not_processed(data, "DeviceDetectionCloudEngine", "device");
+            CloudRequestEngine::record_not_processed(
+                data,
+                "DeviceDetectionCloudEngine",
+                "device",
+                module_path!(),
+            );
             Ok(())
         }
         fn data_key(&self) -> &str {
