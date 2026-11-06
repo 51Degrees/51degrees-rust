@@ -1,49 +1,19 @@
 [
   {
-    "path": "*",
+    "path": "errors",
+    "kind": "value",
     "cases": ["sequence-over-int", "sequence-text"],
-    "kind": "value",
-    "reason": "A sequence .NET cannot read as a 32-bit integer gives an error from the Sequence element and another from the JSON builder, which then writes nothing. The crates give no error and carry on.",
-    "issue": 231
-  },
-  {
-    "path": "json",
-    "cases": ["sequence-over-int", "sequence-text"],
-    "kind": "presence",
-    "reason": "The JSON builder in .NET writes nothing when the sequence in the evidence is not a 32-bit integer.",
-    "issue": 231
-  },
-  {
-    "path": "json.javascriptProperties",
-    "cases": ["sequence-int-max"],
-    "kind": "onlyInDotnet",
-    "reason": "The sequence after 2147483647 wraps to a negative 32-bit number in .NET, so JavaScript properties are still listed. The crates hold a 64-bit sequence.",
-    "issue": 231
-  },
-  {
-    "path": "session",
-    "kind": "value",
-    "cases": ["sequence-int-max"],
-    "reason": "The crates hold the sequence as a 64-bit integer and start again at 1 for a sequence that is not a number, where .NET holds a 32-bit integer and leaves a bad value as it was.",
-    "issue": 231
-  },
-  {
-    "path": "evidenceAfter",
-    "kind": "value",
-    "reason": "The crates' Sequence element writes the session id and sequence into its own data, where .NET writes them back into the evidence.",
-    "issue": 231
+    "reason": "For a sequence that is not a 32-bit integer each side gives an error from the Sequence element and another from the JSON builder, and each message starts with the same sentence. The links in the messages carry each repository's own campaign tags, and the crates' JSON builder message adds a sentence saying where the Sequence element goes. The crates' errors also hold the IP Intelligence error that the #226 entry for errors allows in the other cases."
   },
   {
     "path": "properties.sequence",
     "kind": "onlyInRust",
-    "reason": "The crates' Sequence element lists the session id and sequence as properties of its own data. .NET's lists none.",
-    "issue": 231
+    "reason": "The specification's Element Data for the Sequence element is session-id and sequence, so the crates' Sequence element lists them as properties of its own data. .NET's Sequence element has no data and lists none."
   },
   {
     "path": "json.sequence",
     "kind": "onlyInRust",
-    "reason": "The JSON builder writes the data of the crates' Sequence element, which .NET's Sequence element does not have.",
-    "issue": 231
+    "reason": "The JSON builder writes the data of the crates' Sequence element, being the session-id and sequence the specification's Element Data gives. .NET's Sequence element has no data."
   },
   {
     "path": "properties.ip",
@@ -274,13 +244,6 @@
     "kind": "lineEndings",
     "rust": {"value": [0]},
     "reason": "The .NET 4.5.129 package embeds its template with CRLF line endings, so each line of its script that comes from the template ends with CRLF. The template the specification names and the copy the crates bundle end each line with LF, and the crates write no CRLF."
-  },
-  {
-    "path": "usage*",
-    "kind": "text",
-    "cases": ["sequence-int-max", "sequence-text"],
-    "reason": "Each usage record writes the sequence the Sequence element gives. After 2147483647 .NET's wraps to -2147483648 and the crates' 2147483648 is written as 0, because it is not a 32-bit integer. For text .NET's leaves the text, written as 0, where the crates' starts again at 1.",
-    "issue": 231
   },
   {
     "path": "properties.agent-signature.agentsignaturecreated",

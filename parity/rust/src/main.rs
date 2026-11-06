@@ -89,7 +89,7 @@ const EXTRA_PROPERTIES: &[(&str, &[&str])] = &[
     ("countrynamestranslated", &["SortingCultureUsed"]),
 ];
 
-/// The evidence the Sequence element reads, and in .NET writes back.
+/// The evidence the Sequence element reads and writes back.
 const SESSION_ID_KEY: &str = "query.session-id";
 const SEQUENCE_KEY: &str = "query.sequence";
 
@@ -293,7 +293,7 @@ fn run_case(pipeline: &Arc<Pipeline>, case: &Case) -> Result<Value> {
     let mut data = pipeline.create_flow_data_with(evidence.build());
     let process_error = data.process().err().map(|error| error.to_string());
 
-    let session = data.get(SequenceElement::KEY);
+    let evidence_after = data.evidence();
     let errors: Vec<Value> = data
         .errors()
         .iter()
@@ -309,12 +309,12 @@ fn run_case(pipeline: &Arc<Pipeline>, case: &Case) -> Result<Value> {
         "processError": process_error,
         "properties": properties(&data),
         "session": {
-            "id": session.and_then(|s| s.session_id()),
-            "sequence": session.and_then(|s| s.sequence()),
+            "id": evidence_after.get(SESSION_ID_KEY),
+            "sequence": evidence_after.get(SEQUENCE_KEY).and_then(read_long),
         },
         "evidenceAfter": {
-            SESSION_ID_KEY: data.evidence().get(SESSION_ID_KEY),
-            SEQUENCE_KEY: data.evidence().get(SEQUENCE_KEY),
+            SESSION_ID_KEY: evidence_after.get(SESSION_ID_KEY),
+            SEQUENCE_KEY: evidence_after.get(SEQUENCE_KEY),
         },
         "errors": errors,
         "json": data.get(JSON_BUILDER_DATA_KEY).map(|d| d.json()),
@@ -322,6 +322,14 @@ fn run_case(pipeline: &Arc<Pipeline>, case: &Case) -> Result<Value> {
         "usage": Value::Null,
         "usageCustom": Value::Null,
     }))
+}
+
+/// `text` as a 64-bit integer, read as the .NET producer's `long.TryParse`
+/// reads it, allowing white space either side and a sign.
+fn read_long(text: &str) -> Option<i64> {
+    text.trim_matches(|c| matches!(c, ' ' | '\t'..='\r'))
+        .parse()
+        .ok()
 }
 
 /// Every property of every element that lists properties, keyed by the
