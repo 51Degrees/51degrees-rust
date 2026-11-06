@@ -146,16 +146,17 @@ impl PipelineOptions {
     ///
     /// The file is read as .NET's JSON configuration reader reads it.
     /// Comments and trailing commas are allowed, names are matched ignoring
-    /// case, a number or `true` is read as its text, and two names at one
-    /// place that differ only in case are refused. Each element's build
-    /// parameters are applied in the order .NET's configuration gives them,
-    /// which is by name ignoring case, with whole numbers before other
-    /// names and in numeric order. Other sections, and settings the .NET
-    /// web integration reads from the same section, are ignored.
+    /// case, a number or `true` is read as its text, a `null` builder name
+    /// or build parameter is read as empty text, and two names at one place
+    /// that differ only in case are refused. Each element's build parameters
+    /// are applied in the order .NET's configuration gives them, which is by
+    /// name ignoring case, with whole numbers before other names and in
+    /// numeric order. Other sections, and settings the .NET web integration
+    /// reads from the same section, are ignored.
     ///
     /// A build parameter that is an array or an object is refused, because
     /// .NET cannot read one either. A list is written as comma-separated
-    /// text. A `null` build parameter is also refused.
+    /// text.
     pub fn from_json(text: &str) -> Result<Self> {
         super::json::read_pipeline_options(text)
     }

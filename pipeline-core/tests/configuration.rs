@@ -1212,11 +1212,6 @@ fn json_that_dotnet_would_refuse_or_not_read_is_refused() {
              object. Give each build parameter as text, and a list as comma-separated text.",
         ),
         (
-            r#"{ "PipelineOptions": { "Elements": [ { "BuilderName": "A",
-                "BuildParameters": { "SetMaxLength": null } } ] } }"#,
-            "'PipelineOptions:Elements:0:BuildParameters:SetMaxLength' has no value.",
-        ),
-        (
             r#"{ "Logging": {} }"#,
             "The configuration has no 'PipelineOptions' section.",
         ),
@@ -1255,13 +1250,17 @@ fn json_that_dotnet_would_refuse_or_not_read_is_refused() {
     }
 }
 
+/// .NET 4.5.129 bound a JSON `null` as empty text, reading the file with
+/// .NET's configuration reader 8.0.1 and binder 8.0.2.
 #[test]
 fn json_values_are_read_as_dotnet_reads_them() {
     let options = PipelineOptions::from_json(
         r#"{ "PipelineOptions": { "Elements": [ { "BuilderName": 7, "SubElements": [],
-            "BuildParameters": { "a": 1.50, "b": true, "c": false, "d": "", "e": "x" } },
-            { "BuilderName": null, "BuildParameters": null, "SubElements": null } ],
-            "BuildParameters": {} } }"#,
+            "BuildParameters": { "a": 1.50, "b": true, "c": false, "d": "", "e": "x",
+            "f": null } },
+            { "BuilderName": null, "BuildParameters": null, "SubElements": null },
+            { "BuildParameters": { "a": "x" } } ],
+            "BuildParameters": { "SetSuppressProcessException": null } } }"#,
     )
     .unwrap();
     assert_eq!(
@@ -1274,7 +1273,56 @@ fn json_values_are_read_as_dotnet_reads_them() {
                     .parameter("c", "False")
                     .parameter("d", "")
                     .parameter("e", "x")
+                    .parameter("f", "")
             )
-            .element(ElementOptions::default())
+            .element(ElementOptions::new(""))
+            .element(ElementOptions::default().parameter("a", "x"))
+            .parameter("SetSuppressProcessException", "")
+    );
+}
+
+/// A `null` builder name is empty, so .NET's message gives no name, where a
+/// missing one is "not set". A `null` setting is given empty text, which
+/// .NET then reads as the setting's type reads it.
+#[test]
+fn a_json_null_is_given_as_empty_text() {
+    let from = |text: &str| build(&PipelineOptions::from_json(text).unwrap());
+    let builder = type_name::<SplitterBuilder>();
+    for (text, name) in [
+        (
+            r#"{ "PipelineOptions": { "Elements": [ { "BuilderName": null } ] } }"#,
+            "",
+        ),
+        (
+            r#"{ "PipelineOptions": { "Elements": [ { "BuildParameters": {} } ] } }"#,
+            "BuilderName not set",
+        ),
+    ] {
+        assert_eq!(
+            message(from(text)),
+            failed(
+                name,
+                "No SubElements",
+                "A BuilderName must be specified for element 0.",
+                NO_INNER
+            ),
+            "{text}"
+        );
+    }
+    assert_eq!(
+        message(from(
+            r#"{ "PipelineOptions": { "Elements": [ { "BuilderName": "ListSplitterElement",
+                "BuildParameters": { "MaxLength": null } } ] } }"#
+        )),
+        failed(
+            "ListSplitterElement",
+            "No SubElements",
+            &format!(
+                "Method 'SetMaxLength' on builder '{builder}' for element 0 expects a \
+                 parameter of type 'Int32'. Failed to parse value '' using the static \
+                 'TryParse' method."
+            ),
+            NO_INNER
+        )
     );
 }

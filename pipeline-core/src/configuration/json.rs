@@ -102,8 +102,11 @@ fn read_element(node: &Node, path: &str) -> Result<ElementOptions> {
             "'{path}' must be a JSON object describing an element."
         )));
     };
+    // .NET's reader gives a null as empty text, so the name is empty rather
+    // than not set, and the error says so.
     let builder_name = match find(fields, "BuilderName") {
-        None | Some(Node::Null) => None,
+        None => None,
+        Some(Node::Null) => Some(String::new()),
         Some(Node::Text(name)) => Some(name.clone()),
         Some(_) => {
             return Err(Error::configuration(format!(
@@ -141,9 +144,7 @@ fn read_parameters(node: &Node, path: &str) -> Result<Vec<(String, ConfigValue)>
         .iter()
         .map(|(name, value)| match value {
             Node::Text(text) => Ok((name.clone(), ConfigValue::Text(text.clone()))),
-            Node::Null => Err(Error::configuration(format!(
-                "'{path}:{name}' has no value."
-            ))),
+            Node::Null => Ok((name.clone(), ConfigValue::Text(String::new()))),
             Node::Array(_) | Node::Object(_) => Err(Error::configuration(format!(
                 "'{path}:{name}' is a JSON array or object. Give each build \
                  parameter as text, and a list as comma-separated text."
