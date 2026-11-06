@@ -58,6 +58,8 @@
 //! - [`LazyLoadingConfiguration`] and [`AspectEngineBuilderOptions`]. Optional
 //!   lazy loading and a builder base that captures the options every engine
 //!   builder shares.
+//! - [`configuration`]. The data file settings an on-premise engine's builder
+//!   takes from a configuration file, by .NET's names.
 //!
 //! ## How the cache wires in
 //!
@@ -74,6 +76,7 @@ mod aspect_data;
 mod aspect_engine;
 mod aspect_property_metadata;
 mod aspect_property_value;
+pub mod configuration;
 mod data_file;
 #[cfg(feature = "data-update")]
 mod data_update_service;
