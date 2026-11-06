@@ -579,7 +579,7 @@ fn properties_restrict_the_engine() {
 /// .NET read a copy of the data file made in the temporary folder when
 /// `CreateTempDataCopy` was true, under every profile, and removed it with
 /// the engine. It made none with an empty temporary folder, or for
-/// `BalancedTemp`.
+/// `BalancedTemp`. A refresh here reads a new copy in place of the old.
 #[test]
 fn a_copy_of_the_data_file_is_read_when_asked() {
     let Some(lite) = lite() else { return };
@@ -598,7 +598,13 @@ fn a_copy_of_the_data_file_is_read_when_asked() {
             ],
         ))
         .expect(profile);
-        assert_eq!(files_in(&folder).len(), 1, "{profile}");
+        let copied = files_in(&folder);
+        assert_eq!(copied.len(), 1, "{profile}");
+        assert_eq!(detect(&pipeline, MOBILE).0, Ok(true));
+        engine(&pipeline).refresh(None).expect(profile);
+        let refreshed = files_in(&folder);
+        assert_eq!(refreshed.len(), 1, "{profile}");
+        assert_ne!(refreshed, copied, "{profile}");
         assert_eq!(detect(&pipeline, MOBILE).0, Ok(true));
         drop(pipeline);
         assert!(files_in(&folder).is_empty(), "{profile}");

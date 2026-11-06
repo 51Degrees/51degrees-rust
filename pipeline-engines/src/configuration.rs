@@ -602,6 +602,8 @@ mod tests {
             "ftp://x",
             "C:\\data",
             "HTTPS://example.com:443/a/../b?x=1#f",
+            "mailto:a",
+            "a+b-c.d:x",
         ] {
             assert_eq!(data_update_url(url.to_string()).unwrap(), url);
         }
@@ -609,7 +611,13 @@ mod tests {
             data_update_url(String::new()).unwrap_err().message(),
             "Invalid URI: The URI is empty."
         );
-        for url in ["not a url", "example.com/data", "/data", "1http://x"] {
+        for url in [
+            "not a url",
+            "example.com/data",
+            "/data",
+            "1http://x",
+            "data",
+        ] {
             assert_eq!(
                 data_update_url(url.to_string()).unwrap_err().message(),
                 "Invalid URI: The format of the URI could not be determined.",
