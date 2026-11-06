@@ -179,7 +179,7 @@ impl IpIntelligenceCloudEngine {
             let kind = ValueKind::from_cloud_type(&property.value_type);
             let value_type = match kind {
                 ValueKind::Integer => PropertyValueType::Integer,
-                ValueKind::Double => PropertyValueType::Double,
+                ValueKind::Double => PropertyValueType::Float,
                 ValueKind::Bool => PropertyValueType::Bool,
                 ValueKind::WeightedString => WEIGHTED_PROPERTY_VALUE_TYPE,
                 ValueKind::String => PropertyValueType::String,
@@ -699,7 +699,7 @@ mod tests {
             let unpacks = match declared {
                 PropertyValueType::Bool => ip.boolean(name).value().is_ok(),
                 PropertyValueType::Integer => ip.integer(name).value().is_ok(),
-                PropertyValueType::Double => ip.float(name).value().is_ok(),
+                PropertyValueType::Float => ip.float(name).value().is_ok(),
                 PropertyValueType::KeyValueList => ip.weighted_string(name).value().is_ok(),
                 _ => ip.string(name).value().is_ok(),
             };

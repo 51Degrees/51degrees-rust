@@ -351,6 +351,16 @@ mod tests {
         assert_eq!(double_text(1e9), "1000000000.0");
     }
 
+    /// A latitude given to 3 decimal places is written with those places, as
+    /// .NET writes it.
+    #[test]
+    fn a_rounded_latitude_is_written_to_three_places() {
+        // A stored Declination of 6751 converts to 18.542741172521133.
+        let latitude = fiftyone_pipeline_core::round_angle(6751.0 * 90.0 / 32767.0);
+        assert_eq!(float_text(latitude), "18.543");
+        assert_eq!(double_text(f64::from(latitude)), "18.542999267578125");
+    }
+
     #[test]
     fn strings_are_escaped_as_newtonsoft_escapes_them() {
         let mut out = String::new();

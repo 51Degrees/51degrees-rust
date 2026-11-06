@@ -368,8 +368,7 @@ fn every_present_property_unpacks_as_its_declared_type() {
             let unpacks = match declared {
                 PropertyValueType::Bool => ip_data.boolean(name).value().is_ok(),
                 PropertyValueType::Integer => ip_data.integer(name).value().is_ok(),
-                // Single-precision floats are published as Double but read as f32.
-                PropertyValueType::Double => ip_data.float(name).value().is_ok(),
+                PropertyValueType::Float => ip_data.float(name).value().is_ok(),
                 // The weighted properties are published as a key-value list.
                 PropertyValueType::KeyValueList => ip_data.weighted_string(name).value().is_ok(),
                 _ => ip_data.string(name).value().is_ok(),
