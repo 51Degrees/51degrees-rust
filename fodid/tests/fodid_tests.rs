@@ -1274,6 +1274,173 @@ fn from_base64_ignores_surrounding_whitespace() {
     }
 }
 
+/// A signed 51Did in the URL-safe alphabet without padding whose length is
+/// `over` characters over a group of four, found by adding bytes after the
+/// payload's value one at a time, with what the clean text reads as.
+fn url_safe_text_over_a_group_of_four(fixture: &Fixture, over: usize) -> (String, FodId) {
+    for extra in 0..3 {
+        let mut payload = canonical_payload();
+        payload.resize(payload.len() + extra, 0xA5);
+        let url_safe = fixture
+            .signed_owid_base64(payload)
+            .replace('+', "-")
+            .replace('/', "_")
+            .trim_end_matches('=')
+            .to_owned();
+        if url_safe.len() % 4 == over {
+            let clean = FodId::from_base64(&url_safe).expect("the clean text reads");
+            return (url_safe, clean);
+        }
+    }
+    panic!("no payload length gives a text {over} over a group of four");
+}
+
+/// Puts `fill` after each character position given, counting from 1.
+fn insert_after(text: &str, positions: &[usize], fill: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in text.chars().enumerate() {
+        out.push(c);
+        if positions.contains(&(i + 1)) {
+            out.push_str(fill);
+        }
+    }
+    out
+}
+
+/// White space inside the text is read in the .NET package's three steps,
+/// so each row gets the status .NET gives the case of the same name in
+/// `parity/corpus/fodid.json`. Spaces, tabs and line breaks are skipped,
+/// but padding is first added for a length that counts them. So two spaces
+/// inside a text that is a whole number of groups add `==` the text does
+/// not need, and three leave one character over a group. Other white space
+/// inside the text is refused.
+#[test]
+fn white_space_inside_the_text_reads_as_the_dotnet_package_reads_it() {
+    let fixture = Fixture::new();
+    let (whole, whole_read) = url_safe_text_over_a_group_of_four(&fixture, 0);
+    let (short, short_read) = url_safe_text_over_a_group_of_four(&fixture, 3);
+    let standard = format!("{}=", short.replace('-', "+").replace('_', "/"));
+    let (w, s) = (whole.len(), short.len());
+    let invalid = Err(Status::Owid(ParseStatus::InvalidBase64));
+
+    let cases: [(&str, String, Result<&FodId, Status>); 14] = [
+        (
+            "text-url-space-1",
+            insert_after(&whole, &[w / 2], " "),
+            Ok(&whole_read),
+        ),
+        (
+            "text-url-space-2",
+            insert_after(&whole, &[w / 4, 3 * w / 4], " "),
+            invalid,
+        ),
+        (
+            "text-url-space-3",
+            insert_after(&whole, &[w / 4, w / 2, 3 * w / 4], " "),
+            invalid,
+        ),
+        (
+            "text-url-tabs",
+            insert_after(&whole, &[w / 5, 2 * w / 5, 3 * w / 5, 4 * w / 5], "\t"),
+            Ok(&whole_read),
+        ),
+        (
+            "text-url-line-breaks",
+            insert_after(&whole, &[w / 3, 2 * w / 3], "\r\n"),
+            Ok(&whole_read),
+        ),
+        (
+            "text-url-no-break-spaces",
+            insert_after(&whole, &[w / 5, 2 * w / 5, 3 * w / 5, 4 * w / 5], "\u{a0}"),
+            invalid,
+        ),
+        (
+            "text-url-no-break-space-surrounded",
+            format!("\u{a0}{whole}\u{a0}"),
+            Ok(&whole_read),
+        ),
+        (
+            "text-url-unpadded-space-1",
+            insert_after(&short, &[s / 2], " "),
+            Ok(&short_read),
+        ),
+        (
+            "text-url-unpadded-space-2",
+            insert_after(&short, &[s / 3, 2 * s / 3], " "),
+            Ok(&short_read),
+        ),
+        (
+            "text-url-unpadded-space-3",
+            insert_after(&short, &[s / 4, s / 2, 3 * s / 4], " "),
+            invalid,
+        ),
+        (
+            "text-url-unpadded-space-4",
+            insert_after(&short, &[s / 5, 2 * s / 5, 3 * s / 5, 4 * s / 5], " "),
+            Ok(&short_read),
+        ),
+        (
+            "text-standard-space-1",
+            insert_after(&standard, &[standard.len() / 2], " "),
+            Ok(&short_read),
+        ),
+        (
+            "text-url-vertical-tab",
+            insert_after(&whole, &[w / 2], "\u{b}"),
+            invalid,
+        ),
+        (
+            "text-white-space",
+            " \t\n\u{a0}".to_owned(),
+            Err(Status::Owid(ParseStatus::MissingInput)),
+        ),
+    ];
+
+    for (name, text, expected) in cases {
+        let result = FodId::from_base64(&text);
+        match expected {
+            Ok(clean) => {
+                assert_eq!(status_of(&result), Status::Parsed, "{name}");
+                assert_eq!(
+                    result.unwrap().as_base64().unwrap(),
+                    clean.as_base64().unwrap(),
+                    "{name} reads as the clean text"
+                );
+            }
+            Err(status) => assert_eq!(status_of(&result), status, "{name}"),
+        }
+    }
+}
+
+/// The unused low bits of the last group are ignored, as the .NET decoder
+/// ignores them, so a text whose last character sets them reads as the
+/// text an encoder wrote. `text-url-unpadded-unused-bits` in
+/// `parity/corpus/fodid.json` is the same case for the comparison.
+#[test]
+fn unused_bits_in_the_last_character_are_ignored() {
+    const URL_SAFE: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let fixture = Fixture::new();
+    // Two characters over a group carry one byte in 12 bits and three carry
+    // two bytes in 18 bits, so the last character has 4 or 2 unused bits.
+    for (over, unused) in [(2, 0b1111), (3, 0b11)] {
+        let (text, clean) = url_safe_text_over_a_group_of_four(&fixture, over);
+        let last = URL_SAFE.find(text.chars().last().unwrap()).unwrap();
+        assert_eq!(last & unused, 0, "an encoder writes the unused bits as 0");
+        let changed = format!(
+            "{}{}",
+            &text[..text.len() - 1],
+            URL_SAFE.as_bytes()[last | 1] as char
+        );
+        let read = FodId::from_base64(&changed);
+        assert_eq!(status_of(&read), Status::Parsed, "{over} over");
+        assert_eq!(
+            read.unwrap().as_base64().unwrap(),
+            clean.as_base64().unwrap(),
+            "{over} over"
+        );
+    }
+}
+
 #[test]
 fn from_base64_accepts_both_alphabets_with_or_without_padding() {
     let fixture = Fixture::new();

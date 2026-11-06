@@ -243,6 +243,26 @@
     "text": "A3Bhcml0eS50ZXN0AP70NgAWAAAAQyoAAADw4dLDtKWWh3hpWks8LR4PAX+365Ks7NHGDHOc 8p+HthRQLcCS1M+lvbW273+vslQ3rgRWjlrByWT32mFp9LBGm30cHtHLTvqBNRLdueLgF00="
   },
   {
+    "id": "text-url-unpadded-space-2",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 143 characters so one padding character is left out, with a space after the 47th and the 95th.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAWAAAAQyoAAADw4dLDtKWWh3h pWks8LR4PAX-365Ks7NHGDHOc8p-HthRQLcCS1M-lvbW273- vslQ3rgRWjlrByWT32mFp9LBGm30cHtHLTvqBNRLdueLgF00"
+  },
+  {
+    "id": "text-url-unpadded-space-3",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 143 characters so one padding character is left out, with a space after the 35th, 71st and 107th.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAWAAAAQyoAAAD w4dLDtKWWh3hpWks8LR4PAX-365Ks7NHGDHO c8p-HthRQLcCS1M-lvbW273-vslQ3rgRWjlr ByWT32mFp9LBGm30cHtHLTvqBNRLdueLgF00"
+  },
+  {
+    "id": "text-url-vertical-tab",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 164 characters, with a vertical tab (U+000B) after the 82nd.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAAAAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHwGAqQ\u000bauUk8NJ-aquIsU1xtVk8PJYp4R4eKNCJzGLavXhKb-G619iLKv7KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF"
+  },
+  {
+    "id": "text-url-unpadded-unused-bits",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 143 characters so one padding character is left out, with the lowest of the two unused bits of the last character set.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAWAAAAQyoAAADw4dLDtKWWh3hpWks8LR4PAX-365Ks7NHGDHOc8p-HthRQLcCS1M-lvbW273-vslQ3rgRWjlrByWT32mFp9LBGm30cHtHLTvqBNRLdueLgF01"
+  },
+  {
     "id": "metadata",
     "about": "The 51Did component and the six properties as each language describes them.",
     "metadata": true
