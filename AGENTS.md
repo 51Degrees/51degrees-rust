@@ -291,13 +291,17 @@ workspace reads the submodule and never needs the copy.
 ## CI gates
 
 - `pull-request.yml` runs fmt, build, test, clippy and doc on Windows, Linux
-  (two LTS) and macOS (Apple Silicon), plus a wasm32-wasip1 job for the cloud
-  crates, on pushes to `main` and on PRs into `main`, `rc` and `release/**`.
-  It builds the C sources and restores the data files into `cxx/data` from
-  the entry `data-files.yml` keeps in the Actions cache, downloading with the
-  data repository's script only a file it lacks. It also runs
+  (two LTS) and macOS (Apple Silicon), plus a wasm32-wasip1 job, on pushes to
+  `main` and on PRs into `main`, `rc` and `release/**`. It builds the C
+  sources and restores the data files into `cxx/data` from the entry
+  `data-files.yml` keeps in the Actions cache, downloading with the data
+  repository's script only a file it lacks. It also runs
   `ci/check-native-symbols.ps1` and the property lookup scaling test in
-  release.
+  release. The wasm job builds the crates in its build list and runs the
+  tests of those in its test list under wasmtime, with crates for the cloud,
+  51Did, derived properties and translation among them. It then runs
+  `ci/measure-wasm-size.sh` over the separate `ci/wasm-size` workspace, which
+  gives the module size in `ip-intelligence-translation/README.md`.
 - `data-files.yml` runs each day on `main` and keeps the free data files in
   one Actions cache entry. It restores the newest entry, asks the Distributor
   only whether each file has changed (`-Update`), and saves the files under a
