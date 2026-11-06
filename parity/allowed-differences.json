@@ -347,6 +347,21 @@
     "reason": "The crates' usage sharing element says it is concurrent, because it sends from a thread of its own, so a pipeline holding it is concurrent with no parallel group. .NET's ShareUsageElement says it is not."
   },
   {
+    "path": "fodid.status",
+    "kind": "value",
+    "cases": ["*-text-url-one-plus", "*-text-url-one-slash", "*-text-standard-one-underscore"],
+    "dotnet": {"value": ["Parsed"]},
+    "rust": {"value": ["InvalidBase64"]},
+    "reason": "identifier-layout.md asks a reader to refuse a text holding a character from each base64 alphabet, and to check for that before it reads - as + and _ as /. The crates refuse these texts with InvalidBase64. .NET maps - and _ onto + and / without checking, so it reads each as the clean text."
+  },
+  {
+    "path": "fodid.*",
+    "kind": "presence",
+    "cases": ["*-text-url-one-plus", "*-text-url-one-slash", "*-text-standard-one-underscore"],
+    "rust": {"value": [null]},
+    "reason": "The crates refuse a text that mixes the two base64 alphabets, so every field but the status is null, where .NET reads the 51Did and gives each field."
+  },
+  {
     "path": "properties.countrynames*",
     "kind": "state",
     "cases": ["translation-no-ip-data", "translation-bad-item", "translation-unreadable-after-unresolved"],

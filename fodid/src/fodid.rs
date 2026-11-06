@@ -393,7 +393,9 @@ impl FodId {
     /// a header or a copied link reads back to the same envelope as the
     /// clean form. Any other character outside the alphabet is refused with
     /// [`ParseStatus::InvalidBase64`](crate::ParseStatus::InvalidBase64),
-    /// white space inside the text included.
+    /// white space inside the text included. A text must use one alphabet,
+    /// so one holding a character from each, such as both `+` and `-`, is
+    /// refused the same way.
     pub fn from_base64(base64: &str) -> Result<Self> {
         Self::from_owid(Owid::from_byte_array(&decode_base64(base64)?)?)
     }
@@ -770,9 +772,12 @@ const BASE64: GeneralPurpose = GeneralPurpose::new(
 ///
 /// White space before and after the text is ignored, being any character
 /// with the Unicode White_Space property, which is what [`str::trim`]
-/// removes. `-` and `_` then become `+` and `/`, and the rest is decoded,
-/// so any other character outside the alphabet is refused, white space
-/// inside the text included. The issuer never writes white space inside an
+/// removes. A text holding a character from each alphabet, such as both
+/// `+` and `-`, is refused, because no encoder writes a mix and mapping one
+/// alphabet onto the other would hide a value converted only in part.
+/// `-` and `_` then become `+` and `/`, and the rest is decoded, so any
+/// other character outside the alphabet is refused, white space inside the
+/// text included. The issuer never writes white space inside an
 /// identifier, so white space there is a sign of damage, such as a `+`
 /// turned into a space by a form decoder, and skipping it would read bytes
 /// other than the ones issued. Padding is optional, and a text one
@@ -785,6 +790,9 @@ fn decode_base64(value: &str) -> std::result::Result<Vec<u8>, ParseError> {
         return Err(ParseError::new(ParseStatus::MissingInput, None));
     }
     if trimmed.contains(char::is_whitespace) {
+        return Err(invalid());
+    }
+    if trimmed.contains(['+', '/']) && trimmed.contains(['-', '_']) {
         return Err(invalid());
     }
     let text = trimmed.replace('-', "+").replace('_', "/");
