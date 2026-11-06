@@ -36,8 +36,9 @@
 //!   `SetDataUpdateOnStartup`.
 //! - `SetUpdatePollingInterval` and `SetUpdateRandomisationMax`, as a whole
 //!   number of seconds or as the text of a .NET `TimeSpan`, such as
-//!   `00:30:00`, whose fraction of a second is dropped. A negative number is
-//!   refused, because the update service counts whole seconds from now.
+//!   `00:30:00`, read by [`TimeSpan`], whose fraction of a second is
+//!   dropped. A negative number is refused, because the update service
+//!   counts whole seconds from now.
 //! - `SetDataUpdateLicenseKey`, adding one key, and
 //!   `SetDataUpdateLicenseKeys`, adding a list of them.
 //! - `SetTempDirPath`, the folder a copy of the data file is made in.
@@ -56,7 +57,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use fiftyone_pipeline_core::configuration::{BuilderDefinition, ConfigType, ParseFailure};
+use fiftyone_pipeline_core::configuration::{BuilderDefinition, TimeSpan};
 use fiftyone_pipeline_core::{Error, Result};
 
 use crate::{AspectEngineDataFile, DataFileConfiguration, DataUpdateUrlFormatter};
@@ -208,108 +209,14 @@ impl DataUpdateUrlFormatter for UnformattedUrl {
     }
 }
 
-/// A period read as .NET's `TimeSpan.TryParse` reads it, in seconds.
-struct TimeSpan(f64);
-
-impl ConfigType for TimeSpan {
-    const TYPE_NAME: &'static str = "TimeSpan";
-
-    fn parse_text(text: &str) -> std::result::Result<Self, ParseFailure> {
-        parse_time_span(text)
-            .map(TimeSpan)
-            .ok_or_else(ParseFailure::text)
-    }
-}
-
 /// The ticks of 100 nanoseconds in one second, .NET's unit for a period.
-const TICKS_PER_SECOND: i128 = 10_000_000;
-
-/// The most days a .NET `TimeSpan` holds.
-const MAX_DAYS: u64 = 10_675_199;
-
-/// The most digits of a fraction of a second, in ticks.
-const MAX_FRACTION_DIGITS: usize = 7;
-
-/// Read a period as .NET's `TimeSpan.TryParse` does in the invariant forms,
-/// giving its seconds. Space around the text and a leading `-` are allowed.
-/// One number is days, `h:m` hours and minutes, `h:m:s` hours, minutes and
-/// seconds or, when the hours are more than 23, days, hours and minutes,
-/// and `d.h:m`, `d.h:m:s`, `d:h:m:s` and `h:m:s.f` with `d.h:m:s.f` and
-/// `d:h:m:s.f` add days and a fraction of up to seven digits.
-fn parse_time_span(text: &str) -> Option<f64> {
-    let text = text.trim_matches(char::is_whitespace);
-    let (negative, body) = match text.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, text),
-    };
-    let mut numbers = Vec::new();
-    let mut separators = Vec::new();
-    let mut start = 0;
-    for (index, c) in body.char_indices() {
-        if c == ':' || c == '.' {
-            numbers.push(&body[start..index]);
-            separators.push(c);
-            start = index + 1;
-        } else if !c.is_ascii_digit() {
-            return None;
-        }
-    }
-    numbers.push(&body[start..]);
-    if numbers.iter().any(|n| n.is_empty()) {
-        return None;
-    }
-    let fraction = |digits: &str| -> Option<u64> {
-        if digits.len() > MAX_FRACTION_DIGITS {
-            return None;
-        }
-        let padded = format!("{digits:0<width$}", width = MAX_FRACTION_DIGITS);
-        padded.parse().ok()
-    };
-    let value = |digits: &str| -> Option<u64> { digits.parse().ok() };
-    // Days, hours, minutes, seconds and the fraction in ticks.
-    let parts: [u64; 5] = match (numbers.as_slice(), separators.as_slice()) {
-        ([d], []) => [value(d)?, 0, 0, 0, 0],
-        ([h, m], [':']) => [0, value(h)?, value(m)?, 0, 0],
-        ([a, b, c], [':', ':']) => {
-            let (a, b, c) = (value(a)?, value(b)?, value(c)?);
-            if valid(0, a, b, c) {
-                [0, a, b, c, 0]
-            } else {
-                [a, b, c, 0, 0]
-            }
-        }
-        ([d, h, m], ['.', ':']) => [value(d)?, value(h)?, value(m)?, 0, 0],
-        ([d, h, m, s], ['.' | ':', ':', ':']) => [value(d)?, value(h)?, value(m)?, value(s)?, 0],
-        ([h, m, s, f], [':', ':', '.']) => [0, value(h)?, value(m)?, value(s)?, fraction(f)?],
-        ([d, h, m, s, f], ['.' | ':', ':', ':', '.']) => {
-            [value(d)?, value(h)?, value(m)?, value(s)?, fraction(f)?]
-        }
-        _ => return None,
-    };
-    let [days, hours, minutes, seconds, ticks] = parts;
-    if !valid(days, hours, minutes, seconds) {
-        return None;
-    }
-    let whole = ((i128::from(days) * 24 + i128::from(hours)) * 60 + i128::from(minutes)) * 60
-        + i128::from(seconds);
-    let magnitude = whole * TICKS_PER_SECOND + i128::from(ticks);
-    let total = if negative { -magnitude } else { magnitude };
-    if total > i128::from(i64::MAX) || total < i128::from(i64::MIN) {
-        return None;
-    }
-    Some(total as f64 / TICKS_PER_SECOND as f64)
-}
-
-/// True when each part of a period is in its range.
-fn valid(days: u64, hours: u64, minutes: u64, seconds: u64) -> bool {
-    days <= MAX_DAYS && hours <= 23 && minutes <= 59 && seconds <= 59
-}
+const TICKS_PER_SECOND: f64 = 10_000_000.0;
 
 /// The whole seconds of a period given as a `TimeSpan`, as .NET's builder
 /// takes them, refusing more than `i32::MAX` with .NET's message for the
 /// setting.
 fn whole_seconds(period: &TimeSpan, too_large: &str, parameter: &str) -> Result<i32> {
-    let seconds = period.0;
+    let seconds = period.ticks() as f64 / TICKS_PER_SECOND;
     if seconds > f64::from(i32::MAX) {
         return Err(Error::configuration(format!(
             "{too_large} timespan too large. Must be less than {} seconds but is {seconds} \
@@ -525,98 +432,7 @@ pub fn add_data_file_settings<B: Send + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// What .NET 8's `TimeSpan.TryParse` gave for each text, in the en-GB
-    /// culture, as its seconds printed in the shortest form that reads back,
-    /// or `None` where it failed.
-    const DOTNET: &[(&str, Option<&str>)] = &[
-        ("00:02:00", Some("120")),
-        ("1.00:00:00", Some("86400")),
-        ("1:00:00:00", Some("86400")),
-        ("2:30", Some("9000")),
-        ("-00:01:00", Some("-60")),
-        ("00:00:01.5", Some("1.5")),
-        ("24:00:00", Some("2073600")),
-        ("23:59:59", Some("86399")),
-        ("00:60:00", None),
-        ("1.2:3:4", Some("93784")),
-        ("5", Some("432000")),
-        (" 00:01:00 ", Some("60")),
-        ("1:2:3:4:5", None),
-        ("0:0:0.12345678", None),
-        ("10675199.02:48:05.4775807", Some("922337203685.4775")),
-        ("10675200.00:00:00", None),
-        ("1.", None),
-        ("1e3", None),
-        (":30", None),
-        ("00:01", Some("60")),
-        ("-1.00:00:00", Some("-86400")),
-        ("+00:01:00", None),
-        ("00:00:00.9999999", Some("0.9999999")),
-        ("00:00:59.9", Some("59.9")),
-        ("0:0", Some("0")),
-        ("1:2:3", Some("3723")),
-        ("01:02:03:04", Some("93784")),
-        ("1.2:3", Some("93780")),
-        ("\t00:01:00\n", Some("60")),
-        ("00:01:00\0", None),
-        ("-", None),
-        ("1.1.1", None),
-        ("00:00:60", None),
-        ("00:59", Some("3540")),
-        ("99:00", None),
-        ("1:24:00:00", None),
-        ("1:0:60", None),
-        ("0.23:59:59", Some("86399")),
-        ("00:00:00,5", None),
-        ("1 00:00:00", None),
-        ("-0:0:1", Some("-1")),
-        ("00:00:01.0000001", Some("1.0000001")),
-        ("2147483647", None),
-        ("24855.03:14:07", Some("2147483647")),
-        ("24855.03:14:08", Some("2147483648")),
-        ("-24855.03:14:08", Some("-2147483648")),
-        ("-24855.03:14:09", Some("-2147483649")),
-        ("1:2.5", None),
-        ("1.2:3:4.5", Some("93784.5")),
-        ("1:2:3:4.5", Some("93784.5")),
-        ("1.2.3", None),
-        ("00:00:00.", None),
-        (".5", None),
-        ("1:2:3.", None),
-        ("0000000000001", Some("86400")),
-        ("000:000:000", Some("0")),
-        ("1:02:3", Some("3723")),
-        ("12345678901234567890", None),
-        ("-10675199.02:48:05.4775808", Some("-922337203685.4775")),
-        ("-10675199.02:48:05.4775809", None),
-        ("10675199.02:48:05.4775808", None),
-        ("10675199", Some("922337193600")),
-        ("10675199.23:59:59", None),
-        ("0:0:0:0", Some("0")),
-        ("00:00:00.0000000", Some("0")),
-        ("1 ", Some("86400")),
-        ("\u{a0}00:01:00", Some("60")),
-        ("00:01:00\u{a0}", Some("60")),
-        ("\u{ff11}:00", None),
-        ("00:01:00\r\n", Some("60")),
-        ("--1", None),
-        ("-+1", None),
-        ("1:2:3:4:5.6", None),
-        ("1.2:3:4:5", None),
-        ("1:2:3.4.5", None),
-    ];
-
-    #[test]
-    fn a_time_span_is_read_as_dotnet_reads_it() {
-        for (text, expected) in DOTNET {
-            assert_eq!(
-                parse_time_span(text).map(|seconds| seconds.to_string()),
-                expected.map(str::to_string),
-                "{text:?}"
-            );
-        }
-    }
+    use fiftyone_pipeline_core::configuration::ConfigType;
 
     /// .NET's cast to whole seconds drops the fraction and holds a period
     /// below `i32::MIN` there, and the builder refuses more than `i32::MAX`
@@ -625,13 +441,18 @@ mod tests {
     fn a_time_span_gives_whole_seconds_as_dotnet_casts_them() {
         let seconds = |text: &str| {
             whole_seconds(
-                &TimeSpan(parse_time_span(text).expect(text)),
+                &TimeSpan::parse_text(text).expect(text),
                 "Polling interval",
                 "pollingInterval",
             )
         };
         assert_eq!(seconds("00:00:01.5").unwrap(), 1);
         assert_eq!(seconds("00:00:00.9999999").unwrap(), 0);
+        // Text the core's reader takes as .NET does, such as a fraction of
+        // more than seven digits or an empty number of seconds.
+        assert_eq!(seconds("00:30:00.00000001").unwrap(), 1800);
+        assert_eq!(seconds("00:00:00.0123456789").unwrap(), 0);
+        assert_eq!(seconds("1:2:.3").unwrap(), 3720);
         assert_eq!(seconds("24855.03:14:07").unwrap(), i32::MAX);
         assert_eq!(seconds("-24855.03:14:09").unwrap(), i32::MIN);
         assert_eq!(
@@ -641,7 +462,7 @@ mod tests {
         );
         assert_eq!(
             whole_seconds(
-                &TimeSpan(2147483648.0),
+                &TimeSpan::from_ticks(21_474_836_480_000_000),
                 "Update randomization",
                 "maximumDeviation"
             )
