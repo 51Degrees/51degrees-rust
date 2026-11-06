@@ -279,5 +279,13 @@
     "path": "properties.agent-signature.agentsignatureexpires",
     "kind": "type",
     "reason": "The crates' property values have no type for a point in time, so the agent signature element gives the time as RFC 3339 text, the form .NET's JSON builder writes, where .NET gives a DateTimeOffset. The values are still compared, and are the same."
+  },
+  {
+    "path": "fodid.status",
+    "kind": "value",
+    "cases": ["*-payload-version-2-short"],
+    "dotnet": {"value": ["PayloadTooShort"]},
+    "rust": {"value": ["UnsupportedPayloadVersion"]},
+    "reason": "identifier-layout.md asks a reader to refuse a payload version it does not know, naming the version it found, and the 5 byte header is part of the version 0 layout. So the crates read the version first and refuse a 4 byte payload naming version 2 as that version, where .NET checks the length first and gives PayloadTooShort."
   }
 ]

@@ -69,8 +69,8 @@ pub(crate) const MATCH_KEY_OFFSET: usize = 5;
 pub(crate) const MATCH_KEY_LENGTH: usize = 32;
 
 /// Byte length of the payload header (flags and License Id) that is common to
-/// every identifier type. A payload shorter than this is
-/// [`Error::PayloadTooShort`].
+/// every identifier type in payload version 0. A version 0 payload shorter
+/// than this, or an empty payload, is [`Error::PayloadTooShort`].
 pub(crate) const HEADER_LENGTH: usize = MATCH_KEY_OFFSET;
 
 /// Byte length of the GUID match key carried by [`IdType::Random`]
@@ -359,11 +359,11 @@ impl FodId {
     /// Returns [`Error::Parse`] carrying the OWID status if the string is not
     /// a valid OWID envelope (for example
     /// [`ParseStatus::InvalidBase64`](crate::ParseStatus::InvalidBase64)),
-    /// [`Error::PayloadTooShort`] if the payload cannot hold the 51Did
-    /// header, [`Error::UnsupportedPayloadVersion`] if the flags byte names a
-    /// payload version other than 0, [`Error::NoUsage`] if the flags byte sets
-    /// no usage bit, or [`Error::InvalidTypePayloadLength`] if the payload is
-    /// shorter than the minimum for its identifier type.
+    /// [`Error::UnsupportedPayloadVersion`] if the flags byte names a payload
+    /// version other than 0, [`Error::PayloadTooShort`] if the payload is
+    /// empty or cannot hold the 51Did header, [`Error::NoUsage`] if the flags
+    /// byte sets no usage bit, or [`Error::InvalidTypePayloadLength`] if the
+    /// payload is shorter than the minimum for its identifier type.
     /// Either base64 alphabet is accepted, standard or URL-safe, with or
     /// without padding, because a 51Did travels in URLs and comes back in
     /// the alphabet whoever sent it chose. Leading and trailing white space
@@ -385,12 +385,12 @@ impl FodId {
     /// # Errors
     ///
     /// Returns [`Error::Parse`] carrying the OWID status if the bytes are not
-    /// a valid OWID envelope, [`Error::PayloadTooShort`] if the payload cannot
-    /// hold the 51Did header, [`Error::UnsupportedPayloadVersion`] if the
-    /// flags byte names a payload version other than 0, [`Error::NoUsage`] if
-    /// the flags byte sets no usage bit, or
-    /// [`Error::InvalidTypePayloadLength`] if the payload is shorter than the
-    /// minimum for its identifier type.
+    /// a valid OWID envelope, [`Error::UnsupportedPayloadVersion`] if the
+    /// flags byte names a payload version other than 0,
+    /// [`Error::PayloadTooShort`] if the payload is empty or cannot hold the
+    /// 51Did header, [`Error::NoUsage`] if the flags byte sets no usage bit,
+    /// or [`Error::InvalidTypePayloadLength`] if the payload is shorter than
+    /// the minimum for its identifier type.
     pub fn from_byte_array(buffer: &[u8]) -> Result<Self> {
         Self::from_owid(Owid::from_byte_array(buffer)?)
     }
@@ -399,11 +399,13 @@ impl FodId {
     /// fields. The OWID is moved into the returned value and remains reachable
     /// through [`owid`](FodId::owid) and the [`Deref`].
     ///
-    /// This is the one place the 51Did payload rules live. The payload must
-    /// hold the five byte header before the type can be read, and then the
-    /// value length that type requires, being 16 GUID bytes for
-    /// [`IdType::Random`] and a 32 byte hash for [`IdType::Probabilistic`]
-    /// and [`IdType::HashedEmail`]. A
+    /// This is the one place the 51Did payload rules live. The payload
+    /// version in the flags byte is read first, because the header's length
+    /// and every field after the version belong to the version 0 layout.
+    /// The payload must then hold the five byte header before the type can
+    /// be read, and then the value length that type requires, being 16 GUID
+    /// bytes for [`IdType::Random`] and a 32 byte hash for
+    /// [`IdType::Probabilistic`] and [`IdType::HashedEmail`]. A
     /// [`IdType::Reserved`] payload has no defined value length and is read
     /// best effort, taking every byte after the header as its value, so a
     /// reserved identifier states no terms until that length is assigned.
@@ -412,31 +414,36 @@ impl FodId {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::PayloadTooShort`] if the payload is shorter than the
-    /// header, [`Error::UnsupportedPayloadVersion`] if the flags byte names
-    /// a payload version other than 0, [`Error::NoUsage`] if the flags byte
-    /// sets no usage bit, or [`Error::InvalidTypePayloadLength`] if the
-    /// payload is shorter than the header plus the value length the type
-    /// requires.
+    /// Returns [`Error::UnsupportedPayloadVersion`] if the flags byte names a
+    /// payload version other than 0, whatever the payload's length,
+    /// [`Error::PayloadTooShort`] if the payload is empty or shorter than the
+    /// header, [`Error::NoUsage`] if the flags byte sets no usage bit, or
+    /// [`Error::InvalidTypePayloadLength`] if the payload is shorter than the
+    /// header plus the value length the type requires.
     pub fn from_owid(owid: Owid) -> Result<Self> {
         let payload = owid.payload();
-        if payload.len() < HEADER_LENGTH {
+        let Some(&flags) = payload.get(FLAGS_OFFSET) else {
             return Err(Error::PayloadTooShort {
                 expected: HEADER_LENGTH,
                 actual: payload.len(),
             });
-        }
-        let flags = payload[FLAGS_OFFSET];
-        // The version is read before any field, because a later version
-        // exists precisely because a field moved. Reading a payload of a
-        // version this crate does not know under the layout it does know
-        // would answer with values that are wrong rather than absent, which
-        // is worse than refusing, and a version that nothing checks
-        // protects nothing.
+        };
+        // The version is read before any field, and before the length,
+        // because a later version exists precisely because a field moved.
+        // Reading a payload of a version this crate does not know under the
+        // layout it does know would answer with values that are wrong rather
+        // than absent, and the five byte header is part of that layout, so a
+        // short payload naming another version is refused as that version.
         let payload_version = (flags >> 4) & 0b11;
         if payload_version != SUPPORTED_PAYLOAD_VERSION {
             return Err(Error::UnsupportedPayloadVersion {
                 version: payload_version,
+            });
+        }
+        if payload.len() < HEADER_LENGTH {
+            return Err(Error::PayloadTooShort {
+                expected: HEADER_LENGTH,
+                actual: payload.len(),
             });
         }
         // Every usage the cloud accepts sets bit 0, so a payload with no

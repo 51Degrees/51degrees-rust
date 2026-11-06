@@ -533,7 +533,8 @@ fn random_payload_with_only_the_header_is_invalid_type_payload_length() {
 #[test]
 fn payload_shorter_than_the_header_is_payload_too_short() {
     // With fewer than the header's 5 bytes the type cannot even be read, so
-    // the answer is the header status whatever the flags byte says.
+    // a payload naming version 0, or an empty one, is given the header
+    // status whatever the usage and type bits say.
     let fixture = Fixture::new();
     for length in 0..layout::HEADER_LENGTH {
         let mut payload = vec![0u8; length];
@@ -554,6 +555,29 @@ fn payload_shorter_than_the_header_is_payload_too_short() {
             ),
             "payload of {length} bytes"
         );
+    }
+}
+
+#[test]
+fn a_short_payload_naming_another_version_is_refused_as_that_version() {
+    // The header's length is part of the version 0 layout, so a payload too
+    // short for it that names another version is refused naming the version
+    // it found, as identifier-layout.md "Version" asks. An empty payload has
+    // no flags byte to name a version, so it stays too short.
+    let fixture = Fixture::new();
+    for version in [1u8, 2, 3] {
+        for length in 1..layout::HEADER_LENGTH {
+            let mut payload = vec![0u8; length];
+            payload[layout::FLAGS_OFFSET] = RANDOM_FLAGS;
+            let payload = with_payload_version(&payload, version);
+
+            match FodId::from_base64(&fixture.signed_owid_base64(payload)) {
+                Err(Error::UnsupportedPayloadVersion { version: found }) => {
+                    assert_eq!(found, version, "payload of {length} bytes");
+                }
+                other => panic!("version {version}, {length} bytes: {other:?}"),
+            }
+        }
     }
 }
 
