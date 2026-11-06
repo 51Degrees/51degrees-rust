@@ -248,8 +248,14 @@ impl<'a> Parser<'a> {
         Ok(node)
     }
 
+    /// The error `what`, placed at the line and column of the position, or
+    /// of the character it falls inside.
     fn error(&self, what: &str) -> Error {
-        let before = &self.text[..self.position];
+        let mut end = self.position.min(self.text.len());
+        while !self.text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let before = &self.text[..end];
         let line = before.matches('\n').count() + 1;
         let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
         Error::configuration(format!(
@@ -429,12 +435,14 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// The character the escape after a backslash gives. A bad escape is
+    /// reported at the escaped character, which may take more than one byte,
+    /// so the position moves past it only when it is good.
     fn escape(&mut self) -> Result<char> {
         let c = self
             .peek()
             .ok_or_else(|| self.error("a string that is not closed"))?;
-        self.position += 1;
-        Ok(match c {
+        let escaped = match c {
             b'"' => '"',
             b'\\' => '\\',
             b'/' => '/',
@@ -444,25 +452,31 @@ impl<'a> Parser<'a> {
             b'r' => '\r',
             b't' => '\t',
             b'u' => {
-                let high = self.hex4()?;
-                if (0xD800..0xDC00).contains(&high) {
-                    if !self.text[self.position..].starts_with("\\u") {
-                        return Err(self.error("a lone surrogate in a string"));
-                    }
-                    self.position += 2;
-                    let low = self.hex4()?;
-                    if !(0xDC00..0xE000).contains(&low) {
-                        return Err(self.error("a lone surrogate in a string"));
-                    }
-                    let code = 0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00);
-                    char::from_u32(code).ok_or_else(|| self.error("a bad escape"))?
-                } else {
-                    char::from_u32(high)
-                        .ok_or_else(|| self.error("a lone surrogate in a string"))?
-                }
+                self.position += 1;
+                return self.unicode_escape();
             }
             _ => return Err(self.error("a bad escape in a string")),
-        })
+        };
+        self.position += 1;
+        Ok(escaped)
+    }
+
+    /// The character a `\u` escape gives, the position being after the `u`.
+    fn unicode_escape(&mut self) -> Result<char> {
+        let high = self.hex4()?;
+        if !(0xD800..0xDC00).contains(&high) {
+            return char::from_u32(high).ok_or_else(|| self.error("a lone surrogate in a string"));
+        }
+        if !self.text[self.position..].starts_with("\\u") {
+            return Err(self.error("a lone surrogate in a string"));
+        }
+        self.position += 2;
+        let low = self.hex4()?;
+        if !(0xDC00..0xE000).contains(&low) {
+            return Err(self.error("a lone surrogate in a string"));
+        }
+        let code = 0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00);
+        char::from_u32(code).ok_or_else(|| self.error("a bad escape"))
     }
 
     fn hex4(&mut self) -> Result<u32> {
@@ -541,7 +555,26 @@ mod tests {
             ("{\"a\":\n tru}", "an unexpected word at line 2 column 2"),
             ("{\"a\": \"b}", "a string that is not closed"),
             ("{\"a\": \"\t\"}", "a control character"),
-            ("{\"a\": \"\\x\"}", "a bad escape"),
+            (
+                "{\"a\": \"\\x\"}",
+                "a bad escape in a string at line 1 column 9",
+            ),
+            (
+                "{\"a\": \"\\é\"}",
+                "a bad escape in a string at line 1 column 9",
+            ),
+            (
+                "{\"a\": \"\\😀\"}",
+                "a bad escape in a string at line 1 column 9",
+            ),
+            (
+                "{\"a\":\n\"C:\\Ärzte\"}",
+                "a bad escape in a string at line 2 column 5",
+            ),
+            ("{\"a\": \"\\", "a string that is not closed"),
+            ("{\"a\": \"\\u12\"}", "a bad \\u escape"),
+            ("{\"a\": \"\\uéééé\"}", "a bad \\u escape"),
+            ("{\"a\": \"\\ud800\\é\"}", "a lone surrogate"),
             ("{\"a\": \"\\ud800\"}", "a lone surrogate"),
             ("{\"a\" 1}", "a missing ':'"),
             ("{\"a\": 1 \"b\": 2}", "a missing ',' or '}'"),

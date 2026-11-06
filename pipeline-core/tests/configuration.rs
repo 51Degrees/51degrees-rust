@@ -1651,6 +1651,113 @@ fn json_that_dotnet_would_refuse_or_not_read_is_refused() {
     }
 }
 
+/// A backslash before a character outside ASCII, as in a Windows path
+/// written with single backslashes, is a bad escape refused with its place.
+#[test]
+fn a_bad_escape_before_a_character_outside_ascii_is_refused() {
+    for (text, place) in [
+        (r#"{"a": "\é"}"#, "line 1 column 9"),
+        (
+            "{ \"PipelineOptions\": {\n  \"DataFile\": \"C:\\Ärzte\\51Degrees.hash\" } }",
+            "line 2 column 19",
+        ),
+    ] {
+        assert_eq!(
+            json_message(text),
+            format!("The configuration is not valid JSON, a bad escape in a string at {place}."),
+            "{text}"
+        );
+    }
+}
+
+/// A configuration that builds, using each form the JSON reader takes.
+const EVERY_FORM: &str = "\u{feff}// A comment.
+{ \"pipelineoptions\": { /* Names in any case. */
+    \"Elements\": [
+      { \"SubElements\": [
+        { \"BuilderName\": \"ListSplitterElement\", \"BuildParameters\": { \"delim\": null,
+          \"SetDelimiters\": \"\\u007c,\\t,\\\"é😀\\ud83d\\ude00\", \"SetMaxLength\": 3, }, },
+        { \"BuilderName\": \"DataFileEngine\", \"BuildParameters\": {
+          \"DataFile\": \"C:\\\\Data\\/51Degrees.hash\", \"CreateTempDataCopy\": true } }, ], },
+      { \"BuilderName\": \"EnumPerfProfile\",
+        \"BuildParameters\": { \"PerformanceProfile\": \"highperformance\" } },
+      { \"BuilderName\": \"Multiply\", \"BuildParameters\": { \"multiple\": -20 } },
+    ],
+    \"PipelineBuilderParameters\": { \"SetSuppressProcessException\": true },
+    \"BuildParameters\": { \"SuppressProcessException\": false } } }
+";
+
+/// Characters that make up JSON, and some wider than one byte.
+const JSON_CHARACTERS: &[char] = &[
+    '{', '}', '[', ']', '"', ':', ',', '\\', '/', '*', '-', '+', '.', '0', '1', '9', 'e', 'E', 'u',
+    'a', 'd', 't', 'r', 'n', 'l', 'f', 's', ' ', '\n', '\t', '\u{0}', 'é', 'Ä', '😀', '\u{feff}',
+];
+
+/// A repeatable source of numbers for the texts below, xorshift64*.
+struct Random(u64);
+
+impl Random {
+    fn below(&mut self, limit: usize) -> usize {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        (self.0.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 33) as usize % limit.max(1)
+    }
+
+    fn character(&mut self) -> char {
+        JSON_CHARACTERS[self.below(JSON_CHARACTERS.len())]
+    }
+}
+
+/// Every beginning and end of each sample, and thousands of samples with a
+/// few characters changed and of random texts, are read and, when they
+/// read, built, without a panic. Only that each call returns is checked.
+#[test]
+fn no_configuration_text_panics() {
+    const CHANGED: usize = 4000;
+    const RANDOM: usize = 4000;
+    const MOST_CHANGES: usize = 4;
+    const LONGEST_RANDOM: usize = 48;
+    let samples = [SAMPLE, EVERY_FORM];
+    for sample in samples {
+        build(&PipelineOptions::from_json(sample).unwrap()).unwrap();
+    }
+    let mut texts: Vec<String> = Vec::new();
+    for sample in samples {
+        for end in (0..=sample.len()).filter(|end| sample.is_char_boundary(*end)) {
+            texts.push(sample[..end].to_string());
+            texts.push(sample[end..].to_string());
+        }
+    }
+    let mut random = Random(0x51de_c0de_51de_c0de);
+    for _ in 0..CHANGED {
+        let mut text: Vec<char> = samples[random.below(samples.len())].chars().collect();
+        for _ in 0..=random.below(MOST_CHANGES) {
+            let at = random.below(text.len());
+            match random.below(3) {
+                0 => text.insert(at, random.character()),
+                1 => {
+                    text.remove(at);
+                }
+                _ => text[at] = random.character(),
+            }
+        }
+        texts.push(text.into_iter().collect());
+    }
+    for _ in 0..RANDOM {
+        let length = random.below(LONGEST_RANDOM + 1);
+        texts.push((0..length).map(|_| random.character()).collect());
+    }
+    for text in &texts {
+        let returned = std::panic::catch_unwind(|| {
+            if let Ok(options) = PipelineOptions::from_json(text) {
+                let _ = build(&options);
+            }
+        });
+        assert!(returned.is_ok(), "{text:?} panicked");
+    }
+}
+
 /// .NET 4.5.129 bound a JSON `null` as empty text, reading the file with
 /// .NET's configuration reader 8.0.1 and binder 8.0.2.
 #[test]
