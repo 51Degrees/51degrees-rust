@@ -1,0 +1,21 @@
+# Two programs that ci/measure-wasm-size.sh builds for wasm32-wasip1, to
+# measure what CountriesTranslationEngine adds to a WebAssembly module. The
+# empty [workspace] table makes this its own workspace, so the library
+# workspace neither builds, tests nor publishes it.
+[package]
+name = "wasm-size"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+fiftyone-pipeline-core = { path = "../../pipeline-core" }
+fiftyone-ip-intelligence-translation = { path = "../../ip-intelligence-translation" }
+
+# Built the way a deployment that minds the size of its module would build it.
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+[workspace]

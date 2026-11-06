@@ -357,3 +357,11 @@ jobs:
             cargo test -p "${crate}" --no-default-features --target wasm32-wasip1
             echo "::endgroup::"
           done
+
+      # CountriesTranslationEngine compiles in the Unicode collation data for
+      # every locale icu_collator holds, and edge platforms limit the size of
+      # a deployed module. This builds a release module with and without the
+      # engine, prints both sizes to the log and the run's summary, and runs
+      # both under wasmtime. The crate README's figure comes from here.
+      - name: Measure what the countries translation engine adds to a module
+        run: bash ci/measure-wasm-size.sh
