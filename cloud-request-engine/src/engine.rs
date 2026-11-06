@@ -44,6 +44,10 @@ use crate::recovery::{RecoveryConfig, RecoveryGate};
 use crate::response::{cloud_error, validate_keeping_warnings, validate_response, ParsedResponse};
 use crate::state::CloudEngineState;
 
+/// The longest recovery period the engine holds, 100 years in seconds, so
+/// that adding it to the current instant cannot overflow.
+const RECOVERY_SECONDS_MAX: f64 = 100.0 * 365.25 * 24.0 * 60.0 * 60.0;
+
 /// The set of resolved endpoint URLs the engine talks to.
 #[derive(Debug, Clone)]
 struct Endpoints {
@@ -1003,10 +1007,12 @@ impl CloudRequestEngineBuilder {
         self
     }
 
-    /// Set the recovery-period duration. A zero duration disables recovery mode.
+    /// Set the recovery-period duration. Zero, a negative value or one that is
+    /// not a number disables recovery mode, and a period longer than 100 years
+    /// is held at 100 years.
     pub fn recovery_seconds(mut self, seconds: f64) -> Self {
         self.recovery = if seconds > 0.0 {
-            Duration::from_secs_f64(seconds)
+            Duration::from_secs_f64(seconds.min(RECOVERY_SECONDS_MAX))
         } else {
             Duration::ZERO
         };
@@ -1808,6 +1814,31 @@ mod tests {
             .set_state(sample_state())
             .build()
             .unwrap()
+    }
+
+    #[test]
+    fn a_recovery_period_too_long_to_hold_is_held_at_100_years() {
+        let longest = Duration::from_secs_f64(RECOVERY_SECONDS_MAX);
+        for seconds in [f64::INFINITY, f64::MAX, 1e300, 1e20, RECOVERY_SECONDS_MAX] {
+            let builder = CloudRequestEngine::builder()
+                .failures_to_enter_recovery(1)
+                .recovery_seconds(seconds);
+            assert_eq!(builder.recovery, longest, "{seconds}");
+            let gate = RecoveryGate::new(RecoveryConfig {
+                failures_to_enter_recovery: builder.failures_to_enter_recovery,
+                window: builder.failures_window,
+                recovery: builder.recovery,
+            });
+            let now = Instant::now();
+            gate.record_failure_at(now);
+            assert!(gate.is_recovering_at(now), "{seconds}");
+        }
+        for seconds in [f64::NAN, f64::NEG_INFINITY, -1.0, 0.0] {
+            let builder = CloudRequestEngine::builder().recovery_seconds(seconds);
+            assert_eq!(builder.recovery, Duration::ZERO, "{seconds}");
+        }
+        let builder = CloudRequestEngine::builder().recovery_seconds(2.5);
+        assert_eq!(builder.recovery, Duration::from_millis(2500));
     }
 
     /// The configuration error message from a build that was expected to fail.
