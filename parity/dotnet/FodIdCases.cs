@@ -390,10 +390,10 @@ namespace FiftyOne.Parity
             {
                 ["name"] = property.Name,
                 ["category"] = property.Category,
-                ["component"] = property.GetComponent().Name,
-                ["componentId"] = property.GetComponent().ComponentId,
+                ["component"] = property.Component.Name,
+                ["componentId"] = property.Component.ComponentId,
                 ["type"] = TypeName(property.Type),
-                ["defaultValue"] = property.GetDefaultValue()?.Name,
+                ["defaultValue"] = property.DefaultValue?.Name,
                 ["available"] = property.Available,
                 ["dataTiers"] = Strings(property.DataTiersWherePresent),
                 ["description"] = property.Description,

@@ -9,6 +9,7 @@ change by a difference this comparison stops reporting.
 | Path | What it is |
 | --- | --- |
 | `corpus/evidence.json` | The cases. Each has an id, a sentence saying what it covers, its evidence and, for some, the pipeline it runs through. None of it comes from real visitors. |
+| `corpus/fodid.json` | The 51Did cases. Each is a payload to sign, a text to read as it is, or the 51Did metadata (see "The 51Did comparison"). |
 | `dotnet/` | A .NET 8 console program that runs the cases through the .NET packages and writes one JSON line for each. |
 | `rust/` | The same program over the crates in this checkout. |
 | `compare/` | The comparer, which reports each difference with the case that caused it. |
@@ -94,6 +95,8 @@ Each program writes one JSON object per case.
 | `javascript` | The JavaScript builder's output. |
 | `usage` | The usage sharing record written for the case, or null. |
 | `usageCustom` | The record the second usage sharing element wrote for the case, or null. |
+| `fodid` | For a 51Did case, the parse status and, when the 51Did was read, the value of each accessor, else null. |
+| `metadata` | For the 51Did metadata case, the component's name and id and each property's metadata in list order. |
 
 Value types are `string`, `bool`, `integer`, `double`, `stringList`,
 `javascript`, `ipAddress`, `dateTime` (in .NET only, written as RFC 3339
@@ -157,6 +160,60 @@ first entry that matches takes the difference. The run also fails when an
 entry that applies to its data files allows nothing, so a change that
 removes a difference removes its entry in the same pull request.
 
+## The 51Did comparison
+
+The 51Did cases need no data file, so they run in both jobs. Each program
+signs every payload in `corpus/fodid.json` for the domain `parity.test`
+with a P-256 key it makes for the run, and writes a signed list with its own
+prefix, `rust-` or `dotnet-`, before every id. Then each program reads both
+signed lists, so each verifies the signatures the other made. No key is
+committed.
+
+A case has an `id`, an `about` sentence saying what it covers, and one of
+these.
+
+| Field | What it holds |
+| --- | --- |
+| `payload` | Hex bytes laid out as [identifier-layout.md](https://github.com/51Degrees/specifications/blob/main/did-specification/identifier-layout.md) describes, which the program signs. White space between digits is ignored. |
+| `text` | Text given to the reader as it is, never signed. |
+| `metadata` | `true` for the case whose line holds the 51Did metadata. |
+
+A `payload` case may also have these.
+
+| Field | What it holds |
+| --- | --- |
+| `encoding` | How the signed envelope reaches the reader. `standard`, the default, is the standard alphabet with padding. `url` is the URL-safe alphabet with no padding. `url-surrounded` is `url` with a space before it and a line feed after it. `url-spaced` is `url` with a space after every 20th character. `bytes` gives the envelope's bytes. |
+| `trailing` | Hex bytes added after the envelope before it is encoded. |
+| `tamper` | `true` to change the last byte of the signature after signing. |
+
+An entry of a signed list has the case's `id` with the prefix, its
+`about`, a `form` of `text`, `bytes` or `metadata`, the `input` the reader
+is given (hex for `bytes`), the signing key as SPKI PEM in `publicKey`, null
+for a case that was not signed, and `tamper`.
+
+The `fodid` field of a line holds `status` and then `type`, `usage`,
+`idUsage`, `usageIsIndirect`, `licenseId`, `matchKey`, `terms`,
+`base64Url`, `version`, `domain`, `date`, `payload`, `signature`, `base64`
+and `signatureStatus`. Bytes are lower-case hex and the date is RFC 3339 in
+UTC. The signature is checked with the entry's `publicKey`, so
+`signatureStatus` is null for a case that was not signed. Statuses use
+.NET's names, such as `Parsed`, `PayloadTooShort` and `SignatureValid`, and
+the Rust program writes any status .NET has no name for with a `rust:`
+prefix, so it shows as a difference.
+
+The comparer takes both signed lists as cases and the 51Did lines beside the
+others, because `--corpus`, `--dotnet` and `--rust` may each be given more
+than once. It compares `fodid` and `metadata` key by key and list item by
+item, so a path such as `fodid.matchKey` or
+`metadata.properties[2].description` names the field that differs.
+
+Two steps of the lite job check that this comparison means something.
+Each side must read every signed case that is meant to read with its
+signature `SignatureValid`, in both lists, and the tampered case with its
+signature `SignatureInvalid`, so the two languages cannot agree by both
+failing. Then a Rust line with a changed match key, and a Rust metadata line
+with a changed description, must each fail the comparison.
+
 ## The C code
 
 Both sides build the same C code. The crates build their native code from
@@ -210,9 +267,15 @@ dotnet build dotnet -c Release -o out/dotnet
 DATA="--corpus corpus/evidence.json --dd ../cxx/data/device-detection/51Degrees-LiteV4.1.hash --ipi ../cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi"
 dotnet out/dotnet/Parity.dll $DATA --out out/dotnet.jsonl
 target/debug/parity-rust $DATA --out out/rust.jsonl
-target/debug/parity-compare --corpus corpus/evidence.json --dotnet out/dotnet.jsonl \
-  --rust out/rust.jsonl --allowed allowed-differences.json --data lite --strict \
-  --report out/report.md
+target/debug/parity-rust fodid-sign --cases corpus/fodid.json --prefix rust- --out out/fodid-rust.json
+dotnet out/dotnet/Parity.dll fodid-sign --cases corpus/fodid.json --prefix dotnet- --out out/fodid-dotnet.json
+SIGNED="--corpus out/fodid-rust.json --corpus out/fodid-dotnet.json"
+target/debug/parity-rust fodid $SIGNED --out out/fodid-rust.jsonl
+dotnet out/dotnet/Parity.dll fodid $SIGNED --out out/fodid-dotnet.jsonl
+target/debug/parity-compare --corpus corpus/evidence.json $SIGNED \
+  --dotnet out/dotnet.jsonl --dotnet out/fodid-dotnet.jsonl \
+  --rust out/rust.jsonl --rust out/fodid-rust.jsonl \
+  --allowed allowed-differences.json --data lite --strict --report out/report.md
 ```
 
 `cargo test -p parity-compare` tests the comparer and needs nothing native.
@@ -228,3 +291,8 @@ has a usage record, even when it gives an engines' case's session id, and an
 engines' case whose `header.x-health-check` is `true` has none either. Keep
 every character within the Basic Multilingual Plane. Then run both programs
 and list any new difference with its reason, or fix it.
+
+A 51Did case goes in `corpus/fodid.json` in the same way. A new signed case
+that is meant to read changes the number of cases the workflow step "Check
+every signed 51Did verifies" expects to verify, so change that number in the
+same pull request.
