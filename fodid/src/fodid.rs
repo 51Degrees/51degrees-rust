@@ -20,6 +20,7 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
+use std::fmt;
 use std::ops::Deref;
 use std::str::FromStr;
 
@@ -336,13 +337,14 @@ impl Terms {
 /// [`date`](FodId::date), [`signature`](FodId::signature),
 /// [`age_minutes`](FodId::age_minutes),
 /// [`as_byte_array`](FodId::as_byte_array),
-/// [`as_base64`](FodId::as_base64), [`as_base64_url`](FodId::as_base64_url)
-/// and the four verify methods. The payload is not among them, because
-/// every field in it has a named accessor. `FodId` still [`Deref`]s to
-/// [`Owid`], and the deprecated [`owid`](FodId::owid) and
-/// [`into_owid`](FodId::into_owid) still return it, only so that code
-/// written against earlier releases compiles. The `Deref` goes in the next
-/// release that may break the API.
+/// [`to_buffer`](FodId::to_buffer), [`as_base64`](FodId::as_base64),
+/// [`as_base64_url`](FodId::as_base64_url) and the four verify methods, and
+/// `FodId`'s own [`Display`](fmt::Display) writes the standard base64 text.
+/// The payload is not among them, because every field in it has a named
+/// accessor. `FodId` still [`Deref`]s to [`Owid`], and the deprecated
+/// [`owid`](FodId::owid) and [`into_owid`](FodId::into_owid) still return
+/// it, only so that code written against earlier releases compiles. The
+/// `Deref` goes in the next release that may break the API.
 ///
 /// Two values are equal when they have the same type and the same match key,
 /// as the [`PartialEq`] implementation says, so `==` asks whether two
@@ -646,7 +648,7 @@ impl FodId {
     }
 
     /// The envelope's bytes, which
-    /// [`from_byte_array`](FodId::from_byte_array) reads back to an equal
+    /// [`from_byte_array`](FodId::from_byte_array) reads back to the same
     /// envelope.
     ///
     /// # Errors
@@ -655,6 +657,16 @@ impl FodId {
     /// envelope cannot be written.
     pub fn as_byte_array(&self) -> std::result::Result<Vec<u8>, OwidError> {
         self.owid.as_byte_array()
+    }
+
+    /// Appends the envelope's bytes, the same bytes
+    /// [`as_byte_array`](FodId::as_byte_array) gives, to the buffer given.
+    ///
+    /// # Errors
+    ///
+    /// As [`as_byte_array`](FodId::as_byte_array).
+    pub fn to_buffer(&self, buffer: &mut Vec<u8>) -> std::result::Result<(), OwidError> {
+        self.owid.to_buffer(buffer)
     }
 
     /// The envelope in the standard base64 alphabet with padding, the form
@@ -735,6 +747,15 @@ impl PartialEq for FodId {
 }
 
 impl Eq for FodId {}
+
+/// Writes the envelope in the standard base64 alphabet with padding, as
+/// [`as_base64`](FodId::as_base64) gives it, or the text of the error when
+/// the envelope cannot be written, as [`Owid`]'s `Display` does.
+impl fmt::Display for FodId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.owid, f)
+    }
+}
 
 /// Standard base64 with or without padding. The unused low bits of the last
 /// group are ignored rather than refused, as the .NET decoder ignores them.

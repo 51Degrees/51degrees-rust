@@ -20,6 +20,6 @@ fiftyone-pipeline-engines-fiftyone = { version = "=4.5.2", path = "../pipeline-e
 fodid = { version = "=4.5.5", path = "../fodid" }
 
 [dev-dependencies]
-# A test creates a signed envelope with too short a payload, which needs the
-# OWID creator types fodid exposes under its creator feature.
+# The tests sign envelopes, one of them with too short a payload, which needs
+# the OWID creator types fodid exposes under its creator feature.
 fodid = { version = "4.5.5", path = "../fodid", features = ["creator"] }
