@@ -101,9 +101,9 @@ use crate::constants::{
     SHARE_USAGE_DEFAULT_TAKE_TIMEOUT_MS, SHARE_USAGE_DEFAULT_URL,
 };
 use crate::evidence_filter::{EvidenceKeyFilterShareUsage, EvidenceKeyFilterShareUsageTracker};
-use crate::sequence_element::{SequenceData, SequenceElement};
+use crate::sequence_element::{parse_sequence, SequenceData, SequenceElement};
 use crate::share_usage_tracker::ShareUsageTracker;
-use crate::usage_record::{parse_sequence, write_document, StaticInfo, UsageRecord};
+use crate::usage_record::{write_document, StaticInfo, UsageRecord};
 use crate::usage_sink::{UsageBatch, UsageSink};
 
 /// The smallest value accepted for the minimum entries per message. A message

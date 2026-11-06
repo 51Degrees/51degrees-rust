@@ -32,8 +32,8 @@
 //!
 //! - [`SequenceElement`] establishes the session id and sequence number used to
 //!   correlate the callbacks the client-side JavaScript makes to the server. It
-//!   generates a GUID session id when none is supplied and increments the
-//!   sequence on each request. See the
+//!   generates a GUID session id when none is supplied, increments the
+//!   sequence on each request and writes both into the evidence. See the
 //!   [sequence-element specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/sequence-element.md).
 //! - [`SetHeadersElement`] scans every element's properties for the
 //!   `SetHeader[Identifier][HeaderName]` naming convention and builds the set of
