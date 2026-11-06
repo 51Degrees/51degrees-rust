@@ -323,5 +323,13 @@
     "cases": ["*-encoding-url-spaced", "*-text-url-space-1", "*-text-url-tabs", "*-text-url-line-breaks", "*-text-url-unpadded-space-1", "*-text-url-unpadded-space-2", "*-text-url-unpadded-space-4", "*-text-standard-space-1"],
     "rust": {"value": [null]},
     "reason": "The crates refuse a text with white space inside it, so every field but the status is null, where .NET reads the 51Did and gives each field."
+  },
+  {
+    "path": "properties.countrynames*",
+    "kind": "state",
+    "cases": ["translation-no-ip-data", "translation-bad-item"],
+    "dotnet": {"value": [null]},
+    "rust": {"noValue": true},
+    "reason": "A property no engine set reads as null in .NET, because its data gives null for a key it does not hold. The crates' data cannot hold null, so such a property has no value, with the reason No value for property and its name. In translation-no-ip-data the country codes engine sets no property, and in translation-bad-item the countries engine fails before it sets any, on both sides, and the errors and the JSON are the same."
   }
 ]
