@@ -119,6 +119,11 @@ pub trait FlowElement: Send + Sync {
     /// `false` until then, and the list it gives meanwhile may be defaults. A
     /// consumer deciding what the pipeline offers leaves such an element out
     /// and asks again later. An element that wraps another forwards this.
+    ///
+    /// An aspect engine that can answer `false` from its
+    /// `has_loaded_properties` overrides this as well, reading its property
+    /// list first and then answering `has_loaded_properties`, because this
+    /// default would otherwise count it as loaded before its list is.
     fn properties_loaded(&self) -> bool {
         true
     }
