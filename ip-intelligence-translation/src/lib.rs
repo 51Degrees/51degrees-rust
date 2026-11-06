@@ -39,6 +39,12 @@
 //! compiled in, in English and 16 other languages, so neither engine needs
 //! any configuration or files.
 //!
+//! With the cloud service, [`CloudCountriesTranslationEngine`] takes the
+//! place of both. Added after a cloud request engine, it reads the names the
+//! cloud service translated and gives them under
+//! [`COUNTRY_NAMES_TRANSLATED_KEY`], read through
+//! [`CountriesTranslationData`] as on premise.
+//!
 //! ```
 //! use fiftyone_ip_intelligence_translation::{
 //!     CountriesTranslationEngine, CountryCodeTranslationEngine,
@@ -67,11 +73,14 @@
 
 #![warn(missing_docs)]
 
+mod cloud;
+pub mod configuration;
 mod countries;
 mod country_code;
 mod data;
 mod resources;
 
+pub use cloud::{CloudCountriesTranslationEngine, CloudCountriesTranslationEngineBuilder};
 pub use countries::{CountriesTranslationEngine, CountriesTranslationEngineBuilder};
 pub use country_code::{CountryCodeTranslationEngine, CountryCodeTranslationEngineBuilder};
 pub use data::{

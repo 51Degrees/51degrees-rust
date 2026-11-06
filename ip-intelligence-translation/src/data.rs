@@ -160,11 +160,6 @@ impl CountriesTranslationData for TranslationData {
     }
 }
 
-/// The reason given for a property that was never set.
-fn not_set(name: &str) -> String {
-    format!("No value for property '{name}'.")
-}
-
 /// A property held as a weighted list, leaving out any item with no
 /// translation.
 fn weighted_list(
@@ -172,7 +167,7 @@ fn weighted_list(
     name: &str,
 ) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
     match data.value(name) {
-        None => AspectPropertyValue::no_value(not_set(name)),
+        None => AspectPropertyValue::no_value(data.missing_property_message(name)),
         Some(AspectPropertyValue::NoValue { message }) => {
             AspectPropertyValue::no_value(message.clone())
         }
@@ -198,7 +193,7 @@ fn weighted_list(
 /// translation.
 fn string_list(data: &TranslationData, name: &str) -> AspectPropertyValue<Vec<String>> {
     match data.value(name) {
-        None => AspectPropertyValue::no_value(not_set(name)),
+        None => AspectPropertyValue::no_value(data.missing_property_message(name)),
         Some(AspectPropertyValue::NoValue { message }) => {
             AspectPropertyValue::no_value(message.clone())
         }
