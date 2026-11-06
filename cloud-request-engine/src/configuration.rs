@@ -60,6 +60,10 @@
 //! cloud engines after it find it, and what a configuration set can be read
 //! back.
 //!
+//! The builder of each cloud aspect engine finds that engine with
+//! [`request_engine`], and takes the settings .NET's cloud aspect engine
+//! builders share through [`add_aspect_engine_settings`].
+//!
 //! ```
 //! use std::sync::Arc;
 //! use std::time::Duration;
@@ -116,7 +120,7 @@ use std::sync::Arc;
 
 use fiftyone_caching::{CacheBuilder, LruCache};
 use fiftyone_pipeline_core::configuration::{BuildContext, BuilderDefinition, BuilderRegistry};
-use fiftyone_pipeline_core::{Error, FlowElement};
+use fiftyone_pipeline_core::{Error, FlowElement, Result};
 
 use crate::constants::{
     DATA_FILENAME, EVIDENCE_KEYS_FILENAME, FAILURES_TO_ENTER_RECOVERY_MAX,
@@ -131,10 +135,105 @@ const CONFIGURED_FAILURES_TO_ENTER_RECOVERY_MAX: u32 = 1000;
 /// takes it.
 const NO_LIMIT_SECONDS: u64 = 0;
 
+/// The name of .NET's `LazyLoadingConfiguration`, the type `SetLazyLoading`
+/// takes, as configuration errors give it.
+const LAZY_LOADING_TYPE_NAME: &str = "LazyLoadingConfiguration";
+
+/// The name of .NET's `CacheConfiguration`, the type `SetCache` takes, as
+/// configuration errors give it.
+const CACHE_TYPE_NAME: &str = "CacheConfiguration";
+
 /// Add the cloud request engine's builder to `registry`, as
 /// `CloudRequestEngineBuilder`. Returns `registry` for chaining.
 pub fn add_builders(registry: &mut BuilderRegistry) -> &mut BuilderRegistry {
     registry.add(cloud_request_engine_builder())
+}
+
+/// The cloud request engine made before the cloud aspect engine called
+/// `engine_name`, for that engine's builder to read from. .NET's cloud
+/// aspect engine finds its request engine in the pipeline by type, so with
+/// none made before it, or more than one, this gives .NET's message.
+pub fn request_engine(
+    context: &BuildContext,
+    engine_name: &str,
+) -> Result<Arc<CloudRequestEngine>> {
+    match context.resources::<CloudRequestEngine>().as_slice() {
+        [one] => Ok(Arc::clone(one)),
+        _ => Err(Error::configuration(format!(
+            "The '{engine_name}' requires a 'CloudRequestEngine' before it in the Pipeline. \
+             This engine will be unable to produce results until this is corrected."
+        ))),
+    }
+}
+
+/// Add the seven settings of .NET's `AspectEngineBuilderBase` to the
+/// builder of the cloud aspect engine called `engine_name`, in the order
+/// .NET declares them. None changes the builder, as the cloud engines here
+/// have no lazy loading, no cache and no list of properties of their own.
+///
+/// - `SetLazyLoadingTimeout`, `SetCacheSize` and `SetCacheHitOrMiss` set to
+///   true are read and have no effect, with a warning logged. A negative
+///   cache size is refused, as .NET refuses it.
+/// - `SetProperties` and `SetProperty` are read and have no effect, with a
+///   warning logged, as they have no effect in .NET. The properties the
+///   cloud returns are those the cloud request engine asks for.
+/// - `SetLazyLoading` and `SetCache` take their values in code only, so
+///   naming one fails as it does in .NET.
+pub fn add_aspect_engine_settings<B: Send + 'static>(
+    definition: BuilderDefinition<B>,
+    engine_name: &'static str,
+) -> BuilderDefinition<B> {
+    definition
+        .code_only_setting("SetLazyLoading", LAZY_LOADING_TYPE_NAME)
+        .setting("SetLazyLoadingTimeout", move |builder: B, _: i32| {
+            aspect_setting_ignored(engine_name, "SetLazyLoadingTimeout");
+            builder
+        })
+        .code_only_setting("SetCache", CACHE_TYPE_NAME)
+        .try_setting("SetCacheSize", move |builder: B, size: i32| {
+            if size < 0 {
+                return Err(negative_cache_size(size));
+            }
+            aspect_setting_ignored(engine_name, "SetCacheSize");
+            Ok(builder)
+        })
+        .setting("SetCacheHitOrMiss", move |builder: B, record: bool| {
+            if record {
+                aspect_setting_ignored(engine_name, "SetCacheHitOrMiss");
+            }
+            builder
+        })
+        .setting("SetProperties", move |builder: B, _: Vec<String>| {
+            aspect_properties_ignored(engine_name, "SetProperties");
+            builder
+        })
+        .setting("SetProperty", move |builder: B, _: String| {
+            aspect_properties_ignored(engine_name, "SetProperty");
+            builder
+        })
+}
+
+/// Log that the setting `setting` of the cloud aspect engine called
+/// `engine_name` has no effect.
+fn aspect_setting_ignored(engine_name: &str, setting: &str) {
+    log::warn!("The {engine_name} setting '{setting}' has no effect here and is ignored.");
+}
+
+/// Log that the properties setting `setting` of the cloud aspect engine
+/// called `engine_name` has no effect.
+fn aspect_properties_ignored(engine_name: &str, setting: &str) {
+    log::warn!(
+        "The {engine_name} setting '{setting}' has no effect, because the properties the cloud \
+         returns are those the cloud request engine asks for."
+    );
+}
+
+/// .NET's message for a negative cache size, which its cache refuses.
+fn negative_cache_size(size: i32) -> Error {
+    Error::configuration(format!(
+        "capacity ('{size}') must be a non-negative value. (Parameter 'capacity')\nActual value \
+         was {size}."
+    ))
 }
 
 /// The settings read from a configuration, held as .NET's
@@ -364,7 +463,7 @@ fn cloud_request_engine_builder() -> BuilderDefinition<CloudRequestEngineSetting
             settings
         },
     )
-    .code_only_setting("SetLazyLoading", "LazyLoadingConfiguration")
+    .code_only_setting("SetLazyLoading", LAZY_LOADING_TYPE_NAME)
     .setting(
         "SetLazyLoadingTimeout",
         |settings: CloudRequestEngineSettings, _: i32| {
@@ -372,15 +471,12 @@ fn cloud_request_engine_builder() -> BuilderDefinition<CloudRequestEngineSetting
             settings
         },
     )
-    .code_only_setting("SetCache", "CacheConfiguration")
+    .code_only_setting("SetCache", CACHE_TYPE_NAME)
     .try_setting(
         "SetCacheSize",
         |mut settings: CloudRequestEngineSettings, size: i32| {
             let Ok(capacity) = usize::try_from(size) else {
-                return Err(Error::configuration(format!(
-                    "capacity ('{size}') must be a non-negative value. (Parameter \
-                     'capacity')\nActual value was {size}."
-                )));
+                return Err(negative_cache_size(size));
             };
             settings.cache_size = Some(capacity);
             Ok(settings)
