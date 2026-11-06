@@ -331,7 +331,10 @@ workspace reads the submodule and never needs the copy.
   tests the crate on wasm32-wasip2 under wasmtime. Same triggers, and it
   reads no secrets.
 - `examples.yml` builds and tests `examples/` against local source
-  (`source.toml`) before a release, on every PR.
+  (`source.toml`) before a release. Its contract job builds the two device
+  detection web examples the same way, through
+  `ci/test-examples-against-source.ps1`, and runs the browser contract
+  against them. Runs on every PR.
 - `publish.yml` publishes on push to `main`, then a `verify-published` job
   builds and tests `examples/` against the just-released crates.io packages.
 - `utm-link-lint.yml` checks the UTM links described below, on every PR.

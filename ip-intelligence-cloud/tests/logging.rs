@@ -237,3 +237,38 @@ fn a_property_with_no_metadata_logs_nothing() {
         assert_eq!(take_logged(), Vec::<String>::new(), "request {request}");
     }
 }
+
+/// With only a license key there are no accessible properties to read, so the
+/// engine gives empty metadata, as the specification says, and logs nothing.
+#[test]
+fn a_license_key_alone_gives_empty_metadata_and_logs_nothing() {
+    let _serial = start();
+    let request = Arc::new(
+        CloudRequestEngine::builder()
+            .license_key("test-license-key")
+            .values(["ip.registeredname"])
+            .endpoint("https://cloud.example.test/api/v4/")
+            .http_client(Arc::new(FakeCloud {
+                product: IP_PRODUCT,
+                data: r#"{"ip":{"registeredname":"Example"}}"#,
+                properties_down: Arc::default(),
+            }))
+            .build()
+            .unwrap(),
+    );
+    let engine = IpIntelligenceCloudEngine::builder()
+        .cloud_request_engine(Arc::clone(&request))
+        .build()
+        .unwrap();
+    let pipeline = Pipeline::builder()
+        .add_element(request)
+        .add_element(Arc::new(engine))
+        .build()
+        .unwrap();
+
+    for request in 1..=3 {
+        process(&pipeline);
+        assert_eq!(take_logged(), Vec::<String>::new(), "request {request}");
+    }
+    assert!(pipeline.flow_elements()[1].properties().is_empty());
+}

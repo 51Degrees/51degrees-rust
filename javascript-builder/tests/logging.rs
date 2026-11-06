@@ -29,6 +29,9 @@
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, ThreadId};
 
+use fiftyone_cloud_request_engine::{
+    CloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine,
+};
 use fiftyone_javascript_builder::{JavaScriptBuilderElement, JAVASCRIPT_BUILDER_DATA_KEY};
 use fiftyone_json_builder::JsonBuilderElement;
 use fiftyone_pipeline_core::{Evidence, Pipeline};
@@ -384,4 +387,45 @@ fn reading_promise_and_fetch_logs_nothing_for_aspect_data_that_lacks_them() {
         let (_, records) = request(&pipeline, &[("header.host", "example.com")]);
         assert!(records.is_empty(), "{records:?}");
     }
+}
+
+/// A cloud that cannot be reached, so a request engine built on it has not
+/// completed discovery.
+struct UnreachableCloud;
+
+impl CloudHttpClient for UnreachableCloud {
+    fn send(&self, _request: &CloudHttpRequest) -> Result<CloudHttpResponse, String> {
+        Err("connection refused".to_owned())
+    }
+}
+
+/// The reference form decides at build whether to render the user prompt
+/// section, so with the licensed products not yet known it leaves the section
+/// out and logs one warning saying so. The shared form decides once the
+/// products are known, so it logs nothing.
+#[test]
+fn the_reference_form_logs_a_warning_when_the_products_are_not_known() {
+    let engine = CloudRequestEngine::builder()
+        .resource_key("test-resource-key")
+        .http_client(Arc::new(UnreachableCloud))
+        .recovery_seconds(0.0)
+        .build()
+        .expect("a transient failure does not fail the build");
+    assert!(!engine.has_loaded_metadata());
+
+    let from = mark();
+    let _ = JavaScriptBuilderElement::builder().set_cloud_request_engine(&engine);
+    let records = records_since(from);
+    assert_eq!(records.len(), 1, "{records:?}");
+    assert_eq!(records[0].0, log::Level::Warn);
+    assert!(
+        records[0]
+            .1
+            .starts_with("The cloud request engine's licensed products are not known yet"),
+        "{records:?}"
+    );
+
+    let from = mark();
+    let _ = JavaScriptBuilderElement::builder().set_shared_cloud_request_engine(Arc::new(engine));
+    assert_eq!(records_since(from), Vec::new());
 }

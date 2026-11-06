@@ -24,8 +24,12 @@
 //!
 //! Starting a thread for each element of each flow data costs far more than
 //! most elements take, so the elements run on threads shared by every
-//! pipeline in the process. A thread is started only when none is idle, and a
-//! thread that has had no work for [`IDLE_SECONDS`] ends.
+//! pipeline in the process. A thread is started only when fewer threads are
+//! idle than pieces of work are waiting, and a thread that has had no work
+//! for [`IDLE_SECONDS`] ends.
+//!
+//! The `group_load` bench in this crate measures the two, as its `threads`
+//! and `group` patterns (`benches/group_load.rs`).
 //!
 //! The thread that offers work takes it back if no pool thread has started
 //! it, so a group always finishes, even with every pool thread busy or on a
@@ -198,8 +202,10 @@ impl Pool {
         }
     }
 
-    /// Take back work the thread that offered it is running itself, so no
-    /// pool thread is woken or started for it.
+    /// Take back work the thread that offered it is running itself. Left in
+    /// the queue, the work would count as waiting when a later offer decides
+    /// whether to start a thread, and an idle thread whose wait ran out would
+    /// take it rather than end.
     fn withdraw(&self, job: &Arc<dyn Runnable>) {
         let mut state = lock(&self.state);
         if let Some(index) = state

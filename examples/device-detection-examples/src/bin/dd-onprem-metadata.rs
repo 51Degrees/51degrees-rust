@@ -141,7 +141,7 @@ fn output_components(engine: &DeviceDetectionOnPremiseEngine) {
         "--- Components and their properties ({} properties in total) ---",
         engine.aspect_properties().len()
     );
-    for component in engine.components() {
+    for component in engine.components().iter() {
         let mut message = String::new();
         let _ = writeln!(
             message,
@@ -168,16 +168,20 @@ fn output_components(engine: &DeviceDetectionOnPremiseEngine) {
             );
             // Most match metrics have no defined values, so they are left out.
             if property.core().category != "Device Metrics" {
-                let values = match engine.property_values(property.name()) {
+                // A property can have over a hundred thousand values, so only
+                // those shown are read, and the rest are counted.
+                let values = match engine.property_value_range(property.name(), 0..SHOWN_VALUES) {
                     Ok(values) => values.unwrap_or_default(),
                     Err(error) => {
                         println!("\t\tValues could not be read: {error}");
                         Vec::new()
                     }
                 };
+                let count = engine
+                    .property_value_count(property.name())
+                    .unwrap_or_default();
                 let shown: Vec<String> = values
                     .iter()
-                    .take(SHOWN_VALUES)
                     .map(|value| {
                         // A script's value runs to many lines, so only its first
                         // is shown.
@@ -190,8 +194,8 @@ fn output_components(engine: &DeviceDetectionOnPremiseEngine) {
                     })
                     .collect();
                 let mut line = format!("\t\tPossible values: {}", shown.join(", "));
-                if values.len() > SHOWN_VALUES {
-                    let _ = write!(line, " + {} more ...", values.len() - SHOWN_VALUES);
+                if count > SHOWN_VALUES {
+                    let _ = write!(line, " + {} more ...", count - SHOWN_VALUES);
                 }
                 let _ = writeln!(message, "{line}");
             }

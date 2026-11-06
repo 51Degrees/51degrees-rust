@@ -17,6 +17,10 @@ fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
 # on-premise engine's own dependency.
 fiftyone-pipeline-engines = { version = "=4.5.2", path = "../pipeline-engines", default-features = false }
 
+[dev-dependencies]
+# A capturing logger for the test of what a read of a property logs.
+log = "0.4"
+
 [package.metadata.docs.rs]
 # Build the documentation on docs.rs with every feature enabled, so the
 # cloud, on-premise and optional paths are all documented.

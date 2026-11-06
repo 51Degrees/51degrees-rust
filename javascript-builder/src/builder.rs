@@ -228,6 +228,13 @@ impl JavaScriptBuilderElementBuilder {
     /// answer is not kept, because the 51Did cloud engine reports its default
     /// properties as available until its discovery completes. So a script
     /// built before then carries the section.
+    ///
+    /// A cloud request engine with only a license key has no accessible
+    /// properties to read, so the 51Did cloud engine offers no available
+    /// property and the section is left out, whatever the license grants. A
+    /// pipeline on a license key that needs the section calls this method with
+    /// `true`. .NET has no answer to follow here, because its cloud request
+    /// engine refuses to build without a resource key.
     pub fn set_user_prompt(mut self, render: bool) -> Self {
         self.user_prompt = UserPromptSource::Decided(render);
         self

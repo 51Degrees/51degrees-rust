@@ -27,6 +27,7 @@
 //! names, and skip with a note when there is none. They check what every Hash
 //! data file holds, so they pass against any tier.
 
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -36,7 +37,7 @@ use fiftyone_device_detection_onpremise::{
 use fiftyone_device_detection_shared::{DeviceData, DEVICE_DATA_KEY};
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{ElementData, Evidence, FlowElement, Pipeline, PropertyValueType};
-use fiftyone_pipeline_engines::{AspectEngine, MissingPropertyReason};
+use fiftyone_pipeline_engines::{AspectEngine, MissingPropertyReason, OnPremiseAspectEngine};
 
 /// The match metrics, in the order the .NET engine lists them after the data
 /// file's properties.
@@ -139,11 +140,8 @@ fn every_data_file_property_is_listed_then_the_metrics() {
         .iter()
         .map(|p| p.name.as_str())
         .collect();
-    let fiftyone: Vec<&str> = engine
-        .fiftyone_properties()
-        .iter()
-        .map(|p| p.name())
-        .collect();
+    let fiftyone_properties = engine.fiftyone_properties();
+    let fiftyone: Vec<&str> = fiftyone_properties.iter().map(|p| p.name()).collect();
     assert_eq!(core, names);
     assert_eq!(fiftyone, names);
     assert_eq!(engine.available_properties(), names);
@@ -185,9 +183,9 @@ fn property_metadata_comes_from_the_data_file() {
         return;
     };
     let tier = engine.data_source_tier().to_owned();
+    let properties = engine.fiftyone_properties();
     let find = |name: &str| {
-        engine
-            .fiftyone_properties()
+        properties
             .iter()
             .find(|p| p.name() == name)
             .unwrap_or_else(|| panic!("{name} is in every Hash data file"))
@@ -274,7 +272,7 @@ fn components_hold_their_properties_then_the_metrics() {
     assert!(components[2].property("BrowserName").is_some());
 
     // Each property is in exactly one component, its own.
-    for property in engine.fiftyone_properties() {
+    for property in engine.fiftyone_properties().iter() {
         let holding: Vec<u8> = components
             .iter()
             .filter(|c| c.property(property.name()).is_some())
@@ -287,6 +285,55 @@ fn components_hold_their_properties_then_the_metrics() {
             property.name()
         );
     }
+}
+
+#[test]
+fn a_refresh_frees_the_lists_it_replaces_once_no_caller_holds_them() {
+    let Some(source) = data_file() else {
+        eprintln!("no Hash data file found; skipping");
+        return;
+    };
+    // A copy held in memory, so a refresh can read it on every platform.
+    let dir = std::env::temp_dir().join(format!("fiftyone-dd-metadata-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("51Degrees.hash");
+    std::fs::copy(&source, &path).unwrap();
+    let engine = DeviceDetectionOnPremiseEngineBuilder::new(&path)
+        .performance_profile(PerformanceProfile::InMemory)
+        .build()
+        .expect("the data file loads");
+
+    let held_properties = engine.fiftyone_properties();
+    let held_components = engine.components();
+    // Each call gives the data set's own list rather than a copy.
+    assert!(Arc::ptr_eq(&held_properties, &engine.fiftyone_properties()));
+    assert!(Arc::ptr_eq(&held_components, &engine.components()));
+    let properties = Arc::downgrade(&held_properties);
+    let components = Arc::downgrade(&held_components);
+    engine.refresh(None).expect("the data file loads again");
+
+    // A caller keeps the list it holds, and the engine gives the new data
+    // set's, which the same file makes equal.
+    assert!(!Arc::ptr_eq(
+        &held_properties,
+        &engine.fiftyone_properties()
+    ));
+    assert!(!Arc::ptr_eq(&held_components, &engine.components()));
+    assert_eq!(held_properties, engine.fiftyone_properties());
+    assert_eq!(held_components, engine.components());
+    drop((held_properties, held_components));
+    assert!(
+        properties.upgrade().is_none(),
+        "the old properties are kept"
+    );
+    assert!(
+        components.upgrade().is_none(),
+        "the old components are kept"
+    );
+
+    drop(engine);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -331,9 +378,109 @@ fn property_values_are_read_from_the_data_file() {
     assert_eq!(engine.property_values("ismobile").unwrap(), None);
 }
 
-/// The issue's check. An engine restricted to IsMobile and asked for
-/// BrowserName, for a property the data file lacks and for `NotAProperty`
-/// gives .NET's reason and text each time.
+/// One value is found by its name for a property the engine was opened with,
+/// one it was opened without and a match metric, and is the one the whole
+/// list holds. Both names are matched exactly, as .NET matches them.
+#[test]
+fn a_property_value_is_found_by_its_exact_name() {
+    let Some(engine) = engine(&["IsMobile"]) else {
+        return;
+    };
+    for (property, value) in [
+        ("IsMobile", "True"),
+        ("IsMobile", "False"),
+        ("BrowserName", "Safari"),
+        ("Method", "PERFORMANCE"),
+    ] {
+        let expected = engine
+            .property_values(property)
+            .expect("the values are read")
+            .expect("the property is listed")
+            .into_iter()
+            .find(|v| v.name == value);
+        assert!(expected.is_some(), "{property} {value}");
+        assert_eq!(
+            engine
+                .property_value(property, value)
+                .expect("the value is read"),
+            expected,
+            "{property} {value}"
+        );
+    }
+    for (property, value) in [
+        ("IsMobile", "true"),
+        ("IsMobile", "Safari"),
+        ("Method", "performance"),
+        ("MatchedNodes", "0"),
+        ("ismobile", "True"),
+        ("NotAProperty", "True"),
+    ] {
+        assert_eq!(
+            engine
+                .property_value(property, value)
+                .expect("the value is read"),
+            None,
+            "{property} {value}"
+        );
+    }
+
+    // A data file property's metadata lists no values, so only the engine
+    // finds one.
+    let properties = engine.fiftyone_properties();
+    let is_mobile = properties
+        .iter()
+        .find(|p| p.name() == "IsMobile")
+        .expect("IsMobile is listed");
+    assert!(is_mobile.values().is_empty());
+    assert_eq!(is_mobile.value("True"), None);
+}
+
+/// A range of a property's values is that part of the whole list, for a
+/// property the engine was opened with, one it was opened without and two
+/// match metrics, and the count is the length of the whole list.
+#[test]
+fn a_range_of_property_values_is_that_part_of_the_list() {
+    let Some(engine) = engine(&["IsMobile"]) else {
+        return;
+    };
+    for name in ["IsMobile", "BrowserName", "Method", "MatchedNodes"] {
+        let all = engine
+            .property_values(name)
+            .expect("the values are read")
+            .expect("the property is listed");
+        let count = all.len();
+        assert_eq!(engine.property_value_count(name), Some(count), "{name}");
+        let ranges = [
+            0..0,
+            0..1,
+            0..20,
+            1..3,
+            count / 2..count,
+            count..count + 5,
+            Range { start: 3, end: 1 },
+            usize::MAX - 1..usize::MAX,
+            0..usize::MAX,
+        ];
+        for range in ranges {
+            let part = engine
+                .property_value_range(name, range.clone())
+                .expect("the values are read")
+                .expect("the property is listed");
+            let end = range.end.min(count);
+            assert_eq!(part, all[range.start.min(end)..end], "{name} {range:?}");
+        }
+    }
+    assert_eq!(engine.property_value_count("NotAProperty"), None);
+    assert_eq!(
+        engine.property_value_range("NotAProperty", 0..5).unwrap(),
+        None
+    );
+    assert_eq!(engine.property_value_count("ismobile"), None);
+}
+
+/// An engine restricted to IsMobile and asked for BrowserName, for a
+/// property the data file lacks and for `NotAProperty` gives .NET's reason
+/// and text each time.
 #[test]
 fn a_restricted_engine_gives_the_dotnet_reasons() {
     let Some(engine) = engine(&["IsMobile"]) else {
@@ -365,8 +512,8 @@ fn a_restricted_engine_gives_the_dotnet_reasons() {
             );
             assert!(
                 result.description.contains(
-                    "It is available with the Unknown license/data for the \
-                     DeviceDetectionOnPremiseEngine."
+                    "does not include this property. To see which licenses include it, \
+                     see "
                 ),
                 "{}",
                 result.description

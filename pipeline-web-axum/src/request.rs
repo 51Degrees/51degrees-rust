@@ -50,14 +50,16 @@
 //! - **Protocol** is `https` when an `X-Forwarded-Proto` header says so, when a
 //!   `Forwarded` header carries `proto=https`, or when the request URI carries
 //!   an `https` scheme. Otherwise it is `http`.
+//! - **Method** is the one attached with [`AxumRequestData::with_method`], as
+//!   the endpoint handlers do, and absent otherwise.
 //!
 //! The struct borrows the header map and URI from the request and owns only the
-//! small extras (the buffered form bytes and the optional peer address), so
-//! building one per request is cheap.
+//! small extras (the buffered form bytes, the optional peer address and the
+//! optional method), so building one per request is cheap.
 
 use std::net::SocketAddr;
 
-use axum::http::{HeaderMap, Uri};
+use axum::http::{HeaderMap, Method, Uri};
 
 use crate::form::parse_form_urlencoded;
 
@@ -104,21 +106,24 @@ pub struct AxumRequestData<'a> {
     uri: &'a Uri,
     form_body: Vec<u8>,
     peer_addr: Option<SocketAddr>,
+    method: Option<Method>,
 }
 
 impl<'a> AxumRequestData<'a> {
     /// Build a request view from the header map and URI of an axum request.
     ///
-    /// The form body is empty and no peer address is attached. Use
-    /// [`AxumRequestData::with_form_body`] for a POST body and
+    /// The form body is empty and no peer address or method is attached. Use
+    /// [`AxumRequestData::with_form_body`] for a POST body,
     /// [`AxumRequestData::with_peer_addr`] to supply the connection's peer
-    /// address (normally from [`axum::extract::ConnectInfo`]).
+    /// address (normally from [`axum::extract::ConnectInfo`]) and
+    /// [`AxumRequestData::with_method`] for the request method.
     pub fn new(headers: &'a HeaderMap, uri: &'a Uri) -> Self {
         AxumRequestData {
             headers,
             uri,
             form_body: Vec::new(),
             peer_addr: None,
+            method: None,
         }
     }
 
@@ -137,6 +142,15 @@ impl<'a> AxumRequestData<'a> {
     /// no `X-Forwarded-For` header is present. Returns `self` for chaining.
     pub fn with_peer_addr(mut self, peer_addr: SocketAddr) -> Self {
         self.peer_addr = Some(peer_addr);
+        self
+    }
+
+    /// Attach the request method, which decides whether a matching
+    /// `If-None-Match` gets a `304` or a `412` (see
+    /// [`fiftyone_pipeline_web::RequestData::method`]). Returns `self` for
+    /// chaining.
+    pub fn with_method(mut self, method: Method) -> Self {
+        self.method = Some(method);
         self
     }
 
@@ -228,6 +242,12 @@ impl fiftyone_pipeline_web::RequestData for AxumRequestData<'_> {
         self.uri
             .scheme_str()
             .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https"))
+    }
+
+    fn method(&self) -> Option<String> {
+        self.method
+            .as_ref()
+            .map(|method| method.as_str().to_owned())
     }
 }
 
@@ -360,5 +380,14 @@ mod tests {
         let headers = HeaderMap::new();
         let uri: Uri = "/".parse().unwrap();
         assert!(!AxumRequestData::new(&headers, &uri).is_https());
+    }
+
+    #[test]
+    fn method_is_the_one_attached() {
+        let headers = HeaderMap::new();
+        let uri: Uri = "/".parse().unwrap();
+        assert_eq!(AxumRequestData::new(&headers, &uri).method(), None);
+        let request = AxumRequestData::new(&headers, &uri).with_method(Method::POST);
+        assert_eq!(request.method().as_deref(), Some("POST"));
     }
 }

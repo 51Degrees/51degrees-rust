@@ -56,6 +56,7 @@
 //! candidates high weighting first and writes the flattened dynamic-bag mirror.
 
 use std::any::Any;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -427,6 +428,25 @@ impl IpIntelligenceDataBase {
             || self.readable(name).is_some()
     }
 
+    /// The message of a property recorded through one of the
+    /// `set_*_no_value` setters.
+    fn stored_no_value(&self, name: &str) -> Option<&str> {
+        let key = if needs_lowercase(name) {
+            Cow::Owned(key(name))
+        } else {
+            Cow::Borrowed(name)
+        };
+        let key = key.as_ref();
+        no_value_message(self.strings.get(key))
+            .or_else(|| no_value_message(self.floats.get(key)))
+            .or_else(|| no_value_message(self.integers.get(key)))
+            .or_else(|| no_value_message(self.booleans.get(key)))
+            .or_else(|| match self.weighted_strings.get(key) {
+                Some(WeightedStore::NoValue { message }) => Some(message.as_str()),
+                _ => None,
+            })
+    }
+
     /// Borrow the embedded [`AspectDataBase`], which holds the values set on
     /// this data directly. Values a reader supplies are not in it, so read
     /// through [`ElementData`] or the typed getters to see every value.
@@ -633,10 +653,23 @@ fn value_store_to_aspect<T: Clone>(store: Option<&ValueStore<T>>) -> AspectPrope
     }
 }
 
+/// The message of a [`ValueStore::NoValue`].
+fn no_value_message<T>(store: Option<&ValueStore<T>>) -> Option<&str> {
+    match store {
+        Some(ValueStore::NoValue { message }) => Some(message),
+        _ => None,
+    }
+}
+
 impl ElementData for IpIntelligenceDataBase {
     fn get(&self, name: &str) -> Result<PropertyValue, NoValueError> {
         if let Some(value) = self.base.values().get_value(name) {
             return Ok(value.clone());
+        }
+        // A no-value set directly is held, so it is not missing, and it takes
+        // precedence over the reader, as it does in the typed getters.
+        if let Some(message) = self.stored_no_value(name) {
+            return Err(NoValueError::new(message));
         }
         match self.readable(name) {
             Some((deferred, position)) => deferred
@@ -1035,6 +1068,22 @@ mod tests {
             PropertyValue::String("France".to_owned())
         );
         assert_eq!(reads_of(&reads, "country"), 0);
+    }
+
+    #[test]
+    fn a_no_value_set_directly_wins_over_the_reader() {
+        let (reader, reads) = CountingReader::new();
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader);
+        data.set_string_no_value("Country", "not in this tier");
+        data.set_weighted_string_no_value("CountryCodesGeographical", "no codes");
+        assert_eq!(data.country().no_value_message(), Some("not in this tier"));
+        assert_eq!(data.get("country").unwrap_err().message, "not in this tier");
+        assert_eq!(
+            data.get("COUNTRYCODESGEOGRAPHICAL").unwrap_err().message,
+            "no codes"
+        );
+        assert_eq!(reads_of(&reads, "country"), 0);
+        assert_eq!(reads_of(&reads, "countrycodesgeographical"), 0);
     }
 
     #[test]

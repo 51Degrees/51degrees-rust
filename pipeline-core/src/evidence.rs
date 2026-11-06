@@ -205,6 +205,12 @@ impl Evidence {
         }
     }
 
+    /// The hasher of the entries, so a test can check that a copy has it.
+    #[cfg(test)]
+    pub(crate) fn hasher(&self) -> &RandomState {
+        self.entries.hasher()
+    }
+
     /// Look up a value by key. The key is matched case-insensitively.
     pub fn get(&self, key: &str) -> Option<&str> {
         ci_lookup(key, |exact| self.entries.get(exact)).map(|stored| stored.value.as_str())

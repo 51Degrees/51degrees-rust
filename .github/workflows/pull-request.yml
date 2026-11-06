@@ -312,12 +312,11 @@ jobs:
           done
 
       # wasmtime is the runner that actually executes the wasm test binaries the
-      # next step builds. The install script drops it in ~/.wasmtime/bin, which is
-      # added to PATH so cargo's configured runner can find it.
+      # next step builds. The action looks up the release with the workflow's
+      # token, puts wasmtime on PATH and runs `wasmtime --version`, so a failed
+      # install fails this step rather than the tests.
       - name: Install wasmtime (the wasm test runner)
-        run: |
-          curl https://wasmtime.dev/install.sh -sSf | bash
-          echo "${HOME}/.wasmtime/bin" >> "${GITHUB_PATH}"
+        uses: bytecodealliance/actions/wasmtime/setup@v1
 
       # Run the wasm-safe test suites on the target under wasmtime, so the
       # pure-Rust logic is exercised on wasm and not merely compiled. cargo runs

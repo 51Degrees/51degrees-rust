@@ -114,6 +114,7 @@
 
 #![warn(missing_docs)]
 
+mod canonical;
 mod element;
 mod evaluate;
 mod fault;
