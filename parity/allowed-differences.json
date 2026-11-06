@@ -122,13 +122,6 @@
     "issue": 226
   },
   {
-    "path": "properties.ip.*",
-    "kind": "onlyInRust",
-    "data": "lite",
-    "reason": "The crates' IP Intelligence engine lists a fixed set of property names whatever the data file holds. The ASN file holds few of them.",
-    "issue": 223
-  },
-  {
     "path": "properties.device.*",
     "kind": "noValueMessage",
     "reason": "Every Device Detection property with no value gives the same sentence, where .NET gives the reason for each.",
@@ -242,13 +235,6 @@
     "kind": "order",
     "reason": "The crates' Device Detection engine adds the match metrics and the matched User-Agents to its data before the data file's values, so the JSON lists them first. .NET lists them after the data file's properties.",
     "issue": 224
-  },
-  {
-    "path": "json.ip",
-    "kind": "order",
-    "data": "enterprise",
-    "reason": "The crates' IP Intelligence engine reads a fixed list of property names in name order, so the JSON lists them in that order. .NET lists them in the data file's order.",
-    "issue": 223
   },
   {
     "path": "javascript",

@@ -1317,6 +1317,213 @@ extern "C" {
     ) -> c_int;
 }
 
+// ---------------------------------------------------------------------------
+// The data file's metadata (src/shim.c)
+// ---------------------------------------------------------------------------
+
+/// The name of a data file property, for
+/// [`fiftyoneDegreesShimIpiGetDataFilePropertyString`].
+pub const SHIM_PROPERTY_NAME: c_int = 0;
+/// The description of a data file property.
+pub const SHIM_PROPERTY_DESCRIPTION: c_int = 1;
+/// The category of a data file property.
+pub const SHIM_PROPERTY_CATEGORY: c_int = 2;
+/// The URL of a data file property.
+pub const SHIM_PROPERTY_URL: c_int = 3;
+
+/// The text of a property value, the first of its strings
+/// [`fiftyoneDegreesShimIpiGetDataFilePropertyValues`] gives.
+pub const SHIM_VALUE_NAME: c_int = 0;
+/// The description of a property value, given after its name, which is
+/// always empty in an IP Intelligence data file.
+pub const SHIM_VALUE_DESCRIPTION: c_int = 1;
+/// The URL of a property value, given after its description.
+pub const SHIM_VALUE_URL: c_int = 2;
+
+/// Takes one string of a property value from
+/// [`fiftyoneDegreesShimIpiGetDataFilePropertyValues`]. `field` is one of the
+/// `SHIM_VALUE_` constants and `value` a null terminated string valid only
+/// for the call. `context` is the pointer the caller passed.
+pub type ShimValueStringCallback =
+    unsafe extern "C" fn(context: *mut c_void, field: c_int, value: *const c_char);
+
+/// Returned by the data file metadata string readers when the string, or the
+/// property, value or component it belongs to, cannot be read, or an index
+/// is out of range. An absent string gives zero instead.
+pub const SHIM_STRING_FAILED: usize = usize::MAX;
+
+/// Returned by [`fiftyoneDegreesShimIpiFindDataFilePropertyValue`] when the
+/// property or the value cannot be read, or the property index is out of
+/// range.
+pub const SHIM_FIND_FAILED: c_int = 0;
+/// Returned by [`fiftyoneDegreesShimIpiFindDataFilePropertyValue`] when it
+/// found the value and gave its strings.
+pub const SHIM_FIND_FOUND: c_int = 1;
+/// Returned by [`fiftyoneDegreesShimIpiFindDataFilePropertyValue`] when the
+/// property has no value with the name.
+pub const SHIM_FIND_NOT_FOUND: c_int = 2;
+
+extern "C" {
+    /// Returns the number of properties the data file defines, including
+    /// those the data set was not created with, or zero when no data set is
+    /// available. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized IP Intelligence manager.
+    pub fn fiftyoneDegreesShimIpiGetDataFilePropertyCount(manager: *mut ResourceManager) -> u32;
+
+    /// Reads the fields of the data file property at `property_index` that
+    /// are not strings and returns 1, or returns 0 when the index is out of
+    /// range or the property, its name or its default value cannot be read.
+    /// `value_type` is the [`PropertyValueType`] discriminant of the
+    /// property's values, `available` is 1 when the data set was created with
+    /// the property, `required_index` is the index the results getters take
+    /// for it or -1 for none, `component_id` is the id of the property's
+    /// component or 0 for none, `value_count` is the number of values the
+    /// file holds for the property or 0 when they are not all in its values
+    /// collection, `default_value_number` the place of its default value
+    /// among them or -1 for none, and `map_count` the number of data tiers it
+    /// is in. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized IP Intelligence manager. Every output
+    /// pointer must be writable.
+    pub fn fiftyoneDegreesShimIpiGetDataFileProperty(
+        manager: *mut ResourceManager,
+        property_index: u32,
+        value_type: *mut u8,
+        available: *mut u8,
+        required_index: *mut i32,
+        component_id: *mut u8,
+        display_order: *mut u8,
+        is_mandatory: *mut u8,
+        is_list: *mut u8,
+        is_obsolete: *mut u8,
+        show: *mut u8,
+        show_values: *mut u8,
+        value_count: *mut u32,
+        default_value_number: *mut i32,
+        map_count: *mut u32,
+    ) -> c_int;
+
+    /// Writes the string `field` of the data file property at
+    /// `property_index`, one of the `SHIM_PROPERTY_` constants, into `buffer`
+    /// as a null terminated string, as much as fits, and returns the
+    /// string's full length excluding the terminator. An absent string is
+    /// written as empty, with length zero, and one that cannot be read gives
+    /// [`SHIM_STRING_FAILED`]. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized IP Intelligence manager. `buffer`
+    /// must point to `length` writable bytes.
+    pub fn fiftyoneDegreesShimIpiGetDataFilePropertyString(
+        manager: *mut ResourceManager,
+        property_index: u32,
+        field: c_int,
+        buffer: *mut c_char,
+        length: usize,
+    ) -> usize;
+
+    /// Writes the name of the data tier at `map_index` among those the data
+    /// file property at `property_index` is in into `buffer`, as much as
+    /// fits, and returns its full length, or [`SHIM_STRING_FAILED`] when either
+    /// index is out of range or the name cannot be read. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized IP Intelligence manager. `buffer`
+    /// must point to `length` writable bytes.
+    pub fn fiftyoneDegreesShimIpiGetDataFilePropertyMap(
+        manager: *mut ResourceManager,
+        property_index: u32,
+        map_index: u32,
+        buffer: *mut c_char,
+        length: usize,
+    ) -> usize;
+
+    /// Reads at most `count` of the values the data file holds for the
+    /// property at `property_index`, from the one at `value_number` among
+    /// them, and returns 1. For each value it calls `callback` with `context`
+    /// three times, with its text, an empty description and its URL in that
+    /// order, an absent URL being empty. A value's text is the value written
+    /// as the type its property is stored as, a coordinate to three decimal
+    /// places, as the C++ code the other SDKs call writes it. A
+    /// `value_number` at or past the last value reads none. Returns 0 when
+    /// the property index is out of range or the property, a value or a
+    /// string cannot be read, after giving `callback` the strings read before
+    /// the failure. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized IP Intelligence manager, and
+    /// `context` must be what `callback` expects.
+    pub fn fiftyoneDegreesShimIpiGetDataFilePropertyValues(
+        manager: *mut ResourceManager,
+        property_index: u32,
+        value_number: u32,
+        count: u32,
+        callback: ShimValueStringCallback,
+        context: *mut c_void,
+    ) -> c_int;
+
+    /// Finds the value whose text is `name`, matched exactly, among those the
+    /// data file holds for the property at `property_index`, calls `callback`
+    /// with its strings as [`fiftyoneDegreesShimIpiGetDataFilePropertyValues`]
+    /// does, and returns [`SHIM_FIND_FOUND`]. Returns [`SHIM_FIND_NOT_FOUND`]
+    /// when the property has no such value, or [`SHIM_FIND_FAILED`] when the
+    /// property index is out of range or the property, a value or a string
+    /// cannot be read. The value is found by the C library's binary search
+    /// over the property's values, which are in order. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized IP Intelligence manager, `name` a
+    /// null terminated string, and `context` what `callback` expects.
+    pub fn fiftyoneDegreesShimIpiFindDataFilePropertyValue(
+        manager: *mut ResourceManager,
+        property_index: u32,
+        name: *const c_char,
+        callback: ShimValueStringCallback,
+        context: *mut c_void,
+    ) -> c_int;
+
+    /// Returns the number of components the data set lists, or zero when no
+    /// data set is available. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized IP Intelligence manager.
+    pub fn fiftyoneDegreesShimIpiGetComponentCount(manager: *mut ResourceManager) -> u32;
+
+    /// Reads the id of the component at `component_index` and the offset of
+    /// its default profile and returns 1, or returns 0 when the index is out
+    /// of range or the default profile cannot be read. `has_default_profile`
+    /// is 1 when the component has a default profile, and 0 when its offset
+    /// is `u32::MAX` or no profile is there. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized IP Intelligence manager. Every output
+    /// pointer must be writable.
+    pub fn fiftyoneDegreesShimIpiGetComponent(
+        manager: *mut ResourceManager,
+        component_index: u32,
+        component_id: *mut u8,
+        default_profile_offset: *mut u32,
+        has_default_profile: *mut u8,
+    ) -> c_int;
+
+    /// Writes the name of the component at `component_index` into `buffer`,
+    /// as much as fits, and returns its full length, or [`SHIM_STRING_FAILED`]
+    /// when the index is out of range or the name cannot be read. See
+    /// `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized IP Intelligence manager. `buffer`
+    /// must point to `length` writable bytes.
+    pub fn fiftyoneDegreesShimIpiGetComponentName(
+        manager: *mut ResourceManager,
+        component_index: u32,
+        buffer: *mut c_char,
+        length: usize,
+    ) -> usize;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

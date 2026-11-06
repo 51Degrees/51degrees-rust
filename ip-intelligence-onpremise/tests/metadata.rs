@@ -1,0 +1,333 @@
+/* *********************************************************************
+ * This Original Work is copyright of 51 Degrees Mobile Experts Limited.
+ * Copyright 2026 51 Degrees Mobile Experts Limited, Davidson House,
+ * Forbury Square, Reading, Berkshire, United Kingdom RG1 3EU.
+ *
+ * This Original Work is licensed under the European Union Public Licence
+ * (EUPL) v.1.2 and is subject to its terms as set out below.
+ *
+ * If a copy of the EUPL was not distributed with this file, You can obtain
+ * one at https://opensource.org/licenses/EUPL-1.2.
+ *
+ * The 'Compatible Licences' set out in the Appendix to the EUPL (as may be
+ * amended by the European Commission) shall be deemed incompatible for
+ * the purposes of the Work and the provisions of the compatibility
+ * clause in Article 5 of the EUPL shall not apply.
+ *
+ * If using the Work as, or as part of, a network application, by
+ * including the attribution notice(s) required under Article 5 of the EUPL
+ * in the end user terms of the application under an appropriate heading,
+ * such notice(s) shall fulfill the requirements of that article.
+ * ********************************************************************* */
+
+//! The engine's property and component metadata, read from the data file as
+//! the .NET engine reads it. The tests run against the ASN file in the data
+//! repository, or the file `51DEGREES_IPI_PATH` names, and skip when neither
+//! is present.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use fiftyone_ip_intelligence_onpremise::{
+    IpIntelligenceData, IpIntelligenceOnPremiseEngine, IP_DATA_KEY,
+};
+use fiftyone_native::PerformanceProfile;
+use fiftyone_pipeline_core::{ElementData, Evidence, FlowElement, Pipeline};
+use fiftyone_pipeline_engines::{AspectEngine, MissingPropertyReason, OnPremiseAspectEngine};
+use fiftyone_pipeline_engines_fiftyone::ValueMetaData;
+
+/// The properties the .NET engine lists after the data file's.
+const ADDED_PROPERTIES: [&str; 2] = ["Ip", "IpV6"];
+
+/// The data file `51DEGREES_IPI_PATH` names, else the ASN file in the data
+/// repository inside the `cxx` submodule.
+fn data_file() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("51DEGREES_IPI_PATH") {
+        let path = PathBuf::from(path.trim());
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    loop {
+        let candidate = dir.join("cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+/// An engine on the data file, opened with `properties` named, or every
+/// property when none is.
+fn engine(properties: &[&str]) -> Option<IpIntelligenceOnPremiseEngine> {
+    let file = data_file()?;
+    let engine = IpIntelligenceOnPremiseEngine::builder(&file)
+        .performance_profile(PerformanceProfile::LowMemory)
+        .properties(properties.iter().copied())
+        .auto_update(false)
+        .file_system_watcher(false)
+        .build()
+        .unwrap_or_else(|err| panic!("{} should build an engine: {err}", file.display()));
+    Some(engine)
+}
+
+/// The names of the properties the engine lists, in order.
+fn listed(engine: &IpIntelligenceOnPremiseEngine) -> Vec<String> {
+    engine
+        .aspect_properties()
+        .iter()
+        .map(|property| property.name().to_owned())
+        .collect()
+}
+
+/// Every property the data file defines is listed in the data file's order,
+/// then `Ip` and `IpV6`, and the core, aspect and 51Degrees lists agree.
+#[test]
+fn every_data_file_property_is_listed_then_ip_and_ipv6() {
+    let Some(engine) = engine(&[]) else {
+        eprintln!("no IP Intelligence data file found; skipping the property list");
+        return;
+    };
+    let names = listed(&engine);
+    let populated = engine.populated_property_names();
+    assert!(names.starts_with(populated), "{names:?}");
+    assert_eq!(names[populated.len()..], ADDED_PROPERTIES);
+    assert!(populated.iter().any(|name| name == "Asn"), "{populated:?}");
+
+    let fiftyone = engine.fiftyone_properties();
+    let core = engine.properties();
+    let aspect = engine.aspect_properties();
+    assert_eq!(fiftyone.len(), names.len());
+    assert_eq!(core.len(), names.len());
+    for ((property, core), aspect) in fiftyone.iter().zip(core).zip(aspect) {
+        assert_eq!(property.aspect(), aspect);
+        assert_eq!(&core.name, property.name());
+        assert_eq!(core.value_type, aspect.core().value_type);
+        assert!(core.available, "{}", core.name);
+    }
+}
+
+/// An engine opened with some properties lists the same properties, marking
+/// those it was not opened with unavailable, and reads only those it was.
+#[test]
+fn a_restricted_engine_lists_every_property_and_marks_the_others_unavailable() {
+    let (Some(every), Some(engine)) = (engine(&[]), engine(&["asnname", "NotAProperty"])) else {
+        eprintln!("no IP Intelligence data file found; skipping the restricted engine");
+        return;
+    };
+    assert_eq!(listed(&engine), listed(&every));
+    assert_eq!(engine.populated_property_names(), ["AsnName"]);
+    for property in engine.aspect_properties() {
+        let available = matches!(property.name(), "AsnName" | "Ip" | "IpV6");
+        assert_eq!(property.available(), available, "{}", property.name());
+    }
+    let data = lookup(engine, "1.1.1.1");
+    assert!(data.asn_name().has_value());
+    assert!(!data.asn().has_value());
+}
+
+/// `Ip` and `IpV6` have the metadata .NET gives them.
+#[test]
+fn ip_and_ipv6_have_the_metadata_dotnet_gives_them() {
+    let Some(engine) = engine(&[]) else {
+        eprintln!("no IP Intelligence data file found; skipping Ip and IpV6");
+        return;
+    };
+    let properties = engine.fiftyone_properties();
+    for (name, version) in [("Ip", "IPv4"), ("IpV6", "IPv6")] {
+        let property = properties
+            .iter()
+            .find(|property| property.name() == name)
+            .unwrap_or_else(|| panic!("{name} is listed"));
+        let aspect = property.aspect();
+        assert_eq!(
+            aspect.description(),
+            format!("The {version} address of the request as a string.")
+        );
+        assert_eq!(aspect.core().category, "Network");
+        assert!(aspect.data_tiers_where_present().is_empty());
+        assert!(aspect.available());
+        assert_eq!(property.component_id(), Some(255));
+        assert_eq!(property.component_name(), "Network");
+        assert_eq!(property.display_order(), 255);
+        assert!(!property.mandatory() && !property.list() && !property.obsolete());
+        assert!(property.show() && property.show_values());
+        assert_eq!(property.url(), "");
+        assert_eq!(property.default_value(), Some(&ValueMetaData::new("N/A")));
+        assert_eq!(property.values(), [ValueMetaData::new("N/A")]);
+    }
+}
+
+/// The components are the data file's, each holding exactly its own
+/// properties, then an empty `Metrics` component. `Ip` and `IpV6` are in no
+/// listed component, as in .NET.
+#[test]
+fn components_hold_their_properties_then_an_empty_metrics_component() {
+    let Some(engine) = engine(&[]) else {
+        eprintln!("no IP Intelligence data file found; skipping components");
+        return;
+    };
+    let components = engine.components();
+    let (metrics, file_components) = components.split_last().expect("components are listed");
+    assert_eq!(
+        (metrics.component_id, metrics.name.as_str()),
+        (255, "Metrics")
+    );
+    assert!(metrics.properties().is_empty());
+    assert_eq!(metrics.default_profile_id, None);
+    assert!(file_components
+        .iter()
+        .any(|component| component.name == "Asn"));
+    let properties = engine.fiftyone_properties();
+    for component in file_components {
+        let own: Vec<&str> = properties
+            .iter()
+            .filter(|property| property.component_id() == Some(component.component_id))
+            .map(|property| property.name())
+            .collect();
+        let held: Vec<&str> = component
+            .properties()
+            .iter()
+            .map(|property| property.name())
+            .collect();
+        assert_eq!(held, own, "{}", component.name);
+        assert!(!own.is_empty(), "{}", component.name);
+        assert!(component.default_profile_id.is_some(), "{}", component.name);
+    }
+    for name in ADDED_PROPERTIES {
+        assert!(
+            components
+                .iter()
+                .all(|component| component.property(name).is_none()),
+            "{name}"
+        );
+    }
+}
+
+/// A property's values are read from the data file when asked for, whether
+/// or not the engine was opened with it, and a value is found by its exact
+/// text.
+#[test]
+fn property_values_are_read_from_the_data_file() {
+    let Some(engine) = engine(&["Asn"]) else {
+        eprintln!("no IP Intelligence data file found; skipping values");
+        return;
+    };
+    for name in ["Asn", "AsnName"] {
+        let count = engine.property_value_count(name).expect("listed");
+        let shown = count.min(1000);
+        let values = engine
+            .property_value_range(name, 0..shown)
+            .expect("values are read")
+            .expect("listed");
+        assert_eq!(values.len(), shown, "{name}");
+        let property = engine
+            .fiftyone_properties()
+            .iter()
+            .find(|property| property.name() == name)
+            .cloned()
+            .expect("listed");
+        assert!(
+            property.values().is_empty(),
+            "{name}: values are read on request"
+        );
+        let default = property.default_value().expect("a default").clone();
+        assert_eq!(
+            engine
+                .property_value(name, &default.name)
+                .expect("searched"),
+            Some(default),
+            "{name}"
+        );
+    }
+    let first: Vec<String> = engine
+        .property_value_range("Asn", 0..3)
+        .expect("values are read")
+        .expect("listed")
+        .into_iter()
+        .map(|value| value.name)
+        .collect();
+    assert_eq!(first, ["AS0", "AS1", "AS1000"]);
+    assert_eq!(
+        engine
+            .property_value("Asn", "AS13335")
+            .expect("searched")
+            .map(|value| value.name),
+        Some(String::from("AS13335"))
+    );
+    assert_eq!(
+        engine.property_value("Asn", "as13335").expect("searched"),
+        None
+    );
+    assert_eq!(
+        engine.property_values("Ip").expect("listed values"),
+        Some(vec![ValueMetaData::new("N/A")])
+    );
+    assert_eq!(engine.property_value_count("Ip"), Some(1));
+    assert_eq!(engine.property_values("asn").expect("no error"), None);
+    assert_eq!(
+        engine.property_values("NotAProperty").expect("no error"),
+        None
+    );
+    assert_eq!(engine.property_value_count("NotAProperty"), None);
+}
+
+/// A property the data file defines but the engine was not opened with is
+/// excluded by configuration, through the engine and through IP data, with
+/// .NET's text.
+#[test]
+fn a_property_left_out_by_configuration_is_excluded() {
+    let Some(engine) = engine(&["Asn"]) else {
+        eprintln!("no IP Intelligence data file found; skipping the excluded property");
+        return;
+    };
+    let expected = "Property 'AsnName' not found in data for element 'ip'. This is because \
+                    the property has been excluded when configuring the engine.";
+    let result = engine.missing_property_reason("AsnName");
+    assert_eq!(
+        result.reason,
+        MissingPropertyReason::PropertyExcludedFromConfig
+    );
+    assert_eq!(result.description, expected);
+    let data = lookup(engine, "1.1.1.1");
+    assert_eq!(data.asn_name().no_value_message(), Some(expected));
+    assert_eq!(data.get("AsnName").unwrap_err().message, expected);
+}
+
+/// A refresh reads the metadata of the data file again into new lists.
+#[test]
+fn a_refresh_reads_the_metadata_again() {
+    let Some(engine) = engine(&[]) else {
+        eprintln!("no IP Intelligence data file found; skipping refresh");
+        return;
+    };
+    let before = engine.fiftyone_properties();
+    let components = engine.components();
+    engine.refresh(None).expect("the refresh succeeds");
+    let after = engine.fiftyone_properties();
+    assert!(!Arc::ptr_eq(&before, &after));
+    assert_eq!(*before, *after);
+    assert_eq!(*components, *engine.components());
+    assert_eq!(listed(&engine).len(), after.len());
+}
+
+/// Look `ip` up through a one-element pipeline and return the IP data.
+fn lookup(
+    engine: IpIntelligenceOnPremiseEngine,
+    ip: &str,
+) -> fiftyone_ip_intelligence_onpremise::IpIntelligenceDataBase {
+    let element: Arc<dyn FlowElement> = Arc::new(engine);
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("pipeline builds");
+    let mut data =
+        pipeline.create_flow_data_with(Evidence::builder().add("query.client-ip", ip).build());
+    data.process().expect("processing succeeds");
+    data.get(IP_DATA_KEY)
+        .expect("ip intelligence data was produced")
+        .clone()
+}

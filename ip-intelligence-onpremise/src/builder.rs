@@ -156,7 +156,8 @@ impl IpIntelligenceOnPremiseEngineBuilder {
 
     /// Restrict the engine to a single named property, adding to any already
     /// requested. With no properties requested the engine populates every
-    /// property the shared model surfaces.
+    /// property the data file defines. A name is matched ignoring case, and
+    /// one the data file lacks is neither populated nor listed.
     pub fn property(mut self, property: impl Into<String>) -> Self {
         self.requested_properties.push(property.into());
         self
@@ -335,13 +336,13 @@ impl IpIntelligenceOnPremiseEngineBuilder {
         record_published(&manager, &data_file);
 
         Ok(IpIntelligenceOnPremiseEngine::from_parts(
-            manager,
             copy,
+            manager,
             self.profile,
             self.requested_properties,
             self.data_source_tier,
             data_file,
-        )
+        )?
         .with_temp_dir(self.temp_dir)
         .with_concurrency(self.concurrency))
     }

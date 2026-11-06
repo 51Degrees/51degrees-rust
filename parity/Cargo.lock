@@ -494,6 +494,7 @@ dependencies = [
  "fiftyone-native",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "fiftyone-pipeline-engines-fiftyone",
 ]
 
 [[package]]
