@@ -931,6 +931,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fiftyone-pipeline-translation"
+version = "4.5.2"
+dependencies = [
+ "fiftyone-pipeline-core",
+ "fiftyone-pipeline-engines",
+ "serde_norway",
+]
+
+[[package]]
 name = "fiftyone-pipeline-web"
 version = "4.5.2"
 dependencies = [

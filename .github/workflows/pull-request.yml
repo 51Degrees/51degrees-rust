@@ -289,6 +289,7 @@ jobs:
             fiftyone-fodid-core \
             fiftyone-fodid-cloud \
             fiftyone-derived-properties \
+            fiftyone-pipeline-translation \
             fodid-client; do
             echo "::group::build ${crate}"
             cargo build -p "${crate}" --no-default-features --target wasm32-wasip1
@@ -307,6 +308,7 @@ jobs:
             fiftyone-fodid-core \
             fiftyone-fodid-cloud \
             fiftyone-derived-properties \
+            fiftyone-pipeline-translation \
             fodid-client; do
             echo "::group::clippy ${crate}"
             cargo clippy -p "${crate}" --no-default-features --target wasm32-wasip1 -- -D warnings
@@ -344,6 +346,7 @@ jobs:
             fiftyone-fodid-core \
             fiftyone-fodid-cloud \
             fiftyone-derived-properties \
+            fiftyone-pipeline-translation \
             fodid-client; do
             echo "::group::test ${crate}"
             cargo test -p "${crate}" --no-default-features --target wasm32-wasip1
