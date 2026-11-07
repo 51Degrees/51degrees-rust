@@ -906,8 +906,12 @@ fn populate_added_property(
 /// rendered string (`StoredValueType` is `string`) yet are declared `bool`: a
 /// declared-boolean property is converted from its rendered value and stored
 /// through [`IpIntelligenceDataBase::set_boolean`] so its strongly-typed
-/// accessor reads back a [`bool`]. A property with no value has the reason the
-/// C library gives, as .NET gives it.
+/// accessor reads back a [`bool`].
+///
+/// A property the C library says has no value, as .NET asks it before every
+/// read, has the reason the C library gives, as in .NET. Asking first matters
+/// for a lookup that found nothing, where reading a mandatory property's values
+/// would give its default.
 fn populate_property(
     ip_data: &mut IpIntelligenceDataBase,
     results: &Results,
@@ -916,6 +920,11 @@ fn populate_property(
     value_type: PropertyValueType,
 ) -> Result<()> {
     let declared = declared_property_value_type(name).unwrap_or(value_type);
+    if !results.has_values_by_index(index)? {
+        let message = results.no_value_message_by_index(index)?;
+        set_no_value(ip_data, name, declared, message);
+        return Ok(());
+    }
 
     // A property declared weighted (the country-code distributions and `Mcc`) is
     // always read through the weighted collection, even when the data file stores
@@ -926,7 +935,7 @@ fn populate_property(
         let pairs = results.values_weighted_by_index(index)?;
         if pairs.is_empty() {
             let message = results.no_value_message_by_index(index)?;
-            ip_data.set_weighted_string_no_value(name, message);
+            set_no_value(ip_data, name, declared, message);
         } else {
             let values = pairs
                 .into_iter()
@@ -985,16 +994,20 @@ fn populate_property(
     Ok(())
 }
 
-/// Record that a plain property has no value, with `message`, in the store of
-/// its `declared` type, so its typed accessor gives the reason, and list it
-/// among the keys, so the JSON builder writes it as null with the reason, as
-/// .NET's does.
+/// Record that a property has no value, with `message`, in the store of its
+/// `declared` type, so its typed accessor gives the reason, and list it among
+/// the keys, so the JSON builder writes it as null with the reason, as .NET's
+/// does.
 fn set_no_value(
     ip_data: &mut IpIntelligenceDataBase,
     name: &str,
     declared: PropertyValueType,
     message: String,
 ) {
+    if declared == WEIGHTED_PROPERTY_VALUE_TYPE {
+        ip_data.set_weighted_string_no_value(name, message);
+        return;
+    }
     match declared {
         PropertyValueType::Bool => ip_data.set_boolean_no_value(name, message),
         PropertyValueType::Integer => ip_data.set_integer_no_value(name, message),

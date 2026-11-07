@@ -971,9 +971,9 @@ impl Results {
     /// IPv4-mapped IPv6 address gives the answers of its IPv4 address.
     ///
     /// Evidence holding no client IP address that can be read is looked up
-    /// with none, as the .NET engine looks it up, so the results are empty
-    /// and every property has no value, with the reason
-    /// [`Self::no_value_message_by_index`] gives.
+    /// with none, as the .NET engine looks it up, so the results are empty.
+    /// [`Self::has_values_by_index`] then answers false for every property,
+    /// with the reason [`Self::no_value_message_by_index`] gives.
     pub fn process_evidence(&mut self, evidence: &Evidence) -> Result<()> {
         self.process_client_ip_evidence(evidence).map(|_| ())
     }
@@ -1266,6 +1266,25 @@ impl Results {
         Ok(unsafe { CStr::from_ptr(message) }
             .to_string_lossy()
             .into_owned())
+    }
+
+    /// Whether the property at `index`, as [`Manager::required_property_index`]
+    /// gives it, has a value in these results, as the C library decides it and
+    /// as .NET asks before it reads one. Empty results have no value for any
+    /// property, although reading a mandatory property's values gives its
+    /// default. Returns an error for an index outside this data set's required
+    /// properties.
+    pub fn has_values_by_index(&self, index: c_int) -> Result<bool> {
+        self.manager.check_property_index(index)?;
+        let mut exception = sys::Exception::cleared();
+        let _file_read = self.manager.file_read();
+        // Safety: `results` is valid and the index is one of its data set's
+        // required properties.
+        let has_values = unsafe {
+            sys::fiftyoneDegreesResultsIpiGetHasValues(self.as_ptr(), index, &mut exception)
+        };
+        exception.check()?;
+        Ok(has_values)
     }
 }
 
@@ -1850,7 +1869,10 @@ mod tests {
         results
             .process_evidence(&without_ip)
             .expect("evidence with no client IP should be looked up");
-        assert_eq!(results.value_as_string("Asn", ",").expect("read"), None);
+        let index = manager
+            .required_property_index("Asn")
+            .expect("the data file has Asn");
+        assert!(!results.has_values_by_index(index).expect("asked"));
     }
 
     /// Every header the data file names is a key under both prefixes, with
@@ -2017,14 +2039,8 @@ mod tests {
                 let index = manager
                     .required_property_index(&name)
                     .expect("an available property has an index");
-                assert_eq!(
-                    results.value_as_string(&name, ",").expect("read"),
-                    None,
-                    "{name} for {pairs:?}"
-                );
-                assert_eq!(
-                    results.read_property_by_index(index).expect("read"),
-                    PropertyRead::Absent,
+                assert!(
+                    !results.has_values_by_index(index).expect("asked"),
                     "{name} for {pairs:?}"
                 );
                 assert_eq!(
@@ -2037,7 +2053,9 @@ mod tests {
     }
 
     /// A lookup with no address clears the lookup before it on the same
-    /// results.
+    /// results. Reading a mandatory property's values with nothing found
+    /// gives its default, which is why .NET asks whether there are values
+    /// first.
     #[test]
     fn a_lookup_with_no_address_clears_the_one_before() {
         let Some(data_file) = ipi_data_file() else {
@@ -2045,15 +2063,28 @@ mod tests {
             return;
         };
         let manager = open_found(&data_file, PerformanceProfile::HighPerformance);
+        let index = manager
+            .required_property_index("Asn")
+            .expect("the data file has Asn");
         let mut results = manager.create_results().expect("results allocate");
         results
             .process_evidence(&evidence_of(&[("server.client-ip", CLOUDFLARE)]))
             .expect("the lookup should succeed");
-        assert!(results.value_as_string("Asn", ",").expect("read").is_some());
+        assert!(results.has_values_by_index(index).expect("asked"));
+        let found = results.value_as_string("Asn", ",").expect("read");
+        assert!(
+            found.as_deref().unwrap_or_default().contains("AS13335"),
+            "got {found:?}"
+        );
         results
             .process_evidence(&evidence_of(&[]))
             .expect("the lookup should succeed");
-        assert_eq!(results.value_as_string("Asn", ",").expect("read"), None);
+        assert!(!results.has_values_by_index(index).expect("asked"));
+        assert_eq!(
+            results.no_value_message_by_index(index).expect("reason"),
+            NO_RESULTS_MESSAGE
+        );
+        assert_ne!(results.value_as_string("Asn", ",").expect("read"), found);
     }
 
     /// The address given back is the one the lookup used, the first that

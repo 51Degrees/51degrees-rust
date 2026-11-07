@@ -287,14 +287,20 @@ impl DeferredValues {
     }
 
     /// The lowercase names of the properties read with a value or with a
-    /// listed reason for none, reading any not yet read.
+    /// listed reason for none, in the reader's order whatever order they were
+    /// read in, reading any not yet read.
     fn keys(&self) -> Vec<String> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let state = &mut *state;
         for position in 0..self.reader.property_names().len() {
             self.read(state, position);
         }
-        state.values.keys()
+        self.reader
+            .property_names()
+            .iter()
+            .filter(|name| state.values.lists(name))
+            .cloned()
+            .collect()
     }
 }
 
@@ -426,6 +432,15 @@ impl IpIntelligenceDataBase {
             Some(missing) => AspectPropertyValue::no_value(missing.description),
             None => AspectPropertyValue::empty(),
         }
+    }
+
+    /// Whether [`ElementData::keys`] lists the property with the lowercase
+    /// name `key` among those set on this data directly, being one with a
+    /// value or one set with no value other than through
+    /// [`Self::set_string_no_value_unlisted`].
+    fn lists(&self, key: &str) -> bool {
+        self.base.values().get_value(key).is_some()
+            || self.no_value_places.iter().any(|(placed, _)| placed == key)
     }
 
     /// Whether the property is set on this data directly, with or without a

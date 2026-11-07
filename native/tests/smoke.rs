@@ -738,12 +738,12 @@ mod ip_intelligence {
         results
             .process_evidence(&evidence)
             .expect("evidence with no client IP should be looked up");
-        assert_eq!(
-            results
-                .value_as_string("Asn", "|")
-                .expect("reading the Asn property should not error"),
-            None
-        );
+        let index = manager
+            .required_property_index("Asn")
+            .expect("the ASN data set has Asn");
+        assert!(!results
+            .has_values_by_index(index)
+            .expect("asking for values should not error"));
     }
 
     /// An IPv4-mapped IPv6 address gives the answers of its IPv4 address, in
