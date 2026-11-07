@@ -760,12 +760,13 @@ impl ServiceHandle {
             } else {
                 compressed
             };
+            let recorded = data_file.published_changes();
             engine
                 .refresh_from_memory(Some(data_file.identifier()), &data)
                 .map_err(|e| {
                     DataUpdateError::new(AutoUpdateStatus::RefreshFailed, e.to_string())
                 })?;
-            data_file.set_data_published(Utc::now());
+            Self::record_published(data_file, recorded);
             return Ok(AutoUpdateStatus::Success);
         };
 
@@ -798,18 +799,23 @@ impl ServiceHandle {
                 format!("error replacing data file '{}': {e}", path.display()),
             )
         })?;
+        let recorded = data_file.published_changes();
         engine
             .refresh(Some(data_file.identifier()))
             .map_err(|e| DataUpdateError::new(AutoUpdateStatus::RefreshFailed, e.to_string()))?;
-
-        // Record that fresh data is now in use. We mark "now" as a conservative
-        // lower bound so a subsequent If-Modified-Since is not stale. The true
-        // publish timestamp lives in the data-file header; recovering it is the
-        // engine's responsibility and is not exposed by the refresh trait, so
-        // "now" is used here by design.
-        data_file.set_data_published(Utc::now());
+        Self::record_published(data_file, recorded);
 
         Ok(AutoUpdateStatus::Success)
+    }
+
+    /// After an engine has taken a download, keep the publish date it read
+    /// from the new data, which the next `If-Modified-Since` header carries.
+    /// For an engine that records none since `recorded`, use the current time,
+    /// so the next request is no earlier than this update.
+    fn record_published(data_file: &AspectEngineDataFile, recorded: u64) {
+        if data_file.published_changes() == recorded {
+            data_file.set_data_published(Utc::now());
+        }
     }
 }
 

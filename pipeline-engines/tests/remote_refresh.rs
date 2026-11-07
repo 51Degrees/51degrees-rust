@@ -37,6 +37,7 @@ use std::net::TcpListener;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use chrono::{DateTime, TimeZone, Utc};
 use fiftyone_pipeline_core::{
     EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
     PropertyValueType, Result,
@@ -55,6 +56,9 @@ struct TestEngine {
     data_files: Vec<Arc<AspectEngineDataFile>>,
     refresh_count: Arc<AtomicUsize>,
     last_disk_contents: Arc<Mutex<Vec<u8>>>,
+    /// The publish date a refresh records, as an engine that reads it from
+    /// its data does, or none.
+    publishes: Option<DateTime<Utc>>,
 }
 
 impl TestEngine {
@@ -75,6 +79,14 @@ impl TestEngine {
             data_files: vec![data_file],
             refresh_count: Arc::new(AtomicUsize::new(0)),
             last_disk_contents: Arc::new(Mutex::new(Vec::new())),
+            publishes: None,
+        }
+    }
+
+    /// Record the publish date, if the engine has one, as a refresh does.
+    fn record_published(&self) {
+        if let Some(published) = self.publishes {
+            self.data_files[0].set_data_published(published);
         }
     }
 }
@@ -116,11 +128,13 @@ impl OnPremiseAspectEngine for TestEngine {
                 *self.last_disk_contents.lock().unwrap() = bytes;
             }
         }
+        self.record_published();
         Ok(())
     }
     fn refresh_from_memory(&self, _identifier: Option<&str>, data: &[u8]) -> Result<()> {
         self.refresh_count.fetch_add(1, Ordering::SeqCst);
         *self.last_disk_contents.lock().unwrap() = data.to_vec();
+        self.record_published();
         Ok(())
     }
 }
@@ -193,6 +207,7 @@ fn remote_update_downloads_verifies_decompresses_and_refreshes() {
         .unwrap();
 
     // Programmatic trigger.
+    let before = Utc::now();
     let status = service.check_for_update(&engine_dyn, None).unwrap();
     assert_eq!(status, AutoUpdateStatus::Success);
 
@@ -200,8 +215,49 @@ fn remote_update_downloads_verifies_decompresses_and_refreshes() {
     assert!(refresh_count.load(Ordering::SeqCst) >= 1);
     assert_eq!(std::fs::read(&path).unwrap(), new_contents);
     assert_eq!(*disk.lock().unwrap(), new_contents);
+    // The engine records no publish date, so the time of the update is kept.
+    let published = data_file.data_published().expect("a publish date");
+    assert!(
+        before <= published && published <= Utc::now(),
+        "{published}"
+    );
 
     server.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The publish date an engine reads from the data it was refreshed with is
+/// kept after a download, for a file and for a memory data source, so the
+/// next request's `If-Modified-Since` carries it.
+#[test]
+fn a_publish_date_the_engine_records_is_kept_after_a_download() {
+    let published = Utc.with_ymd_and_hms(2001, 2, 3, 0, 0, 0).unwrap();
+    let dir = std::env::temp_dir().join(format!("fiftyone-dut-date-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("device.dat");
+    std::fs::write(&path, b"OLD data v1").unwrap();
+    for source in ["file", "memory"] {
+        let (url, server) = start_server(gzip(b"FRESH data v2"));
+        let config = match source {
+            "file" => DataFileConfiguration::builder(&path),
+            _ => DataFileConfiguration::memory_builder(),
+        }
+        .data_update_url(url)
+        .automatic_updates_enabled(false)
+        .file_system_watcher_enabled(false)
+        .build();
+        let data_file = Arc::new(AspectEngineDataFile::new(config));
+        let mut engine = TestEngine::new(Arc::clone(&data_file));
+        engine.publishes = Some(published);
+        let engine: Arc<dyn OnPremiseAspectEngine> = Arc::new(engine);
+
+        let status = DataUpdateService::new()
+            .check_for_update(&engine, None)
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(status, AutoUpdateStatus::Success, "{source}");
+        assert_eq!(data_file.data_published(), Some(published), "{source}");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
