@@ -38,8 +38,19 @@ BeforeAll {
         Copy-Item (Join-Path $script:Root $Relative) $target
     }
 
+    # The folders of every workspace member, read from the root manifest.
+    function Get-MemberFolders {
+        $workspace = Get-Content -Raw (Join-Path $script:Root 'Cargo.toml')
+        $list = [regex]::Match($workspace, 'members\s*=\s*\[(?<list>[^\]]*)\]',
+            'Singleline').Groups['list'].Value
+        return @([regex]::Matches($list, '"([^"]+)"') |
+            ForEach-Object { $_.Groups[1].Value })
+    }
+
     # The files ci/check-packages.ps1 and ci/set-crate-versions.ps1 read,
-    # copied so a test can change them.
+    # copied so a test can change them. Every member's manifest is copied
+    # with an empty src/lib.rs, which is all `cargo metadata --no-deps` needs
+    # to read the workspace for ci/check-crate-requirements.ps1.
     function Copy-Workspace {
         $to = New-TempFolder
         foreach ($file in @('Cargo.toml', '.gitmodules', 'ci/crates.txt',
@@ -47,8 +58,9 @@ BeforeAll {
                 'ci/copy-owid-source.ps1')) {
             Copy-RepoFile $to $file
         }
-        foreach ($package in $script:Packages) {
-            Copy-RepoFile $to "$($package.Path)/Cargo.toml"
+        foreach ($folder in (Get-MemberFolders)) {
+            Copy-RepoFile $to "$folder/Cargo.toml"
+            $null = New-Item -ItemType File -Force (Join-Path $to $folder 'src' 'lib.rs')
         }
         return $to
     }
@@ -97,10 +109,37 @@ BeforeAll {
             commit --quiet -m "Move $Path"
     }
 
+    # The record crates.io's API gives a crate whose highest version that is
+    # not yanked is $Highest, with any versions in $Yanked as well.
+    function New-CrateRecord([string]$Highest, [string[]]$Yanked = @()) {
+        $versions = @([pscustomobject]@{ num = $Highest; yanked = $false })
+        $versions += @($Yanked | ForEach-Object {
+            [pscustomobject]@{ num = $_; yanked = $true } })
+        return [pscustomobject]@{
+            crate = [pscustomobject]@{ max_version = $Highest }
+            versions = $versions
+        }
+    }
+
+    # A stand-in for crates.io in which every published crate of
+    # ci/packages.json has $Highest as its highest version, apart from those
+    # with a FirstVersion, which crates.io does not have.
+    function New-Registry([string]$Highest = '4.5.18') {
+        $registry = @{}
+        foreach ($package in $script:Packages) {
+            if ([string]::IsNullOrEmpty($package.FirstVersion) -eq $true) {
+                $registry[$package.Name] = New-CrateRecord $Highest
+            }
+        }
+        return $registry
+    }
+
     # A repository laid out as this one, with a file in every crate folder
     # and in the folders that hold no crate, the two submodules, the real
     # ci/packages.json and ci/crates.txt, and every crate tagged at 4.5.18.
-    function New-PlanRepo {
+    # With -RepositoryTag it has only the repository tag 4.5.18, as before
+    # ci/start-crate-tags.ps1 has run.
+    function New-PlanRepo([switch]$RepositoryTag) {
         $repo = New-TempFolder
         git init --quiet $repo
         foreach ($file in @('ci/packages.json', 'ci/crates.txt')) {
@@ -118,6 +157,10 @@ BeforeAll {
         Add-Commit $repo 'Start'
         Move-Submodule $repo 'cxx'
         Move-Submodule $repo 'owid-rust'
+        if ($RepositoryTag -eq $true) {
+            git -C $repo tag '4.5.18'
+            return $repo
+        }
         foreach ($name in $script:Names) {
             git -C $repo tag "$name/4.5.18"
         }
@@ -147,10 +190,11 @@ BeforeAll {
         return @($found)
     }
 
-    # Every requirement on a crate across the copied manifests.
+    # Every requirement on a crate across the copied manifests, as written,
+    # with its operator.
     function Get-Requirements([string]$RepoRoot, [string]$Name) {
-        foreach ($package in $script:Packages) {
-            $text = Get-Content -Raw (Join-Path $RepoRoot $package.Path 'Cargo.toml')
+        foreach ($folder in (Get-MemberFolders)) {
+            $text = Get-Content -Raw (Join-Path $RepoRoot $folder 'Cargo.toml')
             foreach ($match in [regex]::Matches($text,
                     "(?m)^\s*$([regex]::Escape($Name))\s*=\s*\{[^}]*?version\s*=\s*""([^""]+)""")) {
                 $match.Groups[1].Value
@@ -177,7 +221,7 @@ AfterAll {
 Describe 'ci/check-packages.ps1' {
     It 'passes on this repository' {
         $result = Invoke-Check $script:Root
-        $result.Output | Should -BeLike '*matches the 25 crates*'
+        $result.Output | Should -BeLike '*matches the 26 crates*'
         $result.Failed | Should -BeFalse
     }
 
@@ -309,7 +353,8 @@ Describe 'The release plan of the crates' {
     It 'plans fodid and the crates built on it when the owid-rust submodule moves' {
         Move-Submodule $script:Repo 'owid-rust'
         $plan = Get-Plan $script:Repo
-        $plan.Name | Should -Be @('fodid', 'fodid-client', 'fiftyone-fodid-cloud')
+        $plan.Name | Should -Be @('fodid', 'fodid-client', 'fiftyone-fodid-core',
+            'fiftyone-fodid-cloud')
     }
 
     It 'plans nothing for a change only to CI, documentation or examples' {
@@ -354,6 +399,22 @@ Describe 'The release plan of the crates' {
         $versions['fodid'] | Should -Be '4.5.30'
         $versions['fiftyone-pipeline-core'] | Should -Be '4.5.18'
         git -C $script:Repo tag -d 'fodid/4.5.30'
+    }
+
+    It 'plans a crate with no tag at its FirstVersion, with every crate depending on it' {
+        $first = $script:Packages | Where-Object { $_.FirstVersion }
+        $first.Name | Should -Be 'fiftyone-fodid-core'
+        git -C $script:Repo tag -d 'fiftyone-fodid-core/4.5.18'
+        try {
+            Add-Commit $script:Repo
+            $plan = Get-Plan $script:Repo
+            $plan.Name | Should -Be @('fiftyone-fodid-core', 'fiftyone-fodid-cloud')
+            $plan[0].Version | Should -Be $first.FirstVersion
+            $plan[0].Reason | Should -Be 'first release'
+            $plan[1].Version | Should -Be '4.5.19'
+        } finally {
+            git -C $script:Repo tag 'fiftyone-fodid-core/4.5.18' $script:Start
+        }
     }
 
     It 'stops with what to do when a crate has no tag of its own' {
@@ -461,9 +522,12 @@ Describe 'ci/set-crate-versions.ps1' {
         Get-OwnVersion $copy 'caching' | Should -Be '4.5.18'
         $onCore = @(Get-Requirements $copy 'fiftyone-pipeline-core')
         $onCore.Count | Should -BeGreaterThan 10
-        $onCore | Sort-Object -Unique | Should -Be '4.5.19'
-        Get-Requirements $copy 'fodid' | Sort-Object -Unique | Should -Be '4.5.25'
-        Get-Requirements $copy 'fiftyone-caching' | Sort-Object -Unique | Should -Be '4.5.18'
+        $onCore | ForEach-Object { $_.TrimStart('=') } | Sort-Object -Unique |
+            Should -Be '4.5.19'
+        Get-Requirements $copy 'fodid' | ForEach-Object { $_.TrimStart('=') } |
+            Sort-Object -Unique | Should -Be '4.5.25'
+        Get-Requirements $copy 'fiftyone-caching' | ForEach-Object { $_.TrimStart('=') } |
+            Sort-Object -Unique | Should -Be '4.5.18'
     }
 
     It 'leaves a dependency on the crate itself with no version alone' {
@@ -479,7 +543,10 @@ Describe 'ci/set-crate-versions.ps1' {
         foreach ($package in $script:Packages) {
             Get-OwnVersion $copy $package.Path | Should -Be '4.5.40'
         }
-        Get-Requirements $copy 'fodid' | Sort-Object -Unique | Should -Be '4.5.40'
+        $onFodid = @(Get-Requirements $copy 'fodid' | Sort-Object -Unique)
+        $onFodid | Should -HaveCount 2
+        $onFodid | Should -Contain '=4.5.40'
+        $onFodid | Should -Contain '4.5.40'
     }
 
     It 'refuses a plan that gives a published crate no version' {
@@ -505,6 +572,48 @@ Describe 'ci/set-crate-versions.ps1' {
         { & $script:Script -PlanFile (Write-Versions $versions) -Root $copy } |
             Should -Throw '*not a version*'
         { & $script:Script -Version '4.5' -Root $copy } | Should -Throw '*not a version*'
+    }
+}
+
+Describe 'ci/start-crate-tags.ps1' {
+    BeforeAll {
+        $script:Script = Join-Path $script:Root 'ci/start-crate-tags.ps1'
+        function Get-CrateTags([string]$Repo) {
+            return @(git -C $Repo tag --list | Where-Object { $_ -like '*/*' })
+        }
+    }
+
+    It 'tags every crate at the release, passing over one crates.io does not have that has a FirstVersion' {
+        $repo = New-PlanRepo -RepositoryTag
+        $output = (& $script:Script -RepoPath $repo -Registry (New-Registry)) -join "`n"
+
+        $tags = Get-CrateTags $repo
+        $tags.Count | Should -Be ($script:Names.Count - 1)
+        $tags | Should -Not -Contain 'fiftyone-fodid-core/4.5.18'
+        $tags | Should -Contain 'fodid/4.5.18'
+        $output | Should -BeLike '*fiftyone-fodid-core is not on crates.io*FirstVersion 4.5.19*'
+        $output | Should -BeLike '*git push --atomic origin refs/tags/*'
+    }
+
+    It 'tags nothing when crates.io does not have a crate with no FirstVersion' {
+        $repo = New-PlanRepo -RepositoryTag
+        $registry = New-Registry
+        $registry.Remove('fiftyone-caching')
+        { $null = & $script:Script -RepoPath $repo -Registry $registry } |
+            Should -Throw '*Nothing is tagged*'
+        Get-CrateTags $repo | Should -BeNullOrEmpty
+    }
+
+    It 'tags nothing when a crate is above the release on crates.io' {
+        $repo = New-PlanRepo -RepositoryTag
+        $registry = New-Registry
+        $registry['fodid'] = New-CrateRecord '4.5.19'
+        $registry['fodid'].versions += [pscustomobject]@{ num = '4.5.18'; yanked = $false }
+        $output = [Collections.Generic.List[string]]::new()
+        { & $script:Script -RepoPath $repo -Registry $registry |
+            ForEach-Object { $output.Add("$_") } } | Should -Throw '*Nothing is tagged*'
+        $output -join "`n" | Should -BeLike '*fodid is at 4.5.19 on crates.io, above 4.5.18*'
+        Get-CrateTags $repo | Should -BeNullOrEmpty
     }
 }
 

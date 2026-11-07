@@ -17,6 +17,11 @@ version the crate does not have or hides a later one. Nothing is tagged
 unless every crate passes, and a crate that already has a tag of its own
 stops the run, as this is only for a start.
 
+A crate that crates.io does not have is passed over when ci/packages.json
+gives it a FirstVersion, because its first release is planned at that
+version and needs no tag to count from. Any other crate crates.io does not
+have stops the run.
+
 The tags are lightweight. The weekly release check dates an annotated tag by
 when it was made, so an annotated tag would count as a release on the day
 this runs. A lightweight tag is dated by its commit, which is the day of the
@@ -34,19 +39,20 @@ The repository. Defaults to the one this script sits in.
 
 .PARAMETER Push
 Push the tags to origin, all of them or none.
+
+.PARAMETER Registry
+Each crate's record as crates.io's API gives it, by name, in place of asking
+crates.io. A crate it does not name is one crates.io does not have. For tests.
 #>
 param (
     [string]$Release,
     [string]$RepoPath = (Split-Path $PSScriptRoot -Parent),
-    [switch]$Push
+    [switch]$Push,
+    [hashtable]$Registry
 )
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
-
-$CratesApi = 'https://crates.io/api/v1/crates'
-$UserAgent = '51degrees-rust-start-crate-tags (support@51degrees.com)'
-# crates.io asks for no more than one request a second.
-$RegistryRequestIntervalMilliseconds = 1000
+. (Join-Path $PSScriptRoot 'crates-io.ps1')
 
 if (-not $Release) {
     $Release = git -C $RepoPath tag --list |
@@ -62,14 +68,15 @@ if ($Release -notmatch '^\d+\.\d+\.\d+$') {
 }
 $commit = git -C $RepoPath rev-parse "refs/tags/$Release^{commit}"
 
-$names = @(Get-Content -Raw (Join-Path $RepoPath 'ci/packages.json') |
-    ConvertFrom-Json | Where-Object Publish -eq $true | ForEach-Object Name)
-Write-Output ("Tagging $($names.Count) crates at $Release, commit " +
-    "$($commit.Substring(0, 12)), after checking crates.io.")
+$packages = @(Get-Content -Raw (Join-Path $RepoPath 'ci/packages.json') |
+    ConvertFrom-Json | Where-Object Publish -eq $true)
+Write-Output ("Checking the $($packages.Count) published crates on crates.io " +
+    "before tagging them at $Release, commit $($commit.Substring(0, 12)).")
 
 $problems = @()
 $tags = @()
-foreach ($name in $names) {
+foreach ($package in $packages) {
+    $name = $package.Name
     $own = @(git -C $RepoPath for-each-ref '--format=%(refname:strip=2)' "refs/tags/$name/")
     $tag = "$name/$Release"
     if ($own.Count -gt 0) {
@@ -83,9 +90,17 @@ foreach ($name in $names) {
         continue
     }
 
-    Start-Sleep -Milliseconds $RegistryRequestIntervalMilliseconds
-    $crate = Invoke-RestMethod -Uri "$CratesApi/$name" `
-        -Headers @{ 'User-Agent' = $UserAgent }
+    $crate = Get-CratesIoCrate $name $Registry
+    if ($null -eq $crate) {
+        if ([string]::IsNullOrEmpty($package.FirstVersion) -eq $false) {
+            Write-Output ("  $name is not on crates.io, so it is not tagged. " +
+                "It is released by its FirstVersion $($package.FirstVersion).")
+        } else {
+            $problems += "$name is not on crates.io, and ci/packages.json " +
+                "gives it no FirstVersion"
+        }
+        continue
+    }
     $published = $crate.versions | Where-Object num -eq $Release
     if ($null -eq $published) {
         $problems += "$name $Release is not on crates.io"

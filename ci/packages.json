@@ -95,10 +95,23 @@
     "Publish": true
   },
   {
+    "Name": "fiftyone-fodid-core",
+    "Path": "fodid-core",
+    "DependsOn": [
+      "fiftyone-pipeline-core",
+      "fiftyone-pipeline-engines",
+      "fiftyone-pipeline-engines-fiftyone",
+      "fodid"
+    ],
+    "Publish": true,
+    "FirstVersion": "4.5.19"
+  },
+  {
     "Name": "fiftyone-fodid-cloud",
     "Path": "fodid-cloud",
     "DependsOn": [
       "fiftyone-cloud-request-engine",
+      "fiftyone-fodid-core",
       "fiftyone-pipeline-core",
       "fiftyone-pipeline-engines",
       "fodid"
@@ -140,7 +153,8 @@
       "fiftyone-device-detection-shared",
       "fiftyone-native",
       "fiftyone-pipeline-core",
-      "fiftyone-pipeline-engines"
+      "fiftyone-pipeline-engines",
+      "fiftyone-pipeline-engines-fiftyone"
     ],
     "Publish": true
   },
@@ -162,7 +176,8 @@
       "fiftyone-ip-intelligence-shared",
       "fiftyone-native",
       "fiftyone-pipeline-core",
-      "fiftyone-pipeline-engines"
+      "fiftyone-pipeline-engines",
+      "fiftyone-pipeline-engines-fiftyone"
     ],
     "Publish": true
   },
