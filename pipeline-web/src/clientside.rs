@@ -94,7 +94,9 @@
 //! placeholder JSON, so it is treated as left out and built again too. With
 //! no such resource the body is empty, and a JSON builder that left no data
 //! is still logged after the JavaScript builder. A pipeline without the
-//! builder serves an empty body and logs nothing.
+//! builder serves an empty body and logs nothing. The builder is the element
+//! whose data key is the builder's, compared ignoring case, as
+//! [`crate::WebPipeline`] compares it when it decides which builders to add.
 //!
 //! # Where the `Vary` whitelist comes from
 //!
@@ -124,7 +126,7 @@ use fiftyone_json_builder::{
 use fiftyone_pipeline_core::constants::EVIDENCE_HTTP_HEADER_PREFIX;
 use fiftyone_pipeline_core::{EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData};
 
-use crate::pipeline::VaryList;
+use crate::pipeline::{position, VaryList};
 use crate::request::RequestData;
 use crate::response::WebResponse;
 
@@ -364,24 +366,21 @@ fn json_body(flow_data: &FlowData, left_no_data: bool) -> String {
 
 /// The builder the pipeline holds as a resource, when it is the same `Arc` as
 /// the element with this data key, so the body is built again by the element
-/// that ran, with its configuration.
+/// that ran, with its configuration. The key is compared ignoring case, as
+/// the web pipeline compares it when it finds the builders.
 fn held_builder<T: Any + Send + Sync>(flow_data: &FlowData, data_key: &str) -> Option<Arc<T>> {
     let pipeline = flow_data.pipeline();
-    let element = pipeline
-        .flow_elements()
-        .iter()
-        .find(|element| element.data_key() == data_key)?;
+    let elements = pipeline.flow_elements();
+    let element = &elements[position(elements, data_key)?];
     let builder = pipeline.resource::<T>()?;
     std::ptr::addr_eq(Arc::as_ptr(element), Arc::as_ptr(&builder)).then_some(builder)
 }
 
-/// True if the flow data's pipeline has an element with this data key.
+/// True if the flow data's pipeline has an element with this data key,
+/// ignoring case, as the web pipeline compares it when it finds the
+/// builders.
 fn has_element(flow_data: &FlowData, data_key: &str) -> bool {
-    flow_data
-        .pipeline()
-        .flow_elements()
-        .iter()
-        .any(|element| element.data_key() == data_key)
+    position(flow_data.pipeline().flow_elements(), data_key).is_some()
 }
 
 /// Log that the builder with this data key left no data for the request.
