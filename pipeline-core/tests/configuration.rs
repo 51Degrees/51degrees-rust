@@ -1616,8 +1616,9 @@ fn the_pipeline_parameters_of_both_sections_are_read_in_dotnet_order() {
 }
 
 /// The setting applied last wins, so with the order above the
-/// `BuildParameters` value is the one the pipeline takes, whether the name
-/// is the same, in another case or another form of the same setting.
+/// `BuildParameters` value is the one the pipeline takes when each section
+/// gives one form of the name, whether the same name, the name in another
+/// case or another form of the same setting.
 #[test]
 fn a_pipeline_setting_in_both_sections_takes_the_build_parameters_value() {
     for (obsolete, current) in [

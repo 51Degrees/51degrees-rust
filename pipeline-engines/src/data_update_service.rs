@@ -1251,6 +1251,9 @@ mod tests {
     /// How long the watcher is given to start before the file changes.
     const WATCHER_START: Duration = Duration::from_millis(300);
 
+    /// How often a test checks again for something it is waiting on.
+    const WATCHER_POLL: Duration = Duration::from_millis(20);
+
     /// An engine with one watched data file, whose refresh tells the test it
     /// has started and then waits until the test lets it finish.
     struct WatchedEngine {
@@ -1402,7 +1405,7 @@ mod tests {
         // registration until the round ends.
         let start = Instant::now();
         while registration.strong_count() > 0 && start.elapsed() < WATCHER_WAIT {
-            std::thread::sleep(Duration::from_millis(20));
+            std::thread::sleep(WATCHER_POLL);
         }
         assert!(
             registration.upgrade().is_none(),

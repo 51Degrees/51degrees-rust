@@ -68,7 +68,8 @@ requests through a client of your own, given as
 `Arc<dyn CloudHttpClient>`, or through the built-in client of the
 `reqwest-client` feature, which is off by default. A client given in any other
 form, such as `add_resource(Arc::new(MyClient))`, is not found, so the build
-uses the built-in client, or fails without the feature. `SetShareUsage` set to false in the pipeline's own `BuildParameters` turns
+uses the built-in client, or fails without the feature. `SetShareUsage` set
+to false in the pipeline's own `BuildParameters` turns
 usage sharing off, as does `ShareUsage` in `PipelineBuilderParameters`, the
 older name .NET still reads. A builder this crate does not have, such as
 .NET's `CountryCodeTranslationEngineBuilder`, fails the build with the

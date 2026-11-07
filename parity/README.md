@@ -328,8 +328,8 @@ both sides, the crates through `ShareUsageElement::config` and .NET from
 fields of `ShareUsageBase` read by reflection, and `evidenceFilter`, the
 element's evidence filter's answer for each of a list of keys, which shows
 the blocked headers, the query string parameters shared and whether all
-evidence is shared, because .NET holds those settings only in that filter. `CreateTempDataCopy` is a build
-parameter that the crates do not read back, and
+evidence is shared, because .NET holds those settings only in that filter.
+`CreateTempDataCopy` is a build parameter that the crates do not read back, and
 `a_copy_of_the_data_file_is_read_when_asked` in each on-premise engine's
 `tests/configuration.rs` checks it against what .NET did.
 
