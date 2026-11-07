@@ -178,6 +178,27 @@ fn measure_profile(leaks: &mut Leaks, path: &Path, profile: PerformanceProfile) 
             .process_ip("not an address")
             .expect_err("text is not an address");
     });
+    leaks.measure(&label("read the data file's metadata"), 3, || {
+        let properties = manager
+            .data_file_properties()
+            .expect("the properties are read");
+        manager
+            .data_file_components()
+            .expect("the components are read");
+        for property in &properties {
+            let values = manager
+                .data_file_property_value_range(property.index, 0..20)
+                .expect("the values are read");
+            if let Some(value) = values.last() {
+                manager
+                    .data_file_property_value(property.index, &value.name)
+                    .expect("a value is searched for");
+            }
+            manager
+                .data_file_property_value(property.index, "not a value")
+                .expect("a value is searched for");
+        }
+    });
 
     // A new data set loaded while results from the old one are alive, as an
     // engine refresh does.

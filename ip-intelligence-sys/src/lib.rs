@@ -1464,14 +1464,17 @@ extern "C" {
         context: *mut c_void,
     ) -> c_int;
 
-    /// Finds the value whose text is `name`, matched exactly, among those the
-    /// data file holds for the property at `property_index`, calls `callback`
-    /// with its strings as [`fiftyoneDegreesShimIpiGetDataFilePropertyValues`]
-    /// does, and returns [`SHIM_FIND_FOUND`]. Returns [`SHIM_FIND_NOT_FOUND`]
-    /// when the property has no such value, or [`SHIM_FIND_FAILED`] when the
-    /// property index is out of range or the property, a value or a string
-    /// cannot be read. The value is found by the C library's binary search
-    /// over the property's values, which are in order. See `src/shim.c`.
+    /// Finds the value `name` names among those the data file holds for the
+    /// property at `property_index`, calls `callback` with its strings as
+    /// [`fiftyoneDegreesShimIpiGetDataFilePropertyValues`] does, and returns
+    /// [`SHIM_FIND_FOUND`]. Returns [`SHIM_FIND_NOT_FOUND`] when the property
+    /// has no such value, or [`SHIM_FIND_FAILED`] when the property index is
+    /// out of range or the property, a value or a string cannot be read. The
+    /// value is found by the C library's binary search over the property's
+    /// values, which are in order. A number is compared written to as many
+    /// places as `name` has characters plus three, at most 15, so the text
+    /// given can differ from `name`, as `0.063` is given for `0.0625`. See
+    /// `src/shim.c`.
     ///
     /// # Safety
     /// `manager` must be an initialized IP Intelligence manager, `name` a
