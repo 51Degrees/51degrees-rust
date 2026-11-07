@@ -63,6 +63,8 @@ use fiftyone_pipeline_engines_fiftyone::{
 use crate::operational_copy::OperationalCopy;
 use crate::retained::Retained;
 
+mod profile_lookup;
+
 /// The separator used to join multiple values of a list-typed property into a
 /// single string when reading from the native results. The other ports use a
 /// vertical bar between values, which the shared device-data list accessor then
@@ -427,7 +429,9 @@ impl DeviceDetectionOnPremiseEngine {
     /// The settings the engine opens its data file with over the profile's
     /// own. The concurrency is always set, to the one the builder named or
     /// else [`default_concurrency`](fiftyone_native::dd::default_concurrency),
-    /// and each other field is [`None`] where the builder named none.
+    /// each other setting is [`None`] where the builder named none, and
+    /// [`HashOptions::indexed_properties`] lists the properties the builder
+    /// named to index.
     pub fn hash_options(&self) -> &HashOptions {
         &self.options
     }
