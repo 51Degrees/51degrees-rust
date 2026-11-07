@@ -1017,18 +1017,33 @@ fn a_json_file_written_for_dotnet_makes_the_same_engine_as_code() {
 
 /// With no client given to the pipeline builder, the engine uses the
 /// built-in one, and without the `reqwest-client` feature there is none,
-/// so the build fails as it does in code.
+/// so the build fails. The message names the resource the client is
+/// taken from, where the builder in code names `http_client`. A client
+/// given without the further `Arc` is not found, and gets the same message.
 #[cfg(not(feature = "reqwest-client"))]
 #[test]
-fn with_no_client_and_no_built_in_one_the_build_fails_as_in_code() {
-    let expected = match CloudRequestEngine::builder()
+fn with_no_client_and_no_built_in_one_the_build_names_the_resource() {
+    let expected = "no CloudHttpClient was given to PipelineBuilder::add_resource and the \
+                    `reqwest-client` feature is not enabled, so the CloudRequestEngine has \
+                    no HTTP transport. Give one with add_resource(Arc::new(client)), where \
+                    client is an Arc<dyn CloudHttpClient>, or enable the `reqwest-client` \
+                    feature to use the built-in reqwest client";
+    let configured = options(&[("ResourceKey", RESOURCE_KEY)]);
+    let none = PipelineBuilder::new().build_from_configuration(&registry(), &configured);
+    assert_eq!(message(none), failed(expected));
+    let unwrapped = PipelineBuilder::new()
+        .add_resource(Arc::new(StandIn::default()))
+        .build_from_configuration(&registry(), &configured);
+    assert_eq!(message(unwrapped), failed(expected));
+    let in_code = match CloudRequestEngine::builder()
         .resource_key(RESOURCE_KEY)
         .build()
     {
         Err(error) => error.message().into_owned(),
         Ok(_) => panic!("the engine was built"),
     };
-    let result = PipelineBuilder::new()
-        .build_from_configuration(&registry(), &options(&[("ResourceKey", RESOURCE_KEY)]));
-    assert_eq!(message(result), failed(&expected));
+    assert!(
+        in_code.contains("CloudRequestEngineBuilder::http_client"),
+        "{in_code}"
+    );
 }

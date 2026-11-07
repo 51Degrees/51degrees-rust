@@ -57,10 +57,12 @@
 //!
 //! The engine sends its requests through the `Arc<dyn CloudHttpClient>` the
 //! [`PipelineBuilder`](fiftyone_pipeline_core::PipelineBuilder) was given as
-//! a resource, or through the built-in client of the `reqwest-client`
-//! feature when it was given none. The pipeline holds the engine, so the
-//! cloud engines after it find it, and what a configuration set can be read
-//! back.
+//! a resource, wrapped in a further `Arc` as `add_resource(Arc::new(client))`
+//! below does, or through the built-in client of the `reqwest-client`
+//! feature, which is off by default, when it was given none. A client given
+//! in any other form, such as `add_resource(Arc::new(MyClient))`, is not
+//! found. The pipeline holds the engine, so the cloud engines after it find
+//! it, and what a configuration set can be read back.
 //!
 //! The builder of each cloud aspect engine finds that engine with
 //! [`request_engine`], and takes the settings .NET's cloud aspect engine
@@ -132,6 +134,15 @@ use crate::{CloudHttpClient, CloudRequestEngine, CloudRequestEngineBuilder};
 
 /// The most failures to enter recovery that .NET's builder accepts.
 const CONFIGURED_FAILURES_TO_ENTER_RECOVERY_MAX: u32 = 1000;
+
+/// What the build says with no client and no built-in one. A client of
+/// any other type, such as one given as `Arc::new(MyClient)`, is not found.
+const NO_CLIENT_RESOURCE: &str =
+    "no CloudHttpClient was given to PipelineBuilder::add_resource and the \
+     `reqwest-client` feature is not enabled, so the CloudRequestEngine has no \
+     HTTP transport. Give one with add_resource(Arc::new(client)), where client is \
+     an Arc<dyn CloudHttpClient>, or enable the `reqwest-client` feature to use \
+     the built-in reqwest client";
 
 /// The timeout in seconds that means no limit, as the engine's builder
 /// takes it.
@@ -328,9 +339,10 @@ fn cloud_request_engine_builder() -> BuilderDefinition<CloudRequestEngineSetting
         "CloudRequestEngineBuilder",
         |settings: CloudRequestEngineSettings, context: &mut BuildContext| {
             let mut builder = settings.builder();
-            if let Some(client) = context.latest_resource::<Arc<dyn CloudHttpClient>>() {
-                builder = builder.http_client(Arc::clone(client.as_ref()));
-            }
+            builder = match context.latest_resource::<Arc<dyn CloudHttpClient>>() {
+                Some(client) => builder.http_client(Arc::clone(client.as_ref())),
+                None => builder.no_client_message(NO_CLIENT_RESOURCE),
+            };
             let engine = Arc::new(builder.build()?);
             context.add_resource(Arc::clone(&engine) as _);
             Ok(engine as Arc<dyn FlowElement>)

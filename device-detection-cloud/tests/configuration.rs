@@ -415,6 +415,31 @@ fn without_a_request_engine_before_it_the_build_fails() {
     }
 }
 
+/// Without the `reqwest-client` feature, as on wasm, a pipeline builder
+/// given no client, or a client without the further `Arc`, fails the build
+/// with a message saying how to give one.
+#[cfg(not(feature = "reqwest-client"))]
+#[test]
+fn with_no_client_the_build_says_how_to_give_one() {
+    let options = PipelineOptions::new()
+        .element(request_engine())
+        .element(ElementOptions::new(DEVICE.builder));
+    let expected = failed(
+        REQUEST_ENGINE,
+        "no CloudHttpClient was given to PipelineBuilder::add_resource and the \
+         `reqwest-client` feature is not enabled, so the CloudRequestEngine has no HTTP \
+         transport. Give one with add_resource(Arc::new(client)), where client is an \
+         Arc<dyn CloudHttpClient>, or enable the `reqwest-client` feature to use the \
+         built-in reqwest client",
+    );
+    let none = PipelineBuilder::new().build_from_configuration(&registry(), &options);
+    assert_eq!(message(none), expected);
+    let unwrapped = PipelineBuilder::new()
+        .add_resource(Arc::new(StandIn::default()))
+        .build_from_configuration(&registry(), &options);
+    assert_eq!(message(unwrapped), expected);
+}
+
 /// .NET's engine finds its request engine in the pipeline by type, which
 /// finds none when there are two, so .NET's run with two request engines
 /// before the Device Detection cloud engine failed with this message, on

@@ -43,9 +43,12 @@
 //!
 //! The element fetches through the `Arc<dyn HttpClient>` the
 //! [`PipelineBuilder`](fiftyone_pipeline_core::PipelineBuilder) was given as
-//! a resource, or through the built-in client of the `reqwest-client`
-//! feature when it was given none. The pipeline holds the element, so what a
-//! configuration set can be read back.
+//! a resource, wrapped in a further `Arc` as `add_resource(Arc::new(client))`
+//! below does, or through the built-in client of the `reqwest-client`
+//! feature, which is off by default, when it was given none. A client given
+//! in any other form, such as `add_resource(Arc::new(MyClient))`, is not
+//! found. The pipeline holds the element, so what a configuration set can be
+//! read back.
 //!
 //! ```
 //! use std::sync::Arc;
@@ -106,6 +109,13 @@ use crate::{AgentSignatureElement, AgentSignatureElementBuilder, HttpClient};
 
 /// .NET's message for a cache size below one.
 const CACHE_SIZE_TOO_SMALL: &str = "The cache must be allowed to hold at least one key directory.";
+
+/// What the build says with no client and no built-in one. A client of
+/// any other type, such as one given as `Arc::new(MyClient)`, is not found.
+const NO_CLIENT_RESOURCE: &str = "The agent signature element needs an HTTP client. Turn on \
+                                  the reqwest-client feature or give one to \
+                                  PipelineBuilder::add_resource as Arc::new(client), where \
+                                  client is an Arc<dyn HttpClient>.";
 
 /// .NET's message for a response limit below one byte.
 const MAX_RESPONSE_BYTES_TOO_SMALL: &str =
@@ -212,7 +222,7 @@ fn agent_signature_element_builder() -> BuilderDefinition<AgentSignatureElementB
         let builder = AgentSignatureElement::builder();
         Ok(match context.latest_resource::<Arc<dyn HttpClient>>() {
             Some(client) => builder.set_http_client(Arc::clone(client.as_ref())),
-            None => builder,
+            None => builder.no_client_message(NO_CLIENT_RESOURCE),
         })
     })
 }
