@@ -52,13 +52,20 @@
 //!   evidence-key whitelist [`EndpointOptions::current_vary_whitelist`] gives,
 //!   with the `header.` prefix stripped and the names de-duplicated
 //!   case-insensitively. Omitted when the list is empty or there is none.
-//! - `ETag`: a digest of the cache key the flow data's evidence produces
-//!   under the pipeline filter, the same in every process running the same
-//!   build. The digest is opaque and non-portable (see [`compute_etag`]).
+//! - `ETag`: a weak entity tag, `W/"<16 hex digits>"`, holding a digest of
+//!   the cache key the flow data's evidence produces under the pipeline
+//!   filter, the same in every process running the same build. The digest is
+//!   opaque and non-portable (see [`compute_etag`]). The tag is weak because
+//!   it stands for the evidence, and the content for the same evidence changes
+//!   when a data file is refreshed
+//!   ([RFC 9110 section 8.8.3](https://www.rfc-editor.org/rfc/rfc9110#section-8.8.3)).
 //! - `Access-Control-Allow-Origin`: the request `Origin` header echoed back,
 //!   but only when an origin is present and is not the literal string `null`.
 //!
-//! When the request's `If-None-Match` equals the computed `ETag`, both
+//! When the request's `If-None-Match` is `*` or lists a tag that matches the
+//! computed `ETag` under the weak comparison
+//! ([RFC 9110 section 8.8.3.2](https://www.rfc-editor.org/rfc/rfc9110#section-8.8.3.2)),
+//! meaning the quoted parts are equal with or without `W/` on either, both
 //! endpoints instead return `304 Not Modified` with an empty body and the
 //! `Cache-Control`, `Vary`, `ETag` and `Access-Control-Allow-Origin` fields
 //! the `200` would have carried, as
@@ -155,6 +162,9 @@ pub const CACHE_CONTROL_CACHEABLE: &str = "private, max-age=1800";
 /// ([specifications#53](https://github.com/51Degrees/specifications/pull/53)).
 pub const CACHE_CONTROL_NO_CACHE: &str = "private, no-cache";
 
+/// The prefix that marks an entity tag as weak, which is case-sensitive
+/// ([RFC 9110 section 8.8.3](https://www.rfc-editor.org/rfc/rfc9110#section-8.8.3)).
+const WEAK_ETAG_PREFIX: &str = "W/";
 /// The first fixed seed for the ETag hasher (see [`compute_etag`]).
 const ETAG_SEED_0: u64 = 0x_51de_9e55_0000_0001;
 /// The second fixed seed for the ETag hasher.
@@ -532,8 +542,11 @@ pub fn vary_header(whitelist: &EvidenceKeyFilterWhitelist) -> String {
 /// Compute the `ETag` for a flow data.
 ///
 /// The tag is a hex digest of the deterministic [`fiftyone_pipeline_core::DataKey`]
-/// the flow data's evidence produces under the pipeline filter, rendered as a
-/// quoted string per the HTTP `ETag` grammar.
+/// the flow data's evidence produces under the pipeline filter, written as a
+/// weak entity tag, `W/"<16 hex digits>"`. It is weak because the content for
+/// the same evidence changes when a data file is refreshed, so it is not a
+/// strong validator
+/// ([RFC 9110 sections 8.8.1 and 8.8.3](https://www.rfc-editor.org/rfc/rfc9110#section-8.8.3)).
 ///
 /// The digest is produced by an [`ahash::RandomState`] hasher built from the
 /// four fixed seeds in this module, so the same evidence gives the same tag in
@@ -562,28 +575,30 @@ pub fn compute_etag(flow_data: &FlowData, filter: &dyn EvidenceKeyFilter) -> Str
     }
 
     let digest = hasher.finish();
-    format!("\"{digest:016x}\"")
+    format!("{WEAK_ETAG_PREFIX}\"{digest:016x}\"")
 }
 
 /// Compare an incoming `If-None-Match` value against a computed `ETag`.
 ///
-/// The comparison tolerates the optional weak-validator prefix (`W/`) and a
-/// comma-separated list of candidate tags, returning true if any candidate
-/// equals the computed tag. The wildcard `*` always matches. This is the subset
-/// of [RFC 9110 section 13.1.2](https://www.rfc-editor.org/rfc/rfc9110#section-13.1.2)
-/// the endpoints need.
+/// `If-None-Match` takes the weak comparison
+/// ([RFC 9110 sections 8.8.3.2 and 13.1.2](https://www.rfc-editor.org/rfc/rfc9110#section-13.1.2)),
+/// so `W/` is taken off both tags and the rest compared exactly. The value is
+/// a comma-separated list, and true is returned if any tag in it matches or
+/// it holds the wildcard `*`.
 pub fn etag_matches(if_none_match: &str, etag: &str) -> bool {
+    let etag = without_weak_prefix(etag);
     for candidate in if_none_match.split(',') {
         let candidate = candidate.trim();
-        if candidate == "*" {
-            return true;
-        }
-        let candidate = candidate.strip_prefix("W/").unwrap_or(candidate);
-        if candidate == etag {
+        if candidate == "*" || without_weak_prefix(candidate) == etag {
             return true;
         }
     }
     false
+}
+
+/// The entity tag with the weak prefix `W/` taken off, if it has one.
+fn without_weak_prefix(tag: &str) -> &str {
+    tag.strip_prefix(WEAK_ETAG_PREFIX).unwrap_or(tag)
 }
 
 /// Determine the `Access-Control-Allow-Origin` value to echo, if any.
@@ -610,6 +625,27 @@ mod tests {
         assert!(etag_matches("\"x\", \"abc\"", "\"abc\""));
         assert!(etag_matches("*", "\"abc\""));
         assert!(!etag_matches("\"def\"", "\"abc\""));
+    }
+
+    /// The weak comparison of RFC 9110 section 8.8.3.2, against a weak tag
+    /// like the one [`compute_etag`] gives.
+    #[test]
+    fn a_weak_etag_matches_with_or_without_the_prefix() {
+        let etag = "W/\"x\"";
+        for matching in [
+            "\"x\"",
+            "W/\"x\"",
+            "\"y\", \"x\"",
+            "\"y\", W/\"x\"",
+            "W/\"y\",W/\"x\"",
+            "*",
+        ] {
+            assert!(etag_matches(matching, etag), "{matching}");
+        }
+        // The prefix is case-sensitive, so `w/"x"` is not a weak `"x"`.
+        for other in ["\"y\"", "W/\"y\"", "w/\"x\"", "x", "", "\"y\", W/\"z\""] {
+            assert!(!etag_matches(other, etag), "{other}");
+        }
     }
 
     #[test]
