@@ -813,10 +813,12 @@ impl Manager {
 /// The value type of a data file property from the C library's
 /// `fiftyoneDegreesPropertyValueType`, following the type names the C++
 /// `PropertyMetaDataBuilderIpi` gives. Every weighted type is a
-/// [`PropertyValueType::KeyValueList`], as the engine gives each weighted
-/// property's candidates. An IP address, an area or a coordinate is a
-/// [`PropertyValueType::String`], as is a type the builder does not name,
-/// because the pipeline has no type of its own for them.
+/// [`PropertyValueType::KeyValueList`], as a lookup gives each weighted
+/// property's candidates. That includes `weightedbyte`, which .NET's
+/// `PropertyMetaDataIpi.Type` has no case for and so gives as a string. An
+/// IP address, an area or a coordinate is a [`PropertyValueType::String`],
+/// as is a type the builder does not name, because the pipeline has no type
+/// of its own for them.
 fn data_file_value_type(value_type: u8, is_list: bool) -> PropertyValueType {
     use sys::PropertyValueType as Ty;
     let is = |ty: Ty| i32::from(value_type) == ty as i32;
