@@ -482,12 +482,16 @@ mod tests {
         assert_eq!(text, expected.join("\n"));
     }
 
+    /// The usages a case allows, and each agent with whether it may fetch
+    /// the site.
+    type Case = (&'static [&'static str], &'static [(&'static str, bool)]);
+
     /// What a crawler reads from each text, through a port of Google's
     /// robots.txt parser, which is the reference reader for RFC 9309.
     #[test]
     fn a_crawler_reads_the_answer_the_allowed_usages_give() {
         let model = model();
-        let cases: [(&[&str], &[(&str, bool)]); 4] = [
+        let cases: [Case; 4] = [
             (
                 &[],
                 &[
