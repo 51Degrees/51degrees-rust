@@ -597,6 +597,23 @@
     }
   },
   {
+    "id": "usage-never-shared",
+    "about": "The keys usage sharing never shares, in mixed case, as the whole key and after a prefix, a session value starting 51D_, which is shared, one that does not, which is not, and a header whose name ends in .Email, which is shared because only id.email after a dot is never shared.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "Server.Request-Path": "/articles/never-shared",
+      "server.REQUEST-QUERY": "a=1&b=2",
+      "query.ID.Email": "someone@example.com",
+      "Id.Salt": "salt",
+      "request-path": "/bare",
+      "session.51D_Seen": "1",
+      "session.other": "value",
+      "header.X-Valid.Email": "shared",
+      "server.client-ip": "81.2.69.142",
+      "query.session-id": "parity-usage-never-shared"
+    }
+  },
+  {
     "id": "json-values-sequence-8",
     "about": "The values pipeline with sequence 8, so the JSON builder sees 9, the last sequence that lists JavaScript properties.",
     "pipeline": "values",
