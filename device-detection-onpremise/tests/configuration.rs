@@ -566,6 +566,96 @@ fn performance_profiles_are_read_as_dotnet_reads_them() {
     );
 }
 
+/// .NET gave each matching setting to its native configuration, negative
+/// values included, and its engine detected with them. With neither graph,
+/// the C library refused the configuration in both.
+#[test]
+fn the_matching_settings_reach_the_engine() {
+    let Some(lite) = lite() else { return };
+    let pipeline = build(base(
+        &lite,
+        &[
+            ("Difference", "10"),
+            ("Drift", "10"),
+            ("AllowUnmatched", "true"),
+            ("UpdateMatchedUserAgent", "false"),
+            ("UsePerformanceGraph", "true"),
+            ("UsePredictiveGraph", "false"),
+        ],
+    ))
+    .unwrap();
+    let options = engine(&pipeline).hash_options().clone();
+    assert_eq!(
+        (
+            options.difference,
+            options.drift,
+            options.allow_unmatched,
+            options.update_matched_user_agent,
+            options.use_performance_graph,
+            options.use_predictive_graph,
+        ),
+        (
+            Some(10),
+            Some(10),
+            Some(true),
+            Some(false),
+            Some(true),
+            Some(false)
+        )
+    );
+    assert_eq!(detect(&pipeline, MOBILE), (Ok(true), Ok("iOS".to_string())));
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("header.user-agent", DESKTOP)
+            .build(),
+    );
+    data.process().unwrap();
+    let device = data.get(DEVICE_DATA_KEY).unwrap();
+    assert_eq!(device.method().value().unwrap(), "PERFORMANCE");
+    assert_eq!(device.user_agents().value().unwrap(), &Vec::<String>::new());
+
+    let pipeline = build(base(
+        &lite,
+        &[("Drift", "-3"), ("Difference", "-2147483648")],
+    ))
+    .unwrap();
+    let options = engine(&pipeline).hash_options().clone();
+    assert_eq!(
+        (options.drift, options.difference),
+        (Some(-3), Some(i32::MIN))
+    );
+
+    let refused = message(build(base(&lite, &[("UsePredictiveGraph", "false")])));
+    assert!(
+        refused.contains("The configuration provided was not valid"),
+        "{refused}"
+    );
+}
+
+/// The concurrency reaches the engine. .NET loses it when a performance
+/// profile is set too, in either order in a configuration file, because the
+/// keys are read in name order and the profile replaces the native
+/// configuration's concurrency, so the engine opens with the profile's own.
+/// The crates keep the concurrency the configuration names, as the
+/// specification's separate Concurrency option describes.
+#[test]
+fn the_concurrency_reaches_the_engine_whatever_the_profile() {
+    let Some(lite) = lite() else { return };
+    for parameters in [
+        vec![("Concurrency", "4")],
+        vec![("Concurrency", "4"), ("PerformanceProfile", "LowMemory")],
+        vec![("PerformanceProfile", "LowMemory"), ("Concurrency", "4")],
+    ] {
+        let pipeline = build(base(&lite, &parameters)).expect("built");
+        assert_eq!(engine(&pipeline).concurrency(), 4, "{parameters:?}");
+        assert_eq!(
+            detect(&pipeline, MOBILE),
+            (Ok(true), Ok("iOS".to_string())),
+            "{parameters:?}"
+        );
+    }
+}
+
 /// .NET restricted the engine to the properties named, so another property
 /// is missing, and refused a property the data file does not hold.
 #[test]
@@ -703,13 +793,18 @@ fn the_build_methods_are_dotnets() {
 
 /// .NET lists every setting and build method of the builder, giving
 /// `RuntimeParameterInfo` as each type, where the crates give the type. The
-/// crates leave out the seven Hash matching settings, which the engine's
-/// builder does not take, and .NET's `Build (Stream)`, which is a build
-/// method.
+/// crates leave out .NET's `Build (Stream)`, which is a build method.
 #[test]
 fn an_unknown_setting_lists_the_settings_and_build_methods() {
     let Some(lite) = lite() else { return };
     let listed = [
+        "SetDifference (Int32)",
+        "SetDrift (Int32)",
+        "SetAllowUnmatched (Boolean)",
+        "SetReuseTempFile (Boolean)",
+        "SetUpdateMatchedUserAgent (Boolean)",
+        "SetUsePerformanceGraph (Boolean)",
+        "SetUsePredictiveGraph (Boolean)",
         "SetPerformanceProfile (String)",
         "SetPerformanceProfile (PerformanceProfiles)",
         "SetConcurrency (UInt16)",
@@ -794,6 +889,9 @@ fn values_that_do_not_parse_are_refused() {
         ("Concurrency", "65536", "SetConcurrency", "UInt16"),
         ("Concurrency", "x", "SetConcurrency", "UInt16"),
         ("CacheSize", "x", "SetCacheSize", "Int32"),
+        ("Difference", "x", "SetDifference", "Int32"),
+        ("Difference", "2147483648", "SetDifference", "Int32"),
+        ("AllowUnmatched", "x", "SetAllowUnmatched", "Boolean"),
         (
             "DataUpdateUseUrlFormatter",
             "x",
@@ -971,6 +1069,15 @@ fn settings_with_no_effect_are_logged() {
             vec![warning("SetCacheHitOrMiss", "as the engine has no cache")],
         ),
         ("CacheHitOrMiss", "false", vec![]),
+        (
+            "ReuseTempFile",
+            "true",
+            vec![warning(
+                "SetReuseTempFile",
+                "as the engine never reuses a copy of the data file it finds",
+            )],
+        ),
+        ("ReuseTempFile", "false", vec![]),
     ] {
         let (pipeline, found) = logged_by(|| build(base(&lite, &[(name, value)])));
         let pipeline = pipeline.expect(name);

@@ -37,12 +37,17 @@
 //!   [`PerformanceProfile::Balanced`], as .NET's `BalancedTemp` loads the
 //!   data file as `Balanced` does and makes no copy.
 //! - `SetConcurrency`, `SetProperties` and `SetProperty`.
+//! - The Hash matching settings `SetDifference`, `SetDrift`,
+//!   `SetAllowUnmatched`, `SetUpdateMatchedUserAgent`,
+//!   `SetUsePerformanceGraph` and `SetUsePredictiveGraph`, which reach the
+//!   engine's native configuration as they do in .NET.
 //! - `SetCacheSize`, refused with .NET's message, as the engine keeps no
 //!   results.
-//! - `SetDataDownloadType`, `SetLazyLoadingTimeout` and `SetCacheHitOrMiss`
-//!   set to true are read and have no effect, with a warning logged. The
-//!   download type is the one the data file names, as in .NET, and the
-//!   engine has no lazy loading and no cache.
+//! - `SetDataDownloadType`, `SetLazyLoadingTimeout`, and `SetCacheHitOrMiss`
+//!   and `SetReuseTempFile` set to true, are read and have no effect, with a
+//!   warning logged. The download type is the one the data file names, as in
+//!   .NET, the engine has no lazy loading and no cache, and it never reuses a
+//!   copy of the data file it finds.
 //! - The data file settings of [`fiftyone_pipeline_engines::configuration`].
 //!   Automatic updates and the file system watcher are on unless the
 //!   configuration turns them off, as in .NET, and any update needs a
@@ -51,10 +56,6 @@
 //!   resource, and a license key for automatic updates or update on startup.
 //! - `SetLazyLoading` and `SetCache` take their values in code only, so
 //!   naming one fails as it does in .NET.
-//!
-//! The Hash matching settings, such as `SetDifference` and
-//! `SetUsePredictiveGraph`, are not taken, because the engine's builder has
-//! none, so naming one fails as an unknown setting does.
 //!
 //! The pipeline holds the engine made, so it can be read back.
 //!
@@ -124,6 +125,12 @@ struct DeviceDetectionHashEngineSettings {
     data_file: Option<(String, bool)>,
     profile: Option<PerformanceProfile>,
     concurrency: Option<u16>,
+    difference: Option<i32>,
+    drift: Option<i32>,
+    allow_unmatched: Option<bool>,
+    update_matched_user_agent: Option<bool>,
+    use_performance_graph: Option<bool>,
+    use_predictive_graph: Option<bool>,
     properties: Vec<String>,
     data_file_settings: DataFileSettings,
 }
@@ -134,6 +141,12 @@ impl DeviceDetectionHashEngineSettings {
             data_file,
             profile: None,
             concurrency: None,
+            difference: None,
+            drift: None,
+            allow_unmatched: None,
+            update_matched_user_agent: None,
+            use_performance_graph: None,
+            use_predictive_graph: None,
             properties: Vec::new(),
             data_file_settings: DataFileSettings::new(),
         }
@@ -173,6 +186,24 @@ impl DeviceDetectionHashEngineSettings {
         if let Some(concurrency) = self.concurrency {
             builder = builder.concurrency(concurrency);
         }
+        if let Some(difference) = self.difference {
+            builder = builder.difference(difference);
+        }
+        if let Some(drift) = self.drift {
+            builder = builder.drift(drift);
+        }
+        if let Some(allow) = self.allow_unmatched {
+            builder = builder.allow_unmatched(allow);
+        }
+        if let Some(update) = self.update_matched_user_agent {
+            builder = builder.update_matched_user_agent(update);
+        }
+        if let Some(use_graph) = self.use_performance_graph {
+            builder = builder.use_performance_graph(use_graph);
+        }
+        if let Some(use_graph) = self.use_predictive_graph {
+            builder = builder.use_predictive_graph(use_graph);
+        }
         // .NET makes no copy when the temporary folder is empty text.
         match settings.temp_dir_path() {
             Some("") => {}
@@ -211,6 +242,60 @@ fn device_detection_hash_engine_builder() -> BuilderDefinition<DeviceDetectionHa
         "DeviceDetectionHashEngineBuilder",
         |settings: DeviceDetectionHashEngineSettings, context: &mut BuildContext| {
             settings.engine(context)
+        },
+    )
+    .setting(
+        "SetDifference",
+        |mut settings: DeviceDetectionHashEngineSettings, difference: i32| {
+            settings.difference = Some(difference);
+            settings
+        },
+    )
+    .setting(
+        "SetDrift",
+        |mut settings: DeviceDetectionHashEngineSettings, drift: i32| {
+            settings.drift = Some(drift);
+            settings
+        },
+    )
+    .setting(
+        "SetAllowUnmatched",
+        |mut settings: DeviceDetectionHashEngineSettings, allow: bool| {
+            settings.allow_unmatched = Some(allow);
+            settings
+        },
+    )
+    .setting(
+        "SetReuseTempFile",
+        |settings: DeviceDetectionHashEngineSettings, reuse: bool| {
+            if reuse {
+                ignored(
+                    "SetReuseTempFile",
+                    "as the engine never reuses a copy of the data file it finds",
+                );
+            }
+            settings
+        },
+    )
+    .setting(
+        "SetUpdateMatchedUserAgent",
+        |mut settings: DeviceDetectionHashEngineSettings, update: bool| {
+            settings.update_matched_user_agent = Some(update);
+            settings
+        },
+    )
+    .setting(
+        "SetUsePerformanceGraph",
+        |mut settings: DeviceDetectionHashEngineSettings, use_graph: bool| {
+            settings.use_performance_graph = Some(use_graph);
+            settings
+        },
+    )
+    .setting(
+        "SetUsePredictiveGraph",
+        |mut settings: DeviceDetectionHashEngineSettings, use_graph: bool| {
+            settings.use_predictive_graph = Some(use_graph);
+            settings
         },
     )
     .try_setting(
