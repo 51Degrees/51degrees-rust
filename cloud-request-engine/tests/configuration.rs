@@ -33,8 +33,6 @@ use std::time::Duration;
 use fiftyone_cloud_request_engine::{
     configuration, CloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine,
     CloudRequestEngineBuilder, HttpMethod, CLOUD_ENDPOINT_ENV_VAR, CLOUD_URI_DEFAULT,
-    FAILURES_TO_ENTER_RECOVERY_DEFAULT, FAILURES_WINDOW_SECONDS_DEFAULT, RECOVERY_SECONDS_DEFAULT,
-    TIMEOUT_DEFAULT_SECONDS,
 };
 use fiftyone_pipeline_core::configuration::{
     BuildContext, BuilderDefinition, BuilderRegistry, ElementOptions, PipelineOptions,
@@ -278,11 +276,19 @@ fn the_builder_is_found_by_dotnets_names() {
     }
 }
 
-/// .NET's builder has its own defaults (100 failures in 10 seconds, and
-/// exponential backoff from 2 to 10 seconds). The engine here keeps the
-/// specification's, as it does in code.
+/// .NET's builder has its own recovery defaults (100 failures in 10
+/// seconds, and exponential backoff from 2 to 10 seconds). The engine here
+/// keeps the specification's, as it does in code, and the timeout of 2
+/// seconds that .NET and the specification share. The expected values are
+/// written out rather than taken from the crate's constants, so a change
+/// to a constant fails here.
 #[test]
 fn a_setting_not_given_keeps_the_engine_builders_default() {
+    // The specification's "Configuration options" table for the engine.
+    const TIMEOUT_SECONDS: u64 = 2;
+    const FAILURES_TO_ENTER_RECOVERY: u32 = 10;
+    const FAILURES_WINDOW_SECONDS: u64 = 100;
+    const RECOVERY_SECONDS: u64 = 60;
     let (engine, stand_in) = engine_with(&[]);
     let base = default_base();
     assert_eq!(engine.resource_key(), Some(RESOURCE_KEY));
@@ -294,23 +300,17 @@ fn a_setting_not_given_keeps_the_engine_builders_default() {
             format!("{base}evidencekeys"),
         ]
     );
-    assert_eq!(
-        engine.timeout(),
-        Duration::from_secs(TIMEOUT_DEFAULT_SECONDS)
-    );
+    assert_eq!(engine.timeout(), Duration::from_secs(TIMEOUT_SECONDS));
     let recovery = engine.recovery_config();
     assert_eq!(
         recovery.failures_to_enter_recovery,
-        FAILURES_TO_ENTER_RECOVERY_DEFAULT
+        FAILURES_TO_ENTER_RECOVERY
     );
     assert_eq!(
         recovery.window,
-        Duration::from_secs(FAILURES_WINDOW_SECONDS_DEFAULT)
+        Duration::from_secs(FAILURES_WINDOW_SECONDS)
     );
-    assert_eq!(
-        recovery.recovery,
-        Duration::from_secs_f64(RECOVERY_SECONDS_DEFAULT)
-    );
+    assert_eq!(recovery.recovery, Duration::from_secs(RECOVERY_SECONDS));
     assert_eq!(engine.cloud_request_origin(), None);
     assert!(engine.values().is_empty());
 }
