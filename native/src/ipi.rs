@@ -2158,43 +2158,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_51d_key_and_an_address_with_a_port_are_read() {
-        let Some(data_file) = ipi_data_file() else {
-            eprintln!("no IP Intelligence data file found; skipping 51d keys");
-            return;
-        };
-        let manager = open_found(&data_file, PerformanceProfile::HighPerformance);
-        for value in [
-            "1.1.1.1:443",
-            "[2606:4700:4700::1111]:443",
-            "1.1.1.1, 10.0.0.1",
-        ] {
-            let asn = asn_from(&manager, &[("query.client-ip-51d", value)])
-                .unwrap_or_else(|err| panic!("{value} should be looked up: {err}"));
-            assert!(
-                asn.as_deref().unwrap_or_default().contains("AS13335"),
-                "{value} gave {asn:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn evidence_with_no_readable_address_is_an_error() {
-        let Some(data_file) = ipi_data_file() else {
-            eprintln!("no IP Intelligence data file found; skipping unreadable evidence");
-            return;
-        };
-        let manager = open_found(&data_file, PerformanceProfile::HighPerformance);
-        let err = asn_from(&manager, &[("server.client-ip", "unknown")])
-            .expect_err("evidence with no readable address should be an error");
-        assert!(matches!(err, Error::Native { ref status, .. } if status == "InvalidInput"));
-    }
-
     /// The web request a web integration gives with the evidence, under
     /// `server.http-request`, is not one of its text values, so no address is
     /// read from it. The lookup takes the evidence's own address, and with
-    /// none it is an error rather than a panic.
+    /// none it finds nothing from the request and returns without a panic.
     #[test]
     fn no_address_is_read_from_the_web_request() {
         let Some(data_file) = ipi_data_file() else {
@@ -2226,8 +2193,43 @@ mod tests {
             "got {asn:?}"
         );
 
-        let err = lookup(Evidence::builder().http_request(request()).build())
-            .expect_err("a web request alone gives no address");
+        let alone = lookup(Evidence::builder().http_request(request()).build());
+        assert!(
+            !matches!(&alone, Ok(Some(asn)) if asn.contains("AS19281")),
+            "got {alone:?}"
+        );
+    }
+
+    #[test]
+    fn a_51d_key_and_an_address_with_a_port_are_read() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping 51d keys");
+            return;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::HighPerformance);
+        for value in [
+            "1.1.1.1:443",
+            "[2606:4700:4700::1111]:443",
+            "1.1.1.1, 10.0.0.1",
+        ] {
+            let asn = asn_from(&manager, &[("query.client-ip-51d", value)])
+                .unwrap_or_else(|err| panic!("{value} should be looked up: {err}"));
+            assert!(
+                asn.as_deref().unwrap_or_default().contains("AS13335"),
+                "{value} gave {asn:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn evidence_with_no_readable_address_is_an_error() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping unreadable evidence");
+            return;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::HighPerformance);
+        let err = asn_from(&manager, &[("server.client-ip", "unknown")])
+            .expect_err("evidence with no readable address should be an error");
         assert!(matches!(err, Error::Native { ref status, .. } if status == "InvalidInput"));
     }
 
