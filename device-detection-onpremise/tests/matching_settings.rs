@@ -305,9 +305,9 @@ fn a_refresh_keeps_the_settings() {
         .allow_unmatched(true)
         .build()
         .unwrap();
-    let options = engine.hash_options();
+    let options = engine.hash_options().clone();
     engine.refresh(None).expect("the data file loads again");
-    assert_eq!(engine.hash_options(), options);
+    assert_eq!(engine.hash_options(), &options);
     assert_eq!(detect(&engine, DESKTOP_USER_AGENT).0, "PERFORMANCE");
     assert_eq!(detect(&engine, "").4, Some(false));
 }

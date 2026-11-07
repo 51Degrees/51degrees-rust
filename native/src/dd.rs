@@ -162,7 +162,7 @@ fn set_pool_concurrency(config: &mut sys::ConfigHash, concurrency: u16) {
 /// a Hash data set loads, as the builders of the other 51Degrees ports set
 /// them. Each is [`None`] to keep the profile's own value. Start from
 /// [`HashOptions::default`] and set the fields wanted.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub struct HashOptions {
     /// The expected number of threads processing through the data set at

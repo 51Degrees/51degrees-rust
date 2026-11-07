@@ -416,9 +416,11 @@ impl DeviceDetectionOnPremiseEngine {
     }
 
     /// The settings the engine opens its data file with over the profile's
-    /// own, each [`None`] where the builder named none.
-    pub fn hash_options(&self) -> HashOptions {
-        self.options
+    /// own. The concurrency is always set, to the one the builder named or
+    /// else [`default_concurrency`](fiftyone_native::dd::default_concurrency),
+    /// and each other field is [`None`] where the builder named none.
+    pub fn hash_options(&self) -> &HashOptions {
+        &self.options
     }
 
     /// The evidence keys the engine accepts by name, lowercased, being each

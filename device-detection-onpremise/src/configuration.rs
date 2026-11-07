@@ -46,8 +46,8 @@
 //! - `SetDataDownloadType`, `SetLazyLoadingTimeout`, and `SetCacheHitOrMiss`
 //!   and `SetReuseTempFile` set to true, are read and have no effect, with a
 //!   warning logged. The download type is the one the data file names, as in
-//!   .NET, the engine has no lazy loading and no cache, and it makes a new
-//!   copy of the data file each time it reads one.
+//!   .NET, the engine has no lazy loading and no cache, and it never reuses a
+//!   copy of the data file it finds.
 //! - The data file settings of [`fiftyone_pipeline_engines::configuration`].
 //!   Automatic updates and the file system watcher are on unless the
 //!   configuration turns them off, as in .NET, and any update needs a
@@ -271,7 +271,7 @@ fn device_detection_hash_engine_builder() -> BuilderDefinition<DeviceDetectionHa
             if reuse {
                 ignored(
                     "SetReuseTempFile",
-                    "as the engine makes a new copy of the data file each time it reads one",
+                    "as the engine never reuses a copy of the data file it finds",
                 );
             }
             settings

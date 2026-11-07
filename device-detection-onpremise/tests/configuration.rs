@@ -584,7 +584,7 @@ fn the_matching_settings_reach_the_engine() {
         ],
     ))
     .unwrap();
-    let options = engine(&pipeline).hash_options();
+    let options = engine(&pipeline).hash_options().clone();
     assert_eq!(
         (
             options.difference,
@@ -619,7 +619,7 @@ fn the_matching_settings_reach_the_engine() {
         &[("Drift", "-3"), ("Difference", "-2147483648")],
     ))
     .unwrap();
-    let options = engine(&pipeline).hash_options();
+    let options = engine(&pipeline).hash_options().clone();
     assert_eq!(
         (options.drift, options.difference),
         (Some(-3), Some(i32::MIN))
@@ -1074,7 +1074,7 @@ fn settings_with_no_effect_are_logged() {
             "true",
             vec![warning(
                 "SetReuseTempFile",
-                "as the engine makes a new copy of the data file each time it reads one",
+                "as the engine never reuses a copy of the data file it finds",
             )],
         ),
         ("ReuseTempFile", "false", vec![]),
