@@ -145,6 +145,30 @@ fn measure_profile(leaks: &mut Leaks, path: &Path, profile: PerformanceProfile) 
     leaks.measure(&label("data set name"), 5, || {
         manager.data_set_name();
     });
+
+    let mut indexing = dd::HashOptions::default();
+    indexing
+        .indexed_properties
+        .push(String::from("BrowserName"));
+    let open_indexed = || {
+        dd::Manager::open_with_hash_options(path, profile, None, &indexing)
+            .expect("the data file loads")
+    };
+    leaks.measure(&label("open with an index and free"), 2, || {
+        drop(open_indexed())
+    });
+    let indexed = open_indexed();
+    leaks.measure(&label("look up profiles by value"), 3, || {
+        for searched in [&indexed, &manager] {
+            for value in ["Chrome", "No such browser"] {
+                searched
+                    .profile_ids_for_property_value("BrowserName", value)
+                    .expect("the lookup succeeds");
+            }
+            searched.indexed_properties();
+        }
+    });
+    drop(indexed);
     leaks.measure(&label("create and free results"), 5, || {
         drop(manager.create_results().expect("results allocate"));
     });
