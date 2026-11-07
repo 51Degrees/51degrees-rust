@@ -25,7 +25,7 @@
 //! repository, or the file `51DEGREES_IPI_PATH` names, and skip when neither
 //! is present.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fiftyone_ip_intelligence_onpremise::{
@@ -345,6 +345,81 @@ fn a_refresh_reads_the_metadata_again() {
     assert_eq!(*before, *after);
     assert_eq!(*components, *engine.components());
     assert_eq!(listed(&engine).len(), after.len());
+}
+
+/// Where the data file's header gives its publish date and the place of its
+/// properties, and where a property's description offset sits in its record,
+/// from `ipi.h`, `collection.h` and `property.h` in 51degrees-cxx with the
+/// 64 bit file offsets the IP Intelligence format uses.
+const PUBLISHED_HEADER: usize = 66;
+const PROPERTIES_HEADER: usize = 122;
+const PROPERTY_SIZE: usize = 44;
+const DESCRIPTION_OFFSET: usize = 16;
+
+/// `file` published a year later, with its first property's description
+/// past the end of the strings. The data set loads, because loading reads no
+/// description, and reading the engine's metadata then fails.
+fn later_with_unreadable_metadata(file: &Path) -> Vec<u8> {
+    let mut bytes = std::fs::read(file).unwrap();
+    let year_at = PUBLISHED_HEADER..PUBLISHED_HEADER + 2;
+    let year = i16::from_le_bytes(bytes[year_at.clone()].try_into().unwrap());
+    bytes[year_at].copy_from_slice(&(year + 1).to_le_bytes());
+    let read_u32 = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+    let start = u64::from_le_bytes(
+        bytes[PROPERTIES_HEADER..PROPERTIES_HEADER + 8]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    let length = read_u32(PROPERTIES_HEADER + 8) as usize;
+    let count = read_u32(PROPERTIES_HEADER + 12) as usize;
+    assert_eq!(length, count * PROPERTY_SIZE, "the properties are found");
+    let at = start + DESCRIPTION_OFFSET;
+    bytes[at..at + 4].copy_from_slice(&(i32::MAX as u32).to_le_bytes());
+    bytes
+}
+
+/// A refresh to a data file that loads but whose metadata cannot be read
+/// fails and changes nothing. The engine keeps the old file's publish date,
+/// so the update service's `If-Modified-Since` still asks for the new file.
+#[test]
+fn a_refresh_whose_metadata_cannot_be_read_changes_nothing() {
+    let Some(file) = data_file() else {
+        eprintln!("no IP Intelligence data file found; skipping the failed refresh");
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!(
+        "fiftyone-ipi-unreadable-metadata-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("51Degrees.ipi");
+    std::fs::copy(&file, &path).unwrap();
+    // In memory, so the data file can be replaced on every platform.
+    let engine = IpIntelligenceOnPremiseEngine::builder(&path)
+        .performance_profile(PerformanceProfile::InMemory)
+        .auto_update(false)
+        .file_system_watcher(false)
+        .build()
+        .expect("the data file loads");
+    let published = engine.data_file_published().expect("a publish date");
+    let properties = engine.fiftyone_properties();
+
+    std::fs::write(&path, later_with_unreadable_metadata(&file)).unwrap();
+    let error = engine
+        .refresh(None)
+        .expect_err("the new metadata cannot be read");
+
+    assert!(
+        error
+            .to_string()
+            .contains("the data file's metadata could not be read (property 0)"),
+        "{error}"
+    );
+    assert_eq!(engine.data_file_published(), Some(published));
+    assert!(Arc::ptr_eq(&properties, &engine.fiftyone_properties()));
+    drop(engine);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Look `ip` up through a one-element pipeline and return the IP data.

@@ -542,13 +542,16 @@ impl IpIntelligenceOnPremiseEngine {
             self.concurrency,
         )?;
         let evidence_keys = DataFileEvidenceKeys::whitelist(&manager);
-        if let Some(data_file) = self.data_files.first() {
-            record_published(&manager, data_file);
-        }
         let (loaded, metadata) = describe(copy, manager, &self.tier_override)?;
-        self.loaded.store(Arc::new(loaded));
+        let loaded = Arc::new(loaded);
+        self.loaded.store(Arc::clone(&loaded));
         self.evidence_key_filter.keys.store(Arc::new(evidence_keys));
         self.metadata.replace(metadata);
+        // Recorded only once the new data set is in use, so the update
+        // service never skips a file the engine failed to load.
+        if let Some(data_file) = self.data_files.first() {
+            record_published(&loaded.manager, data_file);
+        }
         Ok(())
     }
 }
