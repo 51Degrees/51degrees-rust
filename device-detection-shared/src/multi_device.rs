@@ -24,6 +24,7 @@
 //! in the cloud and on premise.
 
 use std::any::Any;
+use std::collections::BTreeMap;
 
 use crate::DeviceDataBase;
 use fiftyone_pipeline_core::{ElementData, NoValueError, PropertyValue, TypedKey};
@@ -47,6 +48,10 @@ pub const HARDWARE_ELEMENT_DATA_KEY: &str = "hardware";
 /// ```
 pub const HARDWARE_DATA_KEY: TypedKey<MultiDeviceData> = TypedKey::new(HARDWARE_ELEMENT_DATA_KEY);
 
+/// The one property a [`MultiDeviceData`] lists, `Profiles`, holding every
+/// matched profile, as .NET's `MultiDeviceData` names it.
+pub const PROFILES_PROPERTY_NAME: &str = "Profiles";
+
 /// The result of a hardware-profile lookup: the list of device profiles that
 /// matched the supplied parameter (a TAC or a native model name).
 ///
@@ -58,10 +63,12 @@ pub const HARDWARE_DATA_KEY: TypedKey<MultiDeviceData> = TypedKey::new(HARDWARE_
 /// lookups both store this type under [`HARDWARE_DATA_KEY`], so one lookup can
 /// add its profiles to another's.
 ///
-/// Because a multi-profile container has no scalar properties of its own, its
-/// dynamic [`ElementData::get`] reports every name as a no-value and
-/// [`ElementData::keys`] is empty. Read the matches through
-/// [`MultiDeviceData::profiles`] instead.
+/// Its dynamic [`ElementData`] view lists one property,
+/// [`PROFILES_PROPERTY_NAME`], holding each profile's values as a
+/// [`PropertyValue::KeyValueList`], so the JSON builder writes
+/// `hardware.profiles`. A property a profile holds with no value is left out
+/// of that profile's record. Any other name is a no-value. Read typed values
+/// through [`MultiDeviceData::profiles`].
 #[derive(Debug, Clone, Default)]
 pub struct MultiDeviceData {
     profiles: Vec<DeviceDataBase>,
@@ -105,16 +112,19 @@ impl MultiDeviceData {
 
 impl ElementData for MultiDeviceData {
     fn get(&self, name: &str) -> Result<PropertyValue, NoValueError> {
-        // A multi-profile result exposes no scalar properties of its own; each
-        // matching device is read through `profiles()`.
+        if name.eq_ignore_ascii_case(PROFILES_PROPERTY_NAME) {
+            return Ok(PropertyValue::KeyValueList(
+                self.profiles.iter().map(profile_record).collect(),
+            ));
+        }
         Err(NoValueError::new(format!(
-            "No value for property '{name}'. A hardware-profile lookup returns a list of \
-             device profiles; read them with MultiDeviceData::profiles()."
+            "No value for property '{name}'. A hardware-profile lookup lists \
+             its device profiles under '{PROFILES_PROPERTY_NAME}'."
         )))
     }
 
     fn keys(&self) -> Vec<String> {
-        Vec::new()
+        vec![PROFILES_PROPERTY_NAME.to_owned()]
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -124,6 +134,16 @@ impl ElementData for MultiDeviceData {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+/// One profile's values keyed by property name, leaving out each property
+/// the profile holds with no value.
+fn profile_record(profile: &DeviceDataBase) -> BTreeMap<String, PropertyValue> {
+    profile
+        .keys()
+        .into_iter()
+        .filter_map(|name| profile.get(&name).ok().map(|value| (name, value)))
+        .collect()
 }
 
 #[cfg(test)]
@@ -157,9 +177,38 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_access_is_empty() {
+    fn no_profiles_list_an_empty_profiles_property() {
         let data = MultiDeviceData::new();
-        assert!(data.keys().is_empty());
+        assert_eq!(data.keys(), ["Profiles"]);
+        assert_eq!(
+            data.get("Profiles").unwrap(),
+            PropertyValue::KeyValueList(Vec::new())
+        );
         assert!(data.get("HardwareVendor").is_err());
+    }
+
+    #[test]
+    fn the_profiles_property_holds_each_profiles_values_in_order() {
+        let mut data = MultiDeviceData::new();
+        data.push_profile(
+            DeviceDataBase::new()
+                .set("ProfileId", "12280")
+                .set("HardwareVendor", "Apple"),
+        );
+        data.push_profile(DeviceDataBase::new().set("HardwareVendor", "Samsung"));
+
+        let record = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), PropertyValue::from(*value)))
+                .collect::<BTreeMap<_, _>>()
+        };
+        let expected = PropertyValue::KeyValueList(vec![
+            record(&[("HardwareVendor", "Apple"), ("ProfileId", "12280")]),
+            record(&[("HardwareVendor", "Samsung")]),
+        ]);
+        // The JSON builder asks in lower case.
+        assert_eq!(data.get("profiles").unwrap(), expected);
+        assert_eq!(data.get("Profiles").unwrap(), expected);
     }
 }

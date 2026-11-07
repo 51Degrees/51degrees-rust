@@ -212,3 +212,59 @@ fn device_only_response_yields_no_profiles() {
         "a device-only response should yield no profiles"
     );
 }
+
+#[test]
+fn the_json_builder_writes_each_profile_under_hardware_profiles() {
+    use fiftyone_json_builder::{JsonBuilderElement, JSON_BUILDER_DATA_KEY};
+    use fiftyone_pipeline_engines_fiftyone::SequenceElement;
+
+    let fake = Arc::new(FakeCloud {
+        accessible_properties: ACCESSIBLE_PROPERTIES.to_owned(),
+        evidence_keys: EVIDENCE_KEYS.to_owned(),
+        data: HARDWARE_RESPONSE.to_owned(),
+    });
+    let request_engine = Arc::new(
+        CloudRequestEngine::builder()
+            .resource_key("test-resource-key")
+            .http_client(fake)
+            .build()
+            .expect("request engine builds"),
+    );
+    let hardware_engine = HardwareProfileCloudEngine::builder()
+        .cloud_request_engine(request_engine.clone())
+        .build();
+    let json_builder = JsonBuilderElement::builder()
+        .exclude_element(SequenceElement::DEFAULT_ELEMENT_DATA_KEY)
+        .build();
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(SequenceElement::new()))
+        .add_element(request_engine)
+        .add_element(Arc::new(hardware_engine))
+        .add_element(Arc::new(json_builder))
+        .build()
+        .expect("pipeline builds");
+
+    let mut data =
+        pipeline.create_flow_data_with(Evidence::builder().add("query.tac", "35925406").build());
+    data.process().expect("processing succeeds");
+    let text = data
+        .get(JSON_BUILDER_DATA_KEY)
+        .expect("json builder data present")
+        .json()
+        .to_owned();
+    let json: serde_json::Value = serde_json::from_str(&text).expect("the output is JSON");
+
+    let profiles = json["hardware"]["profiles"]
+        .as_array()
+        .expect("hardware.profiles is a list");
+    assert_eq!(profiles.len(), 2, "{text}");
+    assert_eq!(profiles[0]["hardwarevendor"], "Apple");
+    assert_eq!(profiles[0]["hardwaremodel"], "iPhone11,8");
+    assert_eq!(
+        profiles[0]["hardwarename"],
+        serde_json::json!(["iPhone 11"])
+    );
+    assert_eq!(profiles[1]["hardwaremodel"], "iPhone12,3");
+    // A property a profile holds with no value is left out of its record.
+    assert!(profiles[1].get("hardwarevendor").is_none(), "{text}");
+}
