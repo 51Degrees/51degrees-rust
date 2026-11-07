@@ -14,6 +14,7 @@ homepage = "https://51degrees.com/ip-intelligence?utm_source=docs.rs&utm_medium=
 [dependencies]
 fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
 fiftyone-pipeline-engines = { version = "=4.5.2", path = "../pipeline-engines" }
+fiftyone-pipeline-engines-fiftyone = { version = "=4.5.2", path = "../pipeline-engines-fiftyone" }
 fiftyone-ip-intelligence-shared = { version = "=4.5.2", path = "../ip-intelligence-shared" }
 # Enable only the IP Intelligence product of the native wrapper. This links IP
 # Intelligence's copy of the common C library alone and never pulls in the
