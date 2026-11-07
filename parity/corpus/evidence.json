@@ -480,6 +480,42 @@
     }
   },
   {
+    "id": "sequence-nul",
+    "about": "A number followed by a NUL character.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "5\u0000",
+      "query.session-id": "parity-sequence-nul"
+    }
+  },
+  {
+    "id": "sequence-int-min",
+    "about": "The smallest 32-bit integer.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "-2147483648",
+      "query.session-id": "parity-sequence-int-min"
+    }
+  },
+  {
+    "id": "sequence-empty",
+    "about": "An empty sequence.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "",
+      "query.session-id": "parity-sequence-empty"
+    }
+  },
+  {
+    "id": "sequence-decimal",
+    "about": "A number with a decimal point.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "1.5",
+      "query.session-id": "parity-sequence-decimal"
+    }
+  },
+  {
     "id": "session-generated",
     "about": "A User-Agent with no session id, so one is generated.",
     "evidence": {

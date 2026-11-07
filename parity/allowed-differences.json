@@ -2,7 +2,7 @@
   {
     "path": "errors",
     "kind": "value",
-    "cases": ["sequence-over-int", "sequence-text"],
+    "cases": ["sequence-over-int", "sequence-text", "sequence-empty", "sequence-decimal"],
     "rust": {
       "value": [
         [
@@ -43,8 +43,8 @@
   {
     "path": "errors",
     "kind": "value",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-absent", "sequence-5", "sequence-9", "sequence-10", "sequence-int-max", "sequence-space", "sequence-plus", "session-*", "javascript-*", "usage-*"],
-    "reason": "The crates' IP Intelligence engine gives an error when the evidence holds no address it can read. .NET gives none. The two sequence cases that are not a 32-bit integer are left out, so their errors meet only the entry that pins the crates' side.",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-absent", "sequence-5", "sequence-9", "sequence-10", "sequence-int-max", "sequence-space", "sequence-plus", "sequence-nul", "sequence-int-min", "session-*", "javascript-*", "usage-*"],
+    "reason": "The crates' IP Intelligence engine gives an error when the evidence holds no address it can read. .NET gives none. The four sequence cases that are not a 32-bit integer are left out, so their errors meet only the entry that pins the crates' side.",
     "issue": 226
   },
   {
