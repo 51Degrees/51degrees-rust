@@ -16,6 +16,9 @@ serde_json.workspace = true
 fiftyone-pipeline-core = { path = "../../pipeline-core" }
 fiftyone-pipeline-engines = { path = "../../pipeline-engines", default-features = false }
 fiftyone-agent-signature = { path = "../../agent-signature" }
+# The cloud translation pipeline gives the cloud request engine a stand-in
+# cloud, so the built-in transport is left out.
+fiftyone-cloud-request-engine = { path = "../../cloud-request-engine", default-features = false }
 fiftyone-pipeline-engines-fiftyone = { path = "../../pipeline-engines-fiftyone" }
 fiftyone-native = { path = "../../native" }
 fiftyone-device-detection-onpremise = { path = "../../device-detection-onpremise" }

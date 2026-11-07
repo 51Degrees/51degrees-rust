@@ -30,6 +30,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use fiftyone_native::dd::{default_concurrency, HashOptions};
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{Error, Result};
 use fiftyone_pipeline_engines::{
@@ -72,7 +73,7 @@ pub struct DeviceDetectionOnPremiseEngineBuilder {
     requested_properties: Vec<String>,
     data_source_tier: Option<String>,
     auto_update: Option<AutoUpdate>,
-    concurrency: Option<u16>,
+    options: HashOptions,
     temp_dir: Option<PathBuf>,
     temp_data_copy: bool,
 }
@@ -97,7 +98,7 @@ impl DeviceDetectionOnPremiseEngineBuilder {
             requested_properties: Vec::new(),
             data_source_tier: None,
             auto_update: None,
-            concurrency: None,
+            options: HashOptions::default(),
             temp_dir: None,
             temp_data_copy: false,
         }
@@ -113,14 +114,73 @@ impl DeviceDetectionOnPremiseEngineBuilder {
     /// Set the expected concurrency: the number of threads that will process
     /// through the built engine at once.
     ///
-    /// This sizes the file-handle pool the file-backed collections use under the
-    /// [`PerformanceProfile::LowMemory`] and [`PerformanceProfile::Balanced`]
-    /// profiles. The pool defaults to the number of cores; if more threads than
-    /// that will share the engine, set this to at least that many or threads
-    /// will contend on the pool. It has no effect on the in-memory profiles,
-    /// where the data set is fully resident.
+    /// This sizes the file-handle pool and the caches the file-backed
+    /// collections use under the [`PerformanceProfile::LowMemory`],
+    /// [`PerformanceProfile::Balanced`] and [`PerformanceProfile::Default`]
+    /// profiles. If more threads than this share the engine, they wait for
+    /// each other on the pool. [`PerformanceProfile::HighPerformance`] holds
+    /// the data set in memory, so detection never waits on the pool, but it
+    /// still opens one handle to the data file for each concurrent operation
+    /// and keeps them open until the data set is freed, so a refresh holds
+    /// that many for the old data set and as many again for the new one.
+    /// [`PerformanceProfile::InMemory`] opens none.
+    ///
+    /// Unset, it is the number of processors, held at the most the profile's
+    /// caches take (22 under `Balanced` and `Default`), as
+    /// [`default_concurrency`] gives, where the C library's own is 10. So
+    /// under `LowMemory` and `HighPerformance` the engine keeps a handle open
+    /// for each processor, 64 on a machine with 64 processors. A larger value
+    /// named here is passed on, and the build fails if the profile's caches
+    /// cannot take it.
     pub fn concurrency(mut self, concurrency: u16) -> Self {
-        self.concurrency = Some(concurrency);
+        self.options.concurrency = Some(concurrency);
+        self
+    }
+
+    /// Set the most difference in hash value a match may have. Unset, it is
+    /// the profile's own, 0.
+    pub fn difference(mut self, difference: i32) -> Self {
+        self.options.difference = Some(difference);
+        self
+    }
+
+    /// Set the most drift, in character positions, a match may have. Unset,
+    /// it is the profile's own, 0.
+    pub fn drift(mut self, drift: i32) -> Self {
+        self.options.drift = Some(drift);
+        self
+    }
+
+    /// Set whether a User-Agent that matches nothing gives each component's
+    /// default profile, so every property has a value though some may be
+    /// wrong, rather than no profile and no values. Unset, it is the
+    /// profile's own, false.
+    pub fn allow_unmatched(mut self, allow: bool) -> Self {
+        self.options.allow_unmatched = Some(allow);
+        self
+    }
+
+    /// Set whether a detection records the characters of each User-Agent it
+    /// matched, which the `UserAgents` match metric gives. Unset, it is the
+    /// profile's own, true.
+    pub fn update_matched_user_agent(mut self, update: bool) -> Self {
+        self.options.update_matched_user_agent = Some(update);
+        self
+    }
+
+    /// Set whether detection tries the performance graph, which is faster
+    /// than the predictive graph and can be less accurate. With both graphs
+    /// on, the performance graph is tried first and the predictive graph only
+    /// when it finds no match. Unset, it is the profile's own, false.
+    pub fn use_performance_graph(mut self, use_graph: bool) -> Self {
+        self.options.use_performance_graph = Some(use_graph);
+        self
+    }
+
+    /// Set whether detection tries the predictive graph. Unset, it is the
+    /// profile's own, true.
+    pub fn use_predictive_graph(mut self, use_graph: bool) -> Self {
+        self.options.use_predictive_graph = Some(use_graph);
         self
     }
 
@@ -249,6 +309,10 @@ impl DeviceDetectionOnPremiseEngineBuilder {
             ),
         };
         data_file_config.check_license_keys()?;
+        let mut options = self.options;
+        options
+            .concurrency
+            .get_or_insert_with(|| default_concurrency(self.profile));
 
         // Open the data set with the requested property restriction, from a
         // copy of the data file when updates can replace the file while it is
@@ -265,7 +329,7 @@ impl DeviceDetectionOnPremiseEngineBuilder {
                 .map_or(self.data_file_path.as_path(), OperationalCopy::path),
             self.profile,
             &self.requested_properties,
-            self.concurrency,
+            &options,
         )?;
 
         let engine = Arc::new(
@@ -276,7 +340,7 @@ impl DeviceDetectionOnPremiseEngineBuilder {
                 self.requested_properties,
                 data_file_config,
                 self.data_source_tier,
-                self.concurrency,
+                options,
             )?
             .with_temp_dir(self.temp_dir, self.temp_data_copy),
         );

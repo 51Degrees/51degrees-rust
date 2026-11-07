@@ -22,6 +22,7 @@
 
 //! The JSON builder flow element.
 
+use std::any::Any;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -331,5 +332,11 @@ impl FlowElement for JsonBuilderElement {
 
     fn properties(&self) -> &[PropertyMetaData] {
         &self.properties
+    }
+
+    /// The builder itself, so the web integration can hold one the
+    /// application gives and build a response again with it.
+    fn into_any(self: Arc<Self>) -> Option<Arc<dyn Any + Send + Sync>> {
+        Some(self)
     }
 }

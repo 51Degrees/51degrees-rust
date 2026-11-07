@@ -18,6 +18,17 @@ fiftyone-pipeline-engines = { version = "=4.5.2", path = "../pipeline-engines", 
 fiftyone-pipeline-translation = { version = "=4.5.2", path = "../pipeline-translation" }
 # The data key the IP Intelligence engines write under.
 fiftyone-ip-intelligence-shared = { version = "=4.5.2", path = "../ip-intelligence-shared" }
+# The cloud engine reads the cloud request engine's response and accessible
+# properties. default-features = false leaves out reqwest, so the crate still
+# builds for wasm32.
+fiftyone-cloud-request-engine = { version = "=4.5.2", path = "../cloud-request-engine", default-features = false }
+# preserve_order keeps the cloud response's members in the order it gives
+# them, which is the order the properties are listed in.
+serde_json = { workspace = true, features = ["preserve_order"] }
+once_cell.workspace = true
+# Logs through the log facade, which does nothing until the application
+# installs a logger.
+log = "0.4"
 # The list of every country is read from its YAML source in file order.
 serde.workspace = true
 serde_norway.workspace = true

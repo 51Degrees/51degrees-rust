@@ -43,16 +43,34 @@
 //! 3. [`fiftyone_pipeline_engines_fiftyone::SetHeadersElement`] (only when
 //!    [`WebIntegrationOptions::use_set_header_properties`] is set), after the
 //!    core elements so it can see every `SetHeader*` property they produced.
+//!    It is only added when the application's elements do not already hold
+//!    one, found by its data key ignoring case. One the application gives
+//!    runs where the application put it, whatever the option, but with the
+//!    option off an adapter writes none of its headers to the response.
 //! 4. [`fiftyone_json_builder::JsonBuilderElement`] as the penultimate element,
 //!    so it serializes the results of everything before it.
 //! 5. [`fiftyone_javascript_builder::JavaScriptBuilderElement`] last, because it
 //!    wraps the JSON the JSON builder produced.
 //!
 //! When [`WebIntegrationOptions::client_side_evidence_enabled`] is `false` the
-//! JSON and JavaScript builders are omitted, because the client-side endpoints
-//! are not in use. When they are added, the pipeline also holds them as
-//! resources, so an endpoint can build a response again when a builder left no
-//! data for a request.
+//! JSON and JavaScript builders are not added, because the client-side
+//! endpoints are not in use.
+//!
+//! # Builders the application gives
+//!
+//! A JSON builder or JavaScript builder among the application's elements,
+//! found by its data key ignoring case, is the one the pipeline uses, so its
+//! exclusion lists, template or object name apply. It runs where the
+//! application put it, and the builder of the same kind is not added. A JSON
+//! builder added for a JavaScript builder the application gives goes
+//! immediately before it.
+//!
+//! The pipeline holds each builder it runs as a resource, so an endpoint can
+//! build a response again when a builder left no data for a request. A builder
+//! the application gives is held when [`FlowElement::into_any`] gives back its
+//! own type, as the JSON and JavaScript builders do. One that does not, such
+//! as an element wrapping a builder, still runs, but an endpoint cannot build
+//! its response again.
 //!
 //! # Endpoint matching
 //!
@@ -61,11 +79,12 @@
 //! against the configured paths, so an application mounted under a sub-path
 //! (for example `/app/51Degrees.core.js`) still routes correctly.
 
+use std::any::Any;
 use std::fmt;
 use std::sync::{Arc, OnceLock};
 
-use fiftyone_javascript_builder::JavaScriptBuilderElement;
-use fiftyone_json_builder::JsonBuilderElement;
+use fiftyone_javascript_builder::{JavaScriptBuilderElement, JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY};
+use fiftyone_json_builder::{JsonBuilderElement, JSON_BUILDER_ELEMENT_DATA_KEY};
 use fiftyone_pipeline_core::constants::{
     DEFAULT_CORE_JS_ENDPOINT, DEFAULT_JSON_ENDPOINT, EVIDENCE_HTTP_HEADER_PREFIX,
 };
@@ -92,14 +111,20 @@ pub enum WebEndpoint {
 /// [`fiftyone_pipeline_core::constants`] values.
 #[derive(Debug, Clone)]
 pub struct WebIntegrationOptions {
-    /// When `true` (the default) the JSON and JavaScript builder elements are
-    /// added so the client-side endpoints have content to serve. Set it to
-    /// `false` for a server-only pipeline with no client-side JavaScript.
+    /// When `true` (the default) a JSON builder and a JavaScript builder are
+    /// added, each only when the application's elements hold none, so the
+    /// client-side endpoints have content to serve. Set it to `false` for a
+    /// server-only pipeline with no client-side JavaScript. A builder among
+    /// the application's elements runs either way.
     pub client_side_evidence_enabled: bool,
 
-    /// When `true` (the default) the set-headers element is added so elements
-    /// can request extra evidence (such as User-Agent Client Hints) via HTTP
-    /// response headers.
+    /// When `true` (the default) the set-headers element is added, only when
+    /// the application's elements hold none, so elements can request extra
+    /// evidence (such as User-Agent Client Hints) via HTTP response headers,
+    /// and an adapter writes those headers to each response. When `false` no
+    /// set-headers element is added and an adapter writes no such headers. A
+    /// set-headers element among the application's elements runs either way,
+    /// so its data is still in the flow data.
     pub use_set_header_properties: bool,
 
     /// When `true` (the default) processing exceptions are recorded on the flow
@@ -150,7 +175,9 @@ impl WebPipeline {
     /// order (for example a cloud request engine then a device-detection cloud
     /// engine, or a single on-premise engine). The sequence, set-headers, JSON
     /// and JavaScript elements are inserted around them as described in the
-    /// module documentation. The returned pipeline uses
+    /// module documentation, and a set-headers element, JSON builder or
+    /// JavaScript builder among them is used in place of the one that would be
+    /// added. The returned pipeline uses
     /// [`WebIntegrationOptions::suppress_process_exceptions`].
     ///
     /// Returns the same errors as [`fiftyone_pipeline_core::PipelineBuilder::build`]
@@ -240,16 +267,17 @@ pub fn endpoint_matches(path: &str, endpoint: &str) -> bool {
 }
 
 /// A resource for the pipeline to hold, which it finds again by type.
-type Resource = Arc<dyn std::any::Any + Send + Sync>;
+type Resource = Arc<dyn Any + Send + Sync>;
 
 /// Insert the web elements around the application elements and return the full
-/// ordered list, with the client-side builders added to it as resources for the
+/// ordered list, with the client-side builders it runs as resources for the
 /// pipeline.
 fn order_elements(
     elements: Vec<Arc<dyn FlowElement>>,
     options: &WebIntegrationOptions,
 ) -> (Vec<Arc<dyn FlowElement>>, Vec<Resource>) {
     let mut ordered: Vec<Arc<dyn FlowElement>> = Vec::with_capacity(elements.len() + 4);
+    let mut resources: Vec<Resource> = Vec::new();
 
     // 1. Sequence element first, unless the application's elements already
     // hold one, as a pipeline builder's elements do with usage sharing on.
@@ -260,27 +288,80 @@ fn order_elements(
         ordered.push(Arc::new(SequenceElement::new()));
     }
 
-    // 2. The application's own elements, in their given order.
-    ordered.extend(elements);
+    // A set-headers element the application gives runs where it put it.
+    let given_set_headers =
+        position(&elements, SetHeadersElement::DEFAULT_ELEMENT_DATA_KEY).is_some();
 
-    // 3. Set-headers after the core elements (so it sees their properties).
-    if options.use_set_header_properties {
+    // The builders the application gives run where it put them, and are held
+    // when they give back their own type.
+    let given_json = position(&elements, JSON_BUILDER_ELEMENT_DATA_KEY);
+    let given_javascript = position(&elements, JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY);
+    if let Some(json) =
+        given_json.and_then(|index| given_builder::<JsonBuilderElement>(&elements[index]))
+    {
+        resources.push(json);
+    }
+    if let Some(javascript) = given_javascript
+        .and_then(|index| given_builder::<JavaScriptBuilderElement>(&elements[index]))
+    {
+        resources.push(javascript);
+    }
+
+    // A builder is added only when the client-side endpoints are in use and
+    // the application gives none of its kind.
+    let client_side = options.client_side_evidence_enabled;
+    let mut json =
+        (client_side && given_json.is_none()).then(|| Arc::new(JsonBuilderElement::new()));
+    let javascript = (client_side && given_javascript.is_none())
+        .then(|| Arc::new(JavaScriptBuilderElement::new()));
+
+    // 2. The application's own elements, in their given order, with an added
+    // JSON builder immediately before a JavaScript builder the application
+    // gives.
+    for (index, element) in elements.into_iter().enumerate() {
+        if Some(index) == given_javascript {
+            if let Some(json) = json.take() {
+                ordered.push(json.clone());
+                resources.push(json);
+            }
+        }
+        ordered.push(element);
+    }
+
+    // 3. Set-headers after the core elements (so it sees their properties),
+    // unless the application gives one.
+    if options.use_set_header_properties && !given_set_headers {
         ordered.push(Arc::new(SetHeadersElement::new()));
     }
 
-    // 4 and 5. JSON penultimate, JavaScript last. Both only when the client-side
-    // endpoints are in use.
-    let mut builders: Vec<Resource> = Vec::new();
-    if options.client_side_evidence_enabled {
-        let json = Arc::new(JsonBuilderElement::new());
-        let javascript = Arc::new(JavaScriptBuilderElement::new());
+    // 4 and 5. An added JSON builder penultimate and an added JavaScript
+    // builder last.
+    if let Some(json) = json {
         ordered.push(json.clone());
+        resources.push(json);
+    }
+    if let Some(javascript) = javascript {
         ordered.push(javascript.clone());
-        builders.push(json);
-        builders.push(javascript);
+        resources.push(javascript);
     }
 
-    (ordered, builders)
+    (ordered, resources)
+}
+
+/// The index of the first of `elements` whose data key is `data_key`,
+/// ignoring case, as the flow data keeps element data under the key in lower
+/// case.
+fn position(elements: &[Arc<dyn FlowElement>], data_key: &str) -> Option<usize> {
+    let data_key = data_key.to_lowercase();
+    elements
+        .iter()
+        .position(|element| element.data_key().to_lowercase() == data_key)
+}
+
+/// `element` as the builder `T`, when it gives back its own type through
+/// [`FlowElement::into_any`] and that type is `T`.
+fn given_builder<T: Any + Send + Sync>(element: &Arc<dyn FlowElement>) -> Option<Arc<T>> {
+    Arc::clone(element).into_any()?.downcast::<T>().ok()
 }
 
 /// The `Vary` whitelist of a [`WebPipeline`], shared with the

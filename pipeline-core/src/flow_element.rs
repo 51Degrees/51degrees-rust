@@ -52,6 +52,7 @@
 //! created inside `process`; any hot mutable state (for example a reloadable
 //! data file) belongs behind a synchronisation primitive owned by the element.
 
+use std::any::Any;
 use std::sync::Arc;
 
 use crate::error::Result;
@@ -160,6 +161,18 @@ pub trait FlowElement: Send + Sync {
     fn add_pipeline(&self, _pipeline: &Arc<Pipeline>) -> Result<()> {
         Ok(())
     }
+
+    /// This element as [`Any`], so code holding it as `Arc<dyn FlowElement>`
+    /// can get back its own type. Defaults to `None`.
+    ///
+    /// An element whose own type a consumer needs returns `Some(self)`. The
+    /// JSON and JavaScript builders do, so the web integration can hold a
+    /// builder the application gives and build a response again with it. An
+    /// element that wraps another does not pass this on, because the wrapper
+    /// is the element in the pipeline, not the one it wraps.
+    fn into_any(self: Arc<Self>) -> Option<Arc<dyn Any + Send + Sync>> {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -198,5 +211,13 @@ mod tests {
         assert!(element.properties_loaded());
         let element: &dyn FlowElement = &element;
         assert!(element.properties_loaded());
+    }
+
+    #[test]
+    fn an_element_gives_back_no_type_unless_it_says_otherwise() {
+        let element: Arc<dyn FlowElement> = Arc::new(Plain {
+            filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+        });
+        assert!(element.into_any().is_none());
     }
 }
