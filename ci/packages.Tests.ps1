@@ -513,7 +513,8 @@ Describe 'ci/tag-crate-releases.ps1 -DryRun' {
 
     It 'tags each planned crate at HEAD and writes notes for each, pushing nothing' {
         Add-Change $script:Repo @('common-sys/src/lib.rs')
-        git -C $script:Repo commit --quiet --amend -m 'Fix the common C library'
+        git -C $script:Repo -c user.name=test -c user.email=test@example.com `
+            commit --quiet --amend -m 'Fix the common C library'
         $out = Join-Path (New-TempFolder) 'plan.json'
         $null = & (Join-Path $script:Root 'ci/get-release-plan.ps1') `
             -RepoPath $script:Repo -OutFile $out

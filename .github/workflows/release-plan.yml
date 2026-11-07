@@ -82,6 +82,15 @@ jobs:
           repository: 51Degrees/common-ci
           path: common-ci
           ref: ${{ env.COMMON_CI_REF }}
+      # Until every crate has a tag of its own on the repository, the plan has
+      # nothing to count from, and the publish stops. The dry run tags this
+      # checkout as ci/start-crate-tags.ps1 would, checking crates.io and
+      # pushing nothing, so it shows what the first release would publish.
+      - name: Start each crate's tags in this checkout when none are pushed
+        run: |
+          if (-not (git tag --list '*/*')) {
+            ./ci/start-crate-tags.ps1
+          }
       - name: Work out which crates a release would publish
         run: ./ci/get-release-plan.ps1 -OutFile "$env:RUNNER_TEMP/release-plan.json"
       - name: Check no crate moves its major or minor number
