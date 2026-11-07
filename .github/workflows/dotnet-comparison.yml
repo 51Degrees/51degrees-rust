@@ -479,9 +479,11 @@ jobs:
       # on both sides, or the two could agree by both failing. The full case
       # must give France's German name second with its raw weighting, the
       # culture the response gives and the three names of its list of every
-      # country. The reasons a property is missing must be the same apart
-      # from the link's tags. Then a Rust line with a changed raw
-      # weighting must fail.
+      # country. The two cases cut down from the cloud service's responses
+      # must give their last weighted name with its raw weighting and the
+      # six names of their list of every country. The reasons a property is
+      # missing must be the same apart from the link's tags. Then a Rust
+      # line with a changed raw weighting must fail.
       - name: Check the cloud translation cases read the response
         if: matrix.data == 'lite'
         working-directory: parity
@@ -497,6 +499,22 @@ jobs:
               echo "::error::The $side cloud translation case gave $got, not $want"
               exit 1
             fi
+          done
+          for pair in 'cloud-translation-recorded=Isle of Man 156 6' \
+            'cloud-translation-recorded-unknown=Unknown 65535 6'; do
+            id=${pair%%=*}
+            want=${pair#*=}
+            for side in dotnet rust; do
+              got=$(jq -r --arg id "$id" 'select(.id == $id)
+                | .properties.countrynamestranslated
+                | "\(.countrynamesgeographicaltranslated.value[-1].value) \(.countrynamesgeographicaltranslated.value[-1].rawWeighting) \(.countrynamesgeographicalalltranslated.value | length)"' \
+                "out/$side.jsonl")
+              echo "$side $id: $got"
+              if [ "$got" != "$want" ]; then
+                echo "::error::The $side $id case gave $got, not $want"
+                exit 1
+              fi
+            done
           done
           # A property the response does not give is missing on both sides,
           # and the two reasons must be the same once the configurator
