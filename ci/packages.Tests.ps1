@@ -544,7 +544,7 @@ Describe 'ci/release-plan-filter.ps1' {
             'name = "fodid-client"'
             'version = "4.5.2"'
             'description = "A client"'
-            'homepage = "https://51degrees.com/a"'
+            'homepage = "https://example.com/a"'
             'keywords = ["a", "b"]'
             'categories = ['
             '    "web-programming",'
@@ -580,7 +580,7 @@ Describe 'ci/release-plan-filter.ps1' {
     }
 
     It 'drops a manifest whose only change is a page it points to' {
-        $after = Set-Line $script:Manifest 'homepage*' 'homepage = "https://51degrees.com/b"'
+        $after = Set-Line $script:Manifest 'homepage*' 'homepage = "https://example.com/b"'
         Get-Kept $script:Manifest $after | Should -Be @('fodid-client/src/lib.rs')
     }
 
