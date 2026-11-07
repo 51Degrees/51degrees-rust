@@ -6,10 +6,11 @@ name: Release Plan
 # those scripts run on Linux, Windows and macOS, and ci/packages.json is
 # checked against the crate manifests, because the plan reads only that file.
 #
-# The release rules are common-ci's steps/release-plan.ps1, taken from
-# common-ci's main as publish.yml takes them. A run started by hand can name
-# another common-ci branch, to try a change to the rules before it is
-# released, for example with
+# The release rules are common-ci's steps/release-plan.ps1. A pull request
+# into main takes them from common-ci's main, as publish.yml does, and a
+# pull request into rc from common-ci's rc, so the plan for rc follows the
+# rules that release with it. A run started by hand can name another
+# common-ci branch, for example with
 #
 #   gh workflow run "Release Plan" --ref <branch> -f common-ci-ref=rc
 
@@ -22,6 +23,13 @@ on:
         description: 'common-ci branch, tag or commit to take the release rules from.'
         type: string
         default: main
+
+# The run only reads the repository and prints the plan.
+permissions:
+  contents: read
+
+env:
+  COMMON_CI_REF: ${{ inputs.common-ci-ref || (github.base_ref == 'rc' && 'rc') || 'main' }}
 
 defaults:
   run:
@@ -42,7 +50,7 @@ jobs:
         with:
           repository: 51Degrees/common-ci
           path: common-ci
-          ref: ${{ inputs.common-ci-ref || 'main' }}
+          ref: ${{ env.COMMON_CI_REF }}
       - name: Check ci/packages.json against the crate manifests
         run: ./ci/check-packages.ps1
       - name: Install Pester
@@ -73,7 +81,7 @@ jobs:
         with:
           repository: 51Degrees/common-ci
           path: common-ci
-          ref: ${{ inputs.common-ci-ref || 'main' }}
+          ref: ${{ env.COMMON_CI_REF }}
       - name: Work out which crates a release would publish
         run: ./ci/get-release-plan.ps1 -OutFile "$env:RUNNER_TEMP/release-plan.json"
       - name: Check no crate moves its major or minor number
