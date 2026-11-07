@@ -66,6 +66,8 @@ use crate::metadata::{metadata_read_failed, read_metadata_string, take_value_str
 use crate::profile::PerformanceProfile;
 use crate::status::{status_name, status_to_result, take_message, NativeException, NativeStatus};
 
+mod value_profiles;
+
 /// The character a data set puts between the header names it joins into one
 /// pseudo header, for example the User-Agent Client Hints it reads together.
 const PSEUDO_HEADER_SEPARATOR: char = '\x1F';
@@ -163,10 +165,10 @@ fn set_pool_concurrency(config: &mut sys::ConfigHash, concurrency: u16) {
     }
 }
 
-/// Settings that change a performance profile's native configuration before
-/// a Hash data set loads, as the builders of the other 51Degrees ports set
-/// them. Each is [`None`] to keep the profile's own value. Start from
-/// [`HashOptions::default`] and set the fields wanted.
+/// Settings for loading a Hash data set. Each [`Option`] changes a
+/// performance profile's native configuration, as the builders of the other
+/// 51Degrees ports set them, and is [`None`] to keep the profile's own value.
+/// Start from [`HashOptions::default`] and set the fields wanted.
 #[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub struct HashOptions {
@@ -193,6 +195,15 @@ pub struct HashOptions {
     /// Whether detection tries the predictive graph, after the performance
     /// graph when both are used. The profiles' own value is true.
     pub use_predictive_graph: Option<bool>,
+    /// The properties whose values the data set indexes, when it loads, to
+    /// the profiles holding each, so that
+    /// [`Manager::profile_ids_for_property_value`] finds them without
+    /// reading every profile. A property is indexed whether or not it is
+    /// requested, and whatever the profile. A name the data file has no
+    /// property of indexes nothing. Empty, the default, indexes none. The
+    /// names go to the C library's init function, not into the
+    /// configuration.
+    pub indexed_properties: Vec<String>,
 }
 
 impl HashOptions {
@@ -370,7 +381,8 @@ impl Manager {
     }
 
     /// Open a Hash data file with the named properties, changing the
-    /// profile's native configuration by `options` first.
+    /// profile's native configuration by `options` first, and indexing the
+    /// properties `options` names to index.
     pub fn open_with_hash_options(
         path: impl AsRef<Path>,
         profile: PerformanceProfile,
@@ -380,18 +392,22 @@ impl Manager {
         let path = path.as_ref();
         let path_c = crate::path::native_path(path)?;
         let mut config = profile_config(profile, options);
+        let indexed = value_profiles::IndexedNames::new(&options.indexed_properties)?;
         Self::init(
             properties,
             None,
             |manager, required, exception| {
                 // Safety: every pointer is valid for the call, the config is
-                // read only for the call and the path is null terminated.
+                // read only for the call, the path is null terminated and
+                // `indexed` holds its names until the call returns.
                 unsafe {
-                    sys::fiftyoneDegreesHashInitManagerFromFile(
+                    sys::fiftyoneDegreesHashInitManagerFromFileWithIndexedProperties(
                         manager,
                         &mut config,
                         required,
                         path_c.as_ptr(),
+                        indexed.as_ptr(),
+                        indexed.count(),
                         exception,
                     )
                 }
@@ -402,7 +418,8 @@ impl Manager {
 
     /// Load a Hash data set from `data`, the whole of a data file held in
     /// memory, with the named properties, changing the profile's native
-    /// configuration by `options` first.
+    /// configuration by `options` first, and indexing the properties
+    /// `options` names to index.
     ///
     /// The data set reads its collections from `data` where it lies, so the
     /// manager keeps `data` until the data set is freed. Every profile holds
@@ -429,21 +446,25 @@ impl Manager {
         // library must not free it, and there is no file to copy.
         config.b.b.free_data = false;
         config.b.b.use_temp_file = false;
+        let indexed = value_profiles::IndexedNames::new(&options.indexed_properties)?;
         let start = memory.as_mut_ptr().cast::<c_void>();
         Self::init(
             properties,
             Some(memory),
             |manager, required, exception| {
                 // Safety: every pointer is valid for the call, the config is
-                // read only for the call, and `start` is the first of `size`
-                // bytes that the manager keeps for as long as the data set.
+                // read only for the call, `start` is the first of `size`
+                // bytes that the manager keeps for as long as the data set,
+                // and `indexed` holds its names until the call returns.
                 unsafe {
-                    sys::fiftyoneDegreesHashInitManagerFromMemory(
+                    sys::fiftyoneDegreesHashInitManagerFromMemoryWithIndexedProperties(
                         manager,
                         &mut config,
                         required,
                         start,
                         size,
+                        indexed.as_ptr(),
+                        indexed.count(),
                         exception,
                     )
                 }
@@ -2094,6 +2115,7 @@ mod tests {
             update_matched_user_agent: Some(false),
             use_performance_graph: Some(true),
             use_predictive_graph: Some(false),
+            indexed_properties: vec![String::from("BrowserName")],
         }
         .apply(&mut changed);
         assert_eq!(

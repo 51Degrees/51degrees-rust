@@ -42,7 +42,13 @@
 //!   [`fiftyoneDegreesHashBalancedTempConfig`]).
 //! - **Manager initialization** ([`fiftyoneDegreesHashInitManagerFromFile`] and
 //!   [`fiftyoneDegreesHashInitManagerFromMemory`], plus the matching size
-//!   helpers).
+//!   helpers, and the `...WithIndexedProperties` forms of both, which index
+//!   the profiles holding each value of the properties named).
+//! - **Profiles by property value**
+//!   ([`fiftyoneDegreesHashGetProfileIdsForPropertyAndValue`], with
+//!   [`fiftyoneDegreesShimHashGetIndexedPropertyCount`] and
+//!   [`fiftyoneDegreesShimHashGetIndexedPropertyName`] reading back the
+//!   names a data set indexed).
 //! - **Results** ([`fiftyoneDegreesResultsHashCreate`], the three process
 //!   methods [`fiftyoneDegreesResultsHashFromEvidence`],
 //!   [`fiftyoneDegreesResultsHashFromUserAgent`] and
@@ -385,6 +391,75 @@ extern "C" {
         size: std::os::raw::c_long,
         exception: *mut Exception,
     ) -> StatusCode;
+
+    /// Initializes `manager` as [`fiftyoneDegreesHashInitManagerFromFile`]
+    /// does, and indexes the profiles holding each value of the properties
+    /// named in `indexed_properties`, so that
+    /// [`fiftyoneDegreesHashGetProfileIdsForPropertyAndValue`] finds them
+    /// without reading every profile. A property is indexed whether or not
+    /// it is required, and whatever the configuration. A reload indexes the
+    /// same names again. Names are matched exactly and copied. Null names
+    /// and repeats are ignored, and a name the data file has no property of
+    /// indexes nothing. Null, or only null names, indexes none, as the plain
+    /// function does.
+    ///
+    /// # Safety
+    /// As [`fiftyoneDegreesHashInitManagerFromFile`], and
+    /// `indexed_properties` must be null or point to
+    /// `indexed_properties_count` pointers, each null or a null terminated
+    /// string.
+    pub fn fiftyoneDegreesHashInitManagerFromFileWithIndexedProperties(
+        manager: *mut ResourceManager,
+        config: *mut ConfigHash,
+        properties: *mut PropertiesRequired,
+        file_name: *const c_char,
+        indexed_properties: *const *const c_char,
+        indexed_properties_count: c_int,
+        exception: *mut Exception,
+    ) -> StatusCode;
+
+    /// Initializes `manager` as [`fiftyoneDegreesHashInitManagerFromMemory`]
+    /// does, and indexes the properties named in `indexed_properties` as
+    /// [`fiftyoneDegreesHashInitManagerFromFileWithIndexedProperties`] does.
+    ///
+    /// # Safety
+    /// As [`fiftyoneDegreesHashInitManagerFromMemory`], and
+    /// `indexed_properties` must be null or point to
+    /// `indexed_properties_count` pointers, each null or a null terminated
+    /// string.
+    pub fn fiftyoneDegreesHashInitManagerFromMemoryWithIndexedProperties(
+        manager: *mut ResourceManager,
+        config: *mut ConfigHash,
+        properties: *mut PropertiesRequired,
+        memory: *mut c_void,
+        size: std::os::raw::c_long,
+        indexed_properties: *const *const c_char,
+        indexed_properties_count: c_int,
+        exception: *mut Exception,
+    ) -> StatusCode;
+
+    /// Sets the ids of the profiles that hold the value `value_name` of the
+    /// property `property_name` in `profile_ids`, at most `length` of them,
+    /// and returns how many profiles hold it. When that is more than
+    /// `length` only the first `length` are set, so a larger array is needed
+    /// for the rest. Null `profile_ids` sets none and only counts them.
+    /// Both names are matched exactly, and the ids are in the order of the
+    /// data file, which is ascending profile id. A property named to index
+    /// when the data set was initialized is found from the index, and any
+    /// other by reading every profile, with the same ids.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. `property_name` and
+    /// `value_name` must be null terminated strings. `profile_ids` must be
+    /// null or point to `length` writable ids. `exception` must be valid.
+    pub fn fiftyoneDegreesHashGetProfileIdsForPropertyAndValue(
+        manager: *mut ResourceManager,
+        property_name: *const c_char,
+        value_name: *const c_char,
+        profile_ids: *mut u32,
+        length: u32,
+        exception: *mut Exception,
+    ) -> u32;
 
     /// Allocates a results structure referencing the data set in `manager`. The
     /// returned pointer must be freed with [`fiftyoneDegreesResultsHashFree`].
@@ -938,6 +1013,32 @@ extern "C" {
         callback: ShimValueStringCallback,
         context: *mut c_void,
     ) -> c_int;
+
+    /// Returns the number of properties the data set indexes the profiles of
+    /// by value, which is the number of distinct names given to
+    /// [`fiftyoneDegreesHashInitManagerFromFileWithIndexedProperties`] or
+    /// [`fiftyoneDegreesHashInitManagerFromMemoryWithIndexedProperties`],
+    /// including any the data file has no property of. Returns zero when none
+    /// were named or no data set is available. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager.
+    pub fn fiftyoneDegreesShimHashGetIndexedPropertyCount(manager: *mut ResourceManager) -> u32;
+
+    /// Writes the name at `name_index` among those the data set indexes, in
+    /// the order they were given, into `buffer`, as much as fits, and returns
+    /// its full length, or [`SHIM_STRING_FAILED`] when the index is out of
+    /// range or no data set is available. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. `buffer` must point to
+    /// `length` writable bytes.
+    pub fn fiftyoneDegreesShimHashGetIndexedPropertyName(
+        manager: *mut ResourceManager,
+        name_index: u32,
+        buffer: *mut c_char,
+        length: usize,
+    ) -> usize;
 
     /// Returns the number of components the data set lists, or zero when no
     /// data set is available. See `src/shim.c`.
