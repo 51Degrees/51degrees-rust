@@ -249,6 +249,42 @@ impl DeviceDetectionOnPremiseEngineBuilder {
         self
     }
 
+    /// Index the profiles holding each value of the property named `name`
+    /// when the data set loads, adding to any already named, so
+    /// [`DeviceDetectionOnPremiseEngine::profile_ids_for_property_value`]
+    /// finds them without reading every profile.
+    ///
+    /// The name is matched exactly, including case, and a name the data file
+    /// has no property of indexes nothing. A property is indexed whether or
+    /// not the engine is restricted to it, and a refresh indexes the same
+    /// properties from the new data file. Nothing is indexed unless it is
+    /// named here, whatever the performance profile, and a property that is
+    /// not indexed is looked up by reading every profile.
+    ///
+    /// To look up hardware profiles by TAC or native model name, name `TAC`
+    /// and `NativeModel`. The TAC property is only in the TAC data file, and
+    /// NativeModel is in the Enterprise and TAC data files.
+    pub fn indexed_property(mut self, name: impl Into<String>) -> Self {
+        let name = name.into();
+        if !self.options.indexed_properties.contains(&name) {
+            self.options.indexed_properties.push(name);
+        }
+        self
+    }
+
+    /// Index the profiles holding each value of the named properties, adding
+    /// to any already named. See [`Self::indexed_property`].
+    pub fn indexed_properties<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        for name in names {
+            self = self.indexed_property(name);
+        }
+        self
+    }
+
     /// Override the data-source tier the engine reports, for example `Enterprise`.
     ///
     /// By default the engine reads the tier embedded in the data file header
