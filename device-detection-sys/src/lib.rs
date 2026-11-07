@@ -688,6 +688,15 @@ extern "C" {
     /// `results` must be an initialized Hash results structure or null.
     pub fn fiftyoneDegreesShimHashGetResultCount(results: *mut ResultsHash) -> u32;
 
+    /// Returns the number of components whose graph the results have still
+    /// to walk, or zero when `results` is null. With no properties named as
+    /// the data set was created, the first read of one of a component's
+    /// properties walks that component's graph. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `results` must be an initialized Hash results structure or null.
+    pub fn fiftyoneDegreesShimHashGetPendingGraphCount(results: *mut ResultsHash) -> u32;
+
     /// Reads the match metrics of the single result at `result_index` into the
     /// output pointers and returns 1, or returns 0 when the index is out of
     /// range or a graph cannot be walked. Any graph not yet walked is walked
