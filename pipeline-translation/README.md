@@ -88,14 +88,17 @@ one after another. Each element of a parallel group writes data of its own,
 so the pipeline builder refuses two engines with one data key in the same
 group.
 
-## Links
-
-- Source and issues: [github.com/51Degrees/51degrees-rust](https://github.com/51Degrees/51degrees-rust)
-- API documentation: [docs.rs/fiftyone-pipeline-translation](https://docs.rs/fiftyone-pipeline-translation)
-- The engine specification: [51Degrees/specifications](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/translation-engine.md)
-- About 51Degrees: [51degrees.com](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-translation-readme.md&utm_term=about)
-
 ## License
 
 Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the
 [repository](https://github.com/51Degrees/51degrees-rust) for the full text.
+
+## Find out more
+
+- Source and issues: [github.com/51Degrees/51degrees-rust](https://github.com/51Degrees/51degrees-rust)
+- API documentation: [docs.rs/fiftyone-pipeline-translation](https://docs.rs/fiftyone-pipeline-translation)
+- The engine specification: [51Degrees/specifications](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/translation-engine.md)
+- Build custom data services with the Pipeline API: [51degrees.com/build-your-own](https://51degrees.com/build-your-own?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-translation-readme.md&utm_term=build-your-own)
+- Pipeline API documentation: [51degrees.com/documentation](https://51degrees.com/documentation/_pipeline_api__index.html?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-translation-readme.md&utm_term=documentation)
+- About 51Degrees: [51degrees.com](https://51degrees.com/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-translation-readme.md&utm_term=about)
+- Data files and pricing: [51degrees.com/pricing](https://51degrees.com/pricing?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-translation-readme.md&utm_term=pricing)
