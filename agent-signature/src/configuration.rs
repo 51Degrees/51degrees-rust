@@ -210,7 +210,7 @@ fn agent_signature_element_builder() -> BuilderDefinition<AgentSignatureElementB
     )
     .build_method(Vec::new(), |_, context| {
         let builder = AgentSignatureElement::builder();
-        Ok(match context.resource::<Arc<dyn HttpClient>>() {
+        Ok(match context.latest_resource::<Arc<dyn HttpClient>>() {
             Some(client) => builder.set_http_client(Arc::clone(client.as_ref())),
             None => builder,
         })

@@ -161,7 +161,7 @@ impl DeviceDetectionHashEngineSettings {
                  file configurations that have been supplied.",
             ));
         };
-        let service = context.resource::<DataUpdateService>();
+        let service = context.latest_resource::<DataUpdateService>();
         let settings = &self.data_file_settings;
         settings.check(service.is_some())?;
 

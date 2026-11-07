@@ -326,7 +326,7 @@ fn cloud_request_engine_builder() -> BuilderDefinition<CloudRequestEngineSetting
         "CloudRequestEngineBuilder",
         |settings: CloudRequestEngineSettings, context: &mut BuildContext| {
             let mut builder = settings.builder();
-            if let Some(client) = context.resource::<Arc<dyn CloudHttpClient>>() {
+            if let Some(client) = context.latest_resource::<Arc<dyn CloudHttpClient>>() {
                 builder = builder.http_client(Arc::clone(client.as_ref()));
             }
             let engine = Arc::new(builder.build()?);

@@ -823,7 +823,7 @@ fn a_builder_after_it_finds_the_engine() {
         BuilderDefinition::new(
             "FollowerBuilder",
             move |_: (), context: &mut BuildContext| {
-                *seen.lock().unwrap() = context.resource::<CloudRequestEngine>();
+                *seen.lock().unwrap() = context.latest_resource::<CloudRequestEngine>();
                 Ok(Arc::new(Follower {
                     filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
                 }) as Arc<dyn FlowElement>)

@@ -265,7 +265,7 @@ fn service_definitions() -> [BuilderDefinition<()>; 2] {
         BuilderDefinition::new(
             "UsesServiceElementBuilder",
             |_, context: &mut BuildContext| {
-                let service = context.resource::<Service>().ok_or_else(|| {
+                let service = context.latest_resource::<Service>().ok_or_else(|| {
                     Error::configuration("No service was made before this element.")
                 })?;
                 finish(Element::new("usesservice", service.0), context)
