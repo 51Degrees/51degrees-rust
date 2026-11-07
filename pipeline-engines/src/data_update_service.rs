@@ -204,8 +204,9 @@ impl DataUpdateService {
     /// the updates that follow still run.
     ///
     /// The registration lasts as long as the caller keeps `engine`. Given the
-    /// only reference, the registration ends as this returns, which is logged
-    /// as a warning.
+    /// only reference, the engine is dropped as this returns, so nothing is
+    /// registered, polled, watched or scheduled. That is logged as a warning
+    /// and [`AutoUpdateStatus::NotNeeded`] is returned.
     pub fn register(
         &self,
         engine: Arc<dyn OnPremiseAspectEngine>,
@@ -219,6 +220,7 @@ impl DataUpdateService {
                  it is to be updated.",
                 engine.data_key()
             );
+            return Ok(AutoUpdateStatus::NotNeeded);
         }
         let config = data_file.configuration();
         let already_registered = data_file.is_registered();
@@ -1313,6 +1315,17 @@ mod tests {
     }
 
     fn watched(test: &str) -> Watched {
+        watched_with(test, |config| config)
+    }
+
+    /// As [`watched`], with `configure` adding to the data file's
+    /// configuration.
+    fn watched_with(
+        test: &str,
+        configure: impl FnOnce(
+            crate::data_file::DataFileConfigurationBuilder,
+        ) -> crate::data_file::DataFileConfigurationBuilder,
+    ) -> Watched {
         let dir = std::env::temp_dir().join(format!(
             "fiftyone-update-service-{test}-{}",
             std::process::id()
@@ -1322,10 +1335,12 @@ mod tests {
         let path = dir.join("device.dat");
         std::fs::write(&path, b"version 1").unwrap();
         let data_file = Arc::new(AspectEngineDataFile::new(
-            crate::DataFileConfiguration::builder(&path)
-                .automatic_updates_enabled(true)
-                .file_system_watcher_enabled(true)
-                .build(),
+            configure(
+                crate::DataFileConfiguration::builder(&path)
+                    .automatic_updates_enabled(true)
+                    .file_system_watcher_enabled(true),
+            )
+            .build(),
         ));
         let (started_sender, started) = std::sync::mpsc::channel();
         let (finish, finish_receiver) = std::sync::mpsc::channel();
@@ -1413,5 +1428,75 @@ mod tests {
         );
         drop(service);
         let _ = std::fs::remove_dir_all(&watched.dir);
+    }
+
+    /// An update URL on this machine that counts the connections made to it
+    /// and closes each at once, so a poll of it fails straight away.
+    fn counting_url() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/datafile", listener.local_addr().unwrap());
+        let connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&connections);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                counted.fetch_add(1, Ordering::SeqCst);
+                drop(stream);
+            }
+        });
+        (url, connections)
+    }
+
+    /// Given the only reference to an engine, the service polls nothing on
+    /// start-up and installs no watcher or schedule, as the engine is dropped
+    /// when `register` returns. Given a reference the caller keeps, the same
+    /// configuration is polled and watched, so the test reaches both.
+    #[test]
+    fn the_only_reference_to_an_engine_is_not_registered() {
+        let (url, connections) = counting_url();
+        let polled = |config: crate::data_file::DataFileConfigurationBuilder| {
+            config.data_update_url(url.clone()).update_on_startup(true)
+        };
+        let service = DataUpdateService::new();
+
+        let only = watched_with("only", polled);
+        let status = service.register(only.engine, Arc::clone(&only.data_file));
+        assert_eq!(status.unwrap(), AutoUpdateStatus::NotNeeded);
+        assert_eq!(
+            connections.load(Ordering::SeqCst),
+            0,
+            "the start-up poll ran"
+        );
+        assert!(
+            only.data_file.last_applied_modified().is_none(),
+            "a watcher was installed"
+        );
+        assert!(!only.data_file.is_registered());
+        assert!(service.inner.registrations.lock().unwrap().is_empty());
+        assert!(
+            service.scheduler.lock().unwrap().is_none(),
+            "the scheduler started"
+        );
+
+        let kept = watched_with("kept", polled);
+        let status = service.register(Arc::clone(&kept.engine), Arc::clone(&kept.data_file));
+        assert_eq!(status.unwrap_err().status, AutoUpdateStatus::HttpsError);
+        assert!(
+            connections.load(Ordering::SeqCst) > 0,
+            "no start-up poll ran"
+        );
+        assert!(
+            only_registration(&service)
+                .watcher
+                .lock()
+                .unwrap()
+                .is_some(),
+            "no watcher was installed"
+        );
+        assert!(service.scheduler.lock().unwrap().is_some());
+
+        drop(kept.engine);
+        drop(service);
+        let _ = std::fs::remove_dir_all(&only.dir);
+        let _ = std::fs::remove_dir_all(&kept.dir);
     }
 }
