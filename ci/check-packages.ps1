@@ -14,9 +14,13 @@ against the files it describes.
    path in [dependencies], [build-dependencies] or a target's equivalent.
    Dev-dependencies are left out, because they never reach a user of the
    crate, so a change to one is no reason to release the crate.
-4. Each ExtraPaths is the submodules the crate takes files from at build
-   time, read from ci/copy-cxx-sources.ps1 and ci/copy-owid-source.ps1, so
-   a move of a submodule releases the crates built from it.
+4. Each ExtraPaths is the workspace Cargo.toml, whose package keys and
+   dependencies every crate inherits, and each submodule the crate takes
+   files from at build time with the script that copies them, read from
+   ci/copy-cxx-sources.ps1 and ci/copy-owid-source.ps1. A change to any of
+   these can change what the crate is built from, so it releases the crate.
+   ci/release-plan-filter.ps1 decides which changes to the workspace
+   Cargo.toml count.
 5. ci/crates.txt lists each crate after every crate it requires by path,
    dev-dependencies with a version included, because the published crate
    keeps those as requirements on crates.io. The publish follows that order,
@@ -151,13 +155,22 @@ function Get-WorkspaceCrates([string]$Root) {
     }
 }
 
+# The script that copies each submodule's files into crates.
+$CopyScripts = @{
+    'cxx' = 'ci/copy-cxx-sources.ps1'
+    'owid-rust' = 'ci/copy-owid-source.ps1'
+}
+
+# The workspace manifest, which every crate inherits from.
+$WorkspaceManifest = 'Cargo.toml'
+
 # The crate folders each submodule's files are copied into, read from the
 # scripts that copy them.
 function Get-SubmoduleCopies([string]$Root) {
-    $cxxScript = Get-Content -Raw (Join-Path $Root 'ci/copy-cxx-sources.ps1')
+    $cxxScript = Get-Content -Raw (Join-Path $Root $CopyScripts['cxx'])
     $cxx = @([regex]::Matches($cxxScript, '(?m)^\s*"([^"]+)"\s*=\s*@\(') |
         ForEach-Object { $_.Groups[1].Value })
-    $owidScript = Get-Content -Raw (Join-Path $Root 'ci/copy-owid-source.ps1')
+    $owidScript = Get-Content -Raw (Join-Path $Root $CopyScripts['owid-rust'])
     $owid = @([regex]::Matches($owidScript,
         '(?m)^\$target\s*=\s*Join-Path\s+\$RepoRoot\s+"([^"/]+)/') |
         ForEach-Object { $_.Groups[1].Value })
@@ -237,17 +250,21 @@ foreach ($package in $packages) {
             "but $($package.Path)/Cargo.toml requires $(Format-List $required)"
     }
 
-    # 4. ExtraPaths is the submodules copied into the crate.
-    $expected = @($copies.Keys | Where-Object {
-        $copies[$_] -contains $package.Path } | Sort-Object)
+    # 4. ExtraPaths is the workspace manifest, and each submodule copied into
+    # the crate with the script that copies it.
+    $copied = @($copies.Keys | Where-Object { $copies[$_] -contains $package.Path })
+    $expected = @(@($WorkspaceManifest) + $copied +
+        @($copied | ForEach-Object { $CopyScripts[$_] }) | Sort-Object)
     $extra = @($package.ExtraPaths | Where-Object { $_ } | Sort-Object)
-    if (($expected -join ',') -ne ($extra -join ',')) {
+    if (($expected -join ',') -cne ($extra -join ',')) {
         $failures += "$($package.Name) has ExtraPaths $(Format-List $extra), " +
-            "but the copy scripts in ci/ copy $(Format-List $expected) into it"
+            "but it is built from $(Format-List $expected), being the " +
+            "workspace Cargo.toml and each submodule copied into it with " +
+            "the script in ci/ that copies it"
     }
-    foreach ($path in $extra) {
+    foreach ($path in $copied) {
         if ($submodules -notcontains $path) {
-            $failures += "$($package.Name) has ExtraPaths $path, which is not a submodule in .gitmodules"
+            $failures += "$($package.Name) takes files from $path, which is not a submodule in .gitmodules"
         }
     }
 }
@@ -281,4 +298,5 @@ if ($failures.Count -gt 0) {
         "place(s). The release plan reads only that file, so it must match."
 }
 Write-Output ("ci/packages.json matches the $($packages.Count) crates " +
-    "ci/crates.txt publishes, their manifests and the submodules they copy.")
+    "ci/crates.txt publishes, their manifests, the workspace manifest and " +
+    "the submodules they copy.")

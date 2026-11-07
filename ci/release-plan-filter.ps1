@@ -8,10 +8,17 @@ A crate's Cargo.toml counts only when something other than the [package]
 keys that describe the crate on crates.io changed, being its description,
 the pages it points to (homepage, documentation, repository and readme), its
 keywords, categories and authors. Those keys change no code a user builds,
-so a change to them alone waits for the crate's next real release. Every
-other file counts.
+so a change to them alone waits for the crate's next real release.
 
-The manifest is read as TOML statements, so a value written over several
+The workspace Cargo.toml, which ci/packages.json names in every crate's
+ExtraPaths, counts only when [workspace.package] changed in a key other than
+those, or [workspace.dependencies] changed, because those are what the
+crates inherit. A change to its members, its profiles or anything else in it
+changes nothing a published crate is built from, and nor does a comment.
+
+Every other file counts.
+
+Each manifest is read as TOML statements, so a value written over several
 lines is one statement, and a bracket, quote or '#' inside a string is part
 of the string. Statements are compared as written, case included, because
 Cargo reads keys and values with case.
@@ -40,12 +47,14 @@ param (
 )
 $ErrorActionPreference = "Stop"
 
-# The [package] keys that only describe the crate. A key may also be given as
-# '<key>.workspace = true'.
+# The keys of [package] or [workspace.package] that only describe a crate. A
+# key may also be given as '<key>.workspace = true'.
 $DescriptiveKeys = @(
     'authors', 'categories', 'description', 'documentation', 'homepage',
     'keywords', 'readme', 'repository'
 )
+
+$WorkspaceManifest = 'Cargo.toml'
 
 # Moves the state of a TOML value across one line of it, being how deep it is
 # in brackets and braces and which kind of string it is inside, if any. A '#'
@@ -208,6 +217,26 @@ function Get-CrateText([string[]]$Lines) {
     return $counted -join "`n"
 }
 
+# The text of the workspace manifest that counts, being the keys of
+# [workspace.package] that do not only describe a crate, and every key of
+# [workspace.dependencies] and its sub-tables, each after its table.
+function Get-WorkspaceText([string[]]$Lines) {
+    $counted = foreach ($statement in (Get-Statements $Lines)) {
+        if ($statement.Kind -cne 'value') {
+            continue
+        }
+        $table = $statement.Table
+        $packageKey = $table -ceq 'workspace.package' -and
+            (Test-Descriptive $statement) -eq $false
+        $dependency = $table -ceq 'workspace.dependencies' -or
+            $table.StartsWith('workspace.dependencies.', [StringComparison]::Ordinal)
+        if ($packageKey -or $dependency) {
+            "[$table] $($statement.Text)"
+        }
+    }
+    return $counted -join "`n"
+}
+
 function Get-ManifestLines([string]$Ref, [string]$Path) {
     $PSNativeCommandUseErrorActionPreference = $false
     $lines = @(git -C $RepoPath show "${Ref}:$Path" 2>$null)
@@ -233,6 +262,10 @@ $manifest = "$($Package.Path)/Cargo.toml"
 foreach ($file in $Files) {
     if ($file -ceq $manifest) {
         if (Test-ManifestChanged $file ${function:Get-CrateText}) {
+            $file
+        }
+    } elseif ($file -ceq $WorkspaceManifest) {
+        if (Test-ManifestChanged $file ${function:Get-WorkspaceText}) {
             $file
         }
     } else {

@@ -135,20 +135,23 @@ BeforeAll {
     }
 
     # A repository laid out as this one, with a file in every crate folder
-    # and in the folders that hold no crate, the two submodules, the real
-    # ci/packages.json and ci/crates.txt, and every crate tagged at 4.5.18.
+    # and in the folders that hold no crate, the two submodules and the
+    # scripts that copy them, the real workspace Cargo.toml, ci/packages.json,
+    # ci/crates.txt and ci/release-plan-filter.ps1, which common-ci's plan
+    # runs from the repository it plans, and every crate tagged at 4.5.18.
     # With -RepositoryTag it has only the repository tag 4.5.18, as before
     # ci/start-crate-tags.ps1 has run.
     function New-PlanRepo([switch]$RepositoryTag) {
         $repo = New-TempFolder
         git init --quiet $repo
-        foreach ($file in @('ci/packages.json', 'ci/crates.txt')) {
+        foreach ($file in @('ci/packages.json', 'ci/crates.txt', 'Cargo.toml',
+                'ci/release-plan-filter.ps1')) {
             Copy-RepoFile $repo $file
         }
         $files = @($script:Packages | ForEach-Object { "$($_.Path)/src/lib.rs" }) +
             @('ci/publish-crates.sh', '.github/workflows/publish.yml',
               'docs/README.md', 'examples/Cargo.toml', 'README.md',
-              'AGENTS.md', 'Cargo.toml')
+              'AGENTS.md', 'ci/copy-cxx-sources.ps1', 'ci/copy-owid-source.ps1')
         foreach ($file in $files) {
             $full = Join-Path $repo $file
             $null = New-Item -ItemType Directory -Force (Split-Path $full)
@@ -245,25 +248,41 @@ Describe 'ci/check-packages.ps1' {
         (Invoke-Check $copy).Failed | Should -BeTrue
     }
 
-    It 'refuses a -sys crate that does not list the cxx submodule' {
+    It 'refuses a -sys crate that does not list the cxx submodule and the script that copies it' {
         $copy = Copy-Workspace
         Edit-Packages $copy {
             param($packages)
-            $packages | Where-Object Name -eq 'fiftyone-ip-intelligence-sys' |
+            ($packages | Where-Object Name -eq 'fiftyone-ip-intelligence-sys').ExtraPaths =
+                @('Cargo.toml')
+        }
+        $result = Invoke-Check $copy
+        $result.Failed | Should -BeTrue
+        $result.Output | Should -BeLike ('*fiftyone-ip-intelligence-sys has ExtraPaths ' +
+            'Cargo.toml, but it is built from Cargo.toml, ci/copy-cxx-sources.ps1, cxx,*')
+    }
+
+    It 'refuses fodid without the owid-rust submodule and the script that copies it' {
+        $copy = Copy-Workspace
+        Edit-Packages $copy {
+            param($packages)
+            ($packages | Where-Object Name -eq 'fodid').ExtraPaths =
+                @('cxx', 'ci/copy-cxx-sources.ps1', 'Cargo.toml')
+        }
+        (Invoke-Check $copy).Output | Should -BeLike ('*fodid has ExtraPaths*but it is ' +
+            'built from Cargo.toml, ci/copy-owid-source.ps1, owid-rust,*')
+    }
+
+    It 'refuses a crate that does not list the workspace Cargo.toml' {
+        $copy = Copy-Workspace
+        Edit-Packages $copy {
+            param($packages)
+            $packages | Where-Object Name -eq 'fiftyone-pipeline-core' |
                 ForEach-Object { $_.PSObject.Properties.Remove('ExtraPaths') }
         }
         $result = Invoke-Check $copy
         $result.Failed | Should -BeTrue
-        $result.Output | Should -BeLike '*fiftyone-ip-intelligence-sys has ExtraPaths (none)*copy cxx*'
-    }
-
-    It 'refuses fodid without the owid-rust submodule' {
-        $copy = Copy-Workspace
-        Edit-Packages $copy {
-            param($packages)
-            ($packages | Where-Object Name -eq 'fodid').ExtraPaths = @('cxx')
-        }
-        (Invoke-Check $copy).Output | Should -BeLike '*fodid has ExtraPaths cxx*copy owid-rust*'
+        $result.Output | Should -BeLike ('*fiftyone-pipeline-core has ExtraPaths (none), ' +
+            'but it is built from Cargo.toml,*')
     }
 
     It 'refuses a crate ci/crates.txt publishes that ci/packages.json leaves out' {
@@ -300,6 +319,9 @@ Describe 'The release plan of the crates' {
     BeforeAll {
         $script:Repo = New-PlanRepo
         $script:Start = git -C $script:Repo rev-parse HEAD
+        # Whether common-ci's release plan runs ci/release-plan-filter.ps1,
+        # which a pull request into rc may be tested against before it does.
+        $script:FilterHook = $null -ne (Get-Command Select-CountedFiles -ErrorAction Ignore)
     }
 
     BeforeEach {
@@ -357,10 +379,53 @@ Describe 'The release plan of the crates' {
             'fiftyone-fodid-cloud')
     }
 
+    It 'plans the crates a copy script feeds when the script changes' {
+        Add-Change $script:Repo @('ci/copy-cxx-sources.ps1')
+        (Get-Plan $script:Repo).Name | Should -Be @(
+            'fiftyone-common-sys', 'fiftyone-device-detection-sys',
+            'fiftyone-ip-intelligence-sys', 'fiftyone-native',
+            'fiftyone-device-detection-onpremise',
+            'fiftyone-ip-intelligence-onpremise', 'fiftyone-ip-intelligence',
+            'fiftyone-device-detection')
+
+        git -C $script:Repo reset --quiet --hard $script:Start
+        Add-Change $script:Repo @('ci/copy-owid-source.ps1')
+        (Get-Plan $script:Repo).Name | Should -Be @('fodid', 'fodid-client',
+            'fiftyone-fodid-core', 'fiftyone-fodid-cloud')
+    }
+
+    It 'plans every crate when the workspace Cargo.toml changes what the crates inherit' {
+        $path = Join-Path $script:Repo 'Cargo.toml'
+        $text = Get-Content -Raw $path
+        $text | Should -Match '(?m)^rust-version = "'
+        Set-Content -Path $path -NoNewline -Value ($text -replace
+            '(?m)^rust-version = "[^"]*"', 'rust-version = "1.999"')
+        Add-Commit $script:Repo
+        $plan = Get-Plan $script:Repo
+        $plan.Count | Should -Be $script:Names.Count
+        $plan[0].Reason | Should -BeLike 'changed since 4.5.18*'
+    }
+
     It 'plans nothing for a change only to CI, documentation or examples' {
         Add-Change $script:Repo @('ci/publish-crates.sh',
             '.github/workflows/publish.yml', 'docs/README.md',
-            'examples/Cargo.toml', 'README.md', 'AGENTS.md', 'Cargo.toml')
+            'examples/Cargo.toml', 'README.md', 'AGENTS.md')
+        (Get-Plan $script:Repo).Count | Should -Be 0
+    }
+
+    It 'plans nothing for a change only to the workspace members' {
+        if ($script:FilterHook -eq $false) {
+            Set-ItResult -Skipped -Because ("common-ci's release plan does not " +
+                "run ci/release-plan-filter.ps1 yet")
+            return
+        }
+        $path = Join-Path $script:Repo 'Cargo.toml'
+        $text = Get-Content -Raw $path
+        $text | Should -Match '(?m)^members = \['
+        Set-Content -Path $path -NoNewline -Value ($text -replace
+            '(?m)^members = \[', "members = [`n    `"new-crate`",")
+        Add-Commit $script:Repo
+        git -C $script:Repo diff --name-only HEAD~1 HEAD | Should -Be 'Cargo.toml'
         (Get-Plan $script:Repo).Count | Should -Be 0
     }
 
@@ -883,5 +948,65 @@ Describe 'ci/release-plan-filter.ps1' {
             Should -Be @('fodid-client/Cargo.toml', 'fodid-client/src/lib.rs')
         $after = Set-Line $before '    "A <*' '    "B <a@example.com>",'
         Get-Kept $before $after | Should -Be @('fodid-client/src/lib.rs')
+    }
+}
+
+Describe 'ci/release-plan-filter.ps1 with the workspace Cargo.toml' {
+    BeforeAll {
+        $script:Filter = Join-Path $script:Root 'ci/release-plan-filter.ps1'
+        $script:Crate = [pscustomobject]@{ Name = 'fodid-client'; Path = 'fodid-client' }
+        $script:Workspace = @(Get-Content (Join-Path $script:Root 'Cargo.toml'))
+
+        # The files the filter keeps when the workspace manifest changes from
+        # $Before to $After, beside a source file that always counts.
+        function Get-KeptWorkspace([string[]]$Before, [string[]]$After) {
+            $repo = New-TempFolder
+            git init --quiet $repo
+            $path = Join-Path $repo 'Cargo.toml'
+            Set-Content -Path $path -Value $Before
+            Add-Commit $repo 'Start'
+            git -C $repo tag 'fodid-client/4.5.18'
+            Set-Content -Path $path -Value $After
+            Add-Commit $repo 'Change'
+            return @(& $script:Filter -RepoPath $repo -Package $script:Crate `
+                -From 'fodid-client/4.5.18' `
+                -Files @('Cargo.toml', 'fodid-client/src/lib.rs'))
+        }
+
+        # The workspace manifest with the line matching $Match replaced.
+        function Edit-Workspace([string]$Match, [string]$New) {
+            @($script:Workspace | Where-Object { $_ -match $Match }) | Should -HaveCount 1
+            return @($script:Workspace | ForEach-Object {
+                if ($_ -match $Match) { $New } else { $_ } })
+        }
+    }
+
+    It 'keeps it when a key the crates inherit from [workspace.package] changes' {
+        $after = Edit-Workspace '^rust-version = ' 'rust-version = "1.999"'
+        Get-KeptWorkspace $script:Workspace $after |
+            Should -Be @('Cargo.toml', 'fodid-client/src/lib.rs')
+        $after = Edit-Workspace '^license = ' 'license = "MIT"'
+        Get-KeptWorkspace $script:Workspace $after |
+            Should -Be @('Cargo.toml', 'fodid-client/src/lib.rs')
+    }
+
+    It 'keeps it when [workspace.dependencies] changes' {
+        $after = Edit-Workspace '^serde = ' 'serde = { version = "1", features = ["derive", "rc"] }'
+        Get-KeptWorkspace $script:Workspace $after |
+            Should -Be @('Cargo.toml', 'fodid-client/src/lib.rs')
+    }
+
+    It 'drops it when only a key that describes the crates changes' {
+        $after = Edit-Workspace '^repository = ' 'repository = "https://example.com/rust"'
+        Get-KeptWorkspace $script:Workspace $after | Should -Be @('fodid-client/src/lib.rs')
+    }
+
+    It 'drops it when only its members, profiles or comments change' {
+        $after = Edit-Workspace '^\s*"fodid-cloud",$' '    "fodid-cloud", "new-crate",'
+        Get-KeptWorkspace $script:Workspace $after | Should -Be @('fodid-client/src/lib.rs')
+        $after = Edit-Workspace '^debug = "line-tables-only"' 'debug = true'
+        Get-KeptWorkspace $script:Workspace $after | Should -Be @('fodid-client/src/lib.rs')
+        $after = Edit-Workspace '^# Shared third-party dependencies' '# Changed comment.'
+        Get-KeptWorkspace $script:Workspace $after | Should -Be @('fodid-client/src/lib.rs')
     }
 }
