@@ -39,7 +39,8 @@
 
 use std::net::SocketAddr;
 
-use axum::http::{HeaderMap, Method, Uri};
+use axum::extract::OriginalUri;
+use axum::http::{Extensions, HeaderMap, Method, Uri};
 use fiftyone_pipeline_core::FlowData;
 use fiftyone_pipeline_web::build_evidence;
 
@@ -57,7 +58,9 @@ use crate::state::FiftyOneState;
 pub struct CapturedRequest {
     /// The request headers.
     pub headers: HeaderMap,
-    /// The request URI, carrying the query string and any scheme.
+    /// The request URI, carrying the path, the query string and any scheme
+    /// and authority. The middleware and the endpoint handlers capture it as
+    /// the client sent it, before a nested router takes its prefix off.
     pub uri: Uri,
     /// The buffered request body, used for form fields on a POST. Empty for a
     /// GET or a body-less request.
@@ -82,8 +85,22 @@ impl CapturedRequest {
     }
 }
 
+/// The request URI as the client sent it. A router nested under a prefix
+/// takes the prefix off the URI its routes see, and axum keeps the URI as
+/// sent in [`OriginalUri`], so that is the one read where axum recorded it.
+pub(crate) fn sent_uri(extensions: &Extensions, uri: Uri) -> Uri {
+    match extensions.get::<OriginalUri>() {
+        Some(OriginalUri(original)) => original.clone(),
+        None => uri,
+    }
+}
+
 /// Build evidence from the captured request, then process the pipeline on the
 /// blocking thread pool and return the processed [`FlowData`].
+///
+/// [`CapturedRequest`] holds no method, so the evidence built here has no
+/// request line. The middleware and the endpoint handlers attach the method,
+/// so they give it.
 ///
 /// The pipeline is configured to suppress process exceptions in the web
 /// integration, so a per-element failure is recorded on the flow data rather
