@@ -68,7 +68,9 @@
 //!
 //! Add the element to a pipeline **after** the elements that supply the
 //! properties its scripts name, then read the result from the flow data under
-//! the key `derived`.
+//! the key `derived`. Building the pipeline fails, naming each property, when
+//! no element in it supplies a property a script reads, or when another
+//! derived property element already writes a property of the same name.
 //!
 //! ## Configuration
 //!
@@ -103,6 +105,8 @@
 //!     )
 //!     .with("device.BrowserReleaseYear", Lookup::Value(SourceValue::Int(2026)))
 //!     .with("device.BrowserReleaseAge", Lookup::Value(SourceValue::Int(1)))
+//!     .with("device.BrowserPreviewYear", Lookup::Value(SourceValue::Int(2026)))
+//!     .with("device.BrowserPreviewAge", Lookup::Value(SourceValue::Int(2)))
 //!     .with("ip.HumanProbability", Lookup::Value(SourceValue::Int(9)))
 //!     .with(
 //!         "ip.ConnectionType",
@@ -126,6 +130,7 @@ pub mod configuration;
 mod element;
 mod evaluate;
 mod fault;
+mod files;
 mod model;
 mod parse;
 mod scripts;

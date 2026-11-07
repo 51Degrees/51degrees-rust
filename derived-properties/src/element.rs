@@ -31,19 +31,21 @@
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use fiftyone_pipeline_core::{
     ElementData, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
-    MapElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType, Result,
-    TypedKey,
+    MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue, PropertyValueType,
+    Result, TypedKey,
 };
 
 use crate::canonical::FORMAT;
 use crate::evaluate::Outcome;
 use crate::fault::{Fault, Faults};
-use crate::model::{Literal, Script, ValueType};
+use crate::files;
+use crate::model::{Literal, Script, SourceProperty, ValueType};
 use crate::scripts::{built_in_names, built_in_scripts_commit, BuiltInScript, BUILT_IN_SOURCE};
 use crate::source::{Lookup, PropertySource, SourceValue, WeightedSourceValue};
 
@@ -152,6 +154,112 @@ impl DerivedPropertyElement {
     pub fn scripts(&self) -> &[Script] {
         &self.scripts
     }
+
+    /// Every reason this element cannot work among `elements`, one line
+    /// each in .NET's words. The properties another derived property
+    /// element also writes come first, then the source properties no
+    /// element supplies.
+    ///
+    /// Where an element sits is not judged, because the members of a
+    /// parallel group are listed after the elements around the group. A
+    /// source property written after this element runs has no value on
+    /// each request, and the element logs that once.
+    fn pipeline_faults(&self, elements: &[Arc<dyn FlowElement>]) -> Vec<String> {
+        let mut faults = Vec::new();
+        for script in &self.scripts {
+            let name = &script.output().name;
+            for element in elements {
+                // An element yet to load its properties lists none, as .NET
+                // reads one.
+                if self.is_self(element)
+                    || !element
+                        .data_key()
+                        .eq_ignore_ascii_case(DERIVED_DEFAULT_ELEMENT_DATA_KEY)
+                    || !element.properties_loaded()
+                    || !lists(element.as_ref(), name)
+                {
+                    continue;
+                }
+                faults.push(format!(
+                    "The script '{}' writes the derived property '{name}', and another \
+                     element in the pipeline already writes a property of that name. One \
+                     pipeline writes each derived property once.",
+                    script.name()
+                ));
+            }
+        }
+        for (index, script) in self.scripts.iter().enumerate() {
+            for property in script.source_properties() {
+                if self.supplied(index, elements, property) {
+                    continue;
+                }
+                let name = &property.name;
+                faults.push(format!(
+                    "The script '{}' needs the property '{name}', and no element in the \
+                     pipeline supplies it. Either add the element that supplies '{name}', or \
+                     change the script so that it does not name '{name}'.",
+                    script.name()
+                ));
+            }
+        }
+        faults
+    }
+
+    /// Whether `element` is this element, or one wrapping it that passes
+    /// calls on and so gives this element's own property list. No other
+    /// element can give that list, because it is never empty.
+    fn is_self(&self, element: &Arc<dyn FlowElement>) -> bool {
+        std::ptr::addr_eq(Arc::as_ptr(element), self as *const Self)
+            || std::ptr::eq(element.properties().as_ptr(), self.properties.as_ptr())
+    }
+
+    /// Whether a source property of the script at `index` is supplied.
+    ///
+    /// This element supplies only what its scripts before that one write,
+    /// because a script reads the outcomes of the scripts already run, so
+    /// a property a later script writes never has a value when it is read.
+    /// Another element supplies a property when it has the source
+    /// property's element data key and lists the property, or has that key
+    /// and has yet to load its properties. A cloud engine has its list when
+    /// the pipeline is built unless the request for the list failed for a
+    /// reason that may pass, such as the cloud being out of reach, and it
+    /// asks again when first used, so such a fault does not refuse the
+    /// pipeline.
+    fn supplied(
+        &self,
+        index: usize,
+        elements: &[Arc<dyn FlowElement>],
+        property: &SourceProperty,
+    ) -> bool {
+        if property
+            .element_key
+            .eq_ignore_ascii_case(DERIVED_DEFAULT_ELEMENT_DATA_KEY)
+            && self.scripts[..index].iter().any(|earlier| {
+                earlier
+                    .output()
+                    .name
+                    .eq_ignore_ascii_case(&property.property_name)
+            })
+        {
+            return true;
+        }
+        elements.iter().any(|element| {
+            !self.is_self(element)
+                && element
+                    .data_key()
+                    .eq_ignore_ascii_case(&property.element_key)
+                && (lists(element.as_ref(), &property.property_name)
+                    || !element.properties_loaded())
+        })
+    }
+}
+
+/// Whether an element's metadata lists a property, ignoring case.
+fn lists(element: &dyn FlowElement, name: &str) -> bool {
+    element
+        .properties()
+        .iter()
+        .any(|property| property.name.eq_ignore_ascii_case(name))
 }
 
 impl FlowElement for DerivedPropertyElement {
@@ -199,6 +307,24 @@ impl FlowElement for DerivedPropertyElement {
     fn properties(&self) -> &[PropertyMetaData] {
         &self.properties
     }
+
+    /// Refuse a pipeline in which no element supplies a source property a
+    /// script reads, or another element with the data key `derived` writes
+    /// a property this element writes, as the specification's pipeline
+    /// check asks. The error names every fault, with .NET's message.
+    fn add_pipeline(&self, pipeline: &Arc<Pipeline>) -> Result<()> {
+        let faults = self.pipeline_faults(pipeline.flow_elements());
+        if faults.is_empty() {
+            return Ok(());
+        }
+        let mut message =
+            "The derived property element cannot be used in this pipeline.".to_owned();
+        for fault in faults {
+            message.push('\n');
+            message.push_str(&fault);
+        }
+        Err(Error::configuration(message))
+    }
 }
 
 /// Builds a [`DerivedPropertyElement`] from the scripts it is to run.
@@ -244,24 +370,105 @@ impl DerivedPropertyElementBuilder {
     /// The scripts 51Degrees ships are compiled in rather than read from a
     /// file, so this is for a script of the caller's own. It is also the one
     /// part of this crate that needs a file system.
+    ///
+    /// A `*` or `?` in the file name adds every file in the folder whose name
+    /// matches, in order of their paths, as .NET's `Directory.GetFiles`
+    /// matches them. So `derived/*.yaml` adds every YAML script in
+    /// `derived`, and a folder part that is empty means the current folder.
+    /// Letter case is ignored on Windows and Apple systems only. A folder
+    /// that does not exist is a fault, and a pattern that matches nothing
+    /// adds nothing.
+    ///
+    /// A script read from a file gives its full path as its source.
     pub fn add_script_file(mut self, path: impl AsRef<Path>) -> Self {
         let path = path.as_ref();
-        let source = path.display().to_string();
+        if !files::has_wildcard(&path.to_string_lossy()) {
+            return self.add_one_file(path);
+        }
+        let (folder, pattern) = files::split(path);
+        let fault = |message: String| Fault {
+            script: None,
+            source: path.display().to_string(),
+            path: String::new(),
+            line: None,
+            message,
+        };
+        if !folder.is_dir() {
+            self.faults.push(fault(format!(
+                "the folder '{}' does not exist",
+                folder.display()
+            )));
+            return self;
+        }
+        let entries = match std::fs::read_dir(&folder) {
+            Ok(entries) => entries,
+            Err(error) => {
+                self.faults.push(fault(format!(
+                    "the folder '{}' cannot be read: {error}",
+                    folder.display()
+                )));
+                return self;
+            }
+        };
+        let pattern = files::translate(&pattern);
+        let mut found: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|file| !file.is_dir())
+            .filter(|file| {
+                file.file_name().is_some_and(|name| {
+                    files::matches(&pattern, &name.to_string_lossy(), files::IGNORE_CASE)
+                })
+            })
+            .collect();
+        // Ordered so a wildcard adds the same scripts in the same order on
+        // every machine, comparing UTF-16 code units as .NET's ordinal order
+        // does.
+        found.sort_by(|a, b| {
+            a.to_string_lossy()
+                .encode_utf16()
+                .cmp(b.to_string_lossy().encode_utf16())
+        });
+        for file in found {
+            self = self.add_one_file(&file);
+        }
+        self
+    }
+
+    /// Add the one script file at `path`, with .NET's faults for a file that
+    /// is not there or cannot be read.
+    fn add_one_file(mut self, path: &Path) -> Self {
+        let fault = |message: String| Fault {
+            script: None,
+            source: path.display().to_string(),
+            path: String::new(),
+            line: None,
+            message,
+        };
+        // A folder is not a file, as .NET's `FileInfo.Exists` has it.
+        if !path.exists() || path.is_dir() {
+            self.faults
+                .push(fault("the file does not exist".to_owned()));
+            return self;
+        }
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) => {
+                self.faults
+                    .push(fault(format!("the file cannot be read: {error}")));
+                return self;
+            }
+        };
         let name = path
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned());
-        match std::fs::read_to_string(path) {
-            Ok(text) => match Script::compile_named(&text, name.as_deref(), &source) {
-                Ok(script) => self.scripts.push(script),
-                Err(faults) => self.faults.extend(faults.into_inner()),
-            },
-            Err(error) => self.faults.push(Fault {
-                script: name,
-                source,
-                path: String::new(),
-                line: None,
-                message: format!("the script file could not be read: {error}"),
-            }),
+        let source = std::path::absolute(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .display()
+            .to_string();
+        match Script::compile_named(&text, name.as_deref(), &source) {
+            Ok(script) => self.scripts.push(script),
+            Err(faults) => self.faults.extend(faults.into_inner()),
         }
         self
     }
@@ -431,7 +638,7 @@ fn log_scripts(scripts: &[Script]) {
 struct FlowDataSource<'a> {
     data: &'a FlowData,
     /// What the scripts run so far produced, so that a script can name a
-    /// property another script in the same element produces.
+    /// property an earlier script in the same element produces.
     results: RefCell<Vec<(String, Outcome)>>,
     /// The property names each element data holds, read once and only where a
     /// property could not be read, which is what tells a property that is not

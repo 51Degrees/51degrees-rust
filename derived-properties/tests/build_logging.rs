@@ -134,7 +134,7 @@ fn a_shipped_script_logs_the_commit_its_scripts_came_from_first() {
         take(),
         vec![
             "INFO Built in derived property scripts came from derived-properties commit \
-             bb590750249f2a606c6531cd5dd38d91db34e0e8."
+             3d7d450663c6e68adb1a29d04a231058b25dfa75."
                 .to_owned(),
             "INFO Derived property script 'First' version 2.1.0 (format 1) from code \
              produces 'First' as int."
