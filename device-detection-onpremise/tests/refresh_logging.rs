@@ -148,6 +148,34 @@ fn a_refresh_that_fails_logs_one_error_and_keeps_the_data() {
     std::fs::remove_file(&path).unwrap();
     refresh_fails(&engine, &path, "no file");
 
+    // A refresh from memory that fails logs as one from a file does, naming
+    // no file.
+    for (case, data) in [
+        ("no data", Vec::new()),
+        (
+            "half a data file in memory",
+            bytes[..bytes.len() / 2].to_vec(),
+        ),
+    ] {
+        let result = engine.refresh_from_memory(None, &data);
+        let records = take();
+        let error = result.expect_err(case);
+        assert_eq!(
+            records,
+            vec![format!(
+                "ERROR Failed to refresh data from memory. The engine keeps the data it had. \
+                 If issue persists, please contact support@51degrees.com. {error}"
+            )],
+            "{case}"
+        );
+        assert!(is_mobile(&engine), "{case}: the engine kept its data");
+    }
+    engine
+        .refresh_from_memory(None, &bytes)
+        .expect("the Lite data loads from memory");
+    assert_eq!(take(), Vec::<String>::new());
+    assert!(is_mobile(&engine));
+
     // A refresh that works logs nothing at warning level or above.
     std::fs::copy(&lite, &path).unwrap();
     engine.refresh(None).expect("the Lite file loads again");
