@@ -45,7 +45,8 @@
 //!    core elements so it can see every `SetHeader*` property they produced.
 //!    It is only added when the application's elements do not already hold
 //!    one, found by its data key ignoring case. One the application gives
-//!    runs where the application put it, whatever the option.
+//!    runs where the application put it, whatever the option, but with the
+//!    option off an adapter writes none of its headers to the response.
 //! 4. [`fiftyone_json_builder::JsonBuilderElement`] as the penultimate element,
 //!    so it serializes the results of everything before it.
 //! 5. [`fiftyone_javascript_builder::JavaScriptBuilderElement`] last, because it
@@ -119,8 +120,11 @@ pub struct WebIntegrationOptions {
 
     /// When `true` (the default) the set-headers element is added, only when
     /// the application's elements hold none, so elements can request extra
-    /// evidence (such as User-Agent Client Hints) via HTTP response headers. A
-    /// set-headers element among the application's elements runs either way.
+    /// evidence (such as User-Agent Client Hints) via HTTP response headers,
+    /// and an adapter writes those headers to each response. When `false` no
+    /// set-headers element is added and an adapter writes no such headers. A
+    /// set-headers element among the application's elements runs either way,
+    /// so its data is still in the flow data.
     pub use_set_header_properties: bool,
 
     /// When `true` (the default) processing exceptions are recorded on the flow

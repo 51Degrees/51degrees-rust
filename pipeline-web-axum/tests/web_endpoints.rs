@@ -42,9 +42,10 @@ use fiftyone_javascript_builder::{JavaScriptBuilderElement, JAVASCRIPT_BUILDER_E
 use fiftyone_json_builder::{JsonBuilderElement, JSON_BUILDER_ELEMENT_DATA_KEY};
 use fiftyone_pipeline_core::{
     ElementData, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
-    MapElementData, NoValueError, PropertyMetaData, PropertyValue, Result, TypedKey,
+    MapElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType, Result,
+    TypedKey,
 };
-use fiftyone_pipeline_engines_fiftyone::SequenceElement;
+use fiftyone_pipeline_engines_fiftyone::{SequenceElement, SetHeadersElement};
 use fiftyone_pipeline_web::{WebIntegrationOptions, WebPipeline};
 use fiftyone_pipeline_web_axum::{register, FiftyOneState};
 use tower::ServiceExt;
@@ -552,4 +553,107 @@ async fn an_endpoint_takes_the_peer_address_and_the_pipeline_vary_list() {
             "{path} sends Vary: {vary}"
         );
     }
+}
+
+// ----------------------------------------------------------------------------
+// The set-headers output on a page response.
+// ----------------------------------------------------------------------------
+
+/// The data of [`HintsElement`].
+struct HintsData(MapElementData);
+
+impl ElementData for HintsData {
+    fn get(&self, name: &str) -> std::result::Result<PropertyValue, NoValueError> {
+        self.0.get(name)
+    }
+    fn has_property(&self, name: &str) -> bool {
+        self.0.has_property(name)
+    }
+    fn keys(&self) -> Vec<String> {
+        self.0.keys()
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+/// Asks for the `Sec-CH-UA` client hint through a `SetHeader` property, so a
+/// set-headers element after it gives `Accept-CH: Sec-CH-UA`.
+struct HintsElement {
+    properties: Vec<PropertyMetaData>,
+    nothing: EvidenceKeyFilterWhitelist,
+}
+
+impl HintsElement {
+    const KEY: TypedKey<HintsData> = TypedKey::new("hints");
+    const PROPERTY: &'static str = "SetHeaderBrowserAccept-CH";
+
+    fn new() -> Self {
+        HintsElement {
+            properties: vec![PropertyMetaData::new(
+                Self::PROPERTY,
+                "hints",
+                PropertyValueType::String,
+            )],
+            nothing: EvidenceKeyFilterWhitelist::default(),
+        }
+    }
+}
+
+impl FlowElement for HintsElement {
+    fn process(&self, data: &mut FlowData) -> Result<()> {
+        data.get_or_add(Self::KEY, || {
+            HintsData(MapElementData::new().set(Self::PROPERTY, "Sec-CH-UA"))
+        })?;
+        Ok(())
+    }
+    fn data_key(&self) -> &str {
+        "hints"
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        &self.nothing
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        &self.properties
+    }
+}
+
+/// Serve one page request with a set-headers element the application gives,
+/// and return the response's `Accept-CH` header.
+async fn accept_ch(use_set_header_properties: bool) -> Option<String> {
+    let elements: Vec<Arc<dyn FlowElement>> = vec![
+        Arc::new(HintsElement::new()),
+        Arc::new(SetHeadersElement::new()),
+    ];
+    let options = WebIntegrationOptions {
+        use_set_header_properties,
+        ..WebIntegrationOptions::default()
+    };
+    let web = WebPipeline::build(elements, options).expect("web pipeline builds");
+    let app = register(
+        Router::new().route("/", get(|| async { "home" })),
+        FiftyOneState::from_web_pipeline(&web),
+    );
+    let request = Request::builder()
+        .method("GET")
+        .uri("/")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    header(&response, "accept-ch")
+}
+
+/// The headers a set-headers element asks for are written to the response
+/// only when `use_set_header_properties` is on, even when the application
+/// gives the element itself.
+#[tokio::test]
+async fn the_set_headers_output_is_written_only_with_the_option_on() {
+    assert_eq!(accept_ch(true).await.as_deref(), Some("Sec-CH-UA"));
+    assert_eq!(accept_ch(false).await, None);
 }
