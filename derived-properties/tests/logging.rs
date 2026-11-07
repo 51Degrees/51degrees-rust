@@ -341,15 +341,19 @@ fn a_source_element_that_fails_logs_one_error_on_the_first_request() {
     );
 }
 
+/// A source element not in the pipeline at all fails the build, which logs
+/// nothing.
 #[test]
 fn a_source_element_not_in_the_pipeline_logs_nothing() {
     let _serial = start();
-    let pipeline = Pipeline::builder()
-        .add_element(derived("src.N"))
-        .build()
-        .unwrap();
-    assert_eq!(run(&pipeline, 2), vec![Vec::<String>::new(); 2]);
-    assert!(demo(&pipeline).is_err());
+    let result = Pipeline::builder().add_element(derived("src.N")).build();
+    assert!(
+        matches!(&result, Err(Error::PipelineConfiguration { message })
+            if message.contains("needs the property 'src.N'")),
+        "{:?}",
+        result.err()
+    );
+    assert_eq!(take(), Vec::<String>::new());
 }
 
 #[test]
@@ -383,14 +387,26 @@ fn each_script_reports_once_and_the_element_once_across_pipelines() {
     assert_eq!(run(&second, 2), vec![Vec::<String>::new(); 2]);
 }
 
+/// A script reading a derived property a later script of its element writes
+/// finds no value, and logs nothing, because the element writes `derived`
+/// only after every script has run.
 #[test]
 fn a_script_reading_another_derived_property_logs_nothing() {
     let _serial = start();
+    let element = Arc::new(
+        DerivedPropertyElement::builder()
+            .add_script("Demo", &script("Demo", "derived.Other", ""))
+            .add_script("Other", &script("Other", "src.N", ""))
+            .build()
+            .unwrap(),
+    );
     let pipeline = Pipeline::builder()
-        .add_element(derived("derived.Other"))
+        .add_element(SourceElement::new(false))
+        .add_element(element)
         .build()
         .unwrap();
     assert_eq!(run(&pipeline, 2), vec![Vec::<String>::new(); 2]);
+    assert!(demo(&pipeline).is_err());
 }
 
 #[test]

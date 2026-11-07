@@ -82,6 +82,13 @@ stopping at the first fault, and each fault carries the script, where it came
 from, the place in the document such as `Rules[3].When.All[1]`, and a plain
 message.
 
+Building the pipeline then fails, naming each property, when no element in it
+supplies a property a script reads, or when another derived property element
+already writes a property of the same name. Where the elements sit is not
+judged, so the engines may run in a parallel group before this element. An
+element still to load its properties, as a cloud engine is until the cloud
+has answered, may supply any property under its key.
+
 ### Without a pipeline
 
 A script runs over any `PropertySource`, so a host that already holds the

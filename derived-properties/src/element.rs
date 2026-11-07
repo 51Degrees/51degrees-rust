@@ -33,18 +33,19 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use fiftyone_pipeline_core::{
     ElementData, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
-    MapElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType, Result,
-    TypedKey,
+    MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue, PropertyValueType,
+    Result, TypedKey,
 };
 
 use crate::canonical::FORMAT;
 use crate::evaluate::Outcome;
 use crate::fault::{Fault, Faults};
 use crate::files;
-use crate::model::{Literal, Script, ValueType};
+use crate::model::{Literal, Script, SourceProperty, ValueType};
 use crate::scripts::{built_in_names, built_in_scripts_commit, BuiltInScript, BUILT_IN_SOURCE};
 use crate::source::{Lookup, PropertySource, SourceValue, WeightedSourceValue};
 
@@ -153,6 +154,80 @@ impl DerivedPropertyElement {
     pub fn scripts(&self) -> &[Script] {
         &self.scripts
     }
+
+    /// Every reason this element cannot work among `elements`, one line
+    /// each in .NET's words. The properties another derived property
+    /// element also writes come first, then the source properties no
+    /// element supplies.
+    ///
+    /// Where an element sits is not judged, because the members of a
+    /// parallel group are listed after the elements around the group. A
+    /// source property written after this element runs has no value on
+    /// each request, and the element logs that once.
+    fn pipeline_faults(&self, elements: &[Arc<dyn FlowElement>]) -> Vec<String> {
+        let mut faults = Vec::new();
+        for script in &self.scripts {
+            let name = &script.output().name;
+            for element in elements {
+                // An element yet to load its properties lists none, as .NET
+                // reads one.
+                if std::ptr::addr_eq(Arc::as_ptr(element), self as *const Self)
+                    || !element
+                        .data_key()
+                        .eq_ignore_ascii_case(DERIVED_DEFAULT_ELEMENT_DATA_KEY)
+                    || !element.properties_loaded()
+                    || !lists(element.as_ref(), name)
+                {
+                    continue;
+                }
+                faults.push(format!(
+                    "The script '{}' writes the derived property '{name}', and another \
+                     element in the pipeline already writes a property of that name. One \
+                     pipeline writes each derived property once.",
+                    script.name()
+                ));
+            }
+        }
+        for script in &self.scripts {
+            for property in script.source_properties() {
+                if supplied(elements, property) {
+                    continue;
+                }
+                let name = &property.name;
+                faults.push(format!(
+                    "The script '{}' needs the property '{name}', and no element in the \
+                     pipeline supplies it. Either add the element that supplies '{name}', or \
+                     change the script so that it does not name '{name}'.",
+                    script.name()
+                ));
+            }
+        }
+        faults
+    }
+}
+
+/// Whether an element with the source property's element data key lists the
+/// property, or has yet to load its properties and so may list it once it
+/// has. A cloud engine loads them from the cloud's answer after it is built.
+///
+/// This element counts as well, so a script can read a property another
+/// script of the same element writes, as the specification's "some Element
+/// in the Pipeline" allows.
+fn supplied(elements: &[Arc<dyn FlowElement>], property: &SourceProperty) -> bool {
+    elements.iter().any(|element| {
+        element
+            .data_key()
+            .eq_ignore_ascii_case(&property.element_key)
+            && (lists(element.as_ref(), &property.property_name) || !element.properties_loaded())
+    })
+}
+
+/// Whether an element's metadata lists a property, ignoring case.
+fn lists(element: &dyn FlowElement, name: &str) -> bool {
+    element
+        .properties()
+        .iter()
+        .any(|property| property.name.eq_ignore_ascii_case(name))
 }
 
 impl FlowElement for DerivedPropertyElement {
@@ -199,6 +274,24 @@ impl FlowElement for DerivedPropertyElement {
 
     fn properties(&self) -> &[PropertyMetaData] {
         &self.properties
+    }
+
+    /// Refuse a pipeline in which no element supplies a source property a
+    /// script reads, or another element with the data key `derived` writes
+    /// a property this element writes, as the specification's pipeline
+    /// check asks. The error names every fault, with .NET's message.
+    fn add_pipeline(&self, pipeline: &Arc<Pipeline>) -> Result<()> {
+        let faults = self.pipeline_faults(pipeline.flow_elements());
+        if faults.is_empty() {
+            return Ok(());
+        }
+        let mut message =
+            "The derived property element cannot be used in this pipeline.".to_owned();
+        for fault in faults {
+            message.push('\n');
+            message.push_str(&fault);
+        }
+        Err(Error::configuration(message))
     }
 }
 

@@ -26,18 +26,21 @@
 //! apart from the differences the tests name.
 //!
 //! .NET ships HumanConfidence and IsGdpr where the crate ships
-//! HumanConfidence alone, and .NET refuses a pipeline in which no element
-//! supplies a property a script reads, which the crate does not check yet.
-//! Both are #233's, so the tests that name a shipped script read the element
-//! back where .NET's pipeline build failed after making it.
+//! HumanConfidence alone. A pipeline naming a shipped script also names
+//! `DeviceSource` and `IpSource` after the derived property element, which
+//! supply every property the shipped scripts read, because both languages
+//! refuse a pipeline in which no element supplies one.
 
 use std::sync::Arc;
 
-use fiftyone_derived_properties::{configuration, DerivedPropertyElement};
+use fiftyone_derived_properties::{configuration, BuiltInScript, DerivedPropertyElement};
 use fiftyone_pipeline_core::configuration::{
-    BuilderRegistry, ConfigValue, ElementOptions, PipelineOptions,
+    BuildContext, BuilderDefinition, BuilderRegistry, ConfigValue, ElementOptions, PipelineOptions,
 };
-use fiftyone_pipeline_core::{Error, Pipeline, PipelineBuilder, Result};
+use fiftyone_pipeline_core::{
+    Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, Pipeline,
+    PipelineBuilder, PropertyMetaData, PropertyValueType, Result,
+};
 
 const BUILDER: &str = "DerivedPropertyElementBuilder";
 const BUILDER_TYPE: &str = "fiftyone_derived_properties::element::DerivedPropertyElementBuilder";
@@ -47,9 +50,64 @@ const NO_SCRIPTS: &str = "At least one script must be configured. Add one with A
                           AddScriptFile, or the Scripts and ScriptFiles configuration keys. \
                           (Parameter 'scripts')";
 
+/// An element that lists every property the shipped scripts read under its
+/// key and writes nothing, standing in for an engine.
+struct Source {
+    key: &'static str,
+    properties: Vec<PropertyMetaData>,
+    filter: EvidenceKeyFilterWhitelist,
+}
+
+impl FlowElement for Source {
+    fn process(&self, _data: &mut FlowData) -> Result<()> {
+        Ok(())
+    }
+
+    fn data_key(&self) -> &str {
+        self.key
+    }
+
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        &self.filter
+    }
+
+    fn properties(&self) -> &[PropertyMetaData] {
+        &self.properties
+    }
+}
+
+/// The builder `name`, making a [`Source`] with the data key `key`.
+fn source_builder(name: &str, key: &'static str) -> BuilderDefinition<()> {
+    BuilderDefinition::new(name, move |_: (), _: &mut BuildContext| {
+        let properties = BuiltInScript::ALL
+            .iter()
+            .flat_map(|script| {
+                script
+                    .compile()
+                    .expect("the shipped script is sound")
+                    .source_properties()
+                    .to_vec()
+            })
+            .filter(|property| property.element_key == key)
+            .map(|property| {
+                PropertyMetaData::new(property.property_name, key, PropertyValueType::String)
+            })
+            .collect();
+        Ok(Arc::new(Source {
+            key,
+            properties,
+            filter: EvidenceKeyFilterWhitelist::new(Vec::<&str>::new()),
+        }) as Arc<dyn FlowElement>)
+    })
+    .build_method(Vec::new(), |_, _| Ok(()))
+}
+
 fn registry() -> BuilderRegistry {
     let mut registry = BuilderRegistry::new();
     configuration::add_builders(&mut registry);
+    registry
+        .add(source_builder("DeviceSource", "device"))
+        .add(source_builder("IpSource", "ip"));
     registry
 }
 
@@ -57,14 +115,28 @@ fn build(options: &PipelineOptions) -> Result<Arc<Pipeline>> {
     PipelineBuilder::new().build_from_configuration(&registry(), options)
 }
 
-/// The element `builder` with `parameters`, alone in a pipeline.
-fn with(builder: &str, parameters: Vec<(&str, ConfigValue)>) -> Result<Arc<Pipeline>> {
+fn options(builder: &str, parameters: Vec<(&str, ConfigValue)>) -> PipelineOptions {
     let element = parameters
         .into_iter()
         .fold(ElementOptions::new(builder), |element, (n, v)| {
             element.parameter(n, v)
         });
-    build(&PipelineOptions::new().element(element))
+    PipelineOptions::new().element(element)
+}
+
+/// The element `builder` with `parameters`, alone in a pipeline.
+fn with(builder: &str, parameters: Vec<(&str, ConfigValue)>) -> Result<Arc<Pipeline>> {
+    build(&options(builder, parameters))
+}
+
+/// The element `builder` with `parameters`, then `DeviceSource` and
+/// `IpSource`.
+fn with_sources(builder: &str, parameters: Vec<(&str, ConfigValue)>) -> Result<Arc<Pipeline>> {
+    build(
+        &options(builder, parameters)
+            .element(ElementOptions::new("DeviceSource"))
+            .element(ElementOptions::new("IpSource")),
+    )
 }
 
 fn text(name: &str, value: &str) -> (&'static str, ConfigValue) {
@@ -146,11 +218,39 @@ fn scripts_names_shipped_scripts_ignoring_case_and_space() {
     ] {
         let shown = format!("{parameter:?}");
         assert_eq!(
-            scripts(with(BUILDER, vec![parameter])),
+            scripts(with_sources(BUILDER, vec![parameter])),
             built_in(source),
             "{shown}"
         );
     }
+}
+
+/// A shipped script with no element supplying what it reads is refused when
+/// the pipeline is built, with .NET's message naming each property.
+#[test]
+fn a_pipeline_supplying_nothing_a_shipped_script_reads_is_refused() {
+    let lines: Vec<String> = BuiltInScript::HumanConfidence
+        .compile()
+        .expect("the shipped script is sound")
+        .source_properties()
+        .iter()
+        .map(|property| {
+            let name = &property.name;
+            format!(
+                "\nThe script 'HumanConfidence' needs the property '{name}', and no element in \
+                 the pipeline supplies it. Either add the element that supplies '{name}', or \
+                 change the script so that it does not name '{name}'."
+            )
+        })
+        .collect();
+    assert_eq!(lines.len(), 10);
+    assert_eq!(
+        message(with(BUILDER, vec![text("Scripts", "HumanConfidence")])),
+        format!(
+            "The derived property element cannot be used in this pipeline.{}",
+            lines.concat()
+        )
+    );
 }
 
 /// .NET's list of the shipped scripts also names IsGdpr.
@@ -229,7 +329,7 @@ fn add_script_takes_a_shipped_script_by_name_or_number() {
         "0",
     ] {
         assert_eq!(
-            scripts(with(BUILDER, vec![text("AddScript", value)])),
+            scripts(with_sources(BUILDER, vec![text("AddScript", value)])),
             built_in("HumanConfidence"),
             "'{value}'"
         );
@@ -521,7 +621,7 @@ mod from_files {
         let mut both = files(&s, &["A"]);
         both.extend(built_in("HumanConfidence"));
         assert_eq!(
-            scripts(with(
+            scripts(with_sources(
                 BUILDER,
                 vec![text("ScriptFiles", &a), text("Scripts", "HumanConfidence")]
             )),
@@ -559,7 +659,9 @@ mod from_files {
                             "Scripts": "HumanConfidence",
                             "ScriptFiles": "{}"
                         }}
-                    }}
+                    }},
+                    {{ "BuilderName": "DeviceSource" }},
+                    {{ "BuilderName": "IpSource" }}
                 ]
             }}
         }}"#,

@@ -68,7 +68,9 @@
 //!
 //! Add the element to a pipeline **after** the elements that supply the
 //! properties its scripts name, then read the result from the flow data under
-//! the key `derived`.
+//! the key `derived`. Building the pipeline fails, naming each property, when
+//! no element in it supplies a property a script reads, or when another
+//! derived property element already writes a property of the same name.
 //!
 //! ## Configuration
 //!

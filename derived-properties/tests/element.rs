@@ -87,10 +87,19 @@ struct StubElement {
 
 impl StubElement {
     fn new(key: &'static str, data: StubData) -> Self {
+        Self::listing(key, data, &[])
+    }
+
+    /// An element listing `more` as well as the properties its data holds,
+    /// as an engine lists every property it can supply whatever one request
+    /// carries.
+    fn listing(key: &'static str, data: StubData, more: &[&str]) -> Self {
         let properties = data
             .names
             .iter()
-            .map(|name| PropertyMetaData::new(name.clone(), key, PropertyValueType::String))
+            .map(String::as_str)
+            .chain(more.iter().copied())
+            .map(|name| PropertyMetaData::new(name, key, PropertyValueType::String))
             .collect();
         StubElement {
             key,
@@ -145,13 +154,20 @@ fn ip_data() -> StubData {
 }
 
 fn pipeline_with(device: StubData, ip: StubData) -> Arc<Pipeline> {
+    pipeline_of(
+        StubElement::new("device", device),
+        StubElement::new("ip", ip),
+    )
+}
+
+fn pipeline_of(device: StubElement, ip: StubElement) -> Arc<Pipeline> {
     let derived = DerivedPropertyElement::builder()
         .add_built_in(BuiltInScript::HumanConfidence)
         .build()
         .expect("the shipped script is sound");
     Pipeline::builder()
-        .add_element(Arc::new(StubElement::new("device", device)))
-        .add_element(Arc::new(StubElement::new("ip", ip)))
+        .add_element(Arc::new(device))
+        .add_element(Arc::new(ip))
         .add_element(Arc::new(derived))
         .build()
         .expect("the pipeline")
@@ -178,10 +194,16 @@ fn the_element_publishes_its_property_under_the_derived_key() {
 
 #[test]
 fn a_missing_source_property_leaves_the_output_with_no_value() {
-    // The ip element is in the pipeline but supplies neither property, which is
-    // what an engine configuration or a resource key that leaves them out looks
-    // like.
-    let pipeline = pipeline_with(device_data(), StubData::default());
+    // The ip element lists both properties but this request's data holds
+    // neither, as a cloud engine's data does when its request failed.
+    let pipeline = pipeline_of(
+        StubElement::new("device", device_data()),
+        StubElement::listing(
+            "ip",
+            StubData::default(),
+            &["HumanProbability", "ConnectionType"],
+        ),
+    );
     let mut data = pipeline.create_flow_data();
     data.process().unwrap();
 
@@ -239,29 +261,33 @@ fn a_source_that_carries_its_own_no_value_message_has_it_repeated() {
     );
 }
 
+/// The pipeline is refused when it is built, rather than every request
+/// giving no value. `tests/pipeline_check.rs` checks the whole message.
 #[test]
 fn an_element_that_is_not_in_the_pipeline_at_all_is_named() {
     let derived = DerivedPropertyElement::builder()
         .add_built_in(BuiltInScript::HumanConfidence)
         .build()
         .unwrap();
-    let pipeline = Pipeline::builder()
+    let result = Pipeline::builder()
         .add_element(Arc::new(StubElement::new("device", device_data())))
         .add_element(Arc::new(derived))
-        .build()
-        .unwrap();
-    let mut data = pipeline.create_flow_data();
-    data.process().unwrap();
-
-    let derived = data.get_str(DERIVED_DEFAULT_ELEMENT_DATA_KEY).unwrap();
-    let error = derived.get("HumanConfidence").expect_err("no value");
-    assert!(
-        error
-            .message
-            .contains("element 'ip' has no value for 'HumanProbability': property not present"),
-        "{}",
-        error.message
-    );
+        .build();
+    let message = match result {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => message,
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!("the pipeline was built"),
+    };
+    for property in ["ip.HumanProbability", "ip.ConnectionType"] {
+        assert!(
+            message.contains(&format!(
+                "The script 'HumanConfidence' needs the property '{property}', and no element \
+                 in the pipeline supplies it."
+            )),
+            "{message}"
+        );
+    }
+    assert!(!message.contains("'device."), "{message}");
 }
 
 #[test]
