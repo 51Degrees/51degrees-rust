@@ -23,9 +23,21 @@
 //! The profiles that hold a value of a property, looked up in the data set
 //! the engine has loaded.
 
-use fiftyone_pipeline_core::Result;
+use std::sync::{Arc, Mutex};
 
-use super::DeviceDetectionOnPremiseEngine;
+use fiftyone_device_detection_shared::DeviceDataBase;
+use fiftyone_pipeline_core::{Evidence, Result};
+
+use super::{device_data, DetectionReader, DeviceDetectionOnPremiseEngine};
+
+/// The property each device data
+/// [`profiles_for_property_value`](DeviceDetectionOnPremiseEngine::profiles_for_property_value)
+/// gives holds its profile's id in, as text, because the data file has no
+/// property that holds it.
+pub const PROFILE_ID_PROPERTY_NAME: &str = "ProfileId";
+
+/// The evidence key that gives a detection the profiles whose ids it holds.
+const PROFILE_IDS_EVIDENCE_KEY: &str = "query.51D_ProfileIds";
 
 impl DeviceDetectionOnPremiseEngine {
     /// The ids of the profiles in the loaded data set that hold the value
@@ -42,7 +54,9 @@ impl DeviceDetectionOnPremiseEngine {
     ///
     /// The ids are those of the data set loaded when this is called, and a
     /// refresh can load a data file whose profiles differ. An id given to the
-    /// engine as `query.51D_ProfileIds` evidence gives that profile's values.
+    /// engine as `query.51D_ProfileIds` evidence gives that profile's values,
+    /// and [`Self::profiles_for_property_value`] gives the ids and the values
+    /// from one data set.
     pub fn profile_ids_for_property_value(
         &self,
         property_name: &str,
@@ -62,5 +76,42 @@ impl DeviceDetectionOnPremiseEngine {
     /// refresh it lists what the new data set indexes.
     pub fn indexed_properties(&self) -> Vec<String> {
         self.loaded.load().manager.indexed_properties()
+    }
+
+    /// The device data of each profile
+    /// [`Self::profile_ids_for_property_value`] finds for `value` of the
+    /// property named `property_name`, in the same order. Fails when the data
+    /// file cannot be read.
+    ///
+    /// Each profile's values are those a detection gives for its id as
+    /// `query.51D_ProfileIds` evidence, read when first requested, and
+    /// [`PROFILE_ID_PROPERTY_NAME`] holds the id as text. The other components'
+    /// properties give what such a detection gives them. The ids and every
+    /// value come from the data set loaded when this is called, so a refresh
+    /// cannot leave an id without its profile.
+    pub fn profiles_for_property_value(
+        &self,
+        property_name: &str,
+        value: &str,
+    ) -> Result<Vec<DeviceDataBase>> {
+        let loaded = self.loaded.load_full();
+        let ids = loaded
+            .manager
+            .profile_ids_for_property_value(property_name, value)?;
+        ids.into_iter()
+            .map(|id| -> Result<DeviceDataBase> {
+                let mut results = loaded.manager.create_results()?;
+                let evidence = Evidence::builder()
+                    .add(PROFILE_IDS_EVIDENCE_KEY, id.to_string())
+                    .build();
+                results.process_evidence(&evidence)?;
+                let mut device = device_data(DetectionReader {
+                    results: Mutex::new(results),
+                    loaded: Arc::clone(&loaded),
+                });
+                device.insert(PROFILE_ID_PROPERTY_NAME, id.to_string());
+                Ok(device)
+            })
+            .collect()
     }
 }

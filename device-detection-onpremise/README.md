@@ -25,9 +25,12 @@ let ids = engine.profile_ids_for_property_value("NativeModel", native_model)?;
 The ids are in ascending order, and the property name and value are matched
 exactly, including case. A property that is not indexed is looked up by
 reading every profile, which gives the same ids more slowly. An id given to
-the engine as `query.51D_ProfileIds` evidence gives that profile's values. The
-TAC property is only in the TAC data file, and NativeModel is in the
-Enterprise and TAC data files.
+the engine as `query.51D_ProfileIds` evidence gives that profile's values.
+`profiles_for_property_value` gives each profile's device data in the same
+order, with its id as text in `ProfileId`, reading the ids and the values from
+one data set so a refresh between the two cannot lose a profile. The TAC
+property is only in the TAC data file, and NativeModel is in the Enterprise
+and TAC data files.
 
 ## License
 
