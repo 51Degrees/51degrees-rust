@@ -392,7 +392,13 @@ pub fn compare_case(case: &Case, dotnet: &Value, rust: &Value) -> Vec<Difference
         field_of(&rust, "usageCustom"),
         USAGE_CUSTOM_RUNTIME_ELEMENTS,
     );
-    for field in ["fodid", "metadata", "derived", "robotsTxtEngine"] {
+    for field in [
+        "fodid",
+        "metadata",
+        "engineMetadata",
+        "derived",
+        "robotsTxtEngine",
+    ] {
         out.data(field, field_of(&dotnet, field), field_of(&rust, field));
     }
     for field in ["plainText", "annotatedText"] {
@@ -1600,6 +1606,58 @@ mod tests {
             [
                 ("metadata.properties[2].description", Kind::Value),
                 ("metadata.properties[6]", Kind::OnlyInRust),
+            ]
+        );
+    }
+
+    /// A line for an engine's metadata, with one property and one component.
+    fn engine_metadata_line() -> Value {
+        json!({
+            "id": "metadata-device",
+            "engineMetadata": {
+                "dataSourceTier": "Lite",
+                "propertyNames": ["IsMobile"],
+                "properties": {
+                    "IsMobile": {
+                        "type": "bool",
+                        "description": "Mobile",
+                        "values": [{"name": "True"}, {"name": "False"}]
+                    }
+                },
+                "componentNames": ["HardwarePlatform"],
+                "components": {"HardwarePlatform": {"id": 1, "properties": ["IsMobile"]}}
+            }
+        })
+    }
+
+    #[test]
+    fn engine_metadata_compares_by_name_and_item() {
+        let mut rust = engine_metadata_line();
+        let metadata = &mut rust["engineMetadata"];
+        metadata["properties"]["IsMobile"]["values"][1]["name"] = json!("Changed");
+        metadata["properties"]["IsMobile"]["category"] = json!("Device");
+        metadata["components"]["HardwarePlatform"]["id"] = json!(2);
+        let differences = compare_case(
+            &data_case("metadata-device"),
+            &engine_metadata_line(),
+            &rust,
+        );
+        let found: Vec<(&str, Kind)> = differences
+            .iter()
+            .map(|d| (d.path.as_str(), d.kind))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (
+                    "engineMetadata.properties.IsMobile.values[1].name",
+                    Kind::Value
+                ),
+                (
+                    "engineMetadata.properties.IsMobile.category",
+                    Kind::OnlyInRust
+                ),
+                ("engineMetadata.components.HardwarePlatform.id", Kind::Value),
             ]
         );
     }

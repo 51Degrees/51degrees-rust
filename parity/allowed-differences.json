@@ -398,5 +398,41 @@
     "dotnet": {"pattern": ["line *: # Terms file:///terms/1.txt"]},
     "rust": {"pattern": ["line *: Allow: /"]},
     "reason": "An entry starting with a slash, here /terms/1.txt, is an absolute-path reference by RFC 3986 section 4.2, not a URI, so the crate leaves it out, as .NET's engine documentation asks when it says each entry must be a valid absolute URI. .NET's Uri.TryCreate with UriKind.Absolute reads such a string as a file path on Linux and macOS but not on Windows, so .NET writes file:///terms/1.txt on the comparison's Linux runner and leaves the entry out on Windows. Over the Enterprise file this case first differs at a crawler the two entries for crawlers with no usable product token allow, so this entry is for the Lite file until those entries come out."
+  },
+  {
+    "path": "engineMetadata.dataSourceTier",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "dotnet": {"value": ["IPIV41"]},
+    "reason": "The crates' IP Intelligence engine gives the tier the data file's header names, where .NET gives IPIV41.",
+    "issue": 226
+  },
+  {
+    "path": "engineMetadata.properties.Ip*.type",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "dotnet": {"value": ["ipAddress"]},
+    "rust": {"value": ["string"]},
+    "reason": "The crates' value types have no IP address, so Ip, IpV6, IpRangeStart and IpRangeEnd are strings, where .NET gives IP addresses.",
+    "issue": 226
+  },
+  {
+    "path": "engineMetadata.properties.Areas.type",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "data": "enterprise",
+    "dotnet": {"value": ["wktString"]},
+    "rust": {"value": ["string"]},
+    "reason": "The crates' value types have no WKT value, so Areas is a string, where .NET gives a WKT value.",
+    "issue": 226
+  },
+  {
+    "path": "engineMetadata.properties.*.type",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "data": "enterprise",
+    "dotnet": {"value": ["weightedList"]},
+    "rust": {"value": ["keyValueList"]},
+    "reason": "The crates' value types have no weighted list, so each weighted property, being CountryCodesGeographical, CountryCodesPopulation, Mcc and StateGeoNameIdsGeographical, has the type of a list of records, each a value and a weight, which is how the crates give its values. .NET gives a list of weighted values."
   }
 ]
