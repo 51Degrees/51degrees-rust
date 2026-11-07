@@ -2035,6 +2035,67 @@ mod tests {
         }
     }
 
+    /// The geometry names the C library's WKT writer starts an area's text
+    /// with, from `wkbtot.c`.
+    const WKT_GEOMETRIES: [&str; 18] = [
+        "GEOMETRY",
+        "POINT",
+        "LINESTRING",
+        "POLYGON",
+        "MULTIPOINT",
+        "MULTILINESTRING",
+        "MULTIPOLYGON",
+        "GEOMETRYCOLLECTION",
+        "CIRCULARSTRING",
+        "COMPOUNDCURVE",
+        "CURVEPOLYGON",
+        "MULTICURVE",
+        "MULTISURFACE",
+        "CURVE",
+        "SURFACE",
+        "POLYHEDRALSURFACE",
+        "TIN",
+        "TRIANGLE",
+    ];
+
+    /// True when `text`, a value written as text to 3 places, may not find
+    /// the value it was written from, because the value is a number or an
+    /// area with coordinates that the data file can hold to more places. The
+    /// C++ code and .NET's `GetValue` find nothing for such a text either.
+    fn may_hold_more_places(value_type: PropertyValueType, text: &str) -> bool {
+        let number = matches!(
+            value_type,
+            PropertyValueType::Float | PropertyValueType::Double
+        ) || (text.contains('.') && text.parse::<f64>().is_ok());
+        let geometry = text.split([' ', '(']).next().unwrap_or_default();
+        number || (WKT_GEOMETRIES.contains(&geometry) && text.contains('('))
+    }
+
+    #[test]
+    fn only_a_number_or_an_area_with_coordinates_may_miss_by_its_text() {
+        use PropertyValueType as Type;
+        for (value_type, text) in [
+            (Type::Float, "51.507"),
+            (Type::Float, "0"),
+            (Type::Double, "-0.128"),
+            (Type::String, "-0.128"),
+            (Type::String, "POINT (51.507 -0.128)"),
+            (Type::String, "POLYGON ((1.5 2.5,3.5 4.5,1.5 2.5))"),
+        ] {
+            assert!(may_hold_more_places(value_type, text), "{text}");
+        }
+        for (value_type, text) in [
+            (Type::Integer, "0"),
+            (Type::Integer, "-1"),
+            (Type::String, "255.255.255.255"),
+            (Type::String, "POLYGON EMPTY"),
+            (Type::String, "Unknown"),
+            (Type::String, "Unknown (none)"),
+        ] {
+            assert!(!may_hold_more_places(value_type, text), "{text}");
+        }
+    }
+
     #[test]
     fn each_property_gives_as_many_values_as_it_counts_and_its_default_among_them() {
         let Some(data_file) = ipi_data_file() else {
@@ -2057,7 +2118,9 @@ mod tests {
                 let found = manager
                     .data_file_property_value(property.index, &default.name)
                     .expect("the default should be searched for");
-                assert_eq!(found.as_ref(), Some(default), "{}", property.name);
+                if found.is_some() || !may_hold_more_places(property.value_type, &default.name) {
+                    assert_eq!(found.as_ref(), Some(default), "{}", property.name);
+                }
             }
             let past_end = manager
                 .data_file_property_value_range(property.index, property.value_count..u32::MAX)
