@@ -66,9 +66,10 @@ pub const PROFILES_PROPERTY_NAME: &str = "Profiles";
 /// Its dynamic [`ElementData`] view lists one property,
 /// [`PROFILES_PROPERTY_NAME`], holding each profile's values as a
 /// [`PropertyValue::KeyValueList`], so the JSON builder writes
-/// `hardware.profiles`. A property a profile holds with no value is left out
-/// of that profile's record. Any other name is a no-value. Read typed values
-/// through [`MultiDeviceData::profiles`].
+/// `hardware.profiles`. Each record is keyed by the lower case property
+/// names [`DeviceDataBase`] lists. A property a profile holds with no value
+/// is left out of that profile's record. Any other name is a no-value. Read
+/// typed values through [`MultiDeviceData::profiles`].
 #[derive(Debug, Clone, Default)]
 pub struct MultiDeviceData {
     profiles: Vec<DeviceDataBase>,
@@ -136,8 +137,8 @@ impl ElementData for MultiDeviceData {
     }
 }
 
-/// One profile's values keyed by property name, leaving out each property
-/// the profile holds with no value.
+/// One profile's values keyed by the lower case property name, leaving out
+/// each property the profile holds with no value.
 fn profile_record(profile: &DeviceDataBase) -> BTreeMap<String, PropertyValue> {
     profile
         .keys()
@@ -203,9 +204,11 @@ mod tests {
                 .map(|(name, value)| ((*name).to_owned(), PropertyValue::from(*value)))
                 .collect::<BTreeMap<_, _>>()
         };
+        // The data lists its property names in lower case, as the other
+        // records in the crates are keyed.
         let expected = PropertyValue::KeyValueList(vec![
-            record(&[("HardwareVendor", "Apple"), ("ProfileId", "12280")]),
-            record(&[("HardwareVendor", "Samsung")]),
+            record(&[("hardwarevendor", "Apple"), ("profileid", "12280")]),
+            record(&[("hardwarevendor", "Samsung")]),
         ]);
         // The JSON builder asks in lower case.
         assert_eq!(data.get("profiles").unwrap(), expected);
