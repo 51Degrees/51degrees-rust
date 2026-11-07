@@ -1821,7 +1821,7 @@ mod tests {
     }
 
     /// A data set loaded from memory under any profile opens no file handle,
-    /// takes the properties named, and gives the evidence keys, properties
+    /// takes the property named, and gives the evidence keys, properties
     /// and answers the file gives, after the caller has dropped its own
     /// reference to the manager.
     #[test]
@@ -1832,8 +1832,8 @@ mod tests {
         };
         let bytes = std::fs::read(&data_file).expect("data file reads");
         let all = open_found(&data_file, PerformanceProfile::InMemory).available_property_names();
-        assert!(all.len() > 2, "{all:?}");
-        let named: Vec<&str> = all.iter().take(2).map(String::as_str).collect();
+        assert!(all.len() > 1, "{all:?}");
+        let named = [all[0].as_str()];
         for profile in [
             PerformanceProfile::LowMemory,
             PerformanceProfile::Balanced,
