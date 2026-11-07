@@ -25,8 +25,9 @@ tokio = { workspace = true, features = ["rt"] }
 # The integration test drives the router in process, so it needs a real
 # multi-threaded runtime (spawn_blocking pulls a blocking thread) and the
 # #[tokio::test] macro. tower::ServiceExt::oneshot dispatches a single request
-# without binding a TCP socket.
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+# without binding a TCP socket. The request line test binds one, which needs
+# net.
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
 tower = { workspace = true, features = ["util"] }
 serde_json.workspace = true
 # Records which thread logged that a builder left no data.
@@ -34,6 +35,17 @@ log = "0.4"
 fiftyone-pipeline-engines-fiftyone = { version = "4.5.2", path = "../pipeline-engines-fiftyone" }
 fiftyone-json-builder = { version = "4.5.2", path = "../json-builder" }
 fiftyone-javascript-builder = { version = "4.5.2", path = "../javascript-builder" }
+# The request line test serves a real socket over HTTP/1.1 and HTTP/2, with a
+# hyper client for each, and checks a signed request with the Agent Signature
+# element. That crate is not published, so it is named by path alone, which
+# cargo publish leaves out of the published manifest.
+axum = { workspace = true, features = ["http2"] }
+hyper = { version = "1", features = ["client", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+fiftyone-agent-signature = { path = "../agent-signature" }
+ring = "0.17"
+base64.workspace = true
 
 [package.metadata.docs.rs]
 # Build the documentation on docs.rs with every feature enabled, so the
