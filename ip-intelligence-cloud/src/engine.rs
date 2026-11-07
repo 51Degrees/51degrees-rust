@@ -170,8 +170,9 @@ impl IpIntelligenceCloudEngine {
     }
 
     /// Derive the IPI metadata from the request engine's accessible properties,
-    /// taking the product keyed by `ip`. Returns `None` when there is no such
-    /// product or it lists no properties.
+    /// taking the product keyed by `ip`. Each property keeps the category the
+    /// list gives it. Returns `None` when there is no such product or it lists
+    /// no properties.
     fn derive_metadata(products: &LicensedProducts) -> Option<DerivedMetadata> {
         // The product is looked up by the element data key, which for IPI is
         // `ip`.
@@ -196,7 +197,10 @@ impl IpIntelligenceCloudEngine {
                 ValueKind::WeightedString => WEIGHTED_PROPERTY_VALUE_TYPE,
                 ValueKind::String => PropertyValueType::String,
             };
-            let core_meta = PropertyMetaData::new(&property.name, IP_DATA_KEY_NAME, value_type);
+            let mut core_meta = PropertyMetaData::new(&property.name, IP_DATA_KEY_NAME, value_type);
+            if let Some(category) = &property.category {
+                core_meta = core_meta.with_category(category.clone());
+            }
             let mut aspect_meta = AspectPropertyMetaData::from_core(core_meta.clone());
             if let Some(tier) = &product.data_tier {
                 aspect_meta = aspect_meta.with_data_tiers([tier.clone()]);

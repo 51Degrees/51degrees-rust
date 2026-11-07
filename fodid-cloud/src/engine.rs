@@ -163,9 +163,9 @@ impl FodIdCloudEngine {
 
     /// Derive the identifier metadata from the request engine's accessible
     /// properties, taking the product keyed by `fodid` compared ignoring case,
-    /// because the cloud service reports the product as `FODid`. Returns `None`
-    /// if the resource key grants no identifier product or lists it with no
-    /// properties.
+    /// because the cloud service reports the product as `FODid`. Each property
+    /// keeps the category the list gives it. Returns `None` if the resource key
+    /// grants no identifier product or lists it with no properties.
     fn derive_metadata(
         products: &LicensedProducts,
     ) -> Option<(Vec<PropertyMetaData>, Vec<AspectPropertyMetaData>)> {
@@ -184,11 +184,14 @@ impl FodIdCloudEngine {
         for property in &product.properties {
             // The identifier values are base64 strings, so the published value
             // type is always a string regardless of how the cloud labels it.
-            let core_meta = PropertyMetaData::new(
+            let mut core_meta = PropertyMetaData::new(
                 &property.name,
                 FODID_ELEMENT_DATA_KEY,
                 PropertyValueType::String,
             );
+            if let Some(category) = &property.category {
+                core_meta = core_meta.with_category(category.clone());
+            }
             let mut aspect_meta = AspectPropertyMetaData::from_core(core_meta.clone());
             if let Some(tier) = &product.data_tier {
                 aspect_meta = aspect_meta.with_data_tiers([tier.clone()]);
