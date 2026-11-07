@@ -139,7 +139,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: cxx/data/ip-intelligence/51Degrees-LiteV41.ipi
-          key: ipi-lite-v41-${{ runner.os }}-${{ steps.week.outputs.week }}
+          key: ipi-lite-v41-${{ runner.os }}-${{ steps.week.outputs.week }}-miss-test
       - name: Run the on-premise examples on the free data files
         if: ${{ !cancelled() }}
         shell: pwsh
