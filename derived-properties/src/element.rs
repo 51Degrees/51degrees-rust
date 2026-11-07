@@ -31,7 +31,7 @@
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use fiftyone_pipeline_core::{
@@ -43,6 +43,7 @@ use fiftyone_pipeline_core::{
 use crate::canonical::FORMAT;
 use crate::evaluate::Outcome;
 use crate::fault::{Fault, Faults};
+use crate::files;
 use crate::model::{Literal, Script, ValueType};
 use crate::scripts::{built_in_names, built_in_scripts_commit, BuiltInScript, BUILT_IN_SOURCE};
 use crate::source::{Lookup, PropertySource, SourceValue, WeightedSourceValue};
@@ -244,24 +245,105 @@ impl DerivedPropertyElementBuilder {
     /// The scripts 51Degrees ships are compiled in rather than read from a
     /// file, so this is for a script of the caller's own. It is also the one
     /// part of this crate that needs a file system.
+    ///
+    /// A `*` or `?` in the file name adds every file in the folder whose name
+    /// matches, in order of their paths, as .NET's `Directory.GetFiles`
+    /// matches them. So `derived/*.yaml` adds every YAML script in
+    /// `derived`, and a folder part that is empty means the current folder.
+    /// Letter case is ignored on Windows and Apple systems only. A folder
+    /// that does not exist is a fault, and a pattern that matches nothing
+    /// adds nothing.
+    ///
+    /// A script read from a file gives its full path as its source.
     pub fn add_script_file(mut self, path: impl AsRef<Path>) -> Self {
         let path = path.as_ref();
-        let source = path.display().to_string();
+        if !files::has_wildcard(&path.to_string_lossy()) {
+            return self.add_one_file(path);
+        }
+        let (folder, pattern) = files::split(path);
+        let fault = |message: String| Fault {
+            script: None,
+            source: path.display().to_string(),
+            path: String::new(),
+            line: None,
+            message,
+        };
+        if !folder.is_dir() {
+            self.faults.push(fault(format!(
+                "the folder '{}' does not exist",
+                folder.display()
+            )));
+            return self;
+        }
+        let entries = match std::fs::read_dir(&folder) {
+            Ok(entries) => entries,
+            Err(error) => {
+                self.faults.push(fault(format!(
+                    "the folder '{}' cannot be read: {error}",
+                    folder.display()
+                )));
+                return self;
+            }
+        };
+        let pattern = files::translate(&pattern);
+        let mut found: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|file| !file.is_dir())
+            .filter(|file| {
+                file.file_name().is_some_and(|name| {
+                    files::matches(&pattern, &name.to_string_lossy(), files::IGNORE_CASE)
+                })
+            })
+            .collect();
+        // Ordered so a wildcard adds the same scripts in the same order on
+        // every machine, comparing UTF-16 code units as .NET's ordinal order
+        // does.
+        found.sort_by(|a, b| {
+            a.to_string_lossy()
+                .encode_utf16()
+                .cmp(b.to_string_lossy().encode_utf16())
+        });
+        for file in found {
+            self = self.add_one_file(&file);
+        }
+        self
+    }
+
+    /// Add the one script file at `path`, with .NET's faults for a file that
+    /// is not there or cannot be read.
+    fn add_one_file(mut self, path: &Path) -> Self {
+        let fault = |message: String| Fault {
+            script: None,
+            source: path.display().to_string(),
+            path: String::new(),
+            line: None,
+            message,
+        };
+        // A folder is not a file, as .NET's `FileInfo.Exists` has it.
+        if !path.exists() || path.is_dir() {
+            self.faults
+                .push(fault("the file does not exist".to_owned()));
+            return self;
+        }
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) => {
+                self.faults
+                    .push(fault(format!("the file cannot be read: {error}")));
+                return self;
+            }
+        };
         let name = path
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned());
-        match std::fs::read_to_string(path) {
-            Ok(text) => match Script::compile_named(&text, name.as_deref(), &source) {
-                Ok(script) => self.scripts.push(script),
-                Err(faults) => self.faults.extend(faults.into_inner()),
-            },
-            Err(error) => self.faults.push(Fault {
-                script: name,
-                source,
-                path: String::new(),
-                line: None,
-                message: format!("the script file could not be read: {error}"),
-            }),
+        let source = std::path::absolute(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .display()
+            .to_string();
+        match Script::compile_named(&text, name.as_deref(), &source) {
+            Ok(script) => self.scripts.push(script),
+            Err(faults) => self.faults.extend(faults.into_inner()),
         }
         self
     }

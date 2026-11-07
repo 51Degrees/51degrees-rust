@@ -530,19 +530,20 @@ fn a_script_can_be_read_from_a_file() {
     );
 
     // A file that is not there is reported rather than ignored, and the fault
-    // names the file it tried to read.
+    // names the path it was given, with .NET's wording.
     let missing = folder.join("NotThere.yaml");
     let faults = DerivedPropertyElement::builder()
         .add_script_file(&missing)
         .build()
         .expect_err("a file that is not there");
-    assert!(
-        faults
-            .to_string()
-            .contains("the script file could not be read"),
-        "{faults}"
+    assert_eq!(
+        faults.to_string(),
+        format!(
+            "script ({}) at (document): the file does not exist",
+            missing.display()
+        )
     );
-    assert_eq!(faults.faults()[0].script.as_deref(), Some("NotThere"));
+    assert_eq!(faults.faults()[0].script, None);
 
     std::fs::remove_file(&path).ok();
 }

@@ -58,6 +58,8 @@ let derived = DerivedPropertyElement::builder()
     .add_script("MyProperty", my_script_text)
     // A file, where there is a file system to read one from.
     .add_script_file("derived/MyOtherProperty.yaml")
+    // Every file a wildcard matches, in order of their paths.
+    .add_script_file("more/*.yaml")
     .build()?;
 
 let pipeline = Pipeline::builder()

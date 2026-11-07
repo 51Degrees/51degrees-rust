@@ -128,6 +128,7 @@ pub mod configuration;
 mod element;
 mod evaluate;
 mod fault;
+mod files;
 mod model;
 mod parse;
 mod scripts;

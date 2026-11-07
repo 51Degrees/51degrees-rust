@@ -27,8 +27,8 @@
 //!
 //! .NET ships HumanConfidence and IsGdpr where the crate ships
 //! HumanConfidence alone, and .NET refuses a pipeline in which no element
-//! supplies a property a script reads, which the crate does not check. Both
-//! are #233's, so the tests that name a shipped script read the element
+//! supplies a property a script reads, which the crate does not check yet.
+//! Both are #233's, so the tests that name a shipped script read the element
 //! back where .NET's pipeline build failed after making it.
 
 use std::sync::Arc;
@@ -413,69 +413,88 @@ mod from_files {
         );
     }
 
-    /// .NET's fault for the missing file is "script (<path>) at (document): the
-    /// file does not exist", and it gives the line of the bad file's name, being
-    /// "Bad (<path>) line 2 at Name". The crate reads a path as
-    /// `add_script_file` does, which #233 changes.
+    /// .NET gives the line of the bad file's name as well, being "Bad (<path>)
+    /// line 2 at Name", which the crate does not.
     #[test]
     fn faults_in_script_files_are_reported_together() {
         let s = Scripts::new("faults");
         let missing = s.path("missing.yaml");
         let bad = s.path("Bad.yaml");
-        let found = message(with(
-            BUILDER,
-            vec![text("ScriptFiles", &format!("{missing},{bad}"))],
-        ));
-        let opening = failed("2 faults were found while reading derived property scripts.\n");
-        let opening = opening
-            .split_once(NO_INNER)
-            .unwrap()
-            .0
-            .trim_end_matches('\n');
-        assert!(found.starts_with(opening), "{found}");
-        assert!(
-            found.contains(&format!(
-                "\nmissing ({missing}) at (document): the script file could not be read: "
+        assert_eq!(
+            message(with(
+                BUILDER,
+                vec![text("ScriptFiles", &format!("{missing},{bad}"))],
             )),
-            "{found}"
-        );
-        assert!(
-            found.ends_with(&format!(
-                "\nBad ({bad}) at Name: script name 'Wrong' must equal the file name 'Bad'\n\
-             {NO_INNER}\n"
-            )),
-            "{found}"
+            faults(&[
+                &format!("script ({missing}) at (document): the file does not exist"),
+                &format!("Bad ({bad}) at Name: script name 'Wrong' must equal the file name 'Bad'"),
+            ])
         );
     }
 
-    /// .NET adds a script for each file a wildcard matches, in name order,
-    /// which is #233's. The crate reads the wildcard as a path.
+    /// A wildcard adds every file in its folder whose name it matches, in
+    /// order of their paths, as .NET's `Directory.GetFiles` matches them. So
+    /// `?` stands for one character and leaves `Bad.yaml` out, and `A.*`
+    /// matches `A.yaml`.
     #[test]
-    fn a_wildcard_is_read_as_a_path() {
+    fn a_wildcard_adds_every_file_it_matches_in_order() {
         let s = Scripts::new("wildcard");
-        let pattern = s.path("*.yaml");
-        let found = message(with(BUILDER, vec![text("ScriptFiles", &pattern)]));
-        assert!(
-            found.contains(&format!(
-                "\n* ({pattern}) at (document): the script file could not be read: "
-            )),
-            "{found}"
+        let one_letter = s.path("?.yaml");
+        for parameter in [
+            text("ScriptFiles", &one_letter),
+            text("AddScriptFile", &one_letter),
+        ] {
+            let shown = format!("{parameter:?}");
+            assert_eq!(
+                scripts(with(BUILDER, vec![parameter])),
+                files(&s, &["A", "B"]),
+                "{shown}"
+            );
+        }
+        let each = format!("{},{}", s.path("B.y*"), s.path("A.*"));
+        assert_eq!(
+            scripts(with(BUILDER, vec![text("ScriptFiles", &each)])),
+            files(&s, &["B", "A"])
+        );
+        let bad = s.path("Bad.yaml");
+        assert_eq!(
+            message(with(BUILDER, vec![text("ScriptFiles", &s.path("*.yaml"))])),
+            faults(&[&format!(
+                "Bad ({bad}) at Name: script name 'Wrong' must equal the file name 'Bad'"
+            )])
+        );
+    }
+
+    /// A folder that is not there is a fault, as in .NET, and a wildcard that
+    /// matches no file adds nothing.
+    #[test]
+    fn a_wildcard_needs_its_folder_and_may_match_nothing() {
+        let s = Scripts::new("wildcard-none");
+        let pattern = s.path("none/*.yaml");
+        let folder = s.path("none");
+        assert_eq!(
+            message(with(BUILDER, vec![text("ScriptFiles", &pattern)])),
+            faults(&[&format!(
+                "script ({pattern}) at (document): the folder '{folder}' does not exist"
+            )])
+        );
+        assert_eq!(
+            message(with(BUILDER, vec![text("ScriptFiles", &s.path("*.json"))])),
+            failed(NO_SCRIPTS)
         );
     }
 
     /// `AddScriptFile` takes the path as it is, so space before it is part of
-    /// the path, as in .NET, whose fault is "script ( <path>) at (document):
-    /// the file does not exist". A list is refused with .NET's message.
+    /// the path, as in .NET. A list is refused with .NET's message.
     #[test]
     fn add_script_file_takes_one_path_as_it_is() {
         let s = Scripts::new("one");
         let spaced = format!(" {}", s.path("A.yaml"));
-        let found = message(with(BUILDER, vec![text("AddScriptFile", &spaced)]));
-        assert!(
-            found.contains(&format!(
-                "\nA ({spaced}) at (document): the script file could not be read: "
-            )),
-            "{found}"
+        assert_eq!(
+            message(with(BUILDER, vec![text("AddScriptFile", &spaced)])),
+            faults(&[&format!(
+                "script ({spaced}) at (document): the file does not exist"
+            )])
         );
         assert_eq!(
             message(with(
