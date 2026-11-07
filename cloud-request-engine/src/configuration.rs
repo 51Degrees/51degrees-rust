@@ -36,7 +36,9 @@
 //! - `SetResourceKey` and `SetLicenseKey`, and `SetProperties` and
 //!   `SetProperty`, which add to the properties the engine asks for, being
 //!   [`CloudRequestEngineBuilder::values`]. The combinations refused in code
-//!   are refused here too.
+//!   are refused here too. `SetProperties` can also be named
+//!   `RequestedProperties`, the cloud request engine specification's name,
+//!   which .NET refuses.
 //! - `SetTimeOutSeconds`, where 0 or less means no limit.
 //! - `SetFailuresToEnterRecovery` from 1 to 1000, held at the engine's
 //!   largest value of 100 with a warning logged, `SetFailuresWindowSeconds`
@@ -505,5 +507,6 @@ fn cloud_request_engine_builder() -> BuilderDefinition<CloudRequestEngineSetting
             settings
         },
     )
+    .setting_alternate_name("SetProperties", "RequestedProperties")
     .build_method(Vec::new(), |_, _| Ok(CloudRequestEngineSettings::default()))
 }

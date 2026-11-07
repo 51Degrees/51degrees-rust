@@ -449,10 +449,13 @@ fn an_end_point_that_is_not_an_absolute_url_is_refused() {
 /// request engine specification's accepted combinations. .NET 4.5.129
 /// refuses any configuration without a resource key, as "A resource key
 /// is required to access the 51Degrees cloud service...", and accepts
-/// properties named with a resource key, which it never sends.
+/// properties named with a resource key, which it never sends. The
+/// specification's `RequestedProperties` with a resource key is refused
+/// as `Property` is, as the specification's table says it must not be
+/// given with one.
 #[test]
 fn the_credentials_are_refused_as_they_are_in_code() {
-    let cases: [(Parameters, CloudRequestEngineBuilder); 5] = [
+    let cases: [(Parameters, CloudRequestEngineBuilder); 6] = [
         (&[], CloudRequestEngine::builder()),
         (
             &[("ResourceKey", "")],
@@ -470,6 +473,15 @@ fn the_credentials_are_refused_as_they_are_in_code() {
             &[
                 ("ResourceKey", RESOURCE_KEY),
                 ("Property", "device.ismobile"),
+            ],
+            CloudRequestEngine::builder()
+                .resource_key(RESOURCE_KEY)
+                .values(["device.ismobile"]),
+        ),
+        (
+            &[
+                ("ResourceKey", RESOURCE_KEY),
+                ("RequestedProperties", "device.ismobile"),
             ],
             CloudRequestEngine::builder()
                 .resource_key(RESOURCE_KEY)
@@ -539,6 +551,63 @@ fn the_properties_are_added_to_in_order() {
     assert_eq!(
         engine(&pipeline).values(),
         ["device.ismobile", "device.hardwarename"]
+    );
+}
+
+/// The cloud request engine specification names the properties
+/// `RequestedProperties` in its configuration table, which reads them as
+/// `SetProperties` does, in any case. It is an alternate name, matched as
+/// .NET matches one, so `SetRequestedProperties` matches nothing. .NET
+/// 4.5.129 has no method of either name and refuses both as a parameter
+/// that matches no method.
+#[test]
+fn the_specifications_name_for_the_properties_is_read() {
+    for name in ["RequestedProperties", "requestedproperties"] {
+        let options = PipelineOptions::new().element(
+            ElementOptions::new(BUILDER_NAME)
+                .parameter("LicenseKey", LICENSE_KEY)
+                .parameter("Property", "device.ismobile")
+                .parameter(name, "device.browsername,device.platformname"),
+        );
+        let (pipeline, stand_in) = build_with(&options);
+        let pipeline = pipeline.expect("the pipeline");
+        assert_eq!(
+            engine(&pipeline).values(),
+            [
+                "device.ismobile",
+                "device.browsername",
+                "device.platformname"
+            ],
+            "{name}"
+        );
+        process(&pipeline, "UA");
+        assert!(
+            stand_in.data()[0].form.contains(&(
+                "values".to_string(),
+                "device.ismobile,device.browsername,device.platformname".to_string()
+            )),
+            "{name}"
+        );
+    }
+
+    let options = PipelineOptions::new().element(
+        ElementOptions::new(BUILDER_NAME)
+            .parameter("LicenseKey", LICENSE_KEY)
+            .parameter("RequestedProperties", vec!["device.hardwarename"]),
+    );
+    let pipeline = build_with(&options).0.expect("the pipeline");
+    assert_eq!(engine(&pipeline).values(), ["device.hardwarename"]);
+
+    let refused = message(
+        with(&[
+            ("LicenseKey", LICENSE_KEY),
+            ("SetRequestedProperties", "device.ismobile"),
+        ])
+        .0,
+    );
+    assert!(
+        refused.contains("the following parameters: SETREQUESTEDPROPERTIES."),
+        "{refused}"
     );
 }
 
