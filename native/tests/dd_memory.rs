@@ -158,17 +158,30 @@ fn measure_profile(leaks: &mut Leaks, path: &Path, profile: PerformanceProfile) 
         drop(open_indexed())
     });
     let indexed = open_indexed();
-    leaks.measure(&label("look up profiles by value"), 3, || {
-        for searched in [&indexed, &manager] {
+    leaks.measure(&label("look up profiles from the index"), 3, || {
+        for value in ["Chrome", "No such browser"] {
+            indexed
+                .profile_ids_for_property_value("BrowserName", value)
+                .expect("the lookup succeeds");
+        }
+        indexed.indexed_properties();
+    });
+    drop(indexed);
+    // Reading every profile passes each through the caches of the profiles
+    // that have them, whose entries grow to fit the largest profile they
+    // hold, so this lookup runs on a data set opened and freed in the stage.
+    leaks.measure(
+        &label("look up profiles by reading every profile"),
+        2,
+        || {
+            let unindexed = open();
             for value in ["Chrome", "No such browser"] {
-                searched
+                unindexed
                     .profile_ids_for_property_value("BrowserName", value)
                     .expect("the lookup succeeds");
             }
-            searched.indexed_properties();
-        }
-    });
-    drop(indexed);
+        },
+    );
     leaks.measure(&label("create and free results"), 5, || {
         drop(manager.create_results().expect("results allocate"));
     });
