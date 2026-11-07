@@ -308,7 +308,7 @@ fn read_crawler(
         indexes.product_tokens,
         CRAWLER_PRODUCT_TOKENS,
     )?);
-    let usages = list(&required(results, indexes.usages, CRAWLER_USAGE)?);
+    let usages = values(&required(results, indexes.usages, CRAWLER_USAGE)?);
     let reference_url = read(results, indexes.url, CRAWLER_URL)?
         .filter(|url| !url.trim().is_empty())
         .and_then(|url| Url::parse(&url).ok());
@@ -343,14 +343,21 @@ fn required(
     read(results, index, name)?.ok_or_else(|| format!("{name} has no value"))
 }
 
-/// The values of a list property, which the native reader joins with the
-/// separator, as the Device Detection engine splits them.
+/// The values of a list property that are not empty. The native reader
+/// joins the values with the separator, as the Device Detection engine
+/// splits them.
 fn list(joined: &str) -> Vec<String> {
     joined
         .split('|')
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .collect()
+}
+
+/// Every value of a list property, empty ones included, so a crawler's
+/// usages are written as the data file gives them.
+fn values(joined: &str) -> Vec<String> {
+    joined.split('|').map(str::to_owned).collect()
 }
 
 /// The [`DeviceDetectionOnPremiseEngine`] among the pipeline's elements.
@@ -579,5 +586,21 @@ impl RobotsTxtEngineBuilder {
             state: OnceLock::new(),
             no_evidence: EvidenceKeyFilterWhitelist::default(),
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usages_keep_empty_values_and_product_tokens_do_not() {
+        assert_eq!(values("|Heureka"), ["", "Heureka"]);
+        assert_eq!(values("Search|"), ["Search", ""]);
+        assert_eq!(values("Search||Training"), ["Search", "", "Training"]);
+        assert_eq!(values(""), [""]);
+        assert_eq!(list("|Heureka"), ["Heureka"]);
+        assert_eq!(list("Search||Training"), ["Search", "Training"]);
+        assert!(list("").is_empty());
     }
 }

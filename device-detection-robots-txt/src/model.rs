@@ -462,6 +462,19 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_usage_is_written_in_its_place() {
+        let model = RobotsTxtModel::new(
+            vec![crawler("Image Bot", &["", "Search"], &["ImageBot"], None)],
+            vec![UsageModel::new("Search", "Search")],
+        );
+        for usages in [&["Search"][..], &[]] {
+            let text = model.write(&allowed(usages), &[], true);
+            let lines = "# N: Image Bot\n# U: , Search\n";
+            assert!(text.contains(lines), "{text}");
+        }
+    }
+
+    #[test]
     fn every_tdl_is_written_in_the_closing_group_in_order() {
         let tdls = [
             Url::parse("https://m4ow.uk/socw/2.txt").unwrap(),
