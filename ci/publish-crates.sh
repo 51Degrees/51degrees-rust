@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# Publish the 51Degrees workspace crates to crates.io in dependency order.
+# Publish the named crates to crates.io, in the dependency order of
+# ci/crates.txt whatever order they are named in.
 #
-# Each crate is published only when its current version is not already on
-# crates.io, so an ordinary push that does not bump the version is a no-op.
-# The version is not committed in the manifests. The publish workflow works it
-# out from the tags with GitVersion and ci/set-crate-versions.ps1 writes it into
-# every crate, so all of them move together, as the packages of the other five
-# languages do. Three crates once reached 4.6 while the other twenty one stayed
-# at 4.5.2, which is what holding them in step prevents.
-# After publishing a crate the script waits for the new version to appear on the
-# index so the next, dependent crate resolves it.
+#   bash ci/publish-crates.sh fiftyone-pipeline-core fiftyone-caching
+#
+# The publish workflow names the crates its release plan releases (see
+# ci/get-release-plan.ps1), and ci/set-crate-versions.ps1 has already written
+# each crate's own version into its manifest. Naming no crate publishes
+# nothing. A crate whose version is already on crates.io is skipped, so a
+# rerun finishes what a failed run left undone. After publishing a crate the
+# script waits for the new version to appear on the index so the next,
+# dependent crate resolves it.
 #
 # `fodid` and `fiftyone-fodid-cloud` need no OWID crate from any registry. The
 # OWID source is compiled into `fodid` from the owid-rust submodule by
@@ -28,18 +29,42 @@ if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
   exit 0
 fi
 
-# The crates to publish, read from the single list both this script and
-# ci/setup-trusted-publishing.sh use, so a crate can never be published without
-# also being authorised. Blank lines and comments are skipped.
+# The crates that may be published, read from the single list both this
+# script and ci/setup-trusted-publishing.sh use, so a crate can never be
+# published without also being authorised. Blank lines and comments are
+# skipped.
 CRATES_FILE="$(dirname "$0")/crates.txt"
 if [ ! -f "$CRATES_FILE" ]; then
   echo "Crate list not found at $CRATES_FILE" >&2
   exit 1
 fi
-mapfile -t CRATES < <(grep -vE '^[[:space:]]*(#|$)' "$CRATES_FILE")
-if [ "${#CRATES[@]}" -eq 0 ]; then
+mapfile -t LISTED < <(grep -vE '^[[:space:]]*(#|$)' "$CRATES_FILE")
+if [ "${#LISTED[@]}" -eq 0 ]; then
   echo "Crate list $CRATES_FILE names no crates" >&2
   exit 1
+fi
+
+for named in "$@"; do
+  found=0
+  for listed in "${LISTED[@]}"; do
+    if [ "$named" = "$listed" ]; then found=1; fi
+  done
+  if [ "$found" -eq 0 ]; then
+    echo "$named is not in $CRATES_FILE, so it is not authorised to publish" >&2
+    exit 1
+  fi
+done
+
+# The named crates, in the order of the list.
+CRATES=()
+for listed in "${LISTED[@]}"; do
+  for named in "$@"; do
+    if [ "$named" = "$listed" ]; then CRATES+=("$listed"); fi
+  done
+done
+if [ "${#CRATES[@]}" -eq 0 ]; then
+  echo "No crate named, so nothing is published."
+  exit 0
 fi
 
 UA="51degrees-rust-publish (support@51degrees.com)"

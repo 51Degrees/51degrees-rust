@@ -1,8 +1,12 @@
 name: Publish
 
-# Publish the 51Degrees crates to crates.io when main changes, in dependency
-# order, skipping versions already published. The version comes from the tags,
-# so a release is a tag and no commit decides one on its own.
+# Publish the 51Degrees crates that changed to crates.io when main changes,
+# each at its own version. A crate is released when a file under its folder,
+# or under a submodule it is built from, changed since its last tag
+# '<crate>/<version>', and with it every crate that depends on it. Only the
+# patch number moves, and every other crate keeps the version it last
+# released. The rules are common-ci's steps/release-plan.ps1, read from
+# ci/packages.json, and ci/get-release-plan.ps1 prints the plan.
 #
 # Authentication uses crates.io Trusted Publishing: the
 # rust-lang/crates-io-auth-action exchanges this run's GitHub OIDC identity for a
@@ -20,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       allow-version-bump:
-        description: 'Publish even though the version moves the major or minor place.'
+        description: 'Publish even though a crate moves the major or minor place.'
         type: boolean
         default: false
 
@@ -34,13 +38,14 @@ jobs:
     name: publish to crates.io
     runs-on: ubuntu-latest
     permissions:
-      # write, because a successful publish writes the tag the next release
-      # counts from and creates the GitHub release, as the publish does in
-      # the other languages.
+      # write, because a successful publish writes the tag each crate's next
+      # release counts from and creates its GitHub release.
       contents: write
       # Required to mint the OIDC token Trusted Publishing exchanges for a
       # short-lived crates.io token.
       id-token: write
+    outputs:
+      released: ${{ steps.plan.outputs.count }}
     steps:
       # The owid-rust submodule holds the OWID source that ci/copy-owid-source.ps1
       # compiles into fodid, and the cxx submodule holds the C sources that
@@ -51,122 +56,89 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
-          # GitVersion reads the tags to work out the next version, and a
-          # shallow clone has none of them.
+          # The plan reads each crate's tags, and a shallow clone has none.
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-      # The version rule and the bump check below are taken from common-ci,
-      # which the other five languages publish through, so there is one rule
-      # and not two that drift apart.
+      # The release plan and the bump check below are taken from common-ci,
+      # which the other languages publish through, so there is one rule and
+      # not several that drift apart.
       - name: Checkout common-ci
         uses: actions/checkout@v4
         with:
           repository: 51Degrees/common-ci
           path: common-ci
-      # The version comes from the tags, as it does in the other five
-      # languages, rather than from a number committed in each manifest. No
-      # commit can then release a version by accident, and all 24 crates move
-      # together instead of drifting apart, which is how three of them reached
-      # 4.6 while the other twenty one stayed at 4.5.2. common-ci's
-      # GitVersion.yml gives main a plain version such as 4.5.9, where
-      # GitVersion's own defaults give a pre-release such as 4.5.9-7, which a
-      # requirement such as 4.5 never selects.
-      - name: Work out the version from the tags
-        id: version
+      # The plan is worked out once, before anything is tagged, and every
+      # step after reads it from the file, because the tags this run makes
+      # change what the plan would say. A crate with no tag of its own stops
+      # the run here, as there is nothing for its version to count from.
+      - name: Work out which crates to release
+        id: plan
         shell: pwsh
-        run: |
-          # GitVersion counts from the last version tag. Given none it does
-          # not fail, it answers 0.0.1, and publishing that to crates.io
-          # could never be undone. So having no tags stops the run rather
-          # than being worked around quietly.
-          $tags = git tag --list | Where-Object { $_ -match '^v?[0-9]+[.][0-9]+[.][0-9]+$' }
-          if (-not $tags) {
-            Write-Output "::error title=No version tags::There is nothing for the version to count from, so this run has stopped."
-            Write-Output ""
-            Write-Output "GitVersion answers 0.0.1 where a repository has no version tags. It does not fail, so without this check that number would be written into all the crate manifests and published. crates.io can never be unpublished."
-            Write-Output ""
-            Write-Output "The crates already published are fodid 4.5.5 and fodid-client 4.5.0, so the line to continue from is 4.5.5. Create that tag on the commit those were built from, then run this again:"
-            Write-Output ""
-            Write-Output "    git tag 4.5.5 <commit> && git push origin 4.5.5"
-            Write-Output ""
-            Write-Output "This is needed once. After a release has gone out from here the tag is written by this workflow."
-            exit 1
-          }
-          # The version common-ci installs, so the rule reads the same here.
-          dotnet tool install --global GitVersion.Tool --version 6.1
-          $v = dotnet-gitversion /config common-ci/GitVersion.yml /showvariable SemVer
-          if (-not $v) { throw 'GitVersion produced no version' }
-          Write-Output "version=$v" >> $env:GITHUB_OUTPUT
-          Write-Output "Releasing $v"
-      # Refuses a version that moves the major or minor place unless this run
-      # was dispatched by someone who asked for it. A push to main carries no
-      # inputs, so that route can never allow one and no commit message can
-      # release a 4.6 by itself. Three crates reached 4.6 overnight on
-      # 18 September 2026 by exactly that route.
-      #
-      # This runs before the version is written into the manifests, so a
+        run: ./ci/get-release-plan.ps1 -OutFile "$env:RUNNER_TEMP/release-plan.json"
+      # Refuses a crate whose version moves the major or minor place against
+      # its own tags, unless this run was dispatched by someone who asked for
+      # it. A push to main carries no inputs, so that route can never allow
+      # one. This runs before any version is written into the manifests, so a
       # refused run leaves the tree alone as well as publishing nothing.
       - name: Refuse a major or minor bump nobody approved
+        if: steps.plan.outputs.count != '0'
         shell: pwsh
         env:
           ALLOW_VERSION_BUMP: ${{ inputs.allow-version-bump }}
         run: >-
-          ./common-ci/steps/check-version-bump.ps1
-          -Version '${{ steps.version.outputs.version }}'
-          -RepoName '.'
-      - name: Write that version into every crate
+          ./ci/check-version-bump.ps1 -RepoName .
+          -PlanFile "$env:RUNNER_TEMP/release-plan.json"
+      # A crate the plan releases gets its next version, and every other crate
+      # the version it last released, so each requirement between them names
+      # a version that is on crates.io or is published in this run.
+      - name: Write each crate's version
+        if: steps.plan.outputs.count != '0'
         shell: pwsh
-        run: ./ci/set-crate-versions.ps1 -Version '${{ steps.version.outputs.version }}'
+        run: ./ci/set-crate-versions.ps1 -PlanFile "$env:RUNNER_TEMP/release-plan.json"
       - name: Copy the OWID source into fodid
+        if: steps.plan.outputs.count != '0'
         shell: pwsh
         run: ./ci/copy-owid-source.ps1
       - name: Copy the C sources into the -sys crates
+        if: steps.plan.outputs.count != '0'
         shell: pwsh
         run: ./ci/copy-cxx-sources.ps1
-      # The examples are built and tested against these crates at the version
-      # being released, as the other languages test their examples against the
-      # package they are about to publish. A failure here stops the release.
+      # The examples are built and tested against this tree's crates, as the
+      # other languages test their examples against the package they are
+      # about to publish. The script gives every crate a version above every
+      # crate's last release, so each one replaces its published copy, and
+      # puts the manifests back as the step above wrote them. A failure here
+      # stops the release.
       - name: Test the examples against the crates being released
+        if: steps.plan.outputs.count != '0'
         shell: pwsh
-        run: ./ci/test-examples-against-source.ps1 -Version '${{ steps.version.outputs.version }}'
+        run: ./ci/test-examples-against-source.ps1
       - name: Authenticate to crates.io (Trusted Publishing)
+        if: steps.plan.outputs.count != '0'
         uses: rust-lang/crates-io-auth-action@v1
         id: auth
-      - name: Publish workspace crates in dependency order
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: bash ci/publish-crates.sh
-
-      # The tag is what the next release counts from, and the GitHub release
-      # is created from it with generated notes, as common-ci's
-      # steps/update-tag.ps1 does for the other languages. Each half is
-      # skipped when it already exists, so a rerun finishes what a failed run
-      # left undone.
-      - name: Tag and release what was published
+      - name: Publish the planned crates in dependency order
+        if: steps.plan.outputs.count != '0'
         shell: pwsh
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-          GH_TOKEN: ${{ github.token }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
-          if (git tag --list $env:VERSION) {
-            Write-Output "Tag $env:VERSION is already here, leaving it alone."
-          } else {
-            git tag $env:VERSION
-            git push origin $env:VERSION
-            Write-Output "Tagged $env:VERSION"
-          }
-          # A missing release makes gh release view exit non-zero, which is an
-          # answer here, not a failure.
-          $PSNativeCommandUseErrorActionPreference = $false
-          gh release view $env:VERSION *> $null
-          $exists = $LASTEXITCODE -eq 0
-          $PSNativeCommandUseErrorActionPreference = $true
-          if ($exists) {
-            Write-Output "Release $env:VERSION is already here, leaving it alone."
-            exit 0
-          }
-          gh release create $env:VERSION --verify-tag --generate-notes --title $env:VERSION
-          Write-Output "Released $env:VERSION"
+          $plan = Get-Content -Raw "$env:RUNNER_TEMP/release-plan.json" | ConvertFrom-Json
+          bash ci/publish-crates.sh @($plan.Releases.Name)
+
+      # Each crate's tag is what its next release counts from, and its GitHub
+      # release is created from the tag with notes for that crate. This runs
+      # even when the plan is empty, because a rerun after the tags were
+      # pushed plans nothing, and still has to create any release a failed
+      # run left undone.
+      - name: Tag and release each crate published
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          ./ci/tag-crate-releases.ps1 -RepoName .
+          -PlanFile "$env:RUNNER_TEMP/release-plan.json"
+          -Repository '${{ github.repository }}'
 
   # AFTER publish: prove the just-released packages work by building and testing
   # the examples against crates.io (no source.toml patch). The pre-publish check
@@ -174,6 +146,7 @@ jobs:
   verify-published:
     name: examples vs published crates
     needs: publish
+    if: needs.publish.outputs.released != '0'
     runs-on: ubuntu-latest
     defaults:
       run:
