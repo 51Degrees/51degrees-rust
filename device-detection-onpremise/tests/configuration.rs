@@ -392,7 +392,7 @@ fn updates_with_an_update_service_register_the_data_file() {
         assert_eq!(service.registered_count(), 0);
     }
 
-    for key in [None, Some("")] {
+    for key in [None, Some(""), Some(" ")] {
         let mut parameters = vec![("DataFile", lite.as_str()), ("CreateTempDataCopy", "false")];
         if let Some(key) = key {
             parameters.push(("DataUpdateLicenseKey", key));
@@ -412,6 +412,56 @@ fn updates_with_an_update_service_register_the_data_file() {
     // Updates off, the data file is not registered, as in .NET.
     let pipeline = build_with_service(base(&lite, &[]), &service).unwrap();
     assert!(!engine(&pipeline).data_files()[0].is_registered());
+}
+
+/// A configuration may say that the update source needs no license key, as
+/// the specification allows, so automatic updates from a URL requested as
+/// it is configured run with no key. .NET's engine builder has no such
+/// setting and never asks for a key here.
+#[test]
+fn a_configuration_may_say_no_license_key_is_required() {
+    let Some(lite) = lite() else { return };
+    const SOURCE: &str = "https://updates.example.test/51Degrees-LiteV4.1.hash";
+    let service = Arc::new(DataUpdateService::new());
+    let updated = |required: Option<&str>| {
+        let mut parameters = vec![
+            ("DataFile", lite.as_str()),
+            ("CreateTempDataCopy", "false"),
+            ("DataFileSystemWatcher", "false"),
+            ("DataUpdateUrl", SOURCE),
+            ("DataUpdateUseUrlFormatter", "false"),
+        ];
+        if let Some(required) = required {
+            parameters.push(("LicenseKeyRequired", required));
+        }
+        element(BUILDER, &parameters)
+    };
+
+    let pipeline = build_with_service(updated(Some("false")), &service).unwrap();
+    let made = engine(&pipeline);
+    let file = &made.data_files()[0];
+    assert!(file.is_registered());
+    assert!(file.configuration().automatic_updates_enabled);
+    assert!(file.configuration().data_update_license_keys.is_empty());
+    assert!(!file.configuration().license_key_required_for_updates);
+    assert_eq!(file.formatted_update_url().as_deref(), Some(SOURCE));
+    assert_eq!(service.registered_count(), 1);
+    drop(made);
+    drop(pipeline);
+
+    for required in [None, Some("true")] {
+        assert_eq!(
+            message(build_with_service(updated(required), &service)),
+            failed(
+                "Some enabled features (auto update) require a license key but one has not \
+                 been supplied. This can be corrected by passing a license key to the engine \
+                 builder. If building from configuration, check the associated builder \
+                 implementation to determine the correct parameter name to use."
+            ),
+            "{required:?}"
+        );
+    }
+    assert_eq!(service.registered_count(), 0);
 }
 
 /// Each data file setting reads back as .NET read it back.
@@ -793,7 +843,8 @@ fn the_build_methods_are_dotnets() {
 
 /// .NET lists every setting and build method of the builder, giving
 /// `RuntimeParameterInfo` as each type, where the crates give the type. The
-/// crates leave out .NET's `Build (Stream)`, which is a build method.
+/// crates leave out .NET's `Build (Stream)`, which is a build method. The
+/// crates also list `SetLicenseKeyRequired`, which .NET's builder lacks.
 #[test]
 fn an_unknown_setting_lists_the_settings_and_build_methods() {
     let Some(lite) = lite() else { return };
@@ -827,6 +878,7 @@ fn an_unknown_setting_lists_the_settings_and_build_methods() {
         "SetVerifyIfModifiedSince (Boolean)",
         "SetDataUpdateLicenseKey (String)",
         "SetDataUpdateLicenseKeys (String[])",
+        "SetLicenseKeyRequired (Boolean)",
         "SetDataUpdateOnStartup (Boolean)",
         "AddDataFile (IDataFileConfiguration)",
         "SetTempDirPath (String)",
