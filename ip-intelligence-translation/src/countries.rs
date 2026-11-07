@@ -42,8 +42,8 @@ use icu_locale_core::Locale;
 use serde::de::{Deserialize, Deserializer, MapAccess, Visitor};
 
 use crate::data::{
-    COUNTRY_CODES_GEOGRAPHICAL, COUNTRY_CODES_GEOGRAPHICAL_ALL, COUNTRY_CODES_POPULATION,
-    COUNTRY_CODES_POPULATION_ALL, COUNTRY_NAMES_GEOGRAPHICAL,
+    countries_translated_properties, COUNTRY_CODES_GEOGRAPHICAL, COUNTRY_CODES_GEOGRAPHICAL_ALL,
+    COUNTRY_CODES_POPULATION, COUNTRY_CODES_POPULATION_ALL, COUNTRY_NAMES_GEOGRAPHICAL,
     COUNTRY_NAMES_GEOGRAPHICAL_ALL_TRANSLATED, COUNTRY_NAMES_GEOGRAPHICAL_TRANSLATED,
     COUNTRY_NAMES_KEY_NAME, COUNTRY_NAMES_POPULATION, COUNTRY_NAMES_POPULATION_ALL_TRANSLATED,
     COUNTRY_NAMES_POPULATION_TRANSLATED, COUNTRY_NAMES_TRANSLATED_KEY_NAME, SORTING_CULTURE_USED,
@@ -364,33 +364,7 @@ impl CountriesTranslationEngineBuilder {
             .map_err(|error| collator_error("the root locale", error))?;
         let english = SortedCountries::new(&all_countries, None, ignoring_case);
 
-        let data_key = COUNTRY_NAMES_TRANSLATED_KEY_NAME;
-        let properties = [
-            (
-                COUNTRY_NAMES_GEOGRAPHICAL_TRANSLATED,
-                PropertyValueType::KeyValueList,
-            ),
-            (
-                COUNTRY_NAMES_POPULATION_TRANSLATED,
-                PropertyValueType::KeyValueList,
-            ),
-            (
-                COUNTRY_NAMES_GEOGRAPHICAL_ALL_TRANSLATED,
-                PropertyValueType::StringList,
-            ),
-            (
-                COUNTRY_NAMES_POPULATION_ALL_TRANSLATED,
-                PropertyValueType::StringList,
-            ),
-            (
-                COUNTRY_CODES_GEOGRAPHICAL_ALL,
-                PropertyValueType::StringList,
-            ),
-            (COUNTRY_CODES_POPULATION_ALL, PropertyValueType::StringList),
-        ]
-        .into_iter()
-        .map(|(name, value_type)| PropertyMetaData::new(name, data_key, value_type))
-        .collect();
+        let properties = countries_translated_properties();
 
         Ok(CountriesTranslationEngine {
             engine,

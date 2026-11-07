@@ -1239,5 +1239,69 @@
       "query.accept-language": "es",
       "header.accept-language": "fr-FR"
     }
+  },
+  {
+    "id": "cloud-translation-full",
+    "about": "The cloud translation pipeline with every property the stand-in cloud grants, and SortingCultureUsed, which its metadata does not list.",
+    "pipeline": "cloud-translation",
+    "evidence": {
+      "query.session-id": "parity-cloud-translation-full",
+      "query.parity-cloud-response": "{\"countrynamestranslated\":{\"CountryNamesGeographicalTranslated\":[{\"Value\":\"Vereinigtes Königreich\",\"RawWeighting\":35535},{\"Value\":\"Frankreich\",\"RawWeighting\":30000}],\"CountryNamesPopulationTranslated\":[{\"Value\":\"Frankreich\",\"RawWeighting\":40000},{\"Value\":\"Vereinigtes Königreich\",\"RawWeighting\":25535}],\"CountryNamesGeographicalAllTranslated\":[\"Vereinigtes Königreich\",\"Frankreich\",\"Deutschland\"],\"CountryNamesPopulationAllTranslated\":[\"Frankreich\",\"Vereinigtes Königreich\",\"Deutschland\"],\"CountryCodesGeographicalAll\":[\"GB\",\"FR\",\"DE\"],\"CountryCodesPopulationAll\":[\"FR\",\"GB\",\"DE\"],\"SortingCultureUsed\":\"de-DE\"}}"
+    }
+  },
+  {
+    "id": "cloud-translation-any-case",
+    "about": "Property names and weighted item fields in capitals and in lower case, and raw weightings with a half, which round to the even number.",
+    "pipeline": "cloud-translation",
+    "evidence": {
+      "query.session-id": "parity-cloud-translation-any-case",
+      "query.parity-cloud-response": "{\"countrynamestranslated\":{\"COUNTRYNAMESGEOGRAPHICALTRANSLATED\":[{\"rawweighting\":30000.5,\"value\":\"Deutschland\"},{\"rawweighting\":25535.5,\"value\":\"Frankreich\"}],\"countrynamespopulationtranslated\":[{\"VALUE\":\"Deutschland\",\"RAWWEIGHTING\":65535}],\"countrycodesgeographicalall\":[\"DE\",\"FR\"],\"sortingcultureused\":\"de-DE\"}}"
+    }
+  },
+  {
+    "id": "cloud-translation-nulls",
+    "about": "Null values with a reason, without one, and with a reason whose name differs in case, which is not found, beside a property the response does not give.",
+    "pipeline": "cloud-translation",
+    "evidence": {
+      "query.session-id": "parity-cloud-translation-nulls",
+      "query.parity-cloud-response": "{\"countrynamestranslated\":{\"CountryNamesGeographicalTranslated\":null,\"CountryNamesGeographicalTranslatednullreason\":\"No country is known for this address.\",\"CountryNamesPopulationTranslated\":null,\"CountryNamesGeographicalAllTranslated\":null,\"CountryNamesGeographicalAllTranslatedNullReason\":\"This reason is not found, as its name differs in case.\",\"CountryCodesGeographicalAll\":[\"GB\"]}}"
+    }
+  },
+  {
+    "id": "cloud-translation-section-absent",
+    "about": "A response without the countrynamestranslated section, which is an error leaving the data empty.",
+    "pipeline": "cloud-translation",
+    "evidence": {
+      "query.session-id": "parity-cloud-translation-section-absent",
+      "query.parity-cloud-response": "{\"ip\":{\"RegisteredName\":\"Parity\"}}"
+    }
+  },
+  {
+    "id": "cloud-translation-section-in-capitals",
+    "about": "A response whose section name is in capitals, which is not found.",
+    "pipeline": "cloud-translation",
+    "evidence": {
+      "query.session-id": "parity-cloud-translation-section-in-capitals",
+      "query.parity-cloud-response": "{\"COUNTRYNAMESTRANSLATED\":{\"CountryCodesGeographicalAll\":[\"GB\"]}}"
+    }
+  },
+  {
+    "id": "cloud-translation-section-empty",
+    "about": "An empty countrynamestranslated section, so every property is one the response does not give.",
+    "pipeline": "cloud-translation",
+    "evidence": {
+      "query.session-id": "parity-cloud-translation-section-empty",
+      "query.parity-cloud-response": "{\"countrynamestranslated\":{}}"
+    }
+  },
+  {
+    "id": "cloud-translation-request-failed",
+    "about": "The cloud answers with status 500 and an error, so the request fails and the engine has no response to read.",
+    "pipeline": "cloud-translation",
+    "evidence": {
+      "query.session-id": "parity-cloud-translation-request-failed",
+      "query.parity-cloud-response": "{\"errors\":[\"The cloud service is not available.\"]}",
+      "query.parity-cloud-status": "500"
+    }
   }
 ]

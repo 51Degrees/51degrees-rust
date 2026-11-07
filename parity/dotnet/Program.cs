@@ -46,10 +46,12 @@ using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Linq;
 using FiftyOne.DeviceDetection.Hash.Engine.OnPremise.FlowElements;
+using FiftyOne.IpIntelligence.Cloud.FlowElements;
 using FiftyOne.IpIntelligence.Engine.OnPremise.FlowElements;
 using FiftyOne.IpIntelligence.Shared;
 using FiftyOne.IpIntelligence.Translation.FlowElements;
 using FiftyOne.Pipeline.AgentSignature.FlowElement;
+using FiftyOne.Pipeline.CloudRequestEngine.FlowElements;
 using FiftyOne.Pipeline.Core.Data;
 using FiftyOne.Pipeline.Core.Data.Types;
 using FiftyOne.Pipeline.Core.Exceptions;
@@ -100,6 +102,10 @@ namespace FiftyOne.Parity
 
         // The pipeline of a case that runs through the translation pipeline.
         private const string TranslationPipeline = "translation";
+
+        // The pipeline of a case that runs through the cloud translation
+        // pipeline.
+        private const string CloudTranslationPipeline = "cloud-translation";
 
         // Long enough that the first fetch of a directory the handler serves
         // at once never runs out, and shorter than the slow agent's delay.
@@ -208,9 +214,28 @@ namespace FiftyOne.Parity
                 .AddFlowElement(new JsonBuilderElementBuilder(loggerFactory).Build())
                 .SetSuppressProcessExceptions(true)
                 .Build();
+            // Sequence, the cloud request engine on a stand-in cloud inside
+            // this program, the cloud countries translation engine and the
+            // JSON builder.
+            using var cloud = new HttpClient(new StandInCloud());
+            var cloudRequest = new CloudRequestEngineBuilder(loggerFactory, cloud)
+                .SetEndPoint(StandInCloud.Endpoint)
+                .SetResourceKey(StandInCloud.ResourceKey)
+                .Build();
+            var cloudTranslation = new PipelineBuilder(loggerFactory)
+                .AddFlowElement(new SequenceElementBuilder(loggerFactory).Build())
+                .AddFlowElement(cloudRequest)
+                .AddFlowElement(new CloudCountriesTranslationEngineBuilder(
+                    loggerFactory).Build())
+                .AddFlowElement(new JsonBuilderElementBuilder(loggerFactory).Build())
+                .SetSuppressProcessExceptions(true)
+                .Build();
+            // The builders' whole output is recorded instead, and the cloud
+            // request engine's data is the case's own response.
             var skipped = new HashSet<string>
             {
-                json.ElementDataKey, javascript.ElementDataKey
+                json.ElementDataKey, javascript.ElementDataKey,
+                cloudRequest.ElementDataKey
             };
 
             var lines = new List<JsonObject>();
@@ -226,6 +251,7 @@ namespace FiftyOne.Parity
                     ValuesPipeline => values,
                     AgentSignaturePipeline => agentSignature,
                     TranslationPipeline => translation,
+                    CloudTranslationPipeline => cloudTranslation,
                     var other => throw new ArgumentException(
                         $"{item["id"]}: unknown pipeline {other}")
                 };
@@ -269,6 +295,7 @@ namespace FiftyOne.Parity
                 $"{lines.Count} cases written to {args.Out}, " +
                 $"{records.Count} usage records and " +
                 $"{customRecords.Count} custom usage records captured");
+            cloudTranslation.Dispose();
             translation.Dispose();
             agentSignature.Dispose();
             values.Dispose();
@@ -829,6 +856,97 @@ namespace FiftyOne.Parity
                 RequestMessage = request,
                 Content = new StringContent(DirectoryJson, Encoding.UTF8, MediaType)
             };
+        }
+    }
+
+    // The cloud of the cloud translation pipeline, the same as the Rust
+    // producer's. It grants the six translated properties, takes the two
+    // parity evidence keys, and answers each data request with the body and
+    // status those keys carry, so each case gives both languages the same
+    // cloud response.
+    internal sealed class StandInCloud : HttpMessageHandler
+    {
+        // Never contacted. The handler answers every request itself.
+        public const string Endpoint = "https://cloud.parity.invalid/api/v4/";
+
+        // Not a real key. The handler grants it the six properties.
+        public const string ResourceKey = "parity-resource-key";
+
+        // The form fields that carry the body and the status of the
+        // response, as the evidence keys query.parity-cloud-response and
+        // query.parity-cloud-status reach the cloud. With no status the
+        // response is 200, and with no body it is empty.
+        private const string ResponseField = "parity-cloud-response";
+        private const string StatusField = "parity-cloud-status";
+
+        // The six properties .NET's engine tests list, with the types the
+        // cloud gives them. The same text as the Rust producer's.
+        private const string AccessibleProperties =
+            "{\"Products\":{\"countrynamestranslated\":{\"DataTier\":\"CloudV4\"," +
+            "\"Properties\":[" +
+            "{\"Name\":\"CountryNamesGeographicalTranslated\",\"Type\":\"WeightedString\"}," +
+            "{\"Name\":\"CountryNamesPopulationTranslated\",\"Type\":\"WeightedString\"}," +
+            "{\"Name\":\"CountryNamesGeographicalAllTranslated\",\"Type\":\"Array\"}," +
+            "{\"Name\":\"CountryNamesPopulationAllTranslated\",\"Type\":\"Array\"}," +
+            "{\"Name\":\"CountryCodesGeographicalAll\",\"Type\":\"Array\"}," +
+            "{\"Name\":\"CountryCodesPopulationAll\",\"Type\":\"Array\"}]}}}";
+
+        // The evidence the handler takes. The same text as the Rust
+        // producer's.
+        private const string EvidenceKeys =
+            "[\"query.parity-cloud-response\",\"query.parity-cloud-status\"]";
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var url = request.RequestUri?.AbsoluteUri ?? string.Empty;
+            var status = HttpStatusCode.OK;
+            string body;
+            if (url.Contains("accessibleproperties"))
+            {
+                body = AccessibleProperties;
+            }
+            else if (url.Contains("evidencekeys"))
+            {
+                body = EvidenceKeys;
+            }
+            else
+            {
+                var form = await Form(request.Content);
+                if (form.TryGetValue(StatusField, out var text))
+                {
+                    status = (HttpStatusCode)int.Parse(
+                        text, CultureInfo.InvariantCulture);
+                }
+                body = form.TryGetValue(ResponseField, out var response)
+                    ? response : string.Empty;
+            }
+            return new HttpResponseMessage(status)
+            {
+                RequestMessage = request,
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
+        }
+
+        // The fields of a URL-encoded form, decoded.
+        private static async Task<Dictionary<string, string>> Form(
+            HttpContent content)
+        {
+            var form = new Dictionary<string, string>();
+            if (content == null)
+            {
+                return form;
+            }
+            var text = await content.ReadAsStringAsync();
+            foreach (var pair in text.Split('&', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var at = pair.IndexOf('=');
+                var name = at < 0 ? pair : pair.Substring(0, at);
+                var value = at < 0 ? string.Empty : pair.Substring(at + 1);
+                form[WebUtility.UrlDecode(name)] = WebUtility.UrlDecode(value);
+            }
+            return form;
         }
     }
 
