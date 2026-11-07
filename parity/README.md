@@ -145,6 +145,7 @@ Each program writes one JSON object per case.
 | `fodid` | For a 51Did case, the parse status and, when the 51Did was read, the value of each accessor, else null. |
 | `metadata` | For the 51Did metadata case, the component's name and id and each property's metadata in list order. |
 | `configuration` | For a configuration case, what was built or the error (see "The configuration comparison"). |
+| `derived` | For a derived property case, the script's source properties and its answer (see "The derived property comparison"). |
 
 Value types are `string`, `bool`, `integer`, `double`, `stringList`,
 `javascript`, `ipAddress`, `dateTime` (in .NET only, written as RFC 3339
@@ -358,6 +359,53 @@ setting that does not parse. The report lists at most three differences
 for each path and kind, so a change compared with the others could be
 left out of it.
 
+## The derived property comparison
+
+The derived property cases check that the derived property element gives
+the same answer in both languages for every case derived-properties ships
+with its scripts
+([#233](https://github.com/51Degrees/51degrees-rust/issues/233)). They are
+the case files in `derived-properties/vendor/tests`, one for each script
+the crate builds in, read as they are rather than copied into the corpus.
+.NET's element comes from the FiftyOne.Pipeline.DerivedProperty package at
+the Pipeline version, which builds in the same scripts, so each side runs
+its own built-in copy of the script the file names.
+
+`parity-rust derived-cases` writes the cases as a corpus for the comparer,
+each with an id, an `about` naming the script and the case, and the
+answer the file expects. The id is `derived-`, the script's name in lower
+case, and the case's place in its file counting from 1, such as
+`derived-humanconfidence-01`. Both programs give each case the same id.
+
+Each program reads the case files with its own reader, the crate's YAML
+library in the crates and the package's own parser in .NET, and builds a
+pipeline for each case as the package's own conformance tests do. That is
+one source element for each data key the script or the case names, in the
+ordinal order of the keys, then the derived property element with the
+built-in script. Each source element lists every source property of the
+script under its key, so the pipeline check passes, and writes only the
+values the case gives, so a case that leaves one out has it absent. A plain
+value is written as its own type, `{ String: ... }` as text,
+`{ NoValue: ... }` as a property with that no value message, and a list of
+`Value` and `Weight` pairs as weighted values.
+
+The `derived` field of a line holds `script`, `sourceProperties` (the
+script's source properties in the order it names them), `processError`,
+then `type` and `value` when the output has a value, or `noValue` with its
+message when it has none, and `missing`, the source properties that
+message names in the script's order. A pipeline that could not be built
+gives `error` in place of everything after `sourceProperties`. The
+comparer compares `derived` key by key and list item by item, so a path
+such as `derived.value` or `derived.missing[0]` names the field that
+differs.
+
+Two steps of the lite job check that this comparison means something.
+Each side must give every case the value the case file expects, or no
+value with the missing properties it expects, and the number of cases is
+counted in the case files themselves. Then a Rust line with a changed
+value, and one naming no missing property where .NET names one, must
+each fail the comparison.
+
 ## The C code
 
 Both sides build the same C code. The crates build their native code from
@@ -419,12 +467,16 @@ dotnet out/dotnet/Parity.dll fodid $SIGNED --out out/fodid-dotnet.jsonl
 CONFIG="--cases corpus/configuration.json --dd ../cxx/data/device-detection/51Degrees-LiteV4.1.hash --ipi ../cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi"
 dotnet out/dotnet/Parity.dll configuration $CONFIG --out out/configuration-dotnet.jsonl
 target/debug/parity-rust configuration $CONFIG --out out/configuration-rust.jsonl
+DERIVED="--cases ../derived-properties/vendor/tests"
+target/debug/parity-rust derived-cases $DERIVED --out out/derived-cases.json
+target/debug/parity-rust derived $DERIVED --out out/derived-rust.jsonl
+dotnet out/dotnet/Parity.dll derived $DERIVED --out out/derived-dotnet.jsonl
 target/debug/parity-compare --corpus corpus/evidence.json $SIGNED \
-  --corpus corpus/configuration.json \
+  --corpus corpus/configuration.json --corpus out/derived-cases.json \
   --dotnet out/dotnet.jsonl --dotnet out/fodid-dotnet.jsonl \
-  --dotnet out/configuration-dotnet.jsonl \
+  --dotnet out/configuration-dotnet.jsonl --dotnet out/derived-dotnet.jsonl \
   --rust out/rust.jsonl --rust out/fodid-rust.jsonl \
-  --rust out/configuration-rust.jsonl \
+  --rust out/configuration-rust.jsonl --rust out/derived-rust.jsonl \
   --allowed allowed-differences.json --data lite --strict --report out/report.md
 ```
 
@@ -451,3 +503,8 @@ A configuration case goes in `corpus/configuration.json` in the same way.
 One that builds changes the cases the workflow step "Check that a changed
 configuration answer fails" expects to build, so change that list in the
 same pull request.
+
+A derived property case is added to the case file in derived-properties,
+and reaches this comparison when the crate's `vendor` folder is next copied
+from that repository. A new case file needs its script built into both
+the crate and the .NET package.

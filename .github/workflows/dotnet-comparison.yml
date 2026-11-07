@@ -235,6 +235,14 @@ jobs:
             --out out/configuration-dotnet.jsonl
           target/debug/parity-rust configuration "${config[@]}" \
             --out out/configuration-rust.jsonl
+          # Each side runs every case of the case files derived-properties
+          # ships through the derived property element with the built-in
+          # script, and the Rust side writes the cases as a corpus.
+          derived=(--cases ../derived-properties/vendor/tests)
+          target/debug/parity-rust derived-cases "${derived[@]}" \
+            --out out/derived-cases.json
+          target/debug/parity-rust derived "${derived[@]}" --out out/derived-rust.jsonl
+          dotnet out/dotnet/Parity.dll derived "${derived[@]}" --out out/derived-dotnet.jsonl
 
       - name: Compare
         if: env.RUN == 'true'
@@ -243,11 +251,11 @@ jobs:
           set +e
           target/debug/parity-compare --corpus corpus/evidence.json \
             --corpus out/fodid-rust.json --corpus out/fodid-dotnet.json \
-            --corpus corpus/configuration.json \
+            --corpus corpus/configuration.json --corpus out/derived-cases.json \
             --dotnet out/dotnet.jsonl --dotnet out/fodid-dotnet.jsonl \
-            --dotnet out/configuration-dotnet.jsonl \
+            --dotnet out/configuration-dotnet.jsonl --dotnet out/derived-dotnet.jsonl \
             --rust out/rust.jsonl --rust out/fodid-rust.jsonl \
-            --rust out/configuration-rust.jsonl \
+            --rust out/configuration-rust.jsonl --rust out/derived-rust.jsonl \
             --allowed allowed-differences.json --data ${{ matrix.data }} \
             --report out/report.md --strict > /dev/null
           status=$?
@@ -656,6 +664,62 @@ jobs:
           grep -q '`dotnet-probabilistic`.* at `fodid\.matchKey`: ' out/report-fodid-changed.md
           grep -q '`rust-metadata`.* at `metadata\.properties\[0\]\.description`: ' \
             out/report-fodid-changed.md
+
+      # Every case of each shipped case file must give the answer the file
+      # expects on both sides, or the two could agree by both failing. The
+      # number of cases is counted in the case files themselves, not taken
+      # from the corpus the Rust side wrote.
+      - name: Check every derived property case gives its expected answer
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          want=$(cat ../derived-properties/vendor/tests/*.cases.yaml | grep -c '^ *- Name:')
+          got=$(jq length out/derived-cases.json)
+          if [ "$got" -ne "$want" ]; then
+            echo "::error::The corpus holds $got derived property cases, but the case files hold $want"
+            exit 1
+          fi
+          for side in dotnet rust; do
+            wrong=$(jq -rn --slurpfile cases out/derived-cases.json '
+              (reduce inputs as $line ({}; .[$line.id] = $line.derived)) as $ran
+              | $cases[0][] | . as $case | $ran[$case.id] as $got
+              | select($got == null
+                  or (if $case.expect | has("value")
+                    then $got.value != $case.expect.value
+                    else $got.value != null
+                      or ($got.missing | map(ascii_downcase) | sort)
+                        != ($case.expect.missing | map(ascii_downcase) | sort)
+                    end))
+              | .id' "out/derived-$side.jsonl" | paste -sd ',')
+            echo "$side ran $(wc -l < "out/derived-$side.jsonl") of the $want derived property cases"
+            if [ -n "$wrong" ]; then
+              echo "::error::$side gave these derived property cases an answer their file does not expect: $wrong"
+              exit 1
+            fi
+          done
+
+      # The derived property lines are compared field by field, so a Rust
+      # line with a changed value, and one naming no missing property where
+      # .NET names one, must fail.
+      - name: Check that a changed derived property answer fails
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          valued=$(jq -r 'select(.derived.value != null) | .id' out/derived-rust.jsonl | head -1)
+          missing=$(jq -r 'select((.derived.missing | length) > 0) | .id' out/derived-rust.jsonl | head -1)
+          jq -c --arg valued "$valued" --arg missing "$missing" '
+            if .id == $valued then .derived.value = "Changed"
+            elif .id == $missing then .derived.missing = []
+            else . end' out/derived-rust.jsonl > out/derived-rust-changed.jsonl
+          if target/debug/parity-compare --corpus out/derived-cases.json \
+            --dotnet out/derived-dotnet.jsonl --rust out/derived-rust-changed.jsonl \
+            --allowed allowed-differences.json --data lite \
+            --report out/report-derived-changed.md > /dev/null; then
+            echo "::error::The comparison passed with a changed derived property answer"
+            exit 1
+          fi
+          grep -q "\`$valued\`.* at \`derived\.value\`: " out/report-derived-changed.md
+          grep -q "\`$missing\`.* at \`derived\.missing\[0\]\`: " out/report-derived-changed.md
 
       - name: Upload the answers and the report
         if: always() && env.RUN == 'true'

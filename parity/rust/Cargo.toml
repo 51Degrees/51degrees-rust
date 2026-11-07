@@ -34,5 +34,9 @@ fiftyone-javascript-builder = { path = "../../javascript-builder", default-featu
 # The 51Did cases sign their own payloads, so the reader's creator is on.
 fodid = { path = "../../fodid", features = ["creator"] }
 fiftyone-fodid-core = { path = "../../fodid-core" }
+# The derived property cases run the built-in scripts on their shared case
+# files, read with the YAML library the crate reads scripts with.
+fiftyone-derived-properties = { path = "../../derived-properties" }
+serde_norway = "0.9"
 # Writes the signed 51Dids in each base64 alphabet. The version fodid uses.
 base64 = "0.22"

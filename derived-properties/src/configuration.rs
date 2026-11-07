@@ -40,17 +40,20 @@
 //!
 //! The pipeline holds the element made, so it can be read back. Every fault
 //! found reading the scripts is reported in one message, after a line
-//! counting them, and a configuration giving no script fails.
+//! counting them, and a configuration giving no script fails. So does a
+//! pipeline in which no element supplies a property a script reads, which
+//! [`DerivedPropertyElement`] checks when the pipeline adds it.
 //!
 //! ```
-//! use fiftyone_derived_properties::{configuration, DerivedPropertyElement};
+//! use fiftyone_derived_properties::configuration;
 //! use fiftyone_pipeline_core::configuration::{BuilderRegistry, PipelineOptions};
-//! use fiftyone_pipeline_core::PipelineBuilder;
+//! use fiftyone_pipeline_core::{Error, PipelineBuilder};
 //!
 //! let mut registry = BuilderRegistry::new();
 //! configuration::add_builders(&mut registry);
-//! // A real configuration names the elements supplying the properties the
-//! // script reads before this one.
+//! // A real configuration also names the elements supplying the properties
+//! // the script reads, such as device detection and IP intelligence, whose
+//! // builders their own crates add to the registry.
 //! let options = PipelineOptions::from_json(
 //!     r#"{
 //!         "PipelineOptions": {
@@ -63,14 +66,15 @@
 //!         }
 //!     }"#,
 //! )?;
-//! let pipeline = PipelineBuilder::new().build_from_configuration(&registry, &options)?;
+//! let built = PipelineBuilder::new().build_from_configuration(&registry, &options);
 //!
-//! let element = pipeline
-//!     .resource::<DerivedPropertyElement>()
-//!     .expect("the derived property element");
-//! let names: Vec<&str> = element.scripts().iter().map(|s| s.name()).collect();
-//! assert_eq!(names, ["HumanConfidence"]);
-//! # Ok::<(), fiftyone_pipeline_core::Error>(())
+//! // With none of them, the pipeline is refused, naming each property no
+//! // element supplies.
+//! let Err(Error::PipelineConfiguration { message }) = built else {
+//!     panic!("the pipeline should be refused");
+//! };
+//! assert!(message.contains("needs the property 'device.IsCrawler'"));
+//! # Ok::<(), Error>(())
 //! ```
 
 use std::sync::Arc;

@@ -32,6 +32,7 @@
     <PackageReference Include="FiftyOne.Pipeline.AgentSignature" Version="$(PipelineVersion)" />
     <PackageReference Include="FiftyOne.Did" Version="$(PipelineVersion)" />
     <PackageReference Include="FiftyOne.Did.Core" Version="$(PipelineVersion)" />
+    <PackageReference Include="FiftyOne.Pipeline.DerivedProperty" Version="$(PipelineVersion)" />
     <!-- The configuration cases read their files with .NET's own
          configuration reader and make the builders through a service
          provider, as .NET's examples do. -->
