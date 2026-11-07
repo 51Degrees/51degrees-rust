@@ -26,6 +26,7 @@
 //! entry. Each test holds [`SERIAL`], because a logger is installed once for
 //! the whole process and the records a test reads must be its own.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use fiftyone_cloud_request_engine::{
@@ -48,6 +49,28 @@ const PRODUCT: &str = r#""countrynamestranslated":{"DataTier":"CloudV4","Propert
     {"Name":"CountryNamesPopulationAllTranslated","Type":"Array"},
     {"Name":"CountryCodesGeographicalAll","Type":"Array"},
     {"Name":"CountryCodesPopulationAll","Type":"Array"}]}"#;
+
+/// The six properties as the engine lists them, with their value types.
+const SIX: [(&str, PropertyValueType); 6] = [
+    (
+        "CountryNamesGeographicalTranslated",
+        PropertyValueType::KeyValueList,
+    ),
+    (
+        "CountryNamesPopulationTranslated",
+        PropertyValueType::KeyValueList,
+    ),
+    (
+        "CountryNamesGeographicalAllTranslated",
+        PropertyValueType::StringList,
+    ),
+    (
+        "CountryNamesPopulationAllTranslated",
+        PropertyValueType::StringList,
+    ),
+    ("CountryCodesGeographicalAll", PropertyValueType::StringList),
+    ("CountryCodesPopulationAll", PropertyValueType::StringList),
+];
 
 const IP_PRODUCT: &str = r#""ip":{"DataTier":"CloudV4","Properties":[
     {"Name":"RegisteredName","Type":"String"}]}"#;
@@ -105,16 +128,21 @@ fn take_logged() -> Vec<String> {
 }
 
 /// A stand-in cloud granting `products` and answering every data request
-/// with `status` and `data`.
+/// with `status` and `data`. While `properties_down` is set the accessible
+/// properties request cannot reach it.
 struct FakeCloud {
     products: String,
     status: u16,
     data: String,
+    properties_down: Arc<AtomicBool>,
 }
 
 impl CloudHttpClient for FakeCloud {
     fn send(&self, request: &CloudHttpRequest) -> Result<CloudHttpResponse, String> {
         let (status, body) = if request.url.contains("accessibleproperties") {
+            if self.properties_down.load(Ordering::Relaxed) {
+                return Err("connection refused".to_owned());
+            }
             (200, format!(r#"{{"Products":{{{}}}}}"#, self.products))
         } else if request.url.contains("evidencekeys") {
             (
@@ -137,6 +165,18 @@ fn fake(products: &[&str], status: u16, data: &str) -> Arc<FakeCloud> {
         products: products.join(","),
         status,
         data: data.to_owned(),
+        properties_down: Arc::default(),
+    })
+}
+
+/// A stand-in cloud granting the six properties, whose accessible
+/// properties request fails while `down` is set.
+fn switched(down: &Arc<AtomicBool>) -> Arc<FakeCloud> {
+    Arc::new(FakeCloud {
+        products: PRODUCT.to_owned(),
+        status: 200,
+        data: r#"{"countrynamestranslated":{}}"#.to_owned(),
+        properties_down: Arc::clone(down),
     })
 }
 
@@ -189,6 +229,23 @@ fn process(pipeline: &Arc<Pipeline>) -> FlowData {
     data
 }
 
+/// Each property the engine lists, with its value type.
+fn listed(engine: &CloudCountriesTranslationEngine) -> Vec<(&str, PropertyValueType)> {
+    engine
+        .properties()
+        .iter()
+        .map(|property| (property.name.as_str(), property.value_type))
+        .collect()
+}
+
+/// Whether every property the engine lists has `tiers` as its data tiers.
+fn all_have_tiers(engine: &CloudCountriesTranslationEngine, tiers: &[&str]) -> bool {
+    engine
+        .aspect_properties()
+        .iter()
+        .all(|property| property.data_tiers_where_present() == tiers)
+}
+
 /// The messages of the errors recorded by the countries engine.
 fn countries_errors(data: &FlowData) -> Vec<String> {
     data.errors()
@@ -215,35 +272,85 @@ fn the_properties_are_those_the_metadata_lists_with_their_forms() {
         .include("header.accept-language"));
     assert!(engine.properties_loaded());
 
-    let properties: Vec<(&str, PropertyValueType)> = engine
-        .properties()
-        .iter()
-        .map(|property| (property.name.as_str(), property.value_type))
-        .collect();
-    assert_eq!(
-        properties,
-        [
-            (
-                "CountryNamesGeographicalTranslated",
-                PropertyValueType::KeyValueList
-            ),
-            (
-                "CountryNamesPopulationTranslated",
-                PropertyValueType::KeyValueList
-            ),
-            (
-                "CountryNamesGeographicalAllTranslated",
-                PropertyValueType::StringList
-            ),
-            (
-                "CountryNamesPopulationAllTranslated",
-                PropertyValueType::StringList
-            ),
-            ("CountryCodesGeographicalAll", PropertyValueType::StringList),
-            ("CountryCodesPopulationAll", PropertyValueType::StringList),
-        ]
-    );
+    assert_eq!(listed(&engine), SIX);
     assert_eq!(engine.aspect_properties().len(), 6);
+    assert_eq!(take_logged(), Vec::<String>::new());
+}
+
+/// Until the request engine's discovery completes, the engine lists the
+/// six properties the on-premise engine gives but does not count them as
+/// loaded, and a missing property gives `CloudRequestFailed`, as the cloud
+/// aspect engine specification requires. No empty list is kept from that
+/// time, so once discovery completes and the pipeline processes, the
+/// cloud's own list is read.
+#[test]
+fn until_discovery_completes_the_properties_are_not_loaded() {
+    let _serial = start();
+    let down = Arc::new(AtomicBool::new(true));
+    let request = request_engine(switched(&down));
+    let engine = countries_engine(&request);
+
+    assert!(!engine.properties_loaded());
+    assert!(!engine.has_loaded_properties());
+    assert!(engine.property_list_request_failed());
+    assert_eq!(
+        engine
+            .missing_property_reason("CountryCodesGeographicalAll")
+            .reason,
+        MissingPropertyReason::CloudRequestFailed
+    );
+    // The on-premise engine's six, which carry no data tier.
+    assert_eq!(listed(&engine), SIX);
+    assert!(all_have_tiers(&engine, &[]));
+
+    down.store(false, Ordering::Relaxed);
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::clone(&request) as Arc<dyn FlowElement>)
+        .add_element(Arc::clone(&engine) as Arc<dyn FlowElement>)
+        .suppress_process_exceptions(true)
+        .build()
+        .unwrap();
+    let data = process(&pipeline);
+    assert_eq!(countries_errors(&data), Vec::<String>::new());
+
+    assert!(engine.properties_loaded());
+    assert!(engine.has_loaded_properties());
+    assert!(!engine.property_list_request_failed());
+    // The cloud's list, which carries the product's data tier.
+    assert_eq!(listed(&engine), SIX);
+    assert!(all_have_tiers(&engine, &["CloudV4"]));
+    assert_eq!(
+        engine.missing_property_reason("NotAProperty").reason,
+        MissingPropertyReason::PropertyNotAccessibleWithResourceKey
+    );
+    assert_eq!(take_logged(), Vec::<String>::new());
+}
+
+/// An engine that has not processed since discovery completed reads the
+/// cloud's list when asked whether its properties are loaded.
+#[test]
+fn an_engine_that_has_not_processed_reads_the_list_when_asked() {
+    let _serial = start();
+    let down = Arc::new(AtomicBool::new(true));
+    let request = request_engine(switched(&down));
+    let engine = countries_engine(&request);
+
+    // Only the request engine processes, so discovery completes without the
+    // countries engine reading the list.
+    down.store(false, Ordering::Relaxed);
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::clone(&request) as Arc<dyn FlowElement>)
+        .build()
+        .unwrap();
+    process(&pipeline);
+    assert!(request.public_properties().is_ok());
+    assert!(!engine.has_loaded_properties());
+    assert!(all_have_tiers(&engine, &[]));
+
+    assert!(engine.properties_loaded());
+    assert!(engine.has_loaded_properties());
+    assert_eq!(listed(&engine), SIX);
+    assert!(all_have_tiers(&engine, &["CloudV4"]));
     assert_eq!(take_logged(), Vec::<String>::new());
 }
 
