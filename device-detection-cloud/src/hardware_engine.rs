@@ -37,7 +37,9 @@ use fiftyone_cloud_request_engine::CloudRequestEngine;
 
 use crate::dto::map_device_object;
 use crate::meta::{cloud_json, fill_metadata, property_list_request_failed, DiscoveredMetadata};
-use crate::multi_device::{MultiDeviceData, HARDWARE_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY};
+use fiftyone_device_detection_shared::{
+    MultiDeviceData, HARDWARE_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY,
+};
 
 /// The engine's name in configuration errors and log records.
 const ENGINE_NAME: &str = "HardwareProfileCloudEngine";

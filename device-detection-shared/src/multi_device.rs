@@ -20,11 +20,12 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! The multi-profile result type produced by the hardware-profile lookup.
+//! The multi-profile result type produced by the hardware-profile lookup,
+//! in the cloud and on premise.
 
 use std::any::Any;
 
-use fiftyone_device_detection_shared::DeviceDataBase;
+use crate::DeviceDataBase;
 use fiftyone_pipeline_core::{ElementData, NoValueError, PropertyValue, TypedKey};
 
 /// The element-data key string the hardware-profile lookup stores its result
@@ -35,7 +36,7 @@ pub const HARDWARE_ELEMENT_DATA_KEY: &str = "hardware";
 ///
 /// ```no_run
 /// # use fiftyone_pipeline_core::FlowData;
-/// # use fiftyone_device_detection_cloud::{DeviceData, HARDWARE_DATA_KEY};
+/// # use fiftyone_device_detection_shared::{DeviceData, HARDWARE_DATA_KEY};
 /// # fn demo(data: &FlowData) {
 /// if let Some(hardware) = data.get(HARDWARE_DATA_KEY) {
 ///     for profile in hardware.profiles() {
@@ -50,10 +51,12 @@ pub const HARDWARE_DATA_KEY: TypedKey<MultiDeviceData> = TypedKey::new(HARDWARE_
 /// matched the supplied parameter (a TAC or a native model name).
 ///
 /// A single TAC or native model name can match several device profiles, so the
-/// cloud returns a list rather than a single device. This type carries a list of
+/// lookup gives a list rather than a single device. This type carries a list of
 /// [`DeviceDataBase`] profiles, each interface-compatible with the result of a
 /// normal single-device detection, so the same typed accessors
-/// ([`DeviceData`](fiftyone_device_detection_shared::DeviceData)) read each one.
+/// ([`DeviceData`](crate::DeviceData)) read each one. The cloud and on-premise
+/// lookups both store this type under [`HARDWARE_DATA_KEY`], so one lookup can
+/// add its profiles to another's.
 ///
 /// Because a multi-profile container has no scalar properties of its own, its
 /// dynamic [`ElementData::get`] reports every name as a no-value and
@@ -72,9 +75,9 @@ impl MultiDeviceData {
         }
     }
 
-    /// The device profiles that matched the lookup, in the order the cloud
-    /// returned them. Empty when nothing matched (or when the resource key does
-    /// not grant the hardware-profile-lookup product).
+    /// The device profiles that matched the lookup, in the order they were
+    /// added. Empty when nothing matched (or, in the cloud, when the resource
+    /// key does not grant the hardware-profile-lookup product).
     pub fn profiles(&self) -> &[DeviceDataBase] {
         &self.profiles
     }
@@ -126,7 +129,7 @@ impl ElementData for MultiDeviceData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fiftyone_device_detection_shared::DeviceData;
+    use crate::DeviceData;
 
     #[test]
     fn key_string_is_hardware() {
