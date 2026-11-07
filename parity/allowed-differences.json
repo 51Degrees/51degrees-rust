@@ -322,7 +322,7 @@
   {
     "path": "configuration.concurrent",
     "kind": "value",
-    "cases": ["configuration-no-group", "configuration-setting-in-both-sections"],
+    "cases": ["configuration-no-group", "configuration-setting-in-both-sections", "configuration-engines-only", "configuration-text-forms"],
     "dotnet": {"value": [false]},
     "rust": {"value": [true]},
     "reason": "The crates' usage sharing element says it is concurrent, because it sends from a thread of its own, so a pipeline holding it is concurrent with no parallel group. .NET's ShareUsageElement says it is not."

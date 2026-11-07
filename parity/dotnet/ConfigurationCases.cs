@@ -116,11 +116,13 @@ namespace FiftyOne.Parity
             writer.NewLine = "\n";
             foreach (var node in JsonNode.Parse(File.ReadAllText(cases)).AsArray())
             {
+                var text = node["text"] is JsonNode written
+                    ? WithFiles(written.GetValue<string>(), files)
+                    : WithFiles(node["configuration"], files).ToJsonString();
                 var line = new JsonObject
                 {
                     ["id"] = node["id"].GetValue<string>(),
-                    ["configuration"] = DescribeCase(
-                        WithFiles(node["configuration"], files), files)
+                    ["configuration"] = DescribeCase(text, files)
                 };
                 writer.WriteLine(line.ToJsonString());
             }
@@ -151,13 +153,27 @@ namespace FiftyOne.Parity
             }
         }
 
+        // A configuration file given as text, with each placeholder written
+        // as a JSON string replaced by its data file's path.
+        private static string WithFiles(
+            string text, IReadOnlyDictionary<string, string> files)
+        {
+            foreach (var (placeholder, path) in files)
+            {
+                text = text.Replace(
+                    JsonValue.Create(placeholder).ToJsonString(),
+                    JsonValue.Create(path).ToJsonString());
+            }
+            return text;
+        }
+
         private static JsonObject DescribeCase(
-            JsonNode configuration, IReadOnlyDictionary<string, string> files)
+            string configuration, IReadOnlyDictionary<string, string> files)
         {
             var options = new PipelineOptions();
             new ConfigurationBuilder()
                 .AddJsonStream(new MemoryStream(Encoding.UTF8.GetBytes(
-                    configuration.ToJsonString())))
+                    configuration)))
                 .Build()
                 .Bind("PipelineOptions", options);
             ILoggerFactory loggerFactory = NullLoggerFactory.Instance;

@@ -67,7 +67,7 @@
   },
   {
     "id": "configuration-no-group",
-    "about": "The same elements with the two engines on their own, so they are listed in the order given and the pipeline is not concurrent.",
+    "about": "The same elements with the two engines on their own, so they are listed in the order given. No element of .NET's pipeline is concurrent, where the crates' usage sharing element is, as the configuration.concurrent allowed difference records.",
     "configuration": {
       "PipelineOptions": {
         "Elements": [
@@ -591,6 +591,127 @@
         "BuildParameters": {
           "setsuppressprocessexceptions": "false",
           "ShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-engines-only",
+    "about": "Only the two engines, on their own. .NET's FiftyOnePipelineBuilder adds the Sequence element first and usage sharing last, with usage sharing's default settings, so the elements it adds and those settings are compared.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "IpiOnPremiseEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{ipi}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "configuration-value-forms",
+    "about": "The first case with whole numbers, true, false and null in place of text, and with section, builder and parameter names in other cases. .NET's reader gives a number as the text written, true and false as True and False and null as empty text, and finds every name ignoring case.",
+    "configuration": {
+      "pipelineOptions": {
+        "elements": [
+          {
+            "builderName": "SEQUENCEELEMENTBUILDER"
+          },
+          {
+            "subElements": [
+              {
+                "builderName": "devicedetectionhashengine",
+                "buildParameters": {
+                  "dataFile": "{dd}",
+                  "createTempDataCopy": false,
+                  "AUTOUPDATE": false,
+                  "dataFileSystemWatcher": false,
+                  "dataUpdateOnStartup": false,
+                  "updatePollingInterval": 2700,
+                  "updateRandomisationMax": 120,
+                  "dataUpdateUrl": "https://parity.test/data",
+                  "dataUpdateLicenseKey": "PARITYKEY",
+                  "dataUpdateVerifyMd5": true,
+                  "dataUpdateDecompress": true,
+                  "verifyIfModifiedSince": true
+                }
+              },
+              {
+                "BUILDERNAME": "IpiOnPremiseEngineBuilder",
+                "BUILDPARAMETERS": {
+                  "DATAFILE": "{ipi}",
+                  "createtempdatacopy": false,
+                  "autoupdate": false,
+                  "datafilesystemwatcher": false,
+                  "dataupdateonstartup": false,
+                  "dataupdatelicensekey": null
+                }
+              }
+            ]
+          },
+          {
+            "builderName": "jsonbuilderelement"
+          },
+          {
+            "builderName": "shareusagebuilder",
+            "buildParameters": {
+              "sharePercentage": "0.25",
+              "minimumEntriesPerMessage": 20,
+              "maximumQueueSize": 500,
+              "addTimeout": 10,
+              "takeTimeout": 200,
+              "shareUsageUrl": "https://parity.test/usage",
+              "blockedHttpHeaders": null,
+              "includedQueryStringParameters": "utm_source",
+              "ignoreFlowDataEvidenceFilter": null,
+              "shareAllEvidence": false,
+              "repeatEvidenceIntervalMinutes": 5
+            }
+          }
+        ],
+        "buildParameters": {
+          "suppressProcessExceptions": true
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-text-forms",
+    "about": "A file given as text, with comments, trailing commas, a parameter name holding an escape and a fraction with an exponent, which .NET's reader allows, building the Sequence element, the Hash engine, the JSON builder and usage sharing.",
+    "text": "// A configuration file as written by hand.\n{\n  /* The pipeline. */\n  \"PipelineOptions\": {\n    \"Elements\": [\n      { \"BuilderName\": \"SequenceElementBuilder\", }, // A trailing comma.\n      {\n        \"BuilderName\": \"DeviceDetectionHashEngineBuilder\",\n        \"BuildParameters\": {\n          \"Data\\u0046ile\": \"{dd}\",\n          \"CreateTempDataCopy\": \"false\",\n          \"AutoUpdate\": \"false\",\n          \"DataFileSystemWatcher\": \"false\",\n          \"DataUpdateOnStartup\": \"false\",\n        },\n      },\n      { \"BuilderName\": \"JsonBuilderElementBuilder\" },\n      {\n        \"BuilderName\": \"ShareUsageBuilder\",\n        \"BuildParameters\": {\n          \"SharePercentage\": 2.5e-05, // A fraction with an exponent.\n          \"MinimumEntriesPerMessage\": 20,\n        },\n      },\n    ],\n    \"BuildParameters\": {\n      /* Process errors are not suppressed. */\n      \"SuppressProcessExceptions\": \"false\",\n    },\n  },\n}\n"
+  },
+  {
+    "id": "configuration-pipeline-setting-does-not-parse",
+    "about": "A suppress setting for the pipeline that is not true or false. The pipeline's own settings are read after every element is built, so the error names the pipeline builder.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          }
+        ],
+        "BuildParameters": {
+          "SuppressProcessExceptions": "sometimes"
         }
       }
     }

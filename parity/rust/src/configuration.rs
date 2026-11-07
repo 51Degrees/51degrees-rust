@@ -70,11 +70,13 @@ const USAGE_FILTER_KEYS: &[&str] = &[
 const DD_PLACEHOLDER: &str = "{dd}";
 const IPI_PLACEHOLDER: &str = "{ipi}";
 
-/// One configuration case.
+/// One configuration case, given as JSON or as the text of a file.
 #[derive(Deserialize)]
 struct Case {
     id: String,
+    #[serde(default)]
     configuration: Value,
+    text: Option<String>,
 }
 
 /// Writes one line for each case in `--cases`.
@@ -111,9 +113,13 @@ pub fn run(args: &[String]) -> Result<()> {
     let mut writer =
         BufWriter::new(File::create(&out).with_context(|| format!("creating {}", out.display()))?);
     for case in cases {
+        let text = match &case.text {
+            Some(text) => text_with_files(text, &files)?,
+            None => serde_json::to_string(&with_files(&case.configuration, &files))?,
+        };
         let line = json!({
             "id": case.id,
-            "configuration": describe_case(&registry, &case.configuration, &files)?,
+            "configuration": describe_case(&registry, &text, &files)?,
         });
         serde_json::to_writer(&mut writer, &line)?;
         writer.write_all(b"\n")?;
@@ -142,15 +148,14 @@ fn registry() -> BuilderRegistry {
     registry
 }
 
-/// What building `configuration` gave: the pipeline's settings and its
-/// elements, or the error.
+/// What building the configuration file `text` gave: the pipeline's
+/// settings and its elements, or the error.
 fn describe_case(
     registry: &BuilderRegistry,
-    configuration: &Value,
+    text: &str,
     files: &[(&str, String)],
 ) -> Result<Value> {
-    let text = serde_json::to_string(&with_files(configuration, files))?;
-    let built = PipelineOptions::from_json(&text)
+    let built = PipelineOptions::from_json(text)
         .and_then(|options| PipelineBuilder::new().build_from_configuration(registry, &options));
     let pipeline = match built {
         Ok(pipeline) => pipeline,
@@ -168,6 +173,19 @@ fn describe_case(
         "concurrent": pipeline.is_concurrent(),
         "elements": elements,
     }))
+}
+
+/// A configuration file given as text, with each placeholder written as a
+/// JSON string replaced by its data file's path.
+fn text_with_files(text: &str, files: &[(&str, String)]) -> Result<String> {
+    let mut text = text.to_owned();
+    for (placeholder, path) in files {
+        text = text.replace(
+            &serde_json::to_string(placeholder)?,
+            &serde_json::to_string(path)?,
+        );
+    }
+    Ok(text)
 }
 
 /// `configuration` with each string that is a placeholder replaced by its

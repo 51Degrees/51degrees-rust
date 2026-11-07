@@ -267,19 +267,37 @@ with a changed description, must each fail the comparison.
 The configuration cases check that a configuration file written for the
 .NET packages builds the same pipeline from the crates
 ([#220](https://github.com/51Degrees/51degrees-rust/issues/220)). A case
-has an `id`, an `about` sentence and a `configuration`, being a file in the
-shape .NET's `PipelineOptions` reads, with every parameter given as text.
-The text `{dd}` stands for the Device Detection data file and `{ipi}` for
-the IP Intelligence one, and each program puts the full path of the file it
-was given in its place.
+has an `id`, an `about` sentence and the file, in the shape .NET's
+`PipelineOptions` reads, given either as JSON in `configuration` or as the
+text of the file in `text`. Each program gives its reader the file as
+JSON text. The Rust program writes a `configuration` back through
+`serde_json`, which keeps the order of names and writes text, whole
+numbers, `true`, `false` and `null` as given, but may write a fraction in
+another form, so a fraction goes in a case given as `text`, which both
+programs read unchanged. A `text` also carries what JSON cannot, such as
+comments and trailing commas. The string `"{dd}"` stands for the Device
+Detection data file and `"{ipi}"` for the IP Intelligence one, and each
+program puts the full path of the file it was given in its place, written
+as a JSON string.
 
 The first case holds the Sequence element, the Hash and IP Intelligence
 engines in a parallel group, the JSON builder and usage sharing, with the
-pipeline setting `SuppressProcessExceptions`. The second is the same with
-the two engines on their own. Each of the others changes the first in one
-place, to a builder name that matches no builder, a parameter no setting
-takes or a value that does not parse, once at the top level and once
-inside the group.
+pipeline setting `SuppressProcessExceptions`, every parameter given as
+text. The second is the same with the two engines on their own. Six
+change the first in one place, to a builder name that matches no
+builder, a parameter no setting takes or a value that does not parse,
+once at the top level and once inside the group. Three give a pipeline
+setting under both `PipelineBuilderParameters` and `BuildParameters`, two
+of them with `ShareUsage` false, so no usage sharing element is added.
+`configuration-engines-only` names only the two engines, so it compares
+the Sequence element and usage sharing that `FiftyOnePipelineBuilder`
+adds, and usage sharing's default settings. `configuration-value-forms`
+is the first case with whole numbers, `true`, `false` and `null` in place
+of text and with names in other cases, and `configuration-text-forms` a
+file given as text with comments, trailing commas, a name holding an
+escape and a fraction with an exponent.
+`configuration-pipeline-setting-does-not-parse` gives the pipeline's
+suppress setting a value that is not true or false.
 
 The .NET program reads each file with .NET's own configuration reader and
 builds it with `FiftyOnePipelineBuilder`, making the builders through a
@@ -308,8 +326,9 @@ parameter that the crates do not read back, and
 
 The comparer compares `configuration` key by key and list item by item,
 after making the parts of an error message that the languages write
-differently by design the same in both. Line endings become LF. A
-builder's type name, the .NET full name or the Rust name, becomes `{type}`.
+differently by design the same in both. Line endings become LF. The type
+name of an element's builder or of the pipeline's builder, the .NET full
+name or the Rust name, becomes `{type}`.
 In the list of a builder's settings, the parameter type after each name is
 left out, because .NET 4.5.129 gives `RuntimeParameterInfo` for every
 setting, then a name listed straight after itself is listed once and
@@ -320,10 +339,16 @@ settings. Generic types are left out of the available builders, because
 name. Everything else in the message is compared exactly.
 
 One step of the lite job checks that this comparison means something. The
-first two cases must build on both sides and the others fail, so the two
-cannot agree by both failing. Then a Rust line with a usage sharing
-setting read back differently, and one with two elements in the other
-order, must each fail the comparison.
+cases that build must build on both sides and the others fail, so the two
+cannot agree by both failing. Then each of seven changed Rust answers,
+compared on its own, must fail the comparison at its path: a usage
+sharing setting read back differently, two elements in the other order,
+the other answer for the suppress setting, another default usage sharing
+setting, a setting given as a whole number read back differently, the
+fraction read back differently, and another error for the pipeline
+setting that does not parse. The report lists at most three differences
+for each path and kind, so a change compared with the others could be
+left out of it.
 
 ## The C code
 
