@@ -415,7 +415,9 @@ impl DeviceDetectionOnPremisePipelineBuilder {
     /// through the built pipeline at once, as
     /// [`DeviceDetectionOnPremiseEngineBuilder::concurrency`] describes. Unset,
     /// it is the number of processors, held at the most the profile's caches
-    /// take. It has no effect on the in-memory profiles.
+    /// take. Every profile but `InMemory` keeps that many handles to the data
+    /// file open, `HighPerformance` included, although detection there never
+    /// reads through them.
     pub fn concurrency(mut self, concurrency: u16) -> Self {
         self.concurrency = Some(concurrency);
         self

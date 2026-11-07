@@ -703,6 +703,17 @@ extern "C" {
     /// # Safety
     /// `manager` must be an initialized Hash manager.
     pub fn fiftyoneDegreesShimHashGetFileHandleCount(manager: *mut ResourceManager) -> u16;
+
+    /// Returns the number of handles to the data file that the data set
+    /// managed by `manager` opened when it loaded, which stay open until the
+    /// data set is freed. Every configuration that does not load the whole
+    /// file into memory opens one for each concurrent operation it expects,
+    /// even when all of its collections are then held in memory. See
+    /// `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager.
+    pub fn fiftyoneDegreesShimHashGetFilePoolSize(manager: *mut ResourceManager) -> u16;
 }
 
 // ---------------------------------------------------------------------------

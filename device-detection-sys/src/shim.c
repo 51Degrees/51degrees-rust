@@ -406,6 +406,25 @@ uint16_t fiftyoneDegreesShimHashGetFileHandleCount(
 }
 
 /*
+ * Returns the number of handles to the data file that the data set managed
+ * by `manager` opened when it loaded, which stay open until the data set is
+ * freed. Every configuration that does not load the whole file into memory
+ * opens one for each concurrent operation it expects, even when all of its
+ * collections are then held in memory and no read uses the handles.
+ */
+uint16_t fiftyoneDegreesShimHashGetFilePoolSize(
+    fiftyoneDegreesResourceManager *manager) {
+    fiftyoneDegreesDataSetHash *dataSet =
+        fiftyoneDegreesDataSetHashGet(manager);
+    if (dataSet == NULL) {
+        return 0;
+    }
+    const uint16_t count = dataSet->b.b.filePool.pool.count;
+    fiftyoneDegreesDataSetHashRelease(dataSet);
+    return count;
+}
+
+/*
  * The metadata readers below follow the C++ builders in 51degrees-cxx
  * (src/dd/hash/PropertyMetaDataBuilderHash.cpp,
  * ComponentMetaDataBuilderHash.cpp and ValueMetaDataBuilderHash.cpp), so the

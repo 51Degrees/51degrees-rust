@@ -134,9 +134,11 @@ fn config_for(profile: PerformanceProfile) -> *mut sys::ConfigHash {
 
 /// Set the expected concurrency on every collection in a Hash configuration.
 ///
-/// For the `LowMemory` and `Balanced` profiles the collections are read from
-/// file through a fixed-size handle pool, so the pool must be sized for the
-/// number of threads that will use the data set concurrently. This mirrors the
+/// For the `LowMemory`, `Balanced` and `Default` profiles the collections are
+/// read from file through a fixed-size handle pool, so the pool must be sized
+/// for the number of threads that will use the data set concurrently. Every
+/// profile but `InMemory` opens the pool, `HighPerformance` included (see
+/// [`Manager::file_pool_size`]). This mirrors the
 /// `setConcurrency` helper in the other 51Degrees ports, which applies the value
 /// to every collection's config. A value of zero is treated by the native
 /// library as a single concurrent operation.
@@ -164,8 +166,8 @@ fn set_pool_concurrency(config: &mut sys::ConfigHash, concurrency: u16) {
 #[non_exhaustive]
 pub struct HashOptions {
     /// The expected number of threads processing through the data set at
-    /// once, which sizes the file handle pool and the caches of the profiles
-    /// that read from the file. See [`Manager::open_with_options`].
+    /// once, which sizes the caches of the profiles that read from the file
+    /// and the file handle pool. See [`Manager::open_with_options`].
     pub concurrency: Option<u16>,
     /// The most difference in hash value a match may have. The profiles'
     /// own value is 0.
@@ -245,7 +247,9 @@ fn most_concurrency(profile: PerformanceProfile) -> Option<u16> {
 /// named, which the specification gives as the number of processors. It is
 /// held at the most the profile's caches take, so the profile still loads on
 /// a machine with more processors (22 under `Balanced` and `Default`, whose
-/// values cache holds 500 entries).
+/// values cache holds 500 entries). `LowMemory` and `HighPerformance` have no
+/// limit, so their file handle pool has one handle for each processor (see
+/// [`Manager::file_pool_size`]).
 pub fn default_concurrency(profile: PerformanceProfile) -> u16 {
     let processors = std::thread::available_parallelism()
         .map_or(1, |count| u16::try_from(count.get()).unwrap_or(u16::MAX));
@@ -319,11 +323,14 @@ impl Manager {
     /// concurrency.
     ///
     /// `concurrency` sizes the file-handle pool the file-backed collections use
-    /// under the `LowMemory` and `Balanced` profiles, which is how many calls
-    /// can read the data file at once. A call beyond that waits for a handle,
-    /// so it should be the number of threads that will process through the
-    /// data set at once. [`None`] keeps the profile's default. It has no effect
-    /// on the in-memory profiles, where every collection is already resident.
+    /// under the `LowMemory`, `Balanced` and `Default` profiles, which is how
+    /// many calls can read the data file at once. A call beyond that waits for
+    /// a handle, so it should be the number of threads that will process
+    /// through the data set at once. [`None`] keeps the profile's default.
+    /// `HighPerformance` holds every collection in memory, so detection never
+    /// waits on the pool, but it still opens one handle for each concurrent
+    /// operation and keeps them open until the data set is freed (see
+    /// [`Manager::file_pool_size`]). `InMemory` opens no pool.
     pub fn open_with_options(
         path: impl AsRef<Path>,
         profile: PerformanceProfile,
@@ -425,6 +432,17 @@ impl Manager {
     /// file handle is in use. [`None`] when the data set is held in memory.
     fn file_read(&self) -> Option<FileReadPermit<'_>> {
         self.file_reads.as_ref().map(FileReads::permit)
+    }
+
+    /// The number of handles to the data file that the data set opened when
+    /// it loaded, which stay open until it is freed. Every profile but
+    /// `InMemory` opens one for each concurrent operation it expects, the
+    /// largest concurrency of its collections, `HighPerformance` included,
+    /// although that profile holds every collection in memory and never
+    /// reads through them. `InMemory` opens none.
+    pub fn file_pool_size(&self) -> u16 {
+        // Safety: the manager is initialized for the lifetime of `self`.
+        unsafe { sys::fiftyoneDegreesShimHashGetFilePoolSize(self.as_ptr()) }
     }
 
     /// The number of required properties in the loaded data set, which is the
@@ -1664,6 +1682,35 @@ mod tests {
             results.device_id().expect("the device id reads"),
             Some(device_id)
         );
+    }
+
+    /// Every profile but `InMemory` opens a handle to the data file for each
+    /// concurrent operation it expects and keeps it open, `HighPerformance`
+    /// included, although its reads never use the handles.
+    #[test]
+    fn the_file_pool_has_a_handle_for_each_expected_operation() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the file pool");
+            return;
+        };
+        for (profile, concurrency, handles) in [
+            (PerformanceProfile::LowMemory, Some(3), 3),
+            (PerformanceProfile::Balanced, None, 10),
+            (PerformanceProfile::HighPerformance, Some(3), 3),
+            (PerformanceProfile::HighPerformance, Some(40), 40),
+            (PerformanceProfile::HighPerformance, None, 10),
+            (PerformanceProfile::InMemory, Some(3), 0),
+            (PerformanceProfile::InMemory, None, 0),
+        ] {
+            let manager = Manager::open_with_options(&path, profile, None, concurrency)
+                .expect("data file loads");
+            assert_eq!(
+                manager.file_pool_size(),
+                handles,
+                "{} {concurrency:?}",
+                profile.as_str()
+            );
+        }
     }
 
     /// A data set that reads from its file has a file handle for each

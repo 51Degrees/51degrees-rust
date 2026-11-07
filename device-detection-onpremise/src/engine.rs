@@ -1367,4 +1367,49 @@ mod tests {
         assert!(!filter.include("query.51d"));
         assert_eq!(filter.order("cookie.session"), None);
     }
+
+    /// The Hash data file `51DEGREES_DD_PATH` names, or the Lite file in the
+    /// `cxx` submodule.
+    fn data_file() -> Option<PathBuf> {
+        if let Ok(path) = std::env::var("51DEGREES_DD_PATH") {
+            let path = PathBuf::from(path);
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+        let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()?
+            .to_path_buf();
+        [workspace.clone(), workspace.parent()?.to_path_buf()]
+            .into_iter()
+            .map(|root| root.join("cxx/data/device-detection/51Degrees-LiteV4.1.hash"))
+            .find(|path| path.is_file())
+    }
+
+    /// With no concurrency named, the data set opens with the default, not
+    /// only the engine's record of it, under the two profiles with no limit,
+    /// and a refresh opens the new data set with it too. On a machine with 10
+    /// processors the default equals the C library's own, so the check there
+    /// cannot tell the two apart.
+    #[test]
+    fn the_default_concurrency_reaches_the_data_set() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the default concurrency");
+            return;
+        };
+        for profile in [
+            PerformanceProfile::LowMemory,
+            PerformanceProfile::HighPerformance,
+        ] {
+            let engine = crate::DeviceDetectionOnPremiseEngineBuilder::new(&path)
+                .performance_profile(profile)
+                .build()
+                .expect("the data file loads");
+            let expected = fiftyone_native::dd::default_concurrency(profile);
+            let pool = || engine.loaded.load().manager.file_pool_size();
+            assert_eq!(pool(), expected, "{}", profile.as_str());
+            engine.refresh(None).expect("the data file loads again");
+            assert_eq!(pool(), expected, "{} refreshed", profile.as_str());
+        }
+    }
 }

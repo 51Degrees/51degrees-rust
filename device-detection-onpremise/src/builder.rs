@@ -118,13 +118,20 @@ impl DeviceDetectionOnPremiseEngineBuilder {
     /// collections use under the [`PerformanceProfile::LowMemory`],
     /// [`PerformanceProfile::Balanced`] and [`PerformanceProfile::Default`]
     /// profiles. If more threads than this share the engine, they wait for
-    /// each other on the pool. It has no effect on the in-memory profiles,
-    /// where the data set is fully resident.
+    /// each other on the pool. [`PerformanceProfile::HighPerformance`] holds
+    /// the data set in memory, so detection never waits on the pool, but it
+    /// still opens one handle to the data file for each concurrent operation
+    /// and keeps them open until the data set is freed, so a refresh holds
+    /// that many for the old data set and as many again for the new one.
+    /// [`PerformanceProfile::InMemory`] opens none.
     ///
     /// Unset, it is the number of processors, held at the most the profile's
     /// caches take (22 under `Balanced` and `Default`), as
-    /// [`default_concurrency`] gives. A larger value named here is passed on,
-    /// and the build fails if the profile's caches cannot take it.
+    /// [`default_concurrency`] gives, where the C library's own is 10. So
+    /// under `LowMemory` and `HighPerformance` the engine keeps a handle open
+    /// for each processor, 64 on a machine with 64 processors. A larger value
+    /// named here is passed on, and the build fails if the profile's caches
+    /// cannot take it.
     pub fn concurrency(mut self, concurrency: u16) -> Self {
         self.options.concurrency = Some(concurrency);
         self
