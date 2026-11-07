@@ -272,7 +272,7 @@ Describe 'The release plan of the crates' {
         Add-Change $script:Repo @('derived-properties/src/lib.rs')
         $plan = Get-Plan $script:Repo
         $plan.Name | Should -Be @('fiftyone-derived-properties')
-        $plan[0].Reason | Should -Be 'changed since 4.5.18'
+        $plan[0].Reason | Should -BeLike 'changed since 4.5.18*'
     }
 
     It 'plans a crate others depend on with every crate depending on it, in dependency order' {
@@ -299,8 +299,11 @@ Describe 'The release plan of the crates' {
             'fiftyone-device-detection-onpremise',
             'fiftyone-ip-intelligence-onpremise', 'fiftyone-ip-intelligence',
             'fiftyone-device-detection')
-        ($plan | Where-Object Name -like '*-sys').Reason |
-            Should -Be (@('changed since 4.5.18') * 3)
+        $sys = @($plan | Where-Object Name -like '*-sys')
+        $sys.Count | Should -Be 3
+        foreach ($reason in $sys.Reason) {
+            $reason | Should -BeLike 'changed since 4.5.18*'
+        }
     }
 
     It 'plans fodid and the crates built on it when the owid-rust submodule moves' {
@@ -529,5 +532,82 @@ Describe 'ci/tag-crate-releases.ps1 -DryRun' {
         }
         $output | Should -BeLike '*release fiftyone-common-sys/4.5.19*Changes since 4.5.18*Fix the common C library*'
         $output | Should -BeLike '*release fiftyone-device-detection-sys/4.5.19*Requires these crates*fiftyone-common-sys 4.5.19*'
+    }
+}
+
+Describe 'ci/release-plan-filter.ps1' {
+    BeforeAll {
+        $script:Filter = Join-Path $script:Root 'ci/release-plan-filter.ps1'
+        $script:Crate = [pscustomobject]@{ Name = 'fodid-client'; Path = 'fodid-client' }
+        $script:Manifest = @(
+            '[package]'
+            'name = "fodid-client"'
+            'version = "4.5.2"'
+            'description = "A client"'
+            'homepage = "https://51degrees.com/a"'
+            'keywords = ["a", "b"]'
+            'categories = ['
+            '    "web-programming",'
+            ']'
+            'license.workspace = true'
+            ''
+            '[dependencies]'
+            'fodid = { path = "../fodid", version = "=4.5.5" }'
+        )
+
+        # The files the filter keeps when the crate's manifest changes from
+        # $Before to $After, beside a source file that always counts.
+        function Get-Kept([string[]]$Before, [string[]]$After) {
+            $repo = New-TempFolder
+            git init --quiet $repo
+            $path = Join-Path $repo 'fodid-client/Cargo.toml'
+            $null = New-Item -ItemType Directory -Force (Split-Path $path)
+            if ($null -ne $Before) {
+                Set-Content -Path $path -Value $Before
+            }
+            Add-Commit $repo 'Start'
+            git -C $repo tag 'fodid-client/4.5.18'
+            Set-Content -Path $path -Value $After
+            Add-Commit $repo 'Change'
+            return @(& $script:Filter -RepoPath $repo -Package $script:Crate `
+                -From 'fodid-client/4.5.18' `
+                -Files @('fodid-client/Cargo.toml', 'fodid-client/src/lib.rs'))
+        }
+
+        function Set-Line([string[]]$Lines, [string]$Match, [string]$New) {
+            return @($Lines | ForEach-Object { if ($_ -like $Match) { $New } else { $_ } })
+        }
+    }
+
+    It 'drops a manifest whose only change is a page it points to' {
+        $after = Set-Line $script:Manifest 'homepage*' 'homepage = "https://51degrees.com/b"'
+        Get-Kept $script:Manifest $after | Should -Be @('fodid-client/src/lib.rs')
+    }
+
+    It 'drops a manifest whose descriptive keys change, over several lines too' {
+        $after = Set-Line $script:Manifest 'keywords*' 'keywords = ["a", "c"]'
+        $after = Set-Line $after '    "web-programming",' '    "authentication",'
+        $after = Set-Line $after 'description*' 'description.workspace = true'
+        Get-Kept $script:Manifest $after | Should -Be @('fodid-client/src/lib.rs')
+    }
+
+    It 'keeps a manifest whose requirement on another crate changes' {
+        $after = Set-Line $script:Manifest 'fodid = *' 'fodid = { path = "../fodid", version = "=4.5.6" }'
+        Get-Kept $script:Manifest $after |
+            Should -Be @('fodid-client/Cargo.toml', 'fodid-client/src/lib.rs')
+    }
+
+    It 'keeps a manifest that gains a feature or a build setting' {
+        $after = $script:Manifest + @('', '[features]', 'creator = []')
+        Get-Kept $script:Manifest $after |
+            Should -Be @('fodid-client/Cargo.toml', 'fodid-client/src/lib.rs')
+        $after = Set-Line $script:Manifest 'license.workspace*' 'license = "MIT"'
+        Get-Kept $script:Manifest $after |
+            Should -Be @('fodid-client/Cargo.toml', 'fodid-client/src/lib.rs')
+    }
+
+    It 'keeps a manifest that did not exist at the last tag' {
+        Get-Kept $null $script:Manifest |
+            Should -Be @('fodid-client/Cargo.toml', 'fodid-client/src/lib.rs')
     }
 }
