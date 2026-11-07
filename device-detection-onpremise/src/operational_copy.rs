@@ -32,7 +32,9 @@ use fiftyone_native::dd::data_file_header_size;
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_engines::DataFileConfiguration;
 
-/// The size of the buffer a new copy is written through.
+/// The size of the buffer a new copy is written through. On Linux and Android
+/// `std::io::copy` hands a copy from one file to another to the kernel, with
+/// `copy_file_range` or `sendfile`, so only other systems use the buffer.
 const COPY_BUFFER_BYTES: usize = 1024 * 1024;
 
 /// A copy of a data file that a data set is read from, removed when dropped.
