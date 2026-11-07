@@ -443,16 +443,19 @@ impl IpIntelligenceOnPremiseEngine {
             .map(|property| property.values().len())
     }
 
-    /// The value whose text is `value_name` among those
-    /// [`Self::property_values`] gives for the property named
-    /// `property_name`, both matched exactly, as .NET's `GetValue(valueName)`
-    /// matches them, or [`None`] when the engine lists no such property or the
-    /// property has no such value. Fails when the data file's values cannot be
-    /// read.
+    /// The value `value_name` names among those [`Self::property_values`]
+    /// gives for the property named `property_name`, matched as .NET's
+    /// `GetValue(valueName)` matches them, or [`None`] when the engine lists
+    /// no such property or the property has no such value. Fails when the
+    /// data file's values cannot be read.
     ///
     /// This finds the value in the loaded data file without reading the
     /// property's other values, by the C library's binary search over values
-    /// in order, as .NET finds it.
+    /// in order, as .NET finds it. The property's name is matched exactly,
+    /// as is a value of `Ip` or `IpV6`. The search compares a number written
+    /// to as many places as `value_name` has characters plus three, at most
+    /// 15, so the value given can be written otherwise, as `0.063` is given
+    /// for `0.0625`.
     pub fn property_value(
         &self,
         property_name: &str,

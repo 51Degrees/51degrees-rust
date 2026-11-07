@@ -293,7 +293,8 @@ jobs:
             ipi::tests::each_property_belongs_to_one_of_the_data_files_components \
             ipi::tests::each_shim_string_reader_fails_for_an_index_past_the_end \
             ipi::tests::an_enterprise_file_names_each_type \
-            ipi::tests::an_enterprise_file_gives_each_value_as_text
+            ipi::tests::an_enterprise_file_gives_each_value_as_text \
+            ipi::tests::a_value_is_found_by_its_text_to_more_places
 
       # A changed Rust answer must fail the comparison and be named in the
       # report, or the comparison proves nothing.
