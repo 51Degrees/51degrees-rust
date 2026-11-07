@@ -479,9 +479,12 @@ jobs:
       # on both sides, or the two could agree by both failing. The full case
       # must give France's German name second with its raw weighting, the
       # culture the response gives and the three names of its list of every
-      # country. The reasons a property is missing must be the same apart
-      # from the link's tags. Then a Rust line with a changed raw
-      # weighting must fail.
+      # country. The two cases cut down from the cloud service's responses
+      # must give their last weighted name with its raw weighting and the
+      # six names of their list of every country. The reasons a property is
+      # missing must be the same apart from the link's tags, and the reasons
+      # a value is null exactly the same. Then a Rust line with a changed
+      # raw weighting must fail.
       - name: Check the cloud translation cases read the response
         if: matrix.data == 'lite'
         working-directory: parity
@@ -497,6 +500,22 @@ jobs:
               echo "::error::The $side cloud translation case gave $got, not $want"
               exit 1
             fi
+          done
+          for pair in 'cloud-translation-recorded=Isle of Man 156 6' \
+            'cloud-translation-recorded-unknown=Unknown 65535 6'; do
+            id=${pair%%=*}
+            want=${pair#*=}
+            for side in dotnet rust; do
+              got=$(jq -r --arg id "$id" 'select(.id == $id)
+                | .properties.countrynamestranslated
+                | "\(.countrynamesgeographicaltranslated.value[-1].value) \(.countrynamesgeographicaltranslated.value[-1].rawWeighting) \(.countrynamesgeographicalalltranslated.value | length)"' \
+                "out/$side.jsonl")
+              echo "$side $id: $got"
+              if [ "$got" != "$want" ]; then
+                echo "::error::The $side $id case gave $got, not $want"
+                exit 1
+              fi
+            done
           done
           # A property the response does not give is missing on both sides,
           # and the two reasons must be the same once the configurator
@@ -516,6 +535,25 @@ jobs:
             out/cloud-missing-rust.jsonl)
           if [ "$count" != 7 ]; then
             echo "::error::The empty section case has $count missing properties, not 7"
+            exit 1
+          fi
+          # A null value's reason must be the same on both sides, exactly,
+          # as the noValueMessage entry for these cases would allow any
+          # difference in it. The nulls case has three.
+          for side in dotnet rust; do
+            jq -c 'select(.id | startswith("cloud-translation-"))
+              | [.id, ((.properties.countrynamestranslated // {}) | to_entries
+                | map(select(.value.noValue != null) | [.key, .value.noValue])
+                | sort)]' "out/$side.jsonl" > "out/cloud-no-value-$side.jsonl"
+          done
+          if ! diff out/cloud-no-value-dotnet.jsonl out/cloud-no-value-rust.jsonl; then
+            echo "::error::The reasons for a cloud translation property with no value differ"
+            exit 1
+          fi
+          count=$(jq -r 'select(.[0] == "cloud-translation-nulls") | .[1] | length' \
+            out/cloud-no-value-rust.jsonl)
+          if [ "$count" != 3 ]; then
+            echo "::error::The nulls case has $count properties with no value, not 3"
             exit 1
           fi
           jq -c 'if .id == "cloud-translation-any-case" then
