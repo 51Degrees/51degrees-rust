@@ -449,7 +449,9 @@ Describe 'The release plan of the crates' {
 Describe 'ci/check-version-bump.ps1' {
     BeforeAll {
         $script:Repo = New-PlanRepo
+        $script:Start = git -C $script:Repo rev-parse HEAD
         $script:Folder = New-TempFolder
+        $script:Script = Join-Path $script:Root 'ci/check-version-bump.ps1'
         function Write-Plan([string]$Name, [string]$Version) {
             $path = Join-Path $script:Folder "$Name-$Version.json"
             @{ Releases = @(@{ Name = $Name; Version = $Version;
@@ -457,6 +459,26 @@ Describe 'ci/check-version-bump.ps1' {
                Versions = @{} } | ConvertTo-Json -Depth 4 | Set-Content $path
             return $path
         }
+        # Runs the check against a stand-in for crates.io, keeping what it
+        # printed before it failed.
+        function Invoke-BumpCheck([string]$Plan, [hashtable]$Registry = (New-Registry)) {
+            $lines = [Collections.Generic.List[string]]::new()
+            $failure = $null
+            try {
+                & $script:Script -RepoName $script:Repo -PlanFile $Plan `
+                    -Registry $Registry | ForEach-Object { $lines.Add("$_") }
+            } catch {
+                $failure = "$_"
+            }
+            return [pscustomobject]@{
+                Failure = $failure
+                Output = $lines -join "`n"
+            }
+        }
+    }
+
+    BeforeEach {
+        git -C $script:Repo reset --quiet --hard $script:Start
     }
 
     AfterEach {
@@ -464,33 +486,95 @@ Describe 'ci/check-version-bump.ps1' {
     }
 
     It 'passes a crate that moves its patch number' {
-        $plan = Write-Plan 'fodid' '4.5.19'
-        { $null = & (Join-Path $script:Root 'ci/check-version-bump.ps1') `
-            -RepoName $script:Repo -PlanFile $plan } | Should -Not -Throw
+        $result = Invoke-BumpCheck (Write-Plan 'fodid' '4.5.19')
+        $result.Failure | Should -BeNullOrEmpty
+        $result.Output | Should -BeLike '*fodid 4.5.19 against crates.io keeps 4.5, the major and minor of 4.5.18*'
     }
 
     It 'refuses a crate that moves its minor number against its own tags' {
-        $plan = Write-Plan 'fodid' '4.6.0'
-        { $null = & (Join-Path $script:Root 'ci/check-version-bump.ps1') `
-            -RepoName $script:Repo -PlanFile $plan } | Should -Throw '*fodid 4.6.0*'
+        $result = Invoke-BumpCheck (Write-Plan 'fodid' '4.6.0')
+        $result.Failure | Should -BeLike '*fodid 4.6.0 against its tags*'
     }
 
     It 'compares each crate with its own tags, not the highest of any crate' {
         git -C $script:Repo tag 'fiftyone-caching/4.6.3'
         try {
-            $plan = Write-Plan 'fodid' '4.6.0'
-            { $null = & (Join-Path $script:Root 'ci/check-version-bump.ps1') `
-                -RepoName $script:Repo -PlanFile $plan } | Should -Throw '*fodid 4.6.0*'
+            $result = Invoke-BumpCheck (Write-Plan 'fodid' '4.6.0')
+            $result.Failure | Should -BeLike '*fodid 4.6.0 against its tags*'
         } finally {
             git -C $script:Repo tag -d 'fiftyone-caching/4.6.3'
         }
     }
 
+    It 'refuses a FirstVersion that moves the minor number the crates on crates.io share' {
+        # With no tag of its own there is nothing in the tags to compare with,
+        # so only crates.io can refuse it.
+        git -C $script:Repo tag -d 'fiftyone-fodid-core/4.5.18'
+        try {
+            $result = Invoke-BumpCheck (Write-Plan 'fiftyone-fodid-core' '4.6.0')
+            $result.Output | Should -BeLike ('*fiftyone-fodid-core 4.6.0 against its tags:' +
+                "`nIt has no tag of its own, so it is checked against crates.io alone.*")
+            $result.Output | Should -BeLike '*fiftyone-fodid-core 4.6.0 moves from 4.5, the major and minor that the crates on crates.io share*'
+            $result.Failure | Should -BeLike '*fiftyone-fodid-core 4.6.0 against crates.io*'
+            $result.Failure | Should -Not -BeLike '*against its tags*'
+
+            $result = Invoke-BumpCheck (Write-Plan 'fiftyone-fodid-core' '4.5.19')
+            $result.Failure | Should -BeNullOrEmpty
+        } finally {
+            git -C $script:Repo tag 'fiftyone-fodid-core/4.5.18' $script:Start
+        }
+    }
+
+    It 'passes a FirstVersion on a branch whose history holds none of the tags, as rc does' {
+        # rc does not hold the merge commits on main that the tags point at.
+        $repo = New-PlanRepo
+        git -C $repo tag -d 'fiftyone-fodid-core/4.5.18'
+        git -C $repo checkout --quiet -b rc HEAD~1
+        Add-Change $repo @('fodid-core/src/lib.rs')
+        git -C $repo tag --merged HEAD | Should -BeNullOrEmpty
+        $plan = Write-Plan 'fiftyone-fodid-core' '4.5.19'
+        $lines = [Collections.Generic.List[string]]::new()
+        { & $script:Script -RepoName $repo -PlanFile $plan -Registry (New-Registry) |
+            ForEach-Object { $lines.Add("$_") } } | Should -Not -Throw
+        $lines -join "`n" | Should -BeLike '*keeps 4.5, the major and minor that the crates on crates.io share*'
+    }
+
+    It 'refuses a plan that follows a tag pushed by hand, against crates.io' {
+        git -C $script:Repo tag 'fodid/4.6.0'
+        try {
+            Add-Change $script:Repo @('fodid/src/lib.rs')
+            $out = Join-Path $script:Folder 'hand-tag.json'
+            $null = & (Join-Path $script:Root 'ci/get-release-plan.ps1') `
+                -RepoPath $script:Repo -OutFile $out
+            $plan = Read-ReleasePlan $out
+            ($plan.Releases | Where-Object Name -eq 'fodid').Version | Should -Be '4.6.1'
+
+            $registry = New-Registry
+            $registry['fodid'] = New-CrateRecord '4.5.18' -Yanked '4.6.0'
+            $result = Invoke-BumpCheck $out $registry
+            $result.Output | Should -BeLike '*fodid 4.6.1 against its tags:*Publishing 4.6.1, against 4.6.0 already released. The patch place*'
+            $result.Output | Should -BeLike '*fodid 4.6.1 moves from 4.5, the major and minor of 4.5.18, its highest version on crates.io*'
+            $result.Failure | Should -BeLike '*fodid 4.6.1 against crates.io*'
+            $result.Failure | Should -Not -BeLike '*against its tags*'
+        } finally {
+            git -C $script:Repo tag -d 'fodid/4.6.0'
+        }
+    }
+
+    It 'stops when the crates on crates.io do not share one major and minor number' {
+        $registry = New-Registry
+        $registry['fiftyone-caching'] = New-CrateRecord '4.6.3'
+        $result = Invoke-BumpCheck (Write-Plan 'fiftyone-fodid-core' '4.5.19') $registry
+        $result.Failure | Should -BeLike '*crates.io does not have fiftyone-fodid-core*do not share one (found 4.5, 4.6)*'
+    }
+
     It 'allows the move when a person set ALLOW_VERSION_BUMP' {
         $env:ALLOW_VERSION_BUMP = 'true'
-        $plan = Write-Plan 'fodid' '4.6.0'
-        { $null = & (Join-Path $script:Root 'ci/check-version-bump.ps1') `
-            -RepoName $script:Repo -PlanFile $plan } | Should -Not -Throw
+        $result = Invoke-BumpCheck (Write-Plan 'fodid' '4.6.0')
+        $result.Failure | Should -BeNullOrEmpty
+        $result = Invoke-BumpCheck (Write-Plan 'fiftyone-fodid-core' '4.6.0')
+        $result.Failure | Should -BeNullOrEmpty
+        $result.Output | Should -BeLike '*allowed by ALLOW_VERSION_BUMP*'
     }
 }
 

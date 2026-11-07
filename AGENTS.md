@@ -248,7 +248,9 @@ examples releases nothing. `ci/set-crate-versions.ps1` then writes each
 planned crate's version, and the version every other crate last released,
 into the manifests and the requirements between them on the build machine.
 The workflow refuses a crate that moves its major or minor number against its
-own tags unless a person dispatches it with `allow-version-bump`, tests the
+own tags, or against its highest version on crates.io that is not yanked (for
+a crate crates.io does not have, the major and minor the others share),
+unless a person dispatches it with `allow-version-bump`, tests the
 examples against this tree, publishes the planned crates in the order of
 `ci/crates.txt` with `ci/publish-crates.sh`, skipping any version already
 published, and tags each crate and gives it a GitHub release with
