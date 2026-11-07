@@ -11,6 +11,7 @@ change by a difference this comparison stops reporting.
 | `corpus/evidence.json` | The cases. Each has an id, a sentence saying what it covers, its evidence and, for some, the pipeline it runs through. None of it comes from real visitors. |
 | `corpus/fodid.json` | The 51Did cases. Each is a payload to sign, a text to read as it is, or the 51Did metadata (see "The 51Did comparison"). |
 | `corpus/configuration.json` | The configuration cases. Each is a configuration file in .NET's shape to build a pipeline from (see "The configuration comparison"). |
+| `corpus/robots-txt.json` | The fixed robots.txt cases. The cases for each usage come from the data file (see "The robots.txt comparison"). |
 | `dotnet/` | A .NET 8 console program that runs the cases through the .NET packages and writes one JSON line for each. |
 | `rust/` | The same program over the crates in this checkout. |
 | `compare/` | The comparer, which reports each difference with the case that caused it. |
@@ -146,6 +147,7 @@ Each program writes one JSON object per case.
 | `metadata` | For the 51Did metadata case, the component's name and id and each property's metadata in list order. |
 | `configuration` | For a configuration case, what was built or the error (see "The configuration comparison"). |
 | `derived` | For a derived property case, the script's source properties and its answer (see "The derived property comparison"). |
+| `robotsTxtEngine`, `plainText`, `annotatedText` | For a robots.txt case, the engine's evidence keys and properties, and the two texts (see "The robots.txt comparison"). |
 
 Value types are `string`, `bool`, `integer`, `double`, `stringList`,
 `javascript`, `ipAddress`, `dateTime` (in .NET only, written as RFC 3339
@@ -373,6 +375,56 @@ counted in the case files themselves. Then a Rust line with a changed
 value, and one naming no missing property where .NET names one, must
 each fail the comparison.
 
+## The robots.txt comparison
+
+The robots.txt cases check that the robots.txt engine writes the same
+`PlainText` and `AnnotatedText` in both languages
+([#225](https://github.com/51Degrees/51degrees-rust/issues/225)). .NET's
+engine comes from the FiftyOne.DeviceDetection.RobotsTxt package at the
+Device Detection version. Each program builds one pipeline, the on-premise
+Device Detection engine with the LowMemory profile and then the robots.txt
+engine, with process errors collected rather than thrown. The engine reads
+the crawlers and the usages from the data file, so over the Lite file, which
+holds no crawlers, each text has only its header and the closing
+`User-Agent: *` group, and over the Enterprise file each crawler the request
+does not allow has a group of its own.
+
+The engine's resolver of Terms Document Locator source ids is one inside each
+program, so no case needs the network. It knows `parity-tdl`, ignoring case,
+and gives `https://tdl.parity.test/terms/3.txt` for it, and knows
+`parity-unresolved` but gives nothing for it, as when a lookup fails with no
+earlier answer. It knows no other id.
+
+`parity-rust robots-txt-cases` writes the cases as a corpus for the comparer
+and for both programs. First come the fixed cases of `corpus/robots-txt.json`,
+which give no evidence, evidence the engine does not read, and Terms Document
+Locator entries that are URIs, lists, source ids, empty or not URIs. Then,
+for each usage key the crates' engine reads from the data file, in its order,
+come `robots-txt-allow-NN`, which allows that usage alone, and
+`robots-txt-disallow-NN`, which refuses it alone, counting from 01. Last come
+every usage allowed, every usage but the first allowed, every usage allowed
+with a Terms Document Locator URI, the first usage's key in capitals, and
+`robots-txt-value-NN`, which gives the first usage's key each value the
+engine accepts in another case, two it does not and one with spaces around
+it. Over the Lite file there are no usages, so only the fixed cases run.
+
+The `robotsTxtEngine` field of the line for `robots-txt-none` holds the
+engine's `dataKey`, `dataSourceTier`, `evidenceKeys` (in ordinal order) and
+`properties` (in list order, each with its `name`, `category`, `type`,
+`available`, `dataTiers` and `description`). Every other line holds null
+there. `plainText` and `annotatedText` hold the two texts, or null when the
+engine wrote no data. The comparer compares `robotsTxtEngine` key by key and
+list item by item, and the two texts as text, so a difference names the first
+line that differs. Texts that are the same byte for byte read the same under
+an [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309.html) reader, and the
+crate's own tests check what such a reader reads from them.
+
+Over the Enterprise file, one step of that job checks that each side read the
+usages and wrote a group for at least one crawler, so the comparison cannot
+pass with no crawler in either text, and another runs the crate's data file
+tests over that file. Over the Lite file, one step checks that a Rust text
+with one line changed fails the comparison.
+
 ## The C code
 
 Both sides build the same C code. The crates build their native code from
@@ -438,12 +490,19 @@ DERIVED="--cases ../derived-properties/vendor/tests"
 target/debug/parity-rust derived-cases $DERIVED --out out/derived-cases.json
 target/debug/parity-rust derived $DERIVED --out out/derived-rust.jsonl
 dotnet out/dotnet/Parity.dll derived $DERIVED --out out/derived-dotnet.jsonl
+DD="--dd ../cxx/data/device-detection/51Degrees-LiteV4.1.hash"
+target/debug/parity-rust robots-txt-cases --corpus corpus/robots-txt.json $DD --out out/robots-txt-cases.json
+target/debug/parity-rust robots-txt --corpus out/robots-txt-cases.json $DD --out out/robots-txt-rust.jsonl
+dotnet out/dotnet/Parity.dll robots-txt --corpus out/robots-txt-cases.json $DD --out out/robots-txt-dotnet.jsonl
 target/debug/parity-compare --corpus corpus/evidence.json $SIGNED \
   --corpus corpus/configuration.json --corpus out/derived-cases.json \
+  --corpus out/robots-txt-cases.json \
   --dotnet out/dotnet.jsonl --dotnet out/fodid-dotnet.jsonl \
   --dotnet out/configuration-dotnet.jsonl --dotnet out/derived-dotnet.jsonl \
+  --dotnet out/robots-txt-dotnet.jsonl \
   --rust out/rust.jsonl --rust out/fodid-rust.jsonl \
   --rust out/configuration-rust.jsonl --rust out/derived-rust.jsonl \
+  --rust out/robots-txt-rust.jsonl \
   --allowed allowed-differences.json --data lite --strict --report out/report.md
 ```
 
@@ -470,6 +529,10 @@ A configuration case goes in `corpus/configuration.json` in the same way.
 One that builds changes the cases the workflow step "Check that a changed
 configuration answer fails" expects to build, so change that list in the
 same pull request.
+
+A fixed robots.txt case goes in `corpus/robots-txt.json` in the same way.
+The cases for each usage are written from the data file, so a usage the data
+adds gives its cases with no change here.
 
 A derived property case is added to the case file in derived-properties,
 and reaches this comparison when the crate's `vendor` folder is next copied

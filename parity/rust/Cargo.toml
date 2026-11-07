@@ -22,6 +22,9 @@ fiftyone-cloud-request-engine = { path = "../../cloud-request-engine", default-f
 fiftyone-pipeline-engines-fiftyone = { path = "../../pipeline-engines-fiftyone" }
 fiftyone-native = { path = "../../native" }
 fiftyone-device-detection-onpremise = { path = "../../device-detection-onpremise" }
+# The robots.txt cases give the engine a resolver inside this program, so the
+# built-in GitHub resolver and its client are left out.
+fiftyone-device-detection-robots-txt = { path = "../../device-detection-robots-txt" }
 fiftyone-ip-intelligence-onpremise = { path = "../../ip-intelligence-onpremise" }
 fiftyone-ip-intelligence-shared = { path = "../../ip-intelligence-shared" }
 fiftyone-json-builder = { path = "../../json-builder" }
@@ -38,3 +41,5 @@ fiftyone-derived-properties = { path = "../../derived-properties" }
 serde_norway = "0.9"
 # Writes the signed 51Dids in each base64 alphabet. The version fodid uses.
 base64 = "0.22"
+# The robots.txt resolver gives each source id's URI as a URL.
+url = "2"

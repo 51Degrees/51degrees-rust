@@ -380,8 +380,11 @@ pub fn compare_case(case: &Case, dotnet: &Value, rust: &Value) -> Vec<Difference
         field_of(&rust, "usageCustom"),
         USAGE_CUSTOM_RUNTIME_ELEMENTS,
     );
-    for field in ["fodid", "metadata", "derived"] {
+    for field in ["fodid", "metadata", "derived", "robotsTxtEngine"] {
         out.data(field, field_of(&dotnet, field), field_of(&rust, field));
+    }
+    for field in ["plainText", "annotatedText"] {
+        out.text(field, field_of(&dotnet, field), field_of(&rust, field));
     }
     out.data(
         "configuration",
@@ -1762,6 +1765,71 @@ mod tests {
         let differences = compare_case(&case, &derived_line(Some("High"), &[]), &rust);
         assert_eq!(differences.len(), 1);
         assert_eq!(differences[0].path, "derived.sourceProperties[1]");
+    }
+
+    /// A robots.txt text, and the same text with its second line changed.
+    const ROBOTS_TXT: &str = "User-Agent: *\nDisallow: /\n";
+    const ROBOTS_TXT_CHANGED: &str = "User-Agent: *\nAllow: /\n";
+
+    /// A line for a robots.txt case, as both producers write it.
+    fn robots_txt_line(text: Option<&str>) -> Value {
+        json!({
+            "id": "robots-txt-none",
+            "processError": null,
+            "errors": [],
+            "robotsTxtEngine": {
+                "dataKey": "robotstxt",
+                "dataSourceTier": "TAC",
+                "evidenceKeys": ["query.robotstxt.search", "query.robotstxt.tdl"],
+                "properties": [{"name": "AnnotatedText", "category": "Bots"}]
+            },
+            "plainText": text,
+            "annotatedText": text.map(|text| format!("# Notes\n{text}"))
+        })
+    }
+
+    #[test]
+    fn the_same_robots_txt_answer_is_no_difference() {
+        let case = data_case("robots-txt-none");
+        let line = robots_txt_line(Some(ROBOTS_TXT));
+        assert!(compare_case(&case, &line, &line).is_empty());
+        let line = robots_txt_line(None);
+        assert!(compare_case(&case, &line, &line).is_empty());
+    }
+
+    #[test]
+    fn a_changed_robots_txt_answer_is_named_by_its_field_and_line() {
+        let case = data_case("robots-txt-none");
+        let differences = compare_case(
+            &case,
+            &robots_txt_line(Some(ROBOTS_TXT)),
+            &robots_txt_line(Some(ROBOTS_TXT_CHANGED)),
+        );
+        let paths: Vec<(&str, Kind)> = differences
+            .iter()
+            .map(|d| (d.path.as_str(), d.kind))
+            .collect();
+        assert_eq!(
+            paths,
+            [("plainText", Kind::Text), ("annotatedText", Kind::Text)]
+        );
+        assert_eq!(differences[0].dotnet, json!("line 2: Disallow: /"));
+        assert_eq!(differences[0].rust, json!("line 2: Allow: /"));
+        assert_eq!(differences[1].dotnet, json!("line 3: Disallow: /"));
+
+        let differences = compare_case(
+            &case,
+            &robots_txt_line(Some(ROBOTS_TXT)),
+            &robots_txt_line(None),
+        );
+        assert_eq!(differences.len(), 2);
+        assert!(differences.iter().all(|d| d.kind == Kind::Presence));
+
+        let mut rust = robots_txt_line(None);
+        rust["robotsTxtEngine"]["evidenceKeys"][0] = json!("query.robotstxt.training");
+        let differences = compare_case(&case, &robots_txt_line(None), &rust);
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].path, "robotsTxtEngine.evidenceKeys[0]");
     }
 
     #[test]

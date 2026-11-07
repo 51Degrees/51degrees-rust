@@ -243,6 +243,14 @@ jobs:
             --out out/derived-cases.json
           target/debug/parity-rust derived "${derived[@]}" --out out/derived-rust.jsonl
           dotnet out/dotnet/Parity.dll derived "${derived[@]}" --out out/derived-dotnet.jsonl
+          # The Rust side writes the robots.txt cases, being the fixed ones and
+          # those for each usage the data file holds, and each side runs them.
+          target/debug/parity-rust robots-txt-cases --corpus corpus/robots-txt.json \
+            --dd "$DD_FILE" --out out/robots-txt-cases.json
+          robots=(--corpus out/robots-txt-cases.json --dd "$DD_FILE")
+          target/debug/parity-rust robots-txt "${robots[@]}" --out out/robots-txt-rust.jsonl
+          dotnet out/dotnet/Parity.dll robots-txt "${robots[@]}" \
+            --out out/robots-txt-dotnet.jsonl
 
       - name: Compare
         if: env.RUN == 'true'
@@ -252,10 +260,13 @@ jobs:
           target/debug/parity-compare --corpus corpus/evidence.json \
             --corpus out/fodid-rust.json --corpus out/fodid-dotnet.json \
             --corpus corpus/configuration.json --corpus out/derived-cases.json \
+            --corpus out/robots-txt-cases.json \
             --dotnet out/dotnet.jsonl --dotnet out/fodid-dotnet.jsonl \
             --dotnet out/configuration-dotnet.jsonl --dotnet out/derived-dotnet.jsonl \
+            --dotnet out/robots-txt-dotnet.jsonl \
             --rust out/rust.jsonl --rust out/fodid-rust.jsonl \
             --rust out/configuration-rust.jsonl --rust out/derived-rust.jsonl \
+            --rust out/robots-txt-rust.jsonl \
             --allowed allowed-differences.json --data ${{ matrix.data }} \
             --report out/report.md --strict > /dev/null
           status=$?
@@ -273,6 +284,37 @@ jobs:
           env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_LOCATION=1 \
             cargo test -p fiftyone-ip-intelligence-onpremise \
             --test decimal_places -- --nocapture
+
+      # The robots.txt cases for each usage come from the data file, and the
+      # Lite file holds no crawlers. Over the Enterprise file each side must
+      # read the usages and write a group for each crawler the text refuses,
+      # or the comparison would pass with no crawler in either text.
+      - name: Check the robots.txt cases read the crawlers
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        working-directory: parity
+        run: |
+          echo "$(jq length out/robots-txt-cases.json) robots.txt cases"
+          for side in rust dotnet; do
+            keys=$(jq -r 'select(.id == "robots-txt-none") | .robotsTxtEngine.evidenceKeys | length' \
+              "out/robots-txt-$side.jsonl")
+            groups=$(jq -r 'select(.id == "robots-txt-tdl-uri") | .plainText // ""' \
+              "out/robots-txt-$side.jsonl" | grep -Eic '^user-agent:[[:space:]]*[^*[:space:]]' || true)
+            echo "$side: ${keys:-0} evidence keys, ${groups:-0} crawler groups when no usage is allowed"
+            if [ "${keys:-0}" -lt 2 ] || [ "${groups:-0}" -lt 1 ]; then
+              echo "::error::$side read no usages or wrote no crawler from the Enterprise file"
+              exit 1
+            fi
+          done
+
+      # The crate's tests of each crawler read none over the Lite file the
+      # Pull Request workflow gives them, so they run here over the
+      # Enterprise file, which holds the crawlers.
+      - name: Test the robots.txt engine over the Enterprise file
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        run: |
+          env 51DEGREES_DD_PATH="$DD_FILE" \
+            cargo test -p fiftyone-device-detection-robots-txt \
+            --test data_file -- --nocapture
 
       # A changed Rust answer must fail the comparison and be named in the
       # report, or the comparison proves nothing.
@@ -690,6 +732,28 @@ jobs:
           fi
           grep -q "\`$valued\`.* at \`derived\.value\`: " out/report-derived-changed.md
           grep -q "\`$missing\`.* at \`derived\.missing\[0\]\`: " out/report-derived-changed.md
+
+      # The robots.txt texts are compared line by line, so a Rust text with
+      # one line changed must fail the comparison, named by its case and its
+      # field.
+      - name: Check that a changed robots.txt text fails
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          jq -c 'if .id == "robots-txt-tdl-uri" then .plainText |= sub("\nAllow: /\n"; "\nDisallow: /\n") else . end' \
+            out/robots-txt-rust.jsonl > out/robots-txt-rust-changed.jsonl
+          if cmp -s out/robots-txt-rust.jsonl out/robots-txt-rust-changed.jsonl; then
+            echo "::error::The robots.txt case robots-txt-tdl-uri has no Allow line to change"
+            exit 1
+          fi
+          if target/debug/parity-compare --corpus out/robots-txt-cases.json \
+            --dotnet out/robots-txt-dotnet.jsonl --rust out/robots-txt-rust-changed.jsonl \
+            --allowed allowed-differences.json --data lite \
+            --report out/report-robots-txt-changed.md > /dev/null; then
+            echo "::error::The comparison passed with a changed robots.txt text"
+            exit 1
+          fi
+          grep -q "\`robots-txt-tdl-uri\`.* at \`plainText\`: " out/report-robots-txt-changed.md
 
       - name: Upload the answers and the report
         if: always() && env.RUN == 'true'
