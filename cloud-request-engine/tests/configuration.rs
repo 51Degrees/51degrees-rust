@@ -835,9 +835,9 @@ fn the_cloud_request_origin_is_sent() {
     }
 }
 
-/// The settings .NET's run "cre all" gave, where .NET held a timeout of 9
-/// seconds, 20 failures in 30 seconds, a simple recovery of 40 seconds, the
-/// origin and a cache.
+/// Every setting given at once, where .NET held a timeout of 9 seconds, 20
+/// failures in 30 seconds, a simple recovery of 40 seconds, the origin and
+/// a cache.
 #[test]
 fn every_setting_at_once() {
     let (pipeline, stand_in) = with(&[

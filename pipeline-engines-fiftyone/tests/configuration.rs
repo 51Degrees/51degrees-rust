@@ -894,7 +894,8 @@ fn share_usage_that_is_not_a_boolean_fails() {
             ConfigValue::from(""),
             ". Failed to parse value '' using the static 'TryParse' method.",
         ),
-        // .NET names the `List<string>` the probe gave in code as List`1.
+        // A list given in code is named String[] here, where .NET names a
+        // `List<string>` given in code List`1.
         (
             ConfigValue::from(vec!["true"]),
             " but supplied object is of type 'String[]'.",

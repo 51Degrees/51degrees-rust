@@ -51,7 +51,7 @@ const DESKTOP: &[(&str, &str)] = &[("header.user-agent", "Desktop Chrome")];
 const MOBILE: &[(&str, &str)] = &[("header.user-agent", "iPhone Mobile")];
 const TAC: &[(&str, &str)] = &[("query.tac", "35925406")];
 
-/// The products the stand-in grants, as .NET's run had them.
+/// The products the stand-in grants, the same as .NET was given.
 const PROPERTIES: &str = r#"{"Products":{
     "device":{"DataTier":"CloudV4TAC","Properties":[
         {"Name":"IsMobile","Type":"Boolean","Category":"Device"},
@@ -84,7 +84,7 @@ const HARDWARE: Engine = Engine {
     data_key: "hardware",
 };
 
-/// Answers for the cloud service, as .NET's run had them. A user agent
+/// Answers for the cloud service, the same as .NET was given. A user agent
 /// holding "Mobile" is a mobile Safari, and any other a desktop Chrome.
 #[derive(Default)]
 struct StandIn {
@@ -346,8 +346,9 @@ fn the_builders_are_found_by_dotnets_names() {
     }
 }
 
-/// .NET's run "dd and hw", where both engines took the properties the key
-/// grants and read each response.
+/// The request engine, then the Device Detection and hardware profile
+/// engines with no parameters, where in .NET both engines took the
+/// properties the key grants and read each response.
 #[test]
 fn the_engines_read_the_request_engine_made_before_them() {
     let (pipeline, stand_in) = build(vec![
@@ -441,8 +442,8 @@ fn with_no_client_the_build_says_how_to_give_one() {
 }
 
 /// .NET's engine finds its request engine in the pipeline by type, which
-/// finds none when there are two, so .NET's run with two request engines
-/// before the Device Detection cloud engine failed with this message, on
+/// finds none when there are two, so .NET, given two request engines
+/// before the Device Detection cloud engine, failed with this message, on
 /// its own. Here the element that cannot be made fails the build.
 #[test]
 fn with_two_request_engines_before_it_the_build_fails() {
@@ -544,8 +545,8 @@ fn settings_with_no_effect_here_are_read_and_logged() {
 }
 
 /// .NET makes a cache of the size given, 0 included, and keys it on the
-/// engine's evidence, which for a cloud engine is none. So in .NET's run
-/// the mobile request after a desktop one was given the desktop answer,
+/// engine's evidence, which for a cloud engine is none. So in .NET the
+/// mobile request after a desktop one was given the desktop answer,
 /// marked as a cache hit when `CacheHitOrMiss` was true, from the cache of
 /// size 10 and of size 0. The engines here have no cache, so each request
 /// gets its own answer.

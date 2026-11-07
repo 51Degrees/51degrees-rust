@@ -27,9 +27,9 @@
 //!
 //! .NET ships HumanConfidence and IsGdpr where the crate ships
 //! HumanConfidence alone, and .NET refuses a pipeline in which no element
-//! supplies a property a script reads, which the crate does not check. Both
-//! are #233's, so the tests that name a shipped script read the element
-//! back where .NET's pipeline build failed after making it.
+//! supplies a property a script reads, which the crate does not check.
+//! Neither is matched yet, so the tests that name a shipped script read the
+//! element back where .NET's pipeline build failed after making it.
 
 use std::sync::Arc;
 
@@ -315,8 +315,8 @@ mod from_files {
 
     impl Scripts {
         /// A.yaml and B.yaml, each giving its output Low and reading nothing,
-        /// and Bad.yaml, whose own name is not its file name, as .NET's run had
-        /// them.
+        /// and Bad.yaml, whose own name is not its file name, as .NET was
+        /// given them.
         fn new(test: &str) -> Self {
             let folder = std::env::temp_dir().join(format!(
                 "fiftyone-derived-configuration-{}-{test}",
