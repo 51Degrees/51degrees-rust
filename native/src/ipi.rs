@@ -1447,6 +1447,9 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    /// The ASN file in the data repository.
+    const ASN_FILE_NAME: &str = "51Degrees-IPIV4AsnIpiV41.ipi";
+
     /// Resolve an IP Intelligence data file at run time, searching the
     /// environment override, the `cxx` submodule and the
     /// wider Workspace tree. Returns [`None`] when none is present so the smoke
@@ -1465,16 +1468,15 @@ mod tests {
         let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()?
             .to_path_buf();
-        let name = "51Degrees-IPIV4AsnIpiV41.ipi";
         let candidates = [
             workspace
                 .join("cxx")
                 .join("data")
                 .join("ip-intelligence")
-                .join(name),
+                .join(ASN_FILE_NAME),
             workspace
                 .parent()
-                .map(|p| p.join("data").join("ip-intelligence").join(name))
+                .map(|p| p.join("data").join("ip-intelligence").join(ASN_FILE_NAME))
                 .unwrap_or_default(),
         ];
         candidates.into_iter().find(|p| p.is_file())
@@ -2065,11 +2067,20 @@ mod tests {
             .into_iter()
             .map(|value| value.name)
             .collect();
-        assert_eq!(first, ["AS0", "AS1", "AS1000"]);
         let all = manager
             .data_file_property_values(asn.index)
             .expect("the values should be read");
         assert_eq!(all.len() as u32, asn.value_count);
+        let all_first: Vec<&str> = all[..3].iter().map(|value| value.name.as_str()).collect();
+        assert_eq!(first, all_first);
+        // The ASN file in the data repository changes only when the submodule
+        // moves, so its first values are known. Other files gain values.
+        if data_file
+            .file_name()
+            .is_some_and(|name| name == ASN_FILE_NAME)
+        {
+            assert_eq!(first, ["AS0", "AS1", "AS1000"]);
+        }
         assert_eq!(
             manager
                 .data_file_property_value_range(asn.index, 1..3)

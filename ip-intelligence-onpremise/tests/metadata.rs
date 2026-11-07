@@ -46,6 +46,9 @@ const ADDED_PROPERTIES: [&str; 2] = ["Ip", "IpV6"];
 /// .NET, so a test that needs it fails rather than skips.
 const REQUIRE_ENTERPRISE: &str = "51DEGREES_REQUIRE_ENTERPRISE";
 
+/// The ASN file in the data repository.
+const ASN_FILE_NAME: &str = "51Degrees-IPIV4AsnIpiV41.ipi";
+
 /// Skip `what` for `reason`, or fail when [`REQUIRE_ENTERPRISE`] is set.
 fn skip_without_enterprise(reason: &str, what: &str) {
     assert!(
@@ -70,7 +73,7 @@ fn data_file() -> Option<PathBuf> {
 fn asn_file() -> Option<PathBuf> {
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     loop {
-        let candidate = dir.join("cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi");
+        let candidate = dir.join("cxx/data/ip-intelligence").join(ASN_FILE_NAME);
         if candidate.is_file() {
             return Some(candidate);
         }
@@ -270,7 +273,20 @@ fn property_values_are_read_from_the_data_file() {
         .into_iter()
         .map(|value| value.name)
         .collect();
-    assert_eq!(first, ["AS0", "AS1", "AS1000"]);
+    let all: Vec<String> = engine
+        .property_values("Asn")
+        .expect("values are read")
+        .expect("listed")
+        .into_iter()
+        .map(|value| value.name)
+        .collect();
+    assert_eq!(first, all[..3]);
+    // The ASN file in the data repository changes only when the submodule
+    // moves, so its first values are known. Other files gain values.
+    let file = data_file().expect("the engine's data file");
+    if file.file_name().is_some_and(|name| name == ASN_FILE_NAME) {
+        assert_eq!(first, ["AS0", "AS1", "AS1000"]);
+    }
     assert_eq!(
         engine
             .property_value("Asn", "AS13335")
