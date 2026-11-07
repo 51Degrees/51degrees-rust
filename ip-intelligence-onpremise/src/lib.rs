@@ -63,10 +63,12 @@
 //!   that reads as an IP address is looked up through the native evidence
 //!   entry point.
 //! - **Refreshable.** The loaded [`fiftyone_native::ipi::Manager`] lives behind
-//!   an [`arc_swap::ArcSwap`] so `OnPremiseAspectEngine::refresh` can hot-swap
-//!   a freshly reloaded data set while concurrent `process` calls keep using the
+//!   an [`arc_swap::ArcSwap`] so `OnPremiseAspectEngine::refresh`, and
+//!   `refresh_from_memory` with the whole of a data file, can hot-swap a
+//!   freshly loaded data set while concurrent `process` calls keep using the
 //!   old one until the swap completes, as the data-updates specification
-//!   requires.
+//!   requires. Each load records the publish date and the next update date
+//!   the data file header holds, for the data update service.
 //! - **From a configuration file.** [`configuration`] makes the engine from a
 //!   configuration file written for .NET's `IpiOnPremiseEngineBuilder`.
 //!

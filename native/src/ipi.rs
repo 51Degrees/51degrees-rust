@@ -158,6 +158,9 @@ pub struct Manager {
     /// Permits for the calls that can read the data file, one for each of its
     /// file handles, or [`None`] when the data set is held in memory.
     file_reads: Option<FileReads>,
+    /// The data a load from memory reads in place. Fields drop after
+    /// [`Drop::drop`] has freed the data set, so the data outlives it.
+    _memory: Option<Box<[u8]>>,
 }
 
 /// One evidence key the data file defines, split into the parts the native
@@ -212,7 +215,89 @@ impl Manager {
     ) -> Result<Arc<Manager>> {
         let path = path.as_ref();
         let path_c = crate::path::native_path(path)?;
+        Self::init(
+            properties,
+            None,
+            |manager, required, exception| {
+                // Safety: all pointers are valid for the call and the path is
+                // null terminated. The shim copies the configuration before
+                // setting the concurrency, so the shared global is not
+                // changed.
+                unsafe {
+                    sys::fiftyoneDegreesShimIpiInitManagerFromFile(
+                        manager,
+                        config_for(profile),
+                        concurrency.map_or(-1, i32::from),
+                        required,
+                        path_c.as_ptr(),
+                        exception,
+                    )
+                }
+            },
+            |status| status_detail(status, Some(&path_c)),
+        )
+    }
 
+    /// Load an IP Intelligence data set from `data`, the whole of a data file
+    /// held in memory, requesting only the named properties, or all
+    /// properties when `properties` is [`None`].
+    ///
+    /// The data set reads its collections from `data` where it lies, so the
+    /// manager keeps `data` until the data set is freed. Every profile holds
+    /// the data set in memory this way, so none opens a file pool, and the
+    /// profile's collection and concurrency settings do not apply.
+    pub fn open_from_memory(
+        data: Vec<u8>,
+        profile: PerformanceProfile,
+        properties: Option<&[&str]>,
+    ) -> Result<Arc<Manager>> {
+        let mut memory = data.into_boxed_slice();
+        let size = sys::FileOffset::try_from(memory.len()).map_err(|_| Error::Native {
+            status: String::from("InvalidInput"),
+            message: format!(
+                "the data is {} bytes, more than the C library reads from memory",
+                memory.len()
+            ),
+        })?;
+        let start = memory.as_mut_ptr().cast::<c_void>();
+        Self::init(
+            properties,
+            Some(memory),
+            |manager, required, exception| {
+                // Safety: every pointer is valid for the call, the shim copies
+                // the configuration so that the memory is neither freed nor
+                // copied to a file, and `start` is the first of `size` bytes
+                // that the manager keeps for as long as the data set.
+                unsafe {
+                    sys::fiftyoneDegreesShimIpiInitManagerFromMemory(
+                        manager,
+                        config_for(profile),
+                        required,
+                        start,
+                        size,
+                        exception,
+                    )
+                }
+            },
+            // The C++ engine names no file for a load from memory.
+            |status| status_detail(status, None),
+        )
+    }
+
+    /// Initialize a manager with `init`, requesting the named properties, or
+    /// all of them when `properties` is [`None`]. `memory` is the data a load
+    /// from memory reads, kept until the data set is freed, and `detail`
+    /// gives the message for a failed status.
+    fn init(
+        properties: Option<&[&str]>,
+        memory: Option<Box<[u8]>>,
+        init: impl FnOnce(
+            *mut sys::ResourceManager,
+            *mut sys::PropertiesRequired,
+            *mut sys::Exception,
+        ) -> sys::StatusCode,
+        detail: impl FnOnce(sys::StatusCode) -> String,
+    ) -> Result<Arc<Manager>> {
         let property_list = properties.map(|names| names.join(","));
         let property_list_c = property_list
             .as_deref()
@@ -232,21 +317,9 @@ impl Manager {
         let manager_ptr = Box::into_raw(boxed);
 
         let mut exception = sys::Exception::cleared();
-        // Safety: all pointers are valid for the call and the path is null
-        // terminated. The shim copies the configuration before setting the
-        // concurrency, so the shared global is not changed.
-        let status = unsafe {
-            sys::fiftyoneDegreesShimIpiInitManagerFromFile(
-                manager_ptr,
-                config_for(profile),
-                concurrency.map_or(-1, i32::from),
-                &mut required,
-                path_c.as_ptr(),
-                &mut exception,
-            )
-        };
+        let status = init(manager_ptr, &mut required, &mut exception);
 
-        if let Err(err) = status_to_result(status, || status_detail(status, &path_c)) {
+        if let Err(err) = status_to_result(status, || detail(status)) {
             // Safety: `manager_ptr` came from `Box::into_raw` and was not
             // populated by a failed init.
             unsafe { drop(Box::from_raw(manager_ptr)) };
@@ -270,6 +343,7 @@ impl Manager {
             evidence_keys,
             property_index: OnceLock::new(),
             file_reads: FileReads::for_handles(handles),
+            _memory: memory,
         }))
     }
 
@@ -324,28 +398,38 @@ impl Manager {
         }
     }
 
-    /// The data set's embedded published date as `(year, month, day)`, or
-    /// [`None`] when it cannot be read.
-    ///
-    /// Read from the data set header through this crate's shim. A returned date
-    /// with a zero year, month or day is treated as unset and yields [`None`].
+    /// The date the data file was published, from its header, as `(year,
+    /// month, day)`, or [`None`] when the header holds no valid date.
     pub fn data_set_published(&self) -> Option<(i32, u32, u32)> {
-        let mut year: c_int = 0;
-        let mut month: c_int = 0;
-        let mut day: c_int = 0;
-        // Safety: the manager is initialized and each output pointer is writable.
-        let ok = unsafe {
-            sys::fiftyoneDegreesShimIpiGetDataSetPublished(
-                self.as_ptr(),
-                &mut year,
-                &mut month,
-                &mut day,
-            )
-        };
-        if ok == 0 || year <= 0 || month <= 0 || day <= 0 {
+        self.header_date(sys::fiftyoneDegreesShimIpiGetDataSetPublished)
+    }
+
+    /// The date the next data file is expected, from the data file header,
+    /// as `(year, month, day)`, or [`None`] when the header holds no valid
+    /// date.
+    pub fn data_set_next_update(&self) -> Option<(i32, u32, u32)> {
+        self.header_date(sys::fiftyoneDegreesShimIpiGetDataSetNextUpdate)
+    }
+
+    /// The date `read` gives, or [`None`] when its year is not positive, its
+    /// month is not 1 to 12 or its day is not 1 to 31.
+    fn header_date(
+        &self,
+        read: unsafe extern "C" fn(
+            *mut sys::ResourceManager,
+            *mut c_int,
+            *mut c_int,
+            *mut c_int,
+        ) -> c_int,
+    ) -> Option<(i32, u32, u32)> {
+        let (mut year, mut month, mut day): (c_int, c_int, c_int) = (0, 0, 0);
+        // Safety: the manager is initialized and each output pointer is
+        // writable.
+        let found = unsafe { read(self.as_ptr(), &mut year, &mut month, &mut day) };
+        if found == 0 || year <= 0 || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
             return None;
         }
-        Some((year, month as u32, day as u32))
+        Some((year, u32::try_from(month).ok()?, u32::try_from(day).ok()?))
     }
 
     /// The names of every property the data set was initialized with, in
@@ -1427,14 +1511,18 @@ impl Drop for Results {
     }
 }
 
-/// The message for a failed init, naming the data file. An exception holds no
-/// file name, so its message would say `null` instead.
-fn status_detail(status: sys::StatusCode, path: &CStr) -> String {
-    // Safety: the path is null terminated and outlives the call, and the library
-    // allocated the message.
+/// The message for a failed init, naming the data file, or `null` for a load
+/// from memory. An exception holds no file name, so its message would say
+/// `null` instead.
+fn status_detail(status: sys::StatusCode, path: Option<&CStr>) -> String {
+    // Safety: the path is null terminated and outlives the call, or null for
+    // a load from memory, and the library allocated the message.
     unsafe {
         take_message::<sys::Exception>(
-            sys::common::fiftyoneDegreesStatusGetMessage(status, path.as_ptr()),
+            sys::common::fiftyoneDegreesStatusGetMessage(
+                status,
+                path.map_or(std::ptr::null(), CStr::as_ptr),
+            ),
             "native initialization failed with no message",
         )
     }
@@ -1654,6 +1742,185 @@ mod tests {
                 "{}",
                 profile.as_str()
             );
+        }
+    }
+
+    /// Where the published date starts in an IP Intelligence data file
+    /// header, after the four version numbers, two 16 byte tags, the
+    /// copyright offset, the age, the profile offset shift and the name and
+    /// format offsets. The next update date follows it.
+    const PUBLISHED_AT: usize = 66;
+
+    /// The published and next update dates of the data file `bytes` holds,
+    /// read from the bytes as the header lays them out.
+    fn header_dates(bytes: &[u8]) -> ((i32, u32, u32), (i32, u32, u32)) {
+        let date = |at: usize| {
+            (
+                i32::from(i16::from_le_bytes([bytes[at], bytes[at + 1]])),
+                u32::from(bytes[at + 2]),
+                u32::from(bytes[at + 3]),
+            )
+        };
+        (date(PUBLISHED_AT), date(PUBLISHED_AT + 4))
+    }
+
+    /// The dates read are the ones in the data file header, whether the data
+    /// set reads the file or holds it in memory.
+    #[test]
+    fn the_dates_are_the_ones_the_data_file_header_holds() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping the header dates");
+            return;
+        };
+        let bytes = std::fs::read(&data_file).expect("data file reads");
+        let (published, next) = header_dates(&bytes);
+        assert!(published < next, "{published:?} {next:?}");
+        for manager in [
+            open_found(&data_file, PerformanceProfile::LowMemory),
+            Manager::open_from_memory(bytes, PerformanceProfile::LowMemory, None)
+                .expect("data loads"),
+        ] {
+            assert_eq!(manager.data_set_published(), Some(published));
+            assert_eq!(manager.data_set_next_update(), Some(next));
+        }
+    }
+
+    /// A header date with a year that is not positive, a month outside 1 to
+    /// 12 or a day outside 1 to 31 is not a date, so it is not read. The year
+    /// -1 would otherwise be read as a date before year 1.
+    #[test]
+    fn a_header_holding_no_valid_date_gives_no_dates() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping dates not valid");
+            return;
+        };
+        let bytes = std::fs::read(&data_file).expect("data file reads");
+        let with_dates = |date: [u8; 4]| {
+            let mut data = bytes.clone();
+            for at in [PUBLISHED_AT, PUBLISHED_AT + 4] {
+                data[at..at + 4].copy_from_slice(&date);
+            }
+            data
+        };
+        let year_2001 = 2001i16.to_le_bytes();
+        for (case, date) in [
+            ("zeroed", [0, 0, 0, 0]),
+            ("year -1", [0xFF, 0xFF, 1, 1]),
+            ("month 13", [year_2001[0], year_2001[1], 13, 1]),
+            ("day 32", [year_2001[0], year_2001[1], 1, 32]),
+        ] {
+            let manager =
+                Manager::open_from_memory(with_dates(date), PerformanceProfile::LowMemory, None)
+                    .expect("data loads");
+            assert_eq!(manager.data_set_published(), None, "{case}");
+            assert_eq!(manager.data_set_next_update(), None, "{case}");
+        }
+        let manager = Manager::open_from_memory(
+            with_dates([year_2001[0], year_2001[1], 12, 31]),
+            PerformanceProfile::LowMemory,
+            None,
+        )
+        .expect("data loads");
+        assert_eq!(manager.data_set_published(), Some((2001, 12, 31)));
+        assert_eq!(manager.data_set_next_update(), Some((2001, 12, 31)));
+    }
+
+    /// A data set loaded from memory under any profile opens no file handle,
+    /// takes the property named, and gives the evidence keys, properties
+    /// and answers the file gives, after the caller has dropped its own
+    /// reference to the manager.
+    #[test]
+    fn a_data_set_loads_from_memory_as_it_does_from_the_file() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping loading from memory");
+            return;
+        };
+        let bytes = std::fs::read(&data_file).expect("data file reads");
+        let all = open_found(&data_file, PerformanceProfile::InMemory).available_property_names();
+        assert!(all.len() > 1, "{all:?}");
+        let named = [all[0].as_str()];
+        for profile in [
+            PerformanceProfile::LowMemory,
+            PerformanceProfile::Balanced,
+            PerformanceProfile::HighPerformance,
+            PerformanceProfile::InMemory,
+        ] {
+            for properties in [None, Some(&named[..])] {
+                let case = format!("{} {properties:?}", profile.as_str());
+                let from_file =
+                    Manager::open_with_options(&data_file, profile, properties, Some(3))
+                        .expect("data file loads");
+                let from_memory = Manager::open_from_memory(bytes.clone(), profile, properties)
+                    .expect("data loads");
+                assert!(from_memory.file_reads.is_none(), "{case}");
+                // Safety: the manager is initialized.
+                let handles =
+                    unsafe { sys::fiftyoneDegreesShimIpiGetFileHandleCount(from_memory.as_ptr()) };
+                assert_eq!(handles, 0, "{case}");
+                let names = from_memory.available_property_names();
+                assert_eq!(names, from_file.available_property_names(), "{case}");
+                assert_eq!(
+                    from_memory.evidence_keys().collect::<Vec<_>>(),
+                    from_file.evidence_keys().collect::<Vec<_>>(),
+                    "{case}"
+                );
+                let mut lookups = Vec::new();
+                for address in ["1.1.1.1", "2606:4700:4700::1111"] {
+                    let mut expected = from_file.create_results().expect("results allocate");
+                    expected.process_ip(address).expect("an address");
+                    let mut results = from_memory.create_results().expect("results allocate");
+                    results.process_ip(address).expect("an address");
+                    lookups.push((address, expected, results));
+                }
+                // The results keep the data set, and the memory it reads.
+                drop(from_memory);
+                for (address, expected, results) in &lookups {
+                    for name in &names {
+                        assert_eq!(
+                            results.value_as_string(name, "|").expect("value reads"),
+                            expected.value_as_string(name, "|").expect("value reads"),
+                            "{name} {address} {case}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Data that is not exactly the whole of a data file is refused with the
+    /// C library's status. Too few bytes for the header, or for a collection
+    /// the header describes, is corrupt data, a header of another version is
+    /// the wrong version, and bytes left over after the last collection are
+    /// out of bounds.
+    #[test]
+    fn data_that_is_not_a_whole_data_file_is_refused() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping refused data");
+            return;
+        };
+        let bytes = std::fs::read(&data_file).expect("data file reads");
+        let half = bytes[..bytes.len() / 2].to_vec();
+        let mut extra_byte = bytes.clone();
+        extra_byte.push(0);
+        for (name, data, expected) in [
+            ("nothing", Vec::new(), "CorruptData"),
+            ("zeros", vec![0u8; 1024], "IncorrectVersion"),
+            (
+                "the first 1024 bytes",
+                bytes[..1024].to_vec(),
+                "CorruptData",
+            ),
+            ("half the file", half, "CorruptData"),
+            ("the file and a byte", extra_byte, "PointerOutOfBounds"),
+        ] {
+            let error = Manager::open_from_memory(data, PerformanceProfile::InMemory, None)
+                .err()
+                .unwrap_or_else(|| panic!("{name} should be refused"));
+            let Error::Native { message, status } = &error else {
+                panic!("{name}: {error}");
+            };
+            assert_eq!(status, expected, "{name}: {message}");
+            assert!(!message.is_empty(), "{name}");
         }
     }
 

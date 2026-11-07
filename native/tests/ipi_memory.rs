@@ -269,6 +269,31 @@ fn every_entry_point_leaves_no_native_memory_allocated() {
         leaks.compare(&format!("{} everything freed", profile.as_str()), baseline);
     }
     leaks.measure("native reload", 2, || native_reload(&path));
+    let bytes = std::fs::read(&path).expect("the data file reads");
+    for profile in [PerformanceProfile::InMemory, PerformanceProfile::LowMemory] {
+        leaks.measure(
+            &format!("{} load from memory, look up and free", profile.as_str()),
+            2,
+            || {
+                let manager = ipi::Manager::open_from_memory(bytes.clone(), profile, None)
+                    .expect("the data loads");
+                manager.data_set_published();
+                manager.data_set_next_update();
+                let mut results = manager.create_results().expect("results allocate");
+                drop(manager);
+                results
+                    .process_ip("1.1.1.1")
+                    .expect("an address is processed");
+                let asn = results.value_as_string("Asn", ",").expect("a value");
+                assert!(asn.unwrap_or_default().contains("AS13335"));
+            },
+        );
+    }
+    leaks.measure("refuse half the data from memory", 3, || {
+        let half = bytes[..bytes.len() / 2].to_vec();
+        let opened = ipi::Manager::open_from_memory(half, PerformanceProfile::InMemory, None);
+        assert!(opened.is_err(), "half the data does not load");
+    });
     leaks.measure("open a missing file", 3, || {
         let opened =
             ipi::Manager::open(path.with_extension("missing"), PerformanceProfile::Default);
