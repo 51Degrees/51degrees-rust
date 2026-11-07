@@ -262,10 +262,19 @@ own tags, or against its highest version on crates.io that is not yanked (for
 a crate crates.io does not have, the major and minor the others share),
 unless a person dispatches it with `allow-version-bump`, tests the
 examples against this tree, publishes the planned crates in the order of
-`ci/crates.txt` with `ci/publish-crates.sh`, skipping any version already
-published, and tags each crate and gives it a GitHub release with
-`ci/tag-crate-releases.ps1`. `release-plan.yml` prints the same plan on every
-pull request and publishes nothing.
+`ci/crates.txt` with `ci/publish-planned-crates.ps1` and
+`ci/publish-crates.sh`, skipping any version already published, and tags
+each crate and gives it a GitHub release with `ci/tag-crate-releases.ps1`.
+`release-plan.yml` prints the same plan on every pull request and publishes
+nothing.
+
+Trusted publishing cannot create a crate, so a crate's first version is
+published by a person. When the plan holds a crate crates.io does not have,
+the publish job publishes the crates before it, then fails, naming the crate
+and printing the commands that publish it by hand from the release commit
+with a token of an owner of the other crates and register the workflow as
+its trusted publisher. Running the failed job again then skips every
+version crates.io has and finishes the release.
 
 `ci/packages.json` lists each crate `ci/crates.txt` publishes, with its
 folder, its `ExtraPaths` and the crates it depends on, and a `FirstVersion`

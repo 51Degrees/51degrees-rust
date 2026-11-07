@@ -100,6 +100,10 @@ jobs:
         run: >-
           ./ci/check-version-bump.ps1 -RepoName .
           -PlanFile "$env:RUNNER_TEMP/release-plan.json"
+      - name: Show what a publish would publish, and any crate it stops before
+        run: >-
+          ./ci/publish-planned-crates.ps1 -DryRun
+          -PlanFile "$env:RUNNER_TEMP/release-plan.json"
       - name: Show the tags and releases a publish would make
         run: >-
           ./ci/tag-crate-releases.ps1 -RepoName .

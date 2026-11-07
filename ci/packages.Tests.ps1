@@ -802,6 +802,87 @@ Describe 'ci/start-crate-tags.ps1' {
     }
 }
 
+Describe 'ci/publish-planned-crates.ps1' {
+    BeforeAll {
+        $script:Repo = New-PlanRepo
+        $script:Script = Join-Path $script:Root 'ci/publish-planned-crates.ps1'
+        $script:Head = git -C $script:Repo rev-parse HEAD
+
+        # A plan releasing the named crates at 4.5.19, with every published
+        # crate at 4.5.19 after it, as the first release has.
+        function Write-PublishPlan([string[]]$Names) {
+            $path = Join-Path (New-TempFolder) 'plan.json'
+            $versions = [ordered]@{}
+            foreach ($name in $script:Order) { $versions[$name] = '4.5.19' }
+            @{
+                Releases = @($Names | ForEach-Object {
+                    @{ Name = $_; Version = '4.5.19'; Previous = ''; Reason = 'test' } })
+                Versions = $versions
+            } | ConvertTo-Json -Depth 4 | Set-Content $path
+            return $path
+        }
+
+        # Runs the script, keeping what it printed before it failed.
+        function Invoke-Publish([string]$Plan, [hashtable]$Registry, [switch]$DryRun) {
+            $lines = [Collections.Generic.List[string]]::new()
+            $failure = $null
+            try {
+                & $script:Script -PlanFile $Plan -RepoPath $script:Repo `
+                    -Registry $Registry -DryRun:$DryRun |
+                    ForEach-Object { $lines.Add("$_") }
+            } catch {
+                $failure = "$_"
+            }
+            return [pscustomobject]@{ Failure = $failure; Output = $lines -join "`n" }
+        }
+    }
+
+    It 'publishes the crates before one crates.io does not have, then gives the commands for it' {
+        $at = $script:Order.IndexOf('fiftyone-fodid-core')
+        $before = @($script:Order | Select-Object -First $at)
+        $package = $script:Packages | Where-Object Name -eq 'fiftyone-fodid-core'
+        foreach ($dependency in $package.DependsOn) {
+            $before | Should -Contain $dependency
+        }
+
+        $result = Invoke-Publish (Write-PublishPlan $script:Order) (New-Registry) -DryRun
+        $result.Failure | Should -BeNullOrEmpty
+        $result.Output | Should -BeLike ("*would publish $($before.Count) crate(s) " +
+            "with ci/publish-crates.sh: $($before -join ', ')`n*")
+        $result.Output | Should -BeLike '*A publish of this commit stops before fiftyone-fodid-core*'
+        $result.Output | Should -BeLike "*git checkout --detach $script:Head*"
+        $result.Output | Should -BeLike '*"fiftyone-fodid-core":"4.5.19"*'
+        $result.Output | Should -BeLike '*./ci/set-crate-versions.ps1 -PlanFile $plan*cargo publish -p fiftyone-fodid-core --allow-dirty*bash ci/setup-trusted-publishing.sh*'
+        $result.Output | Should -Not -BeLike '*submodule update*'
+        $result.Output | Should -Not -BeLike '*copy-*.ps1*'
+    }
+
+    It 'stops, failing the run, before a crate crates.io does not have' {
+        $plan = Write-PublishPlan @('fiftyone-fodid-cloud', 'fiftyone-fodid-core')
+        $result = Invoke-Publish $plan (New-Registry)
+        $result.Failure | Should -BeLike '*Stopped before fiftyone-fodid-core*'
+        $result.Output | Should -BeLike '::error title=First version published by hand::fiftyone-fodid-core is not on crates.io*'
+        $result.Output | Should -BeLike '*No crate of the plan comes before it*'
+        $result.Output | Should -BeLike '*cargo publish -p fiftyone-fodid-core --allow-dirty*'
+    }
+
+    It 'checks out and copies the submodule a crate crates.io does not have takes files from' {
+        $registry = New-Registry
+        $registry.Remove('fodid')
+        $result = Invoke-Publish (Write-PublishPlan @('fodid')) $registry -DryRun
+        $result.Output | Should -BeLike '*git submodule update --init owid-rust*./ci/set-crate-versions.ps1*./ci/copy-owid-source.ps1*cargo publish -p fodid --allow-dirty*'
+    }
+
+    It 'publishes every crate of the plan when crates.io has them all' {
+        $registry = New-Registry
+        $registry['fiftyone-fodid-core'] = New-CrateRecord '4.5.19'
+        $result = Invoke-Publish (Write-PublishPlan $script:Order) $registry -DryRun
+        $result.Failure | Should -BeNullOrEmpty
+        $result.Output | Should -BeLike "Dry run, would publish $($script:Order.Count) crate(s)*"
+        $result.Output | Should -Not -BeLike '*stops before*'
+    }
+}
+
 Describe 'ci/tag-crate-releases.ps1 -DryRun' {
     BeforeAll {
         $script:Repo = New-PlanRepo
