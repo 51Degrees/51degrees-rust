@@ -27,11 +27,15 @@
 //! hardware-profile cloud engine) against a fake HTTP transport, so no network is
 //! touched. A representative cloud `hardware.profiles` response is fed through and
 //! the resulting [`MultiDeviceData`] profiles are asserted on, proving the engine
-//! parses the multi-profile `hardware.profiles` shape.
+//! parses the multi-profile `hardware.profiles` shape, and the JSON builder
+//! writes them back in that shape.
 
 use std::sync::Arc;
 
-use fiftyone_pipeline_core::{Evidence, Pipeline};
+use fiftyone_json_builder::{JsonBuilderElement, JSON_BUILDER_DATA_KEY};
+use fiftyone_pipeline_core::{Evidence, FlowElement, Pipeline, PropertyValueType};
+use fiftyone_pipeline_engines_fiftyone::SequenceElement;
+use serde_json::{json, Value};
 
 use fiftyone_cloud_request_engine::{
     CloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine, HttpMethod,
@@ -94,15 +98,36 @@ const DEVICE_ONLY_RESPONSE: &str = r#"{
     "javascriptProperties": []
 }"#;
 
-/// The accessible-properties body advertising the hardware product.
+/// A hardware-profile response that matched no profile, in the form the
+/// cloud sends for a key without the paid hardware properties. Beside the
+/// empty list it gives each paid property as null with a reason.
+const NO_PROFILES_RESPONSE: &str = r#"{
+    "hardware": {
+        "profiles": [],
+        "hardwarevendor": null,
+        "hardwarevendornullreason": "HardwareVendor is a paid feature."
+    },
+    "javascriptProperties": []
+}"#;
+
+/// The accessible-properties body advertising the hardware product, in the
+/// cloud's form, being one `Profiles` property whose item properties are
+/// those each profile holds.
 const ACCESSIBLE_PROPERTIES: &str = r#"{
     "Products": {
         "hardware": {
             "DataTier": "CloudV4",
             "Properties": [
-                { "Name": "HardwareVendor", "Type": "String", "Category": "Hardware" },
-                { "Name": "HardwareName", "Type": "Array", "Category": "Hardware" },
-                { "Name": "HardwareModel", "Type": "String", "Category": "Hardware" }
+                {
+                    "Name": "Profiles",
+                    "Type": "Array",
+                    "Category": "",
+                    "ItemProperties": [
+                        { "Name": "HardwareVendor", "Type": "String", "Category": "Hardware" },
+                        { "Name": "HardwareName", "Type": "Array", "Category": "Hardware" },
+                        { "Name": "HardwareModel", "Type": "String", "Category": "Hardware" }
+                    ]
+                }
             ]
         }
     }
@@ -110,22 +135,27 @@ const ACCESSIBLE_PROPERTIES: &str = r#"{
 
 const EVIDENCE_KEYS: &str = r#"["query.tac","query.nativemodel"]"#;
 
-/// Build a pipeline of `CloudRequestEngine` -> `HardwareProfileCloudEngine` over
-/// a fake transport returning the supplied data body.
-fn fake_pipeline(data: &str) -> Arc<Pipeline> {
+/// A request engine over a fake transport returning the supplied data body.
+fn fake_request_engine(data: &str) -> Arc<CloudRequestEngine> {
     let fake = Arc::new(FakeCloud {
         accessible_properties: ACCESSIBLE_PROPERTIES.to_owned(),
         evidence_keys: EVIDENCE_KEYS.to_owned(),
         data: data.to_owned(),
     });
 
-    let request_engine = Arc::new(
+    Arc::new(
         CloudRequestEngine::builder()
             .resource_key("test-resource-key")
             .http_client(fake)
             .build()
             .expect("request engine builds"),
-    );
+    )
+}
+
+/// Build a pipeline of `CloudRequestEngine` -> `HardwareProfileCloudEngine` over
+/// a fake transport returning the supplied data body.
+fn fake_pipeline(data: &str) -> Arc<Pipeline> {
+    let request_engine = fake_request_engine(data);
 
     let hardware_engine = HardwareProfileCloudEngine::builder()
         .cloud_request_engine(request_engine.clone())
@@ -213,25 +243,12 @@ fn device_only_response_yields_no_profiles() {
     );
 }
 
-#[test]
-fn the_json_builder_writes_each_profile_under_hardware_profiles() {
-    use fiftyone_json_builder::{JsonBuilderElement, JSON_BUILDER_DATA_KEY};
-    use fiftyone_pipeline_engines_fiftyone::SequenceElement;
-
-    let fake = Arc::new(FakeCloud {
-        accessible_properties: ACCESSIBLE_PROPERTIES.to_owned(),
-        evidence_keys: EVIDENCE_KEYS.to_owned(),
-        data: HARDWARE_RESPONSE.to_owned(),
-    });
-    let request_engine = Arc::new(
-        CloudRequestEngine::builder()
-            .resource_key("test-resource-key")
-            .http_client(fake)
-            .build()
-            .expect("request engine builds"),
-    );
+/// Run one TAC lookup answered by `data` through the Sequence element, the
+/// cloud engines and the JSON builder, and return the JSON builder's output.
+fn json_output(data: &str) -> Value {
+    let request_engine = fake_request_engine(data);
     let hardware_engine = HardwareProfileCloudEngine::builder()
-        .cloud_request_engine(request_engine.clone())
+        .cloud_request_engine(Arc::clone(&request_engine))
         .build();
     let json_builder = JsonBuilderElement::builder()
         .exclude_element(SequenceElement::DEFAULT_ELEMENT_DATA_KEY)
@@ -252,19 +269,66 @@ fn the_json_builder_writes_each_profile_under_hardware_profiles() {
         .expect("json builder data present")
         .json()
         .to_owned();
-    let json: serde_json::Value = serde_json::from_str(&text).expect("the output is JSON");
+    serde_json::from_str(&text).expect("the output is JSON")
+}
 
-    let profiles = json["hardware"]["profiles"]
-        .as_array()
-        .expect("hardware.profiles is a list");
-    assert_eq!(profiles.len(), 2, "{text}");
-    assert_eq!(profiles[0]["hardwarevendor"], "Apple");
-    assert_eq!(profiles[0]["hardwaremodel"], "iPhone11,8");
+/// The JSON builder writes each profile as an object under `profiles`, as
+/// .NET's does, with a property the profile has no value for as null
+/// with its reason.
+#[test]
+fn the_json_builder_writes_each_profile_under_hardware_profiles() {
+    let json = json_output(HARDWARE_RESPONSE);
     assert_eq!(
-        profiles[0]["hardwarename"],
-        serde_json::json!(["iPhone 11"])
+        json["hardware"],
+        json!({
+            "profiles": [
+                {
+                    "hardwarevendor": "Apple",
+                    "hardwarename": ["iPhone 11"],
+                    "hardwaremodel": "iPhone11,8"
+                },
+                {
+                    "hardwarevendor": null,
+                    "hardwarevendornullreason": "The value cannot be determined from a TAC alone.",
+                    "hardwarename": ["iPhone 11 Pro", "iPhone 11 Pro Max"],
+                    "hardwaremodel": "iPhone12,3"
+                }
+            ]
+        })
     );
-    assert_eq!(profiles[1]["hardwaremodel"], "iPhone12,3");
-    // A property a profile holds with no value is left out of its record.
-    assert!(profiles[1].get("hardwarevendor").is_none(), "{text}");
+}
+
+/// With no profile matched, `profiles` is an empty list, and the other
+/// entries of the response's `hardware` block are not written, as .NET
+/// reads only `profiles` from it.
+#[test]
+fn the_json_builder_writes_no_profiles_as_an_empty_list() {
+    let json = json_output(NO_PROFILES_RESPONSE);
+    assert_eq!(json["hardware"], json!({ "profiles": [] }));
+}
+
+/// The engine lists `Profiles` as a list of element data whose item
+/// properties are each profile's, as the cloud lists them.
+#[test]
+fn profiles_is_listed_with_its_item_properties() {
+    let engine = HardwareProfileCloudEngine::builder()
+        .cloud_request_engine(fake_request_engine(HARDWARE_RESPONSE))
+        .build();
+    let properties = engine.properties();
+    assert_eq!(properties.len(), 1);
+    assert_eq!(properties[0].name, "Profiles");
+    assert_eq!(properties[0].value_type, PropertyValueType::ElementDataList);
+    let items: Vec<(&str, PropertyValueType)> = properties[0]
+        .item_properties
+        .iter()
+        .map(|item| (item.name.as_str(), item.value_type))
+        .collect();
+    assert_eq!(
+        items,
+        [
+            ("HardwareVendor", PropertyValueType::String),
+            ("HardwareName", PropertyValueType::StringList),
+            ("HardwareModel", PropertyValueType::String),
+        ]
+    );
 }

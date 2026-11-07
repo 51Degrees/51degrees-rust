@@ -29,6 +29,10 @@
 //! ([`crate::ElementData::get`]) self-describing and avoids reflection.
 
 use std::collections::BTreeMap;
+use std::fmt;
+use std::sync::Arc;
+
+use crate::element_data::ElementData;
 
 /// The declared type of a property's values, as carried in property metadata.
 ///
@@ -56,6 +60,9 @@ pub enum PropertyValueType {
     JavaScript,
     /// A list of key-value-pair collections.
     KeyValueList,
+    /// A list of results, each read like an element's own data. The
+    /// property's item properties describe the values each one holds.
+    ElementDataList,
 }
 
 /// A weighted property value.
@@ -104,8 +111,11 @@ impl<T> WeightedValue<T> {
 ///   variant (rather than a plain string) so the JSON and JavaScript builder
 ///   elements can recognize it without separate metadata.
 /// - [`PropertyValue::KeyValueList`] is the "array of key-value-pair
-///   collections" type, used where an element returns several sub-records (for
-///   example TAC lookup or hardware-profile lookup).
+///   collections" type, used where an element returns several sub-records,
+///   such as the weighted values of IP Intelligence.
+/// - [`PropertyValue::ElementDataList`] is a list of results that are each
+///   read like an element's own data, so a value in one can be missing with
+///   a reason, such as the profiles a hardware profile lookup matched.
 ///
 /// `i64` and `f64` are used for the numeric types so that the full range of
 /// values seen in 51Degrees data files round-trips without loss.
@@ -134,6 +144,10 @@ pub enum PropertyValue {
     /// A list of key-value-pair collections, used to return multiple
     /// sub-records. Each entry is keyed and ordered by property name.
     KeyValueList(Vec<BTreeMap<String, PropertyValue>>),
+    /// A list of results, each read like an element's own data, such as
+    /// the profiles a hardware profile lookup matched. The JSON builder
+    /// writes each as an object, in the way it writes an element's values.
+    ElementDataList(ElementDataList),
 }
 
 impl PropertyValue {
@@ -223,6 +237,84 @@ impl From<Vec<String>> for PropertyValue {
     }
 }
 
+impl From<ElementDataList> for PropertyValue {
+    fn from(value: ElementDataList) -> Self {
+        PropertyValue::ElementDataList(value)
+    }
+}
+
+/// The results held by [`PropertyValue::ElementDataList`], each read
+/// through [`ElementData`].
+///
+/// Two lists are equal when they hold as many results and each pair lists
+/// the same names in the same order, with the same value or the same
+/// reason for having none.
+#[derive(Clone, Default)]
+pub struct ElementDataList(Vec<Arc<dyn ElementData>>);
+
+impl ElementDataList {
+    /// Hold the results in the order given.
+    pub fn new(items: Vec<Arc<dyn ElementData>>) -> Self {
+        ElementDataList(items)
+    }
+
+    /// The results, in order.
+    pub fn iter(&self) -> impl Iterator<Item = &dyn ElementData> + '_ {
+        self.0.iter().map(|item| item.as_ref())
+    }
+
+    /// The number of results.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// True when there are no results.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl FromIterator<Arc<dyn ElementData>> for ElementDataList {
+    fn from_iter<I: IntoIterator<Item = Arc<dyn ElementData>>>(items: I) -> Self {
+        ElementDataList(items.into_iter().collect())
+    }
+}
+
+impl PartialEq for ElementDataList {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len()
+            && self
+                .iter()
+                .zip(other.iter())
+                .all(|(a, b)| same_values(a, b))
+    }
+}
+
+/// Whether two results list the same names in the same order, each with
+/// the same value or the same reason for having none.
+fn same_values(a: &dyn ElementData, b: &dyn ElementData) -> bool {
+    let names = a.keys();
+    names == b.keys() && names.iter().all(|name| a.get(name) == b.get(name))
+}
+
+impl fmt::Debug for ElementDataList {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.iter().map(Values)).finish()
+    }
+}
+
+/// One result's names and values, written by [`ElementDataList`]'s `Debug`.
+struct Values<'a>(&'a dyn ElementData);
+
+impl fmt::Debug for Values<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names = self.0.keys();
+        f.debug_map()
+            .entries(names.iter().map(|name| (name, self.0.get(name))))
+            .finish()
+    }
+}
+
 /// The number of decimal places a value converted from an Azimuth or
 /// Declination, such as a latitude or a longitude, is given to.
 const ANGLE_DECIMAL_PLACES: usize = 3;
@@ -277,6 +369,38 @@ pub fn round_angle(value: f64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::element_data::MapElementData;
+
+    /// A result holding `name` with `value`.
+    fn result(name: &str, value: &str) -> Arc<dyn ElementData> {
+        Arc::new(MapElementData::new().set(name, value))
+    }
+
+    #[test]
+    fn element_data_lists_compare_their_values() {
+        let list = |values: &[&str]| -> ElementDataList {
+            values.iter().map(|value| result("vendor", value)).collect()
+        };
+        assert_eq!(list(&["Apple", "Samsung"]), list(&["Apple", "Samsung"]));
+        assert_ne!(list(&["Apple", "Samsung"]), list(&["Apple", "Google"]));
+        assert_ne!(list(&["Apple"]), list(&["Apple", "Samsung"]));
+        assert_ne!(
+            list(&["Apple"]),
+            ElementDataList::new(vec![result("model", "Apple")])
+        );
+        assert_eq!(ElementDataList::default(), list(&[]));
+        assert!(list(&[]).is_empty());
+        assert_eq!(list(&["Apple", "Samsung"]).len(), 2);
+    }
+
+    #[test]
+    fn an_element_data_list_debugs_as_its_values() {
+        let value = PropertyValue::from(ElementDataList::new(vec![result("vendor", "Apple")]));
+        assert_eq!(
+            format!("{value:?}"),
+            "ElementDataList([{\"vendor\": Ok(String(\"Apple\"))}])"
+        );
+    }
 
     /// A stored Declination or Azimuth converted as the C library converts
     /// it, multiplying before dividing.
