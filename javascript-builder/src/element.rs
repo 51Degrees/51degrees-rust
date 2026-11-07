@@ -22,8 +22,9 @@
 
 //! The JavaScript builder flow element.
 
+use std::any::Any;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use fiftyone_json_builder::JSON_BUILDER_DATA_KEY;
 use fiftyone_pipeline_core::constants::EVIDENCE_PROTOCOL_KEY;
@@ -553,6 +554,12 @@ impl FlowElement for JavaScriptBuilderElement {
 
     fn properties(&self) -> &[PropertyMetaData] {
         &self.properties
+    }
+
+    /// The builder itself, so the web integration can hold one the
+    /// application gives and build a response again with it.
+    fn into_any(self: Arc<Self>) -> Option<Arc<dyn Any + Send + Sync>> {
+        Some(self)
     }
 }
 

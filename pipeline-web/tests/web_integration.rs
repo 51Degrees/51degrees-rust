@@ -28,11 +28,13 @@
 use std::any::Any;
 use std::sync::{Arc, OnceLock};
 
+use fiftyone_javascript_builder::JavaScriptBuilderElement;
 use fiftyone_pipeline_core::{
     ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
     MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue, PropertyValueType,
     Result, TypedKey,
 };
+use fiftyone_pipeline_engines_fiftyone::SetHeadersElement;
 use fiftyone_pipeline_web::{
     apply_set_headers, build_evidence, compute_etag, response_headers, serve_javascript,
     serve_json, vary_header, EndpointOptions, RequestData, WebEndpoint, WebIntegrationOptions,
@@ -239,6 +241,165 @@ fn a_sequence_element_among_the_elements_is_not_added_again() {
             "javascriptbuilderelement",
         ]
     );
+}
+
+/// Runs a set-headers element under the data key it is given, as an element
+/// wrapping another does.
+struct WrappedSetHeaders {
+    data_key: &'static str,
+    inner: SetHeadersElement,
+}
+
+impl FlowElement for WrappedSetHeaders {
+    fn process(&self, data: &mut FlowData) -> Result<()> {
+        self.inner.process(data)
+    }
+    fn data_key(&self) -> &str {
+        self.data_key
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        self.inner.evidence_key_filter()
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        self.inner.properties()
+    }
+}
+
+/// The data keys of the pipeline's elements, in the order they run.
+fn data_keys(web: &WebPipeline) -> Vec<&str> {
+    web.pipeline()
+        .flow_elements()
+        .iter()
+        .map(|element| element.data_key())
+        .collect()
+}
+
+/// True if the pipeline's element with this data key is `element` itself.
+fn runs<T>(web: &WebPipeline, data_key: &str, element: &Arc<T>) -> bool {
+    web.pipeline()
+        .flow_elements()
+        .iter()
+        .find(|e| e.data_key() == data_key)
+        .is_some_and(|e| std::ptr::addr_eq(Arc::as_ptr(e), Arc::as_ptr(element)))
+}
+
+/// True if processing a request gives the `Accept-CH` header the test
+/// element asks for, which only a set-headers element after it writes.
+fn sets_accept_ch(web: &WebPipeline) -> bool {
+    let data = processed(web.pipeline(), page_evidence("agent"));
+    response_headers(&data)
+        .iter()
+        .any(|(name, value)| name == "Accept-CH" && value == "Sec-CH-UA")
+}
+
+#[test]
+fn a_set_headers_element_among_the_elements_is_not_added_again() {
+    let given = Arc::new(SetHeadersElement::new());
+    let web = WebPipeline::build(
+        vec![
+            Arc::new(TestElement::new(false)),
+            Arc::clone(&given) as Arc<dyn FlowElement>,
+        ],
+        WebIntegrationOptions::default(),
+    )
+    .expect("web pipeline builds");
+    assert_eq!(
+        data_keys(&web),
+        vec![
+            "sequence",
+            "device",
+            "set-headers",
+            "json-builder",
+            "javascriptbuilderelement",
+        ]
+    );
+    assert!(runs(&web, "set-headers", &given));
+    assert!(sets_accept_ch(&web));
+}
+
+#[test]
+fn a_set_headers_element_among_the_elements_runs_where_it_was_put() {
+    // Given before a JavaScript builder the application also gives. Added in
+    // its usual place, a set-headers element would follow that builder.
+    let given = Arc::new(SetHeadersElement::new());
+    let web = WebPipeline::build(
+        vec![
+            Arc::new(TestElement::new(false)),
+            Arc::clone(&given) as Arc<dyn FlowElement>,
+            Arc::new(JavaScriptBuilderElement::new()),
+        ],
+        WebIntegrationOptions::default(),
+    )
+    .expect("web pipeline builds");
+    assert_eq!(
+        data_keys(&web),
+        vec![
+            "sequence",
+            "device",
+            "set-headers",
+            "json-builder",
+            "javascriptbuilderelement",
+        ]
+    );
+    assert!(runs(&web, "set-headers", &given));
+    assert!(sets_accept_ch(&web));
+}
+
+#[test]
+fn a_set_headers_element_among_the_elements_runs_without_the_option() {
+    let given = Arc::new(SetHeadersElement::new());
+    let options = WebIntegrationOptions {
+        use_set_header_properties: false,
+        ..WebIntegrationOptions::default()
+    };
+    let web = WebPipeline::build(
+        vec![
+            Arc::new(TestElement::new(false)),
+            Arc::clone(&given) as Arc<dyn FlowElement>,
+        ],
+        options,
+    )
+    .expect("builds");
+    assert_eq!(
+        data_keys(&web),
+        vec![
+            "sequence",
+            "device",
+            "set-headers",
+            "json-builder",
+            "javascriptbuilderelement",
+        ]
+    );
+    assert!(runs(&web, "set-headers", &given));
+    assert!(sets_accept_ch(&web));
+}
+
+#[test]
+fn a_set_headers_element_is_found_by_its_data_key_ignoring_case() {
+    let given = Arc::new(WrappedSetHeaders {
+        data_key: "Set-Headers",
+        inner: SetHeadersElement::new(),
+    });
+    let web = WebPipeline::build(
+        vec![
+            Arc::new(TestElement::new(false)),
+            Arc::clone(&given) as Arc<dyn FlowElement>,
+        ],
+        WebIntegrationOptions::default(),
+    )
+    .expect("web pipeline builds");
+    assert_eq!(
+        data_keys(&web),
+        vec![
+            "sequence",
+            "device",
+            "Set-Headers",
+            "json-builder",
+            "javascriptbuilderelement",
+        ]
+    );
+    assert!(runs(&web, "Set-Headers", &given));
+    assert!(sets_accept_ch(&web));
 }
 
 #[test]

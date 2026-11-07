@@ -36,7 +36,9 @@
 //! 3. **Calls the next layer** and, on the way back out, **applies the
 //!    set-headers output**: every response header the set-headers element asked
 //!    for is appended to the response (joined with the HTTP list separator when
-//!    a header is already present).
+//!    a header is already present). When
+//!    [`fiftyone_pipeline_web::WebIntegrationOptions::use_set_header_properties`]
+//!    is off, no header is appended.
 //!
 //! Install it with [`crate::register`], or directly:
 //!
@@ -105,8 +107,14 @@ pub async fn fiftyone_middleware(
     };
 
     // Read the set-headers output before the flow data is moved into the result
-    // handle and locked away for the downstream handler.
-    let set_headers = response_headers(&flow_data);
+    // handle and locked away for the downstream handler. With
+    // `use_set_header_properties` off nothing is written, even from a
+    // set-headers element the application gave.
+    let set_headers = if state.options().use_set_header_properties {
+        response_headers(&flow_data)
+    } else {
+        Vec::new()
+    };
 
     // 3. Stash the processed flow data for the extractor, then run the rest of
     // the stack.
