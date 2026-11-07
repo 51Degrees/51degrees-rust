@@ -131,7 +131,7 @@
   },
   {
     "path": "json.device.*nullreason",
-    "kind": "presence",
+    "kind": "type",
     "dotnet": {"value": [null]},
     "rust": {"pattern": ["No value for property *"]},
     "reason": "When the matched profile holds no value for a property, .NET has no reason to give and its JSON writes null, where the crates give their sentence (properties.device.* noValueMessage).",
