@@ -266,6 +266,28 @@ jobs:
             cargo test -p fiftyone-ip-intelligence-onpremise \
             --test decimal_places -- --nocapture
 
+      # The build jobs read the data file metadata of the ASN file. Only the
+      # Enterprise file has float, bool and weighted properties, addresses
+      # and areas, so the metadata tests run here too, opening the file in
+      # LowMemory, and 51DEGREES_REQUIRE_ENTERPRISE makes a test that needs
+      # the Enterprise file fail rather than skip. The failed refresh test
+      # reads the whole file into memory, so it runs in the build jobs only.
+      - name: Check the IP Intelligence metadata of the Enterprise file
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        run: |
+          env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_ENTERPRISE=1 \
+            cargo test -p fiftyone-ip-intelligence-onpremise --test metadata -- \
+            --skip a_refresh_whose_metadata_cannot_be_read_changes_nothing
+          env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_ENTERPRISE=1 \
+            cargo test -p fiftyone-native --no-default-features --features ipi \
+            --lib -- --exact \
+            ipi::tests::each_property_gives_as_many_values_as_it_counts_and_its_default_among_them \
+            ipi::tests::a_value_is_found_by_its_exact_text \
+            ipi::tests::each_property_belongs_to_one_of_the_data_files_components \
+            ipi::tests::each_shim_string_reader_fails_for_an_index_past_the_end \
+            ipi::tests::an_enterprise_file_names_each_type \
+            ipi::tests::an_enterprise_file_gives_each_value_as_text
+
       # A changed Rust answer must fail the comparison and be named in the
       # report, or the comparison proves nothing.
       - name: Check that a changed answer fails

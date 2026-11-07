@@ -23,7 +23,8 @@
 //! The engine's property and component metadata, read from the data file as
 //! the .NET engine reads it. The tests run against the ASN file in the data
 //! repository, or the file `51DEGREES_IPI_PATH` names, and skip when neither
-//! is present.
+//! is present. A test that needs an Enterprise file skips on any other, and
+//! fails instead when `51DEGREES_REQUIRE_ENTERPRISE` is set.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -38,6 +39,19 @@ use fiftyone_pipeline_engines_fiftyone::ValueMetaData;
 
 /// The properties the .NET engine lists after the data file's.
 const ADDED_PROPERTIES: [&str; 2] = ["Ip", "IpV6"];
+
+/// Set where the Enterprise file must be given, as in the comparison with
+/// .NET, so a test that needs it fails rather than skips.
+const REQUIRE_ENTERPRISE: &str = "51DEGREES_REQUIRE_ENTERPRISE";
+
+/// Skip `what` for `reason`, or fail when [`REQUIRE_ENTERPRISE`] is set.
+fn skip_without_enterprise(reason: &str, what: &str) {
+    assert!(
+        std::env::var_os(REQUIRE_ENTERPRISE).is_none(),
+        "{REQUIRE_ENTERPRISE} is set, but {reason}"
+    );
+    eprintln!("{reason}; skipping {what}");
+}
 
 /// The data file `51DEGREES_IPI_PATH` names, else the ASN file in the data
 /// repository inside the `cxx` submodule.
@@ -308,7 +322,10 @@ fn a_property_left_out_by_configuration_is_excluded() {
 #[test]
 fn a_property_the_shared_model_does_not_declare_is_read_as_the_data_file_types_it() {
     let Some(engine) = engine(&[]) else {
-        eprintln!("no IP Intelligence data file found; skipping undeclared properties");
+        skip_without_enterprise(
+            "no IP Intelligence data file found",
+            "undeclared properties",
+        );
         return;
     };
     if !engine
@@ -316,7 +333,10 @@ fn a_property_the_shared_model_does_not_declare_is_read_as_the_data_file_types_i
         .iter()
         .any(|name| name == "StateGeoNameIdsGeographical")
     {
-        eprintln!("the data file is not an Enterprise file; skipping undeclared properties");
+        skip_without_enterprise(
+            "the data file is not an Enterprise file",
+            "undeclared properties",
+        );
         return;
     }
     let data = lookup(engine, "1.1.1.1");

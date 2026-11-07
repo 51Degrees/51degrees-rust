@@ -2149,13 +2149,30 @@ mod tests {
         }
     }
 
-    /// The types of the properties an Enterprise file defines that are not
-    /// strings, as the data file names them.
-    #[test]
-    fn an_enterprise_file_names_each_type() {
+    /// Set where the Enterprise file must be given, as in the comparison with
+    /// .NET, so a test that needs it fails rather than skips.
+    const REQUIRE_ENTERPRISE: &str = "51DEGREES_REQUIRE_ENTERPRISE";
+
+    /// The length of the buffer the shim first writes a value's text into,
+    /// `SHIM_TEXT_BUFFER_LENGTH` in `shim.c`.
+    const SHIM_TEXT_BUFFER_LENGTH: usize = 256;
+
+    /// Skip `what` for `reason`, or fail when [`REQUIRE_ENTERPRISE`] is set.
+    fn skip_without_enterprise(reason: &str, what: &str) {
+        assert!(
+            std::env::var_os(REQUIRE_ENTERPRISE).is_none(),
+            "{REQUIRE_ENTERPRISE} is set, but {reason}"
+        );
+        eprintln!("{reason}; skipping {what}");
+    }
+
+    /// The Enterprise file `51DEGREES_IPI_PATH` names, opened in LowMemory,
+    /// and its properties, or [`None`] after skipping `what` when there is
+    /// none.
+    fn enterprise_file(what: &str) -> Option<(Arc<Manager>, Vec<DataFileProperty>)> {
         let Some(data_file) = ipi_data_file() else {
-            eprintln!("no IP Intelligence data file found; skipping types");
-            return;
+            skip_without_enterprise("no IP Intelligence data file found", what);
+            return None;
         };
         let manager = open_found(&data_file, PerformanceProfile::LowMemory);
         let properties = manager
@@ -2165,12 +2182,20 @@ mod tests {
             .iter()
             .any(|property| property.name == "Latitude")
         {
-            eprintln!(
-                "{} is not an Enterprise file; skipping types",
-                data_file.display()
-            );
-            return;
+            let reason = format!("{} is not an Enterprise file", data_file.display());
+            skip_without_enterprise(&reason, what);
+            return None;
         }
+        Some((manager, properties))
+    }
+
+    /// The types of the properties an Enterprise file defines that are not
+    /// strings, as the data file names them.
+    #[test]
+    fn an_enterprise_file_names_each_type() {
+        let Some((_, properties)) = enterprise_file("types") else {
+            return;
+        };
         for (name, value_type) in [
             ("Latitude", PropertyValueType::Float),
             ("IsTor", PropertyValueType::Bool),
@@ -2184,6 +2209,46 @@ mod tests {
                 value_type,
                 "{name}"
             );
+        }
+    }
+
+    /// An Enterprise file's values are given as text as .NET gives them. An
+    /// IP range starts at an address, a coordinate has at most 3 decimal
+    /// places, and an area is WKT text. The first area is longer than the
+    /// shim's first buffer, so the shim writes it again into a buffer it
+    /// allocates.
+    #[test]
+    fn an_enterprise_file_gives_each_value_as_text() {
+        let Some((manager, properties)) = enterprise_file("value text") else {
+            return;
+        };
+        let first = |name: &str, count: u32| -> Vec<String> {
+            let property = file_property(&properties, name);
+            let values = manager
+                .data_file_property_value_range(property.index, 0..count)
+                .expect("the values should be read");
+            assert_eq!(values.len() as u32, count, "{name}");
+            values.into_iter().map(|value| value.name).collect()
+        };
+
+        let area = &first("Areas", 1)[0];
+        assert!(area.len() > SHIM_TEXT_BUFFER_LENGTH, "{area}");
+        let keyword = area.split('(').next().unwrap_or_default();
+        assert!(
+            ["POLYGON", "MULTIPOLYGON", "GEOMETRYCOLLECTION"].contains(&keyword),
+            "{area}"
+        );
+        assert!(area.ends_with(')'), "{area}");
+
+        for start in first("IpRangeStart", 10) {
+            assert!(start.parse::<std::net::IpAddr>().is_ok(), "{start}");
+        }
+        for name in ["Latitude", "Longitude"] {
+            for text in first(name, 100) {
+                assert!(text.parse::<f64>().is_ok(), "{name} {text}");
+                let places = text.split_once('.').map_or(0, |(_, places)| places.len());
+                assert!(places <= 3, "{name} {text}");
+            }
         }
     }
 
