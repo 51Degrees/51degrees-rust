@@ -80,6 +80,48 @@ if let Some(countries) = data.get(COUNTRY_NAMES_TRANSLATED_KEY) {
 }
 ```
 
+## With the cloud service
+
+`CloudCountriesTranslationEngine` takes the place of both engines when the
+51Degrees cloud service translates. Add it after a cloud request engine whose
+key carries the `countrynamestranslated` product. The engine reads that
+section of the cloud's answer and gives each property in it under
+`COUNTRY_NAMES_TRANSLATED_KEY`, read through `CountriesTranslationData` as on
+premise, so one engine can be swapped for the other. The engine reads no
+evidence itself, because the cloud request engine sends the request's
+evidence and the cloud service picks the language from it.
+
+```rust
+use std::sync::Arc;
+
+use fiftyone_cloud_request_engine::CloudRequestEngine;
+use fiftyone_ip_intelligence_translation::CloudCountriesTranslationEngine;
+use fiftyone_pipeline_core::Pipeline;
+
+let request = Arc::new(
+    CloudRequestEngine::builder()
+        .resource_key("my-resource-key")
+        .build()?,
+);
+let countries = Arc::new(
+    CloudCountriesTranslationEngine::builder()
+        .cloud_request_engine(Arc::clone(&request))
+        .build()?,
+);
+let pipeline = Pipeline::builder()
+    .add_element(request)
+    .add_element(countries)
+    .build()?;
+// Read the results as in the example above.
+```
+
+A resource key without the product gives the engine no properties and logs
+one error. When the cloud request fails, reading a property gives the reason
+`CloudRequestFailed`. With a resource key, a property the cloud did not
+return gives the reason it is missing. The cloud's answer may also carry
+`SortingCultureUsed`, which is kept as text and logged as a property the
+engine has no metadata for, as .NET does.
+
 ## Size in a WebAssembly build
 
 `CountriesTranslationEngine` sorts for the language each request asks for,
