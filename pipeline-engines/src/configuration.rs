@@ -173,7 +173,7 @@ impl DataFileSettings {
             .collect();
         if self.license_key_required
             && !needing_key.is_empty()
-            && self.license_keys.iter().all(String::is_empty)
+            && self.license_keys.iter().all(|key| key.trim().is_empty())
         {
             return Err(Error::configuration(format!(
                 "Some enabled features ({}) require a license key but one has not been \

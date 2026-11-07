@@ -377,7 +377,7 @@ fn updates_with_an_update_service_register_the_data_file() {
         assert_eq!(service.registered_count(), 0);
     }
 
-    for key in [None, Some("")] {
+    for key in [None, Some(""), Some(" ")] {
         let mut parameters = vec![("DataFile", asn.as_str()), ("CreateTempDataCopy", "false")];
         if let Some(key) = key {
             parameters.push(("DataUpdateLicenseKey", key));
