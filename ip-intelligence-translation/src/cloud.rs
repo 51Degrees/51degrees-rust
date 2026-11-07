@@ -236,6 +236,10 @@ impl CloudCountriesTranslationEngine {
         &self.request_engine
     }
 
+    /// Derive the metadata from the request engine's accessible properties,
+    /// taking the product keyed by `countrynamestranslated`. Each property
+    /// keeps the category the list gives it. Returns `None` when there is no
+    /// such product or it lists no properties.
     fn derive_metadata(products: &LicensedProducts) -> Option<DerivedMetadata> {
         let product = products.products.get(COUNTRY_NAMES_TRANSLATED_KEY_NAME)?;
         if product.properties.is_empty() {
@@ -248,11 +252,14 @@ impl CloudCountriesTranslationEngine {
         };
         for property in &product.properties {
             let form = Form::from_cloud_type(&property.value_type);
-            let core = PropertyMetaData::new(
+            let mut core = PropertyMetaData::new(
                 &property.name,
                 COUNTRY_NAMES_TRANSLATED_KEY_NAME,
                 form.value_type(),
             );
+            if let Some(category) = &property.category {
+                core = core.with_category(category.clone());
+            }
             let mut aspect = AspectPropertyMetaData::from_core(core.clone());
             if let Some(tier) = &product.data_tier {
                 aspect = aspect.with_data_tiers([tier.clone()]);
