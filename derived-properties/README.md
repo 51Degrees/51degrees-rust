@@ -85,9 +85,13 @@ message.
 Building the pipeline then fails, naming each property, when no element in it
 supplies a property a script reads, or when another derived property element
 already writes a property of the same name. Where the elements sit is not
-judged, so the engines may run in a parallel group before this element. An
-element still to load its properties, as a cloud engine is until the cloud
-has answered, may supply any property under its key.
+judged, so the engines may run in a parallel group before this element. A
+script may read what an earlier script of the same element writes, but not
+what a later one writes, because that has no value yet when it is read. An
+element still to load its properties may supply any property under its key.
+A cloud engine is one only when the request for its property list failed at
+start-up for a reason that may pass, such as the cloud being out of reach,
+and it asks again when first used.
 
 ### Without a pipeline
 

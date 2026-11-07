@@ -387,22 +387,24 @@ fn each_script_reports_once_and_the_element_once_across_pipelines() {
     assert_eq!(run(&second, 2), vec![Vec::<String>::new(); 2]);
 }
 
-/// A script reading a derived property a later script of its element writes
-/// finds no value, and logs nothing, because the element writes `derived`
-/// only after every script has run.
+/// A script reading a derived property that another derived property
+/// element writes after it finds no value, and logs nothing, because a
+/// source under `derived` is never reported missing.
 #[test]
 fn a_script_reading_another_derived_property_logs_nothing() {
     let _serial = start();
-    let element = Arc::new(
-        DerivedPropertyElement::builder()
-            .add_script("Demo", &script("Demo", "derived.Other", ""))
-            .add_script("Other", &script("Other", "src.N", ""))
-            .build()
-            .unwrap(),
-    );
+    let element = |name: &str, source: &str| {
+        Arc::new(
+            DerivedPropertyElement::builder()
+                .add_script(name, &script(name, source, ""))
+                .build()
+                .unwrap(),
+        )
+    };
     let pipeline = Pipeline::builder()
         .add_element(SourceElement::new(false))
-        .add_element(element)
+        .add_element(element("Demo", "derived.Other"))
+        .add_element(element("Other", "src.N"))
         .build()
         .unwrap();
     assert_eq!(run(&pipeline, 2), vec![Vec::<String>::new(); 2]);

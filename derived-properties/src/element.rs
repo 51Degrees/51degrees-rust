@@ -171,7 +171,7 @@ impl DerivedPropertyElement {
             for element in elements {
                 // An element yet to load its properties lists none, as .NET
                 // reads one.
-                if std::ptr::addr_eq(Arc::as_ptr(element), self as *const Self)
+                if self.is_self(element)
                     || !element
                         .data_key()
                         .eq_ignore_ascii_case(DERIVED_DEFAULT_ELEMENT_DATA_KEY)
@@ -188,9 +188,9 @@ impl DerivedPropertyElement {
                 ));
             }
         }
-        for script in &self.scripts {
+        for (index, script) in self.scripts.iter().enumerate() {
             for property in script.source_properties() {
-                if supplied(elements, property) {
+                if self.supplied(index, elements, property) {
                     continue;
                 }
                 let name = &property.name;
@@ -204,22 +204,54 @@ impl DerivedPropertyElement {
         }
         faults
     }
-}
 
-/// Whether an element with the source property's element data key lists the
-/// property, or has yet to load its properties and so may list it once it
-/// has. A cloud engine loads them from the cloud's answer after it is built.
-///
-/// This element counts as well, so a script can read a property another
-/// script of the same element writes, as the specification's "some Element
-/// in the Pipeline" allows.
-fn supplied(elements: &[Arc<dyn FlowElement>], property: &SourceProperty) -> bool {
-    elements.iter().any(|element| {
-        element
-            .data_key()
-            .eq_ignore_ascii_case(&property.element_key)
-            && (lists(element.as_ref(), &property.property_name) || !element.properties_loaded())
-    })
+    /// Whether `element` is this element, or one wrapping it that passes
+    /// calls on and so gives this element's own property list. No other
+    /// element can give that list, because it is never empty.
+    fn is_self(&self, element: &Arc<dyn FlowElement>) -> bool {
+        std::ptr::addr_eq(Arc::as_ptr(element), self as *const Self)
+            || std::ptr::eq(element.properties().as_ptr(), self.properties.as_ptr())
+    }
+
+    /// Whether a source property of the script at `index` is supplied.
+    ///
+    /// This element supplies only what its scripts before that one write,
+    /// because a script reads the outcomes of the scripts already run, so
+    /// a property a later script writes never has a value when it is read.
+    /// Another element supplies a property when it has the source
+    /// property's element data key and lists the property, or has that key
+    /// and has yet to load its properties. A cloud engine has its list when
+    /// the pipeline is built unless the request for the list failed for a
+    /// reason that may pass, such as the cloud being out of reach, and it
+    /// asks again when first used, so such a fault does not refuse the
+    /// pipeline.
+    fn supplied(
+        &self,
+        index: usize,
+        elements: &[Arc<dyn FlowElement>],
+        property: &SourceProperty,
+    ) -> bool {
+        if property
+            .element_key
+            .eq_ignore_ascii_case(DERIVED_DEFAULT_ELEMENT_DATA_KEY)
+            && self.scripts[..index].iter().any(|earlier| {
+                earlier
+                    .output()
+                    .name
+                    .eq_ignore_ascii_case(&property.property_name)
+            })
+        {
+            return true;
+        }
+        elements.iter().any(|element| {
+            !self.is_self(element)
+                && element
+                    .data_key()
+                    .eq_ignore_ascii_case(&property.element_key)
+                && (lists(element.as_ref(), &property.property_name)
+                    || !element.properties_loaded())
+        })
+    }
 }
 
 /// Whether an element's metadata lists a property, ignoring case.
@@ -606,7 +638,7 @@ fn log_scripts(scripts: &[Script]) {
 struct FlowDataSource<'a> {
     data: &'a FlowData,
     /// What the scripts run so far produced, so that a script can name a
-    /// property another script in the same element produces.
+    /// property an earlier script in the same element produces.
     results: RefCell<Vec<(String, Outcome)>>,
     /// The property names each element data holds, read once and only where a
     /// property could not be read, which is what tells a property that is not

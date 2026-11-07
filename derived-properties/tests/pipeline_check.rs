@@ -82,7 +82,8 @@ fn supplier(
 }
 
 /// An element with the data key `key` that has yet to load its properties,
-/// as a cloud engine is until the cloud has answered.
+/// as a cloud engine is when the request for its property list failed at
+/// start-up.
 fn not_loaded(key: &'static str) -> Arc<dyn FlowElement> {
     Arc::new(Supplier {
         key,
@@ -90,6 +91,48 @@ fn not_loaded(key: &'static str) -> Arc<dyn FlowElement> {
         loaded: false,
         filter: EvidenceKeyFilterWhitelist::new(Vec::<&str>::new()),
     })
+}
+
+/// An element that wraps another and passes every call on to it, as a host
+/// does to change when the element runs.
+struct Wrapped(Arc<dyn FlowElement>);
+
+impl FlowElement for Wrapped {
+    fn process(&self, data: &mut FlowData) -> Result<()> {
+        self.0.process(data)
+    }
+
+    fn data_key(&self) -> &str {
+        self.0.data_key()
+    }
+
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        self.0.evidence_key_filter()
+    }
+
+    fn is_evidence_key_filter_complete(&self) -> bool {
+        self.0.is_evidence_key_filter_complete()
+    }
+
+    fn properties(&self) -> &[PropertyMetaData] {
+        self.0.properties()
+    }
+
+    fn properties_loaded(&self) -> bool {
+        self.0.properties_loaded()
+    }
+
+    fn is_concurrent(&self) -> bool {
+        self.0.is_concurrent()
+    }
+
+    fn type_name(&self) -> &'static str {
+        self.0.type_name()
+    }
+
+    fn add_pipeline(&self, pipeline: &Arc<Pipeline>) -> Result<()> {
+        self.0.add_pipeline(pipeline)
+    }
 }
 
 fn human_confidence() -> Script {
@@ -300,7 +343,7 @@ fn two_elements_writing_one_derived_property_are_refused() {
 }
 
 #[test]
-fn a_script_may_read_what_another_script_of_its_element_writes() {
+fn a_script_may_read_what_an_earlier_script_of_its_element_writes() {
     Pipeline::builder()
         .add_element(supplier("src", ["N"]))
         .add_element(derived(&[
@@ -308,7 +351,26 @@ fn a_script_may_read_what_another_script_of_its_element_writes() {
             ("BandIsHigh", "derived.Band"),
         ]))
         .build()
-        .expect("derived.Band is written by the element itself");
+        .expect("derived.Band is written by an earlier script");
+
+    // A later script's property has no value when an earlier one reads it.
+    let result = Pipeline::builder()
+        .add_element(supplier("src", ["N"]))
+        .add_element(derived(&[
+            ("BandIsHigh", "derived.Band"),
+            ("Band", "src.N"),
+        ]))
+        .build();
+    assert_eq!(
+        message(result),
+        refused(&[needs("BandIsHigh", "derived.Band")])
+    );
+
+    // A script's own property is not there when it runs either.
+    let result = Pipeline::builder()
+        .add_element(derived(&[("Demo", "derived.Demo")]))
+        .build();
+    assert_eq!(message(result), refused(&[needs("Demo", "derived.Demo")]));
 
     let result = Pipeline::builder()
         .add_element(derived(&[("Demo", "derived.Missing")]))
@@ -317,6 +379,43 @@ fn a_script_may_read_what_another_script_of_its_element_writes() {
         message(result),
         refused(&[needs("Demo", "derived.Missing")])
     );
+}
+
+#[test]
+fn another_derived_property_element_supplies_what_it_writes_wherever_it_sits() {
+    Pipeline::builder()
+        .add_element(supplier("src", ["N"]))
+        .add_element(derived(&[("BandIsHigh", "derived.Band")]))
+        .add_element(derived(&[("Band", "src.N")]))
+        .build()
+        .expect("derived.Band is written by another element");
+}
+
+#[test]
+fn an_element_inside_a_wrapper_passing_calls_on_is_not_another_writer() {
+    Pipeline::builder()
+        .add_element(supplier("device", read_by_human_confidence("device")))
+        .add_element(supplier("ip", read_by_human_confidence("ip")))
+        .add_element(Arc::new(Wrapped(human_confidence_element())))
+        .build()
+        .expect("the wrapper gives the element's own properties");
+
+    // Through the wrapper, earlier scripts still supply and another element
+    // writing the same property is still refused.
+    Pipeline::builder()
+        .add_element(supplier("src", ["N"]))
+        .add_element(Arc::new(Wrapped(derived(&[
+            ("Band", "src.N"),
+            ("BandIsHigh", "derived.Band"),
+        ]))))
+        .build()
+        .expect("derived.Band is written by an earlier script");
+    let result = Pipeline::builder()
+        .add_element(supplier("src", ["N"]))
+        .add_element(Arc::new(Wrapped(derived(&[("Demo", "src.N")]))))
+        .add_element(derived(&[("Demo", "src.N")]))
+        .build();
+    assert_eq!(message(result), refused(&[writes("Demo", "Demo")]));
 }
 
 #[test]
