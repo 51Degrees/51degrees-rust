@@ -1903,6 +1903,36 @@ mod tests {
         }
     }
 
+    /// A header whose dates are zero, or whose year is -1 with a valid month
+    /// and day, holds no valid date, so neither date is read. The year -1
+    /// would otherwise be read as a date before year 1.
+    #[test]
+    fn a_header_holding_no_valid_date_gives_no_dates() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the dates that are not valid");
+            return;
+        };
+        let bytes = std::fs::read(&path).expect("data file reads");
+        let mut zeroed = bytes.clone();
+        zeroed[PUBLISHED_AT..PUBLISHED_AT + 8].fill(0);
+        let mut year_minus_one = bytes;
+        for at in [PUBLISHED_AT, PUBLISHED_AT + 4] {
+            year_minus_one[at..at + 4].copy_from_slice(&[0xFF, 0xFF, 1, 1]);
+        }
+        assert_eq!(header_dates(&year_minus_one), ((-1, 1, 1), (-1, 1, 1)));
+        for (case, data) in [("zeroed", zeroed), ("year -1", year_minus_one)] {
+            let manager = Manager::open_from_memory(
+                data,
+                PerformanceProfile::LowMemory,
+                None,
+                &HashOptions::default(),
+            )
+            .expect("data loads");
+            assert_eq!(manager.data_set_published(), None, "{case}");
+            assert_eq!(manager.data_set_next_update(), None, "{case}");
+        }
+    }
+
     /// A data set loaded from memory under any profile opens no file handle
     /// and gives the answers and properties the file gives, after the caller
     /// has dropped its own reference to the manager.
