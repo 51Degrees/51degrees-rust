@@ -1225,13 +1225,15 @@ fn named_evidence_keys(manager: &Manager) -> Vec<String> {
 /// does after each load. The date the file was published goes in the update
 /// service's `If-Modified-Since` header. The date the next is expected, at noon
 /// UTC and a random minute as .NET gives it, is when the service starts to
-/// poll.
+/// poll. A date the header does not hold is cleared, so that no date of data
+/// no longer loaded is kept.
 fn record_dates(manager: &Manager, data_file: &AspectEngineDataFile) {
     let published = manager
         .data_set_published()
         .and_then(|(year, month, day)| Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).single());
-    if let Some(published) = published {
-        data_file.set_data_published(published);
+    match published {
+        Some(published) => data_file.set_data_published(published),
+        None => data_file.clear_data_published(),
     }
     let next = manager
         .data_set_next_update()
@@ -1239,8 +1241,9 @@ fn record_dates(manager: &Manager, data_file: &AspectEngineDataFile) {
             Utc.with_ymd_and_hms(year, month, day, NEXT_UPDATE_HOUR, random_minute(), 0)
                 .single()
         });
-    if let Some(next) = next {
-        data_file.set_update_available_time(next);
+    match next {
+        Some(next) => data_file.set_update_available_time(next),
+        None => data_file.clear_update_available_time(),
     }
 }
 
@@ -1248,11 +1251,15 @@ fn record_dates(manager: &Manager, data_file: &AspectEngineDataFile) {
 /// file, at which the update service is told to expect it.
 const NEXT_UPDATE_HOUR: u32 = 12;
 
+/// The number of minutes in an hour, the range the minute of
+/// [`NEXT_UPDATE_HOUR`] is chosen from.
+const MINUTES_PER_HOUR: u64 = 60;
+
 /// A minute of the hour chosen at random, so that servers loading the same
 /// data file do not all start to poll at once.
 fn random_minute() -> u32 {
     let random = RandomState::new().hash_one(std::time::SystemTime::now());
-    u32::try_from(random % 60).unwrap_or(0)
+    u32::try_from(random % MINUTES_PER_HOUR).unwrap_or(0)
 }
 
 #[cfg(test)]

@@ -419,6 +419,13 @@ impl AspectEngineDataFile {
         }
     }
 
+    /// Clear the publish time, for data that holds none. This does not count
+    /// as setting one, so after a download the data update service still
+    /// records the time of the download.
+    pub fn clear_data_published(&self) {
+        self.lock().data_published = None;
+    }
+
     /// How many times the publish date has been set.
     #[cfg(feature = "data-update")]
     pub(crate) fn published_changes(&self) -> u64 {
@@ -433,6 +440,12 @@ impl AspectEngineDataFile {
     /// Set the time an updated data file is expected to be available.
     pub fn set_update_available_time(&self, when: DateTime<Utc>) {
         self.lock().update_available = Some(when);
+    }
+
+    /// Clear the time an updated data file is expected, for data that holds
+    /// none.
+    pub fn clear_update_available_time(&self) {
+        self.lock().update_available = None;
     }
 
     /// True once this file has been registered with a data update service.
@@ -622,6 +635,20 @@ mod tests {
         let now = Utc::now();
         file.set_data_published(now);
         assert_eq!(file.data_published(), Some(now));
+        file.set_update_available_time(now);
+        assert_eq!(file.update_available_time(), Some(now));
+
+        #[cfg(feature = "data-update")]
+        let changes = file.published_changes();
+        file.clear_data_published();
+        file.clear_update_available_time();
+        assert!(file.data_published().is_none());
+        assert!(file.update_available_time().is_none());
+        // Clearing the publish date is not setting one.
+        #[cfg(feature = "data-update")]
+        {
+            assert_eq!(file.published_changes(), changes);
+        }
 
         // set_registered exists only with the data-update service.
         #[cfg(feature = "data-update")]
