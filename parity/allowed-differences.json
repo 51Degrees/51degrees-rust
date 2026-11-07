@@ -74,14 +74,6 @@
     "issue": 226
   },
   {
-    "path": "*ip.*geonameid*",
-    "kind": "onlyInDotnet",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "data": "enterprise",
-    "reason": "The crates' model lacks the GeoNameId properties .NET declares.",
-    "issue": 226
-  },
-  {
     "path": "*ip.areas",
     "kind": "type",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
@@ -118,14 +110,6 @@
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*", "translation-*"],
     "reason": "The crates write a weighted value as value and weight, where the published .NET packages write rawweighting and value. The translation cases write their codes as each side's IP Intelligence data, whichever data file the job uses.",
     "issue": 226
-  },
-  {
-    "path": "properties.ip.*",
-    "kind": "onlyInRust",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "data": "lite",
-    "reason": "The crates' IP Intelligence engine lists a fixed set of property names whatever the data file holds. The ASN file holds few of them.",
-    "issue": 223
   },
   {
     "path": "properties.device.*",
@@ -241,14 +225,6 @@
     "kind": "order",
     "reason": "The crates' Device Detection engine adds the match metrics and the matched User-Agents to its data before the data file's values, so the JSON lists them first. .NET lists them after the data file's properties.",
     "issue": 224
-  },
-  {
-    "path": "json.ip",
-    "kind": "order",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "data": "enterprise",
-    "reason": "The crates' IP Intelligence engine reads a fixed list of property names in name order, so the JSON lists them in that order. .NET lists them in the data file's order.",
-    "issue": 223
   },
   {
     "path": "javascript",
