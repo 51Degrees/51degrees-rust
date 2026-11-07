@@ -50,8 +50,8 @@
 //!   logged. The usage sharing element here shares no ASP.NET session
 //!   cookie, and has no recovery settings.
 //!
-//! The pipeline holds the [`ShareUsageConfig`] the usage sharing element
-//! was made with, so what a configuration set can be read back.
+//! The pipeline holds the usage sharing element as a resource, so what a
+//! configuration set can be read back with [`ShareUsageElement::config`].
 //!
 //! [`use_fiftyone_pipeline_builder`] makes pipelines as .NET's
 //! `FiftyOnePipelineBuilder` does, adding the Sequence element and usage
@@ -61,7 +61,7 @@
 //! ```
 //! use fiftyone_pipeline_core::configuration::{BuilderRegistry, PipelineOptions};
 //! use fiftyone_pipeline_core::PipelineBuilder;
-//! use fiftyone_pipeline_engines_fiftyone::{configuration, ShareUsageConfig};
+//! use fiftyone_pipeline_engines_fiftyone::{configuration, ShareUsageElement};
 //!
 //! let mut registry = BuilderRegistry::new();
 //! configuration::add_builders(&mut registry);
@@ -83,7 +83,8 @@
 //! )?;
 //! let pipeline = PipelineBuilder::new().build_from_configuration(&registry, &options)?;
 //!
-//! let config = pipeline.resource::<ShareUsageConfig>().expect("usage sharing");
+//! let element = pipeline.resource::<ShareUsageElement>().expect("usage sharing");
+//! let config = element.config();
 //! assert_eq!(config.share_percentage(), 0.25);
 //! assert_eq!(
 //!     config.ignore_flow_data_evidence_filter(),
@@ -153,8 +154,8 @@ pub fn add_builders(registry: &mut BuilderRegistry) -> &mut BuilderRegistry {
 /// [`ShareUsageElement`] with the default settings is added to run last
 /// unless one is in the configuration on its own. An element in a parallel
 /// group of two or more is not counted, as .NET does not count one. The
-/// pipeline holds the [`ShareUsageConfig`] of an element added this way, as
-/// it does for one the configuration names.
+/// pipeline holds an element added this way as a resource, as it does one
+/// the configuration names.
 ///
 /// The element sends usage only when this crate's `share-usage-transport`
 /// feature is on, which it is not by default (see [`ShareUsageElement`]).
@@ -394,15 +395,15 @@ fn ignored(setting: &str) {
     log::warn!("The usage sharing setting '{setting}' has no effect here and is ignored.");
 }
 
-/// The usage sharing element `builder` describes, with its configuration
-/// given to the pipeline.
+/// The usage sharing element `builder` describes, given to the pipeline as
+/// a resource.
 fn share_usage_element(
     builder: ShareUsageBuilder,
     context: &mut BuildContext,
 ) -> Result<Arc<dyn FlowElement>> {
-    let config = builder.config()?;
-    context.add_resource(Arc::new(config.clone()));
-    Ok(Arc::new(ShareUsageElement::new(config)))
+    let element = Arc::new(ShareUsageElement::new(builder.config()?));
+    context.add_resource(Arc::clone(&element) as _);
+    Ok(element)
 }
 
 /// The usage sharing builder, with its settings in the order .NET's

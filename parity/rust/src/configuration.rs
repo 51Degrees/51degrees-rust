@@ -46,7 +46,7 @@ use fiftyone_pipeline_core::configuration::{BuilderRegistry, PipelineOptions};
 use fiftyone_pipeline_core::{Error, FlowElement, Pipeline, PipelineBuilder};
 use fiftyone_pipeline_engines::{AspectEngineDataFile, OnPremiseAspectEngine};
 use fiftyone_pipeline_engines_fiftyone::constants::SHARE_USAGE_DEFAULT_ELEMENT_DATA_KEY;
-use fiftyone_pipeline_engines_fiftyone::ShareUsageConfig;
+use fiftyone_pipeline_engines_fiftyone::{ShareUsageConfig, ShareUsageElement};
 
 /// The first argument that selects this form.
 pub const RUN: &str = "configuration";
@@ -160,7 +160,7 @@ fn describe_case(
     let elements = pipeline
         .flow_elements()
         .iter()
-        .map(|element| describe_element(&pipeline, element.as_ref(), files))
+        .map(|element| describe_element(&pipeline, element, files))
         .collect::<Vec<_>>();
     Ok(json!({
         "error": null,
@@ -191,7 +191,7 @@ fn with_files(configuration: &Value, files: &[(&str, String)]) -> Value {
 /// An element's data key and the settings read back from it.
 fn describe_element(
     pipeline: &Pipeline,
-    element: &dyn FlowElement,
+    element: &Arc<dyn FlowElement>,
     files: &[(&str, String)],
 ) -> Value {
     let key = element.data_key();
@@ -210,8 +210,12 @@ fn describe_element(
         out["dataFile"] = describe_data_file(&file, files);
     }
     if key == SHARE_USAGE_DEFAULT_ELEMENT_DATA_KEY {
-        if let Some(config) = pipeline.resource::<ShareUsageConfig>() {
-            out["settings"] = describe_share_usage(&config);
+        // The element's own settings, as .NET reads its element's fields.
+        if let Some(share) = Arc::clone(element)
+            .into_any()
+            .and_then(|element| element.downcast::<ShareUsageElement>().ok())
+        {
+            out["settings"] = describe_share_usage(share.config());
         }
         let filter = element.evidence_key_filter();
         out["evidenceFilter"] = USAGE_FILTER_KEYS

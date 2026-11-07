@@ -296,12 +296,12 @@ the order the pipeline lists them, being those on their own first and then
 those in each parallel group, as .NET's `IPipeline.FlowElements` lists them.
 Each element has its `dataKey`. An on-premise engine also has `dataFile`,
 its data file's settings with the path given as its placeholder. The usage
-sharing element also has `settings`, the settings the crates hold in
-`ShareUsageConfig` and .NET in fields of `ShareUsageBase` read by
-reflection, and `evidenceFilter`, the element's evidence filter's answer
-for each of a list of keys, which shows the blocked headers, the query
-string parameters shared and whether all evidence is shared, because .NET
-holds those settings only in that filter. `CreateTempDataCopy` is a build
+sharing element also has `settings`, read from the element itself on
+both sides, the crates through `ShareUsageElement::config` and .NET from
+fields of `ShareUsageBase` read by reflection, and `evidenceFilter`, the
+element's evidence filter's answer for each of a list of keys, which shows
+the blocked headers, the query string parameters shared and whether all
+evidence is shared, because .NET holds those settings only in that filter. `CreateTempDataCopy` is a build
 parameter that the crates do not read back, and
 `a_copy_of_the_data_file_is_read_when_asked` in each on-premise engine's
 `tests/configuration.rs` checks it against what .NET did.

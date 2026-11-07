@@ -671,6 +671,14 @@ impl ShareUsageElement {
         self.fail_count.load(Ordering::Relaxed)
     }
 
+    /// The configuration the element was made with.
+    ///
+    /// To read it from an element in a pipeline, get the element back with
+    /// [`FlowElement::into_any`], which this element answers.
+    pub fn config(&self) -> &ShareUsageConfig {
+        &self.config
+    }
+
     /// True if the evidence matches a pair in the ignore filter, so the
     /// request is not shared.
     fn is_ignored(&self, data: &FlowData) -> bool {
@@ -819,6 +827,12 @@ impl FlowElement for ShareUsageElement {
         }
         *current = Arc::downgrade(pipeline);
         Ok(())
+    }
+
+    /// Gives the element back, so its [`config`](ShareUsageElement::config)
+    /// can be read from the pipeline.
+    fn into_any(self: Arc<Self>) -> Option<Arc<dyn Any + Send + Sync>> {
+        Some(self)
     }
 }
 
