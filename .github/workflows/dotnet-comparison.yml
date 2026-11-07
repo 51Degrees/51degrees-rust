@@ -366,11 +366,9 @@ jobs:
           fi
           grep -q 'ua-iphone.*properties.device.ismobile' out/report-changed.md
 
-      # A lost Rust answer, true or false, must fail too, in the properties
-      # and in the JSON. The entries for a number or true or false value that
-      # does not parse still let a lost 0 or false through, for the screen
-      # sizes over the Lite files and for many properties over the Enterprise
-      # files, until #224 removes that difference.
+      # A lost Rust answer, true or false or 0, must fail too, in the
+      # properties and in the JSON. The screen sizes for curl are 0 on both
+      # sides, from a data file value that is not a number.
       - name: Check that a lost answer fails
         if: matrix.data == 'lite'
         working-directory: parity
@@ -378,6 +376,9 @@ jobs:
           jq -c 'if .id == "ua-iphone" or .id == "ua-chrome-windows" then
               (.properties.device.ismobile |= {name: .name, noValue: "No value for property IsMobile."})
               | (.json |= (fromjson | del(.device.ismobile) | tojson))
+            elif .id == "ua-curl" then
+              (.properties.device.screenpixelswidth |= {name: .name, noValue: "No value for property ScreenPixelsWidth."})
+              | (.json |= (fromjson | del(.device.screenpixelswidth) | tojson))
             else . end' out/rust.jsonl > out/rust-lost.jsonl
           if target/debug/parity-compare --corpus corpus/evidence.json \
             --dotnet out/dotnet.jsonl --rust out/rust-lost.jsonl \
@@ -390,6 +391,8 @@ jobs:
           grep -q 'ua-iphone.*json.device.ismobile' out/report-lost.md
           grep -q 'ua-chrome-windows.*properties.device.ismobile' out/report-lost.md
           grep -q 'ua-chrome-windows.*json.device.ismobile' out/report-lost.md
+          grep -q 'ua-curl.*properties.device.screenpixelswidth' out/report-lost.md
+          grep -q 'ua-curl.*json.device.screenpixelswidth' out/report-lost.md
 
       # The values cases compare the JSON byte for byte, so a Rust text with
       # the same structure and one escape written differently must fail too.

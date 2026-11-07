@@ -768,10 +768,11 @@ pub struct DataFileProperty {
     /// True when the data set was opened with the property, so results can
     /// hold its values.
     pub available: bool,
-    /// The index [`Results::value_as_string_by_index`] takes for the
-    /// property, or [`None`] when results do not hold it. The C library finds
-    /// the property among the names the data set was opened with ignoring
-    /// case, so this is found for a property named in another case.
+    /// The index [`Results::value_as_string_by_index`] and
+    /// [`Results::values_by_index`] take for the property, or [`None`] when
+    /// results do not hold it. The C library finds the property among the
+    /// names the data set was opened with ignoring case, so this is found for
+    /// a property named in another case.
     pub required_property_index: Option<c_int>,
     /// The property's category, or empty when it has none.
     pub category: String,
@@ -1390,6 +1391,54 @@ impl Results {
         Ok(value)
     }
 
+    /// Read each value of a required property by the index
+    /// [`Manager::required_property_index`] returned for it, as the C++
+    /// `ResultsHash` in 51degrees-cxx reads them.
+    ///
+    /// Unlike [`value_as_string_by_index`](Self::value_as_string_by_index),
+    /// the values are kept apart, so one empty value is told apart from none
+    /// and a value holding a separator stays whole. Returns [`None`] when the
+    /// results hold no value for the property, as
+    /// `fiftyoneDegreesResultsHashGetHasValues` decides for a detection with
+    /// no evidence, one that matched nothing or a component with no profile,
+    /// and an empty list when the matched profile holds no value for it. An
+    /// index belongs to the data set it came from, so look it up again after
+    /// a reload. Returns an error for an index outside this data set's
+    /// required properties, or when the values cannot be read.
+    pub fn values_by_index(&self, index: c_int) -> Result<Option<Vec<String>>> {
+        let count = self.manager.property_index_map().len();
+        if index < 0 || index as usize >= count {
+            return Err(Error::Native {
+                status: String::from("InvalidInput"),
+                message: format!("{index} is not a required property index (0..{count})"),
+            });
+        }
+        let mut values: Vec<String> = Vec::new();
+        let mut exception = sys::Exception::cleared();
+        let _file_read = self.manager.file_read();
+        // Safety: the index is in range for this data set, and
+        // `take_result_value` treats the context as the `Vec<String>` it
+        // points to, which nothing else uses during the call.
+        let read = unsafe {
+            sys::fiftyoneDegreesShimHashGetResultValues(
+                self.as_ptr(),
+                index,
+                take_result_value,
+                (&mut values as *mut Vec<String>).cast::<c_void>(),
+                &mut exception,
+            )
+        };
+        exception.check()?;
+        match read {
+            sys::SHIM_VALUES_READ => Ok(Some(values)),
+            sys::SHIM_VALUES_NONE => Ok(None),
+            _ => Err(Error::Native {
+                status: String::from("NoValuesAvailable"),
+                message: String::from("No values are available for the property requested"),
+            }),
+        }
+    }
+
     /// The match metrics of the detection: the match method, difference,
     /// drift, iterations and matched-node count.
     ///
@@ -1532,6 +1581,23 @@ impl Drop for Results {
         // free order (results before manager).
         unsafe { sys::fiftyoneDegreesResultsHashFree(self.results.as_ptr()) };
     }
+}
+
+/// Take one value from `fiftyoneDegreesShimHashGetResultValues` into the
+/// `Vec<String>` that `context` points to.
+///
+/// # Safety
+/// `context` must point to a `Vec<String>` that nothing else uses during the
+/// call, and `value` must be a null terminated string.
+unsafe extern "C" fn take_result_value(context: *mut c_void, _field: c_int, value: *const c_char) {
+    // Safety: the caller's contract above.
+    let (values, text) = unsafe {
+        (
+            &mut *context.cast::<Vec<String>>(),
+            CStr::from_ptr(value).to_string_lossy().into_owned(),
+        )
+    };
+    values.push(text);
 }
 
 /// The message for a failed init, naming the data file at `path`, or `null`
@@ -1786,6 +1852,51 @@ mod tests {
                     "{name}"
                 );
             }
+        }
+    }
+
+    /// Reading each value apart gives the values the joined read joins, and
+    /// results that matched nothing hold no value for any property.
+    #[test]
+    fn values_read_apart_are_the_values_the_joined_read_joins() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping values read apart");
+            return;
+        };
+        let manager = Manager::open(&path, PerformanceProfile::Default).expect("data file loads");
+        let names = manager.property_names();
+        let index = |name: &str| {
+            manager
+                .required_property_index(name)
+                .expect("a listed property has an index")
+        };
+        let matched = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
+        let mut read = 0;
+        for name in &names {
+            let values = matched.values_by_index(index(name)).expect("read apart");
+            let joined = matched
+                .value_as_string_by_index(index(name), c"|")
+                .expect("read joined");
+            if let Some(values) = values {
+                read += 1;
+                assert_eq!(Some(values.join("|")), joined, "{name}");
+            }
+        }
+        assert!(read > 1, "{read} of {} properties read", names.len());
+        assert_eq!(
+            matched
+                .values_by_index(index("IsMobile"))
+                .expect("read apart"),
+            Some(vec!["False".to_owned()])
+        );
+
+        let nothing = detect(&manager, "header.x-not-read", "nothing to match");
+        for name in &names {
+            assert_eq!(
+                nothing.values_by_index(index(name)).expect("read apart"),
+                None,
+                "{name}"
+            );
         }
     }
 
@@ -2133,6 +2244,10 @@ mod tests {
         for index in [-1, count] {
             let err = results
                 .value_as_string_by_index(index, c"|")
+                .expect_err("an index outside the data set should be refused");
+            assert!(matches!(err, Error::Native { ref status, .. } if status == "InvalidInput"));
+            let err = results
+                .values_by_index(index)
                 .expect_err("an index outside the data set should be refused");
             assert!(matches!(err, Error::Native { ref status, .. } if status == "InvalidInput"));
         }
