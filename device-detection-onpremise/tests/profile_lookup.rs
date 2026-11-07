@@ -1,0 +1,262 @@
+/* *********************************************************************
+ * This Original Work is copyright of 51 Degrees Mobile Experts Limited.
+ * Copyright 2026 51 Degrees Mobile Experts Limited, Davidson House,
+ * Forbury Square, Reading, Berkshire, United Kingdom RG1 3EU.
+ *
+ * This Original Work is licensed under the European Union Public Licence
+ * (EUPL) v.1.2 and is subject to its terms as set out below.
+ *
+ * If a copy of the EUPL was not distributed with this file, You can obtain
+ * one at https://opensource.org/licenses/EUPL-1.2.
+ *
+ * The 'Compatible Licences' set out in the Appendix to the EUPL (as may be
+ * amended by the European Commission) shall be deemed incompatible for
+ * the purposes of the Work and the provisions of the compatibility
+ * clause in Article 5 of the EUPL shall not apply.
+ *
+ * If using the Work as, or as part of, a network application, by
+ * including the attribution notice(s) required under Article 5 of the EUPL
+ * in the end user terms of the application under an appropriate heading,
+ * such notice(s) shall fulfill the requirements of that article.
+ * ********************************************************************* */
+
+//! The engine looks up the profiles holding a property value in the data
+//! set it has loaded, from the index of the properties the builder names, and
+//! a refresh indexes the same properties again.
+//!
+//! The tests need a Hash data file with the `BrowserName` property, the one
+//! `51DEGREES_DD_PATH` names or the Lite file in the `cxx` submodule, and skip
+//! with a note when there is none.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use fiftyone_device_detection_onpremise::{
+    DeviceDetectionOnPremiseEngine, DeviceDetectionOnPremiseEngineBuilder,
+};
+use fiftyone_device_detection_shared::DEVICE_DATA_KEY;
+use fiftyone_native::dd::{HashOptions, Manager};
+use fiftyone_native::PerformanceProfile;
+use fiftyone_pipeline_core::{ElementData, Evidence, FlowElement, Pipeline};
+use fiftyone_pipeline_engines::OnPremiseAspectEngine;
+
+/// The property looked up, which every Hash data file has.
+const BROWSER_NAME: &str = "BrowserName";
+
+/// A property name no data file has.
+const NO_SUCH_PROPERTY: &str = "NoSuchProperty";
+
+/// The evidence key the engine reads profile ids from.
+const PROFILE_IDS_KEY: &str = "query.51D_ProfileIds";
+
+/// The Hash data file `51DEGREES_DD_PATH` names, else the Lite file in the
+/// `cxx` submodule, or `None` with a note that the test is skipped.
+fn data_file() -> Option<PathBuf> {
+    let given = std::env::var("51DEGREES_DD_PATH").ok().map(PathBuf::from);
+    let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../cxx/data/device-detection/51Degrees-LiteV4.1.hash");
+    let found = given
+        .into_iter()
+        .chain([bundled])
+        .find(|path| path.is_file());
+    if found.is_none() {
+        eprintln!("skipped: no Hash data file at 51DEGREES_DD_PATH or cxx/data");
+    }
+    found
+}
+
+/// The values the engine lists for `BrowserName`, or `None` with a note when
+/// the data file has no such property.
+fn browser_names(engine: &DeviceDetectionOnPremiseEngine) -> Option<Vec<String>> {
+    let values = engine
+        .property_values(BROWSER_NAME)
+        .expect("the values read")
+        .map(|values| values.into_iter().map(|value| value.name).collect());
+    if values.is_none() {
+        eprintln!("skipped: the data file has no {BROWSER_NAME}");
+    }
+    values
+}
+
+/// The ids of the profiles holding each value, read by a manager that
+/// indexes nothing, so every lookup reads every profile.
+fn ids_reading_every_profile(path: &Path, values: &[String]) -> Vec<Vec<u32>> {
+    let manager = Manager::open_with_hash_options(
+        path,
+        PerformanceProfile::InMemory,
+        None,
+        &HashOptions::default(),
+    )
+    .expect("the data file loads");
+    assert!(manager.indexed_properties().is_empty());
+    values
+        .iter()
+        .map(|value| {
+            manager
+                .profile_ids_for_property_value(BROWSER_NAME, value)
+                .expect("the lookup succeeds")
+        })
+        .collect()
+}
+
+/// The ids the engine gives for each value.
+fn ids(engine: &DeviceDetectionOnPremiseEngine, values: &[String]) -> Vec<Vec<u32>> {
+    values
+        .iter()
+        .map(|value| {
+            engine
+                .profile_ids_for_property_value(BROWSER_NAME, value)
+                .expect("the lookup succeeds")
+        })
+        .collect()
+}
+
+/// An engine with `BrowserName` named to index gives, for every value, the
+/// ids reading every profile gives, and so does an engine that indexes
+/// nothing. Each list is in ascending order and at least one is not empty.
+/// A value, a property name in other case and a property the data file does
+/// not have give none.
+#[test]
+fn every_value_gives_the_ids_reading_every_profile_gives() {
+    let Some(path) = data_file() else {
+        return;
+    };
+    let indexed = DeviceDetectionOnPremiseEngineBuilder::new(&path)
+        .indexed_property(BROWSER_NAME)
+        .build()
+        .expect("the data file loads");
+    let Some(values) = browser_names(&indexed) else {
+        return;
+    };
+    assert_eq!(indexed.indexed_properties(), [BROWSER_NAME]);
+    let expected = ids_reading_every_profile(&path, &values);
+    assert!(expected.iter().any(|ids| !ids.is_empty()));
+    for ids in &expected {
+        assert!(ids.windows(2).all(|pair| pair[0] < pair[1]), "{ids:?}");
+    }
+    assert_eq!(ids(&indexed, &values), expected);
+
+    let unindexed = DeviceDetectionOnPremiseEngineBuilder::new(&path)
+        .build()
+        .expect("the data file loads");
+    assert!(unindexed.indexed_properties().is_empty());
+    assert!(unindexed.hash_options().indexed_properties.is_empty());
+    assert_eq!(ids(&unindexed, &values), expected);
+
+    for (property, value) in [
+        (BROWSER_NAME, "No such browser"),
+        ("browsername", values[0].as_str()),
+        (NO_SUCH_PROPERTY, values[0].as_str()),
+    ] {
+        let found = indexed
+            .profile_ids_for_property_value(property, value)
+            .expect("the lookup succeeds");
+        assert!(found.is_empty(), "{property} {value:?}: {found:?}");
+    }
+}
+
+/// The first and last id found for each value, given to the engine as
+/// profile ids evidence, give a profile whose `BrowserName` is the value.
+#[test]
+fn an_id_given_as_profile_ids_evidence_gives_the_value() {
+    let Some(path) = data_file() else {
+        return;
+    };
+    let engine = DeviceDetectionOnPremiseEngineBuilder::new(&path)
+        .indexed_property(BROWSER_NAME)
+        .build()
+        .expect("the data file loads");
+    let Some(values) = browser_names(&engine) else {
+        return;
+    };
+    let element: Arc<dyn FlowElement> = engine.clone();
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("the pipeline builds");
+    let mut checked = 0;
+    for (value, found) in values.iter().zip(ids(&engine, &values)) {
+        for id in [found.first(), found.last()].into_iter().flatten() {
+            let mut data = pipeline.create_flow_data_with(
+                Evidence::builder()
+                    .add(PROFILE_IDS_KEY, id.to_string())
+                    .build(),
+            );
+            data.process().expect("the profile id processes");
+            let device = data.get(DEVICE_DATA_KEY).expect("device data");
+            let name = device.get(BROWSER_NAME).expect("BrowserName has a value");
+            assert_eq!(name.as_str(), Some(value.as_str()), "profile {id}");
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "no value is held by any profile");
+}
+
+/// An engine restricted to another property still indexes and finds the
+/// profiles of the property named to index, which it does not give.
+#[test]
+fn an_engine_restricted_to_another_property_finds_the_indexed_one() {
+    let Some(path) = data_file() else {
+        return;
+    };
+    let engine = DeviceDetectionOnPremiseEngineBuilder::new(&path)
+        .property("IsMobile")
+        .indexed_property(BROWSER_NAME)
+        .build()
+        .expect("the data file loads");
+    assert_eq!(engine.indexed_properties(), [BROWSER_NAME]);
+    assert!(!engine
+        .available_properties()
+        .iter()
+        .any(|name| name == BROWSER_NAME));
+    let full = DeviceDetectionOnPremiseEngineBuilder::new(&path)
+        .build()
+        .expect("the data file loads");
+    let Some(values) = browser_names(&full) else {
+        return;
+    };
+    assert_eq!(
+        ids(&engine, &values),
+        ids_reading_every_profile(&path, &values)
+    );
+}
+
+/// The builder keeps the names in the order given less exact repeats, a
+/// name in other case and one the data file has no property of among them,
+/// and the data set indexes the same names after a refresh from the file
+/// and from memory, giving the same ids.
+#[test]
+fn a_refresh_indexes_the_same_properties() {
+    let Some(path) = data_file() else {
+        return;
+    };
+    let named = [BROWSER_NAME, NO_SUCH_PROPERTY, "browsername"];
+    let engine = DeviceDetectionOnPremiseEngineBuilder::new(&path)
+        .performance_profile(PerformanceProfile::LowMemory)
+        .indexed_properties([BROWSER_NAME, NO_SUCH_PROPERTY])
+        .indexed_property(BROWSER_NAME)
+        .indexed_property("browsername")
+        .build()
+        .expect("the data file loads");
+    assert_eq!(engine.hash_options().indexed_properties, named);
+    assert_eq!(engine.indexed_properties(), named);
+    let Some(values) = browser_names(&engine) else {
+        return;
+    };
+    let before = ids(&engine, &values);
+
+    engine.refresh(None).expect("the data file loads again");
+    assert_eq!(
+        engine.indexed_properties(),
+        named,
+        "refreshed from the file"
+    );
+    assert_eq!(ids(&engine, &values), before, "refreshed from the file");
+
+    let data = std::fs::read(&path).expect("the data file reads");
+    engine
+        .refresh_from_memory(None, &data)
+        .expect("the data file loads from memory");
+    assert_eq!(engine.indexed_properties(), named, "refreshed from memory");
+    assert_eq!(ids(&engine, &values), before, "refreshed from memory");
+}

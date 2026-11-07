@@ -274,6 +274,17 @@ jobs:
           cat out/report.md >> "$GITHUB_STEP_SUMMARY"
           exit $status
 
+      # Only the TAC file holds the TAC and NativeModel properties, so the
+      # lookup of profiles by their values is checked here over every value
+      # of each, and 51DEGREES_REQUIRE_TAC makes the test fail rather than
+      # skip if the file stops carrying them or does not reach the test.
+      - name: Check the profile lookup on the TAC file
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        run: |
+          env 51DEGREES_DD_PATH="$DD_FILE" 51DEGREES_REQUIRE_TAC=1 \
+            cargo test -p fiftyone-native --test value_profiles \
+            tac_and_native_model_values_find_their_profiles -- --nocapture
+
       # Latitude, Longitude and the points of Areas are given to 3 decimal
       # places. Only the Enterprise file carries them, so the test runs here,
       # and 51DEGREES_REQUIRE_LOCATION makes it fail rather than skip if the
@@ -304,7 +315,8 @@ jobs:
             ipi::tests::each_property_belongs_to_one_of_the_data_files_components \
             ipi::tests::each_shim_string_reader_fails_for_an_index_past_the_end \
             ipi::tests::an_enterprise_file_names_each_type \
-            ipi::tests::an_enterprise_file_gives_each_value_as_text
+            ipi::tests::an_enterprise_file_gives_each_value_as_text \
+            ipi::tests::a_value_is_found_by_its_text_to_more_places
 
       # The robots.txt cases for each usage come from the data file, and the
       # Lite file holds no crawlers. Over the Enterprise file each side must

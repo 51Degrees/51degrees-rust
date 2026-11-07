@@ -1230,15 +1230,30 @@ extern "C" {
         length: usize,
     ) -> usize;
 
-    /// Writes the data set's published date into `*year`, `*month` and `*day`
-    /// and returns `1` on success or `0` when no data set is available. Any
-    /// output pointer may be null. Defined by this crate's `src/shim.c`, reading
-    /// the embedded publish date from the data set header.
+    /// Writes the date the data file was published, from its header, into
+    /// `*year`, `*month` and `*day` and returns `1`, or `0` when no data set
+    /// is available. Any output pointer may be null. Defined by this crate's
+    /// `src/shim.c`.
     ///
     /// # Safety
     /// `manager` must be initialized. Each non-null output pointer must be
     /// writable.
     pub fn fiftyoneDegreesShimIpiGetDataSetPublished(
+        manager: *mut ResourceManager,
+        year: *mut c_int,
+        month: *mut c_int,
+        day: *mut c_int,
+    ) -> c_int;
+
+    /// Writes the date the next data file is expected, from the data file
+    /// header, into `*year`, `*month` and `*day` and returns `1`, or `0` when
+    /// no data set is available. Any output pointer may be null. Defined by
+    /// this crate's `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be initialized. Each non-null output pointer must be
+    /// writable.
+    pub fn fiftyoneDegreesShimIpiGetDataSetNextUpdate(
         manager: *mut ResourceManager,
         year: *mut c_int,
         month: *mut c_int,
@@ -1287,6 +1302,25 @@ extern "C" {
         concurrency: i32,
         properties: *mut PropertiesRequired,
         file_name: *const c_char,
+        exception: *mut Exception,
+    ) -> StatusCode;
+
+    /// Initializes `manager` from the `size` bytes at `memory`, the whole of
+    /// a data file, with a copy of `config` that neither frees the memory nor
+    /// copies it to a temporary file. The data set reads every collection
+    /// from the memory where it lies. The configuration `config` points to is
+    /// not changed. Defined by this crate's `src/shim.c`.
+    ///
+    /// # Safety
+    /// As for [`fiftyoneDegreesIpiInitManagerFromMemory`]: `memory` must point
+    /// to `size` readable bytes that outlive the manager. `config` must point
+    /// to a configuration.
+    pub fn fiftyoneDegreesShimIpiInitManagerFromMemory(
+        manager: *mut ResourceManager,
+        config: *const ConfigIpi,
+        properties: *mut PropertiesRequired,
+        memory: *mut c_void,
+        size: FileOffset,
         exception: *mut Exception,
     ) -> StatusCode;
 
@@ -1464,14 +1498,17 @@ extern "C" {
         context: *mut c_void,
     ) -> c_int;
 
-    /// Finds the value whose text is `name`, matched exactly, among those the
-    /// data file holds for the property at `property_index`, calls `callback`
-    /// with its strings as [`fiftyoneDegreesShimIpiGetDataFilePropertyValues`]
-    /// does, and returns [`SHIM_FIND_FOUND`]. Returns [`SHIM_FIND_NOT_FOUND`]
-    /// when the property has no such value, or [`SHIM_FIND_FAILED`] when the
-    /// property index is out of range or the property, a value or a string
-    /// cannot be read. The value is found by the C library's binary search
-    /// over the property's values, which are in order. See `src/shim.c`.
+    /// Finds the value `name` names among those the data file holds for the
+    /// property at `property_index`, calls `callback` with its strings as
+    /// [`fiftyoneDegreesShimIpiGetDataFilePropertyValues`] does, and returns
+    /// [`SHIM_FIND_FOUND`]. Returns [`SHIM_FIND_NOT_FOUND`] when the property
+    /// has no such value, or [`SHIM_FIND_FAILED`] when the property index is
+    /// out of range or the property, a value or a string cannot be read. The
+    /// value is found by the C library's binary search over the property's
+    /// values, which are in order. A number is compared written to as many
+    /// places as `name` has characters plus three, at most 15, so the text
+    /// given can differ from `name`, as `0.063` is given for `0.0625`. See
+    /// `src/shim.c`.
     ///
     /// # Safety
     /// `manager` must be an initialized IP Intelligence manager, `name` a
