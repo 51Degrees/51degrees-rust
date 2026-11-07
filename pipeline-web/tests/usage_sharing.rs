@@ -246,3 +246,26 @@ fn usage_sharing_shares_the_web_requests_headers_no_element_accepts() {
         assert!(!document.contains(left_out), "{left_out} in {document}");
     }
 }
+
+/// The Sequence element the web pipeline adds accepts the session id and the
+/// sequence itself, so with usage sharing accepting nothing both are still
+/// taken from the request, and the sequence is still counted.
+#[test]
+fn the_session_id_and_sequence_are_still_taken_from_the_request() {
+    let share = Arc::new(ShareUsageElement::with_sink(
+        ShareUsageConfig::builder().build(),
+        Keep::default(),
+    ));
+    let web = web_pipeline(&share);
+    let request = TestRequest {
+        query: pairs(&[("session-id", SESSION_ID), ("sequence", "4")]),
+        ..Default::default()
+    };
+    let evidence = build_evidence(&request, web.pipeline().evidence_key_filter());
+    assert_eq!(evidence.get("query.session-id"), Some(SESSION_ID));
+    assert_eq!(evidence.get("query.sequence"), Some("4"));
+
+    let data = processed(&web, &request);
+    assert_eq!(data.evidence().get("query.session-id"), Some(SESSION_ID));
+    assert_eq!(data.evidence().get("query.sequence"), Some("5"));
+}

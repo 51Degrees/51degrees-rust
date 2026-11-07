@@ -31,7 +31,7 @@ use fiftyone_pipeline_core::{
     PropertyMetaData, Result,
 };
 use fiftyone_pipeline_engines_fiftyone::{
-    ShareUsageConfig, ShareUsageElement, UsageBatch, UsageSink,
+    SequenceElement, ShareUsageConfig, ShareUsageElement, UsageBatch, UsageSink,
 };
 
 /// Keeps each document the usage sharing element delivers.
@@ -109,6 +109,27 @@ fn a_pipeline_with_usage_sharing_accepts_only_its_engines_evidence() {
     assert!(filter.include("header.user-agent"));
     for key in NOT_ACCEPTED {
         assert!(!filter.include(key), "{key}");
+    }
+}
+
+/// The Sequence element accepts the session id and the sequence itself, so a
+/// pipeline with usage sharing, which accepts nothing, still takes both.
+#[test]
+fn a_pipeline_with_usage_sharing_still_accepts_the_session_id_and_sequence() {
+    let share = ShareUsageElement::with_sink(ShareUsageConfig::builder().build(), Keep::default());
+    let session_keys = ["query.session-id", "query.sequence"];
+    for key in session_keys {
+        assert!(!share.evidence_key_filter().include(key), "{key}");
+    }
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(SequenceElement::new()))
+        .add_element(Arc::new(Engine::new()))
+        .add_element(Arc::new(share))
+        .build()
+        .unwrap();
+    let filter = pipeline.evidence_key_filter();
+    for key in session_keys {
+        assert!(filter.include(key), "{key}");
     }
 }
 
