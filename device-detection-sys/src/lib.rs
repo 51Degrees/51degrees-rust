@@ -626,6 +626,38 @@ extern "C" {
         length: usize,
     ) -> usize;
 
+    /// Writes the date the data file was published, from its header, into
+    /// `*year`, `*month` and `*day` and returns 1, or 0 when no data set is
+    /// available.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. Each output pointer must
+    /// be null or point to a writable `i32`.
+    pub fn fiftyoneDegreesShimHashGetDataSetPublished(
+        manager: *mut ResourceManager,
+        year: *mut i32,
+        month: *mut i32,
+        day: *mut i32,
+    ) -> c_int;
+
+    /// Writes the date the next data file is expected, from the data file
+    /// header, into `*year`, `*month` and `*day` and returns 1, or 0 when no
+    /// data set is available.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. Each output pointer must
+    /// be null or point to a writable `i32`.
+    pub fn fiftyoneDegreesShimHashGetDataSetNextUpdate(
+        manager: *mut ResourceManager,
+        year: *mut i32,
+        month: *mut i32,
+        day: *mut i32,
+    ) -> c_int;
+
+    /// Returns the size of a Hash data file's header in bytes, being how much
+    /// of a data file the C library compares to find a copy of it to reuse.
+    pub fn fiftyoneDegreesShimHashGetHeaderSize() -> usize;
+
     /// Reads the match metrics of the results into the output pointers and
     /// returns 1, or returns 0 when `results` is null or a graph cannot be
     /// walked. Any graph not yet walked is walked first, as the walks set the

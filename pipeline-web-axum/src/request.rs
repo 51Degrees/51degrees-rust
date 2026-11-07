@@ -31,8 +31,13 @@
 //!
 //! # How each source is read
 //!
-//! - **Headers** come straight from the request [`HeaderMap`]. A header whose
-//!   value is not valid UTF-8 is skipped, because evidence values are strings.
+//! - **Headers** come from the request [`HeaderMap`], whose names are always
+//!   lower case. A header whose value is not valid UTF-8 is skipped, because
+//!   evidence values are strings. Where the request URI carries the
+//!   authority, as the `:authority` of an HTTP/2 request and the absolute form
+//!   of an HTTP/1.1 request do, the authority is given as the `host` header
+//!   and any Host header sent is left out, because RFC 9113 section 8.3.1 and
+//!   RFC 9112 section 3.2.2 say a server reads the authority from there.
 //! - **Cookies** are parsed from every `Cookie` header, split on `;` then on the
 //!   first `=`, with the name and value trimmed. This is the standard
 //!   `name=value; name2=value2` cookie grammar and needs no external crate.
@@ -51,7 +56,9 @@
 //!   `Forwarded` header carries `proto=https`, or when the request URI carries
 //!   an `https` scheme. Otherwise it is `http`.
 //! - **Method** is the one attached with [`AxumRequestData::with_method`], as
-//!   the endpoint handlers do, and absent otherwise.
+//!   the middleware and the endpoint handlers do, and absent otherwise.
+//! - **Request target** is the request URI's path and query, whose bytes are
+//!   kept as the request carried them. Over HTTP/2 that is the `:path`.
 //!
 //! The struct borrows the header map and URI from the request and owns only the
 //! small extras (the buffered form bytes, the optional peer address and the
@@ -71,6 +78,10 @@ const HEADER_X_FORWARDED_PROTO: &str = "x-forwarded-proto";
 const HEADER_FORWARDED: &str = "forwarded";
 /// The `Cookie` request header.
 const HEADER_COOKIE: &str = "cookie";
+/// The `Host` request header.
+const HEADER_HOST: &str = "host";
+/// The request target of an `OPTIONS` request for the whole server.
+const ASTERISK_FORM: &str = "*";
 
 /// A view over an axum request that implements
 /// [`fiftyone_pipeline_web::RequestData`].
@@ -163,15 +174,27 @@ impl<'a> AxumRequestData<'a> {
 
 impl fiftyone_pipeline_web::RequestData for AxumRequestData<'_> {
     fn headers(&self) -> Vec<(String, String)> {
-        self.headers
-            .iter()
-            .filter_map(|(name, value)| {
-                value
-                    .to_str()
-                    .ok()
-                    .map(|value| (name.as_str().to_owned(), value.to_owned()))
-            })
-            .collect()
+        // Over HTTP/2 hyper puts the :authority into the URI and adds no Host
+        // header, and an absolute form target carries the authority too. A
+        // server reads the authority from there and ignores Host, so it is
+        // given in Host's place, first, as RFC 9110 section 7.2 places Host.
+        let authority = self.uri.authority().map(|authority| authority.as_str());
+        let mut headers = Vec::with_capacity(self.headers.len() + 1);
+        if let Some(authority) = authority {
+            headers.push((HEADER_HOST.to_owned(), authority.to_owned()));
+        }
+        headers.extend(
+            self.headers
+                .iter()
+                .filter(|(name, _)| authority.is_none() || name.as_str() != HEADER_HOST)
+                .filter_map(|(name, value)| {
+                    value
+                        .to_str()
+                        .ok()
+                        .map(|value| (name.as_str().to_owned(), value.to_owned()))
+                }),
+        );
+        headers
     }
 
     fn cookies(&self) -> Vec<(String, String)> {
@@ -248,6 +271,19 @@ impl fiftyone_pipeline_web::RequestData for AxumRequestData<'_> {
         self.method
             .as_ref()
             .map(|method| method.as_str().to_owned())
+    }
+
+    fn request_target(&self) -> Option<String> {
+        // The http crate keeps the path and query bytes as sent. The
+        // authority form of CONNECT has neither, so it gives no request line,
+        // and RFC 9112 section 3.3 gives the asterisk form an empty path and
+        // query.
+        let target = self.uri.path_and_query()?.as_str();
+        Some(if target == ASTERISK_FORM {
+            String::new()
+        } else {
+            target.to_owned()
+        })
     }
 }
 
@@ -380,6 +416,70 @@ mod tests {
         let headers = HeaderMap::new();
         let uri: Uri = "/".parse().unwrap();
         assert!(!AxumRequestData::new(&headers, &uri).is_https());
+    }
+
+    #[test]
+    fn the_host_header_is_given_where_the_target_has_no_authority() {
+        let headers = headers_with(&[("host", "example.com"), ("accept", "*/*")]);
+        let uri: Uri = "/page".parse().unwrap();
+        assert_eq!(
+            AxumRequestData::new(&headers, &uri).headers(),
+            vec![
+                ("host".to_owned(), "example.com".to_owned()),
+                ("accept".to_owned(), "*/*".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_authority_of_an_http2_request_is_given_as_the_host() {
+        // As hyper hands over an HTTP/2 request, with the :authority in the
+        // URI and no Host header.
+        let headers = headers_with(&[("accept", "*/*")]);
+        let uri: Uri = "https://Example.com:8443/page?a=1".parse().unwrap();
+        assert_eq!(
+            AxumRequestData::new(&headers, &uri).headers(),
+            vec![
+                ("host".to_owned(), "Example.com:8443".to_owned()),
+                ("accept".to_owned(), "*/*".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_authority_in_the_target_replaces_the_host_header() {
+        let headers = headers_with(&[("accept", "*/*"), ("host", "other.example")]);
+        let uri: Uri = "http://example.com/page".parse().unwrap();
+        assert_eq!(
+            AxumRequestData::new(&headers, &uri).headers(),
+            vec![
+                ("host".to_owned(), "example.com".to_owned()),
+                ("accept".to_owned(), "*/*".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_request_target_is_the_path_and_query_as_sent() {
+        let headers = HeaderMap::new();
+        for (uri, target) in [
+            ("/a%2Fb/c?x=1&y=%20&x=2", Some("/a%2Fb/c?x=1&y=%20&x=2")),
+            ("/", Some("/")),
+            ("/page?", Some("/page?")),
+            ("https://example.com/page?a=1", Some("/page?a=1")),
+            ("https://example.com", Some("/")),
+            ("*", Some("")),
+            ("example.com:443", None),
+        ] {
+            let uri: Uri = uri.parse().unwrap();
+            assert_eq!(
+                AxumRequestData::new(&headers, &uri)
+                    .request_target()
+                    .as_deref(),
+                target,
+                "{uri}"
+            );
+        }
     }
 
     #[test]

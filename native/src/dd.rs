@@ -47,7 +47,7 @@
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::ops::Range;
-use std::os::raw::{c_char, c_int, c_void};
+use std::os::raw::{c_char, c_int, c_long, c_void};
 use std::path::Path;
 use std::ptr::NonNull;
 use std::sync::{Arc, OnceLock};
@@ -261,6 +261,23 @@ fn concurrency_within(concurrency: u16, profile: PerformanceProfile) -> u16 {
     most_concurrency(profile).map_or(concurrency, |most| concurrency.min(most))
 }
 
+/// A copy of `profile`'s predefined configuration changed by `options`, so a
+/// data set's options never change the shared global the other data sets read.
+fn profile_config(profile: PerformanceProfile, options: &HashOptions) -> sys::ConfigHash {
+    // Safety: `config_for` returns a valid pointer to an initialized config
+    // global, and copying out of it is a plain read of a `repr(C)` value.
+    let mut config = unsafe { *config_for(profile) };
+    options.apply(&mut config);
+    config
+}
+
+/// The size of a Hash data file's header in bytes, being how much of a data
+/// file the C library compares when it looks for a copy of the file to reuse.
+pub fn data_file_header_size() -> usize {
+    // Safety: the shim reads no state and takes no arguments.
+    unsafe { sys::fiftyoneDegreesShimHashGetHeaderSize() }
+}
+
 // ---------------------------------------------------------------------------
 // Manager
 // ---------------------------------------------------------------------------
@@ -284,6 +301,9 @@ pub struct Manager {
     /// Permits for the calls that can read the data file, one for each of its
     /// file handles, or [`None`] when the data set is held in memory.
     file_reads: Option<FileReads>,
+    /// The data a load from memory reads in place. Fields drop after
+    /// [`Drop::drop`] has freed the data set, so the data outlives it.
+    _memory: Option<Box<[u8]>>,
 }
 
 // Safety: the native resource manager is internally reference counted and
@@ -354,7 +374,94 @@ impl Manager {
     ) -> Result<Arc<Manager>> {
         let path = path.as_ref();
         let path_c = crate::path::native_path(path)?;
+        let mut config = profile_config(profile, options);
+        Self::init(
+            properties,
+            None,
+            |manager, required, exception| {
+                // Safety: every pointer is valid for the call, the config is
+                // read only for the call and the path is null terminated.
+                unsafe {
+                    sys::fiftyoneDegreesHashInitManagerFromFile(
+                        manager,
+                        &mut config,
+                        required,
+                        path_c.as_ptr(),
+                        exception,
+                    )
+                }
+            },
+            |status| status_detail(status, path_c.as_ptr()),
+        )
+    }
 
+    /// Load a Hash data set from `data`, the whole of a data file held in
+    /// memory, with the named properties, changing the profile's native
+    /// configuration by `options` first.
+    ///
+    /// The data set reads its collections from `data` where it lies, so the
+    /// manager keeps `data` until the data set is freed. Every profile holds
+    /// the data set in memory this way, so none opens a file pool. The C
+    /// library takes the length as a C `long`, so where that is 32 bits, as on
+    /// Windows, `data` must be shorter than 2 GiB.
+    pub fn open_from_memory(
+        data: Vec<u8>,
+        profile: PerformanceProfile,
+        properties: Option<&[&str]>,
+        options: &HashOptions,
+    ) -> Result<Arc<Manager>> {
+        let mut memory = data.into_boxed_slice();
+        let size = c_long::try_from(memory.len()).map_err(|_| Error::Native {
+            status: String::from("InvalidInput"),
+            message: format!(
+                "the data is {} bytes, more than the C library reads from \
+                 memory on this platform",
+                memory.len()
+            ),
+        })?;
+        let mut config = profile_config(profile, options);
+        // The memory is Rust's and is dropped with the manager, so the C
+        // library must not free it, and there is no file to copy.
+        config.b.b.free_data = false;
+        config.b.b.use_temp_file = false;
+        let start = memory.as_mut_ptr().cast::<c_void>();
+        Self::init(
+            properties,
+            Some(memory),
+            |manager, required, exception| {
+                // Safety: every pointer is valid for the call, the config is
+                // read only for the call, and `start` is the first of `size`
+                // bytes that the manager keeps for as long as the data set.
+                unsafe {
+                    sys::fiftyoneDegreesHashInitManagerFromMemory(
+                        manager,
+                        &mut config,
+                        required,
+                        start,
+                        size,
+                        exception,
+                    )
+                }
+            },
+            // The C++ engine names no file for a load from memory.
+            |status| status_detail(status, std::ptr::null()),
+        )
+    }
+
+    /// Initialize a manager with `init`, requesting the named properties, or
+    /// all of them when `properties` is [`None`]. `memory` is the data a load
+    /// from memory reads, kept until the data set is freed, and `detail`
+    /// gives the message for a failed status.
+    fn init(
+        properties: Option<&[&str]>,
+        memory: Option<Box<[u8]>>,
+        init: impl FnOnce(
+            *mut sys::ResourceManager,
+            *mut sys::PropertiesRequired,
+            *mut sys::Exception,
+        ) -> sys::StatusCode,
+        detail: impl FnOnce(sys::StatusCode) -> String,
+    ) -> Result<Arc<Manager>> {
         // A separated property list, kept alive for the duration of the init
         // call because `PropertiesRequired` only borrows the string pointer.
         let property_list = properties.map(|names| names.join(","));
@@ -376,28 +483,10 @@ impl Manager {
         let boxed = Box::new(sys::ResourceManager::zeroed());
         let manager_ptr = Box::into_raw(boxed);
 
-        // Copy the predefined configuration for this profile into a local value
-        // so the options change this data set without mutating the shared
-        // global the other engines read.
-        // Safety: `config_for` returns a valid pointer to an initialized config
-        // global; copying out of it is a plain read of a `repr(C)` value.
-        let mut config = unsafe { *config_for(profile) };
-        options.apply(&mut config);
-
         let mut exception = sys::Exception::cleared();
-        // Safety: all pointers are valid for the duration of the call. The
-        // config is read only for the call and the path is null terminated.
-        let status = unsafe {
-            sys::fiftyoneDegreesHashInitManagerFromFile(
-                manager_ptr,
-                &mut config,
-                &mut required,
-                path_c.as_ptr(),
-                &mut exception,
-            )
-        };
+        let status = init(manager_ptr, &mut required, &mut exception);
 
-        if let Err(err) = status_to_result(status, || status_detail(status, &path_c)) {
+        if let Err(err) = status_to_result(status, || detail(status)) {
             // The manager was not populated, so free just the box.
             // Safety: `manager_ptr` came from `Box::into_raw` above.
             unsafe { drop(Box::from_raw(manager_ptr)) };
@@ -420,7 +509,40 @@ impl Manager {
             manager,
             property_index: OnceLock::new(),
             file_reads: FileReads::for_handles(handles),
+            _memory: memory,
         }))
+    }
+
+    /// The date the data file was published, from its header, as `(year,
+    /// month, day)`, or [`None`] when the header holds no valid date.
+    pub fn data_set_published(&self) -> Option<(i32, u32, u32)> {
+        self.header_date(sys::fiftyoneDegreesShimHashGetDataSetPublished)
+    }
+
+    /// The date the next data file is expected, from the data file header,
+    /// as `(year, month, day)`, or [`None`] when the header holds no valid
+    /// date.
+    pub fn data_set_next_update(&self) -> Option<(i32, u32, u32)> {
+        self.header_date(sys::fiftyoneDegreesShimHashGetDataSetNextUpdate)
+    }
+
+    fn header_date(
+        &self,
+        read: unsafe extern "C" fn(
+            *mut sys::ResourceManager,
+            *mut i32,
+            *mut i32,
+            *mut i32,
+        ) -> c_int,
+    ) -> Option<(i32, u32, u32)> {
+        let (mut year, mut month, mut day) = (0, 0, 0);
+        // Safety: the manager is initialized and each output pointer is
+        // writable.
+        let found = unsafe { read(self.as_ptr(), &mut year, &mut month, &mut day) };
+        if found == 0 || year <= 0 || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+            return None;
+        }
+        Some((year, u32::try_from(month).ok()?, u32::try_from(day).ok()?))
     }
 
     /// The raw native manager pointer. For the engine wrappers in this crate.
@@ -1446,14 +1568,15 @@ impl Drop for Results {
     }
 }
 
-/// The message for a failed init, naming the data file. An exception holds no
+/// The message for a failed init, naming the data file at `path`, or `null`
+/// when `path` is null, as for data loaded from memory. An exception holds no
 /// file name, so its message would say `null` instead.
-fn status_detail(status: sys::StatusCode, path: &CStr) -> String {
-    // Safety: the path is null terminated and outlives the call, and the library
-    // allocated the message.
+fn status_detail(status: sys::StatusCode, path: *const c_char) -> String {
+    // Safety: the path is null, which the library names "null", or null
+    // terminated and outlives the call, and the library allocated the message.
     unsafe {
         take_message::<sys::Exception>(
-            sys::fiftyoneDegreesStatusGetMessage(status, path.as_ptr()),
+            sys::fiftyoneDegreesStatusGetMessage(status, path),
             "native initialization failed with no message",
         )
     }
@@ -1739,6 +1862,173 @@ mod tests {
                 "{}",
                 profile.as_str()
             );
+        }
+    }
+
+    /// Where the published date starts in a Hash data file header, after the
+    /// four version numbers, two 16 byte tags, the copyright offset, the age,
+    /// the minimum User-Agent count and the name and format offsets. The next
+    /// update date follows it.
+    const PUBLISHED_AT: usize = 66;
+
+    /// The published and next update dates of the data file `bytes` holds,
+    /// read from the bytes as the header lays them out.
+    fn header_dates(bytes: &[u8]) -> ((i32, u32, u32), (i32, u32, u32)) {
+        let date = |at: usize| {
+            (
+                i32::from(i16::from_le_bytes([bytes[at], bytes[at + 1]])),
+                u32::from(bytes[at + 2]),
+                u32::from(bytes[at + 3]),
+            )
+        };
+        (date(PUBLISHED_AT), date(PUBLISHED_AT + 4))
+    }
+
+    /// The dates read are the ones in the data file header, whether the data
+    /// set reads the file or holds it in memory.
+    #[test]
+    fn the_dates_are_the_ones_the_data_file_header_holds() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the header dates");
+            return;
+        };
+        let bytes = std::fs::read(&path).expect("data file reads");
+        let (published, next) = header_dates(&bytes);
+        assert!(published < next, "{published:?} {next:?}");
+        for manager in [
+            Manager::open(&path, PerformanceProfile::LowMemory).expect("data file loads"),
+            Manager::open_from_memory(
+                bytes,
+                PerformanceProfile::LowMemory,
+                None,
+                &HashOptions::default(),
+            )
+            .expect("data loads"),
+        ] {
+            assert_eq!(manager.data_set_published(), Some(published));
+            assert_eq!(manager.data_set_next_update(), Some(next));
+        }
+    }
+
+    /// A header whose dates are zero, or whose year is -1 with a valid month
+    /// and day, holds no valid date, so neither date is read. The year -1
+    /// would otherwise be read as a date before year 1.
+    #[test]
+    fn a_header_holding_no_valid_date_gives_no_dates() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the dates that are not valid");
+            return;
+        };
+        let bytes = std::fs::read(&path).expect("data file reads");
+        let mut zeroed = bytes.clone();
+        zeroed[PUBLISHED_AT..PUBLISHED_AT + 8].fill(0);
+        let mut year_minus_one = bytes;
+        for at in [PUBLISHED_AT, PUBLISHED_AT + 4] {
+            year_minus_one[at..at + 4].copy_from_slice(&[0xFF, 0xFF, 1, 1]);
+        }
+        assert_eq!(header_dates(&year_minus_one), ((-1, 1, 1), (-1, 1, 1)));
+        for (case, data) in [("zeroed", zeroed), ("year -1", year_minus_one)] {
+            let manager = Manager::open_from_memory(
+                data,
+                PerformanceProfile::LowMemory,
+                None,
+                &HashOptions::default(),
+            )
+            .expect("data loads");
+            assert_eq!(manager.data_set_published(), None, "{case}");
+            assert_eq!(manager.data_set_next_update(), None, "{case}");
+        }
+    }
+
+    /// A data set loaded from memory under any profile opens no file handle
+    /// and gives the answers and properties the file gives, after the caller
+    /// has dropped its own reference to the manager.
+    #[test]
+    fn a_data_set_loads_from_memory_as_it_does_from_the_file() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping loading from memory");
+            return;
+        };
+        let bytes = std::fs::read(&path).expect("data file reads");
+        let named = ["IsMobile", "DeviceId", "PlatformName"];
+        for profile in [
+            PerformanceProfile::LowMemory,
+            PerformanceProfile::HighPerformance,
+            PerformanceProfile::InMemory,
+        ] {
+            let options = HashOptions {
+                concurrency: Some(3),
+                ..HashOptions::default()
+            };
+            let from_file =
+                Manager::open_with_hash_options(&path, profile, Some(&named[..]), &options)
+                    .expect("data file loads");
+            let from_memory =
+                Manager::open_from_memory(bytes.clone(), profile, Some(&named[..]), &options)
+                    .expect("data loads");
+            assert_eq!(from_memory.file_pool_size(), 0, "{}", profile.as_str());
+            assert!(from_memory.file_reads.is_none(), "{}", profile.as_str());
+            assert_eq!(
+                from_memory.property_names(),
+                from_file.property_names(),
+                "{}",
+                profile.as_str()
+            );
+            let expected = detect(&from_file, "header.user-agent", CHROME_ON_WINDOWS);
+            let results = detect(&from_memory, "header.user-agent", CHROME_ON_WINDOWS);
+            drop(from_memory);
+            for name in ["IsMobile", "PlatformName"] {
+                assert_eq!(
+                    results.value_as_string(name, "|").expect("value reads"),
+                    expected.value_as_string(name, "|").expect("value reads"),
+                    "{name} {}",
+                    profile.as_str()
+                );
+            }
+            assert_eq!(
+                results.device_id().expect("device id reads"),
+                expected.device_id().expect("device id reads"),
+                "{}",
+                profile.as_str()
+            );
+        }
+    }
+
+    /// Data that is not exactly the whole of a data file is refused with the
+    /// C library's status. Too few bytes for the header, or for a collection
+    /// the header describes, is corrupt data, a header of another version is
+    /// the wrong version, and bytes left over after the last collection are
+    /// out of bounds.
+    #[test]
+    fn data_that_is_not_a_whole_data_file_is_refused() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping refused data");
+            return;
+        };
+        let bytes = std::fs::read(&path).expect("data file reads");
+        let half = bytes[..bytes.len() / 2].to_vec();
+        let mut extra_byte = bytes.clone();
+        extra_byte.push(0);
+        for (name, data, expected) in [
+            ("nothing", Vec::new(), "CorruptData"),
+            ("zeros", vec![0u8; 200], "IncorrectVersion"),
+            ("the header alone", bytes[..200].to_vec(), "CorruptData"),
+            ("half the file", half, "CorruptData"),
+            ("the file and a byte", extra_byte, "PointerOutOfBounds"),
+        ] {
+            let error = Manager::open_from_memory(
+                data,
+                PerformanceProfile::InMemory,
+                None,
+                &HashOptions::default(),
+            )
+            .err()
+            .unwrap_or_else(|| panic!("{name} should be refused"));
+            let Error::Native { message, status } = &error else {
+                panic!("{name}: {error}");
+            };
+            assert_eq!(status, expected, "{name}: {message}");
+            assert!(!message.is_empty(), "{name}");
         }
     }
 
@@ -2288,6 +2578,17 @@ mod tests {
 
     fn write_u32(bytes: &mut [u8], at: usize, value: u32) {
         bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    /// The header ends after the profile offsets, the sixth collection header
+    /// from the properties' own.
+    #[test]
+    fn the_header_size_is_the_hash_data_file_header() {
+        const COLLECTION_HEADER_SIZE: usize = 12;
+        assert_eq!(
+            data_file_header_size(),
+            PROPERTIES_HEADER + 6 * COLLECTION_HEADER_SIZE
+        );
     }
 
     #[test]

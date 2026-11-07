@@ -28,15 +28,17 @@
 //! populate) into the flow data under
 //! [`DEVICE_DATA_KEY`](fiftyone_device_detection_shared::DEVICE_DATA_KEY).
 
+use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 use std::ffi::CStr;
+use std::hash::BuildHasher;
 use std::ops::Range;
 use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use arc_swap::ArcSwap;
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{TimeZone, Utc};
 
 use fiftyone_device_detection_shared::{
     declared_property_value_type, DeviceDataBase, DevicePropertyReader, UachJsConversionElement,
@@ -238,6 +240,10 @@ pub struct DeviceDetectionOnPremiseEngine {
     /// as the builder's `create_temp_data_copy` asked.
     temp_data_copy: bool,
 
+    /// Whether a refresh reads a copy of the data file already in the
+    /// temporary folder, as the builder's `reuse_temp_file` asked.
+    reuse_temp_file: bool,
+
     /// The single data file's run-time state, shared with the update service.
     data_files: Vec<Arc<AspectEngineDataFile>>,
 }
@@ -354,9 +360,9 @@ impl DeviceDetectionOnPremiseEngine {
     ///
     /// Called by the builder once it has opened the data file, or `copy` of
     /// it. Derives the property and evidence-key metadata from the data set,
-    /// records the data-file publish time from the file on disk, and assembles
-    /// the engine. Fails when the data file's metadata cannot be read. `copy`
-    /// comes before `manager` so it is dropped after it, as in `describe`.
+    /// records the dates in the data file header, and assembles the engine.
+    /// Fails when the data file's metadata cannot be read. `copy` comes before
+    /// `manager` so it is dropped after it, as in `describe`.
     pub(crate) fn from_manager(
         copy: Option<OperationalCopy>,
         manager: Arc<Manager>,
@@ -370,12 +376,7 @@ impl DeviceDetectionOnPremiseEngine {
         let (loaded, metadata) = describe(copy, manager, &data_source_tier)?;
 
         let data_file = Arc::new(AspectEngineDataFile::new(data_file_config));
-        // Record the publish time from the data file on disk, the best signal
-        // available without a native published-time accessor. The update
-        // service reads it for the `If-Modified-Since` header.
-        if let Some(published) = data_file_published_from_disk(data_file.data_file_path()) {
-            data_file.set_data_published(published);
-        }
+        record_dates(&loaded.manager, &data_file);
 
         Ok(DeviceDetectionOnPremiseEngine {
             loaded: ArcSwap::from_pointee(loaded),
@@ -388,16 +389,24 @@ impl DeviceDetectionOnPremiseEngine {
             options,
             temp_dir: None,
             temp_data_copy: false,
+            reuse_temp_file: false,
             data_files: vec![data_file],
         })
     }
 
     /// Copy the data file into `temp_dir` on refresh, the folder the builder
-    /// copied it into, or the system's temporary folder when `None`, and
-    /// under every profile when `always` is true.
-    pub(crate) fn with_temp_dir(mut self, temp_dir: Option<PathBuf>, always: bool) -> Self {
+    /// copied it into, or the system's temporary folder when `None`, under
+    /// every profile when `always` is true, and read a copy already there
+    /// when `reuse` is true.
+    pub(crate) fn with_temp_dir(
+        mut self,
+        temp_dir: Option<PathBuf>,
+        always: bool,
+        reuse: bool,
+    ) -> Self {
         self.temp_dir = temp_dir;
         self.temp_data_copy = always;
+        self.reuse_temp_file = reuse;
         self
     }
 
@@ -673,11 +682,7 @@ impl DeviceDetectionOnPremiseEngine {
     /// Reload the data set from the data file on disk and atomically swap it in.
     ///
     /// Shared by [`OnPremiseAspectEngine::refresh`] and the builder's reload
-    /// path. A successful reload replaces the live data set, the properties a
-    /// detection reads, the evidence keys and the metadata, because a new data
-    /// file can carry different properties or a different tier. In-flight
-    /// detections keep using the data set they snapshotted. A failed reload
-    /// changes nothing.
+    /// path. See [`Self::swap_in`].
     fn reload_from_path(&self, path: &Path) -> Result<()> {
         let _refreshing = self
             .refresh_lock
@@ -690,6 +695,7 @@ impl DeviceDetectionOnPremiseEngine {
                 self.profile,
                 file.configuration(),
                 self.temp_data_copy,
+                self.reuse_temp_file,
             )
         });
         let manager = open_manager(
@@ -698,18 +704,42 @@ impl DeviceDetectionOnPremiseEngine {
             &self.requested_properties,
             &self.options,
         )?;
+        self.swap_in(copy, manager)
+    }
+
+    /// Reload the data set from `data`, the whole of a data file, and
+    /// atomically swap it in. See [`Self::swap_in`].
+    fn reload_from_memory(&self, data: &[u8]) -> Result<()> {
+        let _refreshing = self
+            .refresh_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        // The data set reads the data where it lies, so the manager keeps a
+        // copy for as long as the data set.
+        let manager = Manager::open_from_memory(
+            data.to_vec(),
+            self.profile,
+            requested(&self.requested_properties).as_deref(),
+            &self.options,
+        )?;
+        self.swap_in(None, manager)
+    }
+
+    /// Replace the live data set with `manager`'s, which reads `copy` when
+    /// there is one, together with the properties a detection reads, the
+    /// evidence keys, the metadata and the dates in the data file header,
+    /// because a new data file can carry different properties or a different
+    /// tier. In-flight detections keep using the data set they snapshotted. A
+    /// failure changes nothing. The caller holds the refresh lock.
+    fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
         let evidence_keys = named_evidence_keys(&manager);
         let (loaded, metadata) = describe(copy, manager, &self.tier_override)?;
+        if let Some(file) = self.data_files.first() {
+            record_dates(&loaded.manager, file);
+        }
         self.evidence_key_filter.replace(evidence_keys);
         self.loaded.store(Arc::new(loaded));
         self.metadata.replace(metadata);
-
-        // Refresh the recorded publish time from the new file.
-        if let Some(file) = self.data_files.first() {
-            if let Some(published) = data_file_published_from_disk(file.data_file_path()) {
-                file.set_data_published(published);
-            }
-        }
         Ok(())
     }
 }
@@ -803,15 +833,15 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
         }
     }
 
-    fn refresh_from_memory(&self, _data_file_identifier: Option<&str>, _data: &[u8]) -> Result<()> {
-        // The native Hash manager loads from a file path, so an in-memory
-        // refresh is not supported by this engine. The data update service
-        // routes file-based updates through `refresh` instead.
-        Err(Error::configuration(format!(
-            "Engine '{}' loads from a data file and does not support refreshing \
-             from an in-memory data source.",
-            self.data_key()
-        )))
+    fn refresh_from_memory(&self, _data_file_identifier: Option<&str>, data: &[u8]) -> Result<()> {
+        // A single-file engine ignores the identifier. A refresh that fails is
+        // logged as a refresh from the file is.
+        self.reload_from_memory(data).inspect_err(|error| {
+            log::error!(
+                "Failed to refresh data from memory. The engine keeps the data it had. \
+                 If issue persists, please contact support@51degrees.com. {error}"
+            );
+        })
     }
 }
 
@@ -827,12 +857,22 @@ pub(crate) fn open_manager(
     requested_properties: &[String],
     options: &HashOptions,
 ) -> Result<Arc<Manager>> {
-    let requested: Option<Vec<&str>> = if requested_properties.is_empty() {
+    Manager::open_with_hash_options(
+        path,
+        profile,
+        requested(requested_properties).as_deref(),
+        options,
+    )
+}
+
+/// The property names to open a data set with, or [`None`] for every property
+/// when `requested_properties` is empty.
+fn requested(requested_properties: &[String]) -> Option<Vec<&str>> {
+    if requested_properties.is_empty() {
         None
     } else {
         Some(requested_properties.iter().map(String::as_str).collect())
-    };
-    Manager::open_with_hash_options(path, profile, requested.as_deref(), options)
+    }
 }
 
 /// A data file property a detection can read.
@@ -1194,17 +1234,45 @@ fn named_evidence_keys(manager: &Manager) -> Vec<String> {
     keys
 }
 
-/// Read the publish time of the data file from its filesystem modified time.
-///
-/// The native wrapper does not expose the data set's embedded published date, so
-/// the file's modified time on disk is used as a stand-in. It feeds the update
-/// service's `If-Modified-Since` decision, where a recent local file correctly
-/// suppresses an immediate re-download. Returns [`None`] when the file has no
-/// path or its metadata cannot be read.
-fn data_file_published_from_disk(path: Option<&Path>) -> Option<DateTime<Utc>> {
-    let modified = std::fs::metadata(path?).ok()?.modified().ok()?;
-    let since_epoch = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
-    Utc.timestamp_opt(since_epoch.as_secs() as i64, 0).single()
+/// Record on `data_file` the dates in `manager`'s data file header, as .NET
+/// does after each load. The date the file was published goes in the update
+/// service's `If-Modified-Since` header. The date the next is expected, at noon
+/// UTC and a random minute as .NET gives it, is when the service starts to
+/// poll. A date the header does not hold is cleared, so that no date of data
+/// no longer loaded is kept.
+fn record_dates(manager: &Manager, data_file: &AspectEngineDataFile) {
+    let published = manager
+        .data_set_published()
+        .and_then(|(year, month, day)| Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).single());
+    match published {
+        Some(published) => data_file.set_data_published(published),
+        None => data_file.clear_data_published(),
+    }
+    let next = manager
+        .data_set_next_update()
+        .and_then(|(year, month, day)| {
+            Utc.with_ymd_and_hms(year, month, day, NEXT_UPDATE_HOUR, random_minute(), 0)
+                .single()
+        });
+    match next {
+        Some(next) => data_file.set_update_available_time(next),
+        None => data_file.clear_update_available_time(),
+    }
+}
+
+/// The hour, UTC, of the day the data file header gives for the next data
+/// file, at which the update service is told to expect it.
+const NEXT_UPDATE_HOUR: u32 = 12;
+
+/// The number of minutes in an hour, the range the minute of
+/// [`NEXT_UPDATE_HOUR`] is chosen from.
+const MINUTES_PER_HOUR: u64 = 60;
+
+/// A minute of the hour chosen at random, so that servers loading the same
+/// data file do not all start to poll at once.
+fn random_minute() -> u32 {
+    let random = RandomState::new().hash_one(std::time::SystemTime::now());
+    u32::try_from(random % MINUTES_PER_HOUR).unwrap_or(0)
 }
 
 #[cfg(test)]

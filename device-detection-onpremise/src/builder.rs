@@ -76,6 +76,7 @@ pub struct DeviceDetectionOnPremiseEngineBuilder {
     options: HashOptions,
     temp_dir: Option<PathBuf>,
     temp_data_copy: bool,
+    reuse_temp_file: bool,
 }
 
 /// The optional automatic-update settings captured by the builder.
@@ -101,6 +102,7 @@ impl DeviceDetectionOnPremiseEngineBuilder {
             options: HashOptions::default(),
             temp_dir: None,
             temp_data_copy: false,
+            reuse_temp_file: false,
         }
     }
 
@@ -200,6 +202,19 @@ impl DeviceDetectionOnPremiseEngineBuilder {
     /// longer reads it. Defaults to false.
     pub fn create_temp_data_copy(mut self, create: bool) -> Self {
         self.temp_data_copy = create;
+        self
+    }
+
+    /// Read a copy of the data file already in the temporary folder, when the
+    /// engine reads a copy, rather than making a new one, as .NET's
+    /// `SetReuseTempFile` does. A file there is taken as the C library takes
+    /// one, when its name starts with the data file's name without its
+    /// extension and is not the data file's name, and it has the data file's
+    /// length and header. The engine removes the copy once it no longer reads
+    /// it, whether it made the copy or found it, as the C library does.
+    /// Defaults to false.
+    pub fn reuse_temp_file(mut self, reuse: bool) -> Self {
+        self.reuse_temp_file = reuse;
         self
     }
 
@@ -323,6 +338,7 @@ impl DeviceDetectionOnPremiseEngineBuilder {
             self.profile,
             &data_file_config,
             self.temp_data_copy,
+            self.reuse_temp_file,
         );
         let manager = open_manager(
             copy.as_ref()
@@ -342,7 +358,7 @@ impl DeviceDetectionOnPremiseEngineBuilder {
                 self.data_source_tier,
                 options,
             )?
-            .with_temp_dir(self.temp_dir, self.temp_data_copy),
+            .with_temp_dir(self.temp_dir, self.temp_data_copy, self.reuse_temp_file),
         );
 
         // Register the data file with the update service if one was supplied.
