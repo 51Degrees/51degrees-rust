@@ -339,6 +339,10 @@ struct DataFileState {
     /// When the current data was published, parsed from the data file. The
     /// `If-Modified-Since` header is set from this.
     data_published: Option<DateTime<Utc>>,
+    /// How many times the publish date has been set, so the data update
+    /// service can tell whether an engine recorded one during a refresh.
+    #[cfg(feature = "data-update")]
+    published_changes: u64,
     /// When an updated data file is expected to be available. Polling does not
     /// start before this time.
     update_available: Option<DateTime<Utc>>,
@@ -407,7 +411,18 @@ impl AspectEngineDataFile {
 
     /// Set the publish time of the current data.
     pub fn set_data_published(&self, when: DateTime<Utc>) {
-        self.lock().data_published = Some(when);
+        let mut state = self.lock();
+        state.data_published = Some(when);
+        #[cfg(feature = "data-update")]
+        {
+            state.published_changes = state.published_changes.wrapping_add(1);
+        }
+    }
+
+    /// How many times the publish date has been set.
+    #[cfg(feature = "data-update")]
+    pub(crate) fn published_changes(&self) -> u64 {
+        self.lock().published_changes
     }
 
     /// When an updated data file is expected to be available, if known.
