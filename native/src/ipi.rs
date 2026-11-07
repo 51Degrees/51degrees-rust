@@ -1076,7 +1076,7 @@ impl Results {
                 continue;
             };
             if client_ip.address.is_none() {
-                client_ip.address = Some(address);
+                client_ip.address = Some(address.to_canonical());
             }
             // A formatted address never holds a nul byte.
             let value = CString::new(address.to_string()).expect("an IP address has no nul");
@@ -1377,7 +1377,10 @@ impl Results {
 pub struct ClientIpEvidence {
     /// The address looked up, being the first value under
     /// [`Manager::evidence_keys`] that reads as an IP address, in their order,
-    /// or [`None`] when none does.
+    /// or [`None`] when none does. An IPv4-mapped IPv6 address, such as
+    /// `::ffff:1.1.1.1`, is given as the IPv4 address it holds, which is what
+    /// [RFC 4291 section 2.5.5.2](https://www.rfc-editor.org/rfc/rfc4291#section-2.5.5.2)
+    /// says the form is and the address the C library looks up.
     pub address: Option<IpAddr>,
     /// Whether any of those keys held a value that is not blank. With no
     /// address, this tells evidence that held none apart from evidence whose
@@ -2360,8 +2363,8 @@ mod tests {
     }
 
     /// The address given back is the one the lookup used, the first that
-    /// reads as an address in the order of the evidence keys, as it was
-    /// written, so an IPv4-mapped address stays an IPv6 address.
+    /// reads as an address in the order of the evidence keys, with an
+    /// IPv4-mapped address given as its IPv4 address.
     #[test]
     fn the_address_given_back_is_the_one_looked_up() {
         let Some(data_file) = ipi_data_file() else {
@@ -2369,7 +2372,7 @@ mod tests {
             return;
         };
         let manager = open_found(&data_file, PerformanceProfile::HighPerformance);
-        for (pairs, address) in [
+        for (pairs, address, asn) in [
             (
                 &[
                     ("query.client-ip-51d", "unknown"),
@@ -2377,14 +2380,17 @@ mod tests {
                     ("query.client-ip", QUAD9),
                 ][..],
                 QUAD9,
+                "AS19281",
             ),
             (
                 &[("server.client-ip", "[2606:4700:4700::1111]:443")][..],
                 "2606:4700:4700::1111",
+                "AS13335",
             ),
             (
                 &[("server.client-ip", "::ffff:1.1.1.1")][..],
-                "::ffff:1.1.1.1",
+                CLOUDFLARE,
+                "AS13335",
             ),
         ] {
             let mut results = manager.create_results().expect("results allocate");
@@ -2399,7 +2405,11 @@ mod tests {
                 },
                 "{pairs:?}"
             );
-            assert!(results.value_as_string("Asn", ",").expect("read").is_some());
+            let found = results.value_as_string("Asn", ",").expect("read");
+            assert!(
+                found.as_deref().unwrap_or_default().contains(asn),
+                "{pairs:?} gave {found:?}"
+            );
         }
     }
 

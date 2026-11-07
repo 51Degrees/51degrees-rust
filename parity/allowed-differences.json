@@ -44,6 +44,34 @@
     "issue": 226
   },
   {
+    "path": "json.ip.ip",
+    "kind": "onlyInRust",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "rust": {"value": [null]},
+    "reason": "json-builder.md says \"There MUST be a top-level entry for each Element Data containing sub-entries for each Property and its value (set to 'null' if there is no value)\", so the crates write Ip as null when the evidence holds no IPv4 address. .NET's IpDataOnPremise.AsStrippedDictionary leaves Ip out then, so its JSON has no ip."
+  },
+  {
+    "path": "json.ip.ipnullreason",
+    "kind": "onlyInRust",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "rust": {"value": ["IPv4 was not supplied as evidence.", "The IP supplied as evidence was not valid."]},
+    "reason": "json-builder.md says the nullreason meta-Property \"MUST be added with a string message that explains why this Property does not have a value\" where the Property's value is null, so the crates write the reason .NET gives for Ip having no value. .NET leaves Ip out of its JSON then, and writes no reason."
+  },
+  {
+    "path": "json.ip.ipv6",
+    "kind": "onlyInRust",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "rust": {"value": [null]},
+    "reason": "json-builder.md says \"There MUST be a top-level entry for each Element Data containing sub-entries for each Property and its value (set to 'null' if there is no value)\", so the crates write IpV6 as null when the evidence holds no IPv6 address. .NET's IpDataOnPremise.AsStrippedDictionary leaves IpV6 out then, so its JSON has no ipv6."
+  },
+  {
+    "path": "json.ip.ipv6nullreason",
+    "kind": "onlyInRust",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "rust": {"value": ["IPv6 was not supplied as evidence.", "The IP supplied as evidence was not valid."]},
+    "reason": "json-builder.md says the nullreason meta-Property \"MUST be added with a string message that explains why this Property does not have a value\" where the Property's value is null, so the crates write the reason .NET gives for IpV6 having no value. .NET leaves IpV6 out of its JSON then, and writes no reason."
+  },
+  {
     "path": "*ip.areas",
     "kind": "type",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],

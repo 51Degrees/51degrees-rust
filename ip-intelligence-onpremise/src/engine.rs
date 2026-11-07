@@ -376,10 +376,10 @@ impl IpIntelligenceOnPremiseEngine {
             .collect()
     }
 
-    /// The names of the properties a lookup reads, being every property the
-    /// loaded data file defines that the engine was opened with, in the data
-    /// file's order and spelling. A name the engine was restricted to that
-    /// the data file lacks is not among them.
+    /// The names of the data file properties a lookup reads, being every
+    /// property the loaded data file defines that the engine was opened with,
+    /// in the data file's order and spelling. A name the engine was
+    /// restricted to that the data file lacks is not among them.
     pub fn populated_property_names(&self) -> &[String] {
         &self.metadata.current().populated
     }
@@ -398,9 +398,9 @@ impl IpIntelligenceOnPremiseEngine {
     /// The names of the properties the data set was opened with, in the order
     /// it holds them. With properties named, these are the names given, in
     /// the order given, including any the data file has no property for, so
-    /// [`Self::populated_property_names`] gives the ones a lookup reads.
-    /// Without, this is every property the data file defines. Intended for
-    /// introspection, such as the metadata example.
+    /// [`Self::populated_property_names`] gives the data file properties a
+    /// lookup reads. Without, this is every property the data file defines.
+    /// Intended for introspection, such as the metadata example.
     pub fn available_property_names(&self) -> Vec<String> {
         self.loaded.load().manager.available_property_names()
     }
@@ -929,10 +929,10 @@ impl IpIntelligencePropertyReader for LookupReader {
 /// Store the property at `added` in [`ADDED_PROPERTIES`], `Ip` or `IpV6`, as
 /// the address looked up when it is of that property's kind, as .NET does.
 /// An IPv4-mapped IPv6 address is the IPv4 address it holds, as
-/// [RFC 4291 section 2.5.5.2](https://www.rfc-editor.org/rfc/rfc4291#section-2.5.5.2)
-/// defines it and .NET gives it. Otherwise the property has no value, with
-/// .NET's reason, and is left out of the keys, as .NET leaves it out of its
-/// data's dictionary, so the JSON builder writes nothing for it.
+/// [`ClientIpEvidence::address`] gives it. Otherwise the property has no
+/// value, with .NET's reason, and is listed among the keys, so the JSON
+/// builder writes it as null with the reason, as the JSON builder
+/// specification asks of every property.
 fn populate_added_property(
     data: &mut IpIntelligenceDataBase,
     added: usize,
@@ -940,11 +940,11 @@ fn populate_added_property(
 ) {
     let (name, _) = ADDED_PROPERTIES[added];
     let ipv4 = added == ADDED_IPV4_PLACE;
-    match client_ip.address.map(|address| address.to_canonical()) {
+    match client_ip.address {
         Some(address) if address.is_ipv4() == ipv4 => data.set_string(name, address.to_string()),
-        Some(_) => data.set_string_no_value_unlisted(name, ADDED_NOT_SUPPLIED[added]),
-        None if client_ip.supplied => data.set_string_no_value_unlisted(name, ADDED_NOT_VALID),
-        None => data.set_string_no_value_unlisted(name, ADDED_NOT_SUPPLIED[added]),
+        Some(_) => data.set_string_no_value(name, ADDED_NOT_SUPPLIED[added]),
+        None if client_ip.supplied => data.set_string_no_value(name, ADDED_NOT_VALID),
+        None => data.set_string_no_value(name, ADDED_NOT_SUPPLIED[added]),
     }
 }
 
@@ -1552,9 +1552,9 @@ mod tests {
 
     /// Evidence with no client IP address gives data in which no property has
     /// a value, as .NET gives. Each data file property has the C library's
-    /// reason and is listed, so the JSON builder writes it as null. `Ip` and
-    /// `IpV6` have .NET's reason, which says whether a value was supplied,
-    /// and are not listed, as .NET leaves them out of its JSON.
+    /// reason, and `Ip` and `IpV6` have .NET's reason, which says whether a
+    /// value was supplied. Every one is listed, so the JSON builder writes it
+    /// as null with the reason.
     #[test]
     fn evidence_with_no_client_ip_gives_data_with_no_values() {
         let Some(engine) = asn_engine() else {
@@ -1595,15 +1595,19 @@ mod tests {
                     "{name} for {evidence:?}"
                 );
             }
-            assert_eq!(ElementData::keys(&ip), ["asn", "asnname"], "{evidence:?}");
+            assert_eq!(
+                ElementData::keys(&ip),
+                ["asn", "asnname", "ip", "ipv6"],
+                "{evidence:?}"
+            );
         }
     }
 
     /// `Ip` holds the IPv4 address looked up and `IpV6` the IPv6 address, an
-    /// IPv4-mapped address being IPv4, each listed after the data file's
-    /// properties, as .NET's JSON lists it. The other has .NET's reason that
-    /// no address of its kind was supplied, even when a value before the one
-    /// looked up did not read as an address.
+    /// IPv4-mapped address being IPv4. The other has .NET's reason that no
+    /// address of its kind was supplied, even when a value before the one
+    /// looked up did not read as an address. Both are listed after the data
+    /// file's properties, with a value or without.
     #[test]
     fn ip_and_ipv6_hold_the_address_looked_up() {
         let Some(engine) = asn_engine() else {
@@ -1637,9 +1641,11 @@ mod tests {
             ),
         ] {
             let ip = ip_data_for(&engine, evidence);
-            let mut listed: Vec<String> = ASN_PROPERTIES
+            let listed: Vec<String> = ASN_PROPERTIES
                 .iter()
-                .map(|name| name.to_lowercase())
+                .copied()
+                .chain(ADDED_PROPERTIES.iter().map(|(name, _)| *name))
+                .map(str::to_lowercase)
                 .collect();
             for (((name, _), reason), address) in ADDED_PROPERTIES
                 .iter()
@@ -1648,14 +1654,11 @@ mod tests {
             {
                 let value = ip.string(name);
                 match address {
-                    Some(address) => {
-                        assert_eq!(
-                            value.value().ok().map(String::as_str),
-                            Some(address),
-                            "{name} for {evidence:?}"
-                        );
-                        listed.push(name.to_lowercase());
-                    }
+                    Some(address) => assert_eq!(
+                        value.value().ok().map(String::as_str),
+                        Some(address),
+                        "{name} for {evidence:?}"
+                    ),
                     None => assert_eq!(
                         value.no_value_message(),
                         Some(reason),

@@ -218,10 +218,8 @@ pub trait IpIntelligencePropertyReader: Send + Sync {
     /// Read the property at `position` into `data` through its `set_*` methods.
     /// For a property with no value, a `set_*_no_value` method records the
     /// reason and lists the property among the keys, so the JSON builder
-    /// writes it as null with the reason, and
-    /// [`IpIntelligenceDataBase::set_string_no_value_unlisted`] records the
-    /// reason alone. Leaving `data` unchanged gives the default reason. `Err`
-    /// carries the message of a read that failed.
+    /// writes it as null with the reason. Leaving `data` unchanged gives the
+    /// default reason. `Err` carries the message of a read that failed.
     fn read_property(
         &self,
         position: usize,
@@ -287,8 +285,8 @@ impl DeferredValues {
     }
 
     /// The lowercase names of the properties read with a value or with a
-    /// listed reason for none, in the reader's order whatever order they were
-    /// read in, reading any not yet read.
+    /// reason for none, in the reader's order whatever order they were read
+    /// in, reading any not yet read.
     fn keys(&self) -> Vec<String> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let state = &mut *state;
@@ -435,9 +433,8 @@ impl IpIntelligenceDataBase {
     }
 
     /// Whether [`ElementData::keys`] lists the property with the lowercase
-    /// name `key` among those set on this data directly, being one with a
-    /// value or one set with no value other than through
-    /// [`Self::set_string_no_value_unlisted`].
+    /// name `key` among those set on this data directly, with a value or with
+    /// none.
     fn lists(&self, key: &str) -> bool {
         self.base.values().get_value(key).is_some()
             || self.no_value_places.iter().any(|(placed, _)| placed == key)
@@ -566,25 +563,6 @@ impl IpIntelligenceDataBase {
         let key = self.no_value_key(name.as_ref());
         self.strings.insert(
             key,
-            ValueStore::NoValue {
-                message: message.into(),
-            },
-        );
-    }
-
-    /// Record that a string-valued property had no value, with an explanatory
-    /// message, as [`Self::set_string_no_value`] does, but leave the property
-    /// out of [`ElementData::keys`], so the JSON builder writes nothing for
-    /// it. The on-premise engine records `Ip` and `IpV6` this way when the
-    /// evidence holds no address of their kind, as .NET's data leaves them
-    /// out of its dictionary.
-    pub fn set_string_no_value_unlisted(
-        &mut self,
-        name: impl AsRef<str>,
-        message: impl Into<String>,
-    ) {
-        self.strings.insert(
-            key(name.as_ref()),
             ValueStore::NoValue {
                 message: message.into(),
             },
@@ -768,10 +746,9 @@ impl ElementData for IpIntelligenceDataBase {
     /// none, in the order they were first set, then those the reader reads
     /// in the same way. A property set with no value is listed so the JSON
     /// builder writes it as null with the reason, among the values where the
-    /// engine set it, as .NET's data lists it, unless it was set through
-    /// [`IpIntelligenceDataBase::set_string_no_value_unlisted`]. With a
-    /// reader attached this reads every property not yet read, because
-    /// whether a property has a value is only known once it is read.
+    /// engine set it, as .NET's data lists it. With a reader attached this
+    /// reads every property not yet read, because whether a property has a
+    /// value is only known once it is read.
     fn keys(&self) -> Vec<String> {
         let bag = self.base.keys();
         let mut keys = Vec::with_capacity(bag.len() + self.no_value_places.len());
@@ -1147,7 +1124,7 @@ mod tests {
     }
 
     /// A reader that records a reason for each property it gives no value,
-    /// as the on-premise engine does, with `IpV6` recorded unlisted.
+    /// as the on-premise engine does.
     struct NoValueReader {
         names: Vec<String>,
     }
@@ -1184,14 +1161,14 @@ mod tests {
                     data.set_weighted_string_no_value("CountryCodesPopulation", "no codes")
                 }
                 "ip" => data.set_string("Ip", "192.0.2.1"),
-                _ => data.set_string_no_value_unlisted("IpV6", "no IPv6"),
+                _ => data.set_string_no_value("IpV6", "no IPv6"),
             }
             Ok(())
         }
     }
 
     #[test]
-    fn a_property_read_with_no_value_gives_its_reason_and_is_listed_unless_unlisted() {
+    fn a_property_read_with_no_value_gives_its_reason_and_is_listed() {
         let data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(NoValueReader::new());
         assert_eq!(data.asn().no_value_message(), Some("no asn"));
         assert_eq!(data.get("ASN").unwrap_err().message, "no asn");
@@ -1211,7 +1188,7 @@ mod tests {
         assert!(data.has_property("ipv6"));
         assert_eq!(
             data.keys(),
-            ["asn", "latitude", "countrycodespopulation", "ip"]
+            ["asn", "latitude", "countrycodespopulation", "ip", "ipv6"]
         );
     }
 
