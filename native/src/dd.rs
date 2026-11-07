@@ -58,6 +58,7 @@ use fiftyone_pipeline_core::{constants, Error, PropertyValueType, Result};
 use crate::buffer::with_value_string;
 use crate::evidence::with_native_evidence;
 use crate::file_reads::{FileReadPermit, FileReads};
+use crate::metadata::{metadata_read_failed, read_metadata_string, take_value_string};
 use crate::profile::PerformanceProfile;
 use crate::status::{status_name, status_to_result, take_message, NativeException, NativeStatus};
 
@@ -737,9 +738,15 @@ impl Manager {
     }
 }
 
-/// The length of the buffer a metadata string is first read into. A longer
-/// string is read again into a buffer that fits it.
-const METADATA_STRING_BUFFER_LENGTH: usize = 256;
+pub use crate::metadata::DataFileValue;
+
+// The shared readers in `crate::metadata` take the shim's constants as these.
+const _: () = assert!(
+    sys::SHIM_STRING_FAILED == crate::metadata::STRING_FAILED
+        && sys::SHIM_VALUE_NAME == crate::metadata::VALUE_NAME
+        && sys::SHIM_VALUE_DESCRIPTION == crate::metadata::VALUE_DESCRIPTION
+        && sys::SHIM_VALUE_URL == crate::metadata::VALUE_URL
+);
 
 /// The metadata the data file holds for one of its properties, as the C++
 /// `PropertyMetaDataBuilderHash` in 51degrees-cxx reads it.
@@ -807,18 +814,6 @@ pub struct DataFileComponent {
     pub name: String,
     /// The profile id of the component's default profile.
     pub default_profile_id: u32,
-}
-
-/// The metadata the data file holds for one value of a property.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct DataFileValue {
-    /// The value as a string.
-    pub name: String,
-    /// The value's description, or empty when it has none.
-    pub description: String,
-    /// A URL with more about the value, or empty when it has none.
-    pub url: String,
 }
 
 /// The fields of a data file property that are not strings.
@@ -1123,70 +1118,6 @@ fn data_file_value_type(value_type: u8, is_list: bool) -> PropertyValueType {
         JAVASCRIPT => PropertyValueType::JavaScript,
         STRING if is_list => PropertyValueType::StringList,
         _ => PropertyValueType::String,
-    }
-}
-
-/// Take one string of a property value from
-/// `fiftyoneDegreesShimHashGetDataFilePropertyValues` or
-/// `fiftyoneDegreesShimHashFindDataFilePropertyValue` into the
-/// `Vec<DataFileValue>` that `context` points to. The shim gives each value's
-/// name first, which starts a new value, then its description and URL.
-unsafe extern "C" fn take_value_string(context: *mut c_void, field: c_int, value: *const c_char) {
-    // Safety: `Manager::read_values` and `Manager::data_file_property_value`
-    // pass their own `Vec<DataFileValue>` as the context, and the shim passes
-    // a null terminated string valid for this call.
-    let (values, text) = unsafe {
-        (
-            &mut *context.cast::<Vec<DataFileValue>>(),
-            CStr::from_ptr(value).to_string_lossy().into_owned(),
-        )
-    };
-    match field {
-        sys::SHIM_VALUE_NAME => values.push(DataFileValue {
-            name: text,
-            description: String::new(),
-            url: String::new(),
-        }),
-        sys::SHIM_VALUE_DESCRIPTION => {
-            if let Some(last) = values.last_mut() {
-                last.description = text;
-            }
-        }
-        sys::SHIM_VALUE_URL => {
-            if let Some(last) = values.last_mut() {
-                last.url = text;
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Read a metadata string a shim function writes, or [`None`] when the shim
-/// could not read it. `read` writes as much of the string as fits into the
-/// buffer it is given and returns the string's full length, so a longer
-/// string is read again into a buffer that fits it.
-fn read_metadata_string(mut read: impl FnMut(*mut c_char, usize) -> usize) -> Option<String> {
-    let mut buffer = vec![0u8; METADATA_STRING_BUFFER_LENGTH];
-    let mut length = read(buffer.as_mut_ptr() as *mut c_char, buffer.len());
-    if length == sys::SHIM_STRING_FAILED {
-        return None;
-    }
-    if length >= buffer.len() {
-        buffer = vec![0u8; length + 1];
-        length = read(buffer.as_mut_ptr() as *mut c_char, buffer.len());
-        if length == sys::SHIM_STRING_FAILED {
-            return None;
-        }
-    }
-    let end = length.min(buffer.len() - 1);
-    Some(String::from_utf8_lossy(&buffer[..end]).into_owned())
-}
-
-/// The error for a part of the data file's metadata that could not be read.
-fn metadata_read_failed(what: &str) -> Error {
-    Error::Native {
-        status: String::from("CollectionFailure"),
-        message: format!("the data file's metadata could not be read ({what})"),
     }
 }
 
@@ -1606,6 +1537,7 @@ fn status_detail(status: sys::StatusCode, path: *const c_char) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metadata::METADATA_STRING_BUFFER_LENGTH;
     use std::path::PathBuf;
 
     use fiftyone_pipeline_core::Evidence;
