@@ -53,6 +53,12 @@ source's GitHub folder and taking the highest numbered file, kept for twelve
 hours. Without it, or after `set_tdl_source_resolver(None)`, only URIs are
 accepted. Any other `TdlSourceResolver` can be given in its place.
 
+A pipeline made from a configuration file written for .NET finds the engine
+under .NET's name, `RobotsTxtEngineBuilder` or `RobotsTxtEngine`, once
+`configuration::add_builders` has added it to the registry. Its settings are
+.NET's, being `UserAgent` for the GitHub resolver and `Properties`, with
+.NET's cache and lazy loading settings read and having no effect.
+
 ## Links
 
 - Source and issues: [github.com/51Degrees/51degrees-rust](https://github.com/51Degrees/51degrees-rust)

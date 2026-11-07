@@ -282,10 +282,13 @@ was given in its place.
 The first case holds the Sequence element, the Hash and IP Intelligence
 engines in a parallel group, the JSON builder and usage sharing, with the
 pipeline setting `SuppressProcessExceptions`. The second is the same with
-the two engines on their own. Each of the others changes the first in one
+the two engines on their own. Six of the others change the first in one
 place, to a builder name that matches no builder, a parameter no setting
 takes or a value that does not parse, once at the top level and once
-inside the group.
+inside the group. Two hold the Hash engine and then the robots.txt engine,
+with usage sharing off, one giving each setting .NET's robots.txt builder
+reads and one a parameter it has no setting for, whose error lists the
+builder's settings.
 
 The .NET program reads each file with .NET's own configuration reader and
 builds it with `FiftyOnePipelineBuilder`, making the builders through a

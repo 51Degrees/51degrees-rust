@@ -394,6 +394,74 @@
     }
   },
   {
+    "id": "configuration-robots-txt",
+    "about": "The Hash engine then the robots.txt engine, given each setting .NET's robots.txt builder reads, with usage sharing off.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "RobotsTxtEngineBuilder",
+            "BuildParameters": {
+              "UserAgent": "parity-test/1.0",
+              "CacheSize": "100",
+              "CacheHitOrMiss": "false",
+              "LazyLoadingTimeout": "1000",
+              "Properties": "PlainText,AnnotatedText"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SetShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-robots-txt-unknown-parameter",
+    "about": "A parameter the robots.txt engine has no setting for, so the error lists the settings of .NET's robots.txt builder.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "RobotsTxtEngineBuilder",
+            "BuildParameters": {
+              "NoSuchSetting": "1"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SetShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
     "id": "configuration-value-does-not-parse",
     "about": "A share percentage that is not a number.",
     "configuration": {

@@ -463,7 +463,7 @@ jobs:
         if: matrix.data == 'lite'
         working-directory: parity
         run: |
-          want='configuration-pipeline configuration-no-group'
+          want='configuration-pipeline configuration-no-group configuration-robots-txt'
           for side in dotnet rust; do
             got=$(jq -r 'select(.configuration.error == null) | .id' \
               "out/configuration-$side.jsonl" | paste -sd ' ')

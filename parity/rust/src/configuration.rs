@@ -138,6 +138,7 @@ fn registry() -> BuilderRegistry {
     fiftyone_json_builder::configuration::add_builders(&mut registry);
     fiftyone_javascript_builder::configuration::add_builders(&mut registry);
     fiftyone_agent_signature::configuration::add_builders(&mut registry);
+    fiftyone_device_detection_robots_txt::configuration::add_builders(&mut registry);
     fiftyone_pipeline_engines_fiftyone::configuration::use_fiftyone_pipeline_builder(&mut registry);
     registry
 }

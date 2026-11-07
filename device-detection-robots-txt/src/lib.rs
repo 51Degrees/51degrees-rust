@@ -84,9 +84,17 @@
 //! source's GitHub folder and keeps the answer for twelve hours. Without the
 //! feature the engine accepts only URIs until
 //! [`RobotsTxtEngineBuilder::set_tdl_source_resolver`] gives it a resolver.
+//!
+//! ## Configuration
+//!
+//! [`configuration::add_builders`] adds the engine's builder to a
+//! [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the name
+//! .NET gives it, so a configuration file written for .NET makes the same
+//! engine here, with its `UserAgent` and `Properties` settings.
 
 #![warn(missing_docs)]
 
+pub mod configuration;
 pub mod constants;
 mod data;
 mod engine;
