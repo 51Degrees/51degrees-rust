@@ -422,6 +422,18 @@ line that differs. Texts that are the same byte for byte read the same under
 an [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309.html) reader, and the
 crate's own tests check what such a reader reads from them.
 
+Four entries in `allowed-differences.json` allow robots.txt differences,
+each by a `pattern` for the first line that differs. Over the Enterprise
+file, two allow the crawlers with no usable product token, which the
+Device Detection release the comparison runs still writes and the crate
+leaves out, as .NET does since
+[51degrees-dotnet#78](https://github.com/51Degrees/51degrees-dotnet/pull/78).
+They come out when the comparison runs a .NET release with that change.
+Over the Lite file, two allow how a Terms Document Locator entry is
+written, where the crate follows RFC 3986 and keeps its own text. Over the
+Enterprise file those two cases first differ at a crawler the first two
+entries allow.
+
 Over the Enterprise file, one step of that job checks that each side read the
 usages and wrote a group for at least one crawler, so the comparison cannot
 pass with no crawler in either text, and another runs the crate's data file
