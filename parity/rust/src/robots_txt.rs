@@ -50,7 +50,7 @@ use fiftyone_device_detection_robots_txt::{
     RobotsTxtEngine, TdlSourceResolver, ROBOTS_TXT_DATA_KEY,
 };
 use fiftyone_native::PerformanceProfile;
-use fiftyone_pipeline_core::{Evidence, EvidenceKeyFilter, FlowElement, Pipeline};
+use fiftyone_pipeline_core::{Evidence, FlowElement, Pipeline};
 use fiftyone_pipeline_engines::AspectEngine;
 
 use crate::fodid_cases::value_type_name;
