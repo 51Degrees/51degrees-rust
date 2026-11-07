@@ -23,7 +23,7 @@
 //! The keys the two engines store their data under, and typed reads of that
 //! data.
 
-use fiftyone_pipeline_core::{TypedKey, WeightedValue};
+use fiftyone_pipeline_core::{PropertyMetaData, PropertyValueType, TypedKey, WeightedValue};
 use fiftyone_pipeline_engines::AspectPropertyValue;
 use fiftyone_pipeline_translation::{TranslationData, TranslationValue};
 
@@ -54,6 +54,42 @@ pub(crate) const COUNTRY_NAMES_POPULATION_ALL_TRANSLATED: &str =
 pub(crate) const COUNTRY_CODES_GEOGRAPHICAL_ALL: &str = "CountryCodesGeographicalAll";
 pub(crate) const COUNTRY_CODES_POPULATION_ALL: &str = "CountryCodesPopulationAll";
 pub(crate) const SORTING_CULTURE_USED: &str = "SortingCultureUsed";
+
+/// The six properties under [`COUNTRY_NAMES_TRANSLATED_KEY`], with their
+/// value types. [`CountriesTranslationEngine`](crate::CountriesTranslationEngine)
+/// gives these, and
+/// [`CloudCountriesTranslationEngine`](crate::CloudCountriesTranslationEngine)
+/// lists them until the cloud's own list is known.
+pub(crate) fn countries_translated_properties() -> Vec<PropertyMetaData> {
+    [
+        (
+            COUNTRY_NAMES_GEOGRAPHICAL_TRANSLATED,
+            PropertyValueType::KeyValueList,
+        ),
+        (
+            COUNTRY_NAMES_POPULATION_TRANSLATED,
+            PropertyValueType::KeyValueList,
+        ),
+        (
+            COUNTRY_NAMES_GEOGRAPHICAL_ALL_TRANSLATED,
+            PropertyValueType::StringList,
+        ),
+        (
+            COUNTRY_NAMES_POPULATION_ALL_TRANSLATED,
+            PropertyValueType::StringList,
+        ),
+        (
+            COUNTRY_CODES_GEOGRAPHICAL_ALL,
+            PropertyValueType::StringList,
+        ),
+        (COUNTRY_CODES_POPULATION_ALL, PropertyValueType::StringList),
+    ]
+    .into_iter()
+    .map(|(name, value_type)| {
+        PropertyMetaData::new(name, COUNTRY_NAMES_TRANSLATED_KEY_NAME, value_type)
+    })
+    .collect()
+}
 
 /// The English country names
 /// [`CountryCodeTranslationEngine`](crate::CountryCodeTranslationEngine)
@@ -118,8 +154,9 @@ pub trait CountriesTranslationData {
     /// The locale the lists of every country were sorted for, such as
     /// `fr-FR`, or an empty string when the request asked for no language
     /// the engine holds and the names were sorted ignoring case. `None`
-    /// before the engine has run. This is for tests, and not part of the
-    /// data a consumer should rely on.
+    /// before the engine has run, or when the cloud service did not return
+    /// it. This is for tests, and not part of the data a consumer should
+    /// rely on.
     fn sorting_culture_used(&self) -> Option<&str>;
 }
 

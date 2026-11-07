@@ -39,7 +39,10 @@ use fiftyone_pipeline_translation::{TranslationData, TranslationValue};
 use once_cell::sync::OnceCell;
 use serde_json::{Map, Value};
 
-use crate::data::{COUNTRY_NAMES_TRANSLATED_KEY, COUNTRY_NAMES_TRANSLATED_KEY_NAME};
+use crate::data::{
+    countries_translated_properties, COUNTRY_NAMES_TRANSLATED_KEY,
+    COUNTRY_NAMES_TRANSLATED_KEY_NAME,
+};
 
 /// The engine's name in log records and messages.
 const ENGINE_NAME: &str = "CloudCountriesTranslationEngine";
@@ -138,7 +141,9 @@ struct DerivedMetadata {
 /// for the product `countrynamestranslated`. A `Weighted` type gives a list
 /// of weighted strings, `Array` a list of strings, and any other type a
 /// single value held as text. Until the request engine's discovery has
-/// completed the engine lists no properties. A resource key without the
+/// completed, the engine lists the six properties the on-premise engine
+/// gives, as the IP Intelligence cloud engine lists its defaults, and
+/// [`FlowElement::properties_loaded`] is `false`. A resource key without the
 /// product gives empty metadata and logs an error once, as the IP
 /// Intelligence cloud engine does.
 ///
@@ -207,6 +212,11 @@ pub struct CloudCountriesTranslationEngine {
     evidence_filter: EvidenceKeyFilterWhitelist,
     properties: OnceCell<Vec<PropertyMetaData>>,
     aspect_properties: OnceCell<Vec<AspectPropertyMetaData>>,
+    /// The six properties the on-premise engine gives, listed until the
+    /// request engine's discovery has completed.
+    default_properties: Vec<PropertyMetaData>,
+    /// The aspect metadata of the default properties.
+    default_aspect_properties: Vec<AspectPropertyMetaData>,
     /// Why a property is missing from data of a successful request. `None`
     /// with a license key alone, because the properties it grants are not
     /// listed.
@@ -513,7 +523,7 @@ impl FlowElement for CloudCountriesTranslationEngine {
     fn properties(&self) -> &[PropertyMetaData] {
         match self.properties.get() {
             Some(properties) => properties,
-            None => &[],
+            None => &self.default_properties,
         }
     }
 
@@ -541,7 +551,7 @@ impl AspectEngine for CloudCountriesTranslationEngine {
     fn aspect_properties(&self) -> &[AspectPropertyMetaData] {
         match self.aspect_properties.get() {
             Some(properties) => properties,
-            None => &[],
+            None => &self.default_aspect_properties,
         }
     }
 
@@ -586,7 +596,8 @@ impl CloudCountriesTranslationEngineBuilder {
     ///
     /// The metadata is read from the request engine here, which makes no
     /// cloud request. When the request engine's discovery has not
-    /// completed, that waits until it has.
+    /// completed, the metadata is read the first time the engine needs it
+    /// after discovery completes.
     pub fn build(self) -> Result<CloudCountriesTranslationEngine> {
         let request_engine = self.request_engine.ok_or_else(|| {
             Error::configuration(format!(
@@ -594,11 +605,19 @@ impl CloudCountriesTranslationEngineBuilder {
                  .cloud_request_engine(..)."
             ))
         })?;
+        let default_properties = countries_translated_properties();
+        let default_aspect_properties = default_properties
+            .iter()
+            .cloned()
+            .map(AspectPropertyMetaData::from_core)
+            .collect();
         let engine = CloudCountriesTranslationEngine {
             request_engine,
             evidence_filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
             properties: OnceCell::new(),
             aspect_properties: OnceCell::new(),
+            default_properties,
+            default_aspect_properties,
             missing: OnceCell::new(),
             forms: OnceCell::new(),
         };
