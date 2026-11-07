@@ -1104,6 +1104,63 @@ fn the_core_pipeline_settings_name_the_fiftyone_pipeline_builder() {
     );
 }
 
+/// .NET looks a pipeline setting up among every public method of its
+/// builder, so it refuses `Build` and `ToString` as taking no parameters
+/// and `AddFlowElement` as taking an `IFlowElement`, which has no
+/// `TryParse`. The crates ignore each, as any name that is not a setting.
+#[test]
+fn a_pipeline_setting_named_after_a_builder_method_is_ignored() {
+    let _serial = start();
+    for name in ["Build", "AddFlowElement", "ToString"] {
+        LOGGED.lock().unwrap().clear();
+        let pipeline = build_fiftyone(&set_headers().parameter(name, "1")).expect(name);
+        assert_eq!(
+            data_keys(&pipeline),
+            ["sequence", "set-headers", "shareusage"]
+        );
+        assert_eq!(
+            logged(),
+            [format!(
+                "WARN The pipeline has no setting matching the build parameter '{name}', so it \
+                 is ignored."
+            )]
+        );
+    }
+}
+
+/// .NET calls each setting as it reads it, so a value the builder refuses
+/// is reported before a parameter that matches nothing. The crates check
+/// every parameter's name before applying any setting, so the parameter
+/// that matches nothing is reported.
+#[test]
+fn a_parameter_matching_nothing_is_reported_before_a_refused_value() {
+    let _serial = start();
+    let found = message(share_usage(&[
+        ("FailuresToEnterRecovery", "0"),
+        ("NoSuchSetting", "1"),
+    ]));
+    assert!(
+        found.contains(
+            "has no 'Set' methods or 'Build' methods that match (case-insensitively) the \
+             following parameters: NOSUCHSETTING."
+        ),
+        "{found}"
+    );
+    assert!(!found.contains("failuresToEnterRecovery"), "{found}");
+}
+
+/// Names are compared with Unicode's full upper case mapping, so `ß`
+/// matches `SS`. .NET maps each character to one character, so it ignores
+/// this name as matching no setting.
+#[test]
+fn a_name_with_sharp_s_matches_its_double_s_form() {
+    let _serial = start();
+    let pipeline =
+        build_fiftyone(&set_headers().parameter("SuppreßProcessExceptions", "true")).unwrap();
+    assert!(pipeline.is_suppress_process_exceptions());
+    assert!(logged().is_empty(), "{:?}", logged());
+}
+
 #[test]
 fn a_json_file_for_dotnets_fiftyone_pipeline_builder_makes_the_same_pipeline() {
     let _serial = start();
