@@ -263,6 +263,17 @@ jobs:
           cat out/report.md >> "$GITHUB_STEP_SUMMARY"
           exit $status
 
+      # Only the TAC file holds the TAC and NativeModel properties, so the
+      # lookup of profiles by their values is checked here over every value
+      # of each, and 51DEGREES_REQUIRE_TAC makes the test fail rather than
+      # skip if the file stops carrying them or does not reach the test.
+      - name: Check the profile lookup on the TAC file
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        run: |
+          env 51DEGREES_DD_PATH="$DD_FILE" 51DEGREES_REQUIRE_TAC=1 \
+            cargo test -p fiftyone-native --test value_profiles \
+            tac_and_native_model_values_find_their_profiles -- --nocapture
+
       # Latitude, Longitude and the points of Areas are given to 3 decimal
       # places. Only the Enterprise file carries them, so the test runs here,
       # and 51DEGREES_REQUIRE_LOCATION makes it fail rather than skip if the
