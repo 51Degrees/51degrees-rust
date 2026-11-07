@@ -28,6 +28,7 @@
 //! populate) into the flow data under
 //! [`DEVICE_DATA_KEY`](fiftyone_device_detection_shared::DEVICE_DATA_KEY).
 
+use std::any::Any;
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 use std::ffi::CStr;
@@ -483,6 +484,16 @@ impl DeviceDetectionOnPremiseEngine {
         Arc::clone(&self.loaded.load().components)
     }
 
+    /// The native data set the engine has loaded, for an element that reads
+    /// the data file's profiles and their values, as the robots.txt engine
+    /// reads the crawlers.
+    ///
+    /// The data set is the loaded one. A refresh loads a new data set and
+    /// frees this one once no caller holds it.
+    pub fn data_set(&self) -> Arc<Manager> {
+        Arc::clone(&self.loaded.load().manager)
+    }
+
     /// The values the property named `property_name`, matched exactly, can
     /// have, or [`None`] when the engine lists no such property. Fails when
     /// the data file's values cannot be read.
@@ -768,6 +779,12 @@ impl FlowElement for DeviceDetectionOnPremiseEngine {
 
     fn properties(&self) -> &[PropertyMetaData] {
         &self.metadata.current().properties
+    }
+
+    /// The engine itself, so an element added after it, such as the
+    /// robots.txt engine, can find it in the pipeline and read its data set.
+    fn into_any(self: Arc<Self>) -> Option<Arc<dyn Any + Send + Sync>> {
+        Some(self)
     }
 }
 

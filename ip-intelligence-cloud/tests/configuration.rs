@@ -52,14 +52,14 @@ const NO_INNER: &str = "No Inner Exception.";
 const UK: &[(&str, &str)] = &[("query.client-ip", "185.28.167.78")];
 const US: &[(&str, &str)] = &[("query.client-ip", "8.8.8.8")];
 
-/// The products the stand-in grants, as .NET's run had them.
+/// The products the stand-in grants, the same as .NET was given.
 const PROPERTIES: &str = r#"{"Products":{
     "ip":{"DataTier":"CloudV4","Properties":[
         {"Name":"RegisteredName","Type":"String","Category":"Network"},
         {"Name":"CountryCodesGeographical","Type":"WeightedString","Category":"Location"}]}}}"#;
 
 /// RegisteredName and CountryCodesGeographical, and whether the data came
-/// from a cache, as .NET's run gave them.
+/// from a cache, as .NET gave them.
 type Answer = (String, Vec<(String, u16)>, bool);
 
 fn uk_answer() -> Answer {
@@ -78,7 +78,7 @@ fn us_answer() -> Answer {
     )
 }
 
-/// Answers for the cloud service, as .NET's run had them. An address in
+/// Answers for the cloud service, the same as .NET was given. An address in
 /// 185.28 is in the United Kingdom, and any other in the United States or
 /// Canada.
 #[derive(Default)]
@@ -340,10 +340,10 @@ fn the_builder_is_not_found_by_its_rust_name() {
     );
 }
 
-/// .NET's run "ipi after cre", where the engine took the properties the
-/// key grants and read each response. .NET's engine also gives the data
-/// tier the key's product names, CloudV4 here, where the engine here gives
-/// none.
+/// The engine with no parameters after the request engine, where in .NET
+/// the engine took the properties the key grants and read each response.
+/// .NET's engine also gives the data tier the key's product names, CloudV4
+/// here, where the engine here gives none.
 #[test]
 fn the_engine_reads_the_request_engine_made_before_it() {
     let (pipeline, stand_in) = build(vec![request_engine(), ElementOptions::new(NAME)]);
@@ -381,8 +381,8 @@ fn without_a_request_engine_before_it_the_build_fails() {
 }
 
 /// .NET's engine finds its request engine in the pipeline by type, which
-/// finds none when there are two, so .NET's run with two request engines
-/// before the engine failed with this message, on its own. Here the
+/// finds none when there are two, so .NET, given two request engines
+/// before the engine, failed with this message, on its own. Here the
 /// element that cannot be made fails the build.
 #[test]
 fn with_two_request_engines_before_it_the_build_fails() {
@@ -448,8 +448,8 @@ fn settings_with_no_effect_here_are_read_and_logged() {
 }
 
 /// .NET makes a cache of the size given, 0 included, and keys it on the
-/// engine's evidence, which for a cloud engine is none. So in .NET's run
-/// the request from 8.8.8.8 after one from 185.28.167.78 was given the
+/// engine's evidence, which for a cloud engine is none. So in .NET the
+/// request from 8.8.8.8 after one from 185.28.167.78 was given the
 /// first answer, Example Networks and GB, marked as a cache hit when
 /// `CacheHitOrMiss` was true, from the cache of size 10 and of size 0. The
 /// engine here has no cache, so each request gets its own answer.
@@ -563,8 +563,8 @@ fn an_unknown_setting_lists_dotnets_settings() {
     }
 }
 
-/// .NET's run "ipi twice" made both engines, one after the other, and gave
-/// these answers.
+/// .NET, given the engine twice after the request engine, made both, one
+/// after the other, and gave these answers.
 #[test]
 fn the_engine_named_twice_is_made_twice() {
     let (pipeline, stand_in) = build(vec![

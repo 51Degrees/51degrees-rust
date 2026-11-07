@@ -213,6 +213,11 @@ impl DeviceDetectionOnPremiseEngineBuilder {
     /// length and header. The engine removes the copy once it no longer reads
     /// it, whether it made the copy or found it, as the C library does.
     /// Defaults to false.
+    ///
+    /// A file in the folder that passes those checks is read as the data, and
+    /// the default folder can be one every local user writes to, as `/tmp` is
+    /// on Linux when `TMPDIR` is not set. With reuse on, name with
+    /// [`Self::temp_dir_path`] a folder only the service writes to.
     pub fn reuse_temp_file(mut self, reuse: bool) -> Self {
         self.reuse_temp_file = reuse;
         self

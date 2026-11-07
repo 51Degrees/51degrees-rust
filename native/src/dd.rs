@@ -44,6 +44,10 @@
 //! data, and therefore one results structure, belongs to a single thread at a
 //! time.
 
+mod profiles;
+
+pub use profiles::DataFileProfile;
+
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::ops::Range;
@@ -2081,7 +2085,7 @@ mod tests {
 
     /// The profiles that hold the data set in memory and the ones that read
     /// it from the file, so the metadata readers are run against both.
-    const METADATA_PROFILES: [PerformanceProfile; 3] = [
+    pub(super) const METADATA_PROFILES: [PerformanceProfile; 3] = [
         PerformanceProfile::LowMemory,
         PerformanceProfile::Balanced,
         PerformanceProfile::InMemory,

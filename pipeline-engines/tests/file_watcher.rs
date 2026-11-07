@@ -155,9 +155,10 @@ fn dropping_the_service_releases_the_engine_and_stops_the_watcher() {
 /// The service holds an engine weakly, as a .NET engine unregisters its data
 /// files when disposed. Dropping the engine, or the pipeline holding it,
 /// frees its data set and ends its registration while the service lives on,
-/// so a later change to the file refreshes nothing.
+/// so a later change to the file refreshes nothing. The service's unit tests
+/// check that the registration's watcher goes with it.
 #[test]
-fn dropping_the_engine_ends_its_registration_and_watcher() {
+fn dropping_the_engine_ends_its_registration() {
     let (dir, path) = folder("engine");
     let engine = watched_engine(&path, true);
     let refreshes = Arc::clone(&engine.refreshes);

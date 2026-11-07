@@ -4,10 +4,11 @@
 # core and engines, Device Detection and IP Intelligence (cloud and on-premise),
 # the cloud request engine, the derived property element, the agent signature
 # element, the translation engine and the IP Intelligence country translation
-# engines, the JSON and JavaScript builders, the axum web integration, the
-# `fodid` 51Did reader, the 51Did data model and the cloud engine that unpacks
-# a 51Did from a cloud response, and the runnable examples and benchmarks. Each
-# concern is its own crate so a consumer depends only on what it uses.
+# engines, the robots.txt engine, the JSON and JavaScript builders, the axum
+# web integration, the `fodid` 51Did reader, the 51Did data model and the cloud
+# engine that unpacks a 51Did from a cloud response, and the runnable examples
+# and benchmarks. Each concern is its own crate so a consumer depends only on
+# what it uses.
 [workspace]
 resolver = "2"
 members = [
@@ -29,6 +30,7 @@ members = [
     "native",
     "device-detection-shared",
     "device-detection-onpremise",
+    "device-detection-robots-txt",
     "device-detection-cloud",
     "device-detection",
     "ip-intelligence-shared",

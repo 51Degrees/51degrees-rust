@@ -199,19 +199,21 @@ impl TranslationEngineBuilder {
         }
         if self.translations.is_empty() {
             return Err(Error::configuration(
-                "At least one property translation must be configured.",
+                "At least one property translation must be configured. (Parameter \
+                 'translations')",
             ));
         }
         if self.sources.is_empty() {
             return Err(Error::configuration(
-                "At least one source file must be configured.",
+                "At least one source file must be configured. (Parameter 'sources')",
             ));
         }
         let source_data_key = match self.source_data_key {
             Some(key) if !key.trim().is_empty() => key.trim().to_owned(),
             _ => {
                 return Err(Error::configuration(
-                    "The source element key must be configured.",
+                    "The source element key must be configured. (Parameter \
+                     'sourceElementDataKey')",
                 ))
             }
         };

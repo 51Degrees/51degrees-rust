@@ -1066,6 +1066,28 @@ extern "C" {
         buffer: *mut c_char,
         length: usize,
     ) -> usize;
+
+    /// Returns the number of profiles the data file holds, or zero when no
+    /// data set is available. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager.
+    pub fn fiftyoneDegreesShimHashGetProfileCount(manager: *mut ResourceManager) -> u32;
+
+    /// Reads the id of the profile at `profile_index`, in order of profile
+    /// id, and the id of its component and returns 1, or returns 0 when the
+    /// index is out of range or the profile cannot be read. See
+    /// `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. Both output pointers
+    /// must be writable.
+    pub fn fiftyoneDegreesShimHashGetProfile(
+        manager: *mut ResourceManager,
+        profile_index: u32,
+        profile_id: *mut u32,
+        component_id: *mut u8,
+    ) -> c_int;
 }
 
 #[cfg(test)]

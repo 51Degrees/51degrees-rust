@@ -26,7 +26,10 @@
 use crate::error::Result;
 
 /// The value given for one build parameter.
+///
+/// More forms may be added, so a `match` on one needs a wildcard arm.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConfigValue {
     /// Text, which the setting reads as its own type. A configuration file
     /// gives every value this way, a list as comma-separated text.
@@ -74,8 +77,10 @@ impl From<Vec<&str>> for ConfigValue {
 ///
 /// Either `builder_name` names the builder and `build_parameters` gives its
 /// settings, or `sub_elements` lists the elements of a parallel group and
-/// the other two are left empty.
+/// the other two are left empty. Make one with [`ElementOptions::new`] or
+/// [`ElementOptions::group`], as more fields may be added.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ElementOptions {
     /// The builder's name, its name without `Builder` at the end, or one of
     /// its alternate names, in any case.
@@ -114,8 +119,10 @@ impl ElementOptions {
 }
 
 /// How to make a pipeline, being its elements in order and the settings of
-/// the pipeline itself.
+/// the pipeline itself. Make one with [`PipelineOptions::new`] or
+/// [`PipelineOptions::from_json`], as more fields may be added.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PipelineOptions {
     /// The elements, in the order they run.
     pub elements: Vec<ElementOptions>,
@@ -151,8 +158,13 @@ impl PipelineOptions {
     /// that differ only in case are refused. Each element's build parameters
     /// are applied in the order .NET's configuration gives them, which is by
     /// name ignoring case, with whole numbers before other names and in
-    /// numeric order. Other sections, and settings the .NET web integration
-    /// reads from the same section, are ignored.
+    /// numeric order. The pipeline's own settings are read from
+    /// `PipelineBuilderParameters`, the older name .NET still reads, and then
+    /// from `BuildParameters`, each section in the same order, and a name
+    /// given in both in the same case keeps its first place with the
+    /// `BuildParameters` value.
+    /// Other sections, and settings the .NET web integration reads from the
+    /// same section, are ignored.
     ///
     /// A build parameter that is an array or an object is refused, because
     /// .NET cannot read one either. A list is written as comma-separated

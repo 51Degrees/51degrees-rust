@@ -56,9 +56,10 @@ const LF: &str = "\n";
 /// .NET gives the .NET full name and the crates the Rust name.
 pub const BUILDER_TYPE: &str = "{type}";
 
-/// The text before and after a builder's type name in a configuration error.
+/// The text before a builder's type name in a configuration error, and the
+/// texts that may follow it, for an element's builder and the pipeline's.
 const BEFORE_BUILDER_TYPE: &str = "uilder '";
-const AFTER_BUILDER_TYPE: &str = "' for element";
+const AFTER_BUILDER_TYPE: &[&str] = &["' for element", "' for pipeline"];
 
 /// The end of the line a configuration error lists the builder's settings
 /// after, one to a line, up to the line starting with
@@ -222,6 +223,11 @@ pub struct Side {
     /// The side gave one of these values, compared as data.
     #[serde(default)]
     pub value: Option<Vec<Value>>,
+    /// The side gave text matching one of these patterns, where `*` matches
+    /// any run of characters. A text difference gives the line number, so a
+    /// pattern can allow a line wherever it falls.
+    #[serde(default)]
+    pub pattern: Option<Vec<String>>,
     /// The side gave no value for the property.
     #[serde(default, rename = "noValue")]
     pub no_value: bool,
@@ -238,6 +244,11 @@ impl Side {
         (self.no_value && no_value)
             || self.value.as_ref().is_some_and(|values| {
                 value.is_some_and(|value| values.iter().any(|v| same(v, value)))
+            })
+            || self.pattern.as_ref().is_some_and(|patterns| {
+                value
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| patterns.iter().any(|p| glob(p, text)))
             })
     }
 }
@@ -275,18 +286,19 @@ impl Allowed {
                 .is_none_or(|side| side.matches(&difference.path, &difference.rust))
     }
 
-    /// What is wrong with the entry, if anything. A side that names neither
-    /// a value nor no value would match nothing.
+    /// What is wrong with the entry, if anything. A side that names no
+    /// value or pattern and does not ask for no value would match nothing.
     pub fn problem(&self) -> Option<String> {
         [("dotnet", &self.dotnet), ("rust", &self.rust)]
             .into_iter()
             .find(|(_, side)| {
-                side.as_ref()
-                    .is_some_and(|side| side.value.is_none() && !side.no_value)
+                side.as_ref().is_some_and(|side| {
+                    side.value.is_none() && side.pattern.is_none() && !side.no_value
+                })
             })
             .map(|(name, _)| {
                 format!(
-                    "the entry for `{}` gives `{name}` neither a value nor noValue",
+                    "the entry for `{}` gives `{name}` no value, pattern or noValue",
                     self.path
                 )
             })
@@ -380,8 +392,11 @@ pub fn compare_case(case: &Case, dotnet: &Value, rust: &Value) -> Vec<Difference
         field_of(&rust, "usageCustom"),
         USAGE_CUSTOM_RUNTIME_ELEMENTS,
     );
-    for field in ["fodid", "metadata", "derived"] {
+    for field in ["fodid", "metadata", "derived", "robotsTxtEngine"] {
         out.data(field, field_of(&dotnet, field), field_of(&rust, field));
+    }
+    for field in ["plainText", "annotatedText"] {
+        out.text(field, field_of(&dotnet, field), field_of(&rust, field));
     }
     out.data(
         "configuration",
@@ -441,7 +456,7 @@ pub fn normalise_configuration_error(error: &str) -> String {
 }
 
 /// `line` with each builder type name, between [`BEFORE_BUILDER_TYPE`] and
-/// [`AFTER_BUILDER_TYPE`], replaced by [`BUILDER_TYPE`].
+/// one of [`AFTER_BUILDER_TYPE`], replaced by [`BUILDER_TYPE`].
 fn without_builder_type(line: &str) -> String {
     let mut out = String::new();
     let mut rest = line;
@@ -449,8 +464,11 @@ fn without_builder_type(line: &str) -> String {
         let start = at + BEFORE_BUILDER_TYPE.len();
         out.push_str(&rest[..start]);
         rest = &rest[start..];
-        if let Some(end) = rest.find(AFTER_BUILDER_TYPE) {
-            if !rest[..end].contains('\'') {
+        if let Some(end) = rest.find('\'') {
+            if AFTER_BUILDER_TYPE
+                .iter()
+                .any(|after| rest[end..].starts_with(after))
+            {
                 out.push_str(BUILDER_TYPE);
                 rest = &rest[end..];
             }
@@ -1647,6 +1665,28 @@ mod tests {
     }
 
     #[test]
+    fn the_pipeline_builders_type_name_is_the_same_in_both() {
+        let dotnet = "Method 'SetSuppressProcessException' on builder \
+                      'FiftyOne.Pipeline.Engines.FiftyOne.FlowElements.FiftyOnePipelineBuilder' \
+                      for pipeline expects a parameter of type 'Boolean'.";
+        let rust = "Method 'SetSuppressProcessException' on builder \
+                    'fiftyone_pipeline_engines_fiftyone::configuration::FiftyOnePipelineBuilder' \
+                    for pipeline expects a parameter of type 'Boolean'.";
+        assert_eq!(
+            normalise_configuration_error(rust),
+            "Method 'SetSuppressProcessException' on builder '{type}' for pipeline expects a \
+             parameter of type 'Boolean'."
+        );
+        assert_eq!(
+            normalise_configuration_error(dotnet),
+            normalise_configuration_error(rust)
+        );
+        // Quoted text followed by neither ending is kept.
+        let other = "Builder 'a' for something else, and builder 'b' for the pipeline";
+        assert_eq!(normalise_configuration_error(other), other);
+    }
+
+    #[test]
     fn generic_builders_are_left_out_of_the_available_builders() {
         assert_eq!(
             normalise_configuration_error(
@@ -1764,6 +1804,71 @@ mod tests {
         assert_eq!(differences[0].path, "derived.sourceProperties[1]");
     }
 
+    /// A robots.txt text, and the same text with its second line changed.
+    const ROBOTS_TXT: &str = "User-Agent: *\nDisallow: /\n";
+    const ROBOTS_TXT_CHANGED: &str = "User-Agent: *\nAllow: /\n";
+
+    /// A line for a robots.txt case, as both producers write it.
+    fn robots_txt_line(text: Option<&str>) -> Value {
+        json!({
+            "id": "robots-txt-none",
+            "processError": null,
+            "errors": [],
+            "robotsTxtEngine": {
+                "dataKey": "robotstxt",
+                "dataSourceTier": "TAC",
+                "evidenceKeys": ["query.robotstxt.search", "query.robotstxt.tdl"],
+                "properties": [{"name": "AnnotatedText", "category": "Bots"}]
+            },
+            "plainText": text,
+            "annotatedText": text.map(|text| format!("# Notes\n{text}"))
+        })
+    }
+
+    #[test]
+    fn the_same_robots_txt_answer_is_no_difference() {
+        let case = data_case("robots-txt-none");
+        let line = robots_txt_line(Some(ROBOTS_TXT));
+        assert!(compare_case(&case, &line, &line).is_empty());
+        let line = robots_txt_line(None);
+        assert!(compare_case(&case, &line, &line).is_empty());
+    }
+
+    #[test]
+    fn a_changed_robots_txt_answer_is_named_by_its_field_and_line() {
+        let case = data_case("robots-txt-none");
+        let differences = compare_case(
+            &case,
+            &robots_txt_line(Some(ROBOTS_TXT)),
+            &robots_txt_line(Some(ROBOTS_TXT_CHANGED)),
+        );
+        let paths: Vec<(&str, Kind)> = differences
+            .iter()
+            .map(|d| (d.path.as_str(), d.kind))
+            .collect();
+        assert_eq!(
+            paths,
+            [("plainText", Kind::Text), ("annotatedText", Kind::Text)]
+        );
+        assert_eq!(differences[0].dotnet, json!("line 2: Disallow: /"));
+        assert_eq!(differences[0].rust, json!("line 2: Allow: /"));
+        assert_eq!(differences[1].dotnet, json!("line 3: Disallow: /"));
+
+        let differences = compare_case(
+            &case,
+            &robots_txt_line(Some(ROBOTS_TXT)),
+            &robots_txt_line(None),
+        );
+        assert_eq!(differences.len(), 2);
+        assert!(differences.iter().all(|d| d.kind == Kind::Presence));
+
+        let mut rust = robots_txt_line(None);
+        rust["robotsTxtEngine"]["evidenceKeys"][0] = json!("query.robotstxt.training");
+        let differences = compare_case(&case, &robots_txt_line(None), &rust);
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].path, "robotsTxtEngine.evidenceKeys[0]");
+    }
+
     #[test]
     fn an_entry_can_allow_one_metadata_field_in_every_property() {
         let mut rust = metadata_line(6);
@@ -1778,5 +1883,45 @@ mod tests {
         assert_eq!(outcome.allowed_counts[&0], 1);
         assert_eq!(outcome.failures.len(), 1);
         assert_eq!(outcome.failures[0].path, "metadata.componentId");
+    }
+
+    #[test]
+    fn a_side_pattern_allows_a_line_wherever_it_falls() {
+        let differences = compare_case(
+            &data_case("robots-txt-none"),
+            &robots_txt_line(Some(ROBOTS_TXT)),
+            &robots_txt_line(Some(ROBOTS_TXT_CHANGED)),
+        );
+        let allowed = entries(json!([{
+            "path": "*Text", "kind": "text",
+            "dotnet": {"pattern": ["line *: Disallow: /"]},
+            "rust": {"pattern": ["line *: Allow: /"]},
+            "reason": "test"
+        }]));
+        assert!(allowed[0].problem().is_none());
+        let outcome = check(&differences, &allowed, "lite");
+        assert!(outcome.failures.is_empty());
+        assert_eq!(outcome.allowed_counts[&0], 2);
+
+        let allowed = entries(json!([{
+            "path": "*Text", "kind": "text",
+            "dotnet": {"pattern": ["line *: Disallow: /"]},
+            "rust": {"pattern": ["line 1: *", "line *: Allow: /private"]},
+            "reason": "test"
+        }]));
+        assert_eq!(check(&differences, &allowed, "lite").failures.len(), 2);
+    }
+
+    #[test]
+    fn a_side_pattern_matches_only_text() {
+        let differences = compare_case(
+            &data_case("robots-txt-none"),
+            &robots_txt_line(Some(ROBOTS_TXT)),
+            &robots_txt_line(None),
+        );
+        let allowed = entries(json!([{
+            "path": "*Text", "rust": {"pattern": ["*"]}, "reason": "test"
+        }]));
+        assert_eq!(check(&differences, &allowed, "lite").failures.len(), 2);
     }
 }
