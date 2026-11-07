@@ -795,7 +795,7 @@ pub struct DataFileProperty {
     /// True when the property's values should be shown in lists of values.
     pub show_values: bool,
     /// The data tiers whose data files hold the property, in the data file's
-    /// order.
+    /// order, an empty name included, as the C++ code gives them.
     pub data_tiers: Vec<String>,
     /// The property's default value, which a profile with no other value for
     /// the property has, or [`None`] when it has none.
@@ -1073,10 +1073,7 @@ impl Manager {
                     )
                 })
             })
-            .collect::<Option<Vec<String>>>()?
-            .into_iter()
-            .filter(|tier| !tier.is_empty())
-            .collect();
+            .collect::<Option<Vec<String>>>()?;
         let default_value = match u32::try_from(fields.default_value_number) {
             Ok(number) => Some(self.read_values(index, number..number + 1)?.pop()?),
             Err(_) => None,
@@ -2580,13 +2577,19 @@ mod tests {
     /// Places in a Hash data file, from the packed
     /// `fiftyoneDegreesDataSetHashHeader` in the C library's `hash.h` and
     /// `fiftyoneDegreesProperty` in `property.h`. A collection's header is its
-    /// start, its length in bytes and its count, each four bytes.
+    /// start, its length in bytes and its count, each four bytes, and a
+    /// string is its length in two bytes, then its characters.
+    const NAME_HEADER: usize = 58;
+    const STRINGS_HEADER: usize = 74;
+    const MAPS_HEADER: usize = 98;
     const PROPERTIES_HEADER: usize = 110;
     const VALUES_HEADER: usize = 122;
     const PROPERTY_SIZE: usize = 44;
     const NAME_OFFSET: usize = 12;
     const FIRST_VALUE_INDEX: usize = 28;
     const LAST_VALUE_INDEX: usize = 32;
+    const MAP_COUNT: usize = 36;
+    const FIRST_MAP_INDEX: usize = 40;
 
     fn read_u32(bytes: &[u8], at: usize) -> u32 {
         u32::from_le_bytes(bytes[at..at + 4].try_into().expect("four bytes"))
@@ -2787,6 +2790,65 @@ mod tests {
             "{error}"
         );
         drop(manager);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A data tier with an empty name is kept in its place, as the C++
+    /// `PropertyMetaDataBuilderHash` keeps every name it reads. A copy of the
+    /// data file has the first character of the first property's first tier
+    /// other than the file's own made a null, so every property in that
+    /// tier lists an empty name there.
+    #[test]
+    fn an_empty_data_tier_name_is_kept() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping an empty tier name");
+            return;
+        };
+        let mut bytes = std::fs::read(&path).expect("the data file is read");
+        let strings = read_u32(&bytes, STRINGS_HEADER) as usize;
+        let maps = read_u32(&bytes, MAPS_HEADER) as usize;
+        let first_property = read_u32(&bytes, PROPERTIES_HEADER) as usize;
+        let own_name = read_u32(&bytes, NAME_HEADER);
+        let first_map = read_u32(&bytes, first_property + FIRST_MAP_INDEX);
+        let map_count = read_u32(&bytes, first_property + MAP_COUNT);
+        let tier = (first_map..first_map + map_count)
+            .map(|map| read_u32(&bytes, maps + 4 * map as usize))
+            .find(|offset| *offset != own_name)
+            .expect("the first property is in a tier other than the file's own")
+            as usize;
+        let at = strings + tier;
+        let length = u16::from_le_bytes([bytes[at], bytes[at + 1]]) as usize;
+        let name = String::from_utf8(bytes[at + 2..at + 1 + length].to_vec())
+            .expect("the tier's name is text");
+        bytes[at + 2] = 0;
+
+        let original = Manager::open(&path, PerformanceProfile::LowMemory)
+            .expect("data file loads")
+            .data_file_properties()
+            .expect("the properties are read");
+        let mut expected = original.clone();
+        for property in &mut expected {
+            for listed in &mut property.data_tiers {
+                if *listed == name {
+                    listed.clear();
+                }
+            }
+        }
+        assert_ne!(expected, original, "a property is in the {name} tier");
+
+        let dir =
+            std::env::temp_dir().join(format!("fiftyone-native-empty-tier-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the folder is made");
+        let copy = dir.join("51Degrees.hash");
+        std::fs::write(&copy, &bytes).expect("the copy is written");
+        for profile in METADATA_PROFILES {
+            let manager = Manager::open(&copy, profile).expect("the copy loads");
+            let properties = manager
+                .data_file_properties()
+                .expect("the properties are read");
+            assert_eq!(properties, expected, "{}", profile.as_str());
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

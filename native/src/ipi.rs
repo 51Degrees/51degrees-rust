@@ -493,12 +493,12 @@ pub struct DataFileProperty {
     /// True when the property's values should be shown in lists of values.
     pub show_values: bool,
     /// The data tiers whose data files hold the property, in the data file's
-    /// order.
+    /// order, an empty name included, as the C++ code gives them.
     pub data_tiers: Vec<String>,
     /// The property's default value, or [`None`] when it has none. The C++
-    /// code writes the value the property names as its default as text and
-    /// looks that text up among the property's values, so a default that is
-    /// not among them is none.
+    /// code writes the value the property names as its default as text, a
+    /// number to 15 decimal places, and looks that text up among the
+    /// property's values, so a default that is not among them is none.
     pub default_value: Option<DataFileValue>,
     /// The number of values the data file holds for the property. It is 0
     /// when the property's value indexes are -1 or reach past the data
@@ -631,15 +631,18 @@ impl Manager {
             .ok_or_else(|| metadata_read_failed(&format!("values of property {property_index}")))
     }
 
-    /// The value whose text is `name`, matched exactly, among those
-    /// [`Self::data_file_property_values`] gives for the property at
-    /// `property_index`, or [`None`] when the index is out of range or the
-    /// property has no such value. A property or value that cannot be read is
-    /// an error.
+    /// The value `name` names among those [`Self::data_file_property_values`]
+    /// gives for the property at `property_index`, or [`None`] when the index
+    /// is out of range or the property has no such value. A property or
+    /// value that cannot be read is an error.
     ///
     /// A property's values are in order, so the value is found by the C
     /// library's binary search, as the C++ code the other SDKs call finds it,
-    /// without reading the others.
+    /// without reading the others. The search compares a number written to as
+    /// many places as `name` has characters plus three, at most 15, so the
+    /// value given can be written otherwise, as `0.063` is given for
+    /// `0.0625`, and a number's own text, written to three places, can find
+    /// nothing, as it finds nothing in the C++ code.
     pub fn data_file_property_value(
         &self,
         property_index: u32,
@@ -668,9 +671,7 @@ impl Manager {
             )
         };
         match (found, values.pop()) {
-            (sys::SHIM_FIND_FOUND, Some(value)) if values.is_empty() && value.name == name => {
-                Ok(Some(value))
-            }
+            (sys::SHIM_FIND_FOUND, Some(value)) if values.is_empty() => Ok(Some(value)),
             (sys::SHIM_FIND_NOT_FOUND, None) => Ok(None),
             _ => Err(metadata_read_failed(&format!(
                 "value {name:?} of property {property_index}"
@@ -779,10 +780,7 @@ impl Manager {
                     )
                 })
             })
-            .collect::<Option<Vec<String>>>()?
-            .into_iter()
-            .filter(|tier| !tier.is_empty())
-            .collect();
+            .collect::<Option<Vec<String>>>()?;
         let default_value = match u32::try_from(fields.default_value_number) {
             Ok(number) => Some(self.read_values(index, number..number + 1)?.pop()?),
             Err(_) => None,
@@ -1465,6 +1463,13 @@ mod tests {
                 return Some(path);
             }
         }
+        asn_file()
+    }
+
+    /// The ASN file from the data repository, for a test that copies the
+    /// data file and so needs a small one whatever `51DEGREES_IPI_PATH`
+    /// names.
+    fn asn_file() -> Option<PathBuf> {
         let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()?
             .to_path_buf();
@@ -2030,6 +2035,67 @@ mod tests {
         }
     }
 
+    /// The geometry names the C library's WKT writer starts an area's text
+    /// with, from `wkbtot.c`.
+    const WKT_GEOMETRIES: [&str; 18] = [
+        "GEOMETRY",
+        "POINT",
+        "LINESTRING",
+        "POLYGON",
+        "MULTIPOINT",
+        "MULTILINESTRING",
+        "MULTIPOLYGON",
+        "GEOMETRYCOLLECTION",
+        "CIRCULARSTRING",
+        "COMPOUNDCURVE",
+        "CURVEPOLYGON",
+        "MULTICURVE",
+        "MULTISURFACE",
+        "CURVE",
+        "SURFACE",
+        "POLYHEDRALSURFACE",
+        "TIN",
+        "TRIANGLE",
+    ];
+
+    /// True when `text`, a value written as text to 3 places, may not find
+    /// the value it was written from, because the value is a number or an
+    /// area with coordinates that the data file can hold to more places. The
+    /// C++ code and .NET's `GetValue` find nothing for such a text either.
+    fn may_hold_more_places(value_type: PropertyValueType, text: &str) -> bool {
+        let number = matches!(
+            value_type,
+            PropertyValueType::Float | PropertyValueType::Double
+        ) || (text.contains('.') && text.parse::<f64>().is_ok());
+        let geometry = text.split([' ', '(']).next().unwrap_or_default();
+        number || (WKT_GEOMETRIES.contains(&geometry) && text.contains('('))
+    }
+
+    #[test]
+    fn only_a_number_or_an_area_with_coordinates_may_miss_by_its_text() {
+        use PropertyValueType as Type;
+        for (value_type, text) in [
+            (Type::Float, "51.507"),
+            (Type::Float, "0"),
+            (Type::Double, "-0.128"),
+            (Type::String, "-0.128"),
+            (Type::String, "POINT (51.507 -0.128)"),
+            (Type::String, "POLYGON ((1.5 2.5,3.5 4.5,1.5 2.5))"),
+        ] {
+            assert!(may_hold_more_places(value_type, text), "{text}");
+        }
+        for (value_type, text) in [
+            (Type::Integer, "0"),
+            (Type::Integer, "-1"),
+            (Type::String, "255.255.255.255"),
+            (Type::String, "POLYGON EMPTY"),
+            (Type::String, "Unknown"),
+            (Type::String, "Unknown (none)"),
+        ] {
+            assert!(!may_hold_more_places(value_type, text), "{text}");
+        }
+    }
+
     #[test]
     fn each_property_gives_as_many_values_as_it_counts_and_its_default_among_them() {
         let Some(data_file) = ipi_data_file() else {
@@ -2052,7 +2118,9 @@ mod tests {
                 let found = manager
                     .data_file_property_value(property.index, &default.name)
                     .expect("the default should be searched for");
-                assert_eq!(found.as_ref(), Some(default), "{}", property.name);
+                if found.is_some() || !may_hold_more_places(property.value_type, &default.name) {
+                    assert_eq!(found.as_ref(), Some(default), "{}", property.name);
+                }
             }
             let past_end = manager
                 .data_file_property_value_range(property.index, property.value_count..u32::MAX)
@@ -2261,6 +2329,165 @@ mod tests {
                 assert!(places <= 3, "{name} {text}");
             }
         }
+    }
+
+    /// The text the C library writes for `value` to `places` decimal places,
+    /// more than six, one place at a time as `addDoubleByPlace` in
+    /// `stringBuilder.c` writes it, with trailing zeros left out.
+    fn written_by_place(value: f64, places: usize) -> String {
+        // `(int)value` in C, which truncates toward zero.
+        let whole = value as i32;
+        let mut fraction = value - f64::from(whole);
+        let mut sign = "";
+        if fraction < 0.0 {
+            if whole == 0 {
+                sign = "-";
+            }
+            fraction = -fraction;
+        }
+        let mut digits: Vec<u8> = Vec::with_capacity(places);
+        while digits.len() < places && fraction != 0.0 {
+            fraction *= 10.0;
+            // `(char)fracPart` in C, which truncates.
+            let digit = fraction as u8;
+            fraction -= f64::from(digit);
+            digits.push(digit);
+            if digits.len() == places && fraction >= 0.5 {
+                while digits.last() == Some(&9) {
+                    digits.pop();
+                }
+                let Some(last) = digits.last_mut() else {
+                    let away = if value < 0.0 { whole - 1 } else { whole + 1 };
+                    return away.to_string();
+                };
+                *last += 1;
+                break;
+            }
+        }
+        while digits.last() == Some(&0) {
+            digits.pop();
+        }
+        if digits.is_empty() {
+            return whole.to_string();
+        }
+        let digits: String = digits
+            .iter()
+            .map(|digit| char::from(b'0' + digit))
+            .collect();
+        format!("{sign}{whole}.{digits}")
+    }
+
+    /// A value is found by its text to more places than it is given with, as
+    /// the C++ code finds it, and given with its own text. An Enterprise file
+    /// stores a latitude as a whole number of steps of 90 / 32767 degrees, so
+    /// the text to 3 places gives the number, which the test writes to 15
+    /// places as the C library writes it. The value's own text is compared
+    /// with each value written to as many places as the text has characters
+    /// plus three, so it finds nothing, as in the C++ code.
+    #[test]
+    fn a_value_is_found_by_its_text_to_more_places() {
+        let Some((manager, properties)) = enterprise_file("values found by more places") else {
+            return;
+        };
+        let latitude = file_property(&properties, "Latitude");
+        let values = manager
+            .data_file_property_value_range(latitude.index, 0..100)
+            .expect("the values should be read");
+        assert_eq!(values.len(), 100);
+        for value in &values {
+            let steps = (value.name.parse::<f64>().expect("a number") * 32767.0 / 90.0).round();
+            let longer = written_by_place(steps * 90.0 / 32767.0, 15);
+            assert_ne!(longer, value.name);
+            let found = manager
+                .data_file_property_value(latitude.index, &longer)
+                .expect("the value should be searched for");
+            assert_eq!(found.as_ref(), Some(value), "{longer}");
+            let own = manager
+                .data_file_property_value(latitude.index, &value.name)
+                .expect("the value should be searched for");
+            assert_eq!(own, None, "{}", value.name);
+        }
+    }
+
+    /// Places in an IP Intelligence data file, from the packed
+    /// `fiftyoneDegreesDataSetIpiHeader` in the C library's `ipi.h` and
+    /// `fiftyoneDegreesProperty` in `property.h`. A collection's header is
+    /// its start in eight bytes, then its length and its count in four each,
+    /// and a string is its length in two bytes, then its characters.
+    const NAME_HEADER: usize = 58;
+    const STRINGS_HEADER: usize = 74;
+    const MAPS_HEADER: usize = 106;
+    const PROPERTIES_HEADER: usize = 122;
+    const MAP_COUNT: usize = 36;
+    const FIRST_MAP_INDEX: usize = 40;
+
+    fn read_u32(bytes: &[u8], at: usize) -> u32 {
+        u32::from_le_bytes(bytes[at..at + 4].try_into().expect("four bytes"))
+    }
+
+    fn read_start(bytes: &[u8], header: usize) -> usize {
+        let start = u64::from_le_bytes(bytes[header..header + 8].try_into().expect("eight bytes"));
+        usize::try_from(start).expect("the collection starts in memory")
+    }
+
+    /// A data tier with an empty name is kept in its place, as the C++
+    /// `PropertyMetaDataBuilderIpi` keeps every name it reads. A copy of the
+    /// ASN file has the first character of the first property's first tier
+    /// other than the file's own made a null, so every property in that
+    /// tier lists an empty name there.
+    #[test]
+    fn an_empty_data_tier_name_is_kept() {
+        let Some(data_file) = asn_file() else {
+            eprintln!("no ASN data file found; skipping an empty tier name");
+            return;
+        };
+        let mut bytes = std::fs::read(&data_file).expect("the data file is read");
+        let strings = read_start(&bytes, STRINGS_HEADER);
+        let maps = read_start(&bytes, MAPS_HEADER);
+        let first_property = read_start(&bytes, PROPERTIES_HEADER);
+        let own_name = read_u32(&bytes, NAME_HEADER);
+        let first_map = read_u32(&bytes, first_property + FIRST_MAP_INDEX);
+        let map_count = read_u32(&bytes, first_property + MAP_COUNT);
+        let tier = (first_map..first_map + map_count)
+            .map(|map| read_u32(&bytes, maps + 4 * map as usize))
+            .find(|offset| *offset != own_name)
+            .expect("the first property is in a tier other than the file's own")
+            as usize;
+        let at = strings + tier;
+        let length = u16::from_le_bytes([bytes[at], bytes[at + 1]]) as usize;
+        let name = String::from_utf8(bytes[at + 2..at + 1 + length].to_vec())
+            .expect("the tier's name is text");
+        bytes[at + 2] = 0;
+
+        let original = open_found(&data_file, PerformanceProfile::LowMemory)
+            .data_file_properties()
+            .expect("the data file's properties should be read");
+        let mut expected = original.clone();
+        for property in &mut expected {
+            for listed in &mut property.data_tiers {
+                if *listed == name {
+                    listed.clear();
+                }
+            }
+        }
+        assert_ne!(expected, original, "a property is in the {name} tier");
+
+        let dir = std::env::temp_dir().join(format!(
+            "fiftyone-native-ipi-empty-tier-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the folder is made");
+        let copy = dir.join("51Degrees.ipi");
+        std::fs::write(&copy, &bytes).expect("the copy is written");
+        for profile in METADATA_PROFILES {
+            let manager = open_found(&copy, profile);
+            let properties = manager
+                .data_file_properties()
+                .expect("the copy's properties should be read");
+            assert_eq!(properties, expected, "{profile:?}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Calls a shim string reader with a buffer that starts full, and gives
