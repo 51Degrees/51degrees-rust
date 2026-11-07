@@ -56,7 +56,8 @@ pub(crate) fn built_in_names() -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltInScript {
     /// The confidence that the request came from a device being used by a
-    /// human who is viewing the page, being one of High, Medium or Low.
+    /// human who is viewing the page, being one of High, Medium, Low or
+    /// Unknown. Unknown is the answer until the 51Degrees JavaScript has run.
     ///
     /// The script is a draft below version 1.0.0, so its thresholds may be
     /// rewritten. Its own comment header says what each one rests on.

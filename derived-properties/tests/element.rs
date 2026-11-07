@@ -134,6 +134,8 @@ fn device_data() -> StubData {
         .with("IsVisible", "True")
         .with("BrowserReleaseYear", 2026i64)
         .with("BrowserReleaseAge", 1i64)
+        .with("BrowserPreviewYear", 2026i64)
+        .with("BrowserPreviewAge", 2i64)
 }
 
 fn ip_data() -> StubData {
@@ -218,7 +220,9 @@ fn a_source_that_carries_its_own_no_value_message_has_it_repeated() {
         .with("HasWebDriver", "False")
         .with("IsVisible", "True")
         .with_no_value("BrowserReleaseYear", "the browser was not matched")
-        .with("BrowserReleaseAge", 1i64);
+        .with("BrowserReleaseAge", 1i64)
+        .with("BrowserPreviewYear", 2026i64)
+        .with("BrowserPreviewAge", 2i64);
     let pipeline = pipeline_with(device, ip_data());
     let mut data = pipeline.create_flow_data();
     data.process().unwrap();

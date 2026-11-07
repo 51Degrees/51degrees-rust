@@ -103,6 +103,8 @@
 //!     )
 //!     .with("device.BrowserReleaseYear", Lookup::Value(SourceValue::Int(2026)))
 //!     .with("device.BrowserReleaseAge", Lookup::Value(SourceValue::Int(1)))
+//!     .with("device.BrowserPreviewYear", Lookup::Value(SourceValue::Int(2026)))
+//!     .with("device.BrowserPreviewAge", Lookup::Value(SourceValue::Int(2)))
 //!     .with("ip.HumanProbability", Lookup::Value(SourceValue::Int(9)))
 //!     .with(
 //!         "ip.ConnectionType",
