@@ -370,6 +370,6 @@
     "path": "properties.countrynamestranslated.*",
     "kind": "noValueMessage",
     "cases": ["cloud-translation-*"],
-    "reason": "A property the cloud's response does not give is missing on both sides, with the same reason word for word apart from the configurator link's campaign tags, which name each repository and the file the message is in. An entry cannot pin a missing property's reason, so the workflow step that checks the cloud translation cases compares the two reasons with the link's tags removed."
+    "reason": "A property the cloud's response does not give is missing on both sides, with the same reason word for word apart from the configurator link's campaign tags, which name each repository and the file the message is in. An entry cannot pin a missing property's reason, so the workflow step that checks the cloud translation cases compares the two reasons with the link's tags removed. The same kind covers the reason for a null value, which that step compares exactly."
   }
 ]
