@@ -95,8 +95,10 @@ pub struct RobotsTxtModel {
 impl RobotsTxtModel {
     /// A model of the crawlers and usages given, each sorted by name in the
     /// order of the Unicode root collation, which is the order .NET's
-    /// invariant culture gives. The sort is stable, so names that compare
-    /// equal keep the order they were given in.
+    /// invariant culture gives. .NET sorts in the current culture, so a
+    /// culture that orders some letters its own way can give it another
+    /// order. The sort is stable, so names that compare equal keep the order
+    /// they were given in.
     pub fn new(crawlers: Vec<CrawlerModel>, usages: Vec<UsageModel>) -> Self {
         let mut crawlers = crawlers;
         let mut usages = usages;

@@ -28,7 +28,9 @@
 //! crawler by what it uses the pages it fetches for, such as search,
 //! monitoring or training a model, from the crawlers a 51Degrees Device
 //! Detection data file describes. It gives the text .NET's
-//! `FiftyOne.DeviceDetection.RobotsTxt` gives, byte for byte.
+//! `FiftyOne.DeviceDetection.RobotsTxt` gives with `\n` line endings in the
+//! invariant culture. .NET ends each line as the system does and sorts in
+//! the current culture, so its text can differ in those two ways.
 //!
 //! The text follows [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309.html).
 //! Each refused crawler has its own group with `Disallow: /`, and every

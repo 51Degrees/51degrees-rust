@@ -30,14 +30,19 @@ element data key `robotstxt`.
 | `PlainText` | The text with one copyright comment, ready to serve as `/robots.txt`. |
 | `AnnotatedText` | The text with the licence, a legend, and comments giving each crawler's name, usages and address, for a person to read. |
 
-The text is the one .NET's `FiftyOne.DeviceDetection.RobotsTxt` writes, byte
-for byte.
+The text is the one .NET's `FiftyOne.DeviceDetection.RobotsTxt` writes with
+`\n` line endings in the invariant culture. .NET ends each line as the system
+does, which is `\r\n` on Windows, and sorts crawlers and usages in the
+system's current culture, so a culture that orders some letters its own way
+can give .NET another order.
 
 ## Using it
 
 Add the engine after the on-premise Device Detection engine, whose data file
 must hold the crawler properties, as the Enterprise file does. A data file
-without them gives a text that allows every crawler.
+without them, such as the free Lite file, gives a text that allows every
+crawler. "Data files and pricing" under "Find out more" says how to get the
+Enterprise file.
 
 | Evidence | Meaning |
 |----------|---------|
@@ -59,13 +64,17 @@ under .NET's name, `RobotsTxtEngineBuilder` or `RobotsTxtEngine`, once
 .NET's, being `UserAgent` for the GitHub resolver and `Properties`, with
 .NET's cache and lazy loading settings read and having no effect.
 
-## Links
-
-- Source and issues: [github.com/51Degrees/51degrees-rust](https://github.com/51Degrees/51degrees-rust)
-- API documentation: [docs.rs/fiftyone-device-detection-robots-txt](https://docs.rs/fiftyone-device-detection-robots-txt)
-- About 51Degrees: [51degrees.com](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fiftyone-device-detection-robots-txt-readme.md&utm_term=about)
-
 ## License
 
 Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the
 [repository](https://github.com/51Degrees/51degrees-rust) for the full text.
+
+## Find out more
+
+- Source and issues: [github.com/51Degrees/51degrees-rust](https://github.com/51Degrees/51degrees-rust)
+- API documentation: [docs.rs/fiftyone-device-detection-robots-txt](https://docs.rs/fiftyone-device-detection-robots-txt)
+- Device detection: [51degrees.com/device-detection](https://51degrees.com/device-detection?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-device-detection-robots-txt-readme.md&utm_term=device-detection)
+- Device detection documentation: [51degrees.com/documentation](https://51degrees.com/documentation/_device_detection__index.html?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-device-detection-robots-txt-readme.md&utm_term=documentation)
+- robots.txt: [51degrees.com/robots-txt](https://51degrees.com/robots-txt?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-device-detection-robots-txt-readme.md&utm_term=robots-txt)
+- About 51Degrees: [51degrees.com](https://51degrees.com/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-device-detection-robots-txt-readme.md&utm_term=about)
+- Data files and pricing: [51degrees.com/pricing](https://51degrees.com/pricing?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-device-detection-robots-txt-readme.md&utm_term=pricing)
