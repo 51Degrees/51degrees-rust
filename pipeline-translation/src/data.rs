@@ -25,9 +25,10 @@
 
 use std::any::Any;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use fiftyone_pipeline_core::{ElementData, NoValueError, PropertyValue, WeightedValue};
-use fiftyone_pipeline_engines::AspectPropertyValue;
+use fiftyone_pipeline_engines::{AspectDataBase, AspectPropertyValue, MissingPropertySource};
 
 /// The key of the raw weighting in each record of a weighted list, as the
 /// property bag gives it.
@@ -36,6 +37,10 @@ pub const RAW_WEIGHTING_KEY: &str = "rawweighting";
 /// The key of the value in each record of a weighted list, as the property
 /// bag gives it.
 pub const VALUE_KEY: &str = "value";
+
+/// The name of this data in the record logged for a read of a missing
+/// property.
+const DATA_TYPE_NAME: &str = "TranslationData";
 
 /// The reason the property bag gives for a single value that has no
 /// translation.
@@ -127,10 +132,19 @@ impl TranslationValue {
 /// share a data key do. Names are matched ignoring case, and
 /// [`ElementData::keys`] lists them in the order they were first set,
 /// leaving out a single value that has no translation.
+///
+/// A cloud engine that writes this data can say why a property it did not
+/// set is missing, with
+/// [`add_missing_property_source`](Self::add_missing_property_source) or
+/// [`mark_cloud_request_failed`](Self::mark_cloud_request_failed), as
+/// aspect data does.
 #[derive(Debug, Clone, Default)]
 pub struct TranslationData {
     /// The name as first set, its lowercase form, and its value.
     values: Vec<(String, String, AspectPropertyValue<TranslationValue>)>,
+    /// Why a property never set is missing, held only when an engine said.
+    /// Only its reasons are used, never its property bag.
+    missing: Option<AspectDataBase>,
 }
 
 impl TranslationData {
@@ -167,6 +181,45 @@ impl TranslationData {
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.values.iter().map(|(name, _, _)| name.as_str())
     }
+
+    /// Give each property never set the reason `source` gives for it, as
+    /// the data of a cloud engine does. `element_data_key` is the key this
+    /// data is stored under.
+    pub fn add_missing_property_source(
+        &mut self,
+        element_data_key: &str,
+        source: Arc<MissingPropertySource>,
+    ) {
+        self.reasons(element_data_key)
+            .add_missing_property_source(source);
+    }
+
+    /// Mark this data as written for a flow data whose cloud request failed,
+    /// so each property never set gives
+    /// [`MissingPropertyReason::CloudRequestFailed`](fiftyone_pipeline_engines::MissingPropertyReason::CloudRequestFailed),
+    /// naming `element_data_key`, the key this data is stored under.
+    pub fn mark_cloud_request_failed(&mut self, element_data_key: &str) {
+        self.reasons(element_data_key).mark_cloud_request_failed();
+    }
+
+    /// Why the property `name`, never set, has no value. Data given a
+    /// [`MissingPropertySource`], or marked as from a failed cloud request,
+    /// gives the reason and logs the read as aspect data does. Other data
+    /// says only that the property has no value.
+    pub fn missing_property_message(&self, name: &str) -> String {
+        self.missing
+            .as_ref()
+            .and_then(|reasons| reasons.missing_property(name, DATA_TYPE_NAME))
+            .map_or_else(
+                || format!("No value for property '{name}'."),
+                |missing| missing.description,
+            )
+    }
+
+    fn reasons(&mut self, element_data_key: &str) -> &mut AspectDataBase {
+        self.missing
+            .get_or_insert_with(|| AspectDataBase::new(element_data_key))
+    }
 }
 
 impl ElementData for TranslationData {
@@ -174,9 +227,7 @@ impl ElementData for TranslationData {
         match self.value(name) {
             Some(AspectPropertyValue::Value(value)) => value.to_property_value(),
             Some(AspectPropertyValue::NoValue { message }) => Err(NoValueError::new(message)),
-            None => Err(NoValueError::new(format!(
-                "No value for property '{name}'."
-            ))),
+            None => Err(NoValueError::new(self.missing_property_message(name))),
         }
     }
 
@@ -266,5 +317,72 @@ mod tests {
         // The untranslated single value is left out, as nothing is written
         // for it.
         assert_eq!(data.keys(), ["List", "Weighted", "Missing"]);
+    }
+
+    #[test]
+    fn a_property_never_set_says_only_that_it_has_no_value() {
+        let data = TranslationData::new();
+        assert_eq!(
+            data.get("Animal").unwrap_err().message,
+            "No value for property 'Animal'."
+        );
+        assert_eq!(
+            data.missing_property_message("Animal"),
+            "No value for property 'Animal'."
+        );
+        assert!(!data.has_property("Animal"));
+    }
+
+    #[test]
+    fn a_failed_cloud_request_explains_a_property_never_set() {
+        let mut data = TranslationData::new();
+        data.set("Colour", AspectPropertyValue::new("rouge".into()));
+        data.mark_cloud_request_failed("animals");
+
+        let message = data.get("Animal").unwrap_err().message;
+        assert!(
+            message.starts_with("Property 'Animal' not found in data for element 'animals'. "),
+            "{message}"
+        );
+        assert_eq!(data.missing_property_message("Animal"), message);
+        // A property set reads as before, and one never set is still not
+        // held.
+        assert_eq!(data.get("Colour").unwrap(), PropertyValue::from("rouge"));
+        assert!(!data.has_property("Animal"));
+        assert_eq!(data.keys(), ["Colour"]);
+    }
+
+    #[test]
+    fn a_source_explains_a_property_never_set() {
+        use fiftyone_pipeline_core::PropertyValueType;
+        use fiftyone_pipeline_engines::{
+            AspectPropertyMetaData, EngineDeployment, MissingPropertyReason,
+        };
+
+        let source = Arc::new(MissingPropertySource::new(
+            "animals",
+            "AnimalEngine",
+            EngineDeployment::Cloud,
+            "",
+            vec![AspectPropertyMetaData::new(
+                "Animal",
+                "animals",
+                PropertyValueType::String,
+            )],
+        ));
+        let mut data = TranslationData::new();
+        data.add_missing_property_source("animals", Arc::clone(&source));
+
+        let expected = source.reason("Animal");
+        assert_ne!(expected.reason, MissingPropertyReason::Unknown);
+        assert_eq!(
+            data.get("Animal").unwrap_err().message,
+            expected.description
+        );
+        assert_eq!(
+            data.missing_property_message("Animal"),
+            expected.description
+        );
+        assert!(!data.has_property("Animal"));
     }
 }

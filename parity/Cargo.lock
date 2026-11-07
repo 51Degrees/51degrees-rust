@@ -517,13 +517,17 @@ dependencies = [
 name = "fiftyone-ip-intelligence-translation"
 version = "4.5.2"
 dependencies = [
+ "fiftyone-cloud-request-engine",
  "fiftyone-ip-intelligence-shared",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
  "fiftyone-pipeline-translation",
  "icu_collator",
  "icu_locale_core",
+ "log",
+ "once_cell",
  "serde",
+ "serde_json",
  "serde_norway",
 ]
 
@@ -1386,6 +1390,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "fiftyone-agent-signature",
+ "fiftyone-cloud-request-engine",
  "fiftyone-device-detection-onpremise",
  "fiftyone-fodid-core",
  "fiftyone-ip-intelligence-onpremise",

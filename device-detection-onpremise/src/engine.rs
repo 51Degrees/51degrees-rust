@@ -42,7 +42,9 @@ use fiftyone_device_detection_shared::{
     declared_property_value_type, DeviceDataBase, DevicePropertyReader, UachJsConversionElement,
     DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY, UACH_EVIDENCE_COOKIE_KEY, UACH_EVIDENCE_QUERY_KEY,
 };
-use fiftyone_native::dd::{DataFileComponent, DataFileProperty, DataFileValue, Manager, Results};
+use fiftyone_native::dd::{
+    DataFileComponent, DataFileProperty, DataFileValue, HashOptions, Manager, Results,
+};
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{
     constants, Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData,
@@ -223,10 +225,10 @@ pub struct DeviceDetectionOnPremiseEngine {
     /// The evidence keys this engine reads, replaced on refresh.
     evidence_key_filter: HashEvidenceKeyFilter,
 
-    /// The expected concurrency the data set's handle pool was sized for, or
-    /// `None` for the profile default. Carried so a reload re-opens the data set
-    /// with the same pool size.
-    concurrency: Option<u16>,
+    /// The settings the data set opens with over the profile's own, the
+    /// expected concurrency always among them. Carried so a reload opens the
+    /// data set with the same settings.
+    options: HashOptions,
 
     /// The folder a refresh copies the data file into, or `None` for the
     /// system's temporary folder.
@@ -362,7 +364,7 @@ impl DeviceDetectionOnPremiseEngine {
         requested_properties: Vec<String>,
         data_file_config: DataFileConfiguration,
         data_source_tier: Option<String>,
-        concurrency: Option<u16>,
+        options: HashOptions,
     ) -> Result<Self> {
         let evidence_key_filter = HashEvidenceKeyFilter::new(named_evidence_keys(&manager));
         let (loaded, metadata) = describe(copy, manager, &data_source_tier)?;
@@ -383,7 +385,7 @@ impl DeviceDetectionOnPremiseEngine {
             tier_override: data_source_tier,
             refresh_lock: Mutex::new(()),
             evidence_key_filter,
-            concurrency,
+            options,
             temp_dir: None,
             temp_data_copy: false,
             data_files: vec![data_file],
@@ -402,6 +404,23 @@ impl DeviceDetectionOnPremiseEngine {
     /// The performance profile the engine loads its data file with.
     pub fn performance_profile(&self) -> PerformanceProfile {
         self.profile
+    }
+
+    /// The expected concurrency the engine opens its data file with, being
+    /// the one the builder named or else
+    /// [`default_concurrency`](fiftyone_native::dd::default_concurrency).
+    pub fn concurrency(&self) -> u16 {
+        self.options
+            .concurrency
+            .unwrap_or_else(|| fiftyone_native::dd::default_concurrency(self.profile))
+    }
+
+    /// The settings the engine opens its data file with over the profile's
+    /// own. The concurrency is always set, to the one the builder named or
+    /// else [`default_concurrency`](fiftyone_native::dd::default_concurrency),
+    /// and each other field is [`None`] where the builder named none.
+    pub fn hash_options(&self) -> &HashOptions {
+        &self.options
     }
 
     /// The evidence keys the engine accepts by name, lowercased, being each
@@ -677,7 +696,7 @@ impl DeviceDetectionOnPremiseEngine {
             copy.as_ref().map_or(path, OperationalCopy::path),
             self.profile,
             &self.requested_properties,
-            self.concurrency,
+            &self.options,
         )?;
         let evidence_keys = named_evidence_keys(&manager);
         let (loaded, metadata) = describe(copy, manager, &self.tier_override)?;
@@ -806,14 +825,14 @@ pub(crate) fn open_manager(
     path: &Path,
     profile: PerformanceProfile,
     requested_properties: &[String],
-    concurrency: Option<u16>,
+    options: &HashOptions,
 ) -> Result<Arc<Manager>> {
     let requested: Option<Vec<&str>> = if requested_properties.is_empty() {
         None
     } else {
         Some(requested_properties.iter().map(String::as_str).collect())
     };
-    Manager::open_with_options(path, profile, requested.as_deref(), concurrency)
+    Manager::open_with_hash_options(path, profile, requested.as_deref(), options)
 }
 
 /// A data file property a detection can read.
@@ -1349,5 +1368,50 @@ mod tests {
         assert!(!filter.include("cookie.session"));
         assert!(!filter.include("query.51d"));
         assert_eq!(filter.order("cookie.session"), None);
+    }
+
+    /// The Hash data file `51DEGREES_DD_PATH` names, or the Lite file in the
+    /// `cxx` submodule.
+    fn data_file() -> Option<PathBuf> {
+        if let Ok(path) = std::env::var("51DEGREES_DD_PATH") {
+            let path = PathBuf::from(path);
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+        let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()?
+            .to_path_buf();
+        [workspace.clone(), workspace.parent()?.to_path_buf()]
+            .into_iter()
+            .map(|root| root.join("cxx/data/device-detection/51Degrees-LiteV4.1.hash"))
+            .find(|path| path.is_file())
+    }
+
+    /// With no concurrency named, the data set opens with the default, not
+    /// only the engine's record of it, under the two profiles with no limit,
+    /// and a refresh opens the new data set with it too. On a machine with 10
+    /// processors the default equals the C library's own, so the check there
+    /// cannot tell the two apart.
+    #[test]
+    fn the_default_concurrency_reaches_the_data_set() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the default concurrency");
+            return;
+        };
+        for profile in [
+            PerformanceProfile::LowMemory,
+            PerformanceProfile::HighPerformance,
+        ] {
+            let engine = crate::DeviceDetectionOnPremiseEngineBuilder::new(&path)
+                .performance_profile(profile)
+                .build()
+                .expect("the data file loads");
+            let expected = fiftyone_native::dd::default_concurrency(profile);
+            let pool = || engine.loaded.load().manager.file_pool_size();
+            assert_eq!(pool(), expected, "{}", profile.as_str());
+            engine.refresh(None).expect("the data file loads again");
+            assert_eq!(pool(), expected, "{} refreshed", profile.as_str());
+        }
     }
 }
