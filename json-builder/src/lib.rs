@@ -42,30 +42,65 @@
 //! name, plus the sibling keys described on [`JsonBuilderElement`]
 //! (`nullreason`, `delayexecution`, `evidenceproperties`). The list of
 //! JavaScript-typed property paths is collected into a top-level
-//! [`JAVASCRIPT_PROPERTIES_KEY`] array, and any flow errors are appended under
-//! [`ERRORS_KEY`].
+//! [`JAVASCRIPT_PROPERTIES_KEY`] array, and any flow errors and warnings are
+//! appended under [`ERRORS_KEY`] and [`WARNINGS_KEY`].
+//!
+//! ## Changing the output
+//!
+//! Each step the builder takes is a method of [`JsonBuilderSteps`] with a
+//! default, matching the protected virtual methods of .NET's
+//! `JsonBuilderElement`, so a caller replaces only the steps it changes and
+//! calls the functions in [`default_steps`] for the rest. A
+//! [`JsonValueConverter`] changes how a property value is written. Both are
+//! given to the [`JsonBuilderElementBuilder`].
+//!
+//! ## Text form
+//!
+//! The JSON is written as .NET's builder writes it with Newtonsoft.Json,
+//! indented by two spaces, with keys in lower case apart from
+//! `javascriptProperties`, doubles in .NET's shortest round trip form and
+//! .NET's string escapes. Lines end with the platform's line ending, as
+//! .NET's do. [`write_indented`] describes the form, and a step that wants
+//! the same text on every platform calls it with `"\n"`.
 //!
 //! ## Determinism
 //!
-//! The serializer uses `serde_json` with the `preserve_order` feature so the
-//! key order is the insertion order rather than a hash order. Insertion order is
-//! itself made deterministic by sorting element keys and property names, so the
-//! same flow data always yields byte-identical JSON. That stability is what lets
-//! downstream code compute a reliable ETag from the JSON.
+//! Keys are written in the order they were added. Elements are added in the
+//! order their data was added to the flow data, and properties in the order
+//! each element data lists them, as .NET writes them, so the same flow data
+//! always yields byte-identical JSON on one platform. That stability is what
+//! lets downstream code compute a reliable ETag from the JSON.
+//!
+//! ## Configuration
+//!
+//! [`configuration::add_builders`] adds the JSON builder to a
+//! [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the name
+//! .NET gives it, so a configuration file written for .NET makes the same
+//! element here.
 
 #![warn(missing_docs)]
 
 mod builder;
+pub mod configuration;
 mod constants;
+mod converter;
 mod data;
+pub mod default_steps;
 mod element;
+mod steps;
+mod text;
+mod value;
 
 pub use builder::JsonBuilderElementBuilder;
 pub use constants::{DEFAULT_ELEMENT_EXCLUSION_LIST, DEFAULT_PROPERTY_EXCLUSION_LIST};
 pub use constants::{
     DELAY_EXECUTION_SUFFIX, ERRORS_KEY, EVIDENCE_PROPERTIES_SUFFIX, JAVASCRIPT_PROPERTIES_KEY,
     JSON_BUILDER_ELEMENT_DATA_KEY, JSON_PROPERTY_KEY, MAX_JAVASCRIPT_ITERATIONS,
-    NULL_REASON_SUFFIX, SEQUENCE_EVIDENCE_KEY,
+    NULL_REASON_SUFFIX, SEQUENCE_EVIDENCE_KEY, WARNINGS_KEY,
 };
+pub use converter::JsonValueConverter;
 pub use data::{JsonBuilderData, JSON_BUILDER_DATA_KEY};
 pub use element::JsonBuilderElement;
+pub use steps::{DefaultJsonBuilderSteps, JsonBuilderContext, JsonBuilderSteps, PipelineConfig};
+pub use text::{write_indented, NEW_LINE};
+pub use value::{JsonObject, JsonValue};

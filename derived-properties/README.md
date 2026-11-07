@@ -58,6 +58,8 @@ let derived = DerivedPropertyElement::builder()
     .add_script("MyProperty", my_script_text)
     // A file, where there is a file system to read one from.
     .add_script_file("derived/MyOtherProperty.yaml")
+    // Every file a wildcard matches, in order of their paths.
+    .add_script_file("more/*.yaml")
     .build()?;
 
 let pipeline = Pipeline::builder()
@@ -79,6 +81,17 @@ Building reports everything wrong with every script at once, rather than
 stopping at the first fault, and each fault carries the script, where it came
 from, the place in the document such as `Rules[3].When.All[1]`, and a plain
 message.
+
+Building the pipeline then fails, naming each property, when no element in it
+supplies a property a script reads, or when another derived property element
+already writes a property of the same name. Where the elements sit is not
+judged, so the engines may run in a parallel group before this element. A
+script may read what an earlier script of the same element writes, but not
+what a later one writes, because that has no value yet when it is read. An
+element still to load its properties may supply any property under its key.
+A cloud engine is one only when the request for its property list failed at
+start-up for a reason that may pass, such as the cloud being out of reach,
+and it asks again when first used.
 
 ### Without a pipeline
 

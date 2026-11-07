@@ -87,10 +87,19 @@ struct StubElement {
 
 impl StubElement {
     fn new(key: &'static str, data: StubData) -> Self {
+        Self::listing(key, data, &[])
+    }
+
+    /// An element listing `more` as well as the properties its data holds,
+    /// as an engine lists every property it can supply whatever one request
+    /// carries.
+    fn listing(key: &'static str, data: StubData, more: &[&str]) -> Self {
         let properties = data
             .names
             .iter()
-            .map(|name| PropertyMetaData::new(name.clone(), key, PropertyValueType::String))
+            .map(String::as_str)
+            .chain(more.iter().copied())
+            .map(|name| PropertyMetaData::new(name, key, PropertyValueType::String))
             .collect();
         StubElement {
             key,
@@ -134,6 +143,8 @@ fn device_data() -> StubData {
         .with("IsVisible", "True")
         .with("BrowserReleaseYear", 2026i64)
         .with("BrowserReleaseAge", 1i64)
+        .with("BrowserPreviewYear", 2026i64)
+        .with("BrowserPreviewAge", 2i64)
 }
 
 fn ip_data() -> StubData {
@@ -143,13 +154,20 @@ fn ip_data() -> StubData {
 }
 
 fn pipeline_with(device: StubData, ip: StubData) -> Arc<Pipeline> {
+    pipeline_of(
+        StubElement::new("device", device),
+        StubElement::new("ip", ip),
+    )
+}
+
+fn pipeline_of(device: StubElement, ip: StubElement) -> Arc<Pipeline> {
     let derived = DerivedPropertyElement::builder()
         .add_built_in(BuiltInScript::HumanConfidence)
         .build()
         .expect("the shipped script is sound");
     Pipeline::builder()
-        .add_element(Arc::new(StubElement::new("device", device)))
-        .add_element(Arc::new(StubElement::new("ip", ip)))
+        .add_element(Arc::new(device))
+        .add_element(Arc::new(ip))
         .add_element(Arc::new(derived))
         .build()
         .expect("the pipeline")
@@ -176,10 +194,16 @@ fn the_element_publishes_its_property_under_the_derived_key() {
 
 #[test]
 fn a_missing_source_property_leaves_the_output_with_no_value() {
-    // The ip element is in the pipeline but supplies neither property, which is
-    // what an engine configuration or a resource key that leaves them out looks
-    // like.
-    let pipeline = pipeline_with(device_data(), StubData::default());
+    // The ip element lists both properties but this request's data holds
+    // neither, as a cloud engine's data does when its request failed.
+    let pipeline = pipeline_of(
+        StubElement::new("device", device_data()),
+        StubElement::listing(
+            "ip",
+            StubData::default(),
+            &["HumanProbability", "ConnectionType"],
+        ),
+    );
     let mut data = pipeline.create_flow_data();
     data.process().unwrap();
 
@@ -218,7 +242,9 @@ fn a_source_that_carries_its_own_no_value_message_has_it_repeated() {
         .with("HasWebDriver", "False")
         .with("IsVisible", "True")
         .with_no_value("BrowserReleaseYear", "the browser was not matched")
-        .with("BrowserReleaseAge", 1i64);
+        .with("BrowserReleaseAge", 1i64)
+        .with("BrowserPreviewYear", 2026i64)
+        .with("BrowserPreviewAge", 2i64);
     let pipeline = pipeline_with(device, ip_data());
     let mut data = pipeline.create_flow_data();
     data.process().unwrap();
@@ -235,29 +261,33 @@ fn a_source_that_carries_its_own_no_value_message_has_it_repeated() {
     );
 }
 
+/// The pipeline is refused when it is built, rather than every request
+/// giving no value. `tests/pipeline_check.rs` checks the whole message.
 #[test]
 fn an_element_that_is_not_in_the_pipeline_at_all_is_named() {
     let derived = DerivedPropertyElement::builder()
         .add_built_in(BuiltInScript::HumanConfidence)
         .build()
         .unwrap();
-    let pipeline = Pipeline::builder()
+    let result = Pipeline::builder()
         .add_element(Arc::new(StubElement::new("device", device_data())))
         .add_element(Arc::new(derived))
-        .build()
-        .unwrap();
-    let mut data = pipeline.create_flow_data();
-    data.process().unwrap();
-
-    let derived = data.get_str(DERIVED_DEFAULT_ELEMENT_DATA_KEY).unwrap();
-    let error = derived.get("HumanConfidence").expect_err("no value");
-    assert!(
-        error
-            .message
-            .contains("element 'ip' has no value for 'HumanProbability': property not present"),
-        "{}",
-        error.message
-    );
+        .build();
+    let message = match result {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => message,
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!("the pipeline was built"),
+    };
+    for property in ["ip.HumanProbability", "ip.ConnectionType"] {
+        assert!(
+            message.contains(&format!(
+                "The script 'HumanConfidence' needs the property '{property}', and no element \
+                 in the pipeline supplies it."
+            )),
+            "{message}"
+        );
+    }
+    assert!(!message.contains("'device."), "{message}");
 }
 
 #[test]
@@ -308,6 +338,120 @@ fn one_script_can_read_a_property_another_script_produced() {
         derived.get("BandIsHigh").unwrap(),
         PropertyValue::Bool(true)
     );
+}
+
+#[test]
+fn a_32_bit_float_is_read_as_a_number() {
+    // A float on its own, and a float as the value of a weighted record, are
+    // both read as the number they hold rather than as a list.
+    let script = |name: &str, property: &str| {
+        format!(
+            "Format: 1\n\
+             Name: {name}\n\
+             Version: \"1.0.0\"\n\
+             Output:\n\
+             \x20 Name: {name}\n\
+             \x20 Description: Whether the value is above 51.3.\n\
+             \x20 ValueType: string\n\
+             \x20 IsList: false\n\
+             Rules:\n\
+             \x20 - When: {{ Property: ip.{property}, Gt: 51.3 }}\n\
+             \x20   Then: Above\n\
+             \x20 - Else: Below\n"
+        )
+    };
+    let weighted = |value: f32, weight: i64| {
+        let mut record = std::collections::BTreeMap::new();
+        record.insert("value".to_owned(), PropertyValue::Float(value));
+        record.insert("weight".to_owned(), PropertyValue::Integer(weight));
+        record
+    };
+    let ip = StubData::default()
+        .with("Latitude", PropertyValue::Float(51.352))
+        .with(
+            "Weighted",
+            PropertyValue::KeyValueList(vec![weighted(50.5, 1), weighted(51.5, 2)]),
+        );
+    let derived = DerivedPropertyElement::builder()
+        .add_script("FloatAbove", &script("FloatAbove", "Latitude"))
+        .add_script("WeightedAbove", &script("WeightedAbove", "Weighted"))
+        .build()
+        .expect("both scripts");
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(StubElement::new("ip", ip)))
+        .add_element(Arc::new(derived))
+        .build()
+        .unwrap();
+    let mut data = pipeline.create_flow_data();
+    data.process().unwrap();
+
+    let derived = data.get_str(DERIVED_DEFAULT_ELEMENT_DATA_KEY).unwrap();
+    assert_eq!(
+        derived.get("FloatAbove").unwrap(),
+        PropertyValue::String("Above".to_owned())
+    );
+    assert_eq!(
+        derived.get("WeightedAbove").unwrap(),
+        PropertyValue::String("Above".to_owned())
+    );
+}
+
+#[test]
+fn a_32_bit_float_equals_the_decimal_it_holds() {
+    // A latitude given to 3 decimal places is the f32 nearest 18.543. Widened
+    // to a double it is 18.542999267578125, so it would be neither equal to
+    // nor at least the 18.543 a script holds.
+    let script = |name: &str, property: &str, test: &str| {
+        format!(
+            "Format: 1\n\
+             Name: {name}\n\
+             Version: \"1.0.0\"\n\
+             Output:\n\
+             \x20 Name: {name}\n\
+             \x20 Description: Whether the latitude is 18.543.\n\
+             \x20 ValueType: string\n\
+             \x20 IsList: false\n\
+             Rules:\n\
+             \x20 - When: {{ Property: ip.{property}, {test}: 18.543 }}\n\
+             \x20   Then: Yes\n\
+             \x20 - Else: No\n"
+        )
+    };
+    let weighted = |value: f32, weight: i64| {
+        let mut record = std::collections::BTreeMap::new();
+        record.insert("value".to_owned(), PropertyValue::Float(value));
+        record.insert("weight".to_owned(), PropertyValue::Integer(weight));
+        record
+    };
+    let ip = StubData::default()
+        .with("Latitude", PropertyValue::Float(18.543))
+        .with(
+            "Weighted",
+            PropertyValue::KeyValueList(vec![weighted(18.543, 2), weighted(51.5, 1)]),
+        );
+    let derived = DerivedPropertyElement::builder()
+        .add_script("LatitudeEq", &script("LatitudeEq", "Latitude", "Eq"))
+        .add_script("LatitudeGe", &script("LatitudeGe", "Latitude", "Ge"))
+        .add_script("LatitudeLe", &script("LatitudeLe", "Latitude", "Le"))
+        .add_script("WeightedEq", &script("WeightedEq", "Weighted", "Eq"))
+        .build()
+        .expect("every script");
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(StubElement::new("ip", ip)))
+        .add_element(Arc::new(derived))
+        .build()
+        .unwrap();
+    let mut data = pipeline.create_flow_data();
+    data.process().unwrap();
+
+    let derived = data.get_str(DERIVED_DEFAULT_ELEMENT_DATA_KEY).unwrap();
+    for name in ["LatitudeEq", "LatitudeGe", "LatitudeLe", "WeightedEq"] {
+        assert_eq!(
+            derived.get(name).unwrap(),
+            PropertyValue::String("Yes".to_owned()),
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -412,19 +556,20 @@ fn a_script_can_be_read_from_a_file() {
     );
 
     // A file that is not there is reported rather than ignored, and the fault
-    // names the file it tried to read.
+    // names the path it was given, with .NET's wording.
     let missing = folder.join("NotThere.yaml");
     let faults = DerivedPropertyElement::builder()
         .add_script_file(&missing)
         .build()
         .expect_err("a file that is not there");
-    assert!(
-        faults
-            .to_string()
-            .contains("the script file could not be read"),
-        "{faults}"
+    assert_eq!(
+        faults.to_string(),
+        format!(
+            "script ({}) at (document): the file does not exist",
+            missing.display()
+        )
     );
-    assert_eq!(faults.faults()[0].script.as_deref(), Some("NotThere"));
+    assert_eq!(faults.faults()[0].script, None);
 
     std::fs::remove_file(&path).ok();
 }

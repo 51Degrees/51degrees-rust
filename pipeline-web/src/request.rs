@@ -46,7 +46,10 @@
 //!   form fields into the query prefix so the client-side callback (a form POST)
 //!   lands under the same keys as a GET,
 //! - the client IP address becomes `server.client-ip`,
-//! - the request protocol (`http` or `https`) becomes `header.protocol`.
+//! - the request protocol (`http` or `https`) becomes `header.protocol`,
+//! - where the adapter supplies the request line, the method, the path and the
+//!   query string become `server.request-method`, `server.request-path` and
+//!   `server.request-query`, exactly as the request line carried them.
 //!
 //! Every candidate key is added **only if the supplied filter includes it**, so
 //! a pipeline never receives evidence no element can use. This keeps the cache
@@ -54,7 +57,8 @@
 
 use fiftyone_pipeline_core::constants::{
     EVIDENCE_CLIENT_IP_KEY, EVIDENCE_COOKIE_PREFIX, EVIDENCE_HTTP_HEADER_PREFIX,
-    EVIDENCE_PROTOCOL_KEY, EVIDENCE_QUERY_PREFIX, EVIDENCE_SEPARATOR,
+    EVIDENCE_PROTOCOL_KEY, EVIDENCE_QUERY_PREFIX, EVIDENCE_REQUEST_METHOD_KEY,
+    EVIDENCE_REQUEST_PATH_KEY, EVIDENCE_REQUEST_QUERY_KEY, EVIDENCE_SEPARATOR,
 };
 use fiftyone_pipeline_core::{Evidence, EvidenceBuilder, EvidenceKeyFilter};
 
@@ -125,13 +129,40 @@ pub trait RequestData {
     /// The value of the request `If-None-Match` header, if present.
     ///
     /// Used by the client-side endpoints to decide whether to return `304 Not
-    /// Modified`. The default implementation finds it among
-    /// [`RequestData::headers`] case-insensitively.
+    /// Modified` (or `412 Precondition Failed`, see [`RequestData::method`]).
+    /// The default implementation finds it among [`RequestData::headers`]
+    /// case-insensitively.
     fn if_none_match(&self) -> Option<String> {
         self.headers()
             .into_iter()
             .find(|(name, _)| name.eq_ignore_ascii_case("if-none-match"))
             .map(|(_, value)| value)
+    }
+
+    /// The request method, for example `GET` or `POST`, exactly as the
+    /// request line carried it, if the adapter knows it. Method names are
+    /// case-sensitive, so the case is kept. The default returns `None`.
+    ///
+    /// When `If-None-Match` matches, the client-side endpoints answer `304 Not
+    /// Modified` to `GET` or `HEAD` and `412 Precondition Failed` to any other
+    /// method, as
+    /// [RFC 9110 section 13.1.2](https://www.rfc-editor.org/rfc/rfc9110#section-13.1.2)
+    /// requires. They treat `None` as `GET`, so an adapter that serves an
+    /// endpoint on any other method implements this.
+    fn method(&self) -> Option<String> {
+        None
+    }
+
+    /// The request target, being the path and any query string with its `?`,
+    /// byte for byte as the request line carried it, with no decoding and no
+    /// normalisation, for example `/search?q=a%20b`. The default returns
+    /// `None`.
+    ///
+    /// With [`RequestData::method`] this is the request line, which the agent
+    /// signature element rebuilds a signed request from, so one changed byte
+    /// makes a valid signature read as invalid.
+    fn request_target(&self) -> Option<String> {
+        None
     }
 }
 
@@ -153,11 +184,11 @@ fn prefixed(prefix: &str, field: &str) -> String {
 /// # Ordering and conflicts
 ///
 /// Sources are added in the order headers, cookies, query parameters, form
-/// parameters, then the client IP and protocol. Because form parameters share
-/// the `query.` prefix with query-string parameters, a form field overwrites a
-/// query field of the same name (last-writer-wins). The [`Evidence`] itself
-/// lowercases keys, so matching downstream
-/// is case-insensitive regardless of how the request presented them.
+/// parameters, then the client IP, the protocol and the request line. Because
+/// form parameters share the `query.` prefix with query-string parameters, a
+/// form field overwrites a query field of the same name (last-writer-wins).
+/// The [`Evidence`] itself lowercases keys, so matching downstream is
+/// case-insensitive regardless of how the request presented them.
 ///
 /// # Example
 ///
@@ -219,6 +250,23 @@ pub fn build_evidence(request: &dyn RequestData, filter: &dyn EvidenceKeyFilter)
     // explicit protocol header was sent.
     if filter.include(EVIDENCE_PROTOCOL_KEY) {
         builder = builder.add(EVIDENCE_PROTOCOL_KEY, request.protocol());
+    }
+
+    // The request line goes in whole or not at all, with the query empty
+    // where the target has none, so that a missing key always means the
+    // adapter does not supply the request line rather than that the request
+    // had no query string.
+    if let (Some(method), Some(target)) = (request.method(), request.request_target()) {
+        let (path, query) = target.split_once('?').unwrap_or((target.as_str(), ""));
+        for (key, value) in [
+            (EVIDENCE_REQUEST_METHOD_KEY, method.as_str()),
+            (EVIDENCE_REQUEST_PATH_KEY, path),
+            (EVIDENCE_REQUEST_QUERY_KEY, query),
+        ] {
+            if filter.include(key) {
+                builder = builder.add(key, value);
+            }
+        }
     }
 
     builder.build()

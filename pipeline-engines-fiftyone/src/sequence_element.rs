@@ -29,25 +29,28 @@
 //!
 //! # Where the results are written
 //!
-//! [`fiftyone_pipeline_core::Evidence`] is immutable, so the element writes the
-//! new session id and the incremented sequence into its own element data rather
-//! than back into the evidence collection. Downstream elements that need the
-//! values (notably the [`crate::ShareUsageElement`]) read them from the element
-//! data, or from evidence when the caller supplied them. The observable
-//! behavior is a stable session id and a monotonically increasing sequence.
+//! The element writes the session id and the new sequence into the flow
+//! data's evidence with [`FlowData::add_evidence`], as .NET's Sequence element
+//! does, so the elements after it and the caller read them as
+//! `query.session-id` and `query.sequence`. It also holds them in its own
+//! [`SequenceData`], because the specification lists them as the element's
+//! properties.
 
 use std::any::Any;
 
 use fiftyone_pipeline_core::{
-    ElementData, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
-    MapElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType, Result,
-    TypedKey,
+    ElementData, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    FlowError, MapElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType,
+    Result, TypedKey,
 };
 
 use crate::constants::{
     EVIDENCE_SEQUENCE, EVIDENCE_SEQUENCE_SUFFIX, EVIDENCE_SESSIONID, EVIDENCE_SESSIONID_SUFFIX,
     SEQUENCE_DEFAULT_ELEMENT_DATA_KEY,
 };
+
+/// The message of the error a sequence that is not a 32-bit integer gives.
+const SEQUENCE_NOT_VALID: &str = "The value for the 'sequence' parameter is not valid. See https://51degrees.com/documentation/4.5/_services__cloud__error_messages.html?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=pipeline-engines-fiftyone-src-sequence_element.rs&utm_term=sequence-not-valid for more information.";
 
 /// The element data produced by the [`SequenceElement`].
 ///
@@ -65,11 +68,13 @@ pub struct SequenceData {
 }
 
 impl SequenceData {
-    /// Build sequence data from a session id and sequence number.
-    fn new(session_id: String, sequence: i64) -> Self {
-        let inner = MapElementData::new()
-            .set(EVIDENCE_SESSIONID_SUFFIX, session_id)
-            .set(EVIDENCE_SEQUENCE_SUFFIX, sequence);
+    /// Build sequence data from a session id and, when the request's sequence
+    /// could be read, the new sequence number.
+    fn new(session_id: String, sequence: Option<i32>) -> Self {
+        let mut inner = MapElementData::new().set(EVIDENCE_SESSIONID_SUFFIX, session_id);
+        if let Some(sequence) = sequence {
+            inner = inner.set(EVIDENCE_SEQUENCE_SUFFIX, i64::from(sequence));
+        }
         SequenceData { inner }
     }
 
@@ -80,7 +85,8 @@ impl SequenceData {
             .and_then(PropertyValue::as_str)
     }
 
-    /// The sequence number for this flow data.
+    /// The sequence number for this flow data, which is always a 32-bit
+    /// integer. `None` when the request's sequence is not a 32-bit integer.
     pub fn sequence(&self) -> Option<i64> {
         self.inner
             .get_value(EVIDENCE_SEQUENCE_SUFFIX)
@@ -110,13 +116,21 @@ impl ElementData for SequenceData {
 ///
 /// On [`FlowElement::process`]:
 ///
-/// - If `query.session-id` is absent from the evidence, a new GUID is generated
-///   using the `uuid` crate.
-/// - If `query.sequence` is present, it is parsed and incremented, wrapping
-///   after `i64::MAX` as the .NET and Java pipelines do. Otherwise, or when it
-///   is not an integer, the sequence is set to `1`.
+/// - If `query.session-id` is absent from the evidence, a new GUID is added
+///   as the session id. A session id that is present, even an empty one, is
+///   kept as it is.
+/// - If `query.sequence` is absent, a sequence of `1` is added.
+/// - If `query.sequence` is a 32-bit integer, read as .NET's `int.TryParse`
+///   reads it, one is added to it, wrapping from `2147483647` to
+///   `-2147483648`, and the result replaces it.
+/// - Otherwise the sequence is left as it was and an error is recorded on the
+///   flow data, logged at error level whether or not errors are suppressed,
+///   followed by a second error level record saying the sequence was not
+///   incremented. When errors are not suppressed, processing returns the
+///   error once every element has run.
 ///
-/// Both values are written to a [`SequenceData`] under this element's data key.
+/// Both values are also written to a [`SequenceData`] under this element's
+/// data key, which holds no sequence when the request's could not be read.
 /// The element takes no configuration.
 pub struct SequenceElement {
     filter: EvidenceKeyFilterWhitelist,
@@ -148,8 +162,8 @@ impl SequenceElement {
         SequenceElement { filter, properties }
     }
 
-    /// Generate a new session id. A random v4 GUID, the same form the other
-    /// 51Degrees ports use.
+    /// Generate a new session id. A random v4 GUID in its 36 character lower
+    /// case form with hyphens, the form .NET's `Guid.ToString()` gives.
     fn new_session_id() -> String {
         uuid::Uuid::new_v4().to_string()
     }
@@ -163,24 +177,38 @@ impl Default for SequenceElement {
 
 impl FlowElement for SequenceElement {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        // Read the incoming evidence (immutable) before taking the mutable
-        // borrow needed to add element data.
-        let session_id = data
-            .evidence()
-            .get(EVIDENCE_SESSIONID)
-            .map(str::to_owned)
-            .unwrap_or_else(Self::new_session_id);
+        let given_session_id = data.evidence().get(EVIDENCE_SESSIONID).map(str::to_owned);
+        let session_id = match given_session_id {
+            Some(session_id) => session_id,
+            None => {
+                let session_id = Self::new_session_id();
+                data.add_evidence(EVIDENCE_SESSIONID, session_id.clone());
+                session_id
+            }
+        };
 
-        // If a sequence is supplied, increment it, wrapping after the largest
-        // integer as the .NET and Java pipelines do. Anything that does not
-        // parse as an integer is treated as a fresh sequence of 1, which keeps
-        // the element robust to malformed client input rather than failing the
-        // whole flow.
-        let sequence = data
-            .evidence()
-            .get(EVIDENCE_SEQUENCE)
-            .and_then(|raw| raw.trim().parse::<i64>().ok())
-            .map_or(1, |sequence| sequence.wrapping_add(1));
+        let sequence = match data.evidence().get(EVIDENCE_SEQUENCE) {
+            None => Some(1),
+            Some(text) => parse_sequence(text).map(|sequence| sequence.wrapping_add(1)),
+        };
+        match sequence {
+            Some(sequence) => data.add_evidence(EVIDENCE_SEQUENCE, sequence.to_string()),
+            None => {
+                data.add_error(
+                    FlowError::new(
+                        self.data_key(),
+                        Error::Pipeline {
+                            message: SEQUENCE_NOT_VALID.to_owned(),
+                        },
+                    ),
+                    true,
+                );
+                log::error!(
+                    "Failed to increment the usage sequence number, because \
+                     the sequence is not a 32-bit integer."
+                );
+            }
+        }
 
         data.get_or_add(Self::KEY, || SequenceData::new(session_id, sequence))?;
         Ok(())
@@ -196,5 +224,51 @@ impl FlowElement for SequenceElement {
 
     fn properties(&self) -> &[PropertyMetaData] {
         &self.properties
+    }
+}
+
+/// Read a sequence number from evidence text as .NET's `int.TryParse` reads
+/// it, being white space, an optional sign, the digits 0 to 9, white space,
+/// then any number of NUL characters. White space here is space and U+0009
+/// to U+000D. `None` when the text is not a 32-bit integer.
+pub(crate) fn parse_sequence(text: &str) -> Option<i32> {
+    text.trim_end_matches('\0')
+        .trim_matches(is_number_white_space)
+        .parse()
+        .ok()
+}
+
+/// The white space .NET allows around a number.
+fn is_number_white_space(c: char) -> bool {
+    matches!(c, ' ' | '\t'..='\r')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sequence_is_read_as_dotnet_reads_an_integer() {
+        for (text, expected) in [
+            ("3", Some(3)),
+            (" \t+7\r\n", Some(7)),
+            ("-2", Some(-2)),
+            ("0005", Some(5)),
+            ("2147483647", Some(i32::MAX)),
+            ("-2147483648", Some(i32::MIN)),
+            ("5\0\0", Some(5)),
+            ("5 \0", Some(5)),
+            ("2147483648", None),
+            ("5\0 ", None),
+            ("\u{a0}5", None),
+            ("\u{663}", None),
+            ("1.0", None),
+            ("five", None),
+            ("+", None),
+            (" ", None),
+            ("", None),
+        ] {
+            assert_eq!(parse_sequence(text), expected, "{text:?}");
+        }
     }
 }

@@ -26,6 +26,7 @@
 //! JavaScript.
 
 use std::any::Any;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use fiftyone_cloud_request_engine::{
@@ -131,9 +132,19 @@ impl FlowElement for DeviceElement {
     }
 }
 
-/// Build a pipeline: optional device element, then JSON builder, then the
-/// JavaScript builder (configured via `configure`). Returns the generated
-/// JavaScript for the supplied evidence.
+/// A JSON builder that leaves the Sequence element's own data out of the
+/// JSON.
+fn json_builder() -> JsonBuilderElement {
+    JsonBuilderElement::builder()
+        .exclude_element(SequenceElement::DEFAULT_ELEMENT_DATA_KEY)
+        .build()
+}
+
+/// Build a pipeline: the Sequence element, an optional device element, the
+/// JSON builder, then the JavaScript builder (configured via `configure`).
+/// Returns the generated JavaScript for the supplied evidence. The Sequence
+/// element's own data is left out of the JSON, so the JSON holds only what
+/// the device element gives.
 fn run(
     device: Option<DeviceElement>,
     configure: impl FnOnce(
@@ -141,13 +152,13 @@ fn run(
     ) -> JavaScriptBuilderElement,
     evidence: &[(&str, &str)],
 ) -> String {
-    let mut builder = Pipeline::builder();
+    let mut builder = Pipeline::builder().add_element(Arc::new(SequenceElement::new()));
     if let Some(device) = device {
         builder = builder.add_element(Arc::new(device));
     }
     let js_element = configure(JavaScriptBuilderElement::builder());
     let pipeline = builder
-        .add_element(Arc::new(JsonBuilderElement::new()))
+        .add_element(Arc::new(json_builder()))
         .add_element(Arc::new(js_element))
         .build()
         .expect("pipeline builds");
@@ -261,11 +272,8 @@ fn fetch_false_uses_xml_http_request() {
 
 #[test]
 fn minification_is_robust_on_the_real_template() {
-    // The bundled minifier (minify-js 0.6.0) panics on some constructs in the
-    // full template. The element must catch that and fall back to the
-    // unminified content rather than aborting the request. So the minified-on
-    // run must still produce usable output
-    // (and never crash). It is no larger than the unminified output.
+    // Minifying the full template gives a usable script, or the unminified
+    // one when minifying fails, and never one larger than the unminified one.
     let minified = run(
         None,
         |b| b.set_minify(true).build(),
@@ -283,15 +291,12 @@ fn minification_is_robust_on_the_real_template() {
 #[test]
 fn full_template_renders_through_pipeline() {
     // Render the complete embedded template through a real pipeline, the same
-    // path the element.rs doctest exercises. This is the render that previously
-    // crashed under the third-party engine; it must now produce stable, complete
-    // output every time.
+    // path the element.rs doctest exercises, and check the output is complete.
     let js = run(
         Some(DeviceElement::new(Some("Full"), Some(true))),
         |b| b.set_minify(false).set_protocol("https").unwrap().build(),
         &[
             ("header.host", "example.com"),
-            ("query.sequence", "1"),
             ("query.session-id", "abc"),
             ("query.user-agent", "test agent"),
         ],
@@ -307,9 +312,40 @@ fn full_template_renders_through_pipeline() {
     // No unrendered Mustache tags survive in the output.
     assert!(!js.contains("{{"));
     assert!(!js.contains("}}"));
-    // The output is trimmed at the end, matching the previous engine.
-    assert_eq!(js, js.trim_end());
-    assert!(js.ends_with("var fod = new fiftyoneDegreesManager();"));
+    // The template's last line ends with a line break, which is kept.
+    assert!(js.ends_with("var fod = new fiftyoneDegreesManager();\n"));
+}
+
+#[test]
+fn a_line_holding_only_a_section_tag_leaves_nothing_in_the_script() {
+    // In the template, `{{#_enableCookies}}` has a line of its own between
+    // these two lines, and `{{#_updateEnabled}}` and `{{#_userPrompt}}` have
+    // a line each before the closing brace of the function, with their
+    // closing tags after it. Each of those lines is removed, line break
+    // included, whether the section is rendered or not.
+    for (cookies, host) in [(true, "example.com"), (false, ""), (true, "")] {
+        let js = run(
+            None,
+            |b| {
+                b.set_minify(false)
+                    .set_enable_cookies(cookies)
+                    .set_protocol("https")
+                    .unwrap()
+                    .build()
+            },
+            &[("header.host", host)],
+        );
+        if cookies {
+            assert!(
+                js.contains("        let fodValues = {};\n        {\n"),
+                "cookies {cookies}, host {host:?}"
+            );
+        }
+        assert!(
+            js.contains("            refresh();\n            return;\n        }\n    };\n"),
+            "cookies {cookies}, host {host:?}"
+        );
+    }
 }
 
 /// A cloud request engine whose accessible products are the supplied JSON. The
@@ -353,11 +389,11 @@ fn render_for_key(engine: &CloudRequestEngine) -> String {
     )
 }
 
+/// A statement found only inside the user prompt section of the template.
+const USER_PROMPT_MARKER: &str = "var answerKeys = [\"id.usage\", \"tcstring\"];";
+
 #[test]
 fn user_prompt_section_follows_the_keys_licensed_products() {
-    // A statement found only inside the user prompt section of the template.
-    const USER_PROMPT_MARKER: &str = "var answerKeys = [\"id.usage\", \"tcstring\"];";
-
     // The product name is written the way the cloud service reports it,
     // "FODid", which differs in case from the "fodid" element data key.
     let entitled = request_engine(
@@ -373,8 +409,7 @@ fn user_prompt_section_follows_the_keys_licensed_products() {
     );
     assert!(!js.contains("{{"));
     assert!(!js.contains("}}"));
-    assert_eq!(js, js.trim_end());
-    assert!(js.ends_with("var fod = new fiftyoneDegreesManager();"));
+    assert!(js.ends_with("var fod = new fiftyoneDegreesManager();\n"));
 
     // A key with no 51Did product, and a key whose 51Did product grants no
     // property, both leave the section out.
@@ -389,17 +424,128 @@ fn user_prompt_section_follows_the_keys_licensed_products() {
         );
         assert!(!js.contains("{{"));
         assert!(!js.contains("}}"));
-        assert!(js.ends_with("var fod = new fiftyoneDegreesManager();"));
+        assert!(js.ends_with("var fod = new fiftyoneDegreesManager();\n"));
     }
 
-    // A builder given no request engine has no licensed products to read, so
-    // the section is left out as well.
+    // A builder given no request engine, in a pipeline with no 51Did element,
+    // leaves the section out as well.
     let js = run(
         None,
         |b| b.set_minify(false).build(),
         &[("header.host", "example.com")],
     );
     assert!(!js.contains(USER_PROMPT_MARKER));
+}
+
+/// A cloud that refuses every request while `down` is set, and once it
+/// answers grants 51Did and answers each data request with an empty device.
+struct RecoveringCloud {
+    down: Arc<AtomicBool>,
+}
+
+impl CloudHttpClient for RecoveringCloud {
+    fn send(&self, request: &CloudHttpRequest) -> std::result::Result<CloudHttpResponse, String> {
+        if self.down.load(Ordering::Relaxed) {
+            return Err("connection refused".to_owned());
+        }
+        let body = if request.url.contains("accessibleproperties") {
+            r#"{"Products":{"FODid":{"Properties":[{"Name":"IdProbGlobal","Type":"String"}]}}}"#
+        } else if request.url.contains("evidencekeys") {
+            r#"["header.user-agent"]"#
+        } else {
+            r#"{"device":{}}"#
+        };
+        Ok(CloudHttpResponse {
+            status: 200,
+            body: body.to_owned(),
+            retry_after: None,
+        })
+    }
+}
+
+/// A pipeline of the Sequence element, the request engine, the JSON builder
+/// and `element`.
+fn cloud_pipeline(
+    engine: &Arc<CloudRequestEngine>,
+    element: JavaScriptBuilderElement,
+) -> Arc<Pipeline> {
+    Pipeline::builder()
+        .add_element(Arc::new(SequenceElement::new()))
+        .add_element(Arc::clone(engine) as Arc<dyn FlowElement>)
+        .add_element(Arc::new(json_builder()))
+        .add_element(Arc::new(element))
+        .suppress_process_exceptions(true)
+        .build()
+        .expect("pipeline builds")
+}
+
+/// The script one request through `pipeline` gets, whatever the request
+/// engine made of it.
+fn render_through(pipeline: &Arc<Pipeline>) -> String {
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("header.host", "example.com")
+            .build(),
+    );
+    let _ = data.process();
+    data.get(JAVASCRIPT_BUILDER_DATA_KEY)
+        .expect("javascript builder data present")
+        .javascript()
+        .to_owned()
+}
+
+#[test]
+fn user_prompt_section_waits_for_discovery_on_a_shared_engine() {
+    let down = Arc::new(AtomicBool::new(true));
+    let engine = Arc::new(
+        CloudRequestEngine::builder()
+            .resource_key("test-resource-key")
+            .http_client(Arc::new(RecoveringCloud {
+                down: Arc::clone(&down),
+            }))
+            .recovery_seconds(0.0)
+            .build()
+            .expect("a transient failure does not fail the build"),
+    );
+    let configure = || {
+        JavaScriptBuilderElement::builder()
+            .set_minify(false)
+            .set_protocol("https")
+            .unwrap()
+    };
+    let shared = cloud_pipeline(
+        &engine,
+        configure()
+            .set_shared_cloud_request_engine(Arc::clone(&engine))
+            .build(),
+    );
+    let decided = cloud_pipeline(
+        &engine,
+        configure().set_cloud_request_engine(&engine).build(),
+    );
+
+    for pipeline in [&shared, &decided] {
+        assert!(
+            !render_through(pipeline).contains(USER_PROMPT_MARKER),
+            "left out while discovery is pending"
+        );
+    }
+
+    down.store(false, Ordering::Relaxed);
+    assert!(
+        render_through(&shared).contains(USER_PROMPT_MARKER),
+        "the shared engine's element renders it once discovery completes"
+    );
+    assert!(engine.has_loaded_metadata());
+    assert!(
+        !render_through(&decided).contains(USER_PROMPT_MARKER),
+        "the reference form keeps the answer it was built with"
+    );
+    down.store(true, Ordering::Relaxed);
+    assert!(
+        render_through(&shared).contains(USER_PROMPT_MARKER),
+        "and keeps rendering it once it is settled"
+    );
 }
 
 #[test]
@@ -411,12 +557,18 @@ fn fodid_product_name_matches_the_51did_engine_data_key() {
 #[test]
 fn full_template_render_is_deterministic_under_repetition() {
     // Rendering the full template repeatedly must always yield identical bytes.
-    // This guards against any nondeterminism in the renderer.
+    // This guards against any nondeterminism in the renderer. The session id
+    // is given, as the Sequence element creates a new one for each request
+    // that has none.
     let render = || {
         run(
             None,
             |b| b.set_minify(false).build(),
-            &[("header.host", "localhost"), ("query.sequence", "1")],
+            &[
+                ("header.host", "localhost"),
+                ("query.session-id", "abc"),
+                ("query.sequence", "1"),
+            ],
         )
     };
     let first = render();
@@ -512,19 +664,36 @@ fn supplied_session_id_is_kept_and_the_sequence_moves_on() {
 }
 
 #[test]
-fn without_a_sequence_element_the_evidence_is_used() {
-    // A pipeline with no sequence element still reads the evidence directly.
-    let js = run(
-        None,
-        |b| b.set_minify(false).build(),
-        &[
-            ("header.host", "localhost"),
-            ("query.session-id", "abc"),
-            ("query.sequence", "4"),
-        ],
+fn without_a_sequence_element_the_evidence_is_not_used() {
+    // The specification renders an empty session id and a sequence of 1
+    // when there is no Sequence element, so the evidence is not read. The
+    // JSON builder fails without a Sequence element, so its error is
+    // suppressed and the JavaScript builder still renders.
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(JsonBuilderElement::new()))
+        .add_element(Arc::new(
+            JavaScriptBuilderElement::builder()
+                .set_minify(false)
+                .build(),
+        ))
+        .suppress_process_exceptions(true)
+        .build()
+        .expect("pipeline builds");
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("header.host", "localhost")
+            .add("query.session-id", "abc")
+            .add("query.sequence", "4")
+            .build(),
     );
-    assert_eq!(rendered_session_id(&js), "abc");
-    assert!(js.contains("var sequence = 4;"));
+    data.process().expect("errors are suppressed");
+    let js = data
+        .get(JAVASCRIPT_BUILDER_DATA_KEY)
+        .expect("javascript builder data present")
+        .javascript()
+        .to_owned();
+    assert_eq!(rendered_session_id(&js), "");
+    assert!(js.contains("var sequence = 1;"));
 }
 
 #[test]
@@ -594,8 +763,9 @@ fn a_request_without_device_data_leaves_later_visitors_unaffected() {
     // and fetch belongs to the request, so a request that got no device answer
     // must not change the script the next visitor is given.
     let pipeline = Pipeline::builder()
+        .add_element(Arc::new(SequenceElement::new()))
         .add_element(Arc::new(CloudLikeDevice::new()))
-        .add_element(Arc::new(JsonBuilderElement::new()))
+        .add_element(Arc::new(json_builder()))
         .add_element(Arc::new(
             JavaScriptBuilderElement::builder()
                 .set_minify(false)
@@ -637,4 +807,14 @@ fn a_request_without_device_data_leaves_later_visitors_unaffected() {
         "the next visitor's browser supports fetch, but the script was \
          rendered without it"
     );
+}
+
+/// The builder and the element are `Send`, `Sync`, `UnwindSafe` and
+/// `RefUnwindSafe`, as removing an auto trait from a public type breaks
+/// callers. This test fails to compile if either loses one.
+#[test]
+fn the_builder_and_element_keep_their_auto_traits() {
+    fn has_auto_traits<T: Send + Sync + std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
+    has_auto_traits::<fiftyone_javascript_builder::JavaScriptBuilderElementBuilder>();
+    has_auto_traits::<JavaScriptBuilderElement>();
 }

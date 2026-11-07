@@ -8,9 +8,16 @@
 # ci/get-release-plan.ps1), and ci/set-crate-versions.ps1 has already written
 # each crate's own version into its manifest. Naming no crate publishes
 # nothing. A crate whose version is already on crates.io is skipped, so a
-# rerun finishes what a failed run left undone. After publishing a crate the
-# script waits for the new version to appear on the index so the next,
-# dependent crate resolves it.
+# rerun finishes what a failed run left undone.
+#
+# After publishing a crate the script waits until the crates.io API lists the
+# new version, and carries on after 300 seconds even if it does not. The API
+# lists a version once the upload is recorded, which can be before the index
+# that Cargo resolves from has it, so the wait that lets the next, dependent
+# crate resolve the version is cargo publish's own. That waits up to 60 seconds
+# for the index and then carries on with a warning. If the index is slower, the
+# next crate's verification build fails to find the version and the script
+# stops, and a rerun skips what was published and finishes the release.
 #
 # `fodid` and `fiftyone-fodid-cloud` need no OWID crate from any registry. The
 # OWID source is compiled into `fodid` from the owid-rust submodule by
@@ -134,14 +141,15 @@ for crate in "${CRATES[@]}"; do
   fi
   echo "== publishing $crate $version"
   publish_crate "$crate"
-  # Wait for the new version to be queryable so the next dependent crate's
-  # verification build can resolve it from the index.
+  # Wait until the crates.io API lists the new version. This is not the index
+  # the next crate's verification build resolves from, which cargo publish
+  # has already waited for, as the header says.
   for attempt in $(seq 1 30); do
     if is_published "$crate" "$version"; then
-      echo "   $crate $version is indexed."
+      echo "   crates.io lists $crate $version."
       break
     fi
-    echo "   waiting for the index to pick up $crate $version ($attempt/30)..."
+    echo "   waiting for crates.io to list $crate $version ($attempt/30)..."
     sleep 10
   done
 done

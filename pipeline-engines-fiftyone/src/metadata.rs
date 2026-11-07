@@ -85,6 +85,8 @@ pub struct FiftyOneAspectPropertyMetaData {
     aspect: AspectPropertyMetaData,
     /// The name of the component this property belongs to. Empty if none.
     component_name: String,
+    /// The id of the component this property belongs to, if it has one.
+    component_id: Option<u8>,
     /// A URL with more information about the property.
     url: String,
     /// The order in which to display the property. Lower is shown first.
@@ -101,6 +103,8 @@ pub struct FiftyOneAspectPropertyMetaData {
     show_values: bool,
     /// The values the property can return.
     values: Vec<ValueMetaData>,
+    /// The value the property has when nothing else is known.
+    default_value: Option<ValueMetaData>,
 }
 
 impl FiftyOneAspectPropertyMetaData {
@@ -127,6 +131,7 @@ impl FiftyOneAspectPropertyMetaData {
         FiftyOneAspectPropertyMetaData {
             aspect,
             component_name: String::new(),
+            component_id: None,
             url: String::new(),
             display_order: 0,
             mandatory: false,
@@ -135,12 +140,19 @@ impl FiftyOneAspectPropertyMetaData {
             show: true,
             show_values: true,
             values: Vec::new(),
+            default_value: None,
         }
     }
 
     /// Set the owning component name. Returns `self` for chaining.
     pub fn with_component_name(mut self, name: impl Into<String>) -> Self {
         self.component_name = name.into();
+        self
+    }
+
+    /// Set the owning component's id. Returns `self` for chaining.
+    pub fn with_component_id(mut self, component_id: u8) -> Self {
+        self.component_id = Some(component_id);
         self
     }
 
@@ -195,6 +207,12 @@ impl FiftyOneAspectPropertyMetaData {
         self
     }
 
+    /// Set the default value. Returns `self` for chaining.
+    pub fn with_default_value(mut self, default_value: ValueMetaData) -> Self {
+        self.default_value = Some(default_value);
+        self
+    }
+
     /// The property name.
     pub fn name(&self) -> &str {
         self.aspect.name()
@@ -203,6 +221,11 @@ impl FiftyOneAspectPropertyMetaData {
     /// The name of the component this property belongs to.
     pub fn component_name(&self) -> &str {
         &self.component_name
+    }
+
+    /// The id of the component this property belongs to, if it has one.
+    pub fn component_id(&self) -> Option<u8> {
+        self.component_id
     }
 
     /// A URL with more information about the property.
@@ -240,12 +263,24 @@ impl FiftyOneAspectPropertyMetaData {
         self.show_values
     }
 
-    /// The values this property can return.
+    /// The values this property can return, as the metadata was built with
+    /// them. An engine whose data file holds too many values to copy into
+    /// every property's metadata leaves this empty and gives a property's
+    /// values when they are asked for.
     pub fn values(&self) -> &[ValueMetaData] {
         &self.values
     }
 
-    /// Find the value with the given name, matched case-insensitively.
+    /// The value the property has when nothing else is known, if it has one.
+    pub fn default_value(&self) -> Option<&ValueMetaData> {
+        self.default_value.as_ref()
+    }
+
+    /// Find the value with the given name among [`Self::values`], matched
+    /// case-insensitively. So this finds nothing for a property whose engine
+    /// leaves [`Self::values`] empty. Such an engine gives one value when it
+    /// is asked for, as the on-premise Device Detection engine's
+    /// `property_value` does.
     pub fn value(&self, name: &str) -> Option<&ValueMetaData> {
         self.values
             .iter()
@@ -272,18 +307,30 @@ pub struct ComponentMetaData {
     pub component_id: u8,
     /// The name of the component, for example `"HardwareProfile"`.
     pub name: String,
+    /// The profile id of the component's default profile, which gives its
+    /// properties' values when no profile matches the evidence, if it has
+    /// one.
+    pub default_profile_id: Option<u32>,
     /// The properties that belong to this component.
     properties: Vec<FiftyOneAspectPropertyMetaData>,
 }
 
 impl ComponentMetaData {
-    /// Create a component with the given id and name and no properties.
+    /// Create a component with the given id and name, no default profile and
+    /// no properties.
     pub fn new(component_id: u8, name: impl Into<String>) -> Self {
         ComponentMetaData {
             component_id,
             name: name.into(),
+            default_profile_id: None,
             properties: Vec::new(),
         }
+    }
+
+    /// Set the default profile's id. Returns `self` for chaining.
+    pub fn with_default_profile_id(mut self, profile_id: u32) -> Self {
+        self.default_profile_id = Some(profile_id);
+        self
     }
 
     /// Set the component's properties. Returns `self` for chaining.
@@ -327,7 +374,9 @@ mod tests {
                 .with_values([
                     ValueMetaData::new("True").with_description("It is mobile."),
                     ValueMetaData::new("False"),
-                ]);
+                ])
+                .with_component_id(1)
+                .with_default_value(ValueMetaData::new("False"));
 
         assert_eq!(property.name(), "IsMobile");
         assert_eq!(property.component_name(), "Hardware");
@@ -336,15 +385,22 @@ mod tests {
         assert_eq!(property.values().len(), 2);
         assert_eq!(property.value("true").unwrap().description, "It is mobile.");
         assert_eq!(property.core().value_type, PropertyValueType::Bool);
+        assert_eq!(property.component_id(), Some(1));
+        assert_eq!(property.default_value().unwrap().name, "False");
     }
 
     #[test]
     fn component_finds_property_case_insensitively() {
-        let component = ComponentMetaData::new(1, "Hardware").with_properties([
-            FiftyOneAspectPropertyMetaData::new("IsMobile", "device", PropertyValueType::Bool),
-        ]);
+        let component = ComponentMetaData::new(1, "Hardware")
+            .with_default_profile_id(15364)
+            .with_properties([FiftyOneAspectPropertyMetaData::new(
+                "IsMobile",
+                "device",
+                PropertyValueType::Bool,
+            )]);
 
         assert_eq!(component.component_id, 1);
+        assert_eq!(component.default_profile_id, Some(15364));
         assert!(component.property("ismobile").is_some());
         assert!(component.property("missing").is_none());
     }

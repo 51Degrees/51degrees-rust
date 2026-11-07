@@ -32,7 +32,7 @@
 use std::collections::HashMap;
 
 use fiftyone_ip_intelligence_shared::IpIntelligenceDataBase;
-use fiftyone_pipeline_core::WeightedValue;
+use fiftyone_pipeline_core::{round_angle, WeightedValue};
 use serde_json::Value;
 
 /// The JSON field carrying the integer weight factor of a weighted value.
@@ -281,7 +281,9 @@ fn plain_scalar(value: &Value) -> Option<Value> {
 
 /// Insert a single plain value into `data`, converting it to the kind's value
 /// type. A numeric value that fails to parse falls back to its string form so
-/// the value is still surfaced through the dynamic bag.
+/// the value is still surfaced through the dynamic bag. A float is given to 3
+/// decimal places by [`round_angle`], because the IP Intelligence floats are
+/// the latitude and the longitude.
 fn insert_plain(data: &mut IpIntelligenceDataBase, name: &str, kind: ValueKind, value: &Value) {
     match kind {
         ValueKind::String => data.set_string(name, value_to_string(value)),
@@ -290,7 +292,7 @@ fn insert_plain(data: &mut IpIntelligenceDataBase, name: &str, kind: ValueKind, 
             None => data.set_string(name, value_to_string(value)),
         },
         ValueKind::Double => match value_to_f64(value) {
-            Some(float) => data.set_float(name, float as f32),
+            Some(float) => data.set_float(name, round_angle(float)),
             None => data.set_string(name, value_to_string(value)),
         },
         ValueKind::Bool => match value_to_bool(value) {
@@ -419,6 +421,7 @@ fn value_to_bool(value: &Value) -> Option<bool> {
 mod tests {
     use super::*;
     use fiftyone_ip_intelligence_shared::IP_DATA_KEY_NAME;
+    use fiftyone_pipeline_core::{ElementData, PropertyValue};
 
     /// The data key the test data is attributed to.
     const ENGINE_KEY: &str = IP_DATA_KEY_NAME;
@@ -504,6 +507,28 @@ mod tests {
 
         assert_eq!(*data.integer("TimeZoneOffset").value().unwrap(), 60_i32);
         assert!((data.float("Latitude").value().unwrap() - 51.45_f32).abs() < 1e-4);
+    }
+
+    /// A latitude or longitude the response gives with more places is given
+    /// to 3, as the on-premise engine gives it, and kept as a 32-bit float.
+    #[test]
+    fn a_float_is_given_to_three_decimal_places() {
+        let map = aspect(
+            r#"{
+                "Latitude": 18.542741172521133,
+                "Longitude": [ { "rawweighting": 65535, "value": -0.0625 } ]
+            }"#,
+        );
+        let mut kinds = HashMap::new();
+        kinds.insert("latitude".to_owned(), ValueKind::Double);
+        kinds.insert("longitude".to_owned(), ValueKind::Double);
+
+        let mut data = IpIntelligenceDataBase::new(ENGINE_KEY);
+        populate_from_aspect(&mut data, &map, &kinds);
+
+        assert_eq!(*data.float("Latitude").value().unwrap(), 18.543_f32);
+        assert_eq!(*data.float("Longitude").value().unwrap(), -0.063_f32);
+        assert_eq!(data.get("Latitude").unwrap(), PropertyValue::Float(18.543));
     }
 
     #[test]

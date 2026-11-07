@@ -31,7 +31,7 @@ spin = ["dep:spin-sdk"]
 tokio = ["dep:tokio-util"]
 
 [dependencies]
-fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core", optional = true }
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core", optional = true }
 # A current insertion-ordered hash map. Moving an entry to the back on access
 # and popping from the front gives least-recently-used eviction per shard.
 hashlink = "0.10"

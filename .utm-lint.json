@@ -4,6 +4,7 @@
     "/vendor/"
   ],
   "allowUntagged": [
-    "(^|/)Cargo\\.toml$"
+    "(^|/)Cargo\\.toml$",
+    "^device-detection-robots-txt/src/notice\\.rs$"
   ]
 }

@@ -204,7 +204,20 @@ pub struct ConfigDeviceDetection {
     pub b: ConfigBase,
     /// True if the matched user agent characters should be recorded.
     pub update_matched_user_agent: bool,
-    /// Number of characters to consider in the matched user agent.
+    /// The limit, in bytes, on the length of each header value that detection
+    /// uses. Despite the name it applies to every header and every
+    /// pseudo-header, not only the User-Agent, and a pseudo-header counts one
+    /// separator byte between each of the values it joins. A value longer
+    /// than the limit is ignored with no error, and detection moves on to the
+    /// next header.
+    ///
+    /// The predefined configurations set 500 bytes, the C library's default.
+    /// The reason for that default is given where [the default is defined]
+    /// and in the C library's [header length limit] documentation, which
+    /// also gives the memory a larger limit costs.
+    ///
+    /// [the default is defined]: https://github.com/51Degrees/51degrees-cxx/blob/e866f6d3cea936587790f87967eff7863778b30e/src/dd/config-dd.h#L100-L106
+    /// [header length limit]: https://github.com/51Degrees/51degrees-cxx/blob/e866f6d3cea936587790f87967eff7863778b30e/docs/dd/README.md#header-length-limit
     pub max_matched_user_agent_length: usize,
     /// True if a result with no matched node should still be considered valid.
     pub allow_unmatched: bool,
@@ -613,6 +626,38 @@ extern "C" {
         length: usize,
     ) -> usize;
 
+    /// Writes the date the data file was published, from its header, into
+    /// `*year`, `*month` and `*day` and returns 1, or 0 when no data set is
+    /// available.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. Each output pointer must
+    /// be null or point to a writable `i32`.
+    pub fn fiftyoneDegreesShimHashGetDataSetPublished(
+        manager: *mut ResourceManager,
+        year: *mut i32,
+        month: *mut i32,
+        day: *mut i32,
+    ) -> c_int;
+
+    /// Writes the date the next data file is expected, from the data file
+    /// header, into `*year`, `*month` and `*day` and returns 1, or 0 when no
+    /// data set is available.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. Each output pointer must
+    /// be null or point to a writable `i32`.
+    pub fn fiftyoneDegreesShimHashGetDataSetNextUpdate(
+        manager: *mut ResourceManager,
+        year: *mut i32,
+        month: *mut i32,
+        day: *mut i32,
+    ) -> c_int;
+
+    /// Returns the size of a Hash data file's header in bytes, being how much
+    /// of a data file the C library compares to find a copy of it to reuse.
+    pub fn fiftyoneDegreesShimHashGetHeaderSize() -> usize;
+
     /// Reads the match metrics of the results into the output pointers and
     /// returns 1, or returns 0 when `results` is null or a graph cannot be
     /// walked. Any graph not yet walked is walked first, as the walks set the
@@ -690,6 +735,258 @@ extern "C" {
     /// # Safety
     /// `manager` must be an initialized Hash manager.
     pub fn fiftyoneDegreesShimHashGetFileHandleCount(manager: *mut ResourceManager) -> u16;
+
+    /// Returns the number of handles to the data file that the data set
+    /// managed by `manager` opened when it loaded, which stay open until the
+    /// data set is freed. Every configuration that does not load the whole
+    /// file into memory opens one for each concurrent operation it expects,
+    /// even when all of its collections are then held in memory. See
+    /// `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager.
+    pub fn fiftyoneDegreesShimHashGetFilePoolSize(manager: *mut ResourceManager) -> u16;
+}
+
+// ---------------------------------------------------------------------------
+// Data file metadata shim (src/shim.c)
+// ---------------------------------------------------------------------------
+
+/// A string value. The `FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_` constants are
+/// the C library's `fiftyoneDegreesPropertyValueType` values
+/// (`src/common/propertyValueType.h`) the C++ `PropertyMetaDataBuilderHash`
+/// names, for the `value_type`
+/// [`fiftyoneDegreesShimHashGetDataFileProperty`] gives.
+pub const FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_STRING: u8 = 0;
+/// An integer value.
+pub const FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_INTEGER: u8 = 1;
+/// A double value.
+pub const FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_DOUBLE: u8 = 2;
+/// A boolean value.
+pub const FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_BOOLEAN: u8 = 3;
+/// A JavaScript value.
+pub const FIFTYONE_DEGREES_PROPERTY_VALUE_TYPE_JAVASCRIPT: u8 = 4;
+
+/// The name of a data file property, for
+/// [`fiftyoneDegreesShimHashGetDataFilePropertyString`].
+pub const SHIM_PROPERTY_NAME: c_int = 0;
+/// The description of a data file property.
+pub const SHIM_PROPERTY_DESCRIPTION: c_int = 1;
+/// The category of a data file property.
+pub const SHIM_PROPERTY_CATEGORY: c_int = 2;
+/// The URL of a data file property.
+pub const SHIM_PROPERTY_URL: c_int = 3;
+
+/// The name of a property value, the first of its strings
+/// [`fiftyoneDegreesShimHashGetDataFilePropertyValues`] gives.
+pub const SHIM_VALUE_NAME: c_int = 0;
+/// The description of a property value, given after its name.
+pub const SHIM_VALUE_DESCRIPTION: c_int = 1;
+/// The URL of a property value, given after its description.
+pub const SHIM_VALUE_URL: c_int = 2;
+
+/// Takes one string of a property value from
+/// [`fiftyoneDegreesShimHashGetDataFilePropertyValues`]. `field` is one of the
+/// `SHIM_VALUE_` constants and `value` a null terminated string valid only
+/// for the call. `context` is the pointer the caller passed.
+pub type ShimValueStringCallback =
+    unsafe extern "C" fn(context: *mut c_void, field: c_int, value: *const c_char);
+
+/// Returned by the data file metadata string readers when the string, or the
+/// property, value or component it belongs to, cannot be read, or an index
+/// is out of range. An absent string gives zero instead.
+pub const SHIM_STRING_FAILED: usize = usize::MAX;
+
+/// Returned by [`fiftyoneDegreesShimHashFindDataFilePropertyValue`] when the
+/// property or the value cannot be read, or the property index is out of
+/// range.
+pub const SHIM_FIND_FAILED: c_int = 0;
+/// Returned by [`fiftyoneDegreesShimHashFindDataFilePropertyValue`] when it
+/// found the value and gave its strings.
+pub const SHIM_FIND_FOUND: c_int = 1;
+/// Returned by [`fiftyoneDegreesShimHashFindDataFilePropertyValue`] when the
+/// property has no value with the name.
+pub const SHIM_FIND_NOT_FOUND: c_int = 2;
+
+extern "C" {
+    /// Returns the number of properties the data file defines, including
+    /// those the data set was not created with, or zero when no data set is
+    /// available. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager.
+    pub fn fiftyoneDegreesShimHashGetDataFilePropertyCount(manager: *mut ResourceManager) -> u32;
+
+    /// Reads the fields of the data file property at `property_index` that
+    /// are not strings and returns 1, or returns 0 when the index is out of
+    /// range or the property or its name cannot be read, the name being read
+    /// to find whether the data set was created with the property.
+    /// `value_type` is the C library's property value type, `available` is 1
+    /// when the data set was created with the property, `required_index` is
+    /// the index the results getters take for it or -1 for none,
+    /// `component_id` is the id of the property's component or 0 for none,
+    /// `value_count` is the number of values the file holds for the property
+    /// or 0 when they are not all in its values collection,
+    /// `default_value_number` the place of its default value among them or -1
+    /// for none, and `map_count` the number of data tiers it is in. See
+    /// `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. Every output pointer
+    /// must be writable.
+    pub fn fiftyoneDegreesShimHashGetDataFileProperty(
+        manager: *mut ResourceManager,
+        property_index: u32,
+        value_type: *mut u8,
+        available: *mut u8,
+        required_index: *mut i32,
+        component_id: *mut u8,
+        display_order: *mut u8,
+        is_mandatory: *mut u8,
+        is_list: *mut u8,
+        is_obsolete: *mut u8,
+        show: *mut u8,
+        show_values: *mut u8,
+        value_count: *mut u32,
+        default_value_number: *mut i32,
+        map_count: *mut u32,
+    ) -> c_int;
+
+    /// Writes the string `field` of the data file property at
+    /// `property_index`, one of the `SHIM_PROPERTY_` constants, into `buffer`
+    /// as a null terminated string, as much as fits, and returns the
+    /// string's full length excluding the terminator. An absent string is
+    /// written as empty, with length zero, and one that cannot be read gives
+    /// [`SHIM_STRING_FAILED`]. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. `buffer` must point to
+    /// `length` writable bytes.
+    pub fn fiftyoneDegreesShimHashGetDataFilePropertyString(
+        manager: *mut ResourceManager,
+        property_index: u32,
+        field: c_int,
+        buffer: *mut c_char,
+        length: usize,
+    ) -> usize;
+
+    /// Writes the name of the data tier at `map_index` among those the data
+    /// file property at `property_index` is in into `buffer`, as much as
+    /// fits, and returns its full length, or [`SHIM_STRING_FAILED`] when either
+    /// index is out of range or the name cannot be read. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. `buffer` must point to
+    /// `length` writable bytes.
+    pub fn fiftyoneDegreesShimHashGetDataFilePropertyMap(
+        manager: *mut ResourceManager,
+        property_index: u32,
+        map_index: u32,
+        buffer: *mut c_char,
+        length: usize,
+    ) -> usize;
+
+    /// Reads at most `count` of the values the data file holds for the
+    /// property at `property_index`, from the one at `value_number` among
+    /// them, and returns 1. For each value it calls `callback` with `context`
+    /// three times, with its name, description and URL in that order, an
+    /// absent description or URL being empty. A `value_number` at or past the
+    /// last value reads none. Returns 0 when the property index is out of
+    /// range or the property, a value or a string cannot be read, after
+    /// giving `callback` the strings read before the failure. See
+    /// `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager, and `context` must be
+    /// what `callback` expects.
+    pub fn fiftyoneDegreesShimHashGetDataFilePropertyValues(
+        manager: *mut ResourceManager,
+        property_index: u32,
+        value_number: u32,
+        count: u32,
+        callback: ShimValueStringCallback,
+        context: *mut c_void,
+    ) -> c_int;
+
+    /// Finds the value named `name`, matched exactly, among those the data
+    /// file holds for the property at `property_index`, calls `callback` with
+    /// its name, description and URL as
+    /// [`fiftyoneDegreesShimHashGetDataFilePropertyValues`] does, and returns
+    /// [`SHIM_FIND_FOUND`]. Returns [`SHIM_FIND_NOT_FOUND`] when the property
+    /// has no such value, or [`SHIM_FIND_FAILED`] when the property index is
+    /// out of range or the property, a value or a string cannot be read. The
+    /// value is found by the C library's binary search over the property's
+    /// values, which are in order of their names, so a value the data file
+    /// holds out of that order can be missed. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager, `name` a null
+    /// terminated string, and `context` what `callback` expects.
+    pub fn fiftyoneDegreesShimHashFindDataFilePropertyValue(
+        manager: *mut ResourceManager,
+        property_index: u32,
+        name: *const c_char,
+        callback: ShimValueStringCallback,
+        context: *mut c_void,
+    ) -> c_int;
+
+    /// Returns the number of components the data set lists, or zero when no
+    /// data set is available. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager.
+    pub fn fiftyoneDegreesShimHashGetComponentCount(manager: *mut ResourceManager) -> u32;
+
+    /// Reads the id of the component at `component_index` and the profile id
+    /// of its default profile and returns 1, or returns 0 when the index is
+    /// out of range or the default profile cannot be read. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. Both output pointers
+    /// must be writable.
+    pub fn fiftyoneDegreesShimHashGetComponent(
+        manager: *mut ResourceManager,
+        component_index: u32,
+        component_id: *mut u8,
+        default_profile_id: *mut u32,
+    ) -> c_int;
+
+    /// Writes the name of the component at `component_index` into `buffer`,
+    /// as much as fits, and returns its full length, or [`SHIM_STRING_FAILED`]
+    /// when the index is out of range or the name cannot be read. See
+    /// `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. `buffer` must point to
+    /// `length` writable bytes.
+    pub fn fiftyoneDegreesShimHashGetComponentName(
+        manager: *mut ResourceManager,
+        component_index: u32,
+        buffer: *mut c_char,
+        length: usize,
+    ) -> usize;
+
+    /// Returns the number of profiles the data file holds, or zero when no
+    /// data set is available. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager.
+    pub fn fiftyoneDegreesShimHashGetProfileCount(manager: *mut ResourceManager) -> u32;
+
+    /// Reads the id of the profile at `profile_index`, in order of profile
+    /// id, and the id of its component and returns 1, or returns 0 when the
+    /// index is out of range or the profile cannot be read. See
+    /// `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. Both output pointers
+    /// must be writable.
+    pub fn fiftyoneDegreesShimHashGetProfile(
+        manager: *mut ResourceManager,
+        profile_index: u32,
+        profile_id: *mut u32,
+        component_id: *mut u8,
+    ) -> c_int;
 }
 
 #[cfg(test)]

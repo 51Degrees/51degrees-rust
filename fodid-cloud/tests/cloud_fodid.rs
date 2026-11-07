@@ -20,7 +20,7 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! End-to-end tests for the cloud 51Degrees-identifier (51Did / FODid) engine.
+//! End-to-end tests for the cloud 51Did engine.
 //!
 //! These drive a real pipeline (cloud request engine followed by the identifier
 //! cloud engine) against a fake HTTP transport, so no network is touched. A
@@ -288,6 +288,70 @@ fn response_without_fodid_block_yields_empty_data() {
         .expect("identifier data is present even when empty");
     assert!(!fodid.id_prob_global().has_value());
     assert!(!fodid.id_prob_lic().has_value());
+}
+
+/// A transport whose data endpoint fails, as in a cloud outage.
+struct DataDownCloud;
+
+impl CloudHttpClient for DataDownCloud {
+    fn send(&self, request: &CloudHttpRequest) -> Result<CloudHttpResponse, String> {
+        let (status, body) = if request.url.contains("accessibleproperties") {
+            (200, ACCESSIBLE_PROPERTIES.to_owned())
+        } else if request.url.contains("evidencekeys") {
+            (200, EVIDENCE_KEYS.to_owned())
+        } else {
+            (500, r#"{"errors":["the service failed"]}"#.to_owned())
+        };
+        Ok(CloudHttpResponse {
+            status,
+            body,
+            retry_after: None,
+        })
+    }
+}
+
+/// When the cloud request fails, the 51Did engine records that it did not
+/// process, without failing processing, as .NET's cloud aspect engines do,
+/// and still gives empty identifier data.
+#[test]
+fn a_failed_request_records_that_the_51did_engine_did_not_process() {
+    let request_engine = Arc::new(
+        CloudRequestEngine::builder()
+            .resource_key("test-resource-key")
+            .http_client(Arc::new(DataDownCloud))
+            .build()
+            .expect("request engine builds"),
+    );
+    let fodid_engine = FodIdCloudEngine::builder()
+        .cloud_request_engine(request_engine.clone())
+        .build()
+        .expect("identifier engine builds");
+    let pipeline = Pipeline::builder()
+        .add_element(request_engine)
+        .add_element(Arc::new(fodid_engine))
+        .suppress_process_exceptions(true)
+        .build()
+        .expect("pipeline builds");
+    let mut data = pipeline.create_flow_data_with(sample_evidence());
+    data.process().expect("errors are suppressed");
+
+    let recorded: Vec<(&str, bool)> = data
+        .errors()
+        .iter()
+        .map(|error| (error.element_data_key.as_str(), error.should_throw))
+        .collect();
+    assert_eq!(recorded, vec![("cloud-response", true), ("fodid", false)]);
+    assert_eq!(
+        data.errors()[1].source.to_string(),
+        "pipeline error: The 'FodIdCloudEngine' did not process because the JSON \
+         response from the CloudRequestEngine was null or empty. This indicates \
+         that the cloud request failed."
+    );
+    let fodid = data
+        .get(FODID_DATA_KEY)
+        .expect("identifier data is present after a failed request");
+    assert!(!fodid.id_prob_global().has_value());
+    assert!(!fodid.base().cloud_request_failed());
 }
 
 /// The flags byte of a random 51Did created for non-marketing use. Bits 6 and

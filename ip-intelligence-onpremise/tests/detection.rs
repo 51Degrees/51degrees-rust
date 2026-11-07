@@ -50,7 +50,7 @@ use fiftyone_ip_intelligence_onpremise::{
 use fiftyone_ip_intelligence_shared::{generated_property_names, GENERATED_PROPERTY_TYPES};
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{ElementData, Evidence, FlowElement, Pipeline, PropertyValueType};
-use fiftyone_pipeline_engines::{AspectEngine, OnPremiseAspectEngine};
+use fiftyone_pipeline_engines::{AspectEngine, MissingPropertyReason, OnPremiseAspectEngine};
 
 /// Cloudflare's public DNS resolver. It maps to autonomous system AS13335 in
 /// every IP Intelligence tier, so it is a stable lookup target for assertions.
@@ -368,8 +368,7 @@ fn every_present_property_unpacks_as_its_declared_type() {
             let unpacks = match declared {
                 PropertyValueType::Bool => ip_data.boolean(name).value().is_ok(),
                 PropertyValueType::Integer => ip_data.integer(name).value().is_ok(),
-                // Single-precision floats are published as Double but read as f32.
-                PropertyValueType::Double => ip_data.float(name).value().is_ok(),
+                PropertyValueType::Float => ip_data.float(name).value().is_ok(),
                 // The weighted properties are published as a key-value list.
                 PropertyValueType::KeyValueList => ip_data.weighted_string(name).value().is_ok(),
                 _ => ip_data.string(name).value().is_ok(),
@@ -463,5 +462,201 @@ fn enterprise_resolves_location_for_a_public_ip() {
             "weighting {weighting} for '{}' should be in (0, 1]",
             candidate.value
         );
+    }
+}
+
+/// A property the engine was not built with, but that `IpIntelligenceData`
+/// has an accessor for, is not in the engine's metadata, so the
+/// specification's typed accessor rule gives a data file upgrade and the
+/// message leaves out the tier sentence. The rule counts the accessors of the
+/// shared `IpIntelligenceData`.
+#[test]
+fn an_unlisted_property_with_an_accessor_needs_a_data_file_upgrade() {
+    let Some(file) = asn_data_file() else {
+        eprintln!("no ASN data file found; skipping missing property test");
+        return;
+    };
+    let Some(engine) = build_engine(&file, PerformanceProfile::HighPerformance, ASN_PROPERTIES)
+    else {
+        return;
+    };
+
+    let result = engine.missing_property_reason("CountryCode");
+
+    assert_eq!(
+        result.reason,
+        MissingPropertyReason::DataFileUpgradeRequired
+    );
+    assert!(
+        result.description.starts_with(
+            "Property 'CountryCode' not found in data for element 'ip'. This is because \
+             your license or data file does not include this property. To see which \
+             licenses include it, see "
+        ),
+        "{}",
+        result.description
+    );
+}
+
+/// A name no engine knows gives .NET's unknown reason and text.
+#[test]
+fn an_unknown_property_has_an_unknown_reason() {
+    let Some(file) = asn_data_file() else {
+        eprintln!("no ASN data file found; skipping missing property test");
+        return;
+    };
+    let Some(engine) = build_engine(&file, PerformanceProfile::HighPerformance, ASN_PROPERTIES)
+    else {
+        return;
+    };
+
+    let result = engine.missing_property_reason("NotAProperty");
+
+    assert_eq!(result.reason, MissingPropertyReason::Unknown);
+    assert_eq!(
+        result.description,
+        "Property 'NotAProperty' not found in data for element 'ip'. The reason for this \
+         is unknown. Please check that the aspect and property name are correct."
+    );
+}
+
+/// IP data from an engine restricted to the ASN properties gives the same
+/// reason as `engine.missing_property_reason` for each property it does not
+/// hold, through its typed accessors and by name. .NET throws a
+/// `PropertyMissingException` instead, and gives `Unknown` for `CountryCode`,
+/// because `IIpDataOnPremise` declares no properties of its own.
+#[test]
+fn ip_data_gives_the_engine_reason_for_a_missing_property() {
+    let Some(file) = asn_data_file() else {
+        eprintln!("no ASN data file found; skipping missing property test");
+        return;
+    };
+    let Some(engine) = build_engine(&file, PerformanceProfile::HighPerformance, ASN_PROPERTIES)
+    else {
+        return;
+    };
+
+    let ip_data = lookup(Arc::clone(&engine), CLOUDFLARE_IPV4);
+
+    assert!(ip_data.asn().has_value());
+    let country_code = engine.missing_property_reason("CountryCode");
+    assert_eq!(
+        country_code.reason,
+        MissingPropertyReason::DataFileUpgradeRequired
+    );
+    assert_eq!(
+        ip_data.country_code().no_value_message(),
+        Some(country_code.description.as_str())
+    );
+    for name in ["CountryCode", "NotAProperty"] {
+        let expected = engine.missing_property_reason(name).description;
+        assert_eq!(ip_data.get(name).unwrap_err().message, expected, "{name}");
+        assert_eq!(
+            ip_data.string(name).no_value_message(),
+            Some(expected.as_str()),
+            "{name}"
+        );
+    }
+}
+
+/// The ASN file's name.
+const ASN_FILE_NAME: &str = "51Degrees-IPIV4AsnIpiV41.ipi";
+
+/// The start of the message for `CountryCode` when the data file lacks it.
+/// No tier follows, because the data file names none for it.
+const COUNTRY_CODE_UPGRADE: &str = "Property 'CountryCode' not found in data for \
+    element 'ip'. This is because your license or data file does not include this \
+    property. To see which licenses include it, see ";
+
+/// The engine lists only the properties the ASN file defines, so
+/// `CountryCode`, which it lacks, is not listed. `IpIntelligenceData` has a
+/// typed accessor for it, so the reason is a data file upgrade, naming no
+/// tier.
+#[test]
+fn a_typed_property_the_asn_file_lacks_names_no_tier() {
+    let Some(file) = asn_data_file() else {
+        eprintln!("no ASN data file found; skipping missing property test");
+        return;
+    };
+    let engine = build_engine(&file, PerformanceProfile::HighPerformance, &[])
+        .expect("the ASN data file builds an engine");
+    if engine
+        .aspect_properties()
+        .iter()
+        .any(|p| p.name() == "CountryCode")
+    {
+        eprintln!(
+            "{} holds CountryCode, so it is not the ASN file; skipping",
+            file.display()
+        );
+        return;
+    }
+
+    let result = engine.missing_property_reason("CountryCode");
+
+    assert_eq!(
+        result.reason,
+        MissingPropertyReason::DataFileUpgradeRequired
+    );
+    assert!(
+        result.description.starts_with(COUNTRY_CODE_UPGRADE),
+        "{}",
+        result.description
+    );
+    assert!(
+        !result.description.contains("license/data"),
+        "{}",
+        result.description
+    );
+}
+
+/// IP data from an engine on the ASN file, which holds no `CountryCode`,
+/// gives the engine's reason for `CountryCode`, naming no tier, through its
+/// typed accessor and by name, whether or not the engine was built with it
+/// named. A name the data file lacks is neither listed nor read.
+#[test]
+fn ip_data_names_no_tier_for_a_property_the_asn_file_lacks() {
+    let Some(file) = asn_data_file() else {
+        eprintln!("no ASN data file found; skipping missing property test");
+        return;
+    };
+    if file.file_name().and_then(|name| name.to_str()) != Some(ASN_FILE_NAME) {
+        eprintln!("{} is not the ASN file; skipping", file.display());
+        return;
+    }
+    let names: [&[&str]; 2] = [&[], &["Asn", "AsnName", "CountryCode"]];
+    for properties in names {
+        let engine = build_engine(&file, PerformanceProfile::HighPerformance, properties)
+            .expect("the ASN file builds an engine");
+        assert!(
+            !engine
+                .aspect_properties()
+                .iter()
+                .any(|p| p.name() == "CountryCode"),
+            "{properties:?}: the engine lists only the data file's properties"
+        );
+        assert_eq!(
+            engine.populated_property_names(),
+            ["Asn", "AsnName"],
+            "{properties:?}"
+        );
+        let expected = engine.missing_property_reason("CountryCode");
+        assert_eq!(
+            expected.reason,
+            MissingPropertyReason::DataFileUpgradeRequired,
+            "{properties:?}"
+        );
+        let ip_data = lookup(Arc::clone(&engine), CLOUDFLARE_IPV4);
+
+        assert!(ip_data.asn().has_value(), "{properties:?}");
+        let typed = ip_data
+            .country_code()
+            .no_value_message()
+            .expect("the ASN file holds no CountryCode")
+            .to_owned();
+        let by_name = ip_data.get("CountryCode").unwrap_err().message;
+        assert_eq!(typed, expected.description, "{properties:?}");
+        assert_eq!(by_name, expected.description, "{properties:?}");
+        assert!(!typed.contains("license/data"), "{properties:?}: {typed}");
     }
 }

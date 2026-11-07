@@ -23,7 +23,8 @@ core            fiftyone-pipeline-core, fiftyone-caching
 engines         fiftyone-pipeline-engines
   |             fiftyone-pipeline-engines-fiftyone
   |             fiftyone-cloud-request-engine
-  |             fiftyone-derived-properties
+  |             fiftyone-derived-properties, fiftyone-agent-signature
+  |             fiftyone-pipeline-translation
   |             fiftyone-json-builder, fiftyone-javascript-builder
   |
 sys / native    fiftyone-common-sys
@@ -32,6 +33,8 @@ sys / native    fiftyone-common-sys
   |
 products        device-detection-{shared,onpremise,cloud}
   |             ip-intelligence-{shared,onpremise,cloud}
+  |             fiftyone-ip-intelligence-translation
+  |             fiftyone-device-detection-robots-txt
   |
 facades         fiftyone-device-detection, fiftyone-ip-intelligence
   |
@@ -53,17 +56,31 @@ examples        examples-shared, device-detection-examples,
   target the platform runs.
 - **engines** (`fiftyone-pipeline-engines`,
   `fiftyone-pipeline-engines-fiftyone`, `fiftyone-cloud-request-engine`,
-  `fiftyone-derived-properties`, `fiftyone-json-builder`,
+  `fiftyone-derived-properties`, `fiftyone-agent-signature`,
+  `fiftyone-pipeline-translation`, `fiftyone-json-builder`,
   `fiftyone-javascript-builder`). The aspect-engine layer, the
   51Degrees-specific elements (ShareUsage, SetHeaders, Sequence and the
-  metadata model), the cloud request engine, the derived property element and
-  the JSON and JavaScript builder elements.
+  metadata model), the cloud request engine, the derived property element,
+  the agent signature element, the translation engine and the JSON and
+  JavaScript builder elements.
 
   `fiftyone-derived-properties` computes one property from properties earlier
   elements have already produced, following a shared script format that every
   language implementation reads, so one script gives the same answer
   everywhere. The scripts are compiled in rather than read from disk, because
   the element has to run where there is no filesystem.
+
+  `fiftyone-agent-signature` checks the HTTP Message Signature an automated
+  agent sends under the IETF Web Bot Auth protocol, against the key the agent
+  publishes. The address of that key is chosen by whoever sent the request,
+  so each key directory is fetched once on a thread of its own, held in a
+  bounded cache, and waited on for at most a short budget, after which the
+  request reports Timeout and the fetch carries on.
+
+  `fiftyone-pipeline-translation` translates the values another element
+  produced into the language the request asks for, from YAML sources of
+  `value: translation` lines. Engines that share its data key write to the
+  same data, so one engine can translate what another wrote.
 - **sys / native FFI** (`fiftyone-common-sys`,
   `fiftyone-device-detection-sys`, `fiftyone-ip-intelligence-sys`,
   `fiftyone-native`). Raw `extern "C"` bindings to the native common,
@@ -75,6 +92,20 @@ examples        examples-shared, device-detection-examples,
   for both device-detection and ip-intelligence). The product data traits with
   typed and weighted accessors, the on-premise engines over `fiftyone-native`,
   and the cloud engines that map cloud JSON to the data traits.
+
+  `fiftyone-ip-intelligence-translation` sits beside them, built on
+  `fiftyone-pipeline-translation`. Its two engines read the country codes IP
+  Intelligence gives and turn them into country names in the language the
+  request asks for, with every other country in that language's order. It
+  needs only the IP Intelligence data key from
+  `fiftyone-ip-intelligence-shared`, so it has no native code and builds for
+  WebAssembly.
+
+  `fiftyone-device-detection-robots-txt` sits beside them too. When it is
+  added to a pipeline it reads every crawler from the data set of the
+  on-premise Device Detection engine before it, through `fiftyone-native`,
+  and then writes a robots.txt for each request from the usages the request
+  allows, so it is on-premise only.
 - **facades** (`fiftyone-device-detection`, `fiftyone-ip-intelligence`).
   Re-exports plus a builder that selects the cloud or on-premise deployment.
   Both populate the same data type under the same key, so swapping deployment
@@ -92,7 +123,11 @@ examples        examples-shared, device-detection-examples,
   that the 51Degrees web docs are generated from.
 
 The `fodid` crate (a 51Did/OWID reader) sits alongside this stack and is
-independent of it.
+independent of it. `fiftyone-fodid-core` puts the 51Did element data, property
+names, metadata and the `FodIdEngine` trait on the engines layer, with no cloud
+request engine, so any engine producing 51Dids can be built on it.
+`fiftyone-fodid-cloud` is the cloud engine that implements that trait and fills
+that data from the cloud response, and re-exports it.
 
 ## Feature gating
 

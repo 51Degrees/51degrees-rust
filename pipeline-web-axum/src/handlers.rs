@@ -30,23 +30,25 @@
 //!   client-side callback's `application/x-www-form-urlencoded` evidence, which
 //!   is folded into the `query.` evidence prefix.
 //!
-//! Both handlers run pipeline processing off the async runtime through
-//! [`crate::process::process_request`], then hand the processed flow data to the
-//! framework-neutral [`serve_javascript`] / [`serve_json`] functions and map the
-//! resulting [`fiftyone_pipeline_web::WebResponse`] onto an axum response,
-//! including the `If-None-Match` -> `304 Not Modified` short circuit those
-//! functions implement.
+//! Both handlers process the pipeline and call the framework-neutral
+//! [`serve_javascript`] / [`serve_json`] functions in one task on the blocking
+//! thread pool, through [`crate::process::process_then`], because when a
+//! builder left no data, serving builds the body again, which for the script
+//! means rendering and minifying it. The resulting
+//! [`fiftyone_pipeline_web::WebResponse`] is mapped onto an axum response,
+//! including the `If-None-Match` short circuit those functions implement,
+//! being `304 Not Modified` for the JavaScript endpoint's `GET` (or `HEAD`)
+//! and `412 Precondition Failed` for the JSON endpoint's `POST`.
 
 use std::net::SocketAddr;
 
 use axum::body::{to_bytes, Body};
 use axum::extract::{ConnectInfo, State};
-use axum::http::{HeaderMap, Request, StatusCode, Uri};
+use axum::http::{Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use fiftyone_pipeline_web::{serve_javascript, serve_json};
 
-use crate::process::{process_request, CapturedRequest};
-use crate::request::AxumRequestData;
+use crate::process::{process_then, sent_uri, CapturedRequest};
 use crate::response::into_axum_response;
 use crate::state::FiftyOneState;
 
@@ -85,7 +87,8 @@ pub async fn javascript_handler(
 /// Buffers the form body (bounded by `MAX_BODY_BYTES`), builds evidence
 /// including the form fields, processes the pipeline off the runtime and returns
 /// the generated JSON with the shared caching/CORS headers. A matching
-/// `If-None-Match` yields `304 Not Modified`.
+/// `If-None-Match` yields `412 Precondition Failed`, because RFC 9110 section
+/// 13.1.2 gives a `304` only to `GET` and `HEAD`.
 pub async fn json_handler(State(state): State<FiftyOneState>, request: Request<Body>) -> Response {
     // Split the body off so it can be buffered before the rest is captured.
     let (parts, body) = request.into_parts();
@@ -103,77 +106,44 @@ pub async fn json_handler(State(state): State<FiftyOneState>, request: Request<B
     serve(state, request, body_bytes, Endpoint::Json).await
 }
 
-/// Shared body of both handlers: capture the request, process it off the
-/// runtime, then serve the chosen endpoint and map to an axum response.
+/// Shared body of both handlers: capture the request, process it and serve the
+/// chosen endpoint on the blocking thread pool, then map to an axum response.
 async fn serve(
     state: FiftyOneState,
     request: Request<Body>,
     body: Vec<u8>,
     endpoint: Endpoint,
 ) -> Response {
-    let owner = RequestParts::capture(&request);
-
+    let (parts, _) = request.into_parts();
+    let peer_addr = parts
+        .extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|connect_info| connect_info.0);
     let captured = CapturedRequest {
-        headers: owner.headers.clone(),
-        uri: owner.uri.clone(),
+        headers: parts.headers,
+        uri: sent_uri(&parts.extensions, parts.uri),
         body,
-        peer_addr: owner.peer_addr,
+        peer_addr,
     };
 
-    let flow_data = match process_request(&state, captured).await {
-        Ok(flow_data) => flow_data,
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "51Degrees pipeline processing failed",
-            )
-                .into_response()
-        }
-    };
-
-    // The serve_* functions re-read the conditional and Origin headers from the
-    // request, so build a fresh request view over the retained parts.
-    let request_view = owner.as_request();
     let options = state.endpoint_options();
-    let web_response = match endpoint {
-        Endpoint::JavaScript => serve_javascript(&flow_data, &request_view, &options),
-        Endpoint::Json => serve_json(&flow_data, &request_view, &options),
-    };
-    into_axum_response(web_response)
-}
+    let served = process_then(
+        &state,
+        captured,
+        Some(parts.method),
+        move |flow_data, request| match endpoint {
+            Endpoint::JavaScript => serve_javascript(&flow_data, request, &options),
+            Endpoint::Json => serve_json(&flow_data, request, &options),
+        },
+    )
+    .await;
 
-/// The request parts kept alive for the response phase.
-///
-/// The captured [`CapturedRequest`] moves into the blocking processing task, so
-/// a copy of the header map, URI and peer address is retained here to rebuild an
-/// [`AxumRequestData`] for [`serve_javascript`] / [`serve_json`], which read the
-/// conditional and `Origin` headers after processing.
-struct RequestParts {
-    headers: HeaderMap,
-    uri: Uri,
-    peer_addr: Option<SocketAddr>,
-}
-
-impl RequestParts {
-    /// Capture the header map, URI and peer address from a request.
-    fn capture(request: &Request<Body>) -> Self {
-        let peer_addr = request
-            .extensions()
-            .get::<ConnectInfo<SocketAddr>>()
-            .map(|connect_info| connect_info.0);
-        RequestParts {
-            headers: request.headers().clone(),
-            uri: request.uri().clone(),
-            peer_addr,
-        }
-    }
-
-    /// Build a borrowed request view for the response phase.
-    fn as_request(&self) -> AxumRequestData<'_> {
-        let mut request = AxumRequestData::new(&self.headers, &self.uri);
-        if let Some(addr) = self.peer_addr {
-            request = request.with_peer_addr(addr);
-        }
-        request
+    match served {
+        Ok(web_response) => into_axum_response(web_response),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "51Degrees pipeline processing failed",
+        )
+            .into_response(),
     }
 }

@@ -33,7 +33,7 @@ use fiftyone_device_detection_onpremise::DeviceDetectionOnPremiseEngineBuilder;
 use fiftyone_device_detection_shared::{DeviceData, DEVICE_DATA_KEY, GENERATED_PROPERTY_TYPES};
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{ElementData, Evidence, FlowElement, Pipeline, PropertyValueType};
-use fiftyone_pipeline_engines::{AspectEngine, OnPremiseAspectEngine};
+use fiftyone_pipeline_engines::{AspectEngine, MissingPropertyReason, OnPremiseAspectEngine};
 
 /// A representative desktop Chrome on Windows User-Agent.
 const DESKTOP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
@@ -330,7 +330,7 @@ fn metadata_is_published() {
         .evidence_key_filter()
         .include("header.sec-ch-ua-mobile"));
 
-    // The published date is recorded from the data file on disk.
+    // The published date is recorded from the data file header.
     assert!(
         engine.data_file_published().is_some(),
         "the data-file publish time should be recorded"
@@ -529,5 +529,163 @@ fn every_present_property_unpacks_as_its_declared_type() {
     assert!(
         present_count > 0,
         "expected at least some properties to resolve for the sample user agents"
+    );
+}
+
+/// The start of the message for a property the data file lacks and whose
+/// tiers are not known, before the pricing link.
+const UPGRADE_MESSAGE: &str = "Property 'HardwareVendor' not found in data for element \
+    'device'. This is because your license or data file does not include this property. \
+    To see which licenses include it, see ";
+
+/// A property the data file does not hold, but that `DeviceData` has an
+/// accessor for, needs a data file upgrade by the specification's typed
+/// accessor rule, which counts the accessors of the shared `DeviceData`. The
+/// file's metadata does not list the property, so the message leaves out the
+/// tier sentence.
+#[test]
+fn a_property_the_data_file_lacks_needs_a_data_file_upgrade() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no on-premise Hash data file found; skipping missing property test");
+        return;
+    };
+    if engine
+        .properties()
+        .iter()
+        .any(|p| p.name == "HardwareVendor")
+    {
+        eprintln!("the configured data file holds HardwareVendor; skipping");
+        return;
+    }
+
+    let result = engine.missing_property_reason("HardwareVendor");
+
+    assert_eq!(
+        result.reason,
+        MissingPropertyReason::DataFileUpgradeRequired
+    );
+    assert!(
+        result.description.starts_with(UPGRADE_MESSAGE),
+        "{}",
+        result.description
+    );
+    assert!(result
+        .description
+        .ends_with("&utm_term=data-upgrade-required."));
+}
+
+/// A name the engine is built with that the data file holds no property for
+/// is not listed, because the metadata lists the data file's own properties.
+/// The typed accessor rule then gives a data file upgrade that names no tier,
+/// rather than the tier the file already has.
+#[test]
+fn a_named_property_the_data_file_lacks_names_no_tier() {
+    let Some(full) = build_engine() else {
+        eprintln!("no on-premise Hash data file found; skipping missing property test");
+        return;
+    };
+    if full.properties().iter().any(|p| p.name == "HardwareVendor") {
+        eprintln!("the configured data file holds HardwareVendor; skipping");
+        return;
+    }
+    drop(full);
+    let data_file = lite_data_file().expect("the data file was found above");
+    let engine = match DeviceDetectionOnPremiseEngineBuilder::new(data_file)
+        .performance_profile(PerformanceProfile::HighPerformance)
+        .properties(["IsMobile", "HardwareVendor"])
+        .build()
+    {
+        Ok(engine) => engine,
+        Err(e) => {
+            eprintln!("the native Hash data set did not load ({e}); skipping");
+            return;
+        }
+    };
+    assert!(
+        !engine
+            .aspect_properties()
+            .iter()
+            .any(|p| p.name() == "HardwareVendor"),
+        "the engine lists only the data file's properties"
+    );
+
+    let result = engine.missing_property_reason("HardwareVendor");
+
+    assert_eq!(
+        result.reason,
+        MissingPropertyReason::DataFileUpgradeRequired
+    );
+    assert!(
+        result.description.starts_with(UPGRADE_MESSAGE),
+        "{}",
+        result.description
+    );
+}
+
+/// A name no engine knows gives .NET's unknown reason and text.
+#[test]
+fn an_unknown_property_has_an_unknown_reason() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no on-premise Hash data file found; skipping missing property test");
+        return;
+    };
+
+    let result = engine.missing_property_reason("NotAProperty");
+
+    assert_eq!(result.reason, MissingPropertyReason::Unknown);
+    assert_eq!(
+        result.description,
+        "Property 'NotAProperty' not found in data for element 'device'. The reason for \
+         this is unknown. Please check that the aspect and property name are correct."
+    );
+}
+
+/// Device data from an engine restricted to IsMobile gives the same reason as
+/// `engine.missing_property_reason` for each property it does not hold,
+/// through its typed accessors and by name. .NET throws a
+/// `PropertyMissingException` instead, and its reason differs for two of
+/// these names. For `BrowserName`, which .NET lists from the file as
+/// unavailable, it gives `PropertyExcludedFromEngineConfiguration`, and for
+/// `HardwareVendor` it gives `Unknown`, because `IDeviceDataHash` declares no
+/// properties of its own.
+#[test]
+fn device_data_gives_the_engine_reason_for_a_missing_property() {
+    let Some(data_file) = lite_data_file() else {
+        eprintln!("no Lite Hash data file found; skipping missing property test");
+        return;
+    };
+    let engine = match DeviceDetectionOnPremiseEngineBuilder::new(data_file)
+        .performance_profile(PerformanceProfile::HighPerformance)
+        .property("IsMobile")
+        .build()
+    {
+        Ok(engine) => engine,
+        Err(e) => {
+            eprintln!("the native Hash data set did not load ({e}); skipping");
+            return;
+        }
+    };
+
+    let device = detect(Arc::clone(&engine), MOBILE_USER_AGENT);
+
+    assert!(*device.is_mobile().value().unwrap());
+    let browser = engine.missing_property_reason("BrowserName");
+    assert_ne!(browser.reason, MissingPropertyReason::Unknown);
+    assert_eq!(
+        device.browser_name().no_value_message(),
+        Some(browser.description.as_str())
+    );
+    for name in ["BrowserName", "HardwareVendor", "NotAProperty"] {
+        let expected = engine.missing_property_reason(name).description;
+        assert_eq!(device.get(name).unwrap_err().message, expected, "{name}");
+        assert_eq!(
+            device.string_property(name).no_value_message(),
+            Some(expected.as_str()),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        engine.missing_property_reason("NotAProperty").reason,
+        MissingPropertyReason::Unknown
     );
 }

@@ -22,14 +22,14 @@
 
 //! [![51Degrees](https://51degrees.com/img/logo.png?utm_source=docs.rs&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=fiftyone-fodid-cloud-lib.rs&utm_term=logo "Data rewards the curious")](https://51degrees.com/?utm_source=docs.rs&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=fiftyone-fodid-cloud-lib.rs&utm_term=logo)
 //!
-//! Cloud engine that unpacks the 51Degrees identifier (51Did / FODid) block from
-//! the cloud JSON response into typed data.
+//! Cloud engine that maps the 51Did values in the 51Degrees cloud JSON response
+//! into typed data.
 //!
 //! # What this crate does
 //!
 //! A 51Degrees cloud response carries each requested product in its own
 //! top-level JSON member: `device` for device detection, `ip` for IP
-//! intelligence, and `fodid` for the 51Degrees identifier. This crate provides
+//! intelligence, and `fodid` for the 51Did. This crate provides
 //! the pipeline element that owns the `fodid` member.
 //!
 //! [`FodIdCloudEngine`] sits after a
@@ -40,15 +40,18 @@
 //!
 //! # The identifier values
 //!
-//! The block holds two probabilistic identifiers, each a base64-encoded
-//! [OWID](https://github.com/SWAN-community/owid) envelope:
+//! The block holds up to six 51Dids ([`IDENTIFIER_PROPERTIES`]), each a
+//! base64-encoded [OWID](https://github.com/SWAN-community/owid) envelope. There
+//! are three kinds, probabilistic ([`IdProbGlobal`](ID_PROB_GLOBAL_PROPERTY)
+//! and [`IdProbLic`](ID_PROB_LIC_PROPERTY)), random
+//! ([`IdRandGlobal`](ID_RAND_GLOBAL_PROPERTY) and
+//! [`IdRandLic`](ID_RAND_LIC_PROPERTY)) and hashed email
+//! ([`IdHemGlobal`](ID_HEM_GLOBAL_PROPERTY) and
+//! [`IdHemLic`](ID_HEM_LIC_PROPERTY)). Each kind has a global form, unique
+//! across all callers, and a form unique only across the caller's own license
+//! key.
 //!
-//! - [`IdProbGlobal`](ID_PROB_GLOBAL_PROPERTY), unique across all callers
-//!   observing the same device and network, and
-//! - [`IdProbLic`](ID_PROB_LIC_PROPERTY), unique only across the caller's own
-//!   license key.
-//!
-//! Both are exposed in two forms: the raw base64 string
+//! Each is exposed in two forms: the raw base64 string
 //! ([`FodIdData::id_prob_global`]), and the parsed
 //! [`FodId`] ([`FodIdData::id_prob_global_fod_id`]) which unpacks
 //! the envelope's payload (the usage, the identifier type, the license id and
@@ -57,26 +60,38 @@
 //! envelope handling is identical whether a 51Did arrives from the cloud or is
 //! read from a stored cookie.
 //!
-//! # Cloud only
+//! The data model is in [`fiftyone_fodid_core`], which does not depend on the
+//! cloud request engine. This crate re-exports every item of it under the same
+//! name, so [`FodIdDataBase`] here and there is one type.
 //!
-//! A 51Did is issued by the cloud, which alone holds the signing key, so there
-//! is no on-premise engine that produces the same data (unlike device detection
-//! and IP intelligence, which have interchangeable cloud and on-premise
-//! engines). [`FodIdCloudEngine`] is the only producer of [`FODID_DATA_KEY`].
+//! # The 51Did engine surface
+//!
+//! [`FodIdCloudEngine`] implements [`FodIdEngine`], the trait any engine
+//! producing 51Dids implements, so code that accepts any such engine accepts
+//! it. It is the only such engine in these crates, because the cloud holds the
+//! key 51Degrees signs 51Dids with.
+//!
+//! # Configuration
+//!
+//! [`configuration::add_builders`] adds the engine's builder to a
+//! [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the name
+//! .NET gives it, with .NET's settings, so a configuration file written for
+//! .NET makes the same engine here.
 
 #![warn(missing_docs)]
 
-mod data;
+pub mod configuration;
 mod dto;
 mod engine;
 
-pub use data::{
-    default_aspect_property_metadata, default_property_metadata, FodIdData, FodIdDataBase,
-    FODID_DATA_KEY, FODID_ELEMENT_DATA_KEY, IDENTIFIER_PROPERTIES, ID_HEM_GLOBAL_PROPERTY,
-    ID_HEM_LIC_PROPERTY, ID_PROB_GLOBAL_PROPERTY, ID_PROB_LIC_PROPERTY, ID_RAND_GLOBAL_PROPERTY,
-    ID_RAND_LIC_PROPERTY,
-};
 pub use engine::{FodIdCloudEngine, FodIdCloudEngineBuilder};
+pub use fiftyone_fodid_core::{
+    default_aspect_property_metadata, default_component_metadata,
+    default_fiftyone_property_metadata, default_property_metadata, FodIdData, FodIdDataBase,
+    FodIdEngine, CATEGORY_NAME, COMPONENT_NAME, FODID_DATA_KEY, FODID_ELEMENT_DATA_KEY,
+    IDENTIFIER_PROPERTIES, ID_HEM_GLOBAL_PROPERTY, ID_HEM_LIC_PROPERTY, ID_PROB_GLOBAL_PROPERTY,
+    ID_PROB_LIC_PROPERTY, ID_RAND_GLOBAL_PROPERTY, ID_RAND_LIC_PROPERTY,
+};
 
 // Re-export the parsed-identifier type so a consumer can work with the decoded
 // envelope without adding a direct dependency on the `fodid` reader crate.

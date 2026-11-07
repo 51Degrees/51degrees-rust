@@ -29,7 +29,7 @@
 
 use std::any::Any;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use fiftyone_pipeline_core::{
     compare_keys, ElementData, Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist,
@@ -171,6 +171,50 @@ impl FlowElement for FailingElement {
     }
 }
 
+/// An element that keeps each pipeline it is added to, with the number of
+/// elements that pipeline held at the time, and refuses every pipeline when
+/// `refuse` is set.
+struct AddedElement {
+    added: std::sync::Mutex<Vec<(Weak<Pipeline>, usize)>>,
+    refuse: bool,
+    filter: EvidenceKeyFilterWhitelist,
+}
+
+impl AddedElement {
+    fn new(refuse: bool) -> Self {
+        AddedElement {
+            added: std::sync::Mutex::new(Vec::new()),
+            refuse,
+            filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+        }
+    }
+}
+
+impl FlowElement for AddedElement {
+    fn process(&self, _data: &mut FlowData) -> Result<()> {
+        Ok(())
+    }
+    fn data_key(&self) -> &str {
+        "added"
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        &self.filter
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        &[]
+    }
+    fn add_pipeline(&self, pipeline: &Arc<Pipeline>) -> Result<()> {
+        self.added
+            .lock()
+            .unwrap()
+            .push((Arc::downgrade(pipeline), pipeline.flow_elements().len()));
+        if self.refuse {
+            return Err(Error::configuration("refused"));
+        }
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Evidence: case-insensitivity and precedence.
 // ---------------------------------------------------------------------------
@@ -199,6 +243,78 @@ fn duplicate_keys_overwrite_after_case_folding() {
         .build();
     assert_eq!(evidence.len(), 1);
     assert_eq!(evidence.get("query.name"), Some("second"));
+}
+
+/// Evidence with keys in mixed case and in lowercase, and a prefix that comes
+/// back after others, so neither order nor spelling is alphabetical.
+const GIVEN: [(&str, &str); 5] = [
+    ("header.User-Agent", "Mozilla/5.0"),
+    ("query.51D_Test", "x"),
+    ("cookie.b", "2"),
+    ("header.X-Test", "a]]>b"),
+    ("Cookie.A", "1"),
+];
+
+#[test]
+fn entries_keep_the_spelling_and_order_given() {
+    let evidence = Evidence::builder().add_all(GIVEN).build();
+
+    let as_given: Vec<(&str, &str)> = evidence
+        .entries()
+        .map(|entry| (entry.key_as_given(), entry.value()))
+        .collect();
+    assert_eq!(as_given, GIVEN);
+
+    let lowercase: Vec<&str> = evidence.entries().map(|entry| entry.key()).collect();
+    assert_eq!(
+        lowercase,
+        [
+            "header.user-agent",
+            "query.51d_test",
+            "cookie.b",
+            "header.x-test",
+            "cookie.a"
+        ]
+    );
+}
+
+#[test]
+fn iter_gives_lowercase_keys_in_the_order_given() {
+    let evidence = Evidence::builder().add_all(GIVEN).build();
+    let pairs: Vec<(&str, &str)> = evidence.iter().collect();
+    assert_eq!(
+        pairs,
+        [
+            ("header.user-agent", "Mozilla/5.0"),
+            ("query.51d_test", "x"),
+            ("cookie.b", "2"),
+            ("header.x-test", "a]]>b"),
+            ("cookie.a", "1"),
+        ]
+    );
+}
+
+#[test]
+fn a_repeated_key_keeps_its_first_spelling_and_place() {
+    let evidence = Evidence::builder()
+        .add("header.User-Agent", "first")
+        .add("header.Accept", "text/html")
+        .add("HEADER.USER-AGENT", "second")
+        .build();
+
+    assert_eq!(evidence.len(), 2);
+    assert_eq!(evidence.get("header.user-agent"), Some("second"));
+    let as_given: Vec<(&str, &str)> = evidence
+        .entries()
+        .map(|entry| (entry.key_as_given(), entry.value()))
+        .collect();
+    assert_eq!(
+        as_given,
+        [
+            ("header.User-Agent", "second"),
+            ("header.Accept", "text/html")
+        ]
+    );
 }
 
 #[test]
@@ -266,6 +382,24 @@ fn generate_key_is_deterministic_regardless_of_insertion_order() {
         names,
         vec!["query.user-agent", "header.user-agent", "cookie.session"]
     );
+}
+
+#[test]
+fn generate_key_ignores_the_spelling_given() {
+    let filter = EvidenceKeyFilterWhitelist::new(["header.user-agent", "query.51d_test"]);
+    let lower = Evidence::builder()
+        .add("header.user-agent", "ua")
+        .add("query.51d_test", "x")
+        .build();
+    let mixed = Evidence::builder()
+        .add("Query.51D_Test", "x")
+        .add("Header.User-Agent", "ua")
+        .build();
+
+    let key = mixed.generate_key(&filter);
+    assert_eq!(key, lower.generate_key(&filter));
+    let names: Vec<&str> = key.entries().iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(names, vec!["query.51d_test", "header.user-agent"]);
 }
 
 #[test]
@@ -660,6 +794,49 @@ fn empty_pipeline_fails_to_build() {
 }
 
 #[test]
+fn an_element_is_told_each_pipeline_it_is_built_into() {
+    let shared = Arc::new(AddedElement::new(false));
+    let first = Pipeline::builder()
+        .add_element(Arc::clone(&shared) as Arc<dyn FlowElement>)
+        .add_element(Arc::clone(&shared) as Arc<dyn FlowElement>)
+        .build()
+        .unwrap();
+    let second = Pipeline::builder()
+        .add_element(Arc::clone(&shared) as Arc<dyn FlowElement>)
+        .build()
+        .unwrap();
+
+    // Once for each place in each pipeline, in build order, and each time with
+    // every element of the pipeline in place.
+    let added = shared.added.lock().unwrap();
+    let expected = [(&first, 2), (&first, 2), (&second, 1)];
+    assert_eq!(added.len(), expected.len());
+    for ((weak, count), (pipeline, elements)) in added.iter().zip(expected) {
+        assert!(Weak::ptr_eq(weak, &Arc::downgrade(pipeline)));
+        assert_eq!(*count, elements);
+    }
+}
+
+#[test]
+fn an_element_refusing_its_pipeline_fails_the_build() {
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let refusing = Arc::new(AddedElement::new(true));
+    let result = Pipeline::builder()
+        .add_element(Arc::new(OrderElement::new("first", log, &[])))
+        .add_element(Arc::clone(&refusing) as Arc<dyn FlowElement>)
+        .build();
+
+    let Err(Error::PipelineConfiguration { message }) = result else {
+        panic!("the build should fail with the element's error");
+    };
+    assert_eq!(message, "refused");
+    // The refused pipeline is not kept anywhere.
+    let added = refusing.added.lock().unwrap();
+    assert_eq!(added.len(), 1);
+    assert_eq!(added[0].0.strong_count(), 0);
+}
+
+#[test]
 fn weighted_value_weighting_is_normalised() {
     use fiftyone_pipeline_core::WeightedValue;
     let full = WeightedValue::new(u16::MAX, "a");
@@ -787,4 +964,17 @@ fn named_keys_are_listed_by_whitelists_and_their_unions() {
         pipeline.evidence_key_filter().named_keys(),
         Some(vec![String::from("header.user-agent")])
     );
+}
+
+/// A map holds exactly the properties set on it, whatever their case, and
+/// data that does not say holds every property.
+#[test]
+fn has_property_tells_a_missing_property_from_a_held_one() {
+    let map = MapElementData::new().set("IsMobile", true);
+    assert!(map.has_property("ismobile"));
+    assert!(!map.has_property("ScreenWidth"));
+    assert!(map.get("ScreenWidth").is_err());
+
+    let other = OtherData;
+    assert!(other.has_property("anything"));
 }

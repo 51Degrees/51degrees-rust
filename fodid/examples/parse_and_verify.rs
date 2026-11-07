@@ -86,7 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("match_key : {}", hex(fod_id.match_key()));
     println!("terms     : {:?}", fod_id.terms());
 
-    // OWID level fields are reachable directly through Deref.
+    // The envelope's own fields.
     println!("domain    : {}", fod_id.domain());
     println!("date      : {}", fod_id.date());
 

@@ -53,6 +53,8 @@ use fiftyone_pipeline_core::{
     ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
     NoValueError, Pipeline, PropertyMetaData, PropertyValue, PropertyValueType, Result, TypedKey,
 };
+use fiftyone_pipeline_engines_fiftyone::constants::EVIDENCE_SESSIONID;
+use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 
 // ---------------------------------------------------------------------------
 // An element with one value, so the payload can be read back from the object.
@@ -182,14 +184,20 @@ fn render(
     evidence: &[(&str, &str)],
 ) -> String {
     let pipeline = Pipeline::builder()
+        .add_element(Arc::new(SequenceElement::new()))
         .add_element(Arc::new(ValueElement::new()))
         .add_element(Arc::new(JsonBuilderElement::new()))
         .add_element(Arc::new(configure(JavaScriptBuilderElement::builder())))
         .build()
         .expect("pipeline builds");
     // A host gives the script a callback URL, which renders the update
-    // section that holds the page evidence lookup.
-    let mut ev = Evidence::builder().add("header.host", "localhost");
+    // section that holds the page evidence lookup. A fixed session id
+    // keeps the script the same on every run, because the Sequence
+    // element would otherwise write a random one, whose hex digits can
+    // hold a requested name such as "9bad".
+    let mut ev = Evidence::builder()
+        .add("header.host", "localhost")
+        .add(EVIDENCE_SESSIONID, "session");
     for (key, value) in evidence {
         ev = ev.add(*key, *value);
     }

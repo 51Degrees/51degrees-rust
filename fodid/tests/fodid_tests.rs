@@ -28,7 +28,9 @@
 //! no value came back, and the status names the reason. Reading never
 //! touches a key, so none of the failure cases here constructs one.
 
-use fodid::{Creator, Crypto, Error, FodId, IdType, Owid, ParseStatus, SignatureStatus, Usage};
+use fodid::{
+    Creator, Crypto, Error, FodId, IdType, Owid, ParseDetail, ParseStatus, SignatureStatus, Usage,
+};
 
 mod layout;
 
@@ -183,14 +185,128 @@ fn assert_parsed(result: &fodid::Result<FodId>) -> &FodId {
         .expect("a successful read hands back the value")
 }
 
+/// `owid()` and `into_owid()` are deprecated and the `Deref` is kept, so
+/// code written against earlier releases still compiles and still reaches
+/// the same envelope.
 #[test]
-fn fod_id_derefs_to_owid() {
+#[allow(deprecated)]
+fn fod_id_still_derefs_to_owid() {
     let fixture = Fixture::new();
-    let fod_id = FodId::from_base64(&fixture.signed_owid_base64(canonical_payload())).unwrap();
+    let owid = fixture.signed_owid(canonical_payload());
+    let fod_id = FodId::from_owid(owid.clone()).unwrap();
 
-    // The OWID envelope is reachable both explicitly and through Deref.
     let via_deref: &Owid = &fod_id;
-    assert_eq!(via_deref, fod_id.owid());
+    assert_eq!(via_deref, &owid);
+    assert_eq!(fod_id.owid(), &owid);
+    assert_eq!(fod_id.into_owid(), owid);
+}
+
+/// Each envelope method of `FodId` answers as the same method of the
+/// envelope it was read from.
+#[test]
+fn the_envelope_methods_answer_as_the_envelope() {
+    let fixture = Fixture::new();
+    let owid = fixture.signed_owid(canonical_payload());
+    let fod_id = FodId::from_owid(owid.clone()).unwrap();
+    let crypto = Crypto::new_verify_only(&fixture.public_pem).unwrap();
+    let someone_else = Fixture::new();
+
+    assert_eq!(fod_id.version(), owid.version());
+    assert_eq!(fod_id.domain(), TEST_DOMAIN);
+    assert_eq!(fod_id.date(), owid.date());
+    assert_eq!(fod_id.signature(), owid.signature());
+    assert_eq!(fod_id.signature().len(), fodid::SIGNATURE_LENGTH);
+    // Each call reads the clock, so a minute can turn between the two.
+    let age = fod_id.age_minutes();
+    assert!((0..=1).contains(&(owid.age_minutes() - age)));
+    assert_eq!(
+        fod_id.as_byte_array().unwrap(),
+        owid.as_byte_array().unwrap()
+    );
+    assert_eq!(fod_id.as_base64().unwrap(), owid.as_base64().unwrap());
+    // Called by path, so each compiles only as `FodId`'s own and not through
+    // the `Deref` to the envelope.
+    let (mut written, mut expected) = (vec![0xEE], vec![0xEE]);
+    FodId::to_buffer(&fod_id, &mut written).unwrap();
+    owid.to_buffer(&mut expected).unwrap();
+    assert_eq!(written, expected);
+    assert_eq!(<FodId as ToString>::to_string(&fod_id), owid.to_string());
+    assert_eq!(format!("{fod_id}"), owid.as_base64().unwrap());
+    assert!(fod_id.verify_with_crypto(&crypto).unwrap());
+    assert!(fod_id.verify_with_public_key(&fixture.public_pem).unwrap());
+    assert_eq!(
+        fod_id.verify_status_with_crypto(&crypto),
+        SignatureStatus::Valid
+    );
+    assert_eq!(
+        fod_id.verify_status_with_public_key(&fixture.public_pem),
+        SignatureStatus::Valid
+    );
+    assert_eq!(
+        fod_id.verify_status_with_public_key(&someone_else.public_pem),
+        SignatureStatus::Invalid
+    );
+}
+
+/// Two 51Dids for the same inputs carry the same type and match key in
+/// envelopes that differ, so `==` compares the type and match key and
+/// nothing else.
+#[test]
+fn equal_when_the_type_and_match_key_are_equal() {
+    let fixture = Fixture::new();
+    let first = fixture.signed_owid(canonical_payload());
+
+    // The same type and match key, with every other field changed. The
+    // flags keep the hashed email type and set a lower usage, indirect,
+    // the License Id differs and the payload ends at the match key.
+    let mut payload = payload_ending_at_match_key();
+    payload[layout::FLAGS_OFFSET] = 0b1000_1001;
+    payload[layout::LICENSE_ID_OFFSET..layout::LICENSE_ID_OFFSET + layout::LICENSE_ID_LENGTH]
+        .copy_from_slice(&0x0BAD_F00Du32.to_le_bytes());
+    let domain = "example.com";
+    let mut second = fixture
+        .signed_owid_for(domain, payload)
+        .as_byte_array()
+        .unwrap();
+    // A different date, written after signing, which reading never checks.
+    let at = 1 + domain.len() + 1;
+    second[at..at + 4].copy_from_slice(&1u32.to_le_bytes());
+
+    let a = FodId::from_owid(first).unwrap();
+    let b = FodId::from_byte_array(&second).unwrap();
+    assert_ne!(a.as_byte_array().unwrap(), b.as_byte_array().unwrap());
+    assert_ne!(a.domain(), b.domain());
+    assert_ne!(a.date(), b.date());
+    assert_ne!(a.usage(), b.usage());
+    assert_ne!(a.usage_is_indirect(), b.usage_is_indirect());
+    assert_ne!(a.license_id(), b.license_id());
+    assert_ne!(a.terms(), b.terms());
+    assert_eq!(a.id_type(), b.id_type());
+    assert_eq!(a.match_key(), b.match_key());
+    assert_eq!(a, b);
+    assert_eq!(b, a);
+}
+
+#[test]
+fn not_equal_when_the_type_or_match_key_differs() {
+    let fixture = Fixture::new();
+    let read = |payload: Vec<u8>| FodId::from_owid(fixture.signed_owid(payload)).unwrap();
+    let hashed_email = read(canonical_payload());
+
+    // The same 32 match key bytes under the probabilistic type.
+    let mut payload = canonical_payload();
+    payload[layout::FLAGS_OFFSET] = CANONICAL_FLAGS & 0b0011_1111;
+    let probabilistic = read(payload);
+    assert_eq!(probabilistic.id_type(), IdType::Probabilistic);
+    assert_eq!(probabilistic.match_key(), hashed_email.match_key());
+    assert_ne!(probabilistic, hashed_email);
+
+    // The same type with the last match key byte changed.
+    let mut payload = canonical_payload();
+    payload[layout::MATCH_KEY_OFFSET + layout::MATCH_KEY_LENGTH - 1] ^= 1;
+    let other_key = read(payload);
+    assert_eq!(other_key.id_type(), hashed_email.id_type());
+    assert_ne!(other_key, hashed_email);
 }
 
 #[test]
@@ -240,7 +356,10 @@ fn constructor_from_owid_unpacks_all_three_fields() {
     assert_eq!(expected.date(), fod_id.date());
     assert_eq!(expected.version(), fod_id.version());
     // The whole envelope is preserved, not just the parsed fields.
-    assert_eq!(&expected, fod_id.owid());
+    assert_eq!(
+        expected.as_byte_array().unwrap(),
+        fod_id.as_byte_array().unwrap()
+    );
 }
 
 #[test]
@@ -533,7 +652,8 @@ fn random_payload_with_only_the_header_is_invalid_type_payload_length() {
 #[test]
 fn payload_shorter_than_the_header_is_payload_too_short() {
     // With fewer than the header's 5 bytes the type cannot even be read, so
-    // the answer is the header status whatever the flags byte says.
+    // a payload naming version 0, or an empty one, is given the header
+    // status whatever the usage and type bits say.
     let fixture = Fixture::new();
     for length in 0..layout::HEADER_LENGTH {
         let mut payload = vec![0u8; length];
@@ -554,6 +674,29 @@ fn payload_shorter_than_the_header_is_payload_too_short() {
             ),
             "payload of {length} bytes"
         );
+    }
+}
+
+#[test]
+fn a_short_payload_naming_another_version_is_refused_as_that_version() {
+    // The header's length is part of the version 0 layout, so a payload too
+    // short for it that names another version is refused naming the version
+    // it found, as identifier-layout.md "Version" asks. An empty payload has
+    // no flags byte to name a version, so it stays too short.
+    let fixture = Fixture::new();
+    for version in [1u8, 2, 3] {
+        for length in 1..layout::HEADER_LENGTH {
+            let mut payload = vec![0u8; length];
+            payload[layout::FLAGS_OFFSET] = RANDOM_FLAGS;
+            let payload = with_payload_version(&payload, version);
+
+            match FodId::from_base64(&fixture.signed_owid_base64(payload)) {
+                Err(Error::UnsupportedPayloadVersion { version: found }) => {
+                    assert_eq!(found, version, "payload of {length} bytes");
+                }
+                other => panic!("version {version}, {length} bytes: {other:?}"),
+            }
+        }
     }
 }
 
@@ -657,6 +800,67 @@ fn truncated_envelope_is_the_owid_unexpected_end_status() {
 fn unsupported_version_is_the_owid_unsupported_version_status() {
     let result = FodId::from_byte_array(&[9, 9, 9]);
     assert_failed(&result, Status::Owid(ParseStatus::UnsupportedVersion));
+}
+
+/// The bytes of a signed 51Did under the test domain, with the first bytes
+/// of the domain replaced after signing. Reading never looks at the
+/// signature, so the bytes still read as an envelope.
+fn with_domain_starting(fixture: &Fixture, replacement: &[u8]) -> Vec<u8> {
+    let mut bytes = fixture
+        .signed_owid(canonical_payload())
+        .as_byte_array()
+        .unwrap();
+    // The domain starts after the version byte.
+    bytes[1..1 + replacement.len()].copy_from_slice(replacement);
+    bytes
+}
+
+#[test]
+fn a_creator_domain_that_is_not_ascii_is_invalid_domain_encoding() {
+    // identifier-layout.md gives the creator domain as ASCII text. The OWID
+    // reader accepts any UTF-8, so the 51Did reader refuses a domain that is
+    // UTF-8 but not ASCII, with the status the OWID reader gives a domain
+    // that is not UTF-8, on every reading route.
+    use base64::Engine as _;
+
+    let fixture = Fixture::new();
+    // "é" as UTF-8 in place of the "51" of the test domain.
+    let bytes = with_domain_starting(&fixture, &[0xC3, 0xA9]);
+    let owid = Owid::from_byte_array(&bytes).expect("the OWID reader takes UTF-8");
+    assert_eq!(owid.domain(), "édegrees.com");
+    let base64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+    for result in [
+        FodId::from_byte_array(&bytes),
+        FodId::from_base64(&base64),
+        base64.parse::<FodId>(),
+        FodId::try_from(bytes.as_slice()),
+        FodId::from_owid(owid.clone()),
+        FodId::try_from(owid),
+    ] {
+        assert_failed(&result, Status::Owid(ParseStatus::InvalidDomainEncoding));
+        let Err(Error::Parse(error)) = result else {
+            panic!("expected the OWID parse error");
+        };
+        assert_eq!(
+            error.detail(),
+            Some(ParseDetail::Field("the creator domain"))
+        );
+    }
+}
+
+#[test]
+fn a_creator_domain_reads_up_to_the_last_ascii_byte() {
+    // 7F is the last ASCII byte, so a domain holding it reads. 80 is not
+    // UTF-8 on its own, so the OWID reader refuses it with the same status
+    // as a domain that is UTF-8 but not ASCII.
+    let fixture = Fixture::new();
+
+    let result = FodId::from_byte_array(&with_domain_starting(&fixture, &[0x7F]));
+    assert_eq!(assert_parsed(&result).domain(), "\u{7f}1degrees.com");
+
+    let result = FodId::from_byte_array(&with_domain_starting(&fixture, &[0x80]));
+    assert_failed(&result, Status::Owid(ParseStatus::InvalidDomainEncoding));
 }
 
 #[test]
@@ -830,7 +1034,10 @@ fn base64_roundtrip_preserves_all_fields() {
     assert_eq!(fod_id1.license_id(), fod_id2.license_id());
     assert_eq!(fod_id1.match_key(), fod_id2.match_key());
     assert_eq!(fod_id1.domain(), fod_id2.domain());
-    assert_eq!(fod_id1.owid(), fod_id2.owid());
+    assert_eq!(
+        fod_id1.as_byte_array().unwrap(),
+        fod_id2.as_byte_array().unwrap()
+    );
 }
 
 #[test]
@@ -1261,7 +1468,9 @@ fn from_base64_ignores_surrounding_whitespace() {
         .trim_end_matches('=')
         .to_owned();
 
-    let expected = FodId::from_base64(&standard).unwrap();
+    // Compared as bytes, because `==` compares only the type and match key.
+    let envelope = |text: &str| FodId::from_base64(text).unwrap().as_byte_array().unwrap();
+    let expected = envelope(&standard);
     for clean in [&standard, &url_safe] {
         for spaced in [
             format!("{clean}\n"),
@@ -1269,21 +1478,199 @@ fn from_base64_ignores_surrounding_whitespace() {
             format!("{clean} "),
             format!("\r\n\t {clean} \t\r\n"),
         ] {
-            assert_eq!(FodId::from_base64(&spaced).unwrap(), expected);
+            assert_eq!(envelope(&spaced), expected);
         }
     }
+}
+
+/// A signed 51Did in the URL-safe alphabet without padding whose length is
+/// `over` characters over a group of four, found by adding bytes after the
+/// payload's value one at a time, with what the clean text reads as.
+fn url_safe_text_over_a_group_of_four(fixture: &Fixture, over: usize) -> (String, FodId) {
+    for extra in 0..3 {
+        let mut payload = canonical_payload();
+        payload.resize(payload.len() + extra, 0xA5);
+        let url_safe = fixture
+            .signed_owid_base64(payload)
+            .replace('+', "-")
+            .replace('/', "_")
+            .trim_end_matches('=')
+            .to_owned();
+        if url_safe.len() % 4 == over {
+            let clean = FodId::from_base64(&url_safe).expect("the clean text reads");
+            return (url_safe, clean);
+        }
+    }
+    panic!("no payload length gives a text {over} over a group of four");
+}
+
+/// Puts `fill` after each character position given, counting from 1.
+fn insert_after(text: &str, positions: &[usize], fill: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in text.chars().enumerate() {
+        out.push(c);
+        if positions.contains(&(i + 1)) {
+            out.push_str(fill);
+        }
+    }
+    out
+}
+
+/// White space inside the text is refused, whatever its kind, how much of
+/// it there is and how long the text is, whilst white space only before
+/// and after the text is ignored. Each row is the case of the same name in
+/// `parity/corpus/fodid.json`.
+#[test]
+fn white_space_inside_the_text_is_refused() {
+    let fixture = Fixture::new();
+    let (whole, whole_read) = url_safe_text_over_a_group_of_four(&fixture, 0);
+    let (short, _) = url_safe_text_over_a_group_of_four(&fixture, 3);
+    let standard = format!("{}=", short.replace('-', "+").replace('_', "/"));
+    let (w, s) = (whole.len(), short.len());
+    let invalid = Err(Status::Owid(ParseStatus::InvalidBase64));
+
+    let cases: [(&str, String, Result<&FodId, Status>); 16] = [
+        (
+            "text-url-space-1",
+            insert_after(&whole, &[w / 2], " "),
+            invalid,
+        ),
+        (
+            "text-url-space-2",
+            insert_after(&whole, &[w / 4, 3 * w / 4], " "),
+            invalid,
+        ),
+        (
+            "text-url-space-3",
+            insert_after(&whole, &[w / 4, w / 2, 3 * w / 4], " "),
+            invalid,
+        ),
+        (
+            "text-url-tabs",
+            insert_after(&whole, &[w / 5, 2 * w / 5, 3 * w / 5, 4 * w / 5], "\t"),
+            invalid,
+        ),
+        (
+            "text-url-line-breaks",
+            insert_after(&whole, &[w / 3, 2 * w / 3], "\r\n"),
+            invalid,
+        ),
+        (
+            "text-url-no-break-spaces",
+            insert_after(&whole, &[w / 5, 2 * w / 5, 3 * w / 5, 4 * w / 5], "\u{a0}"),
+            invalid,
+        ),
+        (
+            "text-url-no-break-space-surrounded",
+            format!("\u{a0}{whole}\u{a0}"),
+            Ok(&whole_read),
+        ),
+        (
+            "text-url-unpadded-space-1",
+            insert_after(&short, &[s / 2], " "),
+            invalid,
+        ),
+        (
+            "text-url-unpadded-space-2",
+            insert_after(&short, &[s / 3, 2 * s / 3], " "),
+            invalid,
+        ),
+        (
+            "text-url-unpadded-space-3",
+            insert_after(&short, &[s / 4, s / 2, 3 * s / 4], " "),
+            invalid,
+        ),
+        (
+            "text-url-unpadded-space-4",
+            insert_after(&short, &[s / 5, 2 * s / 5, 3 * s / 5, 4 * s / 5], " "),
+            invalid,
+        ),
+        (
+            "text-standard-space-1",
+            insert_after(&standard, &[standard.len() / 2], " "),
+            invalid,
+        ),
+        (
+            "text-url-vertical-tab",
+            insert_after(&whole, &[w / 2], "\u{b}"),
+            invalid,
+        ),
+        (
+            "text-url-line-separator",
+            insert_after(&whole, &[w / 2], "\u{2028}"),
+            invalid,
+        ),
+        (
+            "text-url-ideographic-space-surrounded",
+            format!("\u{3000}{whole}\u{3000}"),
+            Ok(&whole_read),
+        ),
+        (
+            "text-white-space",
+            " \t\n\u{a0}".to_owned(),
+            Err(Status::Owid(ParseStatus::MissingInput)),
+        ),
+    ];
+
+    for (name, text, expected) in cases {
+        let result = FodId::from_base64(&text);
+        match expected {
+            Ok(clean) => {
+                assert_eq!(status_of(&result), Status::Parsed, "{name}");
+                assert_eq!(
+                    result.unwrap().as_base64().unwrap(),
+                    clean.as_base64().unwrap(),
+                    "{name} reads as the clean text"
+                );
+            }
+            Err(status) => assert_eq!(status_of(&result), status, "{name}"),
+        }
+    }
+}
+
+/// The unused low bits of the last group are ignored, as the .NET decoder
+/// ignores them, so a text whose last character sets them reads as the
+/// text an encoder wrote. `text-url-unpadded-unused-bits` in
+/// `parity/corpus/fodid.json` is the same case for the comparison.
+#[test]
+fn unused_bits_in_the_last_character_are_ignored() {
+    const URL_SAFE: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let fixture = Fixture::new();
+    // Two characters over a group carry one byte in 12 bits and three carry
+    // two bytes in 18 bits, so the last character has 4 or 2 unused bits.
+    for (over, unused) in [(2, 0b1111), (3, 0b11)] {
+        let (text, clean) = url_safe_text_over_a_group_of_four(&fixture, over);
+        let last = URL_SAFE.find(text.chars().last().unwrap()).unwrap();
+        assert_eq!(last & unused, 0, "an encoder writes the unused bits as 0");
+        let changed = format!(
+            "{}{}",
+            &text[..text.len() - 1],
+            URL_SAFE.as_bytes()[last | 1] as char
+        );
+        let read = FodId::from_base64(&changed);
+        assert_eq!(status_of(&read), Status::Parsed, "{over} over");
+        assert_eq!(
+            read.unwrap().as_base64().unwrap(),
+            clean.as_base64().unwrap(),
+            "{over} over"
+        );
+    }
+}
+
+/// A payload whose signed encoding carries both `+` and `/` and needs
+/// padding, which the tests using it check rather than assume.
+fn payload_with_both_symbols() -> Vec<u8> {
+    let mut payload = canonical_payload();
+    for (i, b) in payload[layout::MATCH_KEY_OFFSET..].iter_mut().enumerate() {
+        *b = 0xFB + (i as u8 % 5);
+    }
+    payload
 }
 
 #[test]
 fn from_base64_accepts_both_alphabets_with_or_without_padding() {
     let fixture = Fixture::new();
-    // A payload chosen so the encoding carries both `+` and `/` and needs
-    // padding, which the assertions below check rather than assume.
-    let mut payload = canonical_payload();
-    for (i, b) in payload[layout::MATCH_KEY_OFFSET..].iter_mut().enumerate() {
-        *b = 0xFB + (i as u8 % 5);
-    }
-    let standard = fixture.signed_owid_base64(payload);
+    let standard = fixture.signed_owid_base64(payload_with_both_symbols());
     assert!(standard.contains('+') || standard.contains('/'));
     assert!(standard.ends_with('='));
 
@@ -1291,14 +1678,48 @@ fn from_base64_accepts_both_alphabets_with_or_without_padding() {
     let url_safe = url_safe_padded.trim_end_matches('=').to_owned();
     assert_ne!(url_safe, standard);
 
-    let expected = FodId::from_base64(&standard).unwrap();
-    assert_eq!(FodId::from_base64(&url_safe_padded).unwrap(), expected);
-    assert_eq!(FodId::from_base64(&url_safe).unwrap(), expected);
+    // Each form reads back to the same envelope, compared as bytes because
+    // `==` compares only the type and match key.
+    let envelope = |text: &str| FodId::from_base64(text).unwrap().as_byte_array().unwrap();
+    let expected = envelope(&standard);
+    assert_eq!(envelope(&url_safe_padded), expected);
+    assert_eq!(envelope(&url_safe), expected);
     // Padding stripped from the standard alphabet is restored too.
-    assert_eq!(
-        FodId::from_base64(standard.trim_end_matches('=')).unwrap(),
-        expected
-    );
+    assert_eq!(envelope(standard.trim_end_matches('=')), expected);
+}
+
+/// A text that mixes the two alphabets is refused, whichever alphabet most
+/// of it is in, although mapping `-` and `_` onto `+` and `/` would read it
+/// as the clean text. Each row is the case of the same name in
+/// `parity/corpus/fodid.json`.
+#[test]
+fn a_text_mixing_the_two_alphabets_is_refused() {
+    let fixture = Fixture::new();
+    let standard = fixture.signed_owid_base64(payload_with_both_symbols());
+    assert!(standard.contains('+') && standard.contains('/'));
+    assert_eq!(status_of(&FodId::from_base64(&standard)), Status::Parsed);
+    let url_safe = standard.replace('+', "-").replace('/', "_");
+
+    let cases = [
+        ("text-url-one-plus", url_safe.replacen('-', "+", 1)),
+        ("text-url-one-slash", url_safe.replacen('_', "/", 1)),
+        (
+            "text-standard-one-underscore",
+            standard.replacen('/', "_", 1),
+        ),
+    ];
+    for (name, text) in cases {
+        assert_eq!(
+            text.replace('-', "+").replace('_', "/"),
+            standard,
+            "{name} maps to the clean text"
+        );
+        assert_eq!(
+            status_of(&FodId::from_base64(&text)),
+            Status::Owid(ParseStatus::InvalidBase64),
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -1323,5 +1744,11 @@ fn as_base64_url_round_trips_and_carries_no_padding_or_standard_symbols() {
             .replace('/', "_")
             .trim_end_matches('=')
     );
-    assert_eq!(FodId::from_base64(&url_safe).unwrap(), fod_id);
+    assert_eq!(
+        FodId::from_base64(&url_safe)
+            .unwrap()
+            .as_byte_array()
+            .unwrap(),
+        fod_id.as_byte_array().unwrap()
+    );
 }
