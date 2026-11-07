@@ -51,6 +51,35 @@ fiftyoneDegreesResultsHash* fiftyoneDegreesResultsHashCreate(
 	uint32_t userAgentCapacity,
 	uint32_t overridesCapacity);
 
+fiftyoneDegreesStatusCode
+fiftyoneDegreesHashInitManagerFromFileWithIndexedProperties(
+	fiftyoneDegreesResourceManager *manager,
+	fiftyoneDegreesConfigHash *config,
+	fiftyoneDegreesPropertiesRequired *properties,
+	const char *fileName,
+	const char **indexedProperties,
+	int indexedPropertiesCount,
+	fiftyoneDegreesException *exception);
+
+fiftyoneDegreesStatusCode
+fiftyoneDegreesHashInitManagerFromMemoryWithIndexedProperties(
+	fiftyoneDegreesResourceManager *manager,
+	fiftyoneDegreesConfigHash *config,
+	fiftyoneDegreesPropertiesRequired *properties,
+	void *memory,
+	long size,
+	const char **indexedProperties,
+	int indexedPropertiesCount,
+	fiftyoneDegreesException *exception);
+
+uint32_t fiftyoneDegreesHashGetProfileIdsForPropertyAndValue(
+	fiftyoneDegreesResourceManager *manager,
+	const char *propertyName,
+	const char *valueName,
+	uint32_t *profileIds,
+	uint32_t length,
+	fiftyoneDegreesException *exception);
+
 /* fiftyone-common-sys */
 
 typedef struct {

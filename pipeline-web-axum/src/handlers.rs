@@ -71,8 +71,9 @@ enum Endpoint {
 /// Handle `GET /51Degrees.core.js`.
 ///
 /// Builds evidence from the request, processes the pipeline off the runtime and
-/// returns the generated JavaScript with the caching, `Vary`, `ETag` and CORS
-/// headers the web crate computes. A matching `If-None-Match` yields `304 Not
+/// returns the generated JavaScript with the caching, `Vary`, weak `ETag` and
+/// CORS headers the web crate computes. An `If-None-Match` that matches the
+/// `ETag` under the weak comparison, with or without `W/`, yields `304 Not
 /// Modified`.
 pub async fn javascript_handler(
     State(state): State<FiftyOneState>,
@@ -86,9 +87,10 @@ pub async fn javascript_handler(
 ///
 /// Buffers the form body (bounded by `MAX_BODY_BYTES`), builds evidence
 /// including the form fields, processes the pipeline off the runtime and returns
-/// the generated JSON with the shared caching/CORS headers. A matching
-/// `If-None-Match` yields `412 Precondition Failed`, because RFC 9110 section
-/// 13.1.2 gives a `304` only to `GET` and `HEAD`.
+/// the generated JSON with the caching, `Vary`, weak `ETag` and CORS headers
+/// the web crate computes. An `If-None-Match` that matches the `ETag` yields
+/// `412 Precondition Failed`, because RFC 9110 section 13.1.2 gives a `304`
+/// only to `GET` and `HEAD`.
 pub async fn json_handler(State(state): State<FiftyOneState>, request: Request<Body>) -> Response {
     // Split the body off so it can be buffered before the rest is captured.
     let (parts, body) = request.into_parts();

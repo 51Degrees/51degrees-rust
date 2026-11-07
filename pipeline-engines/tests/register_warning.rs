@@ -117,10 +117,10 @@ fn quiet_engine() -> (Arc<dyn OnPremiseAspectEngine>, Arc<AspectEngineDataFile>)
     (engine, data_file)
 }
 
-/// A caller that hands the service its only reference to the engine gets a
-/// registration that ends as `register` returns, so the service warns. A
-/// caller that keeps a reference gets no warning and a registration that
-/// lasts.
+/// A caller that hands the service its only reference to the engine gets no
+/// registration, as the engine is dropped when `register` returns, so the
+/// service warns. A caller that keeps a reference gets no warning and a
+/// registration that lasts.
 #[test]
 fn registering_the_only_reference_to_an_engine_is_logged() {
     let _ = log::set_logger(&LOGGER);

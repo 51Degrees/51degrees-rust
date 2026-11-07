@@ -28,10 +28,12 @@
 //! results the first time it is requested. See the crate-level documentation
 //! for the design rationale.
 
+use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
+use std::hash::BuildHasher;
 use std::ops::Range;
 use std::os::raw::c_int;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use arc_swap::ArcSwap;
@@ -247,14 +249,45 @@ fn describe(
     ))
 }
 
-/// Record the publish date in `manager`'s data file header on `data_file`,
-/// for the metadata and the update service's `If-Modified-Since` header.
-pub(crate) fn record_published(manager: &Manager, data_file: &AspectEngineDataFile) {
-    if let Some((year, month, day)) = manager.data_set_published() {
-        if let Some(published) = Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).single() {
-            data_file.set_data_published(published);
-        }
+/// Record on `data_file` the dates in `manager`'s data file header, as .NET
+/// does after each load. The date the file was published goes in the update
+/// service's `If-Modified-Since` header. The date the next is expected, at noon
+/// UTC and a random minute as .NET gives it, is when the service starts to
+/// poll. A date the header does not hold is cleared, so that no date of data
+/// no longer loaded is kept.
+pub(crate) fn record_dates(manager: &Manager, data_file: &AspectEngineDataFile) {
+    let published = manager
+        .data_set_published()
+        .and_then(|(year, month, day)| Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).single());
+    match published {
+        Some(published) => data_file.set_data_published(published),
+        None => data_file.clear_data_published(),
     }
+    let next = manager
+        .data_set_next_update()
+        .and_then(|(year, month, day)| {
+            Utc.with_ymd_and_hms(year, month, day, NEXT_UPDATE_HOUR, random_minute(), 0)
+                .single()
+        });
+    match next {
+        Some(next) => data_file.set_update_available_time(next),
+        None => data_file.clear_update_available_time(),
+    }
+}
+
+/// The hour, UTC, of the day the data file header gives for the next data
+/// file, at which the update service is told to expect it.
+const NEXT_UPDATE_HOUR: u32 = 12;
+
+/// The number of minutes in an hour, the range the minute of
+/// [`NEXT_UPDATE_HOUR`] is chosen from.
+const MINUTES_PER_HOUR: u64 = 60;
+
+/// A minute of the hour chosen at random, so that servers loading the same
+/// data file do not all start to poll at once.
+fn random_minute() -> u32 {
+    let random = RandomState::new().hash_one(std::time::SystemTime::now());
+    u32::try_from(random % MINUTES_PER_HOUR).unwrap_or(0)
 }
 
 impl IpIntelligenceOnPremiseEngine {
@@ -443,16 +476,19 @@ impl IpIntelligenceOnPremiseEngine {
             .map(|property| property.values().len())
     }
 
-    /// The value whose text is `value_name` among those
-    /// [`Self::property_values`] gives for the property named
-    /// `property_name`, both matched exactly, as .NET's `GetValue(valueName)`
-    /// matches them, or [`None`] when the engine lists no such property or the
-    /// property has no such value. Fails when the data file's values cannot be
-    /// read.
+    /// The value `value_name` names among those [`Self::property_values`]
+    /// gives for the property named `property_name`, matched as .NET's
+    /// `GetValue(valueName)` matches them, or [`None`] when the engine lists
+    /// no such property or the property has no such value. Fails when the
+    /// data file's values cannot be read.
     ///
     /// This finds the value in the loaded data file without reading the
     /// property's other values, by the C library's binary search over values
-    /// in order, as .NET finds it.
+    /// in order, as .NET finds it. The property's name is matched exactly,
+    /// as is a value of `Ip` or `IpV6`. The search compares a number written
+    /// to as many places as `value_name` has characters plus three, at most
+    /// 15, so the value given can be written otherwise, as `0.063` is given
+    /// for `0.0625`.
     pub fn property_value(
         &self,
         property_name: &str,
@@ -500,29 +536,10 @@ impl IpIntelligenceOnPremiseEngine {
         }))
     }
 
-    /// Reopen the data file from disk and atomically swap it in.
-    ///
-    /// Shared by [`OnPremiseAspectEngine::refresh`]. A concurrent `process` call
-    /// keeps using the old data set until this swap completes. The evidence
-    /// keys, the metadata, the tier and the publish date follow the new data
-    /// file, which can differ from the old one. A failed reload, including one
-    /// whose metadata cannot be read, changes nothing.
-    fn reload_from_disk(&self) -> Result<()> {
-        let _refreshing = self
-            .refresh_lock
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let path = self
-            .data_files
-            .first()
-            .and_then(|file| file.data_file_path().map(|p| p.to_path_buf()))
-            .ok_or_else(|| {
-                Error::configuration(
-                    "Cannot refresh an IP-intelligence engine that has no data file path.",
-                )
-            })?;
-
-        let property_refs: Option<Vec<&str>> = if self.requested_properties.is_empty() {
+    /// The properties the engine was restricted to, as the native open takes
+    /// them, or [`None`] for every property the data file defines.
+    fn property_refs(&self) -> Option<Vec<&str>> {
+        if self.requested_properties.is_empty() {
             None
         } else {
             Some(
@@ -531,10 +548,19 @@ impl IpIntelligenceOnPremiseEngine {
                     .map(String::as_str)
                     .collect(),
             )
-        };
+        }
+    }
+
+    /// Reopen the data file at `path` and atomically swap it in. See
+    /// [`Self::swap_in`].
+    fn reload_from_path(&self, path: &Path) -> Result<()> {
+        let _refreshing = self
+            .refresh_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let copy = self.data_files.first().and_then(|file| {
             OperationalCopy::when_needed(
-                &path,
+                path,
                 self.temp_dir.as_deref(),
                 self.profile,
                 file.configuration(),
@@ -542,11 +568,38 @@ impl IpIntelligenceOnPremiseEngine {
             )
         });
         let manager = Manager::open_with_options(
-            copy.as_ref().map_or(path.as_path(), OperationalCopy::path),
+            copy.as_ref().map_or(path, OperationalCopy::path),
             self.profile,
-            property_refs.as_deref(),
+            self.property_refs().as_deref(),
             self.concurrency,
         )?;
+        self.swap_in(copy, manager)
+    }
+
+    /// Load the data set from `data`, the whole of a data file, and
+    /// atomically swap it in. See [`Self::swap_in`].
+    fn reload_from_memory(&self, data: &[u8]) -> Result<()> {
+        let _refreshing = self
+            .refresh_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        // The data set reads the data where it lies, so the manager keeps a
+        // copy for as long as the data set.
+        let manager = Manager::open_from_memory(
+            data.to_vec(),
+            self.profile,
+            self.property_refs().as_deref(),
+        )?;
+        self.swap_in(None, manager)
+    }
+
+    /// Replace the live data set with `manager`'s, which reads `copy` when
+    /// there is one. A concurrent `process` call keeps using the old data set
+    /// until the swap completes. The evidence keys, the metadata, the tier
+    /// and the dates in the data file header follow the new data, which can
+    /// differ from the old. A failure, including metadata that cannot be
+    /// read, changes nothing. The caller holds the refresh lock.
+    fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
         let evidence_keys = DataFileEvidenceKeys::whitelist(&manager);
         let (loaded, metadata) = describe(copy, manager, &self.tier_override)?;
         let loaded = Arc::new(loaded);
@@ -556,7 +609,7 @@ impl IpIntelligenceOnPremiseEngine {
         // Recorded only once the new data set is in use, so the update
         // service never skips a file the engine failed to load.
         if let Some(data_file) = self.data_files.first() {
-            record_published(&loaded.manager, data_file);
+            record_dates(&loaded.manager, data_file);
         }
         Ok(())
     }
@@ -1004,9 +1057,24 @@ impl OnPremiseAspectEngine for IpIntelligenceOnPremiseEngine {
     }
 
     fn refresh(&self, _data_file_identifier: Option<&str>) -> Result<()> {
-        // Single-file engine: the identifier is ignored. Reopen from disk and
-        // swap the new data set in atomically.
-        self.reload_from_disk()
+        // Single-file engine: the identifier is ignored. Reopen the file the
+        // engine was configured with and swap the new data set in atomically.
+        let path = self
+            .data_files
+            .first()
+            .and_then(|file| file.data_file_path().map(Path::to_path_buf))
+            .ok_or_else(|| {
+                Error::configuration(
+                    "Cannot refresh an IP-intelligence engine that has no data file path.",
+                )
+            })?;
+        self.reload_from_path(&path)
+    }
+
+    fn refresh_from_memory(&self, _data_file_identifier: Option<&str>, data: &[u8]) -> Result<()> {
+        // Single-file engine: the identifier is ignored. Load the data given
+        // and swap the new data set in atomically.
+        self.reload_from_memory(data)
     }
 }
 
