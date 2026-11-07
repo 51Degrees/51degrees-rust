@@ -169,7 +169,9 @@ fn a_refresh_from_memory_records_the_dates_of_the_new_data() {
 
 /// Data whose header dates are not valid loads, and records no dates, where
 /// .NET refuses to build on it and throws from a refresh after loading it.
-/// A refresh to such data keeps the dates already recorded.
+/// A refresh to such data clears the dates of the data it replaces, and a
+/// refresh to data whose next update date alone is not valid clears that
+/// date alone.
 #[test]
 fn data_whose_header_dates_are_not_valid_loads_and_records_no_dates() {
     let Some(lite) = lite() else {
@@ -177,6 +179,8 @@ fn data_whose_header_dates_are_not_valid_loads_and_records_no_dates() {
     };
     let mut undated = dated(&lite);
     undated[PUBLISHED_AT..PUBLISHED_AT + 8].fill(0);
+    let mut no_next_update = dated(&lite);
+    no_next_update[PUBLISHED_AT + 4..PUBLISHED_AT + 8].fill(0);
     let dir = folder("undated");
     let path = dir.join("51Degrees.hash");
     std::fs::write(&path, &undated).unwrap();
@@ -196,7 +200,27 @@ fn data_whose_header_dates_are_not_valid_loads_and_records_no_dates() {
     engine
         .refresh_from_memory(None, &undated)
         .expect("the data loads from memory");
-    assert_dates(&engine, "undated after dated");
+    assert_eq!(file.data_published(), None, "undated after dated");
+    assert_eq!(file.update_available_time(), None, "undated after dated");
+    assert!(is_mobile(&engine));
+
+    engine
+        .refresh_from_memory(None, &dated(&lite))
+        .expect("the data loads from memory");
+    assert_dates(&engine, "dated again");
+    engine
+        .refresh_from_memory(None, &no_next_update)
+        .expect("the data loads from memory");
+    assert_eq!(
+        file.data_published(),
+        Some(midnight(PUBLISHED)),
+        "no next update after dated"
+    );
+    assert_eq!(
+        file.update_available_time(),
+        None,
+        "no next update after dated"
+    );
     assert!(is_mobile(&engine));
     drop(engine);
     let _ = std::fs::remove_dir_all(&dir);
