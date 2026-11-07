@@ -219,12 +219,20 @@ fn agent_signature_element_builder() -> BuilderDefinition<AgentSignatureElementB
         },
     )
     .build_method(Vec::new(), |_, context| {
-        let builder = AgentSignatureElement::builder();
-        Ok(match context.latest_resource::<Arc<dyn HttpClient>>() {
-            Some(client) => builder.set_http_client(Arc::clone(client.as_ref())),
-            None => builder.no_client_message(NO_CLIENT_RESOURCE),
-        })
+        let client = context.latest_resource::<Arc<dyn HttpClient>>();
+        Ok(starting_builder(client.as_deref()))
     })
+}
+
+/// The builder a configuration starts from, given the pipeline's latest
+/// `Arc<dyn HttpClient>` resource if it has one. Without one, a build with
+/// no built-in client says how to give the pipeline a client.
+fn starting_builder(client: Option<&Arc<dyn HttpClient>>) -> AgentSignatureElementBuilder {
+    let builder = AgentSignatureElement::builder();
+    match client {
+        Some(client) => builder.set_http_client(Arc::clone(client)),
+        None => builder.no_client_message(NO_CLIENT_RESOURCE),
+    }
 }
 
 /// A count of at least one, refused below that with `message` as .NET's
@@ -257,4 +265,40 @@ fn out_of_range(message: &str, parameter: &str, value: impl std::fmt::Display) -
     Error::configuration(format!(
         "{message} (Parameter '{parameter}')\nActual value was {value}."
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{HttpRequest, HttpResponse};
+
+    /// A client that is never asked for anything.
+    struct UnusedClient;
+
+    impl HttpClient for UnusedClient {
+        fn get(&self, _: &HttpRequest<'_>) -> std::result::Result<HttpResponse, String> {
+            Err("not used".to_owned())
+        }
+    }
+
+    /// With no client among the pipeline's resources, the builder holds the
+    /// message that says how to give the pipeline one, which a build without
+    /// the `reqwest-client` feature returns. The tests always build with that
+    /// feature, so they hold the message here rather than through a build.
+    #[test]
+    fn a_configuration_with_no_client_says_how_to_give_one() {
+        let builder = starting_builder(None);
+        let (client, message) = builder.client_and_message();
+        assert!(client.is_none());
+        assert_eq!(message, NO_CLIENT_RESOURCE);
+    }
+
+    /// With a client among the pipeline's resources, the builder uses it.
+    #[test]
+    fn a_configuration_uses_the_pipeline_client() {
+        let given: Arc<dyn HttpClient> = Arc::new(UnusedClient);
+        let builder = starting_builder(Some(&given));
+        let (client, _) = builder.client_and_message();
+        assert!(client.is_some_and(|client| Arc::ptr_eq(client, &given)));
+    }
 }

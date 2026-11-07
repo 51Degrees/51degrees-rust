@@ -253,6 +253,13 @@ impl AgentSignatureElementBuilder {
         self
     }
 
+    /// The client given and what the build says without one, so the tests
+    /// can see what a configuration starts from.
+    #[cfg(test)]
+    pub(crate) fn client_and_message(&self) -> (Option<&Arc<dyn HttpClient>>, &'static str) {
+        (self.http_client.as_ref(), self.no_client_message)
+    }
+
     /// Build the element, refusing any setting out of range.
     pub fn build(self) -> Result<AgentSignatureElement> {
         let periods = [
