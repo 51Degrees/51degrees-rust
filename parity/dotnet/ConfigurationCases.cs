@@ -42,6 +42,7 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using FiftyOne.DeviceDetection.Hash.Engine.OnPremise.FlowElements;
+using FiftyOne.DeviceDetection.RobotsTxt.FlowElements;
 using FiftyOne.IpIntelligence.Engine.OnPremise.FlowElements;
 using FiftyOne.Pipeline.Core.Configuration;
 using FiftyOne.Pipeline.Core.Exceptions;
@@ -168,6 +169,7 @@ namespace FiftyOne.Parity
             services.AddTransient<ShareUsageBuilder>();
             services.AddTransient<JsonBuilderElementBuilder>();
             services.AddTransient<DeviceDetectionHashEngineBuilder>();
+            services.AddTransient<RobotsTxtEngineBuilder>();
             services.AddTransient<IpiOnPremiseEngineBuilder>();
             using var provider = services.BuildServiceProvider();
             IPipeline pipeline;
