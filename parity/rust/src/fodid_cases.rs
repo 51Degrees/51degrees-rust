@@ -407,7 +407,7 @@ fn property_metadata(property: &FiftyOneAspectPropertyMetaData) -> Value {
 }
 
 /// The type a property's values have, by the names the other lines use.
-fn value_type_name(value_type: PropertyValueType) -> String {
+pub(crate) fn value_type_name(value_type: PropertyValueType) -> String {
     let name = match value_type {
         PropertyValueType::String => "string",
         PropertyValueType::Bool => "bool",
