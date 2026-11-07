@@ -1,0 +1,104 @@
+name: Release Plan
+
+# The dry run of a publish. Prints which crates a release of this pull
+# request's result would publish, each at its own version, with the same
+# scripts publish.yml runs, and publishes nothing. Before that, the tests of
+# those scripts run on Linux, Windows and macOS, and ci/packages.json is
+# checked against the crate manifests, because the plan reads only that file.
+#
+# The release rules are common-ci's steps/release-plan.ps1. A pull request
+# into main takes them from common-ci's main, as publish.yml does, and a
+# pull request into rc from common-ci's rc, so the plan for rc follows the
+# rules that release with it. A run started by hand can name another
+# common-ci branch, for example with
+#
+#   gh workflow run "Release Plan" --ref <branch> -f common-ci-ref=rc
+
+on:
+  pull_request:
+    branches: [main, rc]
+  workflow_dispatch:
+    inputs:
+      common-ci-ref:
+        description: 'common-ci branch, tag or commit to take the release rules from.'
+        type: string
+        default: main
+
+# The run only reads the repository and prints the plan.
+permissions:
+  contents: read
+
+env:
+  COMMON_CI_REF: ${{ inputs.common-ci-ref || (github.base_ref == 'rc' && 'rc') || 'main' }}
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  tests:
+    name: release scripts (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout common-ci
+        uses: actions/checkout@v4
+        with:
+          repository: 51Degrees/common-ci
+          path: common-ci
+          ref: ${{ env.COMMON_CI_REF }}
+      - name: Check ci/packages.json against the crate manifests
+        run: ./ci/check-packages.ps1
+      - name: Install Pester
+        run: >-
+          Install-Module -Name Pester -MinimumVersion 5.0.0 -Force
+          -Scope CurrentUser -SkipPublisherCheck
+      - name: Test the release scripts
+        run: |
+          Import-Module Pester -MinimumVersion 5.0.0
+          $config = New-PesterConfiguration
+          $config.Run.Path = './ci'
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $config
+
+  plan:
+    name: dry run of the publish
+    runs-on: ubuntu-latest
+    steps:
+      # The plan reads each crate's tags, and a shallow clone has none. A
+      # submodule's moves are read from the commits, so no submodule is
+      # checked out.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Checkout common-ci
+        uses: actions/checkout@v4
+        with:
+          repository: 51Degrees/common-ci
+          path: common-ci
+          ref: ${{ env.COMMON_CI_REF }}
+      # Until every crate has a tag of its own on the repository, the plan has
+      # nothing to count from, and the publish stops. The dry run tags this
+      # checkout as ci/start-crate-tags.ps1 would, checking crates.io and
+      # pushing nothing, so it shows what the first release would publish.
+      - name: Start each crate's tags in this checkout when none are pushed
+        run: |
+          if (-not (git tag --list '*/*')) {
+            ./ci/start-crate-tags.ps1
+          }
+      - name: Work out which crates a release would publish
+        run: ./ci/get-release-plan.ps1 -OutFile "$env:RUNNER_TEMP/release-plan.json"
+      - name: Check no crate moves its major or minor number
+        run: >-
+          ./ci/check-version-bump.ps1 -RepoName .
+          -PlanFile "$env:RUNNER_TEMP/release-plan.json"
+      - name: Show the tags and releases a publish would make
+        run: >-
+          ./ci/tag-crate-releases.ps1 -RepoName .
+          -PlanFile "$env:RUNNER_TEMP/release-plan.json"
+          -Repository '${{ github.repository }}' -DryRun

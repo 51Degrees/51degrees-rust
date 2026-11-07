@@ -234,15 +234,31 @@ into `main` from any other branch.
 
 ## Releasing to crates.io
 
-Releases are automated, and every push to `main` releases. The version is never
-committed. `.github/workflows/publish.yml` works it out from the release tags
-with GitVersion and common-ci's `GitVersion.yml`, which gives `main` the next
-plain patch, such as 4.5.9 after 4.5.8, and `ci/set-crate-versions.ps1` writes
-it into every manifest on the build machine. The workflow refuses a major or
-minor move unless a person dispatches it with `allow-version-bump`, tests the
-examples against the crates at that version, publishes each crate to crates.io
-in dependency order with `ci/publish-crates.sh`, skipping any version already
-published, and tags the commit.
+Releases are automated, and every push to `main` publishes the crates that
+changed. Each crate has its own version, tagged `<crate>/<version>` (for
+example `fodid/4.5.19`), and no version is committed.
+`.github/workflows/publish.yml` runs `ci/get-release-plan.ps1`, which applies
+common-ci's `steps/release-plan.ps1` to `ci/packages.json`. A crate is
+released at its last tag plus one patch when a file under its folder, or under
+a submodule named in its `ExtraPaths`, changed since that tag, and every crate
+that depends on it is released with it. A change only to CI, documentation or
+examples releases nothing. `ci/set-crate-versions.ps1` then writes each
+planned crate's version, and the version every other crate last released,
+into the manifests and the requirements between them on the build machine.
+The workflow refuses a crate that moves its major or minor number against its
+own tags unless a person dispatches it with `allow-version-bump`, tests the
+examples against this tree, publishes the planned crates in the order of
+`ci/crates.txt` with `ci/publish-crates.sh`, skipping any version already
+published, and tags each crate and gives it a GitHub release with
+`ci/tag-crate-releases.ps1`. `release-plan.yml` prints the same plan on every
+pull request and publishes nothing.
+
+`ci/packages.json` lists each crate `ci/crates.txt` publishes, with its
+folder, the submodules it is built from and the crates it depends on.
+`ci/check-packages.ps1` fails when the file disagrees with the manifests, so a
+dependency added to a manifest is added there too. A crate with no tag of its
+own stops the publish, and `ci/start-crate-tags.ps1` is the script a person
+runs once to tag every crate at the release it was last published from.
 
 Authentication uses crates.io **Trusted Publishing**, where the publish workflow
 exchanges the run's GitHub OIDC identity for a short-lived token, so no API
@@ -312,8 +328,13 @@ workspace reads the submodule and never needs the copy.
   reads no secrets.
 - `examples.yml` builds and tests `examples/` against local source
   (`source.toml`) before a release, on every PR.
-- `publish.yml` publishes on push to `main`, then a `verify-published` job
-  builds and tests `examples/` against the just-released crates.io packages.
+- `publish.yml` publishes the crates that changed on push to `main`, then a
+  `verify-published` job builds and tests `examples/` against the
+  just-released crates.io packages.
+- `release-plan.yml` checks `ci/packages.json` against the manifests and runs
+  the Pester tests of the release scripts (`ci/packages.Tests.ps1`) on Linux,
+  Windows and macOS, then prints the crates a release would publish, on every
+  PR into `main` or `rc`.
 - `utm-link-lint.yml` checks the UTM links described below, on every PR.
 - `mustache-drift.yml` guards the generated JavaScript resource template.
   Push and pull request builds compare against a pinned upstream commit

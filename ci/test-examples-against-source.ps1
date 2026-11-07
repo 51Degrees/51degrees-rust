@@ -15,9 +15,10 @@ The manifests and the lock are put back as they were when the script ends, so a
 run leaves the working tree unchanged.
 
 .PARAMETER Version
-The version to give the crates. The publish workflow passes the version it is
-releasing. Without it, the next patch above the highest release tag is used,
-such as 4.5.9 after 4.5.8.
+The version to give every crate. Without it, the next patch above the highest
+version any crate has been released at is used, such as 4.5.20 when the
+highest tag is fodid/4.5.19. Each crate has its own version on crates.io, so
+the highest of them all is the one that puts every crate above its own.
 
 .PARAMETER Root
 The workspace root. Defaults to the repository this script sits in.
@@ -36,11 +37,16 @@ $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 
 if (-not $Version) {
-    # Release tags are plain versions. Tags with a suffix are pre-releases,
-    # which a requirement such as 4.5.2 never selects, so they are left out.
+    # Release tags are a plain version for a release of every crate, or
+    # '<crate>/<version>' for a release of one. Tags with a suffix are
+    # pre-releases, which a requirement such as 4.5.2 never selects, so they
+    # are left out.
     $released = git -C $Root tag --list |
-        Where-Object { $_ -match '^\d+\.\d+\.\d+$' } |
-        ForEach-Object { [version]$_ } |
+        ForEach-Object {
+            if ($_ -match '^(?:[A-Za-z0-9_-]+/)?(\d+\.\d+\.\d+)$') {
+                [version]$Matches[1]
+            }
+        } |
         Sort-Object -Descending |
         Select-Object -First 1
     if (-not $released) {
