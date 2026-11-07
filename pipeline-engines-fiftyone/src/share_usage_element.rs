@@ -197,8 +197,9 @@ impl ShareUsageConfig {
         self.take_timeout
     }
 
-    /// The HTTP headers that are not shared, as they were given. The `cookie`
-    /// header is not shared whether or not it is in this list.
+    /// The HTTP headers that are not shared, as they were given. Unless all
+    /// evidence is shared, the `cookie` header is not shared whether or not it
+    /// is in this list.
     pub fn blocked_http_headers(&self) -> &[String] {
         &self.blocked_http_headers
     }
@@ -210,7 +211,8 @@ impl ShareUsageConfig {
     }
 
     /// True if every evidence value is shared, ignoring the blocked-header
-    /// and query filters.
+    /// and query filters, apart from the keys that are never shared (see
+    /// [`EvidenceKeyFilterShareUsage`]).
     pub fn share_all_evidence(&self) -> bool {
         self.share_all_evidence
     }
@@ -307,8 +309,9 @@ impl ShareUsageConfigBuilder {
         self
     }
 
-    /// Set the HTTP headers that must not be shared. The `cookie` header is
-    /// always blocked regardless of this list. Returns `self` for chaining.
+    /// Set the HTTP headers that must not be shared. Unless all evidence is
+    /// shared, the `cookie` header is blocked whether or not it is in this
+    /// list. Returns `self` for chaining.
     pub fn blocked_http_headers<I, S>(mut self, headers: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -332,7 +335,8 @@ impl ShareUsageConfigBuilder {
     }
 
     /// Share every evidence value, ignoring the blocked-header and query
-    /// filters. Returns `self` for chaining.
+    /// filters, apart from the keys that are never shared (see
+    /// [`EvidenceKeyFilterShareUsage`]). Returns `self` for chaining.
     pub fn share_all_evidence(mut self, share_all: bool) -> Self {
         self.config.share_all_evidence = share_all;
         self
@@ -1383,6 +1387,83 @@ mod tests {
              <header Name=\"Accept-Language\"><![CDATA[en]]></header>\
              <query Name=\"51D_Test\"><![CDATA[x]]></query></Device></Devices>"
         );
+    }
+
+    /// Evidence in mixed case holding every key that is never shared, the
+    /// `cookie` header, and a `session.` value that starts `51D_` and one
+    /// that does not, beside a user agent.
+    fn evidence_with_keys_never_shared() -> Evidence {
+        Evidence::builder()
+            .add("header.User-Agent", "agent")
+            .add("Server.Request-Path", "/never-shared-1")
+            .add("server.REQUEST-QUERY", "never-shared-2")
+            .add("Query.ID.Email", "never-shared-3")
+            .add("Id.Salt", "never-shared-4")
+            .add("request-path", "/never-shared-5")
+            .add("header.Cookie", "cookie-header")
+            .add("session.51D_Seen", "session-51d")
+            .add("Session.Other", "session-other")
+            .build()
+    }
+
+    #[test]
+    fn the_keys_never_shared_are_left_out_of_the_record() {
+        let capture = Capture::default();
+        share(
+            ShareUsageConfig::default(),
+            capture.clone(),
+            Vec::new(),
+            vec![evidence_with_keys_never_shared()],
+        );
+        let xml = &capture.messages()[0];
+        assert!(!xml.contains("never-shared"), "{xml}");
+        assert!(!xml.contains("cookie-header"), "{xml}");
+        assert!(!xml.contains("session-other"), "{xml}");
+        assert!(
+            xml.contains("<session Name=\"51D_Seen\"><![CDATA[session-51d]]></session>"),
+            "{xml}"
+        );
+    }
+
+    #[test]
+    fn sharing_all_still_leaves_out_the_keys_never_shared() {
+        let capture = Capture::default();
+        share(
+            ShareUsageConfig::builder().share_all_evidence(true).build(),
+            capture.clone(),
+            Vec::new(),
+            vec![evidence_with_keys_never_shared()],
+        );
+        let xml = &capture.messages()[0];
+        assert!(!xml.contains("never-shared"), "{xml}");
+        assert!(
+            xml.contains("<header Name=\"Cookie\"><![CDATA[cookie-header]]></header>"),
+            "{xml}"
+        );
+        assert!(
+            xml.contains("<Session Name=\"Other\"><![CDATA[session-other]]></Session>"),
+            "{xml}"
+        );
+    }
+
+    #[test]
+    fn a_visitor_opening_another_page_is_not_shared_again() {
+        let capture = Capture::default();
+        let page = |path: &str, query: &str| {
+            Evidence::builder()
+                .add("header.user-agent", "agent")
+                .add("server.client-ip", "192.0.2.7")
+                .add("server.request-path", path)
+                .add("server.request-query", query)
+                .build()
+        };
+        share(
+            ShareUsageConfig::default(),
+            capture.clone(),
+            Vec::new(),
+            vec![page("/first", "a=1"), page("/second", "b=2")],
+        );
+        assert_eq!(capture.devices(), 1, "{:?}", capture.messages());
     }
 
     #[test]

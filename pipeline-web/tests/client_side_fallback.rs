@@ -205,6 +205,37 @@ impl FlowElement for ClashElement {
     }
 }
 
+/// Stands in for a JSON builder under the data key it is given, and adds no
+/// data and records no error, as a builder that wrote nothing would.
+struct SilentJsonBuilder {
+    data_key: &'static str,
+    filter: EvidenceKeyFilterWhitelist,
+}
+
+impl SilentJsonBuilder {
+    fn new(data_key: &'static str) -> Self {
+        SilentJsonBuilder {
+            data_key,
+            filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+        }
+    }
+}
+
+impl FlowElement for SilentJsonBuilder {
+    fn process(&self, _data: &mut FlowData) -> Result<()> {
+        Ok(())
+    }
+    fn data_key(&self) -> &str {
+        self.data_key
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        &self.filter
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        &[]
+    }
+}
+
 // ----------------------------------------------------------------------------
 // Requests and responses.
 // ----------------------------------------------------------------------------
@@ -735,6 +766,53 @@ fn a_json_builder_that_left_no_data_is_logged_when_the_script_cannot_be_built() 
         assert_eq!(records_since(from), expected, "{clashed} {with_json}");
         assert_not_cached(&response);
         assert!(response.body.is_empty(), "{}", body(&response));
+    }
+}
+
+/// An element under the JSON builder's data key in other case is the JSON
+/// builder to the endpoints, as it is to the web pipeline, which adds no JSON
+/// builder beside it. When it leaves no data, with no error recorded, it is
+/// logged and neither endpoint's response is cached, as for the same element
+/// under the key in lower case.
+#[test]
+fn a_json_builder_key_in_other_case_that_left_no_data_is_logged_and_not_cached() {
+    for data_key in [JSON_BUILDER_ELEMENT_DATA_KEY, "JSON-Builder"] {
+        let elements: Vec<Arc<dyn FlowElement>> = vec![
+            Arc::new(DeviceElement::new()),
+            Arc::new(SilentJsonBuilder::new(data_key)),
+        ];
+        let web = WebPipeline::build(elements, WebIntegrationOptions::default())
+            .expect("the web pipeline builds");
+        assert!(web.pipeline().resource::<JsonBuilderElement>().is_none());
+        let data = processed(web.pipeline());
+        assert!(data.errors().is_empty(), "{data_key}");
+        assert!(data.get(JSON_BUILDER_DATA_KEY).is_none(), "{data_key}");
+        assert!(
+            data.get(JAVASCRIPT_BUILDER_DATA_KEY).is_some(),
+            "{data_key}"
+        );
+
+        let from = mark();
+        let json = serve_json(&data, &TestRequest, &options(&web));
+        assert_eq!(
+            records_since(from),
+            vec![missing(JSON_BUILDER_ELEMENT_DATA_KEY)],
+            "{data_key}"
+        );
+        assert_not_cached(&json);
+        assert!(json.body.is_empty(), "{data_key}: {}", body(&json));
+
+        let from = mark();
+        let javascript = serve_javascript(&data, &TestRequest, &options(&web));
+        assert_eq!(
+            records_since(from),
+            vec![
+                missing(JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY),
+                missing(JSON_BUILDER_ELEMENT_DATA_KEY),
+            ],
+            "{data_key}"
+        );
+        assert_not_cached(&javascript);
     }
 }
 

@@ -351,7 +351,7 @@ fn order_elements(
 /// The index of the first of `elements` whose data key is `data_key`,
 /// ignoring case, as the flow data keeps element data under the key in lower
 /// case.
-fn position(elements: &[Arc<dyn FlowElement>], data_key: &str) -> Option<usize> {
+pub(crate) fn position(elements: &[Arc<dyn FlowElement>], data_key: &str) -> Option<usize> {
     let data_key = data_key.to_lowercase();
     elements
         .iter()

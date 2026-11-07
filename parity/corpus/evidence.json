@@ -597,6 +597,23 @@
     }
   },
   {
+    "id": "usage-never-shared",
+    "about": "The keys usage sharing never shares, in mixed case, as the whole key and after a prefix, a session value starting 51D_, which is shared, one that does not, which is not, and a header whose name ends in .Email, which is shared because only id.email after a dot is never shared.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "Server.Request-Path": "/articles/never-shared",
+      "server.REQUEST-QUERY": "a=1&b=2",
+      "query.ID.Email": "someone@example.com",
+      "Id.Salt": "salt",
+      "request-path": "/bare",
+      "session.51D_Seen": "1",
+      "session.other": "value",
+      "header.X-Valid.Email": "shared",
+      "server.client-ip": "81.2.69.142",
+      "query.session-id": "parity-usage-never-shared"
+    }
+  },
+  {
     "id": "json-values-sequence-8",
     "about": "The values pipeline with sequence 8, so the JSON builder sees 9, the last sequence that lists JavaScript properties.",
     "pipeline": "values",
@@ -1302,6 +1319,24 @@
       "query.session-id": "parity-cloud-translation-request-failed",
       "query.parity-cloud-response": "{\"errors\":[\"The cloud service is not available.\"]}",
       "query.parity-cloud-status": "500"
+    }
+  },
+  {
+    "id": "cloud-translation-recorded",
+    "about": "Cut down from the cloud service's response for 185.28.167.78 with the language de-DE, keeping its shape. Property names and weighted item fields are in lower case, members are in alphabetical order and there is no SortingCultureUsed. Each list of every country keeps the first six of its 250 entries.",
+    "pipeline": "cloud-translation",
+    "evidence": {
+      "query.session-id": "parity-cloud-translation-recorded",
+      "query.parity-cloud-response": "{\"countrynamestranslated\":{\"countrycodesgeographicalall\":[\"GB\",\"IE\",\"IM\",\"AF\",\"EG\",\"AX\"],\"countrycodespopulationall\":[\"GB\",\"IE\",\"IM\",\"AF\",\"EG\",\"AX\"],\"countrynamesgeographicalalltranslated\":[\"Vereinigtes Königreich\",\"Irland\",\"Isle of Man\",\"Afghanistan\",\"Ägypten\",\"Ålandinseln\"],\"countrynamesgeographicaltranslated\":[{\"rawweighting\":59967,\"value\":\"Vereinigtes Königreich\"},{\"rawweighting\":5412,\"value\":\"Irland\"},{\"rawweighting\":156,\"value\":\"Isle of Man\"}],\"countrynamespopulationalltranslated\":[\"Vereinigtes Königreich\",\"Irland\",\"Isle of Man\",\"Afghanistan\",\"Ägypten\",\"Ålandinseln\"],\"countrynamespopulationtranslated\":[{\"rawweighting\":62781,\"value\":\"Vereinigtes Königreich\"},{\"rawweighting\":2678,\"value\":\"Irland\"},{\"rawweighting\":76,\"value\":\"Isle of Man\"}]}}"
+    }
+  },
+  {
+    "id": "cloud-translation-recorded-unknown",
+    "about": "Cut down from the cloud service's response for 10.0.0.1 with the language de-DE, where each weighted list holds Unknown with the raw weighting 65535 rather than null. Each list of every country keeps the first six of its 250 entries.",
+    "pipeline": "cloud-translation",
+    "evidence": {
+      "query.session-id": "parity-cloud-translation-recorded-unknown",
+      "query.parity-cloud-response": "{\"countrynamestranslated\":{\"countrycodesgeographicalall\":[\"AF\",\"EG\",\"AX\",\"AL\",\"DZ\",\"AS\"],\"countrycodespopulationall\":[\"AF\",\"EG\",\"AX\",\"AL\",\"DZ\",\"AS\"],\"countrynamesgeographicalalltranslated\":[\"Afghanistan\",\"Ägypten\",\"Ålandinseln\",\"Albanien\",\"Algerien\",\"Amerikanisch-Samoa\"],\"countrynamesgeographicaltranslated\":[{\"rawweighting\":65535,\"value\":\"Unknown\"}],\"countrynamespopulationalltranslated\":[\"Afghanistan\",\"Ägypten\",\"Ålandinseln\",\"Albanien\",\"Algerien\",\"Amerikanisch-Samoa\"],\"countrynamespopulationtranslated\":[{\"rawweighting\":65535,\"value\":\"Unknown\"}]}}"
     }
   }
 ]
