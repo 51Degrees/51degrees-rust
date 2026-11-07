@@ -755,4 +755,49 @@ Describe 'ci/release-plan-filter.ps1' {
         Get-Kept $null $script:Manifest |
             Should -Be @('fodid-client/Cargo.toml', 'fodid-client/src/lib.rs')
     }
+
+    It 'keeps a manifest whose only change is in case, as Cargo reads case' {
+        $before = @('[package]', 'links = "fiftyone-common-c"') +
+            @($script:Manifest | Select-Object -Skip 1) + @(
+            ''
+            '[features]'
+            'default = ["Std"]'
+            ''
+            '[target.''cfg(target_os = "Linux")''.dependencies]'
+            'libc = "0.2"'
+        )
+        foreach ($change in @(
+                @('links = *', 'links = "FiftyOne-Common-C"'),
+                @('default = *', 'default = ["std"]'),
+                @('`[target.*', '[target.''cfg(target_os = "linux")''.dependencies]'))) {
+            $after = Set-Line $before $change[0] $change[1]
+            ($after -join "`n") | Should -Not -BeExactly ($before -join "`n")
+            Get-Kept $before $after |
+                Should -Be @('fodid-client/Cargo.toml', 'fodid-client/src/lib.rs') -Because $change[1]
+        }
+    }
+
+    It 'finds the end of a value over several lines outside its strings' {
+        # The last line of authors holds a '#' inside a string, ahead of the
+        # ']' that closes the array.
+        $before = @(
+            '[package]'
+            'name = "fodid-client"'
+            'authors = ['
+            '    "A <a@example.com>",'
+            '    "C# team <b@example.com>" ]'
+            'build = "build.rs"'
+            ''
+            '[dependencies]'
+            'fodid = { path = "../fodid", version = "=4.5.5" }'
+        )
+        $after = Set-Line $before 'build = *' 'build = "other.rs"'
+        Get-Kept $before $after |
+            Should -Be @('fodid-client/Cargo.toml', 'fodid-client/src/lib.rs')
+        $after = Set-Line $before '`[dependencies`]' '[build-dependencies]'
+        Get-Kept $before $after |
+            Should -Be @('fodid-client/Cargo.toml', 'fodid-client/src/lib.rs')
+        $after = Set-Line $before '    "A <*' '    "B <a@example.com>",'
+        Get-Kept $before $after | Should -Be @('fodid-client/src/lib.rs')
+    }
 }
