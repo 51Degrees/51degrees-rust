@@ -41,6 +41,11 @@
 //!   counts whole seconds from now.
 //! - `SetDataUpdateLicenseKey`, adding one key, and
 //!   `SetDataUpdateLicenseKeys`, adding a list of them.
+//! - `SetLicenseKeyRequired`, true unless the update source serves the file
+//!   without a key, as the
+//!   [specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/data-updates.md#defaults)
+//!   allows. .NET's engine builders have no such setting, as .NET never
+//!   asks for a key on this route.
 //! - `SetTempDirPath`, the folder a copy of the data file is made in.
 //! - `SetDataUpdateUrl` given a `Uri`, `SetDataUpdateUrlFormatter`,
 //!   `SetDataUpdateUseUrlFormatter` given a formatter, and `AddDataFile`
@@ -73,7 +78,9 @@ const DEFAULT_RANDOMISATION_SECONDS: i32 = 10 * 60;
 /// defaults are .NET's, being automatic updates and the file system watcher
 /// on, update on startup off, a poll every 30 minutes plus up to 10, MD5
 /// verification, decompression and `If-Modified-Since` on, and the
-/// Distributor's URL formatter.
+/// Distributor's URL formatter. Automatic updates and update on startup
+/// need a license key unless `SetLicenseKeyRequired` is false, as the
+/// specification says, where .NET never asks for one.
 #[derive(Debug, Clone)]
 pub struct DataFileSettings {
     data_update_url: Option<String>,
@@ -86,6 +93,7 @@ pub struct DataFileSettings {
     randomisation_seconds: i32,
     verify_modified_since: bool,
     license_keys: Vec<String>,
+    license_key_required: bool,
     update_on_startup: bool,
     temp_dir_path: Option<String>,
 }
@@ -103,6 +111,7 @@ impl Default for DataFileSettings {
             randomisation_seconds: DEFAULT_RANDOMISATION_SECONDS,
             verify_modified_since: true,
             license_keys: Vec::new(),
+            license_key_required: true,
             update_on_startup: false,
             temp_dir_path: None,
         }
@@ -143,7 +152,7 @@ impl DataFileSettings {
     /// Refuse updates that cannot run, with .NET's messages. Any update needs
     /// an update service, which an application gives the pipeline builder as
     /// a resource, and automatic updates or update on startup need a license
-    /// key, as the
+    /// key unless `SetLicenseKeyRequired` is false, as the
     /// [specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/data-updates.md#defaults)
     /// requires.
     pub fn check(&self, has_update_service: bool) -> Result<()> {
@@ -162,7 +171,10 @@ impl DataFileSettings {
             .into_iter()
             .filter(|feature| *feature != "file system watcher")
             .collect();
-        if !needing_key.is_empty() && self.license_keys.iter().all(String::is_empty) {
+        if self.license_key_required
+            && !needing_key.is_empty()
+            && self.license_keys.iter().all(String::is_empty)
+        {
             return Err(Error::configuration(format!(
                 "Some enabled features ({}) require a license key but one has not been \
                  supplied. This can be corrected by passing a license key to the engine \
@@ -187,7 +199,8 @@ impl DataFileSettings {
             .decompress_content(self.decompress)
             .verify_md5(self.verify_md5)
             .verify_modified_since(self.verify_modified_since)
-            .data_update_license_keys(self.license_keys.iter().cloned());
+            .data_update_license_keys(self.license_keys.iter().cloned())
+            .license_key_required_for_updates(self.license_key_required);
         if let Some(url) = &self.data_update_url {
             builder = builder.data_update_url(url.clone());
         }
@@ -317,7 +330,8 @@ pub fn performance_profile_number(text: &str, engine: &str) -> Result<u8> {
 
 /// Add the data file settings to `definition`, in the order .NET's
 /// `SingleFileAspectEngineBuilderBase` and `OnPremiseAspectEngineBuilderBase`
-/// declare them. `settings` gives the [`DataFileSettings`] the builder `B`
+/// declare them, with `SetLicenseKeyRequired`, which they lack, after the
+/// license keys. `settings` gives the [`DataFileSettings`] the builder `B`
 /// holds.
 pub fn add_data_file_settings<B: Send + 'static>(
     definition: BuilderDefinition<B>,
@@ -418,6 +432,13 @@ pub fn add_data_file_settings<B: Send + 'static>(
                 builder
             },
         )
+        .setting(
+            "SetLicenseKeyRequired",
+            move |mut builder: B, required: bool| {
+                settings(&mut builder).license_key_required = required;
+                builder
+            },
+        )
         .setting("SetDataUpdateOnStartup", move |mut builder: B, on: bool| {
             settings(&mut builder).update_on_startup = on;
             builder
@@ -471,6 +492,40 @@ mod tests {
             "Update randomization timespan too large. Must be less than 2147483647 seconds but \
              is 2147483648 seconds (Parameter 'maximumDeviation')"
         );
+    }
+
+    /// Automatic updates and update on startup need a key unless the
+    /// settings say the update source needs none, and the data file made
+    /// from the settings then needs none either. An update service is
+    /// needed whatever the settings say.
+    #[test]
+    fn updates_need_a_key_unless_the_settings_say_not() {
+        let mut settings = DataFileSettings::new();
+        let refused = settings.check(true).unwrap_err();
+        assert!(
+            refused
+                .message()
+                .starts_with("Some enabled features (auto update) require a license key"),
+            "{}",
+            refused.message()
+        );
+        let configuration = settings.configuration("51Degrees.hash");
+        assert!(configuration.license_key_required_for_updates);
+        assert!(configuration.check_license_keys().is_err());
+
+        settings.license_key_required = false;
+        for update_on_startup in [false, true] {
+            settings.update_on_startup = update_on_startup;
+            settings.check(true).unwrap();
+            let configuration = settings.configuration("51Degrees.hash");
+            assert!(!configuration.license_key_required_for_updates);
+            configuration.check_license_keys().unwrap();
+            assert!(settings
+                .check(false)
+                .unwrap_err()
+                .message()
+                .contains("require an IDataUpdateService"));
+        }
     }
 
     /// A URL .NET's `Uri` reads keeps its text, and one it refuses gives

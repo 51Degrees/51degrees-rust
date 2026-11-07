@@ -53,7 +53,9 @@
 //!   configuration turns them off, as in .NET, and any update needs a
 //!   [`DataUpdateService`] given to the
 //!   [`PipelineBuilder`](fiftyone_pipeline_core::PipelineBuilder) as a
-//!   resource, and a license key for automatic updates or update on startup.
+//!   resource, and a license key for automatic updates or update on startup
+//!   unless `SetLicenseKeyRequired` is false, for an update source that
+//!   serves the file without one.
 //! - `SetLazyLoading` and `SetCache` take their values in code only, so
 //!   naming one fails as it does in .NET.
 //!
