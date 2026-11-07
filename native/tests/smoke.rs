@@ -724,10 +724,10 @@ mod ip_intelligence {
             .expect("reading a property should not error");
     }
 
-    /// Looking up evidence with no client IP returns a native input error rather
-    /// than panicking.
+    /// Looking up evidence with no client IP gives results with no values, as
+    /// .NET gives, rather than an error.
     #[test]
-    fn evidence_without_ip_errors() {
+    fn evidence_without_ip_gives_no_values() {
         let Some(data_file) = ipi_data_file() else {
             eprintln!("no IP Intelligence data file found; skipping no-IP test");
             return;
@@ -735,9 +735,14 @@ mod ip_intelligence {
         let manager = open_loaded(&data_file);
         let mut results = manager.create_results().expect("results should allocate");
         let evidence = Evidence::builder().add("header.user-agent", "x").build();
-        assert!(
-            results.process_evidence(&evidence).is_err(),
-            "evidence with no client IP should be an error"
+        results
+            .process_evidence(&evidence)
+            .expect("evidence with no client IP should be looked up");
+        assert_eq!(
+            results
+                .value_as_string("Asn", "|")
+                .expect("reading the Asn property should not error"),
+            None
         );
     }
 

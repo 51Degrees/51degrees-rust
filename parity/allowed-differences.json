@@ -11,17 +11,13 @@
             "message": "The value for the 'sequence' parameter is not valid. See https://51degrees.com/documentation/4.5/_services__cloud__error_messages.html?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=pipeline-engines-fiftyone-src-sequence_element.rs&utm_term=sequence-not-valid for more information."
           },
           {
-            "element": "ip",
-            "message": "evidence contains no client IP address to look up"
-          },
-          {
             "element": "json-builder",
             "message": "The value for the 'sequence' parameter could not be found. A Sequence element needs to be placed before the JSON builder element in the pipeline. See https://51degrees.com/documentation/4.5/_services__cloud__error_messages.html?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=json-builder-src-element.rs&utm_term=sequence-number-not-present for more information."
           }
         ]
       ]
     },
-    "reason": "For a sequence that is not a 32-bit integer each side gives an error from the Sequence element and another from the JSON builder, and each message starts with the same sentence. The links in the messages carry each repository's own campaign tags, and the crates' JSON builder message adds a sentence saying where the Sequence element goes. The crates' errors also hold the IP Intelligence error that the #226 entry for errors allows in the other cases. The crates' side is pinned, so the entry allows only .NET's tags and wording. When #226 removes the IP Intelligence error, it comes out of the pinned side too."
+    "reason": "For a sequence that is not a 32-bit integer each side gives an error from the Sequence element and another from the JSON builder, and each message starts with the same sentence. The links in the messages carry each repository's own campaign tags, and the crates' JSON builder message adds a sentence saying where the Sequence element goes. The crates' side is pinned, so the entry allows only .NET's tags and wording."
   },
   {
     "path": "properties.sequence",
@@ -34,43 +30,17 @@
     "reason": "The JSON builder writes the data of the crates' Sequence element, being the session-id and sequence the specification's Element Data gives. .NET's Sequence element has no data."
   },
   {
-    "path": "properties.ip",
-    "kind": "presence",
+    "path": "properties.ip.ip",
+    "kind": "type",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "reason": "With no address in the evidence the crates' IP Intelligence engine gives an error and no data, where .NET gives data in which no property has a value.",
+    "reason": "The crates give Ip as a string, where .NET gives an IP address. The values are still compared, and are the same.",
     "issue": 226
   },
   {
-    "path": "errors",
-    "kind": "value",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-absent", "sequence-5", "sequence-9", "sequence-10", "sequence-int-max", "sequence-space", "sequence-plus", "sequence-nul", "sequence-int-min", "session-*", "javascript-*", "usage-*"],
-    "reason": "The crates' IP Intelligence engine gives an error when the evidence holds no address it can read. .NET gives none. The four sequence cases that are not a 32-bit integer are left out, so their errors meet only the entry that pins the crates' side.",
-    "issue": 226
-  },
-  {
-    "path": "json.errors",
-    "kind": "onlyInRust",
+    "path": "properties.ip.ipv6",
+    "kind": "type",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "reason": "The JSON builder writes the IP Intelligence error the crates give when the evidence holds no address it can read.",
-    "issue": 226
-  },
-  {
-    "path": "json.ip",
-    "kind": "onlyInDotnet",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "reason": "The crates' IP Intelligence engine writes no data when the evidence holds no address it can read, so the JSON has no ip object.",
-    "issue": 226
-  },
-  {
-    "path": "*ip.ip",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "reason": "The crates do not fill the Ip property with the address looked up, as .NET does.",
-    "issue": 226
-  },
-  {
-    "path": "*ip.ipv6",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "reason": "The crates do not fill the IpV6 property with the address looked up, as .NET does.",
+    "reason": "The crates give IpV6 as a string, where .NET gives an IP address. The values are still compared, and are the same.",
     "issue": 226
   },
   {
