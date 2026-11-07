@@ -63,7 +63,7 @@ use axum::response::Response;
 use fiftyone_pipeline_web::{response_headers, WebEndpoint};
 
 use crate::handlers::{javascript_handler, json_handler};
-use crate::process::{process_request, CapturedRequest};
+use crate::process::{process_then, sent_uri, CapturedRequest};
 use crate::result::FiftyOneResult;
 use crate::state::FiftyOneState;
 
@@ -86,18 +86,20 @@ pub async fn fiftyone_middleware(
     }
 
     // 2. Process the pipeline for every other request. A non-endpoint request
-    // has no relevant body, so the form body is empty.
+    // has no relevant body, so the form body is empty. The method and the URI
+    // as sent make up the request line.
     let captured = CapturedRequest {
         headers: request.headers().clone(),
-        uri: request.uri().clone(),
+        uri: sent_uri(request.extensions(), request.uri().clone()),
         body: Vec::new(),
         peer_addr: request
             .extensions()
             .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
             .map(|connect_info| connect_info.0),
     };
+    let method = Some(request.method().clone());
 
-    let flow_data = match process_request(&state, captured).await {
+    let flow_data = match process_then(&state, captured, method, |flow_data, _| flow_data).await {
         Ok(flow_data) => flow_data,
         Err(_) => {
             // A panic in processing must not take the whole request down; pass it
