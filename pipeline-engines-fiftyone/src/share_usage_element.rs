@@ -1552,13 +1552,15 @@ mod tests {
     }
 
     /// The web request is shared with the evidence, a key in both having the
-    /// evidence's value and the web request's place and spelling, and the
-    /// ignore filter reads it too.
+    /// evidence's value and the web request's place and spelling, a key only
+    /// in the evidence coming after the web request's keys, and the ignore
+    /// filter reads it too.
     #[test]
     fn the_web_request_is_shared_and_the_evidence_wins() {
         let capture = Capture::default();
         let config = ShareUsageConfig::builder()
             .ignore_flow_data_evidence_filter([("header.x-skip", "yes")])
+            .included_query_string_parameters(Some(["extra"]))
             .build();
         let request = |test: &str, skip: &str| {
             Evidence::builder()
