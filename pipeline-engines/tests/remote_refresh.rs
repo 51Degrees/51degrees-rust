@@ -261,6 +261,78 @@ fn a_publish_date_the_engine_records_is_kept_after_a_download() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Start a local server that answers one request with 304 and gives back
+/// the request's `If-Modified-Since` header, if it had one.
+fn start_not_modified_server() -> (String, std::thread::JoinHandle<Option<String>>) {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/datafile", server.server_addr());
+    let handle = std::thread::spawn(move || {
+        let request = server.recv().ok()?;
+        let since = request
+            .headers()
+            .iter()
+            .find(|header| header.field.equiv("If-Modified-Since"))
+            .map(|header| header.value.as_str().to_owned());
+        let _ = request.respond(tiny_http::Response::empty(304));
+        since
+    });
+    (url, handle)
+}
+
+/// `If-Modified-Since` carries the publish date the data holds, or the data
+/// file's modified time when the data holds none, as the specification
+/// allows. A memory data source with no publish date sends no date.
+#[test]
+fn if_modified_since_is_the_publish_date_or_the_file_modified_time() {
+    let dir = std::env::temp_dir().join(format!("fiftyone-dut-ims-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("device.dat");
+    std::fs::write(&path, b"current data").unwrap();
+    let modified = DateTime::<Utc>::from(std::fs::metadata(&path).unwrap().modified().unwrap());
+    let published = Utc.with_ymd_and_hms(2001, 2, 3, 0, 0, 0).unwrap();
+    let cases = [
+        (
+            "a file with no publish date",
+            Some(&path),
+            None,
+            Some(modified),
+        ),
+        (
+            "a file with a publish date",
+            Some(&path),
+            Some(published),
+            Some(published),
+        ),
+        ("memory with no publish date", None, None, None),
+    ];
+    for (case, file, recorded, expected) in cases {
+        let (url, server) = start_not_modified_server();
+        let config = match file {
+            Some(path) => DataFileConfiguration::builder(path),
+            None => DataFileConfiguration::memory_builder(),
+        }
+        .data_update_url(url)
+        .automatic_updates_enabled(false)
+        .file_system_watcher_enabled(false)
+        .build();
+        let data_file = Arc::new(AspectEngineDataFile::new(config));
+        if let Some(recorded) = recorded {
+            data_file.set_data_published(recorded);
+        }
+        let engine: Arc<dyn OnPremiseAspectEngine> =
+            Arc::new(TestEngine::new(Arc::clone(&data_file)));
+
+        let status = DataUpdateService::new()
+            .check_for_update(&engine, None)
+            .unwrap();
+        let sent = server.join().unwrap();
+        assert_eq!(status, AutoUpdateStatus::NotNeeded, "{case}");
+        let expected = expected.map(|when| when.format("%a, %d %b %Y %H:%M:%S GMT").to_string());
+        assert_eq!(sent, expected, "{case}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn not_modified_response_reports_not_needed() {
     // A server that always answers 304.

@@ -677,14 +677,17 @@ impl ServiceHandle {
             .formatted_update_url()
             .unwrap_or_else(|| url.clone());
 
-        // Build the request, adding If-Modified-Since when configured.
+        // Build the request, adding If-Modified-Since when configured. It is
+        // the date the data was published, or the file's modified time when
+        // the data holds no publish date, as the specification allows.
         let mut request = self.client.get(&request_url);
         if config.verify_modified_since {
-            if let Some(published) = data_file.data_published() {
-                request = request.header(
-                    reqwest::header::IF_MODIFIED_SINCE,
-                    httpdate_format(published),
-                );
+            let since = data_file
+                .data_published()
+                .or_else(|| data_file.data_file_path().and_then(file_modified_time));
+            if let Some(since) = since {
+                request =
+                    request.header(reqwest::header::IF_MODIFIED_SINCE, httpdate_format(since));
             }
         }
 
