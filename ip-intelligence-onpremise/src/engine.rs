@@ -469,7 +469,13 @@ impl IpIntelligenceOnPremiseEngine {
             .fiftyone_properties
             .iter()
             .find(|property| property.name() == property_name)
-            .and_then(|property| property.value(value_name).cloned()))
+            .and_then(|property| {
+                property
+                    .values()
+                    .iter()
+                    .find(|value| value.name == value_name)
+                    .cloned()
+            }))
     }
 
     /// Look up the client IP in `data`'s evidence, through

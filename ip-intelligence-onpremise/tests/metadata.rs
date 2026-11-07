@@ -267,6 +267,11 @@ fn property_values_are_read_from_the_data_file() {
         Some(vec![ValueMetaData::new("N/A")])
     );
     assert_eq!(engine.property_value_count("Ip"), Some(1));
+    assert_eq!(
+        engine.property_value("Ip", "N/A").expect("searched"),
+        Some(ValueMetaData::new("N/A"))
+    );
+    assert_eq!(engine.property_value("Ip", "n/a").expect("searched"), None);
     assert_eq!(engine.property_values("asn").expect("no error"), None);
     assert_eq!(
         engine.property_values("NotAProperty").expect("no error"),
