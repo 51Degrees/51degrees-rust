@@ -51,6 +51,9 @@ jobs:
           repository: 51Degrees/common-ci
           path: common-ci
           ref: ${{ env.COMMON_CI_REF }}
+      # ci/set-crate-versions.ps1 checks the requirements between the crates
+      # with `cargo metadata`, which reads the manifests and compiles nothing.
+      - uses: dtolnay/rust-toolchain@stable
       - name: Check ci/packages.json against the crate manifests
         run: ./ci/check-packages.ps1
       - name: Install Pester

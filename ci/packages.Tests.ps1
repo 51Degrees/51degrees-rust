@@ -530,6 +530,42 @@ Describe 'ci/set-crate-versions.ps1' {
             Sort-Object -Unique | Should -Be '4.5.18'
     }
 
+    It 'keeps an exact requirement exact, on a planned crate and on a crate keeping its last version' {
+        $copy = Copy-Workspace
+        $versions = Get-AllVersions '4.5.18'
+        $versions['fiftyone-common-sys'] = '4.5.19'
+        $versions['fiftyone-native'] = '4.5.19'
+        $null = & $script:Script -PlanFile (Write-Versions $versions) -Root $copy
+
+        $native = Get-Content -Raw (Join-Path $copy 'native' 'Cargo.toml')
+        $native | Should -Match 'fiftyone-common-sys = \{ version = "=4\.5\.19"'
+        $native | Should -Match 'fiftyone-pipeline-core = \{ version = "=4\.5\.18"'
+        $native | Should -Match 'fiftyone-ip-intelligence-sys = \{ version = "=4\.5\.18"'
+        $onCommon = @(Get-Requirements $copy 'fiftyone-common-sys')
+        $onCommon.Count | Should -BeGreaterThan 0
+        $onCommon | Sort-Object -Unique | Should -Be '=4.5.19'
+    }
+
+    It 'keeps a dev-dependency plain, and any other operator as it was' {
+        $copy = Copy-Workspace
+        $client = Join-Path $copy 'fodid-client' 'Cargo.toml'
+        $text = Get-Content -Raw $client
+        $own = Get-OwnVersion $copy 'fodid'
+        $dev = "fodid = { path = `"../fodid`", version = `"$own`", features = [`"creator`"] }"
+        $text.Contains($dev) | Should -BeTrue
+        $caret = $dev.Replace("`"$own`"", "`"^$own`"")
+        Set-Content -Path $client -Value $text.Replace($dev, $caret) -NoNewline
+        $versions = Get-AllVersions '4.5.18'
+        $versions['fodid'] = '4.5.25'
+        $null = & $script:Script -PlanFile (Write-Versions $versions) -Root $copy
+
+        Get-Content -Raw $client | Should -Match 'fodid = \{ path = "\.\./fodid", version = "=4\.5\.25" \}'
+        Get-Content -Raw $client | Should -Match 'fodid = \{ path = "\.\./fodid", version = "\^4\.5\.25", features'
+        $core = Get-Content -Raw (Join-Path $copy 'fodid-core' 'Cargo.toml')
+        $core | Should -Match 'fodid = \{ version = "=4\.5\.25", path'
+        $core | Should -Match 'fodid = \{ version = "4\.5\.25", path = "\.\./fodid", features'
+    }
+
     It 'leaves a dependency on the crate itself with no version alone' {
         $copy = Copy-Workspace
         $null = & $script:Script -PlanFile (Write-Versions (Get-AllVersions '4.5.19')) -Root $copy

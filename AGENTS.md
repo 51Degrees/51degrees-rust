@@ -270,8 +270,9 @@ would let a fresh build of an older crate take newer `-sys` crates.
 Dev-dependencies are the exception and take the plain version, because they
 never reach a project's build and an exact one would force a new release of a
 crate whenever a crate its tests use is released. `set-crate-versions.ps1`
-writes the release's version into each requirement in that form, and
-`ci/check-crate-requirements.ps1`, which it runs before and after writing,
+writes the required crate's own version into each requirement and keeps the
+requirement's operator, and `ci/check-crate-requirements.ps1`, which it runs
+before and after writing,
 fails on a requirement in the other form, on a published crate that requires
 one `ci/crates.txt` does not publish, on a `ci/crates.txt` order that
 publishes a crate before one it requires, and on finding nothing to check.
