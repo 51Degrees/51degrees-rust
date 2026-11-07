@@ -406,7 +406,7 @@ fn an_unknown_setting_lists_dotnets_settings() {
 mod from_files {
     use std::path::{Path, PathBuf};
 
-    use fiftyone_pipeline_core::{FlowElement, PropertyValue};
+    use fiftyone_pipeline_core::PropertyValue;
 
     use super::*;
 
