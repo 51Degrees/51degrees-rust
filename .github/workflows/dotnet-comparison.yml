@@ -279,13 +279,12 @@ jobs:
       # and areas, so the metadata tests run here too, opening the file in
       # LowMemory, and 51DEGREES_REQUIRE_ENTERPRISE makes a test that needs
       # the Enterprise file fail rather than skip. The failed refresh test
-      # reads the whole file into memory, so it runs in the build jobs only.
+      # always uses the ASN file.
       - name: Check the IP Intelligence metadata of the Enterprise file
         if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
         run: |
           env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_ENTERPRISE=1 \
-            cargo test -p fiftyone-ip-intelligence-onpremise --test metadata -- \
-            --skip a_refresh_whose_metadata_cannot_be_read_changes_nothing
+            cargo test -p fiftyone-ip-intelligence-onpremise --test metadata
           env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_ENTERPRISE=1 \
             cargo test -p fiftyone-native --no-default-features --features ipi \
             --lib -- --exact \

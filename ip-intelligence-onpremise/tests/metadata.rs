@@ -24,7 +24,9 @@
 //! the .NET engine reads it. The tests run against the ASN file in the data
 //! repository, or the file `51DEGREES_IPI_PATH` names, and skip when neither
 //! is present. A test that needs an Enterprise file skips on any other, and
-//! fails instead when `51DEGREES_REQUIRE_ENTERPRISE` is set.
+//! fails instead when `51DEGREES_REQUIRE_ENTERPRISE` is set. The failed
+//! refresh test always uses the ASN file, because it holds two copies of the
+//! file in memory and writes a third to disk.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -53,8 +55,7 @@ fn skip_without_enterprise(reason: &str, what: &str) {
     eprintln!("{reason}; skipping {what}");
 }
 
-/// The data file `51DEGREES_IPI_PATH` names, else the ASN file in the data
-/// repository inside the `cxx` submodule.
+/// The data file `51DEGREES_IPI_PATH` names, else [`asn_file`].
 fn data_file() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("51DEGREES_IPI_PATH") {
         let path = PathBuf::from(path.trim());
@@ -62,6 +63,11 @@ fn data_file() -> Option<PathBuf> {
             return Some(path);
         }
     }
+    asn_file()
+}
+
+/// The ASN file in the data repository inside the `cxx` submodule.
+fn asn_file() -> Option<PathBuf> {
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     loop {
         let candidate = dir.join("cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi");
@@ -333,10 +339,9 @@ fn a_property_the_shared_model_does_not_declare_is_read_as_the_data_file_types_i
         .iter()
         .any(|name| name == "StateGeoNameIdsGeographical")
     {
-        skip_without_enterprise(
-            "the data file is not an Enterprise file",
-            "undeclared properties",
-        );
+        let file = data_file().expect("the engine's data file");
+        let reason = format!("{} is not an Enterprise file", file.display());
+        skip_without_enterprise(&reason, "undeclared properties");
         return;
     }
     let data = lookup(engine, "1.1.1.1");
@@ -406,10 +411,12 @@ fn later_with_unreadable_metadata(file: &Path) -> Vec<u8> {
 /// A refresh to a data file that loads but whose metadata cannot be read
 /// fails and changes nothing. The engine keeps the old file's publish date,
 /// so the update service's `If-Modified-Since` still asks for the new file.
+/// The test needs no particular file, so it uses the small ASN file whatever
+/// `51DEGREES_IPI_PATH` names.
 #[test]
 fn a_refresh_whose_metadata_cannot_be_read_changes_nothing() {
-    let Some(file) = data_file() else {
-        eprintln!("no IP Intelligence data file found; skipping the failed refresh");
+    let Some(file) = asn_file() else {
+        eprintln!("no ASN data file found; skipping the failed refresh");
         return;
     };
     let dir = std::env::temp_dir().join(format!(
