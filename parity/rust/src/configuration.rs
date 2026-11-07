@@ -46,7 +46,7 @@ use fiftyone_pipeline_core::configuration::{BuilderRegistry, PipelineOptions};
 use fiftyone_pipeline_core::{Error, FlowElement, Pipeline, PipelineBuilder};
 use fiftyone_pipeline_engines::{AspectEngineDataFile, OnPremiseAspectEngine};
 use fiftyone_pipeline_engines_fiftyone::constants::SHARE_USAGE_DEFAULT_ELEMENT_DATA_KEY;
-use fiftyone_pipeline_engines_fiftyone::ShareUsageConfig;
+use fiftyone_pipeline_engines_fiftyone::{ShareUsageConfig, ShareUsageElement};
 
 /// The first argument that selects this form.
 pub const RUN: &str = "configuration";
@@ -70,11 +70,13 @@ const USAGE_FILTER_KEYS: &[&str] = &[
 const DD_PLACEHOLDER: &str = "{dd}";
 const IPI_PLACEHOLDER: &str = "{ipi}";
 
-/// One configuration case.
+/// One configuration case, given as JSON or as the text of a file.
 #[derive(Deserialize)]
 struct Case {
     id: String,
+    #[serde(default)]
     configuration: Value,
+    text: Option<String>,
 }
 
 /// Writes one line for each case in `--cases`.
@@ -111,9 +113,13 @@ pub fn run(args: &[String]) -> Result<()> {
     let mut writer =
         BufWriter::new(File::create(&out).with_context(|| format!("creating {}", out.display()))?);
     for case in cases {
+        let text = match &case.text {
+            Some(text) => text_with_files(text, &files)?,
+            None => serde_json::to_string(&with_files(&case.configuration, &files))?,
+        };
         let line = json!({
             "id": case.id,
-            "configuration": describe_case(&registry, &case.configuration, &files)?,
+            "configuration": describe_case(&registry, &text, &files)?,
         });
         serde_json::to_writer(&mut writer, &line)?;
         writer.write_all(b"\n")?;
@@ -137,21 +143,23 @@ fn registry() -> BuilderRegistry {
     fiftyone_ip_intelligence_onpremise::configuration::add_builders(&mut registry);
     fiftyone_json_builder::configuration::add_builders(&mut registry);
     fiftyone_javascript_builder::configuration::add_builders(&mut registry);
+    fiftyone_cloud_request_engine::configuration::add_builders(&mut registry);
     fiftyone_agent_signature::configuration::add_builders(&mut registry);
+    fiftyone_ip_intelligence_translation::configuration::add_builders(&mut registry);
+    fiftyone_ip_intelligence_cloud::configuration::add_builders(&mut registry);
     fiftyone_device_detection_robots_txt::configuration::add_builders(&mut registry);
     fiftyone_pipeline_engines_fiftyone::configuration::use_fiftyone_pipeline_builder(&mut registry);
     registry
 }
 
-/// What building `configuration` gave: the pipeline's settings and its
-/// elements, or the error.
+/// What building the configuration file `text` gave: the pipeline's
+/// settings and its elements, or the error.
 fn describe_case(
     registry: &BuilderRegistry,
-    configuration: &Value,
+    text: &str,
     files: &[(&str, String)],
 ) -> Result<Value> {
-    let text = serde_json::to_string(&with_files(configuration, files))?;
-    let built = PipelineOptions::from_json(&text)
+    let built = PipelineOptions::from_json(text)
         .and_then(|options| PipelineBuilder::new().build_from_configuration(registry, &options));
     let pipeline = match built {
         Ok(pipeline) => pipeline,
@@ -161,7 +169,7 @@ fn describe_case(
     let elements = pipeline
         .flow_elements()
         .iter()
-        .map(|element| describe_element(&pipeline, element.as_ref(), files))
+        .map(|element| describe_element(&pipeline, element, files))
         .collect::<Vec<_>>();
     Ok(json!({
         "error": null,
@@ -169,6 +177,19 @@ fn describe_case(
         "concurrent": pipeline.is_concurrent(),
         "elements": elements,
     }))
+}
+
+/// A configuration file given as text, with each placeholder written as a
+/// JSON string replaced by its data file's path.
+fn text_with_files(text: &str, files: &[(&str, String)]) -> Result<String> {
+    let mut text = text.to_owned();
+    for (placeholder, path) in files {
+        text = text.replace(
+            &serde_json::to_string(placeholder)?,
+            &serde_json::to_string(path)?,
+        );
+    }
+    Ok(text)
 }
 
 /// `configuration` with each string that is a placeholder replaced by its
@@ -192,7 +213,7 @@ fn with_files(configuration: &Value, files: &[(&str, String)]) -> Value {
 /// An element's data key and the settings read back from it.
 fn describe_element(
     pipeline: &Pipeline,
-    element: &dyn FlowElement,
+    element: &Arc<dyn FlowElement>,
     files: &[(&str, String)],
 ) -> Value {
     let key = element.data_key();
@@ -211,8 +232,12 @@ fn describe_element(
         out["dataFile"] = describe_data_file(&file, files);
     }
     if key == SHARE_USAGE_DEFAULT_ELEMENT_DATA_KEY {
-        if let Some(config) = pipeline.resource::<ShareUsageConfig>() {
-            out["settings"] = describe_share_usage(&config);
+        // The element's own settings, as .NET reads its element's fields.
+        if let Some(share) = Arc::clone(element)
+            .into_any()
+            .and_then(|element| element.downcast::<ShareUsageElement>().ok())
+        {
+            out["settings"] = describe_share_usage(share.config());
         }
         let filter = element.evidence_key_filter();
         out["evidenceFilter"] = USAGE_FILTER_KEYS

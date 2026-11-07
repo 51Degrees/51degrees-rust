@@ -48,6 +48,14 @@ use crate::state::CloudEngineState;
 /// that adding it to the current instant cannot overflow.
 const RECOVERY_SECONDS_MAX: f64 = 100.0 * 365.25 * 24.0 * 60.0 * 60.0;
 
+/// What a build with no client and no built-in one says, for a caller of
+/// the builder in code.
+const NO_CLIENT: &str = "no CloudHttpClient was supplied and the `reqwest-client` feature is \
+                         not enabled, so the CloudRequestEngine has no HTTP transport; \
+                         supply one with CloudRequestEngineBuilder::http_client(..) or \
+                         enable the `reqwest-client` feature to use the built-in reqwest \
+                         client";
+
 /// The set of resolved endpoint URLs the engine talks to.
 #[derive(Debug, Clone)]
 struct Endpoints {
@@ -880,6 +888,8 @@ pub struct CloudRequestEngineBuilder {
     failures_window: Duration,
     recovery: Duration,
     http: Option<Arc<dyn CloudHttpClient>>,
+    /// What the build says when it has no client and no built-in one.
+    no_client_message: &'static str,
     cloud_state: Option<CloudEngineState>,
     response_cache: Option<Arc<dyn PutCache<String, String>>>,
 }
@@ -901,6 +911,7 @@ impl CloudRequestEngineBuilder {
             failures_window: Duration::from_secs(constants::FAILURES_WINDOW_SECONDS_DEFAULT),
             recovery: Duration::from_secs_f64(constants::RECOVERY_SECONDS_DEFAULT),
             http: None,
+            no_client_message: NO_CLIENT,
             cloud_state: None,
             response_cache: None,
         }
@@ -1046,6 +1057,14 @@ impl CloudRequestEngineBuilder {
         self
     }
 
+    /// Say `message` when the build has no client and no built-in one, for
+    /// a caller that gives the client some other way than
+    /// [`Self::http_client`].
+    pub(crate) fn no_client_message(mut self, message: &'static str) -> Self {
+        self.no_client_message = message;
+        self
+    }
+
     /// Supply a response cache, keyed by the request's evidence.
     ///
     /// When set, the engine serves an identical request from the cache instead of
@@ -1159,7 +1178,7 @@ impl CloudRequestEngineBuilder {
 
         let http: Arc<dyn CloudHttpClient> = match &self.http {
             Some(client) => Arc::clone(client),
-            None => default_http_client(self.timeout)?,
+            None => default_http_client(self.timeout, self.no_client_message)?,
         };
 
         let recovery = RecoveryGate::new(RecoveryConfig {
@@ -1373,7 +1392,7 @@ impl Default for CloudRequestEngineBuilder {
 /// not given a [`CloudHttpClient`]. Compiled only with the `reqwest-client`
 /// feature.
 #[cfg(feature = "reqwest-client")]
-fn default_http_client(timeout: Duration) -> Result<Arc<dyn CloudHttpClient>> {
+fn default_http_client(timeout: Duration, _: &'static str) -> Result<Arc<dyn CloudHttpClient>> {
     Ok(Arc::new(
         crate::http::ReqwestClient::new(timeout).map_err(|m| cloud_error(0, None, m))?,
     ))
@@ -1381,16 +1400,14 @@ fn default_http_client(timeout: Duration) -> Result<Arc<dyn CloudHttpClient>> {
 
 /// Without the `reqwest-client` feature there is no built-in transport, so a
 /// builder that was not given a [`CloudHttpClient`] cannot produce an engine.
-/// Return a clear configuration error rather than silently falling back to
-/// reqwest.
+/// Return a clear configuration error, being `message`, rather than silently
+/// falling back to reqwest.
 #[cfg(not(feature = "reqwest-client"))]
-fn default_http_client(_timeout: Duration) -> Result<Arc<dyn CloudHttpClient>> {
-    Err(Error::configuration(
-        "no CloudHttpClient was supplied and the `reqwest-client` feature is not \
-         enabled, so the CloudRequestEngine has no HTTP transport; supply one with \
-         CloudRequestEngineBuilder::http_client(..) or enable the `reqwest-client` \
-         feature to use the built-in reqwest client",
-    ))
+fn default_http_client(
+    _timeout: Duration,
+    message: &'static str,
+) -> Result<Arc<dyn CloudHttpClient>> {
+    Err(Error::configuration(message))
 }
 
 /// Whether a send checks the recovery gate first.

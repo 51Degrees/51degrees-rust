@@ -52,8 +52,9 @@ pub struct BuildContext {
 
 impl BuildContext {
     /// The resource of type `T` added most recently, so a builder finds the
-    /// one made just before it.
-    pub fn resource<T: Any + Send + Sync>(&self) -> Option<Arc<T>> {
+    /// one made just before it. [`Pipeline::resource`] gives the one added
+    /// first instead.
+    pub fn latest_resource<T: Any + Send + Sync>(&self) -> Option<Arc<T>> {
         self.resources
             .iter()
             .rev()

@@ -654,6 +654,10 @@ extern "C" {
         day: *mut i32,
     ) -> c_int;
 
+    /// Returns the size of a Hash data file's header in bytes, being how much
+    /// of a data file the C library compares to find a copy of it to reuse.
+    pub fn fiftyoneDegreesShimHashGetHeaderSize() -> usize;
+
     /// Reads the match metrics of the results into the output pointers and
     /// returns 1, or returns 0 when `results` is null or a graph cannot be
     /// walked. Any graph not yet walked is walked first, as the walks set the

@@ -63,9 +63,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 `PipelineBuilder` and `Evidence` come from the `fiftyone-pipeline-core`
 crate. The cloud engines are `CloudRequestEngineBuilder`, given the resource
 key as `ResourceKey`, and then `IpiCloudEngineBuilder`. They send their
-requests through the client of the `reqwest-client` feature, or through an
-`Arc<dyn CloudHttpClient>` given to `PipelineBuilder::add_resource`.
-`SetShareUsage` set to false in the pipeline's own `BuildParameters` turns
+requests through a client of your own, given as
+`PipelineBuilder::new().add_resource(Arc::new(client))` where `client` is an
+`Arc<dyn CloudHttpClient>`, or through the built-in client of the
+`reqwest-client` feature, which is off by default. A client given in any other
+form, such as `add_resource(Arc::new(MyClient))`, is not found, so the build
+uses the built-in client, or fails without the feature. `SetShareUsage` set
+to false in the pipeline's own `BuildParameters` turns
 usage sharing off, as does `ShareUsage` in `PipelineBuilderParameters`, the
 older name .NET still reads. A builder this crate does not have, such as
 .NET's `CountryCodeTranslationEngineBuilder`, fails the build with the

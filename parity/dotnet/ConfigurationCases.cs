@@ -44,6 +44,7 @@ using System.Threading.Tasks;
 using FiftyOne.DeviceDetection.Hash.Engine.OnPremise.FlowElements;
 using FiftyOne.DeviceDetection.RobotsTxt.FlowElements;
 using FiftyOne.IpIntelligence.Engine.OnPremise.FlowElements;
+using FiftyOne.IpIntelligence.Translation.FlowElements;
 using FiftyOne.Pipeline.Core.Configuration;
 using FiftyOne.Pipeline.Core.Exceptions;
 using FiftyOne.Pipeline.Core.FlowElements;
@@ -51,6 +52,7 @@ using FiftyOne.Pipeline.Engines.Data;
 using FiftyOne.Pipeline.Engines.FiftyOne.FlowElements;
 using FiftyOne.Pipeline.Engines.FlowElements;
 using FiftyOne.Pipeline.JsonBuilder.FlowElement;
+using FiftyOne.Pipeline.Translation.FlowElements;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -117,11 +119,13 @@ namespace FiftyOne.Parity
             writer.NewLine = "\n";
             foreach (var node in JsonNode.Parse(File.ReadAllText(cases)).AsArray())
             {
+                var text = node["text"] is JsonNode written
+                    ? WithFiles(written.GetValue<string>(), files)
+                    : WithFiles(node["configuration"], files).ToJsonString();
                 var line = new JsonObject
                 {
                     ["id"] = node["id"].GetValue<string>(),
-                    ["configuration"] = DescribeCase(
-                        WithFiles(node["configuration"], files), files)
+                    ["configuration"] = DescribeCase(text, files)
                 };
                 writer.WriteLine(line.ToJsonString());
             }
@@ -152,13 +156,27 @@ namespace FiftyOne.Parity
             }
         }
 
+        // A configuration file given as text, with each placeholder written
+        // as a JSON string replaced by its data file's path.
+        private static string WithFiles(
+            string text, IReadOnlyDictionary<string, string> files)
+        {
+            foreach (var (placeholder, path) in files)
+            {
+                text = text.Replace(
+                    JsonValue.Create(placeholder).ToJsonString(),
+                    JsonValue.Create(path).ToJsonString());
+            }
+            return text;
+        }
+
         private static JsonObject DescribeCase(
-            JsonNode configuration, IReadOnlyDictionary<string, string> files)
+            string configuration, IReadOnlyDictionary<string, string> files)
         {
             var options = new PipelineOptions();
             new ConfigurationBuilder()
                 .AddJsonStream(new MemoryStream(Encoding.UTF8.GetBytes(
-                    configuration.ToJsonString())))
+                    configuration)))
                 .Build()
                 .Bind("PipelineOptions", options);
             ILoggerFactory loggerFactory = NullLoggerFactory.Instance;
@@ -171,6 +189,9 @@ namespace FiftyOne.Parity
             services.AddTransient<DeviceDetectionHashEngineBuilder>();
             services.AddTransient<RobotsTxtEngineBuilder>();
             services.AddTransient<IpiOnPremiseEngineBuilder>();
+            services.AddTransient<CountriesTranslationEngineBuilder>();
+            services.AddTransient<CountryCodeTranslationEngineBuilder>();
+            services.AddTransient<TranslationEngineBuilder>();
             using var provider = services.BuildServiceProvider();
             IPipeline pipeline;
             try

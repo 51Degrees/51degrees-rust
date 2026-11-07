@@ -29,6 +29,7 @@
 //! for the design rationale.
 
 use std::collections::HashMap;
+use std::ops::Range;
 use std::os::raw::c_int;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -37,10 +38,12 @@ use arc_swap::ArcSwap;
 use chrono::{TimeZone, Utc};
 
 use fiftyone_ip_intelligence_shared::{
-    declared_property_value_type, generated_property_names, IpIntelligenceDataBase,
-    IpIntelligencePropertyReader, IP_DATA_KEY, IP_DATA_KEY_NAME, WEIGHTED_PROPERTY_VALUE_TYPE,
+    declared_property_value_type, IpIntelligenceDataBase, IpIntelligencePropertyReader,
+    IP_DATA_KEY, IP_DATA_KEY_NAME, WEIGHTED_PROPERTY_VALUE_TYPE,
 };
-use fiftyone_native::ipi::{Manager, PropertyRead, Results};
+use fiftyone_native::ipi::{
+    DataFileComponent, DataFileProperty, DataFileValue, Manager, PropertyRead, Results,
+};
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{
     constants, round_angle, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData,
@@ -50,17 +53,16 @@ use fiftyone_pipeline_engines::{
     AspectEngine, AspectEngineBase, AspectEngineDataFile, AspectPropertyMetaData, EngineDeployment,
     MissingPropertySource, OnPremiseAspectEngine,
 };
+use fiftyone_pipeline_engines_fiftyone::{
+    ComponentMetaData, FiftyOneAspectPropertyMetaData, ValueMetaData,
+};
 
 use crate::builder::IpIntelligenceOnPremiseEngineBuilder;
 use crate::operational_copy::OperationalCopy;
 use crate::retained::Retained;
 
-/// The default data-source tier reported by the engine.
-///
-/// The native IP Intelligence wrapper does not expose the data set's tier
-/// string, so the engine reports a fixed tier. `Lite` is the freely
-/// distributed tier the Lite `.ipi` file ships as, matching the file the
-/// workspace bundles for tests.
+/// The data-source tier the engine reports when the data file's header names
+/// none and the builder sets none.
 pub const DEFAULT_DATA_SOURCE_TIER: &str = "Lite";
 
 /// The engine's type name, which the message for a property that needs a data
@@ -82,6 +84,35 @@ pub const IP_EVIDENCE_KEYS: &[&str] = &[
     "server.51d.client-ip",
 ];
 
+/// The id .NET gives a component the data file does not define, being the
+/// `Metrics` component and the component of the `Ip` and `IpV6` properties.
+const ADDED_COMPONENT_ID: u8 = 255;
+
+/// The name of the component .NET lists after the data file's, which holds no
+/// property.
+const METRICS_COMPONENT_NAME: &str = "Metrics";
+
+/// The name of the component, and the category, of the `Ip` and `IpV6`
+/// properties.
+const NETWORK: &str = "Network";
+
+/// The display order of the `Ip` and `IpV6` properties.
+const ADDED_DISPLAY_ORDER: u8 = 255;
+
+/// The default value, and only value, of the `Ip` and `IpV6` properties.
+const ADDED_DEFAULT_VALUE: &str = "N/A";
+
+/// The properties .NET lists after the data file's, which hold the address
+/// looked up, with their descriptions.
+const ADDED_PROPERTIES: [(&str, &str); 2] = [
+    ("Ip", "The IPv4 address of the request as a string."),
+    ("IpV6", "The IPv6 address of the request as a string."),
+];
+
+/// The property .NET gives a weighted type when the data file names it a
+/// string, matched ignoring case.
+const MCC_PROPERTY: &str = "Mcc";
+
 /// An on-premise IP-intelligence aspect engine.
 ///
 /// Reads IP-intelligence properties for the client IP carried in a request's
@@ -98,27 +129,23 @@ pub struct IpIntelligenceOnPremiseEngine {
     /// keeps its native results, and the data set they came from, until it is
     /// dropped.
     base: AspectEngineBase<IpIntelligenceDataBase>,
-    /// The loaded native data set and the populated properties it carries,
-    /// swapped together atomically on refresh.
+    /// The loaded native data set, the properties a lookup reads from it and
+    /// its metadata, swapped together atomically on refresh.
     loaded: ArcSwap<LoadedDataSet>,
     /// The performance profile used to (re)open the data file on refresh.
     profile: PerformanceProfile,
     /// The expected concurrency used to (re)open the data file on refresh, or
     /// `None` for the profile's own.
     concurrency: Option<u16>,
-    /// The properties the engine was restricted to, lowercased. Empty means all
-    /// typed properties are populated.
+    /// The properties the engine was restricted to, lowercased. Empty means
+    /// every property the data file defines.
     requested_properties: Vec<String>,
-    /// The names of the properties actually populated, in declaration order.
-    populated_property_names: Vec<String>,
     /// The evidence keys of the loaded data file, replaced on refresh.
     evidence_key_filter: DataFileEvidenceKeys,
-    /// Core property metadata for the populated properties.
-    properties: Vec<PropertyMetaData>,
-    /// The tier of the loaded data set and the aspect property metadata, which
-    /// names that tier, for [`AspectEngine::data_source_tier`] and
-    /// [`AspectEngine::aspect_properties`].
-    metadata: Retained<TierMetadata>,
+    /// The property metadata and tier of the loaded data set, for
+    /// [`FlowElement::properties`], [`AspectEngine::aspect_properties`] and
+    /// [`AspectEngine::data_source_tier`].
+    metadata: Retained<LentMetadata>,
     /// The tier the builder set, which every data set loaded reports, or
     /// `None` to report the tier each data file names.
     tier_override: Option<String>,
@@ -135,28 +162,89 @@ pub struct IpIntelligenceOnPremiseEngine {
     data_files: Vec<Arc<AspectEngineDataFile>>,
 }
 
-/// The tier of a loaded data set and the aspect property metadata that names
-/// it.
+/// The part of a loaded data set's metadata the pipeline traits lend by
+/// reference, which [`Retained`] keeps for the engine's life.
 #[derive(PartialEq)]
-struct TierMetadata {
-    tier: String,
+struct LentMetadata {
+    properties: Vec<PropertyMetaData>,
     aspect_properties: Vec<AspectPropertyMetaData>,
+    tier: String,
+    /// The names of the properties a lookup reads, in the data file's order.
+    populated: Vec<String>,
 }
 
-impl TierMetadata {
-    /// The metadata of the data set `manager` holds, reporting `tier_override`
-    /// when it is set, otherwise the tier the data file names, then
-    /// [`DEFAULT_DATA_SOURCE_TIER`] when it names none.
-    fn new(manager: &Manager, tier_override: &Option<String>, populated: &[String]) -> Self {
-        let tier = tier_override
-            .clone()
-            .or_else(|| manager.data_set_name())
-            .unwrap_or_else(|| DEFAULT_DATA_SOURCE_TIER.to_owned());
-        TierMetadata {
-            aspect_properties: build_aspect_metadata(populated, &tier),
-            tier,
-        }
-    }
+/// The property and component metadata and tier of a loaded data set.
+struct EngineMetadata {
+    lent: LentMetadata,
+    fiftyone_properties: Vec<FiftyOneAspectPropertyMetaData>,
+    components: Vec<ComponentMetaData>,
+}
+
+/// Where a data file property is among the data file's properties, and how
+/// many values the data file holds for it.
+#[derive(Clone, Copy)]
+struct FilePropertyPlace {
+    /// The index [`Manager::data_file_property_value_range`] takes.
+    index: u32,
+    value_count: u32,
+}
+
+/// The data set `manager` holds, read from `copy` when there is one, and its
+/// metadata, reporting `tier_override` when it is set, otherwise the tier the
+/// data file names. The missing property rules always compare with the tier
+/// the data file names, because that is what each property's tiers list.
+///
+/// `copy` comes before `manager` because Rust drops later parameters first,
+/// so on an error the data set is freed, closing the copy, before the copy
+/// is removed, as [`LoadedDataSet`] orders them.
+fn describe(
+    copy: Option<OperationalCopy>,
+    manager: Arc<Manager>,
+    tier_override: &Option<String>,
+) -> Result<(LoadedDataSet, LentMetadata)> {
+    let file_tier = manager
+        .data_set_name()
+        .unwrap_or_else(|| DEFAULT_DATA_SOURCE_TIER.to_owned());
+    let tier = tier_override.clone().unwrap_or_else(|| file_tier.clone());
+    let file_properties = manager.data_file_properties()?;
+    let EngineMetadata {
+        lent,
+        fiftyone_properties,
+        components,
+    } = build_metadata(&file_properties, &manager.data_file_components()?, tier);
+    let readable = Arc::new(ReadableNames::new(&file_properties));
+    let file_property_places = file_properties
+        .iter()
+        .map(|property| {
+            let place = FilePropertyPlace {
+                index: property.index,
+                value_count: property.value_count,
+            };
+            (property.name.clone(), place)
+        })
+        .collect();
+    let missing = Arc::new(
+        MissingPropertySource::new(
+            IP_DATA_KEY_NAME,
+            ENGINE_TYPE_NAME,
+            EngineDeployment::OnPremise,
+            file_tier,
+            lent.aspect_properties.clone(),
+        )
+        .with_typed_properties(is_typed_property),
+    );
+    Ok((
+        LoadedDataSet {
+            manager,
+            readable,
+            file_properties: file_property_places,
+            missing,
+            fiftyone_properties: fiftyone_properties.into(),
+            components: components.into(),
+            _copy: copy,
+        },
+        lent,
+    ))
 }
 
 /// Record the publish date in `manager`'s data file header on `data_file`,
@@ -180,40 +268,33 @@ impl IpIntelligenceOnPremiseEngine {
     }
 
     /// Assemble an engine from its pre-built parts. Called by the builder once
-    /// it has opened the data file and derived the metadata.
+    /// it has opened the data file. Fails when the data file's metadata cannot
+    /// be read. `copy` comes before `manager` so it is dropped after it, as in
+    /// `describe`.
     pub(crate) fn from_parts(
-        manager: Arc<Manager>,
         copy: Option<OperationalCopy>,
+        manager: Arc<Manager>,
         profile: PerformanceProfile,
         requested_properties: Vec<String>,
         tier_override: Option<String>,
         data_file: Arc<AspectEngineDataFile>,
-    ) -> Self {
-        let populated_property_names = populated_property_names(&requested_properties);
-        let properties = build_core_metadata(&populated_property_names);
-        let metadata = TierMetadata::new(&manager, &tier_override, &populated_property_names);
-
-        IpIntelligenceOnPremiseEngine {
+    ) -> Result<Self> {
+        let evidence_key_filter = DataFileEvidenceKeys::new(&manager);
+        let (loaded, metadata) = describe(copy, manager, &tier_override)?;
+        Ok(IpIntelligenceOnPremiseEngine {
             base: AspectEngineBase::new(),
-            evidence_key_filter: DataFileEvidenceKeys::new(&manager),
-            loaded: ArcSwap::from_pointee(LoadedDataSet::new(
-                manager,
-                copy,
-                &populated_property_names,
-                &metadata,
-            )),
+            evidence_key_filter,
+            loaded: ArcSwap::from_pointee(loaded),
             profile,
             concurrency: None,
             requested_properties,
-            populated_property_names,
-            properties,
             metadata: Retained::new(metadata),
             tier_override,
             refresh_lock: Mutex::new(()),
             temp_dir: None,
             temp_data_copy: false,
             data_files: vec![data_file],
-        }
+        })
     }
 
     /// Copy the data file into `temp_dir` on refresh, the folder the builder
@@ -247,12 +328,12 @@ impl IpIntelligenceOnPremiseEngine {
             .collect()
     }
 
-    /// The names of the properties this engine populates, in declaration order.
-    ///
-    /// The full typed set from the shared model, or the subset that intersects
-    /// the requested properties when the engine was restricted.
+    /// The names of the properties a lookup reads, being every property the
+    /// loaded data file defines that the engine was opened with, in the data
+    /// file's order and spelling. A name the engine was restricted to that
+    /// the data file lacks is not among them.
     pub fn populated_property_names(&self) -> &[String] {
-        &self.populated_property_names
+        &self.metadata.current().populated
     }
 
     /// The performance profile the engine opens its data file with.
@@ -266,16 +347,135 @@ impl IpIntelligenceOnPremiseEngine {
         self.concurrency
     }
 
-    /// Every property the loaded data file carries, read from the data set.
-    ///
-    /// Unlike [`populated_property_names`](Self::populated_property_names) (the
-    /// curated typed set the engine maps results into), this is the data file's
-    /// own catalogue, so it reflects the tier: an ASN file lists its
-    /// autonomous-system and registered-range properties, while an Enterprise
-    /// file additionally lists the location and behavioural ones. Intended for
+    /// The names of the properties the data set was opened with, in the order
+    /// it holds them. With properties named, these are the names given, in
+    /// the order given, including any the data file has no property for, so
+    /// [`Self::populated_property_names`] gives the ones a lookup reads.
+    /// Without, this is every property the data file defines. Intended for
     /// introspection, such as the metadata example.
     pub fn available_property_names(&self) -> Vec<String> {
         self.loaded.load().manager.available_property_names()
+    }
+
+    /// The 51Degrees metadata of each property in
+    /// [`AspectEngine::aspect_properties`], in the same order, with the URL,
+    /// display order, flags, component and default value the data file gives
+    /// it.
+    ///
+    /// A data file property's values are not copied into its metadata,
+    /// because a data file can hold millions of them, so
+    /// [`Self::property_values`] reads them when they are asked for. The `Ip`
+    /// and `IpV6` properties, which .NET adds after the data file's, list
+    /// their one value.
+    ///
+    /// The list is the loaded data set's. A refresh loads a new list and frees
+    /// this one once no caller holds it.
+    pub fn fiftyone_properties(&self) -> Arc<[FiftyOneAspectPropertyMetaData]> {
+        Arc::clone(&self.loaded.load().fiftyone_properties)
+    }
+
+    /// The components the data file defines, such as the location and the
+    /// network, each with every property the data file gives it, then the
+    /// `Metrics` component, which holds no property, as .NET lists them.
+    ///
+    /// The list is the loaded data set's. A refresh loads a new list and frees
+    /// this one once no caller holds it.
+    pub fn components(&self) -> Arc<[ComponentMetaData]> {
+        Arc::clone(&self.loaded.load().components)
+    }
+
+    /// The values the property named `property_name`, matched exactly, can
+    /// have, or [`None`] when the engine lists no such property. Fails when
+    /// the data file's values cannot be read.
+    ///
+    /// A data file property's values are read from the loaded data file on
+    /// each call, in the data file's order, each written as text as .NET
+    /// gives it, so a coordinate has three decimal places and an IP address is
+    /// written in full. The `Ip` and `IpV6` properties give the one value
+    /// their metadata lists. A data file can hold millions of values for one
+    /// property, so [`Self::property_value_range`] reads part of the list.
+    pub fn property_values(&self, property_name: &str) -> Result<Option<Vec<ValueMetaData>>> {
+        self.property_value_range(property_name, 0..usize::MAX)
+    }
+
+    /// The values at the places `range` covers among those
+    /// [`Self::property_values`] gives for the property named
+    /// `property_name`, so a caller that shows the first 20 reads only 20.
+    /// The part of `range` past the last value is left out. [`None`] when
+    /// the engine lists no such property.
+    pub fn property_value_range(
+        &self,
+        property_name: &str,
+        range: Range<usize>,
+    ) -> Result<Option<Vec<ValueMetaData>>> {
+        let loaded = self.loaded.load();
+        if let Some(place) = loaded.file_properties.get(property_name) {
+            let start = u32::try_from(range.start).unwrap_or(u32::MAX);
+            let end = u32::try_from(range.end).unwrap_or(u32::MAX);
+            let values = loaded
+                .manager
+                .data_file_property_value_range(place.index, start..end)?;
+            return Ok(Some(values.iter().map(value_metadata).collect()));
+        }
+        Ok(loaded
+            .fiftyone_properties
+            .iter()
+            .find(|property| property.name() == property_name)
+            .map(|property| {
+                let values = property.values();
+                let end = range.end.min(values.len());
+                values[range.start.min(end)..end].to_vec()
+            }))
+    }
+
+    /// The number of values [`Self::property_values`] gives for the property
+    /// named `property_name`, or [`None`] when the engine lists no such
+    /// property. No value is read to count them.
+    pub fn property_value_count(&self, property_name: &str) -> Option<usize> {
+        let loaded = self.loaded.load();
+        if let Some(place) = loaded.file_properties.get(property_name) {
+            return Some(place.value_count as usize);
+        }
+        loaded
+            .fiftyone_properties
+            .iter()
+            .find(|property| property.name() == property_name)
+            .map(|property| property.values().len())
+    }
+
+    /// The value whose text is `value_name` among those
+    /// [`Self::property_values`] gives for the property named
+    /// `property_name`, both matched exactly, as .NET's `GetValue(valueName)`
+    /// matches them, or [`None`] when the engine lists no such property or the
+    /// property has no such value. Fails when the data file's values cannot be
+    /// read.
+    ///
+    /// This finds the value in the loaded data file without reading the
+    /// property's other values, by the C library's binary search over values
+    /// in order, as .NET finds it.
+    pub fn property_value(
+        &self,
+        property_name: &str,
+        value_name: &str,
+    ) -> Result<Option<ValueMetaData>> {
+        let loaded = self.loaded.load();
+        if let Some(place) = loaded.file_properties.get(property_name) {
+            let value = loaded
+                .manager
+                .data_file_property_value(place.index, value_name)?;
+            return Ok(value.as_ref().map(value_metadata));
+        }
+        Ok(loaded
+            .fiftyone_properties
+            .iter()
+            .find(|property| property.name() == property_name)
+            .and_then(|property| {
+                property
+                    .values()
+                    .iter()
+                    .find(|value| value.name == value_name)
+                    .cloned()
+            }))
     }
 
     /// Look up the client IP in `data`'s evidence, through
@@ -304,8 +504,9 @@ impl IpIntelligenceOnPremiseEngine {
     ///
     /// Shared by [`OnPremiseAspectEngine::refresh`]. A concurrent `process` call
     /// keeps using the old data set until this swap completes. The evidence
-    /// keys, the tier and the publish date follow the new data file, which can
-    /// differ from the old one. A failed reload changes nothing.
+    /// keys, the metadata, the tier and the publish date follow the new data
+    /// file, which can differ from the old one. A failed reload, including one
+    /// whose metadata cannot be read, changes nothing.
     fn reload_from_disk(&self) -> Result<()> {
         let _refreshing = self
             .refresh_lock
@@ -347,22 +548,16 @@ impl IpIntelligenceOnPremiseEngine {
             self.concurrency,
         )?;
         let evidence_keys = DataFileEvidenceKeys::whitelist(&manager);
-        let metadata = TierMetadata::new(
-            &manager,
-            &self.tier_override,
-            &self.populated_property_names,
-        );
-        if let Some(data_file) = self.data_files.first() {
-            record_published(&manager, data_file);
-        }
-        self.loaded.store(Arc::new(LoadedDataSet::new(
-            manager,
-            copy,
-            &self.populated_property_names,
-            &metadata,
-        )));
+        let (loaded, metadata) = describe(copy, manager, &self.tier_override)?;
+        let loaded = Arc::new(loaded);
+        self.loaded.store(Arc::clone(&loaded));
         self.evidence_key_filter.keys.store(Arc::new(evidence_keys));
         self.metadata.replace(metadata);
+        // Recorded only once the new data set is in use, so the update
+        // service never skips a file the engine failed to load.
+        if let Some(data_file) = self.data_files.first() {
+            record_published(&loaded.manager, data_file);
+        }
         Ok(())
     }
 }
@@ -401,141 +596,203 @@ impl EvidenceKeyFilter for DataFileEvidenceKeys {
     }
 }
 
-/// Resolve the populated property names from the requested set.
+/// Build the engine's metadata from the data file's properties and components.
 ///
-/// An empty requested set means every typed property. Otherwise the typed
-/// properties that intersect the requested set (case-insensitively, in the
-/// shared model's declaration order) come first, then any explicitly requested
-/// name that is not one of the typed properties is appended in requested order.
-/// Honouring a requested non-typed name lets the engine surface properties a
-/// specialised data file carries that the curated typed set does not model, such
-/// as the `Asn` and `AsnName` properties in an ASN data file. A requested name
-/// that the data file does not contain simply yields no value, the same as a
-/// typed property with no candidates.
-fn populated_property_names(requested: &[String]) -> Vec<String> {
-    let generated = generated_property_names();
-    if requested.is_empty() {
-        return generated.iter().map(|s| s.to_string()).collect();
-    }
-    let mut names: Vec<String> = generated
+/// Every property the data file defines is listed, in the data file's order,
+/// with the type, category, description, data tiers and the rest the data
+/// file gives it, and one the data set was opened without is marked
+/// unavailable, as the C++ `PropertyMetaDataBuilderIpi` in 51degrees-cxx
+/// does. The `Ip` and `IpV6` properties follow, in a `Network` component of
+/// their own, then the components, each with its properties, and the empty
+/// `Metrics` component last, as the .NET engine lists them.
+fn build_metadata(
+    file_properties: &[DataFileProperty],
+    file_components: &[DataFileComponent],
+    tier: String,
+) -> EngineMetadata {
+    let mut fiftyone_properties: Vec<FiftyOneAspectPropertyMetaData> = file_properties
         .iter()
-        .filter(|name| {
-            requested
-                .iter()
-                .any(|wanted| wanted.eq_ignore_ascii_case(name))
-        })
-        .map(|s| s.to_string())
+        .map(|property| file_property_metadata(property, file_components))
         .collect();
-    for wanted in requested {
-        let already_typed = generated
+    fiftyone_properties.extend(
+        ADDED_PROPERTIES
             .iter()
-            .any(|name| wanted.eq_ignore_ascii_case(name));
-        let already_added = names.iter().any(|name| name.eq_ignore_ascii_case(wanted));
-        if !already_typed && !already_added {
-            names.push(wanted.clone());
-        }
+            .map(|(name, description)| added_property_metadata(name, description)),
+    );
+
+    let aspect_properties: Vec<AspectPropertyMetaData> = fiftyone_properties
+        .iter()
+        .map(|property| property.aspect().clone())
+        .collect();
+    let properties = aspect_properties
+        .iter()
+        .map(|property| property.core().clone())
+        .collect();
+    let populated = file_properties
+        .iter()
+        .filter(|property| property.available)
+        .map(|property| property.name.clone())
+        .collect();
+
+    // A component holds the properties with its id and name, because .NET
+    // gives the Ip and IpV6 properties a Network component with the Metrics
+    // component's id, which neither the data file's Network component nor the
+    // Metrics component holds.
+    let component = |id: u8, name: &str| {
+        ComponentMetaData::new(id, name).with_properties(
+            fiftyone_properties
+                .iter()
+                .filter(|property| {
+                    property.component_id() == Some(id) && property.component_name() == name
+                })
+                .cloned(),
+        )
+    };
+    let mut components: Vec<ComponentMetaData> = file_components
+        .iter()
+        .map(|file_component| {
+            let metadata = component(file_component.component_id, &file_component.name);
+            match file_component.default_profile_offset {
+                Some(offset) => metadata.with_default_profile_id(offset),
+                None => metadata,
+            }
+        })
+        .collect();
+    components.push(component(ADDED_COMPONENT_ID, METRICS_COMPONENT_NAME));
+
+    EngineMetadata {
+        lent: LentMetadata {
+            properties,
+            aspect_properties,
+            tier,
+            populated,
+        },
+        fiftyone_properties,
+        components,
     }
-    names
 }
 
-/// The metadata value type for a property.
-///
-/// Uses the declared type for the generated model's properties (string, bool,
-/// double, integer or the weighted key-value list). For any other requested
-/// property the type is not known without a lookup, so it defaults to the
-/// weighted key-value-list type, which is how a weighted property such as
-/// `CountryCodesGeographical` is published.
-fn metadata_value_type(name: &str) -> PropertyValueType {
-    declared_property_value_type(name)
-        .unwrap_or(fiftyone_ip_intelligence_shared::WEIGHTED_PROPERTY_VALUE_TYPE)
-}
-
-/// Build the core property metadata for the populated properties.
-fn build_core_metadata(names: &[String]) -> Vec<PropertyMetaData> {
-    names
+/// The metadata of a data file property.
+fn file_property_metadata(
+    property: &DataFileProperty,
+    file_components: &[DataFileComponent],
+) -> FiftyOneAspectPropertyMetaData {
+    let aspect = AspectPropertyMetaData::new(
+        &property.name,
+        IP_DATA_KEY_NAME,
+        metadata_value_type(&property.name, property.value_type),
+    )
+    .with_description(&property.description)
+    .with_data_tiers(property.data_tiers.iter().cloned())
+    .map_core(|core| {
+        core.with_category(&property.category)
+            .with_available(property.available)
+    });
+    let mut metadata = FiftyOneAspectPropertyMetaData::from_aspect(aspect)
+        .with_url(&property.url)
+        .with_display_order(property.display_order)
+        .with_mandatory(property.mandatory)
+        .with_list(property.list)
+        .with_obsolete(property.obsolete)
+        .with_show(property.show)
+        .with_show_values(property.show_values);
+    if let Some(component) = file_components
         .iter()
-        .map(|name| {
-            PropertyMetaData::new(name.clone(), IP_DATA_KEY_NAME, metadata_value_type(name))
-        })
-        .collect()
+        .find(|component| component.component_id == property.component_id)
+    {
+        metadata = metadata
+            .with_component_id(component.component_id)
+            .with_component_name(&component.name);
+    }
+    if let Some(default_value) = &property.default_value {
+        metadata = metadata.with_default_value(value_metadata(default_value));
+    }
+    metadata
 }
 
-/// Build the aspect property metadata for the populated properties, tagging
-/// each with the engine's data-source tier so missing-property reasoning works.
-fn build_aspect_metadata(names: &[String], tier: &str) -> Vec<AspectPropertyMetaData> {
-    names
-        .iter()
-        .map(|name| {
-            AspectPropertyMetaData::new(name.clone(), IP_DATA_KEY_NAME, metadata_value_type(name))
-                .with_data_tiers([tier])
-        })
-        .collect()
+/// The type of the values of the data file property `name`, being the
+/// `value_type` the data file names, except that `Mcc` named as a string is
+/// weighted, as .NET's `PropertyMetaDataIpi` types it.
+fn metadata_value_type(name: &str, value_type: PropertyValueType) -> PropertyValueType {
+    if value_type == PropertyValueType::String && name.eq_ignore_ascii_case(MCC_PROPERTY) {
+        WEIGHTED_PROPERTY_VALUE_TYPE
+    } else {
+        value_type
+    }
 }
 
-/// A loaded data set, with the populated properties it carries and the copy
-/// of the data file it was read from, if any.
+/// The metadata of the `Ip` or `IpV6` property, with the category, component,
+/// display order, flags and value the .NET engine gives both.
+fn added_property_metadata(name: &str, description: &str) -> FiftyOneAspectPropertyMetaData {
+    let aspect = AspectPropertyMetaData::new(name, IP_DATA_KEY_NAME, PropertyValueType::String)
+        .with_description(description)
+        .map_core(|core| core.with_category(NETWORK));
+    FiftyOneAspectPropertyMetaData::from_aspect(aspect)
+        .with_component_id(ADDED_COMPONENT_ID)
+        .with_component_name(NETWORK)
+        .with_display_order(ADDED_DISPLAY_ORDER)
+        .with_default_value(ValueMetaData::new(ADDED_DEFAULT_VALUE))
+        .with_values([ValueMetaData::new(ADDED_DEFAULT_VALUE)])
+}
+
+/// The metadata of a data file value.
+fn value_metadata(value: &DataFileValue) -> ValueMetaData {
+    ValueMetaData::new(&value.name)
+        .with_description(&value.description)
+        .with_url(&value.url)
+}
+
+/// A loaded data set, with the properties a lookup reads from it, its
+/// metadata and the copy of the data file it was read from, if any.
 struct LoadedDataSet {
     manager: Arc<Manager>,
     readable: Arc<ReadableNames>,
+    /// Each data file property's place among the data file's properties and
+    /// its number of values, by name.
+    file_properties: HashMap<String, FilePropertyPlace>,
     /// Why a property is missing, from the metadata of this data set, added to
     /// every result a lookup writes.
     missing: Arc<MissingPropertySource>,
+    /// The 51Degrees metadata of each property, freed with the data set once
+    /// no caller holds it.
+    fiftyone_properties: Arc<[FiftyOneAspectPropertyMetaData]>,
+    /// The components, each with its properties, freed in the same way.
+    components: Arc<[ComponentMetaData]>,
     /// Held only to be dropped with the data set, and declared after the
     /// manager, so it is removed after the data set that has it open is freed.
     _copy: Option<OperationalCopy>,
 }
 
-impl LoadedDataSet {
-    fn new(
-        manager: Arc<Manager>,
-        copy: Option<OperationalCopy>,
-        populated: &[String],
-        metadata: &TierMetadata,
-    ) -> Self {
-        let readable = Arc::new(ReadableNames::new(populated, &manager));
-        let missing = Arc::new(
-            MissingPropertySource::new(
-                IP_DATA_KEY_NAME,
-                ENGINE_TYPE_NAME,
-                EngineDeployment::OnPremise,
-                metadata.tier.clone(),
-                metadata.aspect_properties.clone(),
-            )
-            .with_typed_properties(is_typed_property),
-        );
-        LoadedDataSet {
-            manager,
-            readable,
-            missing,
-            _copy: copy,
-        }
-    }
-}
-
-/// The populated properties a data set carries, each with its index in that
-/// data set, found by lowercase name. A property the data file does not carry
-/// has no value, so a lookup never reads it.
+/// The properties a lookup reads, being every data file property the data
+/// set was opened with, each with the index the results getters take for it.
+/// The C library finds a property ignoring case and gives the data file's
+/// spelling, so a property named in another case is read under that spelling.
 struct ReadableNames {
-    /// Each property's name as the engine populates it.
+    /// Each property's name in the data file's spelling.
     names: Vec<String>,
     /// Each property's name in lowercase, in the same order.
     lowercase_names: Vec<String>,
     /// Each property's required property index in the data set.
     indexes: Vec<c_int>,
+    /// Each property's type, as the engine's metadata gives it from the data
+    /// file.
+    value_types: Vec<PropertyValueType>,
     /// The position of each property in `names`, by lowercase name.
     by_name: HashMap<String, usize>,
 }
 
 impl ReadableNames {
-    fn new(populated: &[String], manager: &Manager) -> Self {
-        let (names, indexes): (Vec<String>, Vec<c_int>) = populated
-            .iter()
-            .filter_map(|name| {
-                manager
-                    .required_property_index(name)
-                    .map(|index| (name.clone(), index))
-            })
-            .unzip();
+    fn new(file_properties: &[DataFileProperty]) -> Self {
+        let mut names = Vec::new();
+        let mut indexes = Vec::new();
+        let mut value_types = Vec::new();
+        for property in file_properties.iter().filter(|property| property.available) {
+            if let Some(index) = property.required_property_index {
+                names.push(property.name.clone());
+                indexes.push(index);
+                value_types.push(metadata_value_type(&property.name, property.value_type));
+            }
+        }
         let lowercase_names: Vec<String> = names.iter().map(|name| name.to_lowercase()).collect();
         ReadableNames {
             by_name: lowercase_names
@@ -546,6 +803,7 @@ impl ReadableNames {
             names,
             lowercase_names,
             indexes,
+            value_types,
         }
     }
 }
@@ -575,15 +833,19 @@ impl IpIntelligencePropertyReader for LookupReader {
         position: usize,
         data: &mut IpIntelligenceDataBase,
     ) -> std::result::Result<(), String> {
-        let name = &self.loaded.readable.names[position];
-        let index = self.loaded.readable.indexes[position];
+        let readable = &self.loaded.readable;
+        let name = &readable.names[position];
+        let index = readable.indexes[position];
+        let value_type = readable.value_types[position];
         let results = self.results.lock().unwrap_or_else(PoisonError::into_inner);
-        populate_property(data, &results, name, index).map_err(|error| error.to_string())
+        populate_property(data, &results, name, index, value_type)
+            .map_err(|error| error.to_string())
     }
 }
 
 /// Read one property from the results and store it on `ip_data`, typed by the
-/// property's declared value type.
+/// property's declared value type, or by `value_type`, the type the data file
+/// names for it, when the shared model declares none.
 ///
 /// The native [`Results::read_property`] decides plain versus weighted from the
 /// value type the data file stores, so a weighted property is stored as a
@@ -599,15 +861,16 @@ fn populate_property(
     results: &Results,
     name: &str,
     index: c_int,
+    value_type: PropertyValueType,
 ) -> Result<()> {
-    let declared = declared_property_value_type(name);
+    let declared = declared_property_value_type(name).unwrap_or(value_type);
 
     // A property declared weighted (the country-code distributions and `Mcc`) is
     // always read through the weighted collection, even when the data file stores
     // its candidates as plain strings (their `StoredValueType` is `string`, so the
     // native value type alone would misclassify them as plain). The declared
     // metadata type is the source of truth for weighted-ness.
-    if declared == Some(WEIGHTED_PROPERTY_VALUE_TYPE) {
+    if declared == WEIGHTED_PROPERTY_VALUE_TYPE {
         let pairs = results.values_weighted_by_index(index)?;
         if !pairs.is_empty() {
             let values = pairs
@@ -630,7 +893,7 @@ fn populate_property(
         }
         PropertyRead::Boolean(value) => ip_data.set_boolean(name, value),
         PropertyRead::Integer(value) => {
-            if declared == Some(PropertyValueType::Bool) {
+            if declared == PropertyValueType::Bool {
                 ip_data.set_boolean(name, value != 0);
             } else {
                 ip_data.set_integer(name, value);
@@ -643,17 +906,17 @@ fn populate_property(
         // typed accessor could not return. A string property keeps its value
         // verbatim, including such a sentinel, matching the other SDKs.
         PropertyRead::String(value) => match declared {
-            Some(PropertyValueType::Bool) => {
+            PropertyValueType::Bool => {
                 if let Some(flag) = parse_bool(&value) {
                     ip_data.set_boolean(name, flag);
                 }
             }
-            Some(PropertyValueType::Integer) => {
+            PropertyValueType::Integer => {
                 if let Ok(int) = value.trim().parse::<i32>() {
                     ip_data.set_integer(name, int);
                 }
             }
-            Some(PropertyValueType::Float) => {
+            PropertyValueType::Float => {
                 if let Some(float) = float_from_text(&value) {
                     ip_data.set_float(name, float);
                 }
@@ -702,7 +965,7 @@ impl FlowElement for IpIntelligenceOnPremiseEngine {
     }
 
     fn properties(&self) -> &[PropertyMetaData] {
-        &self.properties
+        &self.metadata.current().properties
     }
 }
 
@@ -825,11 +1088,28 @@ mod tests {
         assert_eq!(IP_DATA_KEY_NAME, "ip");
     }
 
+    /// .NET types `Mcc` as weighted when the data file names it a string, in
+    /// any case, and takes every other type as the data file names it.
+    #[test]
+    fn mcc_named_as_a_string_is_weighted() {
+        use PropertyValueType::{Integer, KeyValueList, String};
+        for name in ["Mcc", "MCC", "mcc"] {
+            assert_eq!(
+                metadata_value_type(name, String),
+                WEIGHTED_PROPERTY_VALUE_TYPE
+            );
+            assert_eq!(metadata_value_type(name, Integer), Integer);
+        }
+        assert_eq!(metadata_value_type("Mcc", KeyValueList), KeyValueList);
+        assert_eq!(metadata_value_type("Asn", String), String);
+    }
+
     /// Asserts the reader of the loaded data set covers exactly the populated
-    /// properties the data file carries, each with its index in the data set.
+    /// properties, each with its index in the data set.
     fn assert_reader_covers_carried_properties(engine: &IpIntelligenceOnPremiseEngine) {
         let loaded = engine.loaded.load();
         let readable = &loaded.readable;
+        assert_eq!(readable.names, engine.populated_property_names());
         for (name, index) in readable.names.iter().zip(&readable.indexes) {
             assert_eq!(
                 loaded.manager.required_property_index(name),
@@ -837,14 +1117,10 @@ mod tests {
                 "{name}"
             );
         }
-        for name in engine.populated_property_names() {
-            let carried = loaded.manager.required_property_index(name).is_some();
-            assert_eq!(readable.names.contains(name), carried, "{name}");
-        }
     }
 
-    /// With no properties requested the engine populates the whole typed set,
-    /// and each lookup reads only the part of it the data file carries.
+    /// With no properties requested the engine populates every property the
+    /// data file defines, in the data file's order.
     #[test]
     fn reader_covers_only_the_populated_properties_the_file_carries() {
         let Some(data_file) = ipi_data_file() else {
@@ -857,6 +1133,16 @@ mod tests {
             .build()
             .expect("the IP Intelligence data file should build an engine");
         assert_reader_covers_carried_properties(&engine);
+        let file_names: Vec<String> = engine
+            .loaded
+            .load()
+            .manager
+            .data_file_properties()
+            .expect("the data file's properties should be read")
+            .into_iter()
+            .map(|property| property.name)
+            .collect();
+        assert_eq!(engine.populated_property_names(), file_names);
     }
 
     /// The most expected concurrency the Balanced profile opens with. Its
@@ -981,16 +1267,35 @@ mod tests {
         assert_eq!(float_from_text("Unknown"), None);
     }
 
+    /// A restricted engine populates the requested properties the data file
+    /// defines, in the data file's spelling, and still lists every property,
+    /// marking the others unavailable.
     #[test]
     fn requested_properties_restrict_populated_set() {
-        // The generated set is ordered by name, so an intersection preserves that
-        // order: "Country" sorts before "RegisteredCountry".
-        let restricted =
-            populated_property_names(&["RegisteredCountry".to_owned(), "country".to_owned()]);
-        assert_eq!(restricted, vec!["Country", "RegisteredCountry"]);
-
-        let all = populated_property_names(&[]);
-        assert_eq!(all.len(), generated_property_names().len());
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping restricted set");
+            return;
+        };
+        let engine = IpIntelligenceOnPremiseEngine::builder(&data_file)
+            .properties(["asnname", "Country"])
+            .auto_update(false)
+            .build()
+            .expect("the IP Intelligence data file should build an engine");
+        assert_eq!(engine.populated_property_names(), ["AsnName"]);
+        let listed: Vec<(&str, bool)> = engine
+            .aspect_properties()
+            .iter()
+            .map(|property| (property.name(), property.available()))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("Asn", false),
+                ("AsnName", true),
+                ("Ip", true),
+                ("IpV6", true)
+            ]
+        );
     }
 
     /// Build the engine and run a public IPv4 lookup through a pipeline,

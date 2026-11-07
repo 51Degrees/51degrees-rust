@@ -33,8 +33,6 @@ use std::time::Duration;
 use fiftyone_cloud_request_engine::{
     configuration, CloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine,
     CloudRequestEngineBuilder, HttpMethod, CLOUD_ENDPOINT_ENV_VAR, CLOUD_URI_DEFAULT,
-    FAILURES_TO_ENTER_RECOVERY_DEFAULT, FAILURES_WINDOW_SECONDS_DEFAULT, RECOVERY_SECONDS_DEFAULT,
-    TIMEOUT_DEFAULT_SECONDS,
 };
 use fiftyone_pipeline_core::configuration::{
     BuildContext, BuilderDefinition, BuilderRegistry, ElementOptions, PipelineOptions,
@@ -278,11 +276,19 @@ fn the_builder_is_found_by_dotnets_names() {
     }
 }
 
-/// .NET's builder has its own defaults (100 failures in 10 seconds, and
-/// exponential backoff from 2 to 10 seconds). The engine here keeps the
-/// specification's, as it does in code.
+/// .NET's builder has its own recovery defaults (100 failures in 10
+/// seconds, and exponential backoff from 2 to 10 seconds). The engine here
+/// keeps the specification's, as it does in code, and the timeout of 2
+/// seconds that .NET and the specification share. The expected values are
+/// written out rather than taken from the crate's constants, so a change
+/// to a constant fails here.
 #[test]
 fn a_setting_not_given_keeps_the_engine_builders_default() {
+    // The specification's "Configuration options" table for the engine.
+    const TIMEOUT_SECONDS: u64 = 2;
+    const FAILURES_TO_ENTER_RECOVERY: u32 = 10;
+    const FAILURES_WINDOW_SECONDS: u64 = 100;
+    const RECOVERY_SECONDS: u64 = 60;
     let (engine, stand_in) = engine_with(&[]);
     let base = default_base();
     assert_eq!(engine.resource_key(), Some(RESOURCE_KEY));
@@ -294,23 +300,17 @@ fn a_setting_not_given_keeps_the_engine_builders_default() {
             format!("{base}evidencekeys"),
         ]
     );
-    assert_eq!(
-        engine.timeout(),
-        Duration::from_secs(TIMEOUT_DEFAULT_SECONDS)
-    );
+    assert_eq!(engine.timeout(), Duration::from_secs(TIMEOUT_SECONDS));
     let recovery = engine.recovery_config();
     assert_eq!(
         recovery.failures_to_enter_recovery,
-        FAILURES_TO_ENTER_RECOVERY_DEFAULT
+        FAILURES_TO_ENTER_RECOVERY
     );
     assert_eq!(
         recovery.window,
-        Duration::from_secs(FAILURES_WINDOW_SECONDS_DEFAULT)
+        Duration::from_secs(FAILURES_WINDOW_SECONDS)
     );
-    assert_eq!(
-        recovery.recovery,
-        Duration::from_secs_f64(RECOVERY_SECONDS_DEFAULT)
-    );
+    assert_eq!(recovery.recovery, Duration::from_secs(RECOVERY_SECONDS));
     assert_eq!(engine.cloud_request_origin(), None);
     assert!(engine.values().is_empty());
 }
@@ -449,10 +449,13 @@ fn an_end_point_that_is_not_an_absolute_url_is_refused() {
 /// request engine specification's accepted combinations. .NET 4.5.129
 /// refuses any configuration without a resource key, as "A resource key
 /// is required to access the 51Degrees cloud service...", and accepts
-/// properties named with a resource key, which it never sends.
+/// properties named with a resource key, which it never sends. The
+/// specification's `RequestedProperties` with a resource key is refused
+/// as `Property` is, as the specification's table says it must not be
+/// given with one.
 #[test]
 fn the_credentials_are_refused_as_they_are_in_code() {
-    let cases: [(Parameters, CloudRequestEngineBuilder); 5] = [
+    let cases: [(Parameters, CloudRequestEngineBuilder); 6] = [
         (&[], CloudRequestEngine::builder()),
         (
             &[("ResourceKey", "")],
@@ -470,6 +473,15 @@ fn the_credentials_are_refused_as_they_are_in_code() {
             &[
                 ("ResourceKey", RESOURCE_KEY),
                 ("Property", "device.ismobile"),
+            ],
+            CloudRequestEngine::builder()
+                .resource_key(RESOURCE_KEY)
+                .values(["device.ismobile"]),
+        ),
+        (
+            &[
+                ("ResourceKey", RESOURCE_KEY),
+                ("RequestedProperties", "device.ismobile"),
             ],
             CloudRequestEngine::builder()
                 .resource_key(RESOURCE_KEY)
@@ -539,6 +551,63 @@ fn the_properties_are_added_to_in_order() {
     assert_eq!(
         engine(&pipeline).values(),
         ["device.ismobile", "device.hardwarename"]
+    );
+}
+
+/// The cloud request engine specification names the properties
+/// `RequestedProperties` in its configuration table, which reads them as
+/// `SetProperties` does, in any case. It is an alternate name, matched as
+/// .NET matches one, so `SetRequestedProperties` matches nothing. .NET
+/// 4.5.129 has no method of either name and refuses both as a parameter
+/// that matches no method.
+#[test]
+fn the_specifications_name_for_the_properties_is_read() {
+    for name in ["RequestedProperties", "requestedproperties"] {
+        let options = PipelineOptions::new().element(
+            ElementOptions::new(BUILDER_NAME)
+                .parameter("LicenseKey", LICENSE_KEY)
+                .parameter("Property", "device.ismobile")
+                .parameter(name, "device.browsername,device.platformname"),
+        );
+        let (pipeline, stand_in) = build_with(&options);
+        let pipeline = pipeline.expect("the pipeline");
+        assert_eq!(
+            engine(&pipeline).values(),
+            [
+                "device.ismobile",
+                "device.browsername",
+                "device.platformname"
+            ],
+            "{name}"
+        );
+        process(&pipeline, "UA");
+        assert!(
+            stand_in.data()[0].form.contains(&(
+                "values".to_string(),
+                "device.ismobile,device.browsername,device.platformname".to_string()
+            )),
+            "{name}"
+        );
+    }
+
+    let options = PipelineOptions::new().element(
+        ElementOptions::new(BUILDER_NAME)
+            .parameter("LicenseKey", LICENSE_KEY)
+            .parameter("RequestedProperties", vec!["device.hardwarename"]),
+    );
+    let pipeline = build_with(&options).0.expect("the pipeline");
+    assert_eq!(engine(&pipeline).values(), ["device.hardwarename"]);
+
+    let refused = message(
+        with(&[
+            ("LicenseKey", LICENSE_KEY),
+            ("SetRequestedProperties", "device.ismobile"),
+        ])
+        .0,
+    );
+    assert!(
+        refused.contains("the following parameters: SETREQUESTEDPROPERTIES."),
+        "{refused}"
     );
 }
 
@@ -766,9 +835,9 @@ fn the_cloud_request_origin_is_sent() {
     }
 }
 
-/// The settings .NET's run "cre all" gave, where .NET held a timeout of 9
-/// seconds, 20 failures in 30 seconds, a simple recovery of 40 seconds, the
-/// origin and a cache.
+/// Every setting given at once, where .NET held a timeout of 9 seconds, 20
+/// failures in 30 seconds, a simple recovery of 40 seconds, the origin and
+/// a cache.
 #[test]
 fn every_setting_at_once() {
     let (pipeline, stand_in) = with(&[
@@ -823,7 +892,7 @@ fn a_builder_after_it_finds_the_engine() {
         BuilderDefinition::new(
             "FollowerBuilder",
             move |_: (), context: &mut BuildContext| {
-                *seen.lock().unwrap() = context.resource::<CloudRequestEngine>();
+                *seen.lock().unwrap() = context.latest_resource::<CloudRequestEngine>();
                 Ok(Arc::new(Follower {
                     filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
                 }) as Arc<dyn FlowElement>)
@@ -948,18 +1017,33 @@ fn a_json_file_written_for_dotnet_makes_the_same_engine_as_code() {
 
 /// With no client given to the pipeline builder, the engine uses the
 /// built-in one, and without the `reqwest-client` feature there is none,
-/// so the build fails as it does in code.
+/// so the build fails. The message names the resource the client is
+/// taken from, where the builder in code names `http_client`. A client
+/// given without the further `Arc` is not found, and gets the same message.
 #[cfg(not(feature = "reqwest-client"))]
 #[test]
-fn with_no_client_and_no_built_in_one_the_build_fails_as_in_code() {
-    let expected = match CloudRequestEngine::builder()
+fn with_no_client_and_no_built_in_one_the_build_names_the_resource() {
+    let expected = "no CloudHttpClient was given to PipelineBuilder::add_resource and the \
+                    `reqwest-client` feature is not enabled, so the CloudRequestEngine has \
+                    no HTTP transport. Give one with add_resource(Arc::new(client)), where \
+                    client is an Arc<dyn CloudHttpClient>, or enable the `reqwest-client` \
+                    feature to use the built-in reqwest client";
+    let configured = options(&[("ResourceKey", RESOURCE_KEY)]);
+    let none = PipelineBuilder::new().build_from_configuration(&registry(), &configured);
+    assert_eq!(message(none), failed(expected));
+    let unwrapped = PipelineBuilder::new()
+        .add_resource(Arc::new(StandIn::default()))
+        .build_from_configuration(&registry(), &configured);
+    assert_eq!(message(unwrapped), failed(expected));
+    let in_code = match CloudRequestEngine::builder()
         .resource_key(RESOURCE_KEY)
         .build()
     {
         Err(error) => error.message().into_owned(),
         Ok(_) => panic!("the engine was built"),
     };
-    let result = PipelineBuilder::new()
-        .build_from_configuration(&registry(), &options(&[("ResourceKey", RESOURCE_KEY)]));
-    assert_eq!(message(result), failed(&expected));
+    assert!(
+        in_code.contains("CloudRequestEngineBuilder::http_client"),
+        "{in_code}"
+    );
 }

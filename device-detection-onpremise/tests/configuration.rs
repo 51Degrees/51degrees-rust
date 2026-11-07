@@ -746,7 +746,8 @@ fn properties_restrict_the_engine() {
 /// .NET read a copy of the data file made in the temporary folder when
 /// `CreateTempDataCopy` was true, under every profile, and removed it with
 /// the engine. It made none with an empty temporary folder, or for
-/// `BalancedTemp`. A refresh here reads a new copy in place of the old.
+/// `BalancedTemp` alone. A refresh here reads a new copy in place of the
+/// old.
 #[test]
 fn a_copy_of_the_data_file_is_read_when_asked() {
     let Some(lite) = lite() else { return };
@@ -799,7 +800,61 @@ fn a_copy_of_the_data_file_is_read_when_asked() {
     ))
     .unwrap();
     assert_eq!(detect(&pipeline, MOBILE).0, Ok(true));
+    // No copy was made in the current folder, which an empty folder name
+    // would give.
+    let current = files_in(&std::env::current_dir().unwrap());
+    assert!(
+        !current.iter().any(|name| name.ends_with(".operational")),
+        "{current:?}"
+    );
     drop(pipeline);
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
+/// `SetReuseTempFile` true reads a copy of the data file already in the
+/// temporary folder, found as the C library that .NET passes the setting to
+/// finds one, and the engine removes it as it removes a copy it made. With
+/// false a new copy is made beside it, and the copy already there stays. The
+/// files expected are read from the C library's `dataset.c` and `file.c`,
+/// not from a .NET run.
+#[test]
+fn reuse_temp_file_reads_a_copy_already_in_the_folder() {
+    let Some(lite) = lite() else { return };
+    let folder = empty_folder("reuse");
+    let temp = folder.to_string_lossy().into_owned();
+    let stem = Path::new(&lite)
+        .file_stem()
+        .expect("the data file's name")
+        .to_string_lossy()
+        .into_owned();
+    let left = format!("{stem}-left");
+    for reuse in ["true", "false"] {
+        std::fs::copy(&lite, folder.join(&left)).unwrap();
+        let pipeline = build(element(
+            BUILDER,
+            &[
+                ("DataFile", &lite),
+                ("CreateTempDataCopy", "true"),
+                ("AutoUpdate", "false"),
+                ("DataFileSystemWatcher", "false"),
+                ("TempDirPath", &temp),
+                ("ReuseTempFile", reuse),
+            ],
+        ))
+        .expect(reuse);
+        assert_eq!(detect(&pipeline, MOBILE).0, Ok(true), "{reuse}");
+        let read = files_in(&folder);
+        drop(pipeline);
+        let kept = files_in(&folder);
+        if reuse == "true" {
+            assert_eq!(read, [left.as_str()], "{reuse}");
+            assert_eq!(kept, Vec::<String>::new(), "{reuse}");
+        } else {
+            assert_eq!(read.len(), 2, "{reuse}");
+            assert_eq!(kept, [left.as_str()], "{reuse}");
+            std::fs::remove_file(folder.join(&left)).unwrap();
+        }
+    }
     std::fs::remove_dir_all(&folder).unwrap();
 }
 
@@ -1086,6 +1141,7 @@ fn negative_update_periods_are_refused() {
 }
 
 /// The settings that have no effect here are read, and logged.
+/// `SetReuseTempFile` has an effect, so it logs nothing.
 #[test]
 fn settings_with_no_effect_are_logged() {
     let Some(lite) = lite() else { return };
@@ -1121,14 +1177,7 @@ fn settings_with_no_effect_are_logged() {
             vec![warning("SetCacheHitOrMiss", "as the engine has no cache")],
         ),
         ("CacheHitOrMiss", "false", vec![]),
-        (
-            "ReuseTempFile",
-            "true",
-            vec![warning(
-                "SetReuseTempFile",
-                "as the engine never reuses a copy of the data file it finds",
-            )],
-        ),
+        ("ReuseTempFile", "true", vec![]),
         ("ReuseTempFile", "false", vec![]),
     ] {
         let (pipeline, found) = logged_by(|| build(base(&lite, &[(name, value)])));

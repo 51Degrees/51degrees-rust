@@ -415,8 +415,8 @@ mod from_files {
 
     impl Scripts {
         /// A.yaml and B.yaml, each giving its output Low and reading nothing,
-        /// and Bad.yaml, whose own name is not its file name, as .NET's run had
-        /// them.
+        /// and Bad.yaml, whose own name is not its file name, as .NET was
+        /// given them.
         fn new(test: &str) -> Self {
             let folder = std::env::temp_dir().join(format!(
                 "fiftyone-derived-configuration-{}-{test}",

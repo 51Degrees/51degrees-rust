@@ -60,13 +60,13 @@ const US: &[(&str, &str)] = &[
     ("query.id.usage", "non-marketing"),
 ];
 
-/// The product the stand-in grants, as .NET's run had it.
+/// The product the stand-in grants, the same as .NET was given.
 const GRANTED: &str = r#"{"DataTier":"CloudV5Bespoke","Properties":[
     {"Name":"IdProbGlobal","Type":"String","Category":"FODid"},
     {"Name":"IdRandGlobal","Type":"String","Category":"FODid"}]}"#;
 
 /// IdProbGlobal and IdRandGlobal, and whether the data came from a cache,
-/// as .NET's run gave them.
+/// as .NET gave them.
 type Answer = (String, String, bool);
 
 fn uk_answer() -> Answer {
@@ -77,7 +77,7 @@ fn us_answer() -> Answer {
     ("us-prob".to_string(), "us-rand".to_string(), false)
 }
 
-/// Answers for the cloud service, as .NET's run had them. An address in
+/// Answers for the cloud service, the same as .NET was given. An address in
 /// 185.28 gets the `uk` identifiers, and any other the `us` ones.
 #[derive(Default)]
 struct StandIn {
@@ -311,7 +311,7 @@ fn properties_ignored(setting: &str) -> (log::Level, String) {
 
 /// .NET's engine has the data key `FODid`, its component name, where the
 /// engine here has `fodid`. A data key is matched ignoring case, so in
-/// .NET's run and here the data is found under either.
+/// .NET and here the data is found under either.
 #[test]
 fn the_builder_is_found_by_dotnets_names() {
     let lower = BUILDER.to_lowercase();
@@ -342,13 +342,13 @@ fn the_builder_is_not_found_by_its_rust_names() {
     }
 }
 
-/// .NET's run "did after cre", where the engine took the properties the
-/// key grants and read each response. .NET's engine also gives the data
-/// tier the key's product names, CloudV5Bespoke here, where the engine
-/// here gives none. .NET's engine holds the granted properties once it is
-/// built. The engine here gives the six properties every 51Did engine
-/// describes until it reads the granted ones, which `properties_loaded`
-/// does, as processing does.
+/// The engine with no parameters after the request engine, where in .NET
+/// the engine took the properties the key grants and read each response.
+/// .NET's engine also gives the data tier the key's product names,
+/// CloudV5Bespoke here, where the engine here gives none. .NET's engine
+/// holds the granted properties once it is built. The engine here gives the
+/// six properties every 51Did engine describes until it reads the granted
+/// ones, which `properties_loaded` does, as processing does.
 #[test]
 fn the_engine_reads_the_request_engine_made_before_it() {
     let (pipeline, stand_in) = build(vec![request_engine(), ElementOptions::new(NAME)]);
@@ -398,8 +398,8 @@ fn without_a_request_engine_before_it_the_build_fails() {
 }
 
 /// .NET's engine finds its request engine in the pipeline by type, which
-/// finds none when there are two, so .NET's run with two request engines
-/// before the engine failed with this message, on its own. Here the
+/// finds none when there are two, so .NET, given two request engines
+/// before the engine, failed with this message, on its own. Here the
 /// element that cannot be made fails the build.
 #[test]
 fn with_two_request_engines_before_it_the_build_fails() {
@@ -475,8 +475,8 @@ fn settings_with_no_effect_here_are_read_and_logged() {
 }
 
 /// .NET makes a cache of the size given, 0 included, and keys it on the
-/// engine's evidence, which for a cloud engine is none. So in .NET's run
-/// the request from 8.8.8.8 after one from 185.28.167.78 was given the
+/// engine's evidence, which for a cloud engine is none. So in .NET the
+/// request from 8.8.8.8 after one from 185.28.167.78 was given the
 /// first request's 51Dids, marked as a cache hit when `CacheHitOrMiss` was
 /// true, from the cache of size 10 and of size 0. The engine here has no
 /// cache, so each request gets its own 51Dids.
@@ -590,8 +590,8 @@ fn an_unknown_setting_lists_dotnets_settings() {
     }
 }
 
-/// .NET's run "did twice" made both engines, one after the other, and gave
-/// these answers.
+/// .NET, given the engine twice after the request engine, made both, one
+/// after the other, and gave these answers.
 #[test]
 fn the_engine_named_twice_is_made_twice() {
     let (pipeline, stand_in) = build(vec![
@@ -634,7 +634,7 @@ fn a_key_without_the_product_logs_dotnets_error() {
 }
 
 /// The cloud service names the product `FODid`. .NET looks for that name
-/// exactly, so with the product named `fodid` .NET's run logged the error
+/// exactly, so with the product named `fodid` .NET logged the error
 /// of the test above and failed the build in the same way. The engine
 /// here finds the product ignoring case.
 #[test]

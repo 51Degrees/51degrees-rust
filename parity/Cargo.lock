@@ -519,6 +519,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fiftyone-ip-intelligence-cloud"
+version = "4.5.2"
+dependencies = [
+ "fiftyone-cloud-request-engine",
+ "fiftyone-ip-intelligence-shared",
+ "fiftyone-pipeline-core",
+ "fiftyone-pipeline-engines",
+ "log",
+ "once_cell",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "fiftyone-ip-intelligence-onpremise"
 version = "4.5.2"
 dependencies = [
@@ -528,6 +542,7 @@ dependencies = [
  "fiftyone-native",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "fiftyone-pipeline-engines-fiftyone",
  "log",
 ]
 
@@ -1428,6 +1443,7 @@ dependencies = [
  "fiftyone-device-detection-onpremise",
  "fiftyone-device-detection-robots-txt",
  "fiftyone-fodid-core",
+ "fiftyone-ip-intelligence-cloud",
  "fiftyone-ip-intelligence-onpremise",
  "fiftyone-ip-intelligence-shared",
  "fiftyone-ip-intelligence-translation",
