@@ -168,7 +168,7 @@ pub(crate) fn matches(pattern: &[Token], name: &str, ignore_case: bool) -> bool 
         let mut prior_index = 0;
         let mut checked = 0;
         while prior_index < prior.len() {
-            let mut offset = (prior[prior_index] + 1) / 2;
+            let mut offset = prior[prior_index].div_ceil(2);
             prior_index += 1;
             while offset < pattern.len() {
                 let state = offset * 2;
