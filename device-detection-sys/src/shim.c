@@ -370,6 +370,29 @@ uint32_t fiftyoneDegreesShimHashGetResultCount(
 }
 
 /*
+ * Returns the number of components whose graph the results have still to
+ * walk, or zero when `results` is NULL. When the data set was created with no
+ * properties named, populating the results walks no graph, and the first read
+ * of one of a component's properties walks that component's graph.
+ */
+uint32_t fiftyoneDegreesShimHashGetPendingGraphCount(
+    fiftyoneDegreesResultsHash *results) {
+    uint32_t count = 0;
+    if (results == NULL) {
+        return 0;
+    }
+    for (uint32_t word = 0; word < FIFTYONE_DEGREES_RESULTS_PENDING_WORDS;
+        word++) {
+        uint32_t bits = results->b.b.pending[word];
+        while (bits != 0) {
+            bits &= bits - 1;
+            count++;
+        }
+    }
+    return count;
+}
+
+/*
  * Reads the match metrics of the single result at `resultIndex` into the
  * output parameters and returns 1, or returns 0 when the index is out of range
  * or a graph cannot be walked. Any output pointer may be null to skip that

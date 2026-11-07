@@ -1509,6 +1509,19 @@ impl Results {
         }
         user_agents
     }
+
+    /// The number of components, such as the hardware or the browser, whose
+    /// graph is still to be walked. When the data set was opened with no
+    /// properties named, a detection walks no graph, and the first read of
+    /// one of a component's properties walks that component's graph. The
+    /// match metrics, the matched User-Agents and the device id need every
+    /// graph, so reading any of them walks the rest. When properties were
+    /// named, the detection walks the graphs they need and this is zero.
+    pub fn pending_graphs(&self) -> u32 {
+        // Safety: the results came from `ResultsHashCreate` and remain valid
+        // for the lifetime of `self`. Counting reads nothing from the file.
+        unsafe { sys::fiftyoneDegreesShimHashGetPendingGraphCount(self.as_ptr()) }
+    }
 }
 
 /// The buffer a matched User-Agent is read into. The native default records at
@@ -1740,6 +1753,51 @@ mod tests {
                 assert!(kept == '_' || kept == original, "{user_agent}");
             }
         }
+    }
+
+    /// With no properties named, a detection walks no graph, reading a
+    /// property walks only its component's graph, and reading what needs
+    /// every component walks the rest.
+    #[test]
+    fn a_read_walks_only_the_graphs_it_needs() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the graph walks");
+            return;
+        };
+        let manager = Manager::open(&path, PerformanceProfile::Default).expect("data file loads");
+        let results = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
+        // Safety: the results are valid for the duration of the borrow.
+        let count = unsafe { sys::fiftyoneDegreesShimHashGetResultCount(results.as_ptr()) };
+        assert!(count > 1, "a result for each component: {count}");
+        assert_eq!(results.pending_graphs(), count);
+        results
+            .value_as_string("IsMobile", "|")
+            .expect("IsMobile reads");
+        assert_eq!(results.pending_graphs(), count - 1);
+        results.match_metrics().expect("metrics are readable");
+        assert_eq!(results.pending_graphs(), 0);
+
+        let results = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
+        results.device_id().expect("the device id reads");
+        assert_eq!(results.pending_graphs(), 0, "the device id");
+        let results = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
+        assert!(!results.matched_user_agents().is_empty());
+        assert_eq!(results.pending_graphs(), 0, "the matched User-Agents");
+    }
+
+    /// With properties named, a detection walks the graphs they need, so
+    /// none is left for a read to walk.
+    #[test]
+    fn named_properties_leave_no_graph_to_walk() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the named graph walks");
+            return;
+        };
+        let manager =
+            Manager::open_with_properties(&path, PerformanceProfile::Default, Some(&["IsMobile"]))
+                .expect("data file loads");
+        let results = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
+        assert_eq!(results.pending_graphs(), 0);
     }
 
     #[test]
