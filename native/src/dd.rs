@@ -776,8 +776,10 @@ pub struct DataFileProperty {
     /// The data tiers whose data files hold the property, in the data file's
     /// order.
     pub data_tiers: Vec<String>,
-    /// The property's default value, which a profile with no other value for
-    /// the property has, or [`None`] when it has none.
+    /// The property's default value, or [`None`] when it has none. As the
+    /// C++ code the other SDKs call finds it, it is the property's own value
+    /// with the name of the value the data file gives as the default, or with
+    /// an empty name when the file gives none.
     pub default_value: Option<DataFileValue>,
     /// The number of values the data file holds for the property. It is 0
     /// when the property's value indexes are -1 or reach past the data
@@ -981,8 +983,9 @@ impl Manager {
     }
 
     /// The fields of the data file property at `index` that are not strings,
-    /// or [`None`] when the index is out of range or the property or its name
-    /// cannot be read. The caller holds the file read permit.
+    /// or [`None`] when the index is out of range or the property, its name
+    /// or its default value cannot be read. The caller holds the file read
+    /// permit.
     fn read_property_fields(&self, index: u32) -> Option<PropertyFields> {
         let mut fields = PropertyFields {
             value_type: 0,
@@ -2498,15 +2501,23 @@ mod tests {
     }
 
     /// Places in a Hash data file, from the packed
-    /// `fiftyoneDegreesDataSetHashHeader` in the C library's `hash.h` and
-    /// `fiftyoneDegreesProperty` in `property.h`. A collection's header is its
-    /// start, its length in bytes and its count, each four bytes.
+    /// `fiftyoneDegreesDataSetHashHeader` in the C library's `hash.h`,
+    /// `fiftyoneDegreesProperty` in `property.h` and `fiftyoneDegreesValue`
+    /// in `value.h`. A collection's header is its start, its length in bytes
+    /// and its count, each four bytes.
+    const STRINGS_HEADER: usize = 74;
     const PROPERTIES_HEADER: usize = 110;
     const VALUES_HEADER: usize = 122;
     const PROPERTY_SIZE: usize = 44;
+    const DEFAULT_VALUE_INDEX: usize = 8;
     const NAME_OFFSET: usize = 12;
+    const DESCRIPTION_OFFSET: usize = 16;
+    const CATEGORY_OFFSET: usize = 20;
+    const URL_OFFSET: usize = 24;
     const FIRST_VALUE_INDEX: usize = 28;
     const LAST_VALUE_INDEX: usize = 32;
+    const VALUE_SIZE: usize = 14;
+    const VALUE_NAME_OFFSET: usize = 2;
 
     fn read_u32(bytes: &[u8], at: usize) -> u32 {
         u32::from_le_bytes(bytes[at..at + 4].try_into().expect("four bytes"))
@@ -2641,6 +2652,170 @@ mod tests {
                     );
                 }
             }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The default value is the property's own value with the name of the
+    /// value at its default value index, wherever that value is, or with an
+    /// empty name when it has no index, as the C++
+    /// MetaDataHash::getDefaultValueForProperty finds it. Every default in
+    /// the Lite file is one of its own property's values and no value there
+    /// has an empty name, so a copy is changed to give the other cases.
+    #[test]
+    fn a_default_value_is_found_by_its_name_among_the_property_values() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping default value names");
+            return;
+        };
+        let mut bytes = std::fs::read(&path).expect("the data file is read");
+        let start = read_u32(&bytes, PROPERTIES_HEADER) as usize;
+        let count = read_u32(&bytes, PROPERTIES_HEADER + 8);
+        let values_start = read_u32(&bytes, VALUES_HEADER) as usize;
+        let values_count = read_u32(&bytes, VALUES_HEADER + 8);
+        let strings_start = read_u32(&bytes, STRINGS_HEADER) as usize;
+        let record = |index: u32| start + index as usize * PROPERTY_SIZE;
+        let value_name =
+            |index: u32| values_start + index as usize * VALUE_SIZE + VALUE_NAME_OFFSET;
+
+        let manager = Manager::open(&path, PerformanceProfile::InMemory).expect("data file loads");
+        let original = manager
+            .data_file_properties()
+            .expect("the properties are read");
+        let named = |name: &str| {
+            original
+                .iter()
+                .find(|p| p.name == name)
+                .expect("the property is in every Hash data file")
+        };
+        let values = |name: &str| {
+            manager
+                .data_file_property_values(named(name).index)
+                .expect("the values are read")
+        };
+        let is_mobile = values("IsMobile");
+        let platform_names = values("PlatformName");
+        let widths = values("ScreenPixelsWidth");
+        let browser_names = values("BrowserName");
+        let artificial = values("IsArtificialIntelligence");
+        drop(manager);
+
+        // The index in the values collection of the value named `name` among
+        // the property `of`'s values, which are read in the data file's order.
+        let index_of = |of: &str, among: &[DataFileValue], name: &str| {
+            let place = among
+                .iter()
+                .position(|value| value.name == name)
+                .expect("the property has the value");
+            read_u32(&bytes, record(named(of).index) + FIRST_VALUE_INDEX)
+                + u32::try_from(place).expect("few values")
+        };
+        let artificial_true = index_of("IsArtificialIntelligence", &artificial, "True");
+        let mobile_false = index_of("IsMobile", &is_mobile, "False");
+        let mobile_true = is_mobile
+            .iter()
+            .find(|value| value.name == "True")
+            .expect("IsMobile has True")
+            .clone();
+        assert!(platform_names.iter().all(|value| value.name != "False"));
+        assert!(widths.iter().all(|value| !value.name.is_empty()));
+
+        // BrowserName has no default value index. Its first value's name is
+        // made empty, which is the first name in order, so that value becomes
+        // its default, as a value with an empty name is in the Enterprise
+        // file. No other value or property may use the name's string.
+        let browser = named("BrowserName").index;
+        assert_eq!(named("BrowserName").default_value, None);
+        assert_eq!(
+            read_u32(&bytes, record(browser) + DEFAULT_VALUE_INDEX),
+            u32::MAX
+        );
+        let first = read_u32(&bytes, record(browser) + FIRST_VALUE_INDEX);
+        let offset = read_u32(&bytes, value_name(first));
+        assert_eq!(
+            (0..values_count)
+                .filter(|&index| read_u32(&bytes, value_name(index)) == offset)
+                .count(),
+            1
+        );
+        for index in 0..count {
+            for field in [NAME_OFFSET, DESCRIPTION_OFFSET, CATEGORY_OFFSET, URL_OFFSET] {
+                assert_ne!(read_u32(&bytes, record(index) + field), offset);
+            }
+        }
+        let empty = DataFileValue {
+            name: String::new(),
+            ..browser_names[0].clone()
+        };
+
+        // IsMobile's default becomes IsArtificialIntelligence's True, so its
+        // own True is found by the name. PlatformName's becomes IsMobile's
+        // False, a name it has no value with, and ScreenPixelsWidth's none, so
+        // neither has one.
+        let default_at = |name: &str| record(named(name).index) + DEFAULT_VALUE_INDEX;
+        let mobile_at = default_at("IsMobile");
+        write_u32(&mut bytes, mobile_at, artificial_true);
+        write_u32(&mut bytes, default_at("PlatformName"), mobile_false);
+        write_u32(&mut bytes, default_at("ScreenPixelsWidth"), u32::MAX);
+        // A string is its size in two bytes, counting the terminator, then its
+        // characters, so a size of one then the terminator is empty.
+        let at = strings_start + offset as usize;
+        bytes[at..at + 3].copy_from_slice(&[1, 0, 0]);
+
+        let dir = std::env::temp_dir().join(format!(
+            "fiftyone-native-default-names-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the folder is made");
+        let patched = dir.join("51Degrees.hash");
+        std::fs::write(&patched, &bytes).expect("the copy is written");
+        let changed = [
+            "IsMobile",
+            "PlatformName",
+            "ScreenPixelsWidth",
+            "BrowserName",
+        ];
+        for profile in METADATA_PROFILES {
+            let manager = Manager::open(&patched, profile).expect("the copy loads");
+            let properties = manager
+                .data_file_properties()
+                .expect("the properties are read");
+            assert_eq!(properties.len(), original.len());
+            for (property, before) in properties.iter().zip(&original) {
+                let what = format!("{} {}", property.name, profile.as_str());
+                if !changed.contains(&property.name.as_str()) {
+                    assert_eq!(property, before, "{what}");
+                    continue;
+                }
+                let expected = match property.name.as_str() {
+                    "IsMobile" => Some(mobile_true.clone()),
+                    "BrowserName" => Some(empty.clone()),
+                    _ => None,
+                };
+                assert_eq!(property.default_value, expected, "{what}");
+            }
+            assert_eq!(
+                manager
+                    .data_file_property_value(browser, "")
+                    .expect("the values are read"),
+                Some(empty.clone()),
+                "{}",
+                profile.as_str()
+            );
+        }
+
+        // A default value index past the last value cannot be read, so the
+        // property cannot be read, as the C++ builder throws there.
+        write_u32(&mut bytes, mobile_at, values_count);
+        std::fs::write(&patched, &bytes).expect("the copy is written");
+        for profile in METADATA_PROFILES {
+            let manager = Manager::open(&patched, profile).expect("the copy loads");
+            assert!(
+                manager.data_file_properties().is_err(),
+                "{}",
+                profile.as_str()
+            );
         }
         let _ = std::fs::remove_dir_all(&dir);
     }

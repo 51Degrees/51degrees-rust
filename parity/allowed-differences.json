@@ -445,21 +445,6 @@
     "reason": "The crates' value types have no weighted list, so each weighted property, being CountryCodesGeographical, CountryCodesPopulation, Mcc and StateGeoNameIdsGeographical, has the type of a list of records, each a value and a weight, which is how the crates give its values. .NET gives a list of weighted values."
   },
   {
-    "path": "engineMetadata.properties.*.defaultValue",
-    "kind": "presence",
-    "cases": ["metadata-device*"],
-    "data": "enterprise",
-    "dotnet": {
-      "value": [
-        {"name": "", "description": "", "url": ""},
-        {"name": "", "description": "Indicates that the crawler has unknown use.", "url": ""}
-      ]
-    },
-    "rust": {"value": [null]},
-    "reason": "For CrawlerProductTokens, CrawlerUsage and HardwareName in the Enterprise file, each of which has a value with an empty name, .NET gives that value as the default and the crates give none. The C++ code .NET calls takes the name of the value at the property's default value index, or an empty name when the index is none, and looks that name up among the property's own values. The crates give a default only when the index falls among the property's own values. Every other property's default is the same on both sides.",
-    "issue": 223
-  },
-  {
     "path": "properties.ip.*",
     "kind": "noValueMessage",
     "cases": ["metadata-ip-asn"],
