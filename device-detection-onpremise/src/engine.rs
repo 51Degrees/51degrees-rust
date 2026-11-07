@@ -28,6 +28,7 @@
 //! populate) into the flow data under
 //! [`DEVICE_DATA_KEY`](fiftyone_device_detection_shared::DEVICE_DATA_KEY).
 
+use std::any::Any;
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 use std::ffi::CStr;
@@ -317,6 +318,10 @@ pub struct DeviceDetectionOnPremiseEngine {
     /// as the builder's `create_temp_data_copy` asked.
     temp_data_copy: bool,
 
+    /// Whether a refresh reads a copy of the data file already in the
+    /// temporary folder, as the builder's `reuse_temp_file` asked.
+    reuse_temp_file: bool,
+
     /// The single data file's run-time state, shared with the update service.
     data_files: Vec<Arc<AspectEngineDataFile>>,
 }
@@ -462,16 +467,24 @@ impl DeviceDetectionOnPremiseEngine {
             options,
             temp_dir: None,
             temp_data_copy: false,
+            reuse_temp_file: false,
             data_files: vec![data_file],
         })
     }
 
     /// Copy the data file into `temp_dir` on refresh, the folder the builder
-    /// copied it into, or the system's temporary folder when `None`, and
-    /// under every profile when `always` is true.
-    pub(crate) fn with_temp_dir(mut self, temp_dir: Option<PathBuf>, always: bool) -> Self {
+    /// copied it into, or the system's temporary folder when `None`, under
+    /// every profile when `always` is true, and read a copy already there
+    /// when `reuse` is true.
+    pub(crate) fn with_temp_dir(
+        mut self,
+        temp_dir: Option<PathBuf>,
+        always: bool,
+        reuse: bool,
+    ) -> Self {
         self.temp_dir = temp_dir;
         self.temp_data_copy = always;
+        self.reuse_temp_file = reuse;
         self
     }
 
@@ -542,6 +555,16 @@ impl DeviceDetectionOnPremiseEngine {
     /// this one once no caller holds it.
     pub fn components(&self) -> Arc<[ComponentMetaData]> {
         Arc::clone(&self.loaded.load().components)
+    }
+
+    /// The native data set the engine has loaded, for an element that reads
+    /// the data file's profiles and their values, as the robots.txt engine
+    /// reads the crawlers.
+    ///
+    /// The data set is the loaded one. A refresh loads a new data set and
+    /// frees this one once no caller holds it.
+    pub fn data_set(&self) -> Arc<Manager> {
+        Arc::clone(&self.loaded.load().manager)
     }
 
     /// The values the property named `property_name`, matched exactly, can
@@ -732,6 +755,7 @@ impl DeviceDetectionOnPremiseEngine {
                 self.profile,
                 file.configuration(),
                 self.temp_data_copy,
+                self.reuse_temp_file,
             )
         });
         let manager = open_manager(
@@ -800,6 +824,12 @@ impl FlowElement for DeviceDetectionOnPremiseEngine {
 
     fn properties(&self) -> &[PropertyMetaData] {
         &self.metadata.current().properties
+    }
+
+    /// The engine itself, so an element added after it, such as the
+    /// robots.txt engine, can find it in the pipeline and read its data set.
+    fn into_any(self: Arc<Self>) -> Option<Arc<dyn Any + Send + Sync>> {
+        Some(self)
     }
 }
 

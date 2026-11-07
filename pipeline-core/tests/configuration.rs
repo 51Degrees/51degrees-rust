@@ -265,7 +265,7 @@ fn service_definitions() -> [BuilderDefinition<()>; 2] {
         BuilderDefinition::new(
             "UsesServiceElementBuilder",
             |_, context: &mut BuildContext| {
-                let service = context.resource::<Service>().ok_or_else(|| {
+                let service = context.latest_resource::<Service>().ok_or_else(|| {
                     Error::configuration("No service was made before this element.")
                 })?;
                 finish(Element::new("usesservice", service.0), context)
@@ -1589,6 +1589,62 @@ fn the_obsolete_pipeline_parameters_name_is_read() {
     assert!(build(&options).unwrap().is_suppress_process_exceptions());
 }
 
+/// .NET binds `PipelineBuilderParameters` first, into the dictionary that
+/// `BuildParameters` then fills, each in key order. A name in both in the
+/// same case keeps its first place with the second value, and one in
+/// another case is a second entry.
+#[test]
+fn the_pipeline_parameters_of_both_sections_are_read_in_dotnet_order() {
+    let options = PipelineOptions::from_json(
+        r#"{ "PipelineOptions": {
+            "BuildParameters": { "SetSuppressProcessException": "false", "B": "2", "a": "3" },
+            "PipelineBuilderParameters": {
+                "SetSuppressProcessException": "true", "C": "1", "A": "4" } } }"#,
+    )
+    .unwrap();
+    let expected: Vec<(String, ConfigValue)> = [
+        ("A", "4"),
+        ("C", "1"),
+        ("SetSuppressProcessException", "false"),
+        ("a", "3"),
+        ("B", "2"),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_string(), value.into()))
+    .collect();
+    assert_eq!(options.build_parameters, expected);
+}
+
+/// The setting applied last wins, so with the order above the
+/// `BuildParameters` value is the one the pipeline takes when each section
+/// gives one form of the name, whether the same name, the name in another
+/// case or another form of the same setting.
+#[test]
+fn a_pipeline_setting_in_both_sections_takes_the_build_parameters_value() {
+    for (obsolete, current) in [
+        ("SetSuppressProcessException", "SetSuppressProcessException"),
+        ("SetSuppressProcessException", "setsuppressprocessexception"),
+        ("SuppressProcessException", "SetSuppressProcessException"),
+        ("SetSuppressProcessException", "SuppressProcessException"),
+    ] {
+        for value in [true, false] {
+            let options = PipelineOptions::from_json(&format!(
+                r#"{{ "PipelineOptions": {{
+                    "Elements": [ {{ "BuilderName": "ListSplitterElement" }} ],
+                    "BuildParameters": {{ "{current}": {value} }},
+                    "PipelineBuilderParameters": {{ "{obsolete}": {} }} }} }}"#,
+                !value
+            ))
+            .unwrap();
+            assert_eq!(
+                build(&options).unwrap().is_suppress_process_exceptions(),
+                value,
+                "{obsolete} then {current} given {value}"
+            );
+        }
+    }
+}
+
 fn json_message(text: &str) -> String {
     match PipelineOptions::from_json(text) {
         Err(Error::PipelineConfiguration { message }) => message,
@@ -1676,7 +1732,8 @@ const EVERY_FORM: &str = "\u{feff}// A comment.
     \"Elements\": [
       { \"SubElements\": [
         { \"BuilderName\": \"ListSplitterElement\", \"BuildParameters\": { \"delim\": null,
-          \"SetDelimiters\": \"\\u007c,\\t,\\\"é😀\\ud83d\\ude00\", \"SetMaxLength\": 3, }, },
+          \"SetDelimiters\": \"\\u007c,\\t,\\\"é😀\\ud83d\\ude00,\\b\\f\\n\\r\", \"SetMaxLength\": 3, },
+        },
         { \"BuilderName\": \"DataFileEngine\", \"BuildParameters\": {
           \"DataFile\": \"C:\\\\Data\\/51Degrees.hash\", \"CreateTempDataCopy\": true } }, ], },
       { \"BuilderName\": \"EnumPerfProfile\",
@@ -1684,7 +1741,7 @@ const EVERY_FORM: &str = "\u{feff}// A comment.
       { \"BuilderName\": \"Multiply\", \"BuildParameters\": { \"multiple\": -20 } },
     ],
     \"PipelineBuilderParameters\": { \"SetSuppressProcessException\": true },
-    \"BuildParameters\": { \"SuppressProcessException\": false } } }
+    \"BuildParameters\": { \"SuppressProcessException\": false, \"Precision\": -1.5e-3 } } }
 ";
 
 /// Characters that make up JSON, and some wider than one byte.

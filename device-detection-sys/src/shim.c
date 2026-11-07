@@ -290,6 +290,14 @@ int fiftyoneDegreesShimHashGetDataSetNextUpdate(
 }
 
 /*
+ * Returns the size of a Hash data file's header in bytes, being how much of a
+ * data file the C library compares to find a copy of it to reuse.
+ */
+size_t fiftyoneDegreesShimHashGetHeaderSize(void) {
+    return sizeof(fiftyoneDegreesDataSetHashHeader);
+}
+
+/*
  * Walks the graph of each component the results have not yet walked, and
  * returns 1, or 0 when a walk fails. The walk of a component's graph sets the
  * match metrics and the matched User-Agent of its result. Unless the data set
@@ -1141,4 +1149,65 @@ size_t fiftyoneDegreesShimHashGetComponentName(
     }
     fiftyoneDegreesDataSetHashRelease(dataSet);
     return total;
+}
+
+/*
+ * Returns the number of profiles the data file holds, or zero when no data
+ * set is available.
+ */
+uint32_t fiftyoneDegreesShimHashGetProfileCount(
+    fiftyoneDegreesResourceManager *manager) {
+    fiftyoneDegreesDataSetHash *dataSet =
+        fiftyoneDegreesDataSetHashGet(manager);
+    if (dataSet == NULL) {
+        return 0;
+    }
+    uint32_t count = fiftyoneDegreesCollectionGetCount(dataSet->profileOffsets);
+    fiftyoneDegreesDataSetHashRelease(dataSet);
+    return count;
+}
+
+/*
+ * Reads the id of the profile at `profileIndex` among the data file's
+ * profiles, which are in order of profile id, and the id of the component it
+ * belongs to into the output parameters and returns 1, as the C++
+ * ProfileMetaDataCollectionHash reads them. Returns 0 when the index is out
+ * of range or the profile or its component cannot be read.
+ */
+int fiftyoneDegreesShimHashGetProfile(
+    fiftyoneDegreesResourceManager *manager,
+    uint32_t profileIndex,
+    uint32_t *profileId,
+    uint8_t *componentId) {
+    fiftyoneDegreesDataSetHash *dataSet =
+        fiftyoneDegreesDataSetHashGet(manager);
+    if (dataSet == NULL) {
+        return 0;
+    }
+    int result = 0;
+    if (profileIndex <
+        fiftyoneDegreesCollectionGetCount(dataSet->profileOffsets)) {
+        FIFTYONE_DEGREES_EXCEPTION_CREATE;
+        fiftyoneDegreesCollectionItem item;
+        fiftyoneDegreesDataReset(&item.data);
+        const fiftyoneDegreesProfile *profile =
+            fiftyoneDegreesProfileGetByIndex(
+                dataSet->profileOffsets,
+                dataSet->profiles,
+                profileIndex,
+                &item,
+                exception);
+        if (profile != NULL) {
+            const fiftyoneDegreesComponent *component =
+                get_component(dataSet, profile->componentIndex);
+            if (FIFTYONE_DEGREES_EXCEPTION_OKAY && component != NULL) {
+                *profileId = profile->profileId;
+                *componentId = component->componentId;
+                result = 1;
+            }
+            FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->profiles, &item);
+        }
+    }
+    fiftyoneDegreesDataSetHashRelease(dataSet);
+    return result;
 }

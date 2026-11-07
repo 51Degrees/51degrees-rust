@@ -11,6 +11,7 @@ change by a difference this comparison stops reporting.
 | `corpus/evidence.json` | The cases. Each has an id, a sentence saying what it covers, its evidence and, for some, the pipeline it runs through. None of it comes from real visitors. |
 | `corpus/fodid.json` | The 51Did cases. Each is a payload to sign, a text to read as it is, or the 51Did metadata (see "The 51Did comparison"). |
 | `corpus/configuration.json` | The configuration cases. Each is a configuration file in .NET's shape to build a pipeline from (see "The configuration comparison"). |
+| `corpus/robots-txt.json` | The fixed robots.txt cases. The cases for each usage come from the data file (see "The robots.txt comparison"). |
 | `dotnet/` | A .NET 8 console program that runs the cases through the .NET packages and writes one JSON line for each. |
 | `rust/` | The same program over the crates in this checkout. |
 | `compare/` | The comparer, which reports each difference with the case that caused it. |
@@ -146,6 +147,7 @@ Each program writes one JSON object per case.
 | `metadata` | For the 51Did metadata case, the component's name and id and each property's metadata in list order. |
 | `configuration` | For a configuration case, what was built or the error (see "The configuration comparison"). |
 | `derived` | For a derived property case, the script's source properties and its answer (see "The derived property comparison"). |
+| `robotsTxtEngine`, `plainText`, `annotatedText` | For a robots.txt case, the engine's evidence keys and properties, and the two texts (see "The robots.txt comparison"). |
 
 Value types are `string`, `bool`, `integer`, `double`, `stringList`,
 `javascript`, `ipAddress`, `dateTime` (in .NET only, written as RFC 3339
@@ -202,9 +204,12 @@ matches it. An entry has a `path` pattern, where `*` matches any run of
 characters, an optional `kind`, optional `cases` patterns, optional `data`
 (`lite` or `enterprise`), a required `reason`, and an `issue` number.
 Optional `dotnet` and `rust` sides say what each side gave, either a
-`value` list, compared as data, or `"noValue": true`, so that an entry
+`value` list, compared as data, a `pattern` list, where `*` matches any
+run of characters in a text value, or `"noValue": true`, so that an entry
 allows only the change its reason describes. For a property the value is
-the property's value, and for anything else the value at the path. The
+the property's value, and for anything else the value at the path. A text
+difference gives each side as `line N: ` and that line, so a pattern such
+as `line *: Allow: /` allows the line wherever it falls. The
 first entry that matches takes the difference. The run also fails when an
 entry that applies to its data files allows nothing, so a change that
 removes a difference removes its entry in the same pull request.
@@ -268,26 +273,56 @@ with a changed description, must each fail the comparison.
 The configuration cases check that a configuration file written for the
 .NET packages builds the same pipeline from the crates
 ([#220](https://github.com/51Degrees/51degrees-rust/issues/220)). A case
-has an `id`, an `about` sentence and a `configuration`, being a file in the
-shape .NET's `PipelineOptions` reads, with every parameter given as text.
-The text `{dd}` stands for the Device Detection data file and `{ipi}` for
-the IP Intelligence one, and each program puts the full path of the file it
-was given in its place.
+has an `id`, an `about` sentence and the file, in the shape .NET's
+`PipelineOptions` reads, given either as JSON in `configuration` or as the
+text of the file in `text`. Each program gives its reader the file as
+JSON text. The Rust program writes a `configuration` back through
+`serde_json`, which keeps the order of names and writes text, whole
+numbers, `true`, `false` and `null` as given, but may write a fraction in
+another form, so a fraction goes in a case given as `text`, which both
+programs read unchanged. A `text` also carries what JSON cannot, such as
+comments and trailing commas. The string `"{dd}"` stands for the Device
+Detection data file and `"{ipi}"` for the IP Intelligence one, and each
+program puts the full path of the file it was given in its place, written
+as a JSON string.
 
 The first case holds the Sequence element, the Hash and IP Intelligence
 engines in a parallel group, the JSON builder and usage sharing, with the
-pipeline setting `SuppressProcessExceptions`. The second is the same with
-the two engines on their own. Each of the others changes the first in one
-place, to a builder name that matches no builder, a parameter no setting
-takes or a value that does not parse, once at the top level and once
-inside the group.
+pipeline setting `SuppressProcessExceptions`, every parameter given as
+text. The second is the same with the two engines on their own. Six
+change the first in one place, to a builder name that matches no
+builder, a parameter no setting takes or a value that does not parse,
+once at the top level and once inside the group. Two hold the Hash
+engine and then the robots.txt engine, with usage sharing off, one giving
+each setting .NET's robots.txt builder reads and one a parameter it has
+no setting for, whose error lists the builder's settings. Three give a
+pipeline setting under both `PipelineBuilderParameters` and
+`BuildParameters`, two of them with `ShareUsage` false, so no usage
+sharing element is added.
+`configuration-engines-only` names only the two engines, so it compares
+the Sequence element and usage sharing that `FiftyOnePipelineBuilder`
+adds, and usage sharing's default settings. `configuration-value-forms`
+is the first case with whole numbers, `true`, `false` and `null` in place
+of text and with names in other cases, and `configuration-text-forms` a
+file given as text with comments, trailing commas, a name holding an
+escape and a fraction with an exponent.
+`configuration-pipeline-setting-does-not-parse` gives the pipeline's
+suppress setting a value that is not true or false.
+The five `configuration-translation-` cases name the translation engines.
+`configuration-translation-countries` makes the two country translation
+engines after the IP Intelligence engine. The other four name the
+translation engine's builder, whose translations are given in code only, so
+none of them builds. One gives the three settings a configuration can give,
+one a missing translation behavior that does not parse, one `AddTranslation`,
+which takes two values, and one `Sources`, which names no setting.
 
 The .NET program reads each file with .NET's own configuration reader and
 builds it with `FiftyOnePipelineBuilder`, making the builders through a
 service provider, as .NET's examples do. Its `HttpClient` refuses to send,
 and neither program processes anything, so the usage sharing element sends
 nothing. The Rust program builds each file with a registry holding the
-builders of the crates it uses, which make pipelines as .NET's
+builders of the crates it uses, in the order .NET lists those of the
+packages the .NET program loads, which make pipelines as .NET's
 `FiftyOnePipelineBuilder` does.
 
 The `configuration` field of a line holds `error`, the message of the
@@ -297,20 +332,21 @@ the order the pipeline lists them, being those on their own first and then
 those in each parallel group, as .NET's `IPipeline.FlowElements` lists them.
 Each element has its `dataKey`. An on-premise engine also has `dataFile`,
 its data file's settings with the path given as its placeholder. The usage
-sharing element also has `settings`, the settings the crates hold in
-`ShareUsageConfig` and .NET in fields of `ShareUsageBase` read by
-reflection, and `evidenceFilter`, the element's evidence filter's answer
-for each of a list of keys, which shows the blocked headers, the query
-string parameters shared and whether all evidence is shared, because .NET
-holds those settings only in that filter. `CreateTempDataCopy` is a build
-parameter that the crates do not read back, and
+sharing element also has `settings`, read from the element itself on
+both sides, the crates through `ShareUsageElement::config` and .NET from
+fields of `ShareUsageBase` read by reflection, and `evidenceFilter`, the
+element's evidence filter's answer for each of a list of keys, which shows
+the blocked headers, the query string parameters shared and whether all
+evidence is shared, because .NET holds those settings only in that filter.
+`CreateTempDataCopy` is a build parameter that the crates do not read back, and
 `a_copy_of_the_data_file_is_read_when_asked` in each on-premise engine's
 `tests/configuration.rs` checks it against what .NET did.
 
 The comparer compares `configuration` key by key and list item by item,
 after making the parts of an error message that the languages write
-differently by design the same in both. Line endings become LF. A
-builder's type name, the .NET full name or the Rust name, becomes `{type}`.
+differently by design the same in both. Line endings become LF. The type
+name of an element's builder or of the pipeline's builder, the .NET full
+name or the Rust name, becomes `{type}`.
 In the list of a builder's settings, the parameter type after each name is
 left out, because .NET 4.5.129 gives `RuntimeParameterInfo` for every
 setting, then a name listed straight after itself is listed once and
@@ -321,10 +357,16 @@ settings. Generic types are left out of the available builders, because
 name. Everything else in the message is compared exactly.
 
 One step of the lite job checks that this comparison means something. The
-first two cases must build on both sides and the others fail, so the two
-cannot agree by both failing. Then a Rust line with a usage sharing
-setting read back differently, and one with two elements in the other
-order, must each fail the comparison.
+cases that build must build on both sides and the others fail, so the two
+cannot agree by both failing. Then each of seven changed Rust answers,
+compared on its own, must fail the comparison at its path: a usage
+sharing setting read back differently, two elements in the other order,
+the other answer for the suppress setting, another default usage sharing
+setting, a setting given as a whole number read back differently, the
+fraction read back differently, and another error for the pipeline
+setting that does not parse. The report lists at most three differences
+for each path and kind, so a change compared with the others could be
+left out of it.
 
 ## The derived property comparison
 
@@ -372,6 +414,68 @@ value with the missing properties it expects, and the number of cases is
 counted in the case files themselves. Then a Rust line with a changed
 value, and one naming no missing property where .NET names one, must
 each fail the comparison.
+
+## The robots.txt comparison
+
+The robots.txt cases check that the robots.txt engine writes the same
+`PlainText` and `AnnotatedText` in both languages
+([#225](https://github.com/51Degrees/51degrees-rust/issues/225)). .NET's
+engine comes from the FiftyOne.DeviceDetection.RobotsTxt package at the
+Device Detection version. Each program builds one pipeline, the on-premise
+Device Detection engine with the LowMemory profile and then the robots.txt
+engine, with process errors collected rather than thrown. The engine reads
+the crawlers and the usages from the data file, so over the Lite file, which
+holds no crawlers, each text has only its header and the closing
+`User-Agent: *` group, and over the Enterprise file each crawler the request
+does not allow has a group of its own.
+
+The engine's resolver of Terms Document Locator source ids is one inside each
+program, so no case needs the network. It knows `parity-tdl`, ignoring case,
+and gives `https://tdl.parity.test/terms/3.txt` for it, and knows
+`parity-unresolved` but gives nothing for it, as when a lookup fails with no
+earlier answer. It knows no other id.
+
+`parity-rust robots-txt-cases` writes the cases as a corpus for the comparer
+and for both programs. First come the fixed cases of `corpus/robots-txt.json`,
+which give no evidence, evidence the engine does not read, and Terms Document
+Locator entries that are URIs, lists, source ids, empty or not URIs. Then,
+for each usage key the crates' engine reads from the data file, in its order,
+come `robots-txt-allow-NN`, which allows that usage alone, and
+`robots-txt-disallow-NN`, which refuses it alone, counting from 01. Last come
+every usage allowed, every usage but the first allowed, every usage allowed
+with a Terms Document Locator URI, the first usage's key in capitals, and
+`robots-txt-value-NN`, which gives the first usage's key each value the
+engine accepts in another case, two it does not and one with spaces around
+it. Over the Lite file there are no usages, so only the fixed cases run.
+
+The `robotsTxtEngine` field of the line for `robots-txt-none` holds the
+engine's `dataKey`, `dataSourceTier`, `evidenceKeys` (in ordinal order) and
+`properties` (in list order, each with its `name`, `category`, `type`,
+`available`, `dataTiers` and `description`). Every other line holds null
+there. `plainText` and `annotatedText` hold the two texts, or null when the
+engine wrote no data. The comparer compares `robotsTxtEngine` key by key and
+list item by item, and the two texts as text, so a difference names the first
+line that differs. Texts that are the same byte for byte read the same under
+an [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309.html) reader, and the
+crate's own tests check what such a reader reads from them.
+
+Four entries in `allowed-differences.json` allow robots.txt differences,
+each by a `pattern` for the first line that differs. Over the Enterprise
+file, two allow the crawlers with no usable product token, which the
+Device Detection release the comparison runs still writes and the crate
+leaves out, as .NET does since
+[51degrees-dotnet#78](https://github.com/51Degrees/51degrees-dotnet/pull/78).
+They come out when the comparison runs a .NET release with that change.
+Over the Lite file, two allow how a Terms Document Locator entry is
+written, where the crate follows RFC 3986 and keeps its own text. Over the
+Enterprise file those two cases first differ at a crawler the first two
+entries allow.
+
+Over the Enterprise file, one step of that job checks that each side read the
+usages and wrote a group for at least one crawler, so the comparison cannot
+pass with no crawler in either text, and another runs the crate's data file
+tests over that file. Over the Lite file, one step checks that a Rust text
+with one line changed fails the comparison.
 
 ## The C code
 
@@ -438,12 +542,19 @@ DERIVED="--cases ../derived-properties/vendor/tests"
 target/debug/parity-rust derived-cases $DERIVED --out out/derived-cases.json
 target/debug/parity-rust derived $DERIVED --out out/derived-rust.jsonl
 dotnet out/dotnet/Parity.dll derived $DERIVED --out out/derived-dotnet.jsonl
+DD="--dd ../cxx/data/device-detection/51Degrees-LiteV4.1.hash"
+target/debug/parity-rust robots-txt-cases --corpus corpus/robots-txt.json $DD --out out/robots-txt-cases.json
+target/debug/parity-rust robots-txt --corpus out/robots-txt-cases.json $DD --out out/robots-txt-rust.jsonl
+dotnet out/dotnet/Parity.dll robots-txt --corpus out/robots-txt-cases.json $DD --out out/robots-txt-dotnet.jsonl
 target/debug/parity-compare --corpus corpus/evidence.json $SIGNED \
   --corpus corpus/configuration.json --corpus out/derived-cases.json \
+  --corpus out/robots-txt-cases.json \
   --dotnet out/dotnet.jsonl --dotnet out/fodid-dotnet.jsonl \
   --dotnet out/configuration-dotnet.jsonl --dotnet out/derived-dotnet.jsonl \
+  --dotnet out/robots-txt-dotnet.jsonl \
   --rust out/rust.jsonl --rust out/fodid-rust.jsonl \
   --rust out/configuration-rust.jsonl --rust out/derived-rust.jsonl \
+  --rust out/robots-txt-rust.jsonl \
   --allowed allowed-differences.json --data lite --strict --report out/report.md
 ```
 
@@ -470,6 +581,10 @@ A configuration case goes in `corpus/configuration.json` in the same way.
 One that builds changes the cases the workflow step "Check that a changed
 configuration answer fails" expects to build, so change that list in the
 same pull request.
+
+A fixed robots.txt case goes in `corpus/robots-txt.json` in the same way.
+The cases for each usage are written from the data file, so a usage the data
+adds gives its cases with no change here.
 
 A derived property case is added to the case file in derived-properties,
 and reaches this comparison when the crate's `vendor` folder is next copied

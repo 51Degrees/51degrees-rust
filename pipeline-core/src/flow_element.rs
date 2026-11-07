@@ -167,9 +167,10 @@ pub trait FlowElement: Send + Sync {
     ///
     /// An element whose own type a consumer needs returns `Some(self)`. The
     /// JSON and JavaScript builders do, so the web integration can hold a
-    /// builder the application gives and build a response again with it. An
-    /// element that wraps another does not pass this on, because the wrapper
-    /// is the element in the pipeline, not the one it wraps.
+    /// builder the application gives and build a response again with it, and
+    /// so does the usage sharing element, so its settings can be read back.
+    /// An element that wraps another does not pass this on, because the
+    /// wrapper is the element in the pipeline, not the one it wraps.
     fn into_any(self: Arc<Self>) -> Option<Arc<dyn Any + Send + Sync>> {
         None
     }

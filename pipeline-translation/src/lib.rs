@@ -62,6 +62,7 @@
 
 mod behavior;
 mod builder;
+pub mod configuration;
 mod data;
 mod engine;
 mod languages;

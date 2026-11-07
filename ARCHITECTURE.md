@@ -34,6 +34,7 @@ sys / native    fiftyone-common-sys
 products        device-detection-{shared,onpremise,cloud}
   |             ip-intelligence-{shared,onpremise,cloud}
   |             fiftyone-ip-intelligence-translation
+  |             fiftyone-device-detection-robots-txt
   |
 facades         fiftyone-device-detection, fiftyone-ip-intelligence
   |
@@ -99,6 +100,12 @@ examples        examples-shared, device-detection-examples,
   needs only the IP Intelligence data key from
   `fiftyone-ip-intelligence-shared`, so it has no native code and builds for
   WebAssembly.
+
+  `fiftyone-device-detection-robots-txt` sits beside them too. When it is
+  added to a pipeline it reads every crawler from the data set of the
+  on-premise Device Detection engine before it, through `fiftyone-native`,
+  and then writes a robots.txt for each request from the usages the request
+  allows, so it is on-premise only.
 - **facades** (`fiftyone-device-detection`, `fiftyone-ip-intelligence`).
   Re-exports plus a builder that selects the cloud or on-premise deployment.
   Both populate the same data type under the same key, so swapping deployment

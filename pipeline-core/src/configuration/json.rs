@@ -68,17 +68,21 @@ pub(crate) fn read_pipeline_options(text: &str) -> Result<PipelineOptions> {
     if let Some(elements) = find(fields, "Elements") {
         options.elements = read_elements(elements, &format!("{path}:Elements"))?;
     }
-    // .NET binds the obsolete name into the same dictionary.
-    for name in ["BuildParameters", "PipelineBuilderParameters"] {
+    // .NET binds the obsolete name first, into the dictionary that
+    // `BuildParameters` then fills, each section in key order. A name given
+    // in both, in the same case, keeps its first place with the second value.
+    for name in ["PipelineBuilderParameters", "BuildParameters"] {
         if let Some(parameters) = find(fields, name) {
-            options
-                .build_parameters
-                .extend(read_parameters(parameters, &format!("{path}:{name}"))?);
+            let mut section = read_parameters(parameters, &format!("{path}:{name}"))?;
+            section.sort_by(|(a, _), (b, _)| compare_keys(a, b));
+            for (key, value) in section {
+                match options.build_parameters.iter_mut().find(|(k, _)| *k == key) {
+                    Some((_, held)) => *held = value,
+                    None => options.build_parameters.push((key, value)),
+                }
+            }
         }
     }
-    options
-        .build_parameters
-        .sort_by(|(a, _), (b, _)| compare_keys(a, b));
     Ok(options)
 }
 

@@ -788,6 +788,31 @@ fn start_capture_server_answering(
 }
 
 #[test]
+fn a_share_usage_element_gives_back_its_configuration_from_the_pipeline() {
+    let config = ShareUsageConfig::builder()
+        .share_percentage(0.25)
+        .minimum_entries_per_message(7)
+        .build();
+    let share = Arc::new(ShareUsageElement::new(config.clone()));
+    assert_eq!(format!("{:?}", share.config()), format!("{config:?}"));
+
+    // A pipeline made in code holds no resource for the element, which is
+    // reached through `into_any` instead.
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::clone(&share) as Arc<dyn FlowElement>)
+        .build()
+        .unwrap();
+    assert!(pipeline.resource::<ShareUsageElement>().is_none());
+    let found = Arc::clone(&pipeline.flow_elements()[0])
+        .into_any()
+        .and_then(|element| element.downcast::<ShareUsageElement>().ok())
+        .expect("the usage sharing element");
+    assert!(Arc::ptr_eq(&found, &share));
+    assert_eq!(found.config().share_percentage(), 0.25);
+    assert_eq!(found.config().minimum_entries_per_message(), 7);
+}
+
+#[test]
 fn share_usage_posts_gzipped_xml_on_flush() {
     let (url, bodies, request_count) = start_capture_server();
 
