@@ -43,6 +43,7 @@
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use ahash::RandomState;
 use indexmap::map::Entry;
@@ -190,9 +191,14 @@ fn insert(entries: &mut EntryMap, key: &str, value: String) {
 /// it, so it is cheap to share by reference across threads during processing.
 /// Only a flow data adds to its own evidence, through
 /// [`crate::FlowData::add_evidence`].
+///
+/// A web integration also gives the whole web request, read with
+/// [`Evidence::http_request`], which is not one of the text values.
 #[derive(Debug, Clone, Default)]
 pub struct Evidence {
     entries: EntryMap,
+    /// The web request under [`constants::EVIDENCE_HTTP_REQUEST_KEY`].
+    http_request: Option<Arc<Evidence>>,
 }
 
 impl Evidence {
@@ -206,6 +212,7 @@ impl Evidence {
     pub(crate) fn empty_with_same_hasher(&self) -> Evidence {
         Evidence {
             entries: IndexMap::with_hasher(self.entries.hasher().clone()),
+            http_request: None,
         }
     }
 
@@ -225,6 +232,20 @@ impl Evidence {
     /// Look up a value by key. The key is matched case-insensitively.
     pub fn get(&self, key: &str) -> Option<&str> {
         ci_lookup(key, |exact| self.entries.get(exact)).map(|stored| stored.value.as_str())
+    }
+
+    /// The web request a web integration gave under
+    /// [`constants::EVIDENCE_HTTP_REQUEST_KEY`], whether or not any element
+    /// accepts it, as an evidence of its own. It holds every header, cookie,
+    /// query string and form parameter of the request, the client IP, the
+    /// protocol and the request line, each under the key it has as evidence,
+    /// for example `header.user-agent`. `None` when the evidence was not
+    /// built from a web request.
+    ///
+    /// It is not a text value, so [`Evidence::get`], [`Evidence::iter`] and
+    /// [`Evidence::generate_key`] do not see it, and no element accepts it.
+    pub fn http_request(&self) -> Option<&Evidence> {
+        self.http_request.as_deref()
     }
 
     /// True if the store contains the given key (matched case-insensitively).
@@ -301,6 +322,7 @@ impl Evidence {
 #[derive(Debug, Default)]
 pub struct EvidenceBuilder {
     entries: EntryMap,
+    http_request: Option<Arc<Evidence>>,
 }
 
 impl EvidenceBuilder {
@@ -308,6 +330,7 @@ impl EvidenceBuilder {
     pub fn new() -> Self {
         EvidenceBuilder {
             entries: EntryMap::default(),
+            http_request: None,
         }
     }
 
@@ -332,10 +355,19 @@ impl EvidenceBuilder {
         self
     }
 
+    /// Give the whole web request, read back with [`Evidence::http_request`].
+    /// A web integration calls this on every request with each value of the
+    /// request under the key it has as evidence. Returns `self` for chaining.
+    pub fn http_request(mut self, request: Evidence) -> Self {
+        self.http_request = Some(Arc::new(request));
+        self
+    }
+
     /// Consume the builder and produce the immutable [`Evidence`].
     pub fn build(self) -> Evidence {
         Evidence {
             entries: self.entries,
+            http_request: self.http_request,
         }
     }
 }
@@ -539,6 +571,23 @@ impl EvidenceKeyFilter for EvidenceKeyFilterAggregator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The web request is read through its own accessor, never as one of the
+    /// text values, so nothing that reads the text values sees it.
+    #[test]
+    fn the_web_request_is_not_a_text_value() {
+        let request = Evidence::builder().add("header.X-Test", "a").build();
+        let evidence = Evidence::builder()
+            .add("header.user-agent", "b")
+            .http_request(request)
+            .build();
+        let given = evidence.http_request().expect("the web request");
+        assert_eq!(given.get("header.x-test"), Some("a"));
+        assert_eq!(evidence.get(constants::EVIDENCE_HTTP_REQUEST_KEY), None);
+        assert_eq!(evidence.len(), 1);
+        assert!(evidence.clone().http_request().is_some());
+        assert!(Evidence::default().http_request().is_none());
+    }
 
     /// Evidence made for a parallel group copies the hasher of the evidence
     /// it was made from, so a key hashes the same through both, where a

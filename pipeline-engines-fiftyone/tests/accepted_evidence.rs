@@ -88,7 +88,6 @@ const NOT_ACCEPTED: [&str; 5] = [
 ];
 
 #[test]
-#[ignore = "held back for one run so CI reaches the web tests on the base"]
 fn the_usage_sharing_element_accepts_no_evidence() {
     let element =
         ShareUsageElement::with_sink(ShareUsageConfig::builder().build(), Keep::default());
@@ -99,7 +98,6 @@ fn the_usage_sharing_element_accepts_no_evidence() {
 }
 
 #[test]
-#[ignore = "held back for one run so CI reaches the web tests on the base"]
 fn a_pipeline_with_usage_sharing_accepts_only_its_engines_evidence() {
     let share = ShareUsageElement::with_sink(ShareUsageConfig::builder().build(), Keep::default());
     let pipeline = Pipeline::builder()
