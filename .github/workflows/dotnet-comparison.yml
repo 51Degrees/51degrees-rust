@@ -825,8 +825,9 @@ jobs:
 
       # Each metadata line on each side must list properties, components and
       # values, so the two cannot agree by both listing none. Then a Rust
-      # line with a changed description and one with a changed value must
-      # each fail the comparison.
+      # line with a changed description, one with a changed value and one
+      # with a changed reason for a property read with no value must each
+      # fail the comparison.
       - name: Check that a changed metadata answer fails
         if: ${{ !cancelled() && env.RUN == 'true' }}
         working-directory: parity
@@ -846,6 +847,8 @@ jobs:
               .engineMetadata.properties.IsMobile.description |= . + " Changed."
             elif .id == "metadata-ip" then
               .engineMetadata.properties.Asn.values[0].name |= . + " Changed."
+            elif .id == "metadata-device-ismobile" then
+              .properties.device.browsername.missing |= . + " Changed."
             else . end' out/metadata-rust.jsonl > out/metadata-rust-changed.jsonl
           if target/debug/parity-compare --corpus corpus/metadata.json \
             --dotnet out/metadata-dotnet.jsonl --rust out/metadata-rust-changed.jsonl \
@@ -857,6 +860,8 @@ jobs:
           grep -q '`metadata-device`.* at `engineMetadata\.properties\.IsMobile\.description`: ' \
             out/report-metadata-changed.md
           grep -q '`metadata-ip`.* at `engineMetadata\.properties\.Asn\.values\[0\]\.name`: ' \
+            out/report-metadata-changed.md
+          grep -q '`metadata-device-ismobile`.* at `properties\.device\.browsername`: ' \
             out/report-metadata-changed.md
 
       - name: Upload the answers and the report

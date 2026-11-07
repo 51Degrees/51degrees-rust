@@ -118,11 +118,12 @@
     "data": "lite",
     "dotnet": {"pattern": ["Property 'Hardware*' not found in data for element 'device'. The reason for this is unknown. Please check that the aspect and property name are correct."]},
     "rust": {"pattern": ["Property 'Hardware*' not found in data for element 'device'. This is because your license or data file does not include this property. To see which licenses include it, see *"]},
-    "reason": "The Lite file has no HardwareVendor, HardwareModel or HardwareName. For a property the data file does not hold, both sides give the upgrade reason when the engine's data type has a typed accessor for the name. .NET's MissingPropertyService looks for the accessor among the properties IDeviceDataHash declares, which are none, as Type.GetProperties on an interface leaves out those of the interfaces it extends, so it never sees IDeviceData's HardwareVendor and gives the unknown reason. The crates find the accessor and give the upgrade reason the service's own documentation describes. This entry comes before the one for every Device Detection property, so that one does not take these."
+    "reason": "The Lite file has no HardwareVendor, HardwareModel or HardwareName. For a property the data file does not hold, both sides give the upgrade reason when the engine's data type has a typed accessor for the name. .NET's MissingPropertyService looks for the accessor among the properties IDeviceDataHash declares, which are none, as Type.GetProperties on an interface leaves out those of the interfaces it extends, so it never sees IDeviceData's HardwareVendor and gives the unknown reason. The crates find the accessor and give the upgrade reason the service's own documentation describes."
   },
   {
     "path": "properties.device.*",
     "kind": "noValueMessage",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "reason": "Every Device Detection property with no value gives the same sentence, where .NET gives the reason for each.",
     "issue": 223
   },
