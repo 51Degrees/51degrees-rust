@@ -25,6 +25,7 @@
 //   dotnet run -- --corpus <json> --dd <hash file> --ipi <ipi file> --out <jsonl>
 //   dotnet run -- fodid-sign ... and dotnet run -- fodid ..., see FodIdCases
 //   dotnet run -- configuration ..., see ConfigurationCases
+//   dotnet run -- derived ..., see DerivedCases
 //
 // The pipelines and the line format are the same as the Rust producer's, as
 // parity/README.md describes. Usage records go to a handler and to a custom
@@ -139,6 +140,7 @@ namespace FiftyOne.Parity
                 case FodIdCases.Sign: return FodIdCases.SignCases(argv[1..]);
                 case FodIdCases.Read: return FodIdCases.ReadCases(argv[1..]);
                 case ConfigurationCases.Run: return ConfigurationCases.RunCases(argv[1..]);
+                case DerivedCases.Run: return DerivedCases.RunCases(argv[1..]);
             }
             var args = Args.Parse(argv);
             var cases = JsonNode.Parse(File.ReadAllText(args.Corpus)).AsArray();

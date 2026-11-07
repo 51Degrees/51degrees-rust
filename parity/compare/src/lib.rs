@@ -380,7 +380,7 @@ pub fn compare_case(case: &Case, dotnet: &Value, rust: &Value) -> Vec<Difference
         field_of(&rust, "usageCustom"),
         USAGE_CUSTOM_RUNTIME_ELEMENTS,
     );
-    for field in ["fodid", "metadata"] {
+    for field in ["fodid", "metadata", "derived"] {
         out.data(field, field_of(&dotnet, field), field_of(&rust, field));
     }
     out.data(
@@ -1710,6 +1710,58 @@ mod tests {
                 Kind::Value
             )]
         );
+    }
+
+    /// A line for a derived property case, as both producers write it.
+    fn derived_line(value: Option<&str>, missing: &[&str]) -> Value {
+        json!({
+            "id": "derived-humanconfidence-01",
+            "derived": {
+                "script": "HumanConfidence",
+                "sourceProperties": ["device.IsCrawler", "ip.ConnectionType"],
+                "processError": null,
+                "type": value.map(|_| "string"),
+                "value": value,
+                "noValue": value.is_none().then_some("No value."),
+                "missing": missing
+            }
+        })
+    }
+
+    #[test]
+    fn the_same_derived_answer_is_no_difference() {
+        let case = data_case("derived-humanconfidence-01");
+        let line = derived_line(Some("High"), &[]);
+        assert!(compare_case(&case, &line, &line).is_empty());
+        let line = derived_line(None, &["ip.ConnectionType"]);
+        assert!(compare_case(&case, &line, &line).is_empty());
+    }
+
+    #[test]
+    fn a_changed_derived_answer_is_named_by_its_field() {
+        let case = data_case("derived-humanconfidence-01");
+        let differences = compare_case(
+            &case,
+            &derived_line(Some("High"), &[]),
+            &derived_line(Some("Low"), &[]),
+        );
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].path, "derived.value");
+        assert_eq!(differences[0].kind, Kind::Value);
+
+        let differences = compare_case(
+            &case,
+            &derived_line(None, &["ip.ConnectionType"]),
+            &derived_line(None, &["device.IsCrawler", "ip.ConnectionType"]),
+        );
+        let paths: Vec<&str> = differences.iter().map(|d| d.path.as_str()).collect();
+        assert_eq!(paths, ["derived.missing[0]", "derived.missing[1]"]);
+
+        let mut rust = derived_line(Some("High"), &[]);
+        rust["derived"]["sourceProperties"][1] = json!("ip.HumanProbability");
+        let differences = compare_case(&case, &derived_line(Some("High"), &[]), &rust);
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].path, "derived.sourceProperties[1]");
     }
 
     #[test]
