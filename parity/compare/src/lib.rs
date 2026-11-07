@@ -222,6 +222,11 @@ pub struct Side {
     /// The side gave one of these values, compared as data.
     #[serde(default)]
     pub value: Option<Vec<Value>>,
+    /// The side gave text matching one of these patterns, where `*` matches
+    /// any run of characters. A text difference gives the line number, so a
+    /// pattern can allow a line wherever it falls.
+    #[serde(default)]
+    pub pattern: Option<Vec<String>>,
     /// The side gave no value for the property.
     #[serde(default, rename = "noValue")]
     pub no_value: bool,
@@ -238,6 +243,11 @@ impl Side {
         (self.no_value && no_value)
             || self.value.as_ref().is_some_and(|values| {
                 value.is_some_and(|value| values.iter().any(|v| same(v, value)))
+            })
+            || self.pattern.as_ref().is_some_and(|patterns| {
+                value
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| patterns.iter().any(|p| glob(p, text)))
             })
     }
 }
@@ -275,18 +285,19 @@ impl Allowed {
                 .is_none_or(|side| side.matches(&difference.path, &difference.rust))
     }
 
-    /// What is wrong with the entry, if anything. A side that names neither
-    /// a value nor no value would match nothing.
+    /// What is wrong with the entry, if anything. A side that names no
+    /// value or pattern and does not ask for no value would match nothing.
     pub fn problem(&self) -> Option<String> {
         [("dotnet", &self.dotnet), ("rust", &self.rust)]
             .into_iter()
             .find(|(_, side)| {
-                side.as_ref()
-                    .is_some_and(|side| side.value.is_none() && !side.no_value)
+                side.as_ref().is_some_and(|side| {
+                    side.value.is_none() && side.pattern.is_none() && !side.no_value
+                })
             })
             .map(|(name, _)| {
                 format!(
-                    "the entry for `{}` gives `{name}` neither a value nor noValue",
+                    "the entry for `{}` gives `{name}` no value, pattern or noValue",
                     self.path
                 )
             })
@@ -1846,5 +1857,45 @@ mod tests {
         assert_eq!(outcome.allowed_counts[&0], 1);
         assert_eq!(outcome.failures.len(), 1);
         assert_eq!(outcome.failures[0].path, "metadata.componentId");
+    }
+
+    #[test]
+    fn a_side_pattern_allows_a_line_wherever_it_falls() {
+        let differences = compare_case(
+            &data_case("robots-txt-none"),
+            &robots_txt_line(Some(ROBOTS_TXT)),
+            &robots_txt_line(Some(ROBOTS_TXT_CHANGED)),
+        );
+        let allowed = entries(json!([{
+            "path": "*Text", "kind": "text",
+            "dotnet": {"pattern": ["line *: Disallow: /"]},
+            "rust": {"pattern": ["line *: Allow: /"]},
+            "reason": "test"
+        }]));
+        assert!(allowed[0].problem().is_none());
+        let outcome = check(&differences, &allowed, "lite");
+        assert!(outcome.failures.is_empty());
+        assert_eq!(outcome.allowed_counts[&0], 2);
+
+        let allowed = entries(json!([{
+            "path": "*Text", "kind": "text",
+            "dotnet": {"pattern": ["line *: Disallow: /"]},
+            "rust": {"pattern": ["line 1: *", "line *: Allow: /private"]},
+            "reason": "test"
+        }]));
+        assert_eq!(check(&differences, &allowed, "lite").failures.len(), 2);
+    }
+
+    #[test]
+    fn a_side_pattern_matches_only_text() {
+        let differences = compare_case(
+            &data_case("robots-txt-none"),
+            &robots_txt_line(Some(ROBOTS_TXT)),
+            &robots_txt_line(None),
+        );
+        let allowed = entries(json!([{
+            "path": "*Text", "rust": {"pattern": ["*"]}, "reason": "test"
+        }]));
+        assert_eq!(check(&differences, &allowed, "lite").failures.len(), 2);
     }
 }

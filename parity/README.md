@@ -204,9 +204,12 @@ matches it. An entry has a `path` pattern, where `*` matches any run of
 characters, an optional `kind`, optional `cases` patterns, optional `data`
 (`lite` or `enterprise`), a required `reason`, and an `issue` number.
 Optional `dotnet` and `rust` sides say what each side gave, either a
-`value` list, compared as data, or `"noValue": true`, so that an entry
+`value` list, compared as data, a `pattern` list, where `*` matches any
+run of characters in a text value, or `"noValue": true`, so that an entry
 allows only the change its reason describes. For a property the value is
-the property's value, and for anything else the value at the path. The
+the property's value, and for anything else the value at the path. A text
+difference gives each side as `line N: ` and that line, so a pattern such
+as `line *: Allow: /` allows the line wherever it falls. The
 first entry that matches takes the difference. The run also fails when an
 entry that applies to its data files allows nothing, so a change that
 removes a difference removes its entry in the same pull request.
