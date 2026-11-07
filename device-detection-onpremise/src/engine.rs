@@ -31,7 +31,7 @@
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 use std::ffi::CStr;
-use std::hash::{BuildHasher, Hash, Hasher};
+use std::hash::BuildHasher;
 use std::ops::Range;
 use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
@@ -1251,9 +1251,8 @@ const NEXT_UPDATE_HOUR: u32 = 12;
 /// A minute of the hour chosen at random, so that servers loading the same
 /// data file do not all start to poll at once.
 fn random_minute() -> u32 {
-    let mut hasher = RandomState::new().build_hasher();
-    std::time::SystemTime::now().hash(&mut hasher);
-    u32::try_from(hasher.finish() % 60).unwrap_or(0)
+    let random = RandomState::new().hash_one(std::time::SystemTime::now());
+    u32::try_from(random % 60).unwrap_or(0)
 }
 
 #[cfg(test)]
