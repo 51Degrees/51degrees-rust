@@ -143,7 +143,10 @@ fn registry() -> BuilderRegistry {
     fiftyone_ip_intelligence_onpremise::configuration::add_builders(&mut registry);
     fiftyone_json_builder::configuration::add_builders(&mut registry);
     fiftyone_javascript_builder::configuration::add_builders(&mut registry);
+    fiftyone_cloud_request_engine::configuration::add_builders(&mut registry);
     fiftyone_agent_signature::configuration::add_builders(&mut registry);
+    fiftyone_ip_intelligence_translation::configuration::add_builders(&mut registry);
+    fiftyone_ip_intelligence_cloud::configuration::add_builders(&mut registry);
     fiftyone_pipeline_engines_fiftyone::configuration::use_fiftyone_pipeline_builder(&mut registry);
     registry
 }

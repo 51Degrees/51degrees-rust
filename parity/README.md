@@ -298,13 +298,21 @@ file given as text with comments, trailing commas, a name holding an
 escape and a fraction with an exponent.
 `configuration-pipeline-setting-does-not-parse` gives the pipeline's
 suppress setting a value that is not true or false.
+The five `configuration-translation-` cases name the translation engines.
+`configuration-translation-countries` makes the two country translation
+engines after the IP Intelligence engine. The other four name the
+translation engine's builder, whose translations are given in code only, so
+none of them builds. One gives the three settings a configuration can give,
+one a missing translation behavior that does not parse, one `AddTranslation`,
+which takes two values, and one `Sources`, which names no setting.
 
 The .NET program reads each file with .NET's own configuration reader and
 builds it with `FiftyOnePipelineBuilder`, making the builders through a
 service provider, as .NET's examples do. Its `HttpClient` refuses to send,
 and neither program processes anything, so the usage sharing element sends
 nothing. The Rust program builds each file with a registry holding the
-builders of the crates it uses, which make pipelines as .NET's
+builders of the crates it uses, in the order .NET lists those of the
+packages the .NET program loads, which make pipelines as .NET's
 `FiftyOnePipelineBuilder` does.
 
 The `configuration` field of a line holds `error`, the message of the

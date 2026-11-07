@@ -255,15 +255,21 @@ fn building_needs_sources_translations_and_a_source_key() {
         .set_source_element_data_key(" ")
         .build();
     for (result, message) in [
-        (no_sources, "At least one source file must be configured."),
+        (
+            no_sources,
+            "At least one source file must be configured. (Parameter 'sources')",
+        ),
         (
             no_translations,
-            "At least one property translation must be configured.",
+            "At least one property translation must be configured. (Parameter 'translations')",
         ),
-        (no_source_key, "The source element key must be configured."),
+        (
+            no_source_key,
+            "The source element key must be configured. (Parameter 'sourceElementDataKey')",
+        ),
         (
             blank_source_key,
-            "The source element key must be configured.",
+            "The source element key must be configured. (Parameter 'sourceElementDataKey')",
         ),
     ] {
         let error = result.err().expect("the build fails");

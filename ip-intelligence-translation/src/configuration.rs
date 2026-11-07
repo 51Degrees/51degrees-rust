@@ -24,12 +24,19 @@
 //! so that a configuration file written for .NET makes the same engines
 //! here. See [`fiftyone_pipeline_core::configuration`].
 //!
-//! [`add_builders`] adds `CloudCountriesTranslationEngineBuilder`, which a
-//! configuration can also name `CloudCountriesTranslationEngine`. The engine
-//! reads the response of the cloud request engine made before it, so a
-//! configuration names one such engine first. It takes the seven settings of
-//! .NET's builder, none of which has an effect here, as
-//! [`add_aspect_engine_settings`] describes.
+//! [`add_builders`] adds these builders, in the order .NET listed them. A
+//! configuration can also name each without `Builder` at the end.
+//!
+//! - `CountriesTranslationEngineBuilder` and
+//!   `CountryCodeTranslationEngineBuilder`, which take no settings, as their
+//!   sources and translations are compiled in.
+//! - `TranslationEngineBuilder`, the builder of the translation engine both
+//!   are made from (see [`fiftyone_pipeline_translation::configuration`]).
+//! - `CloudCountriesTranslationEngineBuilder`. The engine reads the response
+//!   of the cloud request engine made before it, so a configuration names
+//!   one such engine first. It takes the seven settings of .NET's builder,
+//!   none of which has an effect here, as [`add_aspect_engine_settings`]
+//!   describes.
 //!
 //! The pipeline holds the engine made, so it can be read back.
 //!
@@ -96,7 +103,11 @@ use fiftyone_cloud_request_engine::configuration::{add_aspect_engine_settings, r
 use fiftyone_pipeline_core::configuration::{BuildContext, BuilderDefinition, BuilderRegistry};
 use fiftyone_pipeline_core::FlowElement;
 
-use crate::{CloudCountriesTranslationEngine, CloudCountriesTranslationEngineBuilder};
+use crate::{
+    CloudCountriesTranslationEngine, CloudCountriesTranslationEngineBuilder,
+    CountriesTranslationEngine, CountriesTranslationEngineBuilder, CountryCodeTranslationEngine,
+    CountryCodeTranslationEngineBuilder,
+};
 
 /// The name of the engine in the messages .NET gives.
 const CLOUD_COUNTRIES_ENGINE_NAME: &str = "CloudCountriesTranslationEngine";
@@ -104,7 +115,42 @@ const CLOUD_COUNTRIES_ENGINE_NAME: &str = "CloudCountriesTranslationEngine";
 /// Add the translation engines' builders to `registry`. Returns `registry`
 /// for chaining.
 pub fn add_builders(registry: &mut BuilderRegistry) -> &mut BuilderRegistry {
+    registry
+        .add(countries_translation_engine_builder())
+        .add(country_code_translation_engine_builder());
+    fiftyone_pipeline_translation::configuration::add_builders(registry);
     registry.add(cloud_countries_translation_engine_builder())
+}
+
+/// The builder of the engine that translates country names into the
+/// request's language, which takes no settings.
+fn countries_translation_engine_builder() -> BuilderDefinition<CountriesTranslationEngineBuilder> {
+    BuilderDefinition::new(
+        "CountriesTranslationEngineBuilder",
+        |builder: CountriesTranslationEngineBuilder, context: &mut BuildContext| {
+            let engine = Arc::new(builder.build()?);
+            context.add_resource(Arc::clone(&engine) as _);
+            Ok(engine as Arc<dyn FlowElement>)
+        },
+    )
+    .build_method(Vec::new(), |_, _| Ok(CountriesTranslationEngine::builder()))
+}
+
+/// The builder of the engine that gives each country code's English name,
+/// which takes no settings.
+fn country_code_translation_engine_builder(
+) -> BuilderDefinition<CountryCodeTranslationEngineBuilder> {
+    BuilderDefinition::new(
+        "CountryCodeTranslationEngineBuilder",
+        |builder: CountryCodeTranslationEngineBuilder, context: &mut BuildContext| {
+            let engine = Arc::new(builder.build()?);
+            context.add_resource(Arc::clone(&engine) as _);
+            Ok(engine as Arc<dyn FlowElement>)
+        },
+    )
+    .build_method(Vec::new(), |_, _| {
+        Ok(CountryCodeTranslationEngine::builder())
+    })
 }
 
 /// The cloud countries translation engine's builder, finding the cloud

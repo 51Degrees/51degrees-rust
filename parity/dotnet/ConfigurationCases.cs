@@ -43,6 +43,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FiftyOne.DeviceDetection.Hash.Engine.OnPremise.FlowElements;
 using FiftyOne.IpIntelligence.Engine.OnPremise.FlowElements;
+using FiftyOne.IpIntelligence.Translation.FlowElements;
 using FiftyOne.Pipeline.Core.Configuration;
 using FiftyOne.Pipeline.Core.Exceptions;
 using FiftyOne.Pipeline.Core.FlowElements;
@@ -50,6 +51,7 @@ using FiftyOne.Pipeline.Engines.Data;
 using FiftyOne.Pipeline.Engines.FiftyOne.FlowElements;
 using FiftyOne.Pipeline.Engines.FlowElements;
 using FiftyOne.Pipeline.JsonBuilder.FlowElement;
+using FiftyOne.Pipeline.Translation.FlowElements;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -185,6 +187,9 @@ namespace FiftyOne.Parity
             services.AddTransient<JsonBuilderElementBuilder>();
             services.AddTransient<DeviceDetectionHashEngineBuilder>();
             services.AddTransient<IpiOnPremiseEngineBuilder>();
+            services.AddTransient<CountriesTranslationEngineBuilder>();
+            services.AddTransient<CountryCodeTranslationEngineBuilder>();
+            services.AddTransient<TranslationEngineBuilder>();
             using var provider = services.BuildServiceProvider();
             IPipeline pipeline;
             try

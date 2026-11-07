@@ -715,5 +715,97 @@
         }
       }
     }
+  },
+  {
+    "id": "configuration-translation-countries",
+    "about": "The two country translation engines after the IP Intelligence engine, one named by its builder's name and one by the name without Builder.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "IpiOnPremiseEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{ipi}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "CountryCodeTranslationEngineBuilder"
+          },
+          {
+            "BuilderName": "CountriesTranslationEngine"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "configuration-translation-settings",
+    "about": "The translation engine with the three settings a configuration can give, the behavior named in lower case. Its translations are given in code only, so the engine has none and is not built.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "TranslationEngineBuilder",
+            "BuildParameters": {
+              "SourceElementDataKey": "countrynames",
+              "FixedLanguage": "fr_FR",
+              "MissingTranslationBehavior": "emptystring"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "configuration-translation-behavior-does-not-parse",
+    "about": "A missing translation behavior that is not one of the three.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "TranslationEngineBuilder",
+            "BuildParameters": {
+              "MissingTranslationBehavior": "Nonsense"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "configuration-translation-add-translation",
+    "about": "AddTranslation, whose source and destination cannot both be given in one value.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "TranslationEngineBuilder",
+            "BuildParameters": {
+              "AddTranslation": "CountryNamesGeographical"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "configuration-translation-sources",
+    "about": "Sources, which names no setting, so the error lists the four settings that take one value.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "TranslationEngineBuilder",
+            "BuildParameters": {
+              "Sources": "countries.fr_FR.yml"
+            }
+          }
+        ]
+      }
+    }
   }
 ]

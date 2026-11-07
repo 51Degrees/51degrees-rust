@@ -422,7 +422,7 @@ jobs:
           want+=' configuration-setting-forms-in-both-sections'
           want+=' configuration-setting-case-in-both-sections'
           want+=' configuration-engines-only configuration-value-forms'
-          want+=' configuration-text-forms'
+          want+=' configuration-text-forms configuration-translation-countries'
           for side in dotnet rust; do
             got=$(jq -r 'select(.configuration.error == null) | .id' \
               "out/configuration-$side.jsonl" | paste -sd ' ')
