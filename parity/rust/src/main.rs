@@ -27,18 +27,22 @@
 //! parity-rust fodid-sign --cases <json> --prefix <text> --out <json>
 //! parity-rust fodid --corpus <json> [--corpus <json>] --out <jsonl>
 //! parity-rust configuration --cases <json> --dd <hash file> --ipi <ipi file> --out <jsonl>
+//! parity-rust derived-cases --cases <folder> --out <json>
+//! parity-rust derived --cases <folder> --out <jsonl>
 //! ```
 //!
 //! The first form runs the evidence cases through the pipelines. The
 //! pipelines and the line format are the same as the .NET producer's, as
 //! `parity/README.md` describes. Usage records go to sinks inside this
 //! program, so nothing is sent anywhere. The next two forms are the 51Did
-//! cases, described in `fodid_cases`, and the last builds pipelines from
-//! configuration files, described in `configuration`.
+//! cases, described in `fodid_cases`, the fourth builds pipelines from
+//! configuration files, described in `configuration`, and the last two are
+//! the derived property cases, described in `derived`.
 
 mod agent_signature;
 mod cloud_translation;
 mod configuration;
+mod derived;
 mod fodid_cases;
 mod translation;
 mod usage;
@@ -135,6 +139,8 @@ fn main() -> Result<()> {
         Some(fodid_cases::SIGN) => return fodid_cases::sign(&args[1..]),
         Some(fodid_cases::READ) => return fodid_cases::read(&args[1..]),
         Some(configuration::RUN) => return configuration::run(&args[1..]),
+        Some(derived::CASES) => return derived::cases(&args[1..]),
+        Some(derived::RUN) => return derived::run(&args[1..]),
         _ => {}
     }
     let args = parse_args(&args)?;

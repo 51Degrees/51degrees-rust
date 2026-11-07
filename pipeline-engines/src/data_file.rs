@@ -339,6 +339,10 @@ struct DataFileState {
     /// When the current data was published, parsed from the data file. The
     /// `If-Modified-Since` header is set from this.
     data_published: Option<DateTime<Utc>>,
+    /// How many times the publish date has been set, so the data update
+    /// service can tell whether an engine recorded one during a refresh.
+    #[cfg(feature = "data-update")]
+    published_changes: u64,
     /// When an updated data file is expected to be available. Polling does not
     /// start before this time.
     update_available: Option<DateTime<Utc>>,
@@ -407,7 +411,25 @@ impl AspectEngineDataFile {
 
     /// Set the publish time of the current data.
     pub fn set_data_published(&self, when: DateTime<Utc>) {
-        self.lock().data_published = Some(when);
+        let mut state = self.lock();
+        state.data_published = Some(when);
+        #[cfg(feature = "data-update")]
+        {
+            state.published_changes = state.published_changes.wrapping_add(1);
+        }
+    }
+
+    /// Clear the publish time, for data that holds none. This does not count
+    /// as setting one, so after a download the data update service still
+    /// records the time of the download.
+    pub fn clear_data_published(&self) {
+        self.lock().data_published = None;
+    }
+
+    /// How many times the publish date has been set.
+    #[cfg(feature = "data-update")]
+    pub(crate) fn published_changes(&self) -> u64 {
+        self.lock().published_changes
     }
 
     /// When an updated data file is expected to be available, if known.
@@ -418,6 +440,12 @@ impl AspectEngineDataFile {
     /// Set the time an updated data file is expected to be available.
     pub fn set_update_available_time(&self, when: DateTime<Utc>) {
         self.lock().update_available = Some(when);
+    }
+
+    /// Clear the time an updated data file is expected, for data that holds
+    /// none.
+    pub fn clear_update_available_time(&self) {
+        self.lock().update_available = None;
     }
 
     /// True once this file has been registered with a data update service.
@@ -607,6 +635,20 @@ mod tests {
         let now = Utc::now();
         file.set_data_published(now);
         assert_eq!(file.data_published(), Some(now));
+        file.set_update_available_time(now);
+        assert_eq!(file.update_available_time(), Some(now));
+
+        #[cfg(feature = "data-update")]
+        let changes = file.published_changes();
+        file.clear_data_published();
+        file.clear_update_available_time();
+        assert!(file.data_published().is_none());
+        assert!(file.update_available_time().is_none());
+        // Clearing the publish date is not setting one.
+        #[cfg(feature = "data-update")]
+        {
+            assert_eq!(file.published_changes(), changes);
+        }
 
         // set_registered exists only with the data-update service.
         #[cfg(feature = "data-update")]

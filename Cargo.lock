@@ -978,12 +978,18 @@ name = "fiftyone-pipeline-web-axum"
 version = "4.5.2"
 dependencies = [
  "axum",
+ "base64",
+ "fiftyone-agent-signature",
  "fiftyone-javascript-builder",
  "fiftyone-json-builder",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines-fiftyone",
  "fiftyone-pipeline-web",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "log",
+ "ring",
  "serde_json",
  "tokio",
  "tower",
@@ -1014,6 +1020,12 @@ dependencies = [
  "crc32fast",
  "miniz_oxide",
 ]
+
+[[package]]
+name = "fnv"
+version = "1.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "fodid"
@@ -1229,6 +1241,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "h2"
+version = "0.4.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d29020232d6aa3fb1daca64c1127cf662cf97f254ae16c18c05b8ab635fc118"
+dependencies = [
+ "atomic-waker",
+ "bytes",
+ "fnv",
+ "futures-core",
+ "futures-sink",
+ "http",
+ "indexmap",
+ "slab",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1326,6 +1357,7 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-core",
+ "h2",
  "http",
  "http-body",
  "httparse",
@@ -3331,6 +3363,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "futures-util",
+ "libc",
  "pin-project-lite",
  "tokio",
 ]

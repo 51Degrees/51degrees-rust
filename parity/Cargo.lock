@@ -443,6 +443,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fiftyone-derived-properties"
+version = "4.5.2"
+dependencies = [
+ "fiftyone-pipeline-core",
+ "log",
+ "serde_norway",
+ "thiserror",
+]
+
+[[package]]
 name = "fiftyone-device-detection-onpremise"
 version = "4.5.2"
 dependencies = [
@@ -1391,6 +1401,7 @@ dependencies = [
  "base64 0.22.1",
  "fiftyone-agent-signature",
  "fiftyone-cloud-request-engine",
+ "fiftyone-derived-properties",
  "fiftyone-device-detection-onpremise",
  "fiftyone-fodid-core",
  "fiftyone-ip-intelligence-onpremise",
@@ -1406,6 +1417,7 @@ dependencies = [
  "fodid",
  "serde",
  "serde_json",
+ "serde_norway",
 ]
 
 [[package]]

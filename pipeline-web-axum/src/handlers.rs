@@ -48,7 +48,7 @@ use axum::http::{Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use fiftyone_pipeline_web::{serve_javascript, serve_json};
 
-use crate::process::{process_then, CapturedRequest};
+use crate::process::{process_then, sent_uri, CapturedRequest};
 use crate::response::into_axum_response;
 use crate::state::FiftyOneState;
 
@@ -121,7 +121,7 @@ async fn serve(
         .map(|connect_info| connect_info.0);
     let captured = CapturedRequest {
         headers: parts.headers,
-        uri: parts.uri,
+        uri: sent_uri(&parts.extensions, parts.uri),
         body,
         peer_addr,
     };

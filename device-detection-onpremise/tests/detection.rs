@@ -330,7 +330,7 @@ fn metadata_is_published() {
         .evidence_key_filter()
         .include("header.sec-ch-ua-mobile"));
 
-    // The published date is recorded from the data file on disk.
+    // The published date is recorded from the data file header.
     assert!(
         engine.data_file_published().is_some(),
         "the data-file publish time should be recorded"

@@ -26,18 +26,21 @@
 //! apart from the differences the tests name.
 //!
 //! .NET ships HumanConfidence and IsGdpr where the crate ships
-//! HumanConfidence alone, and .NET refuses a pipeline in which no element
-//! supplies a property a script reads, which the crate does not check. Both
-//! are #233's, so the tests that name a shipped script read the element
-//! back where .NET's pipeline build failed after making it.
+//! HumanConfidence alone. A pipeline naming a shipped script also names
+//! `DeviceSource` and `IpSource` after the derived property element, which
+//! supply every property the shipped scripts read, because both languages
+//! refuse a pipeline in which no element supplies one.
 
 use std::sync::Arc;
 
-use fiftyone_derived_properties::{configuration, DerivedPropertyElement};
+use fiftyone_derived_properties::{configuration, BuiltInScript, DerivedPropertyElement};
 use fiftyone_pipeline_core::configuration::{
-    BuilderRegistry, ConfigValue, ElementOptions, PipelineOptions,
+    BuildContext, BuilderDefinition, BuilderRegistry, ConfigValue, ElementOptions, PipelineOptions,
 };
-use fiftyone_pipeline_core::{Error, Pipeline, PipelineBuilder, Result};
+use fiftyone_pipeline_core::{
+    Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, Pipeline,
+    PipelineBuilder, PropertyMetaData, PropertyValueType, Result,
+};
 
 const BUILDER: &str = "DerivedPropertyElementBuilder";
 const BUILDER_TYPE: &str = "fiftyone_derived_properties::element::DerivedPropertyElementBuilder";
@@ -47,9 +50,64 @@ const NO_SCRIPTS: &str = "At least one script must be configured. Add one with A
                           AddScriptFile, or the Scripts and ScriptFiles configuration keys. \
                           (Parameter 'scripts')";
 
+/// An element that lists every property the shipped scripts read under its
+/// key and writes nothing, standing in for an engine.
+struct Source {
+    key: &'static str,
+    properties: Vec<PropertyMetaData>,
+    filter: EvidenceKeyFilterWhitelist,
+}
+
+impl FlowElement for Source {
+    fn process(&self, _data: &mut FlowData) -> Result<()> {
+        Ok(())
+    }
+
+    fn data_key(&self) -> &str {
+        self.key
+    }
+
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        &self.filter
+    }
+
+    fn properties(&self) -> &[PropertyMetaData] {
+        &self.properties
+    }
+}
+
+/// The builder `name`, making a [`Source`] with the data key `key`.
+fn source_builder(name: &str, key: &'static str) -> BuilderDefinition<()> {
+    BuilderDefinition::new(name, move |_: (), _: &mut BuildContext| {
+        let properties = BuiltInScript::ALL
+            .iter()
+            .flat_map(|script| {
+                script
+                    .compile()
+                    .expect("the shipped script is sound")
+                    .source_properties()
+                    .to_vec()
+            })
+            .filter(|property| property.element_key == key)
+            .map(|property| {
+                PropertyMetaData::new(property.property_name, key, PropertyValueType::String)
+            })
+            .collect();
+        Ok(Arc::new(Source {
+            key,
+            properties,
+            filter: EvidenceKeyFilterWhitelist::new(Vec::<&str>::new()),
+        }) as Arc<dyn FlowElement>)
+    })
+    .build_method(Vec::new(), |_, _| Ok(()))
+}
+
 fn registry() -> BuilderRegistry {
     let mut registry = BuilderRegistry::new();
     configuration::add_builders(&mut registry);
+    registry
+        .add(source_builder("DeviceSource", "device"))
+        .add(source_builder("IpSource", "ip"));
     registry
 }
 
@@ -57,14 +115,28 @@ fn build(options: &PipelineOptions) -> Result<Arc<Pipeline>> {
     PipelineBuilder::new().build_from_configuration(&registry(), options)
 }
 
-/// The element `builder` with `parameters`, alone in a pipeline.
-fn with(builder: &str, parameters: Vec<(&str, ConfigValue)>) -> Result<Arc<Pipeline>> {
+fn options(builder: &str, parameters: Vec<(&str, ConfigValue)>) -> PipelineOptions {
     let element = parameters
         .into_iter()
         .fold(ElementOptions::new(builder), |element, (n, v)| {
             element.parameter(n, v)
         });
-    build(&PipelineOptions::new().element(element))
+    PipelineOptions::new().element(element)
+}
+
+/// The element `builder` with `parameters`, alone in a pipeline.
+fn with(builder: &str, parameters: Vec<(&str, ConfigValue)>) -> Result<Arc<Pipeline>> {
+    build(&options(builder, parameters))
+}
+
+/// The element `builder` with `parameters`, then `DeviceSource` and
+/// `IpSource`.
+fn with_sources(builder: &str, parameters: Vec<(&str, ConfigValue)>) -> Result<Arc<Pipeline>> {
+    build(
+        &options(builder, parameters)
+            .element(ElementOptions::new("DeviceSource"))
+            .element(ElementOptions::new("IpSource")),
+    )
 }
 
 fn text(name: &str, value: &str) -> (&'static str, ConfigValue) {
@@ -146,11 +218,39 @@ fn scripts_names_shipped_scripts_ignoring_case_and_space() {
     ] {
         let shown = format!("{parameter:?}");
         assert_eq!(
-            scripts(with(BUILDER, vec![parameter])),
+            scripts(with_sources(BUILDER, vec![parameter])),
             built_in(source),
             "{shown}"
         );
     }
+}
+
+/// A shipped script with no element supplying what it reads is refused when
+/// the pipeline is built, with .NET's message naming each property.
+#[test]
+fn a_pipeline_supplying_nothing_a_shipped_script_reads_is_refused() {
+    let lines: Vec<String> = BuiltInScript::HumanConfidence
+        .compile()
+        .expect("the shipped script is sound")
+        .source_properties()
+        .iter()
+        .map(|property| {
+            let name = &property.name;
+            format!(
+                "\nThe script 'HumanConfidence' needs the property '{name}', and no element in \
+                 the pipeline supplies it. Either add the element that supplies '{name}', or \
+                 change the script so that it does not name '{name}'."
+            )
+        })
+        .collect();
+    assert_eq!(lines.len(), 10);
+    assert_eq!(
+        message(with(BUILDER, vec![text("Scripts", "HumanConfidence")])),
+        format!(
+            "The derived property element cannot be used in this pipeline.{}",
+            lines.concat()
+        )
+    );
 }
 
 /// .NET's list of the shipped scripts also names IsGdpr.
@@ -229,7 +329,7 @@ fn add_script_takes_a_shipped_script_by_name_or_number() {
         "0",
     ] {
         assert_eq!(
-            scripts(with(BUILDER, vec![text("AddScript", value)])),
+            scripts(with_sources(BUILDER, vec![text("AddScript", value)])),
             built_in("HumanConfidence"),
             "'{value}'"
         );
@@ -306,7 +406,7 @@ fn an_unknown_setting_lists_dotnets_settings() {
 mod from_files {
     use std::path::{Path, PathBuf};
 
-    use fiftyone_pipeline_core::{FlowElement, PropertyValue};
+    use fiftyone_pipeline_core::PropertyValue;
 
     use super::*;
 
@@ -413,69 +513,88 @@ mod from_files {
         );
     }
 
-    /// .NET's fault for the missing file is "script (<path>) at (document): the
-    /// file does not exist", and it gives the line of the bad file's name, being
-    /// "Bad (<path>) line 2 at Name". The crate reads a path as
-    /// `add_script_file` does, which #233 changes.
+    /// .NET gives the line of the bad file's name as well, being "Bad (<path>)
+    /// line 2 at Name", which the crate does not.
     #[test]
     fn faults_in_script_files_are_reported_together() {
         let s = Scripts::new("faults");
         let missing = s.path("missing.yaml");
         let bad = s.path("Bad.yaml");
-        let found = message(with(
-            BUILDER,
-            vec![text("ScriptFiles", &format!("{missing},{bad}"))],
-        ));
-        let opening = failed("2 faults were found while reading derived property scripts.\n");
-        let opening = opening
-            .split_once(NO_INNER)
-            .unwrap()
-            .0
-            .trim_end_matches('\n');
-        assert!(found.starts_with(opening), "{found}");
-        assert!(
-            found.contains(&format!(
-                "\nmissing ({missing}) at (document): the script file could not be read: "
+        assert_eq!(
+            message(with(
+                BUILDER,
+                vec![text("ScriptFiles", &format!("{missing},{bad}"))],
             )),
-            "{found}"
-        );
-        assert!(
-            found.ends_with(&format!(
-                "\nBad ({bad}) at Name: script name 'Wrong' must equal the file name 'Bad'\n\
-             {NO_INNER}\n"
-            )),
-            "{found}"
+            faults(&[
+                &format!("script ({missing}) at (document): the file does not exist"),
+                &format!("Bad ({bad}) at Name: script name 'Wrong' must equal the file name 'Bad'"),
+            ])
         );
     }
 
-    /// .NET adds a script for each file a wildcard matches, in name order,
-    /// which is #233's. The crate reads the wildcard as a path.
+    /// A wildcard adds every file in its folder whose name it matches, in
+    /// order of their paths, as .NET's `Directory.GetFiles` matches them. So
+    /// `?` stands for one character and leaves `Bad.yaml` out, and `A.*`
+    /// matches `A.yaml`.
     #[test]
-    fn a_wildcard_is_read_as_a_path() {
+    fn a_wildcard_adds_every_file_it_matches_in_order() {
         let s = Scripts::new("wildcard");
-        let pattern = s.path("*.yaml");
-        let found = message(with(BUILDER, vec![text("ScriptFiles", &pattern)]));
-        assert!(
-            found.contains(&format!(
-                "\n* ({pattern}) at (document): the script file could not be read: "
-            )),
-            "{found}"
+        let one_letter = s.path("?.yaml");
+        for parameter in [
+            text("ScriptFiles", &one_letter),
+            text("AddScriptFile", &one_letter),
+        ] {
+            let shown = format!("{parameter:?}");
+            assert_eq!(
+                scripts(with(BUILDER, vec![parameter])),
+                files(&s, &["A", "B"]),
+                "{shown}"
+            );
+        }
+        let each = format!("{},{}", s.path("B.y*"), s.path("A.*"));
+        assert_eq!(
+            scripts(with(BUILDER, vec![text("ScriptFiles", &each)])),
+            files(&s, &["B", "A"])
+        );
+        let bad = s.path("Bad.yaml");
+        assert_eq!(
+            message(with(BUILDER, vec![text("ScriptFiles", &s.path("*.yaml"))])),
+            faults(&[&format!(
+                "Bad ({bad}) at Name: script name 'Wrong' must equal the file name 'Bad'"
+            )])
+        );
+    }
+
+    /// A folder that is not there is a fault, as in .NET, and a wildcard that
+    /// matches no file adds nothing.
+    #[test]
+    fn a_wildcard_needs_its_folder_and_may_match_nothing() {
+        let s = Scripts::new("wildcard-none");
+        let pattern = s.path("none/*.yaml");
+        let folder = s.path("none");
+        assert_eq!(
+            message(with(BUILDER, vec![text("ScriptFiles", &pattern)])),
+            faults(&[&format!(
+                "script ({pattern}) at (document): the folder '{folder}' does not exist"
+            )])
+        );
+        assert_eq!(
+            message(with(BUILDER, vec![text("ScriptFiles", &s.path("*.json"))])),
+            failed(NO_SCRIPTS)
         );
     }
 
     /// `AddScriptFile` takes the path as it is, so space before it is part of
-    /// the path, as in .NET, whose fault is "script ( <path>) at (document):
-    /// the file does not exist". A list is refused with .NET's message.
+    /// the path, as in .NET. A list is refused with .NET's message.
     #[test]
     fn add_script_file_takes_one_path_as_it_is() {
         let s = Scripts::new("one");
         let spaced = format!(" {}", s.path("A.yaml"));
-        let found = message(with(BUILDER, vec![text("AddScriptFile", &spaced)]));
-        assert!(
-            found.contains(&format!(
-                "\nA ({spaced}) at (document): the script file could not be read: "
-            )),
-            "{found}"
+        assert_eq!(
+            message(with(BUILDER, vec![text("AddScriptFile", &spaced)])),
+            faults(&[&format!(
+                "script ({spaced}) at (document): the file does not exist"
+            )])
         );
         assert_eq!(
             message(with(
@@ -502,7 +621,7 @@ mod from_files {
         let mut both = files(&s, &["A"]);
         both.extend(built_in("HumanConfidence"));
         assert_eq!(
-            scripts(with(
+            scripts(with_sources(
                 BUILDER,
                 vec![text("ScriptFiles", &a), text("Scripts", "HumanConfidence")]
             )),
@@ -540,7 +659,9 @@ mod from_files {
                             "Scripts": "HumanConfidence",
                             "ScriptFiles": "{}"
                         }}
-                    }}
+                    }},
+                    {{ "BuilderName": "DeviceSource" }},
+                    {{ "BuilderName": "IpSource" }}
                 ]
             }}
         }}"#,

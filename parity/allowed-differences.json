@@ -304,6 +304,14 @@
     "reason": "The crates' usage sharing element says it is concurrent, because it sends from a thread of its own, so a pipeline holding it is concurrent with no parallel group. .NET's ShareUsageElement says it is not."
   },
   {
+    "path": "configuration.error",
+    "kind": "value",
+    "cases": ["configuration-unknown-parameter-in-group"],
+    "dotnet": {"value": ["Configuration failed to build.\nBuilderName: BuilderName not set\nSubElement Builder Names: DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder\nBuilder '{type}' for element 1 in element 1 has no 'Set' methods or 'Build' methods that match (case-insensitively) the following parameters: CREATETEMPDATACOPY,DATAFILE,NOSUCHSETTING. The available configuration methods on this builder are: \nSetReuseTempFile\nSetPerformanceProfile\nSetConcurrency\nSetCache\nSetCacheSize\nSetDataDownloadType\nSetDataUpdateUrl\nSetDataUpdateUrlFormatter\nSetDataUpdateUseUrlFormatter\nSetDataUpdateVerifyMd5\nSetDataUpdateDecompress\nSetAutoUpdate\nSetDataFileSystemWatcher\nSetUpdatePollingInterval\nSetUpdateRandomisationMax\nSetVerifyIfModifiedSince\nSetDataUpdateLicenseKey\nSetDataUpdateLicenseKeys\nSetDataUpdateOnStartup\nAddDataFile\nSetTempDirPath\nSetLazyLoading\nSetLazyLoadingTimeout\nSetCacheHitOrMiss\nSetProperties\nSetProperty\nThe available 'Build' methods have the following signatures: \ndatafile (String),createTempDataCopy (Boolean)\ndata (Stream)\n\n\nNo Inner Exception.\n"]},
+    "rust": {"value": ["Configuration failed to build.\nBuilderName: BuilderName not set\nSubElement Builder Names: DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder\nBuilder '{type}' for element 1 in element 1 has no 'Set' methods or 'Build' methods that match (case-insensitively) the following parameters: CREATETEMPDATACOPY,DATAFILE,NOSUCHSETTING. The available configuration methods on this builder are: \nSetReuseTempFile\nSetPerformanceProfile\nSetConcurrency\nSetCache\nSetCacheSize\nSetDataDownloadType\nSetDataUpdateUrl\nSetDataUpdateUrlFormatter\nSetDataUpdateUseUrlFormatter\nSetDataUpdateVerifyMd5\nSetDataUpdateDecompress\nSetAutoUpdate\nSetDataFileSystemWatcher\nSetUpdatePollingInterval\nSetUpdateRandomisationMax\nSetVerifyIfModifiedSince\nSetDataUpdateLicenseKey\nSetDataUpdateLicenseKeys\nSetLicenseKeyRequired\nSetDataUpdateOnStartup\nAddDataFile\nSetTempDirPath\nSetLazyLoading\nSetLazyLoadingTimeout\nSetCacheHitOrMiss\nSetProperties\nSetProperty\nThe available 'Build' methods have the following signatures: \ndatafile (String),createTempDataCopy (Boolean)\ndata (Stream)\n\n\nNo Inner Exception.\n"]},
+    "reason": "The crates' on-premise engines take SetLicenseKeyRequired, so a configuration can say that its update source serves the data file without a license key, as the specification allows (#312). .NET's engine builders have no such setting, because .NET never asks for a key when an engine is built from a configuration, so the list of settings given for an unknown setting has one more name than .NET's."
+  },
+  {
     "path": "fodid.status",
     "kind": "value",
     "cases": ["*-text-url-one-plus", "*-text-url-one-slash", "*-text-standard-one-underscore"],
@@ -346,6 +354,6 @@
     "path": "properties.countrynamestranslated.*",
     "kind": "noValueMessage",
     "cases": ["cloud-translation-*"],
-    "reason": "A property the cloud's response does not give is missing on both sides, with the same reason word for word apart from the configurator link's campaign tags, which name each repository and the file the message is in. An entry cannot pin a missing property's reason, so the workflow step that checks the cloud translation cases compares the two reasons with the link's tags removed."
+    "reason": "A property the cloud's response does not give is missing on both sides, with the same reason word for word apart from the configurator link's campaign tags, which name each repository and the file the message is in. An entry cannot pin a missing property's reason, so the workflow step that checks the cloud translation cases compares the two reasons with the link's tags removed. The same kind covers the reason for a null value, which that step compares exactly."
   }
 ]

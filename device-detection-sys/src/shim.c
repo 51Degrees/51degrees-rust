@@ -233,6 +233,71 @@ size_t fiftyoneDegreesShimHashGetDataSetName(
 }
 
 /*
+ * Writes the year, month and day of the published date (`next` zero) or the
+ * next update date (`next` not zero) in the data file header. Any of the
+ * output pointers may be NULL.
+ */
+static int get_header_date(
+    fiftyoneDegreesResourceManager *manager,
+    int next,
+    int32_t *year,
+    int32_t *month,
+    int32_t *day) {
+    fiftyoneDegreesDataSetHash *dataSet =
+        fiftyoneDegreesDataSetHashGet(manager);
+    if (dataSet == NULL) {
+        return 0;
+    }
+    const fiftyoneDegreesDate *date = next
+        ? &dataSet->header.nextUpdate
+        : &dataSet->header.published;
+    if (year != NULL) {
+        *year = (int32_t)date->year;
+    }
+    if (month != NULL) {
+        *month = (int32_t)date->month;
+    }
+    if (day != NULL) {
+        *day = (int32_t)date->day;
+    }
+    fiftyoneDegreesDataSetHashRelease(dataSet);
+    return 1;
+}
+
+/*
+ * Writes the date the data file was published, from its header, into `*year`,
+ * `*month` and `*day` and returns 1, or 0 when no data set is available.
+ */
+int fiftyoneDegreesShimHashGetDataSetPublished(
+    fiftyoneDegreesResourceManager *manager,
+    int32_t *year,
+    int32_t *month,
+    int32_t *day) {
+    return get_header_date(manager, 0, year, month, day);
+}
+
+/*
+ * Writes the date the next data file is expected, from the data file header,
+ * into `*year`, `*month` and `*day` and returns 1, or 0 when no data set is
+ * available.
+ */
+int fiftyoneDegreesShimHashGetDataSetNextUpdate(
+    fiftyoneDegreesResourceManager *manager,
+    int32_t *year,
+    int32_t *month,
+    int32_t *day) {
+    return get_header_date(manager, 1, year, month, day);
+}
+
+/*
+ * Returns the size of a Hash data file's header in bytes, being how much of a
+ * data file the C library compares to find a copy of it to reuse.
+ */
+size_t fiftyoneDegreesShimHashGetHeaderSize(void) {
+    return sizeof(fiftyoneDegreesDataSetHashHeader);
+}
+
+/*
  * Walks the graph of each component the results have not yet walked, and
  * returns 1, or 0 when a walk fails. The walk of a component's graph sets the
  * match metrics and the matched User-Agent of its result. Unless the data set

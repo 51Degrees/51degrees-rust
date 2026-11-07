@@ -392,7 +392,7 @@ fn updates_with_an_update_service_register_the_data_file() {
         assert_eq!(service.registered_count(), 0);
     }
 
-    for key in [None, Some("")] {
+    for key in [None, Some(""), Some(" ")] {
         let mut parameters = vec![("DataFile", lite.as_str()), ("CreateTempDataCopy", "false")];
         if let Some(key) = key {
             parameters.push(("DataUpdateLicenseKey", key));
@@ -412,6 +412,56 @@ fn updates_with_an_update_service_register_the_data_file() {
     // Updates off, the data file is not registered, as in .NET.
     let pipeline = build_with_service(base(&lite, &[]), &service).unwrap();
     assert!(!engine(&pipeline).data_files()[0].is_registered());
+}
+
+/// A configuration may say that the update source needs no license key, as
+/// the specification allows, so automatic updates from a URL requested as
+/// it is configured run with no key. .NET's engine builder has no such
+/// setting and never asks for a key here.
+#[test]
+fn a_configuration_may_say_no_license_key_is_required() {
+    let Some(lite) = lite() else { return };
+    const SOURCE: &str = "https://updates.example.test/51Degrees-LiteV4.1.hash";
+    let service = Arc::new(DataUpdateService::new());
+    let updated = |required: Option<&str>| {
+        let mut parameters = vec![
+            ("DataFile", lite.as_str()),
+            ("CreateTempDataCopy", "false"),
+            ("DataFileSystemWatcher", "false"),
+            ("DataUpdateUrl", SOURCE),
+            ("DataUpdateUseUrlFormatter", "false"),
+        ];
+        if let Some(required) = required {
+            parameters.push(("LicenseKeyRequired", required));
+        }
+        element(BUILDER, &parameters)
+    };
+
+    let pipeline = build_with_service(updated(Some("false")), &service).unwrap();
+    let made = engine(&pipeline);
+    let file = &made.data_files()[0];
+    assert!(file.is_registered());
+    assert!(file.configuration().automatic_updates_enabled);
+    assert!(file.configuration().data_update_license_keys.is_empty());
+    assert!(!file.configuration().license_key_required_for_updates);
+    assert_eq!(file.formatted_update_url().as_deref(), Some(SOURCE));
+    assert_eq!(service.registered_count(), 1);
+    drop(made);
+    drop(pipeline);
+
+    for required in [None, Some("true")] {
+        assert_eq!(
+            message(build_with_service(updated(required), &service)),
+            failed(
+                "Some enabled features (auto update) require a license key but one has not \
+                 been supplied. This can be corrected by passing a license key to the engine \
+                 builder. If building from configuration, check the associated builder \
+                 implementation to determine the correct parameter name to use."
+            ),
+            "{required:?}"
+        );
+    }
+    assert_eq!(service.registered_count(), 0);
 }
 
 /// Each data file setting reads back as .NET read it back.
@@ -753,6 +803,53 @@ fn a_copy_of_the_data_file_is_read_when_asked() {
     std::fs::remove_dir_all(&folder).unwrap();
 }
 
+/// `SetReuseTempFile` true reads a copy of the data file already in the
+/// temporary folder, found as the C library that .NET passes the setting to
+/// finds one, and the engine removes it as it removes a copy it made. With
+/// false a new copy is made beside it, and the copy already there stays. The
+/// files expected are read from the C library's `dataset.c` and `file.c`,
+/// not from a .NET run.
+#[test]
+fn reuse_temp_file_reads_a_copy_already_in_the_folder() {
+    let Some(lite) = lite() else { return };
+    let folder = empty_folder("reuse");
+    let temp = folder.to_string_lossy().into_owned();
+    let stem = Path::new(&lite)
+        .file_stem()
+        .expect("the data file's name")
+        .to_string_lossy()
+        .into_owned();
+    let left = format!("{stem}-left");
+    for reuse in ["true", "false"] {
+        std::fs::copy(&lite, folder.join(&left)).unwrap();
+        let pipeline = build(element(
+            BUILDER,
+            &[
+                ("DataFile", &lite),
+                ("CreateTempDataCopy", "true"),
+                ("AutoUpdate", "false"),
+                ("DataFileSystemWatcher", "false"),
+                ("TempDirPath", &temp),
+                ("ReuseTempFile", reuse),
+            ],
+        ))
+        .expect(reuse);
+        assert_eq!(detect(&pipeline, MOBILE).0, Ok(true), "{reuse}");
+        let read = files_in(&folder);
+        drop(pipeline);
+        let kept = files_in(&folder);
+        if reuse == "true" {
+            assert_eq!(read, [left.as_str()], "{reuse}");
+            assert_eq!(kept, Vec::<String>::new(), "{reuse}");
+        } else {
+            assert_eq!(read.len(), 2, "{reuse}");
+            assert_eq!(kept, [left.as_str()], "{reuse}");
+            std::fs::remove_file(folder.join(&left)).unwrap();
+        }
+    }
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
 /// .NET's two build methods, and the builder's own `Build()`, which .NET
 /// calls when no build parameter is given.
 #[test]
@@ -793,7 +890,8 @@ fn the_build_methods_are_dotnets() {
 
 /// .NET lists every setting and build method of the builder, giving
 /// `RuntimeParameterInfo` as each type, where the crates give the type. The
-/// crates leave out .NET's `Build (Stream)`, which is a build method.
+/// crates leave out .NET's `Build (Stream)`, which is a build method. The
+/// crates also list `SetLicenseKeyRequired`, which .NET's builder lacks.
 #[test]
 fn an_unknown_setting_lists_the_settings_and_build_methods() {
     let Some(lite) = lite() else { return };
@@ -827,6 +925,7 @@ fn an_unknown_setting_lists_the_settings_and_build_methods() {
         "SetVerifyIfModifiedSince (Boolean)",
         "SetDataUpdateLicenseKey (String)",
         "SetDataUpdateLicenseKeys (String[])",
+        "SetLicenseKeyRequired (Boolean)",
         "SetDataUpdateOnStartup (Boolean)",
         "AddDataFile (IDataFileConfiguration)",
         "SetTempDirPath (String)",
@@ -1034,6 +1133,7 @@ fn negative_update_periods_are_refused() {
 }
 
 /// The settings that have no effect here are read, and logged.
+/// `SetReuseTempFile` has an effect, so it logs nothing.
 #[test]
 fn settings_with_no_effect_are_logged() {
     let Some(lite) = lite() else { return };
@@ -1069,14 +1169,7 @@ fn settings_with_no_effect_are_logged() {
             vec![warning("SetCacheHitOrMiss", "as the engine has no cache")],
         ),
         ("CacheHitOrMiss", "false", vec![]),
-        (
-            "ReuseTempFile",
-            "true",
-            vec![warning(
-                "SetReuseTempFile",
-                "as the engine never reuses a copy of the data file it finds",
-            )],
-        ),
+        ("ReuseTempFile", "true", vec![]),
         ("ReuseTempFile", "false", vec![]),
     ] {
         let (pipeline, found) = logged_by(|| build(base(&lite, &[(name, value)])));
