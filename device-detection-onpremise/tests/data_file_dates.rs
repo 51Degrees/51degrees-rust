@@ -167,6 +167,64 @@ fn a_refresh_from_memory_records_the_dates_of_the_new_data() {
     assert!(is_mobile(&engine));
 }
 
+/// Data whose header dates are not valid loads, and records no dates, where
+/// .NET refuses to build on it and throws from a refresh after loading it.
+/// A refresh to such data keeps the dates already recorded.
+#[test]
+fn data_whose_header_dates_are_not_valid_loads_and_records_no_dates() {
+    let Some(lite) = lite() else {
+        return;
+    };
+    let mut undated = dated(&lite);
+    undated[PUBLISHED_AT..PUBLISHED_AT + 8].fill(0);
+    let dir = folder("undated");
+    let path = dir.join("51Degrees.hash");
+    std::fs::write(&path, &undated).unwrap();
+    let engine = DeviceDetectionOnPremiseEngineBuilder::new(&path)
+        .performance_profile(PerformanceProfile::LowMemory)
+        .build()
+        .expect("the data file loads");
+    let file = &engine.data_files()[0];
+    assert_eq!(file.data_published(), None);
+    assert_eq!(file.update_available_time(), None);
+    assert!(is_mobile(&engine));
+
+    engine
+        .refresh_from_memory(None, &dated(&lite))
+        .expect("the data loads from memory");
+    assert_dates(&engine, "dated");
+    engine
+        .refresh_from_memory(None, &undated)
+        .expect("the data loads from memory");
+    assert_dates(&engine, "undated after dated");
+    assert!(is_mobile(&engine));
+    drop(engine);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A refresh from the file after a refresh from memory loads the file the
+/// engine was built from, with its dates. .NET's fails, as its reload from
+/// the original file then has no file name.
+#[test]
+fn a_refresh_from_the_file_after_one_from_memory_loads_the_file() {
+    let Some(lite) = lite() else {
+        return;
+    };
+    let engine = DeviceDetectionOnPremiseEngineBuilder::new(&lite)
+        .performance_profile(PerformanceProfile::LowMemory)
+        .build()
+        .expect("the data file loads");
+    let built = engine.data_files()[0].data_published();
+    assert_ne!(built, Some(midnight(PUBLISHED)));
+    engine
+        .refresh_from_memory(None, &dated(&lite))
+        .expect("the data loads from memory");
+    assert_dates(&engine, "from memory");
+    engine.refresh(None).expect("the data file loads again");
+    assert_eq!(engine.data_files()[0].data_published(), built);
+    assert!(is_mobile(&engine));
+}
+
 /// A data file the update service downloads keeps the publish date the
 /// engine reads from it, which the next request's `If-Modified-Since`
 /// carries, rather than the time of the download.
