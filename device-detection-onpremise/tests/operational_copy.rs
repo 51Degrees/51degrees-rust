@@ -254,6 +254,47 @@ fn the_copy_goes_in_the_folder_the_builder_names() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// With reuse on, a refresh of an unchanged data file reads the copy the
+/// engine already reads rather than making another, and none is left once
+/// the engine is dropped. The old data set's removal of the copy it shares
+/// unlinks the copy on Linux and macOS, where the new data set keeps the
+/// handles it opened, and fails on Windows while the copy is open, so the
+/// folder then holds that copy or nothing.
+#[test]
+fn a_refresh_with_reuse_reads_the_copy_already_made() {
+    let Some(lite) = lite_data_file() else {
+        eprintln!("skipping operational copies: set 51DEGREES_DD_PATH to the Lite file");
+        return;
+    };
+    let (dir, path) = folder_with(&lite, "reuse-refresh", "51Degrees.hash");
+    let temp = dir.join("temp");
+    std::fs::create_dir_all(&temp).unwrap();
+    let engine = DeviceDetectionOnPremiseEngineBuilder::new(&path)
+        .temp_dir_path(&temp)
+        .create_temp_data_copy(true)
+        .reuse_temp_file(true)
+        .build()
+        .expect("the data file loads");
+    let copied = files_in(&temp);
+    assert_eq!(copied.len(), 1, "one copy for the data set loaded");
+
+    engine.refresh(None).expect("the data file reloads");
+    let refreshed = files_in(&temp);
+    assert!(
+        refreshed.iter().all(|name| copied.contains(name)),
+        "no new copy: {copied:?} then {refreshed:?}"
+    );
+    assert_eq!(is_mobile(&detect(&engine)), Some(true));
+
+    drop(engine);
+    assert_eq!(
+        files_in(&temp),
+        Vec::<String>::new(),
+        "no copy outlives the engine"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The profiles that keep the data file open, so the engine reads a copy.
 const COPYING_PROFILES: [PerformanceProfile; 4] = [
     PerformanceProfile::Default,

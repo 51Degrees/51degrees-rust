@@ -271,6 +271,13 @@ fn profile_config(profile: PerformanceProfile, options: &HashOptions) -> sys::Co
     config
 }
 
+/// The size of a Hash data file's header in bytes, being how much of a data
+/// file the C library compares when it looks for a copy of the file to reuse.
+pub fn data_file_header_size() -> usize {
+    // Safety: the shim reads no state and takes no arguments.
+    unsafe { sys::fiftyoneDegreesShimHashGetHeaderSize() }
+}
+
 // ---------------------------------------------------------------------------
 // Manager
 // ---------------------------------------------------------------------------
@@ -2541,6 +2548,17 @@ mod tests {
 
     fn write_u32(bytes: &mut [u8], at: usize, value: u32) {
         bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    /// The header ends after the profile offsets, the sixth collection header
+    /// from the properties' own.
+    #[test]
+    fn the_header_size_is_the_hash_data_file_header() {
+        const COLLECTION_HEADER_SIZE: usize = 12;
+        assert_eq!(
+            data_file_header_size(),
+            PROPERTIES_HEADER + 6 * COLLECTION_HEADER_SIZE
+        );
     }
 
     #[test]

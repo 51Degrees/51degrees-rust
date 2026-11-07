@@ -290,6 +290,14 @@ int fiftyoneDegreesShimHashGetDataSetNextUpdate(
 }
 
 /*
+ * Returns the size of a Hash data file's header in bytes, being how much of a
+ * data file the C library compares to find a copy of it to reuse.
+ */
+size_t fiftyoneDegreesShimHashGetHeaderSize(void) {
+    return sizeof(fiftyoneDegreesDataSetHashHeader);
+}
+
+/*
  * Walks the graph of each component the results have not yet walked, and
  * returns 1, or 0 when a walk fails. The walk of a component's graph sets the
  * match metrics and the matched User-Agent of its result. Unless the data set

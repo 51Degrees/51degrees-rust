@@ -41,13 +41,15 @@
 //!   `SetAllowUnmatched`, `SetUpdateMatchedUserAgent`,
 //!   `SetUsePerformanceGraph` and `SetUsePredictiveGraph`, which reach the
 //!   engine's native configuration as they do in .NET.
+//! - `SetReuseTempFile`, which reads a copy of the data file already in the
+//!   temporary folder, as
+//!   [`DeviceDetectionOnPremiseEngineBuilder::reuse_temp_file`] says.
 //! - `SetCacheSize`, refused with .NET's message, as the engine keeps no
 //!   results.
 //! - `SetDataDownloadType`, `SetLazyLoadingTimeout`, and `SetCacheHitOrMiss`
-//!   and `SetReuseTempFile` set to true, are read and have no effect, with a
-//!   warning logged. The download type is the one the data file names, as in
-//!   .NET, the engine has no lazy loading and no cache, and it never reuses a
-//!   copy of the data file it finds.
+//!   set to true, are read and have no effect, with a warning logged. The
+//!   download type is the one the data file names, as in .NET, and the
+//!   engine has no lazy loading and no cache.
 //! - The data file settings of [`fiftyone_pipeline_engines::configuration`].
 //!   Automatic updates and the file system watcher are on unless the
 //!   configuration turns them off, as in .NET, and any update needs a
@@ -133,6 +135,7 @@ struct DeviceDetectionHashEngineSettings {
     update_matched_user_agent: Option<bool>,
     use_performance_graph: Option<bool>,
     use_predictive_graph: Option<bool>,
+    reuse_temp_file: Option<bool>,
     properties: Vec<String>,
     data_file_settings: DataFileSettings,
 }
@@ -149,6 +152,7 @@ impl DeviceDetectionHashEngineSettings {
             update_matched_user_agent: None,
             use_performance_graph: None,
             use_predictive_graph: None,
+            reuse_temp_file: None,
             properties: Vec::new(),
             data_file_settings: DataFileSettings::new(),
         }
@@ -205,6 +209,9 @@ impl DeviceDetectionHashEngineSettings {
         }
         if let Some(use_graph) = self.use_predictive_graph {
             builder = builder.use_predictive_graph(use_graph);
+        }
+        if let Some(reuse) = self.reuse_temp_file {
+            builder = builder.reuse_temp_file(reuse);
         }
         // .NET makes no copy when the temporary folder is empty text.
         match settings.temp_dir_path() {
@@ -269,13 +276,8 @@ fn device_detection_hash_engine_builder() -> BuilderDefinition<DeviceDetectionHa
     )
     .setting(
         "SetReuseTempFile",
-        |settings: DeviceDetectionHashEngineSettings, reuse: bool| {
-            if reuse {
-                ignored(
-                    "SetReuseTempFile",
-                    "as the engine never reuses a copy of the data file it finds",
-                );
-            }
+        |mut settings: DeviceDetectionHashEngineSettings, reuse: bool| {
+            settings.reuse_temp_file = Some(reuse);
             settings
         },
     )
