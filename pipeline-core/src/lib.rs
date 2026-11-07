@@ -34,11 +34,12 @@
 //! ## The pieces
 //!
 //! - [`Pipeline`] and [`PipelineBuilder`] group ordered [`FlowElement`]s and run
-//!   them sequentially. A built pipeline is immutable and shared via
-//!   [`std::sync::Arc`].
-//! - [`FlowData`] is the unit of work. It carries the immutable [`Evidence`]
-//!   input, the [`ElementData`] outputs, and any errors, and it knows how to
-//!   process itself via its pipeline back-reference.
+//!   them in order, with the elements of a parallel group at the same time. A
+//!   built pipeline is immutable and shared via [`std::sync::Arc`].
+//! - [`FlowData`] is the unit of work. It carries the [`Evidence`] input,
+//!   with any values its elements add, the [`ElementData`] outputs, and any
+//!   errors, and it knows how to process itself via its pipeline
+//!   back-reference.
 //! - [`Evidence`] is an immutable, case-insensitive `prefix.field` store with a
 //!   defined precedence order ([`EvidencePrefix`]). [`EvidenceKeyFilter`] and
 //!   [`EvidenceKeyFilterWhitelist`] advertise the evidence an element accepts
@@ -119,22 +120,25 @@
 #![warn(missing_docs)]
 
 mod ci_map;
+pub mod configuration;
 pub mod constants;
 mod element_data;
 mod error;
 mod evidence;
 mod flow_data;
 mod flow_element;
+mod group_threads;
 mod pipeline;
 mod property;
 pub mod redact;
 mod typed_key;
 mod value;
+mod warning;
 
 pub use element_data::{ElementData, MapElementData};
 pub use error::{Error, FlowError, MissingPropertyReason, NoValueError, Result};
 pub use evidence::{
-    compare_keys, DataKey, Evidence, EvidenceBuilder, EvidenceKeyFilter,
+    compare_keys, DataKey, Evidence, EvidenceBuilder, EvidenceEntry, EvidenceKeyFilter,
     EvidenceKeyFilterAggregator, EvidenceKeyFilterWhitelist, EvidencePrefix,
 };
 pub use flow_data::FlowData;
@@ -142,4 +146,5 @@ pub use flow_element::FlowElement;
 pub use pipeline::{Pipeline, PipelineBuilder};
 pub use property::PropertyMetaData;
 pub use typed_key::TypedKey;
-pub use value::{PropertyValue, PropertyValueType, WeightedValue};
+pub use value::{round_angle, PropertyValue, PropertyValueType, WeightedValue};
+pub use warning::FlowWarning;

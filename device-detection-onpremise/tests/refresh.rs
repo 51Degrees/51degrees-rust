@@ -20,8 +20,9 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! A refresh to a data file with other properties or another tier leaves the
-//! engine as an engine built on that file would be.
+//! A refresh, from the file or from memory, to a data file with other
+//! properties or another tier leaves the engine as an engine built on that
+//! file would be.
 //!
 //! The test needs the Lite file `51DEGREES_DD_PATH` names and a data file
 //! with more properties beside it, `Enterprise-HashV41.hash` or
@@ -113,6 +114,8 @@ fn a_refresh_reads_and_reports_the_properties_of_the_new_data_file() {
         built.available_properties()
     );
     assert_eq!(refreshed.properties(), built.properties());
+    assert_eq!(refreshed.fiftyone_properties(), built.fiftyone_properties());
+    assert_eq!(refreshed.components(), built.components());
     assert_eq!(refreshed.aspect_properties(), built.aspect_properties());
     let value = richer_value(&refreshed);
     assert!(
@@ -124,4 +127,56 @@ fn a_refresh_reads_and_reports_the_properties_of_the_new_data_file() {
     drop(refreshed);
     drop(built);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A refresh from memory leaves the engine as an engine built on the file
+/// holding that data would be, with the date that data was published.
+#[test]
+fn a_refresh_from_memory_reads_and_reports_the_properties_of_the_new_data() {
+    let Some((lite, richer)) = data_files() else {
+        eprintln!(
+            "skipping the refresh from memory test: set 51DEGREES_DD_PATH to the Lite \
+             file, with Enterprise-HashV41.hash or TAC-HashV41.hash beside it"
+        );
+        return;
+    };
+    let refreshed = engine(&lite);
+    assert!(
+        richer_value(&refreshed).is_err(),
+        "the Lite file carries {RICHER_PROPERTY}"
+    );
+    let data = std::fs::read(&richer).unwrap();
+    refreshed
+        .refresh_from_memory(None, &data)
+        .expect("the richer data loads");
+    drop(data);
+    let built = engine(&richer);
+
+    assert_eq!(refreshed.data_source_tier(), built.data_source_tier());
+    assert_eq!(
+        refreshed.available_properties(),
+        built.available_properties()
+    );
+    assert_eq!(refreshed.properties(), built.properties());
+    assert_eq!(refreshed.fiftyone_properties(), built.fiftyone_properties());
+    assert_eq!(refreshed.components(), built.components());
+    assert_eq!(refreshed.aspect_properties(), built.aspect_properties());
+    let value = richer_value(&refreshed);
+    assert!(
+        value.is_ok(),
+        "{RICHER_PROPERTY} after the refresh: {value:?}"
+    );
+    assert_eq!(value, richer_value(&built));
+    assert_eq!(
+        refreshed.data_files()[0].data_published(),
+        built.data_files()[0].data_published()
+    );
+    assert_eq!(
+        refreshed.data_files()[0]
+            .update_available_time()
+            .map(|time| time.date_naive()),
+        built.data_files()[0]
+            .update_available_time()
+            .map(|time| time.date_naive())
+    );
 }

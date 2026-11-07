@@ -41,9 +41,9 @@ use crate::config::CacheBuilder;
 ///
 /// `V` is the engine's cached result. It must be `Send + Sync + Clone`, so it
 /// is typically an [`Arc`] around the engine's aspect-data struct, or the raw
-/// cloud JSON string. Element data itself is not `Sync` and so cannot be cached
-/// directly; an engine caches a thread-safe representation and rebuilds (or
-/// shares) its element data from that on a hit.
+/// cloud JSON string. Element data itself is not `Clone` and so cannot be
+/// cached directly; an engine caches a representation it can clone and rebuilds
+/// (or shares) its element data from that on a hit.
 ///
 /// The cache derives a [`DataKey`] from a flow data using the
 /// [`EvidenceKeyFilter`] supplied at construction. That filter is normally the

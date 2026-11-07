@@ -13,10 +13,12 @@ homepage = "https://51degrees.com/ip-intelligence?utm_source=docs.rs&utm_medium=
 
 [features]
 default = ["cloud", "on-premise", "share-usage"]
-# Turn usage sharing on by default in both pipeline builders, and compile the
-# built-in transport the usage-sharing element sends with. Without it the
-# builders leave usage sharing off unless share_usage(true) is called, and the
-# element sends nothing unless the transport is enabled another way.
+# Turn usage sharing on by default in both pipeline builders and in pipelines
+# made from a configuration, and compile the built-in transport the
+# usage-sharing element sends with. Without it the builders leave usage sharing
+# off unless share_usage(true) is called, a configuration leaves it off unless
+# it sets SetShareUsage to true, and the element sends nothing unless the
+# transport is enabled another way.
 share-usage = ["fiftyone-pipeline-engines-fiftyone/share-usage-transport"]
 # Pull in the cloud IP-intelligence engine and the cloud request engine, so the
 # facade can assemble a cloud pipeline from a resource key.
@@ -32,20 +34,20 @@ reqwest-client = ["cloud", "fiftyone-ip-intelligence-cloud/reqwest-client"]
 on-premise = ["dep:fiftyone-ip-intelligence-onpremise", "dep:fiftyone-native"]
 
 [dependencies]
-fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
-fiftyone-pipeline-engines = { version = "4.5.2", path = "../pipeline-engines" }
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
+fiftyone-pipeline-engines = { version = "=4.5.2", path = "../pipeline-engines" }
 # The sequence and usage-sharing elements both builders add when usage sharing
 # is on.
-fiftyone-pipeline-engines-fiftyone = { version = "4.5.2", path = "../pipeline-engines-fiftyone" }
-fiftyone-ip-intelligence-shared = { version = "4.5.2", path = "../ip-intelligence-shared" }
-fiftyone-ip-intelligence-onpremise = { version = "4.5.2", path = "../ip-intelligence-onpremise", optional = true }
-fiftyone-ip-intelligence-cloud = { version = "4.5.2", path = "../ip-intelligence-cloud", optional = true }
-fiftyone-cloud-request-engine = { version = "4.5.2", path = "../cloud-request-engine", optional = true, default-features = false }
+fiftyone-pipeline-engines-fiftyone = { version = "=4.5.2", path = "../pipeline-engines-fiftyone" }
+fiftyone-ip-intelligence-shared = { version = "=4.5.2", path = "../ip-intelligence-shared" }
+fiftyone-ip-intelligence-onpremise = { version = "=4.5.2", path = "../ip-intelligence-onpremise", optional = true }
+fiftyone-ip-intelligence-cloud = { version = "=4.5.2", path = "../ip-intelligence-cloud", optional = true }
+fiftyone-cloud-request-engine = { version = "=4.5.2", path = "../cloud-request-engine", optional = true, default-features = false }
 # The on-premise builder names PerformanceProfile from the native wrapper in its
 # public surface. Link only IP Intelligence's copy of the common C library (the
 # `ipi` feature), matching the on-premise engine crate, so the two ABI
 # incompatible common C library builds never collide.
-fiftyone-native = { version = "4.5.2", path = "../native", default-features = false, features = ["ipi"], optional = true }
+fiftyone-native = { version = "=4.5.2", path = "../native", default-features = false, features = ["ipi"], optional = true }
 
 [dev-dependencies]
 # Depend on this crate itself with reqwest-client enabled, so its own tests get
@@ -53,8 +55,9 @@ fiftyone-native = { version = "4.5.2", path = "../native", default-features = fa
 # default (for wasm and lean cloud builds); the examples workspace used to unify
 # it on for the whole build, but now that the examples are a separate workspace
 # the tests opt in here. Dev-dependencies never reach the published graph, so
-# this does not change what a consumer resolves.
-fiftyone-ip-intelligence = { path = ".", features = ["reqwest-client"] }
+# this does not change what a consumer resolves. It leaves the default features
+# to the command line, so a test run with --no-default-features has them off.
+fiftyone-ip-intelligence = { path = ".", default-features = false, features = ["reqwest-client"] }
 
 [package.metadata.docs.rs]
 # Build the documentation on docs.rs with every feature enabled, so the

@@ -32,11 +32,32 @@
 use crate::fault::Faults;
 use crate::model::Script;
 
+/// What the source of a shipped script starts with, followed by its name.
+pub(crate) const BUILT_IN_SOURCE: &str = "built in";
+
+/// The commit of 51Degrees/derived-properties the files under `vendor` were
+/// copied from, which the element logs at build so that anyone holding the log
+/// can find the exact scripts that ran. Copying the files again means writing
+/// the new commit to `vendor/COMMIT`.
+pub(crate) fn built_in_scripts_commit() -> &'static str {
+    include_str!("../vendor/COMMIT").trim()
+}
+
+/// The names of the shipped scripts, joined by ", ", as messages list them.
+pub(crate) fn built_in_names() -> String {
+    BuiltInScript::ALL
+        .iter()
+        .map(|script| script.name())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// A script shipped inside this crate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltInScript {
     /// The confidence that the request came from a device being used by a
-    /// human who is viewing the page, being one of High, Medium or Low.
+    /// human who is viewing the page, being one of High, Medium, Low or
+    /// Unknown. Unknown is the answer until the 51Degrees JavaScript has run.
     ///
     /// The script is a draft below version 1.0.0, so its thresholds may be
     /// rewritten. Its own comment header says what each one rests on.
@@ -69,7 +90,11 @@ impl BuiltInScript {
     /// A shipped script is checked by the tests of this crate, so this only
     /// returns faults if the vendored copy has been edited.
     pub fn compile(self) -> Result<Script, Faults> {
-        Script::compile_named(self.text(), Some(self.name()), self.name())
+        Script::compile_named(
+            self.text(),
+            Some(self.name()),
+            &format!("{BUILT_IN_SOURCE} {}", self.name()),
+        )
     }
 
     /// The shipped script of that name, matched without regard to letter case,

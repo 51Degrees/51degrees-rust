@@ -1,0 +1,128 @@
+[
+  {
+    "id": "robots-txt-none",
+    "about": "No evidence, so the engine writes no data. The line also holds the engine's evidence keys and properties.",
+    "engine": true,
+    "evidence": {}
+  },
+  {
+    "id": "robots-txt-unrelated",
+    "about": "Evidence the engine does not read, being its prefix with no usage and another query value, so it writes no data.",
+    "evidence": {
+      "query.robotstxt": "allow",
+      "query.other": "allow"
+    }
+  },
+  {
+    "id": "robots-txt-tdl-uri",
+    "about": "One Terms Document Locator URI.",
+    "evidence": {
+      "query.robotstxt.tdl": "https://m4ow.uk/socw/1.txt"
+    }
+  },
+  {
+    "id": "robots-txt-tdl-list",
+    "about": "Three Terms Document Locator URIs separated by a comma and a bar, with spaces around them.",
+    "evidence": {
+      "query.robotstxt.tdl": " https://m4ow.uk/socw/1.txt , https://example.com/terms/2.txt|https://example.org/tdl.txt "
+    }
+  },
+  {
+    "id": "robots-txt-tdl-duplicate",
+    "about": "The same Terms Document Locator URI twice.",
+    "evidence": {
+      "query.robotstxt.tdl": "https://m4ow.uk/socw/1.txt,https://m4ow.uk/socw/1.txt"
+    }
+  },
+  {
+    "id": "robots-txt-tdl-written-form",
+    "about": "A Terms Document Locator URI with a scheme and host in capitals, escaped spaces, a query and a fragment, so the text shows how each side writes a URI.",
+    "evidence": {
+      "query.robotstxt.tdl": "HTTPS://Example.COM/Terms%20Of%20Use/1.txt?v=1#top"
+    }
+  },
+  {
+    "id": "robots-txt-tdl-urn",
+    "about": "A Terms Document Locator URI that is not a web address.",
+    "evidence": {
+      "query.robotstxt.tdl": "urn:example:terms:1"
+    }
+  },
+  {
+    "id": "robots-txt-tdl-invalid",
+    "about": "A Terms Document Locator entry that is not a URI, which is left out.",
+    "evidence": {
+      "query.robotstxt.tdl": "not a uri"
+    }
+  },
+  {
+    "id": "robots-txt-tdl-relative",
+    "about": "A relative reference with no leading slash, which is not an absolute URI.",
+    "evidence": {
+      "query.robotstxt.tdl": "terms/1.txt"
+    }
+  },
+  {
+    "id": "robots-txt-tdl-path",
+    "about": "A relative reference starting with a slash, which is not an absolute URI.",
+    "evidence": {
+      "query.robotstxt.tdl": "/terms/1.txt"
+    }
+  },
+  {
+    "id": "robots-txt-tdl-empty",
+    "about": "The Terms Document Locator key with an empty value, so the engine writes data with no Terms Document Locator.",
+    "evidence": {
+      "query.robotstxt.tdl": ""
+    }
+  },
+  {
+    "id": "robots-txt-tdl-separators-only",
+    "about": "Only separators and spaces, so every entry is empty.",
+    "evidence": {
+      "query.robotstxt.tdl": " , | ,"
+    }
+  },
+  {
+    "id": "robots-txt-tdl-id",
+    "about": "A source id the program's resolver knows, which it resolves to a URI.",
+    "evidence": {
+      "query.robotstxt.tdl": "parity-tdl"
+    }
+  },
+  {
+    "id": "robots-txt-tdl-id-case",
+    "about": "The same source id in capitals, which the resolver knows ignoring case.",
+    "evidence": {
+      "query.robotstxt.tdl": "PARITY-TDL"
+    }
+  },
+  {
+    "id": "robots-txt-tdl-id-unresolved",
+    "about": "A source id the resolver knows but cannot resolve, which is left out.",
+    "evidence": {
+      "query.robotstxt.tdl": "parity-unresolved"
+    }
+  },
+  {
+    "id": "robots-txt-tdl-id-unknown",
+    "about": "A source id the resolver does not know, which is left out.",
+    "evidence": {
+      "query.robotstxt.tdl": "MOW-SOCW"
+    }
+  },
+  {
+    "id": "robots-txt-tdl-mixed",
+    "about": "A URI, an entry that is not a URI and a known source id together.",
+    "evidence": {
+      "query.robotstxt.tdl": "https://m4ow.uk/socw/1.txt|not a uri|parity-tdl"
+    }
+  },
+  {
+    "id": "robots-txt-tdl-key-case",
+    "about": "The Terms Document Locator key in capitals.",
+    "evidence": {
+      "QUERY.ROBOTSTXT.TDL": "https://m4ow.uk/socw/1.txt"
+    }
+  }
+]

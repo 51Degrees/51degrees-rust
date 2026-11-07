@@ -34,7 +34,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use fiftyone_pipeline_core::{
-    ElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType, TypedKey,
+    ElementData, MapElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType,
+    TypedKey,
 };
 use fiftyone_pipeline_engines::{
     AspectData, AspectDataBase, AspectPropertyMetaData, AspectPropertyValue,
@@ -59,8 +60,8 @@ pub const DEVICE_ELEMENT_DATA_KEY: &str = "device";
 /// [`DEVICE_ELEMENT_DATA_KEY`].
 pub const DEVICE_DATA_KEY: TypedKey<DeviceDataBase> = TypedKey::new(DEVICE_ELEMENT_DATA_KEY);
 
-/// The standard explanation used when a typed accessor finds the property
-/// absent from the underlying bag.
+/// The explanation a typed accessor gives for a property with no value, when
+/// the engine gave no reason it is missing.
 ///
 /// A property that
 /// the engine did not populate surfaces as an
@@ -72,6 +73,9 @@ const ABSENT_MESSAGE: &str = "The property was not present in the device data.";
 /// unexpected type for the requested accessor.
 const WRONG_TYPE_MESSAGE: &str =
     "The property was present but its stored value did not match the requested type.";
+
+/// The type the warning for a read of a missing property names.
+const DATA_TYPE_NAME: &str = "DeviceDataBase";
 
 /// Reads the properties of one detection from its native results when they are
 /// requested.
@@ -129,28 +133,25 @@ impl DeferredValues {
         read[position].get_or_insert_with(|| self.reader.read_property(position))
     }
 
+    /// The position of a property the reader can read, or `None` when it
+    /// cannot.
+    fn readable(&self, name: &str) -> Option<usize> {
+        self.position(name)
+            .filter(|position| *position < self.reader.property_names().len())
+    }
+
     /// The value of a property, read on its first request, or `None` when the
     /// reader cannot read it.
     fn get(&self, name: &str) -> Option<ReadOutcome> {
-        let position = self
-            .position(name)
-            .filter(|position| *position < self.reader.property_names().len())?;
+        let position = self.readable(name)?;
         let mut read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
         Some(self.outcome(&mut read, position).clone())
     }
 
-    /// The lowercase names of the properties that have a value, reading any not
-    /// yet read.
+    /// The lowercase names of every property the reader holds, with or
+    /// without a value. Nothing is read.
     fn keys(&self) -> Vec<String> {
-        let mut read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
-        let names = self.reader.property_names();
-        let mut keys = Vec::new();
-        for (position, name) in names.iter().enumerate() {
-            if matches!(self.outcome(&mut read, position), Ok(Some(_))) {
-                keys.push(name.clone());
-            }
-        }
-        keys
+        self.reader.property_names().to_vec()
     }
 }
 
@@ -181,6 +182,10 @@ enum Lookup {
     Found(PropertyValue),
     /// No value, with the bag's explanation.
     Absent(NoValueError),
+    /// Held with no value, with the message set for it.
+    NoValue(String),
+    /// The data does not hold the property, with the reason it is missing.
+    Missing(String),
     /// The reader failed to read the value, with its message.
     Failed(String),
 }
@@ -210,6 +215,17 @@ enum Lookup {
 /// [`DeviceDataBase::with_reader`], and a property not in the bag is then read
 /// from the native results the first time it is requested.
 ///
+/// A cloud engine holds a property the response gives as null through
+/// [`DeviceDataBase::insert_no_value`], so the property has no value and
+/// carries the response's message.
+///
+/// A property the data does not hold in any of these ways is missing. When
+/// the engine added a
+/// [`MissingPropertySource`](fiftyone_pipeline_engines::MissingPropertySource)
+/// to the wrapped [`AspectDataBase`], its no-value carries the reason, as
+/// .NET's `PropertyMissingException` does, and each read of the property logs
+/// a warning, as .NET's aspect data does.
+///
 /// # Example
 ///
 /// ```
@@ -233,6 +249,13 @@ enum Lookup {
 #[derive(Debug, Clone)]
 pub struct DeviceDataBase {
     base: AspectDataBase,
+    /// The message of each property held with no value, as a string under
+    /// the property's name, in the order the properties were added.
+    no_values: MapElementData,
+    /// For each property in `no_values`, in the same order, how many names
+    /// the bag held when the property was added, so that `keys` lists it
+    /// among the bag's names where it was added.
+    no_value_places: Vec<usize>,
     /// The values read on request, when an engine attached a reader.
     deferred: Option<Arc<DeferredValues>>,
 }
@@ -241,10 +264,7 @@ impl DeviceDataBase {
     /// Create an empty device data attributed to the device-detection engine
     /// (data key [`DEVICE_ELEMENT_DATA_KEY`]).
     pub fn new() -> Self {
-        DeviceDataBase {
-            base: AspectDataBase::new(DEVICE_ELEMENT_DATA_KEY),
-            deferred: None,
-        }
+        DeviceDataBase::from_base(AspectDataBase::new(DEVICE_ELEMENT_DATA_KEY))
     }
 
     /// Create a device data wrapping an existing [`AspectDataBase`].
@@ -255,6 +275,8 @@ impl DeviceDataBase {
     pub fn from_base(base: AspectDataBase) -> Self {
         DeviceDataBase {
             base,
+            no_values: MapElementData::new(),
+            no_value_places: Vec::new(),
             deferred: None,
         }
     }
@@ -272,10 +294,14 @@ impl DeviceDataBase {
         self
     }
 
-    /// Look a property up in the bag, then through the reader if there is one.
+    /// Look a property up in the bag, then among the properties held with no
+    /// value, then through the reader if there is one.
     fn lookup(&self, name: &str) -> Lookup {
         if let Some(value) = self.base.values().get_value(name) {
             return Lookup::Found(value.clone());
+        }
+        if let Some(message) = self.no_value_message(name) {
+            return Lookup::NoValue(message.to_owned());
         }
         match self
             .deferred
@@ -284,11 +310,39 @@ impl DeviceDataBase {
         {
             Some(Ok(Some(value))) => Lookup::Found(value),
             Some(Err(message)) => Lookup::Failed(message),
-            // The bag's own explanation, as when there is no reader.
-            _ => match self.base.get(name) {
-                Ok(value) => Lookup::Found(value),
-                Err(absent) => Lookup::Absent(absent),
+            // The reader holds the property, with no value for this detection.
+            Some(Ok(None)) => self.absent(name),
+            // Neither the bag nor the reader holds the property.
+            None => match self.base.missing_property(name, DATA_TYPE_NAME) {
+                Some(missing) => Lookup::Missing(missing.description),
+                None => self.absent(name),
             },
+        }
+    }
+
+    /// The message of a property held with no value.
+    fn no_value_message(&self, name: &str) -> Option<&str> {
+        self.no_values
+            .get_value(name)
+            .and_then(PropertyValue::as_str)
+    }
+
+    /// Whether the bag, the properties held with no value or the reader hold
+    /// a property.
+    fn holds(&self, name: &str) -> bool {
+        self.base.values().get_value(name).is_some()
+            || self.no_values.get_value(name).is_some()
+            || self
+                .deferred
+                .as_ref()
+                .is_some_and(|deferred| deferred.readable(name).is_some())
+    }
+
+    /// The bag's own explanation of a property it has no value for.
+    fn absent(&self, name: &str) -> Lookup {
+        match self.base.values().get(name) {
+            Ok(value) => Lookup::Found(value),
+            Err(absent) => Lookup::Absent(absent),
         }
     }
 
@@ -304,7 +358,9 @@ impl DeviceDataBase {
                 None => AspectPropertyValue::no_value(WRONG_TYPE_MESSAGE),
             },
             Lookup::Absent(_) => AspectPropertyValue::no_value(ABSENT_MESSAGE),
-            Lookup::Failed(message) => AspectPropertyValue::no_value(message),
+            Lookup::NoValue(message) | Lookup::Missing(message) | Lookup::Failed(message) => {
+                AspectPropertyValue::no_value(message)
+            }
         }
     }
 
@@ -323,6 +379,22 @@ impl DeviceDataBase {
         self.base.insert(name, value);
     }
 
+    /// Hold a property with no value, with the message that says why, as a
+    /// cloud engine does for a property the response gives as null.
+    ///
+    /// The typed accessor then gives a no-value carrying `message`, and
+    /// [`ElementData::get`] fails with it. The data holds the property, so
+    /// nothing is logged and no missing property reason is given. A value
+    /// set for the same name takes precedence. The name is matched
+    /// case-insensitively.
+    pub fn insert_no_value(&mut self, name: impl AsRef<str>, message: impl Into<String>) {
+        if self.no_values.get_value(name.as_ref()).is_none() {
+            self.no_value_places.push(self.base.values().len());
+        }
+        self.no_values
+            .insert(name, PropertyValue::String(message.into()));
+    }
+
     /// Mark this data as having been served from a cache hit. Delegates to
     /// [`AspectDataBase::set_cache_hit`].
     pub fn set_cache_hit(&mut self) {
@@ -330,8 +402,9 @@ impl DeviceDataBase {
     }
 
     /// Borrow the wrapped [`AspectDataBase`], which holds the values set on
-    /// this data directly. Values a reader supplies are not in it, so read
-    /// through [`ElementData`] or the typed getters to see every value.
+    /// this data directly. Values a reader supplies and properties held with
+    /// no value are not in it, so read through [`ElementData`] or the typed
+    /// getters to see every property.
     pub fn base(&self) -> &AspectDataBase {
         &self.base
     }
@@ -395,21 +468,49 @@ impl ElementData for DeviceDataBase {
         match self.lookup(name) {
             Lookup::Found(value) => Ok(value),
             Lookup::Absent(absent) => Err(absent),
-            Lookup::Failed(message) => Err(NoValueError::new(message)),
+            Lookup::NoValue(message) | Lookup::Missing(message) | Lookup::Failed(message) => {
+                Err(NoValueError::new(message))
+            }
         }
     }
 
-    /// The names of the properties that have a value. With a reader attached
-    /// this reads every property not yet read, because whether a property has
-    /// a value is only known once it is read.
+    /// Whether the bag, the properties held with no value or the reader hold
+    /// the property. Unless the wrapped
+    /// [`AspectDataBase`] knows its missing properties, through a
+    /// [`MissingPropertySource`](fiftyone_pipeline_engines::MissingPropertySource)
+    /// or a failed cloud request, it answers `true`, because without one the
+    /// data cannot say which properties should be there.
+    fn has_property(&self, name: &str) -> bool {
+        !self.base.knows_missing_properties() || self.holds(name)
+    }
+
+    /// The names of the properties in the bag and those held with no value,
+    /// in the order they were added, then those the reader holds, with or
+    /// without a value, as .NET's data lists every property it holds. A
+    /// property with no value is listed so the JSON builder writes it as
+    /// null with the reason, in the place the cloud response gave it.
+    /// Listing reads nothing.
     fn keys(&self) -> Vec<String> {
-        let mut keys = self.base.keys();
+        let bag = self.base.keys();
+        let mut keys = Vec::with_capacity(bag.len() + self.no_value_places.len());
+        let mut listed = 0;
+        for (name, &place) in self.no_values.keys().into_iter().zip(&self.no_value_places) {
+            // The bag only grows, so each place is at least the one before
+            // and at most the bag's length.
+            let place = place.clamp(listed, bag.len());
+            keys.extend_from_slice(&bag[listed..place]);
+            listed = place;
+            if self.base.values().get_value(&name).is_none() {
+                keys.push(name);
+            }
+        }
+        keys.extend_from_slice(&bag[listed..]);
         if let Some(deferred) = &self.deferred {
-            // The reader's names are distinct, so only the bag's few names can
-            // repeat one of them.
-            let in_bag = keys.len();
+            // The reader's names are distinct, so only the few names set
+            // directly can repeat one of them.
+            let set_directly = keys.len();
             for name in deferred.keys() {
-                if !keys[..in_bag].contains(&name) {
+                if !keys[..set_directly].contains(&name) {
                     keys.push(name);
                 }
             }
@@ -486,6 +587,9 @@ pub fn default_aspect_property_metadata() -> Vec<AspectPropertyMetaData> {
 mod tests {
     use super::*;
     use crate::DeviceData;
+    use fiftyone_pipeline_engines::{
+        EngineDeployment, MissingPropertyReason, MissingPropertySource,
+    };
     use std::collections::HashMap;
 
     #[test]
@@ -684,20 +788,37 @@ mod tests {
     }
 
     #[test]
-    fn keys_list_only_the_properties_with_a_value() {
+    fn keys_list_every_property_with_or_without_a_value() {
         let (reader, reads) = CountingReader::new();
         let device = DeviceDataBase::new()
             .set("DeviceId", "1-2-3-4")
             .with_reader(reader);
-        let mut keys = device.keys();
-        keys.sort();
-        assert_eq!(keys, ["deviceid", "ismobile", "platformname"]);
-        // Every property was read once to find which have a value.
+        // The bag first, then the reader's names in its order, including
+        // browsername, which has no value, and hardwarevendor, whose read
+        // fails.
+        assert_eq!(
+            device.keys(),
+            [
+                "deviceid",
+                "ismobile",
+                "platformname",
+                "browsername",
+                "hardwarevendor"
+            ]
+        );
+        // Listing the names reads nothing.
         for name in ["ismobile", "platformname", "browsername", "hardwarevendor"] {
-            assert_eq!(reads_of(&reads, name), 1, "{name}");
+            assert_eq!(reads_of(&reads, name), 0, "{name}");
         }
-        device.keys();
-        assert_eq!(reads_of(&reads, "ismobile"), 1);
+        // Each listed property without a value gives its reason.
+        assert_eq!(
+            device.get("browsername").unwrap_err().message,
+            "No value for property 'browsername'."
+        );
+        assert_eq!(
+            device.get("hardwarevendor").unwrap_err().message,
+            "the native read failed"
+        );
     }
 
     #[test]
@@ -729,6 +850,221 @@ mod tests {
         assert_eq!(
             device.get("HardwareVendor").unwrap_err().message,
             "the native read failed"
+        );
+    }
+
+    /// The details of an engine whose metadata lists the reader's properties.
+    fn missing_property_source() -> Arc<MissingPropertySource> {
+        let properties = ["IsMobile", "PlatformName", "BrowserName", "HardwareVendor"]
+            .iter()
+            .map(|name| {
+                AspectPropertyMetaData::new(
+                    *name,
+                    DEVICE_ELEMENT_DATA_KEY,
+                    PropertyValueType::String,
+                )
+                .with_data_tiers(["Lite"])
+            })
+            .collect();
+        Arc::new(
+            MissingPropertySource::new(
+                DEVICE_ELEMENT_DATA_KEY,
+                "TestEngine",
+                EngineDeployment::OnPremise,
+                "Lite",
+                properties,
+            )
+            .with_typed_properties(|name: &str| declared_property_value_type(name).is_some()),
+        )
+    }
+
+    #[test]
+    fn a_property_the_reader_cannot_read_gives_the_missing_reason() {
+        let (reader, _) = CountingReader::new();
+        let source = missing_property_source();
+        let mut device = DeviceDataBase::new().with_reader(reader);
+        device
+            .base_mut()
+            .add_missing_property_source(Arc::clone(&source));
+
+        // DeviceType has an accessor, and the metadata does not list it.
+        let device_type = source.reason("DeviceType");
+        assert_eq!(
+            device_type.reason,
+            MissingPropertyReason::DataFileUpgradeRequired
+        );
+        assert_eq!(
+            device.device_type().no_value_message(),
+            Some(device_type.description.as_str())
+        );
+        assert_eq!(
+            device.get("DeviceType").unwrap_err().message,
+            device_type.description
+        );
+
+        let unknown = source.reason("NotAProperty");
+        assert_eq!(unknown.reason, MissingPropertyReason::Unknown);
+        assert_eq!(
+            device.get("NotAProperty").unwrap_err().message,
+            unknown.description
+        );
+        assert_eq!(
+            device.string_property("NotAProperty").no_value_message(),
+            Some(unknown.description.as_str())
+        );
+    }
+
+    #[test]
+    fn a_property_the_reader_reads_without_a_value_is_not_missing() {
+        let (reader, _) = CountingReader::new();
+        let mut device = DeviceDataBase::new().with_reader(reader);
+        device
+            .base_mut()
+            .add_missing_property_source(missing_property_source());
+        assert_eq!(
+            device.browser_name().no_value_message(),
+            Some(ABSENT_MESSAGE)
+        );
+        assert_eq!(
+            device.get("BrowserName").unwrap_err().message,
+            "No value for property 'BrowserName'."
+        );
+        assert!(*device.is_mobile().value().unwrap());
+        assert_eq!(
+            device.hardware_vendor().no_value_message(),
+            Some("the native read failed")
+        );
+    }
+
+    #[test]
+    fn without_a_source_a_missing_property_keeps_the_bag_explanation() {
+        let (reader, _) = CountingReader::new();
+        let device = DeviceDataBase::new().with_reader(reader);
+        assert_eq!(
+            device.device_type().no_value_message(),
+            Some(ABSENT_MESSAGE)
+        );
+        assert_eq!(
+            device.get("DeviceType").unwrap_err().message,
+            "No value for property 'DeviceType'."
+        );
+    }
+
+    #[test]
+    fn a_source_explains_a_property_missing_from_data_with_no_reader() {
+        let mut device = DeviceDataBase::new().set("IsMobile", true);
+        let source = missing_property_source();
+        device
+            .base_mut()
+            .add_missing_property_source(Arc::clone(&source));
+        assert_eq!(
+            device.device_type().no_value_message(),
+            Some(source.reason("DeviceType").description.as_str())
+        );
+        assert!(*device.is_mobile().value().unwrap());
+    }
+
+    #[test]
+    fn a_source_lets_the_data_say_what_it_holds() {
+        let (reader, reads) = CountingReader::new();
+        let mut device = DeviceDataBase::new()
+            .set("DeviceId", "1-2-3-4")
+            .with_reader(reader);
+        assert!(device.has_property("DeviceType"));
+
+        device
+            .base_mut()
+            .add_missing_property_source(missing_property_source());
+        // In the bag, then read with a value, with none, and failing.
+        for name in ["DeviceId", "IsMobile", "browsername", "HardwareVendor"] {
+            assert!(device.has_property(name), "{name}");
+        }
+        assert!(!device.has_property("DeviceType"));
+        assert!(!device.has_property("NotAProperty"));
+        // Asking reads nothing.
+        assert_eq!(reads_of(&reads, "ismobile"), 0);
+    }
+
+    /// A message a cloud response gives for a property it returns as null.
+    const NO_MATCH: &str = "No matching profiles were found.";
+
+    #[test]
+    fn a_property_held_with_no_value_gives_its_message() {
+        let mut device = DeviceDataBase::new().set("IsMobile", true);
+        device.insert_no_value("HardwareVendor", NO_MATCH);
+        let vendor = device.hardware_vendor();
+        assert!(!vendor.has_value());
+        assert_eq!(vendor.no_value_message(), Some(NO_MATCH));
+        assert_eq!(device.get("hardwarevendor").unwrap_err().message, NO_MATCH);
+        assert!(device.has_property("HARDWAREVENDOR"));
+        assert_eq!(device.keys(), ["ismobile", "hardwarevendor"]);
+        assert!(device.base().values().get_value("hardwarevendor").is_none());
+    }
+
+    #[test]
+    fn a_property_held_with_no_value_is_not_missing() {
+        let mut device = DeviceDataBase::new();
+        device.insert_no_value("HardwareVendor", NO_MATCH);
+        device
+            .base_mut()
+            .add_missing_property_source(missing_property_source());
+        assert!(device.has_property("HardwareVendor"));
+        // The source would give "The reason for this is unknown...".
+        assert_eq!(device.hardware_vendor().no_value_message(), Some(NO_MATCH));
+        assert_eq!(device.get("HardwareVendor").unwrap_err().message, NO_MATCH);
+        assert!(!device.has_property("DeviceType"));
+    }
+
+    #[test]
+    fn keys_keep_the_order_properties_were_added_in() {
+        let mut device = DeviceDataBase::new();
+        device.insert_no_value("HardwareVendor", NO_MATCH);
+        device.insert("IsMobile", true);
+        device.insert("BrowserName", "Chrome");
+        device.insert_no_value("PlatformName", NO_MATCH);
+        device.insert("DeviceType", "Mobile");
+        // A name given again keeps its first place.
+        device.insert_no_value("hardwarevendor", NO_MATCH);
+        device.insert("ismobile", false);
+        assert_eq!(
+            device.keys(),
+            [
+                "hardwarevendor",
+                "ismobile",
+                "browsername",
+                "platformname",
+                "devicetype"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_value_for_the_same_name_wins_over_no_value() {
+        let mut device = DeviceDataBase::new();
+        device.insert_no_value("HardwareVendor", NO_MATCH);
+        device.insert("hardwarevendor", "Apple");
+        assert_eq!(device.hardware_vendor().value().unwrap(), "Apple");
+        assert_eq!(device.keys(), ["hardwarevendor"]);
+    }
+
+    #[test]
+    fn no_value_wins_over_the_reader_and_is_listed_once() {
+        let (reader, reads) = CountingReader::new();
+        let mut device = DeviceDataBase::new()
+            .set("DeviceId", "1-2-3-4")
+            .with_reader(reader);
+        device.insert_no_value("PlatformName", NO_MATCH);
+        assert_eq!(device.platform_name().no_value_message(), Some(NO_MATCH));
+        assert_eq!(reads_of(&reads, "platformname"), 0);
+        assert_eq!(
+            device.keys(),
+            [
+                "deviceid",
+                "platformname",
+                "ismobile",
+                "browsername",
+                "hardwarevendor"
+            ]
         );
     }
 

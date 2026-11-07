@@ -51,8 +51,9 @@
 //!
 //! - `cloud` (default): the cloud engine and its request engine.
 //! - `on-premise` (default): the native Hash engine.
-//! - `share-usage` (default): usage sharing on in both builders, and the
-//!   built-in transport it sends with.
+//! - `share-usage` (default): usage sharing on in both builders and in
+//!   pipelines made from a configuration, and the built-in transport it
+//!   sends with.
 //!
 //! The default `["cloud", "on-premise", "share-usage"]` builds the full SDK. A
 //! cloud-only consumer that does not want to link the native library sets
@@ -95,6 +96,14 @@
 //! specification's master switch does. `.file_system_watcher(false)` turns
 //! only the watcher off, and `pipeline.resource::<DataUpdateService>()`
 //! reaches the service for a check on demand.
+//!
+//! ## From a configuration file
+//!
+//! [`configuration::registry`] makes a pipeline from a configuration file
+//! written for .NET's `FiftyOne.DeviceDetection` package, finding each
+//! builder and setting by .NET's names, and adding the Sequence element and
+//! usage sharing as .NET's `FiftyOnePipelineBuilder` does. See the
+//! [`configuration`] module.
 //!
 //! ## Examples
 //!
@@ -163,6 +172,14 @@ pub use fiftyone_device_detection_cloud::{
 pub use fiftyone_cloud_request_engine::{
     CloudEngineState, CloudRequestEngine, CloudRequestEngineBuilder,
 };
+
+pub mod configuration;
+
+/// The examples in the README are compiled as documentation tests, so the
+/// documented way to use this crate cannot quietly stop working.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeExamples;
 
 // ---------------------------------------------------------------------------
 // The convenience top-level pipeline builder.
@@ -274,6 +291,10 @@ pub struct DeviceDetectionOnPremisePipelineBuilder {
     properties: Vec<String>,
     data_source_tier: Option<String>,
     concurrency: Option<u16>,
+    difference: Option<i32>,
+    allow_unmatched: Option<bool>,
+    use_performance_graph: Option<bool>,
+    use_predictive_graph: Option<bool>,
     use_uach: bool,
     share_usage: bool,
     auto_update: bool,
@@ -296,6 +317,10 @@ impl DeviceDetectionOnPremisePipelineBuilder {
             properties: Vec::new(),
             data_source_tier: None,
             concurrency: None,
+            difference: None,
+            allow_unmatched: None,
+            use_performance_graph: None,
+            use_predictive_graph: None,
             use_uach: true,
             share_usage: cfg!(feature = "share-usage"),
             auto_update: true,
@@ -387,15 +412,45 @@ impl DeviceDetectionOnPremisePipelineBuilder {
     }
 
     /// Set the expected concurrency: the number of threads that will process
-    /// through the built pipeline at once.
-    ///
-    /// This sizes the file-handle pool the file-backed collections use under the
-    /// [`PerformanceProfile::LowMemory`] and [`PerformanceProfile::Balanced`]
-    /// profiles, which otherwise defaults to the number of cores. Set it when
-    /// more threads than that will share the pipeline. It has no effect on the
-    /// in-memory profiles.
+    /// through the built pipeline at once, as
+    /// [`DeviceDetectionOnPremiseEngineBuilder::concurrency`] describes. Unset,
+    /// it is the number of processors, held at the most the profile's caches
+    /// take. Every profile but `InMemory` keeps that many handles to the data
+    /// file open, `HighPerformance` included, although detection there never
+    /// reads through them.
     pub fn concurrency(mut self, concurrency: u16) -> Self {
         self.concurrency = Some(concurrency);
+        self
+    }
+
+    /// Set the most difference in hash value a match may have, as
+    /// [`DeviceDetectionOnPremiseEngineBuilder::difference`] describes.
+    pub fn difference(mut self, difference: i32) -> Self {
+        self.difference = Some(difference);
+        self
+    }
+
+    /// Set whether a User-Agent that matches nothing gives each component's
+    /// default profile, as
+    /// [`DeviceDetectionOnPremiseEngineBuilder::allow_unmatched`] describes.
+    pub fn allow_unmatched(mut self, allow: bool) -> Self {
+        self.allow_unmatched = Some(allow);
+        self
+    }
+
+    /// Set whether detection tries the performance graph, as
+    /// [`DeviceDetectionOnPremiseEngineBuilder::use_performance_graph`]
+    /// describes.
+    pub fn use_performance_graph(mut self, use_graph: bool) -> Self {
+        self.use_performance_graph = Some(use_graph);
+        self
+    }
+
+    /// Set whether detection tries the predictive graph, as
+    /// [`DeviceDetectionOnPremiseEngineBuilder::use_predictive_graph`]
+    /// describes.
+    pub fn use_predictive_graph(mut self, use_graph: bool) -> Self {
+        self.use_predictive_graph = Some(use_graph);
         self
     }
 
@@ -491,6 +546,18 @@ impl DeviceDetectionOnPremisePipelineBuilder {
         }
         if let Some(concurrency) = self.concurrency {
             engine_builder = engine_builder.concurrency(concurrency);
+        }
+        if let Some(difference) = self.difference {
+            engine_builder = engine_builder.difference(difference);
+        }
+        if let Some(allow) = self.allow_unmatched {
+            engine_builder = engine_builder.allow_unmatched(allow);
+        }
+        if let Some(use_graph) = self.use_performance_graph {
+            engine_builder = engine_builder.use_performance_graph(use_graph);
+        }
+        if let Some(use_graph) = self.use_predictive_graph {
+            engine_builder = engine_builder.use_predictive_graph(use_graph);
         }
         if let Some(service) = &service {
             let mut config = DataFileConfiguration::builder(self.data_file_path)

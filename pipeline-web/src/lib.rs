@@ -58,18 +58,23 @@
 //!   `application/json` for JSON.
 //! - **`Content-Length`**: the UTF-8 byte length of the body.
 //! - **`Cache-Control`**: `private, max-age=1800` when processing recorded no
-//!   errors, else `no-cache` and no `ETag`, so a browser that kept the response
-//!   to a failed request fetches it again in full rather than having it
-//!   confirmed by a `304`.
+//!   errors and the builder's data was there, else `private, no-cache` and no
+//!   `ETag`, so a browser that kept the response to a failed request fetches
+//!   it again in full rather than having it confirmed by a `304`.
 //! - **`Vary`**: the comma-joined HTTP-header evidence keys (prefix stripped,
-//!   de-duplicated case-insensitively, sorted) taken from the supplied
-//!   whitelist; omitted when empty.
+//!   de-duplicated case-insensitively, sorted) the pipeline's elements accept,
+//!   or those of a whitelist supplied in their place; omitted when empty.
 //! - **`ETag`**: an opaque, non-portable digest of the evidence cache key, the
 //!   same in every process running the same build (see [`compute_etag`]).
 //! - **`Access-Control-Allow-Origin`**: the request `Origin` echoed back, unless
 //!   it is absent or the literal string `null`.
-//! - A matching `If-None-Match` yields a bare `304 Not Modified` (empty body, no
-//!   other headers).
+//! - A matching `If-None-Match` yields a `304 Not Modified` with an empty body
+//!   and the `Cache-Control`, `Vary`, `ETag` and `Access-Control-Allow-Origin`
+//!   fields the `200` would have carried, as RFC 9110 section 15.4.5 requires
+//!   for the first three. On a method other than `GET` or `HEAD` (see
+//!   [`RequestData::method`]) it yields a `412 Precondition Failed` with an
+//!   empty body and only `Access-Control-Allow-Origin`, as RFC 9110 section
+//!   13.1.2 requires.
 //!
 //! ## A worked, framework-free example
 //!
@@ -81,7 +86,7 @@
 //!     TypedKey,
 //! };
 //! use fiftyone_pipeline_web::{
-//!     build_evidence, serve_json, EndpointOptions, RequestData, WebEndpoint,
+//!     build_evidence, serve_json, RequestData, WebEndpoint,
 //!     WebIntegrationOptions, WebPipeline,
 //! };
 //!
@@ -135,7 +140,7 @@
 //! let mut data = web.pipeline().create_flow_data_with(evidence);
 //! data.process().unwrap();
 //!
-//! let options = EndpointOptions::new(web.vary_whitelist().clone());
+//! let options = web.endpoint_options();
 //! let response = serve_json(&data, &Req, &options);
 //! assert_eq!(response.status, 200);
 //! assert_eq!(response.header("Content-Type"), Some("application/json"));

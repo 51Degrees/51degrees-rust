@@ -24,20 +24,32 @@
 //!
 //! Usage sharing accepts evidence by rule rather than by a fixed whitelist, so
 //! it implements [`EvidenceKeyFilter`] directly. It realises the
-//! [accepted-evidence rules](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/usage-sharing-element.md#accepted-evidence):
+//! [accepted-evidence rules](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/usage-sharing-element.md#accepted-evidence).
+//! The prefix of a key is everything before its first `.`, and keys are
+//! compared without regard to case.
+//!
+//! `id.email`, `id.salt`, `request-query` and `request-path`, as the whole key
+//! or after a `.`, are never shared, even when sharing all evidence. So
+//! `server.request-path` and `query.id.email` are never shared, while
+//! `query.valid.email` is an ordinary query string parameter.
+//!
+//! Unless all evidence is shared:
 //!
 //! - `header.*` is shared unless the header name is in the blocked list (the
-//!   `cookie` header is always blocked).
-//! - `cookie.*` is shared only when the cookie name starts with `51d_`.
+//!   `cookie` header, which carries every cookie, is always blocked).
+//! - `cookie.*` and `session.*` are shared only when the name starts with
+//!   `51d_`.
 //! - `query.*` is shared only when the parameter name starts with `51d_` or is
 //!   in the configured allow list. With no allow list (`None`) every query
 //!   parameter is shared.
 //! - everything else is shared.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 
 use fiftyone_pipeline_core::constants::{
     EVIDENCE_COOKIE_PREFIX, EVIDENCE_HTTP_HEADER_PREFIX, EVIDENCE_QUERY_PREFIX, EVIDENCE_SEPARATOR,
+    EVIDENCE_SESSION_PREFIX,
 };
 use fiftyone_pipeline_core::EvidenceKeyFilter;
 
@@ -45,15 +57,43 @@ use crate::constants::{
     EVIDENCE_HTTPHEADER_COOKIE_SUFFIX, EVIDENCE_SEQUENCE, EVIDENCE_SESSIONID, FIFTYONE_PREFIX,
 };
 
+/// The keys never shared, matched as the whole key or after a `.`, whatever
+/// the configuration. `id.email` is a raw email address and `id.salt` the salt
+/// used to make hashed email identifiers. `request-query` is the whole query
+/// string, so sharing it would undo the rules for query string parameters.
+/// `request-path` would make each page a visitor opens look like a new
+/// session to the repeat evidence tracker, and is the part of a URL most
+/// likely to carry a name or an identifier.
+const NEVER_SHARED: [&str; 4] = ["id.email", "id.salt", "request-query", "request-path"];
+
+/// True if the lowercase `key` is one of [`NEVER_SHARED`], or ends with a `.`
+/// and one of them.
+fn is_never_shared(key: &str) -> bool {
+    NEVER_SHARED.iter().any(|never| {
+        key.strip_suffix(never)
+            .is_some_and(|rest| rest.is_empty() || rest.ends_with(EVIDENCE_SEPARATOR))
+    })
+}
+
+/// The key in lowercase, borrowed when it is already lowercase ASCII.
+fn lowercase(key: &str) -> Cow<'_, str> {
+    if key.bytes().all(|b| b.is_ascii() && !b.is_ascii_uppercase()) {
+        Cow::Borrowed(key)
+    } else {
+        Cow::Owned(key.to_lowercase())
+    }
+}
+
 /// Filters evidence keys for the usage-sharing element.
 ///
 /// Construct it with [`EvidenceKeyFilterShareUsage::new`] for the rule-based
-/// filter, or [`EvidenceKeyFilterShareUsage::share_all`] to share every key.
-/// Keys reaching [`EvidenceKeyFilter::include`] are already lowercased by the
-/// core, so all matching here is done on lowercase values.
+/// filter, or [`EvidenceKeyFilterShareUsage::share_all`] to share every key
+/// but those never shared. Keys are compared without regard to case. The core
+/// gives keys in lowercase, and a key in another case is lowered first.
 #[derive(Debug, Clone)]
 pub struct EvidenceKeyFilterShareUsage {
-    /// When true, every key is shared and the lists below are ignored.
+    /// When true, every key but those never shared is shared, and the lists
+    /// below are ignored.
     share_all: bool,
     /// Lower-cased HTTP header names that must never be shared.
     blocked_http_headers: HashSet<String>,
@@ -95,7 +135,7 @@ impl EvidenceKeyFilterShareUsage {
         }
     }
 
-    /// Create a filter that shares every evidence key.
+    /// Create a filter that shares every evidence key but those never shared.
     pub fn share_all() -> Self {
         EvidenceKeyFilterShareUsage {
             share_all: true,
@@ -106,6 +146,10 @@ impl EvidenceKeyFilterShareUsage {
 
     /// The core rule, shared by this filter and the tracker filter.
     fn include_inner(&self, key: &str) -> bool {
+        let key = lowercase(key);
+        if is_never_shared(&key) {
+            return false;
+        }
         if self.share_all {
             return true;
         }
@@ -120,7 +164,7 @@ impl EvidenceKeyFilterShareUsage {
 
         if prefix == EVIDENCE_HTTP_HEADER_PREFIX {
             !self.blocked_http_headers.contains(field)
-        } else if prefix == EVIDENCE_COOKIE_PREFIX {
+        } else if prefix == EVIDENCE_COOKIE_PREFIX || prefix == EVIDENCE_SESSION_PREFIX {
             field.starts_with(FIFTYONE_PREFIX)
         } else if prefix == EVIDENCE_QUERY_PREFIX {
             match &self.included_query_string_params {
@@ -217,11 +261,123 @@ mod tests {
     }
 
     #[test]
-    fn share_all_includes_everything() {
+    fn share_all_includes_every_key_but_those_never_shared() {
         let filter = EvidenceKeyFilterShareUsage::share_all();
         assert!(filter.include("header.cookie"));
         assert!(filter.include("cookie.sessionid"));
         assert!(filter.include("query.other"));
+    }
+
+    /// The keys never shared, bare and after a prefix.
+    const NEVER_SHARED_KEYS: &[&str] = &[
+        "id.email",
+        "id.salt",
+        "request-path",
+        "request-query",
+        "server.request-path",
+        "server.request-query",
+        "query.id.email",
+        "query.id.salt",
+        "header.request-path",
+    ];
+
+    /// `key` as given, in upper case, and with each letter after a `.` or
+    /// `-` and the first letter in upper case.
+    fn spellings(key: &str) -> [String; 3] {
+        let mut title = String::with_capacity(key.len());
+        let mut upper = true;
+        for c in key.chars() {
+            if upper {
+                title.extend(c.to_uppercase());
+            } else {
+                title.push(c);
+            }
+            upper = c == '.' || c == '-';
+        }
+        [key.to_owned(), key.to_uppercase(), title]
+    }
+
+    /// A rule-based filter that shares every query string parameter, so a
+    /// query key is refused only by the never shared rule, and a filter that
+    /// shares all evidence.
+    fn both_filters() -> [(&'static str, EvidenceKeyFilterShareUsage); 2] {
+        [
+            (
+                "rule-based",
+                EvidenceKeyFilterShareUsage::new(Vec::<&str>::new(), None::<Vec<&str>>),
+            ),
+            ("share all", EvidenceKeyFilterShareUsage::share_all()),
+        ]
+    }
+
+    #[test]
+    fn the_keys_never_shared_are_not_shared_in_any_case() {
+        for (name, filter) in both_filters() {
+            for key in NEVER_SHARED_KEYS {
+                for spelling in spellings(key) {
+                    assert!(!filter.include(&spelling), "{name}: {spelling} shared");
+                    assert_eq!(filter.order(&spelling), None, "{name}: {spelling}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_key_that_only_ends_like_one_never_shared_is_shared() {
+        for (name, filter) in both_filters() {
+            for key in [
+                "query.valid.email",
+                "query.xid.email",
+                "query.id.email.copy",
+                "server.my-request-path",
+                "header.x-request-query-id",
+            ] {
+                assert!(filter.include(key), "{name}: {key} not shared");
+            }
+        }
+    }
+
+    #[test]
+    fn session_values_are_shared_only_when_they_start_51d() {
+        let filter = EvidenceKeyFilterShareUsage::new(Vec::<&str>::new(), None::<Vec<&str>>);
+        for key in spellings("session.51d_x") {
+            assert!(filter.include(&key), "{key} not shared");
+        }
+        for key in spellings("session.other") {
+            assert!(!filter.include(&key), "{key} shared");
+        }
+    }
+
+    #[test]
+    fn sharing_all_shares_every_session_value() {
+        let filter = EvidenceKeyFilterShareUsage::share_all();
+        for key in ["session.51d_x", "session.other"] {
+            for spelling in spellings(key) {
+                assert!(filter.include(&spelling), "{spelling} not shared");
+            }
+        }
+    }
+
+    #[test]
+    fn the_cookie_header_is_shared_only_when_sharing_all() {
+        let rule_based = EvidenceKeyFilterShareUsage::new(Vec::<&str>::new(), None::<Vec<&str>>);
+        let share_all = EvidenceKeyFilterShareUsage::share_all();
+        for key in spellings("header.cookie") {
+            assert!(!rule_based.include(&key), "{key} shared");
+            assert!(share_all.include(&key), "{key} not shared when sharing all");
+        }
+    }
+
+    #[test]
+    fn the_rules_compare_keys_ignoring_case() {
+        let filter = EvidenceKeyFilterShareUsage::new(["Referer"], Some(vec!["MyParam"]));
+        assert!(!filter.include("HEADER.REFERER"));
+        assert!(filter.include("Header.User-Agent"));
+        assert!(filter.include("Query.MYPARAM"));
+        assert!(filter.include("QUERY.51D_Other"));
+        assert!(!filter.include("Query.Other"));
+        assert!(filter.include("Cookie.51D_Profile"));
+        assert!(!filter.include("COOKIE.other"));
     }
 
     #[test]

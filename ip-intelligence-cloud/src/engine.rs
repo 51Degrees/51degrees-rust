@@ -37,12 +37,15 @@ use fiftyone_pipeline_core::{
     PropertyValueType, Result,
 };
 use fiftyone_pipeline_engines::{
-    missing_property_reason, AspectEngine, AspectPropertyMetaData, EngineDeployment,
-    EngineMissingPropertyContext, MissingPropertyResult,
+    default_missing_property_reason, AspectEngine, AspectPropertyMetaData, EngineDeployment,
+    MissingPropertyResult, MissingPropertySource,
 };
 use serde_json::Value;
 
 use crate::parse::{self, ValueKind};
+
+/// The engine's name in log records.
+const ENGINE_NAME: &str = "IpIntelligenceCloudEngine";
 
 /// The metadata derived from the request engine's accessible properties for the
 /// IPI product, kept together so the three pieces are computed and cached as a
@@ -72,13 +75,24 @@ struct DerivedMetadata {
 ///
 /// # Metadata
 ///
-/// The property metadata is derived lazily from the
-/// [`CloudRequestEngine::public_properties`] of the supplied request engine, the
-/// first time it is needed, taking the product whose key is `ip`. Until that
-/// fetch succeeds the engine reports the shared default metadata so a consumer
-/// always sees the documented property set. The metadata `Type` field of each
+/// The property metadata is derived from the
+/// [`CloudRequestEngine::public_properties`] of the supplied request engine when
+/// the engine is built, taking the product whose key is `ip`. When the request
+/// engine's discovery has not completed, it is derived the first time it is
+/// needed after it has, and until then the engine reports the shared default
+/// metadata so a consumer always sees the documented property set. A resource
+/// key that grants no `ip` product, or lists it with no properties, leaves the
+/// metadata empty and logs an error once. The metadata `Type` field of each
 /// cloud property also drives how its weighted values are parsed (string,
 /// integer or floating-point).
+///
+/// # A property the response did not return
+///
+/// With a resource key, the data from a successful response is given the
+/// properties the key grants, so a read of a property the response did not
+/// return gives the reason it is missing and logs a warning, as .NET's
+/// `MissingPropertyServiceCloud` does. With a license key alone the granted
+/// properties are not listed, so the data cannot say why one is missing.
 ///
 /// # Example
 ///
@@ -119,19 +133,23 @@ struct DerivedMetadata {
 /// ```
 pub struct IpIntelligenceCloudEngine {
     /// The request engine whose response and accessible-properties this engine
-    /// reads. Held so the metadata can be discovered lazily on first use.
+    /// reads. Held so the metadata can be derived once discovery completes.
     request_engine: Arc<CloudRequestEngine>,
 
     /// The empty evidence filter. This engine reads no evidence directly.
     evidence_filter: EvidenceKeyFilterWhitelist,
 
-    /// Lazily derived core metadata for the IPI product, cached after the first
-    /// successful discovery from the request engine.
+    /// Core metadata for the IPI product, derived once the request engine's
+    /// discovery has completed.
     properties: OnceCell<Vec<PropertyMetaData>>,
     /// The aspect view of the same metadata.
     aspect_properties: OnceCell<Vec<AspectPropertyMetaData>>,
-    /// Lazily derived map of property name (lower case) to value kind, used to
-    /// parse each weighted property as the right type.
+    /// Why a property is missing from data of a successful request, derived
+    /// with the metadata. Holds `None` with only a license key, because the
+    /// properties a license key grants are not listed.
+    missing: OnceCell<Option<Arc<MissingPropertySource>>>,
+    /// Property name (lower case) to value kind, derived with the metadata and
+    /// used to parse each weighted property as the right type.
     value_kinds: OnceCell<HashMap<String, ValueKind>>,
 
     /// The shared default core metadata, returned before discovery completes.
@@ -152,9 +170,9 @@ impl IpIntelligenceCloudEngine {
     }
 
     /// Derive the IPI metadata from the request engine's accessible properties,
-    /// taking the product keyed by `ip`. Returns `None` if the discovery fetch
-    /// fails or the resource key grants no IPI product, in which case the engine
-    /// keeps reporting the shared defaults.
+    /// taking the product keyed by `ip`. Each property keeps the category the
+    /// list gives it. Returns `None` when there is no such product or it lists
+    /// no properties.
     fn derive_metadata(products: &LicensedProducts) -> Option<DerivedMetadata> {
         // The product is looked up by the element data key, which for IPI is
         // `ip`.
@@ -174,12 +192,15 @@ impl IpIntelligenceCloudEngine {
             let kind = ValueKind::from_cloud_type(&property.value_type);
             let value_type = match kind {
                 ValueKind::Integer => PropertyValueType::Integer,
-                ValueKind::Double => PropertyValueType::Double,
+                ValueKind::Double => PropertyValueType::Float,
                 ValueKind::Bool => PropertyValueType::Bool,
                 ValueKind::WeightedString => WEIGHTED_PROPERTY_VALUE_TYPE,
                 ValueKind::String => PropertyValueType::String,
             };
-            let core_meta = PropertyMetaData::new(&property.name, IP_DATA_KEY_NAME, value_type);
+            let mut core_meta = PropertyMetaData::new(&property.name, IP_DATA_KEY_NAME, value_type);
+            if let Some(category) = &property.category {
+                core_meta = core_meta.with_category(category.clone());
+            }
             let mut aspect_meta = AspectPropertyMetaData::from_core(core_meta.clone());
             if let Some(tier) = &product.data_tier {
                 aspect_meta = aspect_meta.with_data_tiers([tier.clone()]);
@@ -195,21 +216,70 @@ impl IpIntelligenceCloudEngine {
         })
     }
 
-    /// Ensure the lazily derived metadata is populated, fetching the request
-    /// engine's accessible properties on first use. A discovery failure leaves
-    /// the caches empty, so the engine continues with the shared defaults. It is
-    /// not fatal, degrading gracefully when the metadata cannot be loaded.
+    /// Derive the metadata from the request engine's accessible properties if
+    /// it is not there yet. Makes no cloud request.
+    ///
+    /// While the request engine's discovery has not completed the caches stay
+    /// empty and the engine reports the shared defaults. When the accessible
+    /// properties hold no `ip` product, or list it with no properties, the
+    /// engine gets empty metadata, as the missing product rule of draft
+    /// specifications#75 says, where .NET refuses such a key and fails the
+    /// pipeline build. An engine with only a license key gets empty metadata
+    /// too, because it has no accessible properties to read, as the cloud
+    /// request engine specification says. With a resource key the call that
+    /// sets the empty metadata logs an error, so it is logged once. The
+    /// reason for a missing property is derived with the metadata, naming no
+    /// properties when the key has no `ip` product. The properties are set
+    /// last because a request that finds them set reads the rest.
     fn ensure_metadata(&self) {
         if self.properties.get().is_some() {
             return;
         }
-        if let Ok(products) = self.request_engine.public_properties() {
-            if let Some(derived) = Self::derive_metadata(products) {
-                let _ = self.properties.set(derived.core);
-                let _ = self.aspect_properties.set(derived.aspect);
+        let Ok(products) = self.request_engine.public_properties() else {
+            return;
+        };
+        match Self::derive_metadata(products) {
+            Some(derived) => {
+                let _ = self
+                    .missing
+                    .set(self.missing_property_source(&derived.aspect));
                 let _ = self.value_kinds.set(derived.kinds);
+                let _ = self.aspect_properties.set(derived.aspect);
+                let _ = self.properties.set(derived.core);
+            }
+            None => {
+                let _ = self.missing.set(self.missing_property_source(&[]));
+                let _ = self.value_kinds.set(HashMap::new());
+                let _ = self.aspect_properties.set(Vec::new());
+                if self.properties.set(Vec::new()).is_ok()
+                    && self.request_engine.resource_key().is_some()
+                {
+                    log::error!(
+                        "Aspect properties could not be loaded for {ENGINE_NAME} - \
+                         '{IP_DATA_KEY_NAME}'"
+                    );
+                }
             }
         }
+    }
+
+    /// The reason for each property missing from data of a successful
+    /// request, from the properties the resource key grants, as .NET's
+    /// `MissingPropertyServiceCloud` gives it. `None` with only a license
+    /// key, because the properties it grants are not listed.
+    fn missing_property_source(
+        &self,
+        properties: &[AspectPropertyMetaData],
+    ) -> Option<Arc<MissingPropertySource>> {
+        self.request_engine.resource_key().is_some().then(|| {
+            Arc::new(MissingPropertySource::new(
+                IP_DATA_KEY_NAME,
+                ENGINE_NAME,
+                EngineDeployment::Cloud,
+                self.data_source_tier(),
+                properties.to_vec(),
+            ))
+        })
     }
 
     /// The value kinds derived from the cloud metadata, or an empty map before
@@ -226,9 +296,8 @@ impl IpIntelligenceCloudEngine {
     /// Returns an [`Error::PipelineConfiguration`] when there is no cloud
     /// request data, which means no [`CloudRequestEngine`] ran before this
     /// engine. A request engine that ran and failed has already recorded its
-    /// own error and left no response, so that gives empty data rather than a
-    /// second error.
-    fn build_data(&self, data: &FlowData) -> Result<IpIntelligenceDataBase> {
+    /// own error and left no response, which gives `None`.
+    fn build_data(&self, data: &FlowData) -> Result<Option<IpIntelligenceDataBase>> {
         let cloud = data.get(CloudRequestEngine::DATA_KEY).ok_or_else(|| {
             Error::configuration(
                 "No cloud request data is present. This is probably because there \
@@ -239,8 +308,8 @@ impl IpIntelligenceCloudEngine {
         })?;
 
         match cloud.json_response() {
-            Some(json) if !json.is_empty() => self.parse_json(json),
-            _ => Ok(IpIntelligenceDataBase::new(IP_DATA_KEY_NAME)),
+            Some(json) if !json.is_empty() => self.parse_json(json).map(Some),
+            _ => Ok(None),
         }
     }
 
@@ -267,8 +336,39 @@ impl IpIntelligenceCloudEngine {
 }
 
 impl FlowElement for IpIntelligenceCloudEngine {
+    /// Stores the IP data the cloud returned. When the cloud request engine
+    /// left no response, it logs that at info level, records a flow error that
+    /// does not fail processing, and stores empty data marked as from a failed
+    /// cloud request, so each property read gives
+    /// [`MissingPropertyReason::CloudRequestFailed`](fiftyone_pipeline_core::MissingPropertyReason::CloudRequestFailed),
+    /// as .NET does. Data from a response is given the reason for each
+    /// property the response did not return.
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        let element = self.build_data(data)?;
+        // Read the metadata if discovery has completed since construction,
+        // whether or not this response carries an `ip` member, so a key
+        // without the product is logged and later elements see its metadata.
+        self.ensure_metadata();
+        let element = match self.build_data(data)? {
+            Some(mut element) => {
+                if let Some(Some(missing)) = self.missing.get() {
+                    element
+                        .base_mut()
+                        .add_missing_property_source(Arc::clone(missing));
+                }
+                element
+            }
+            None => {
+                CloudRequestEngine::record_not_processed(
+                    data,
+                    ENGINE_NAME,
+                    IP_DATA_KEY_NAME,
+                    module_path!(),
+                );
+                let mut element = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+                element.base_mut().mark_cloud_request_failed();
+                element
+            }
+        };
         // The on-premise and cloud engines store identical types under the same
         // key, so a consumer can swap one for the other unchanged.
         data.get_or_add(IP_DATA_KEY, || element)?;
@@ -289,9 +389,20 @@ impl FlowElement for IpIntelligenceCloudEngine {
             None => &self.default_properties,
         }
     }
+
+    /// Reads the cloud's property list first if discovery has completed
+    /// since the engine last looked, so the answer is current.
+    fn properties_loaded(&self) -> bool {
+        self.ensure_metadata();
+        self.has_loaded_properties()
+    }
 }
 
 impl AspectEngine for IpIntelligenceCloudEngine {
+    fn engine_type_name(&self) -> &str {
+        ENGINE_NAME
+    }
+
     fn data_source_tier(&self) -> &str {
         // Cloud engines have no on-premise data tier.
         ""
@@ -312,18 +423,17 @@ impl AspectEngine for IpIntelligenceCloudEngine {
         self.properties.get().is_some()
     }
 
+    /// The request engine asks for the property list when it is built, or is
+    /// given it, so a list it still lacks is one whose request failed.
+    fn property_list_request_failed(&self) -> bool {
+        !self.has_loaded_properties() && self.request_engine.public_properties().is_err()
+    }
+
     fn missing_property_reason(&self, property_name: &str) -> MissingPropertyResult {
-        // Trigger discovery so the reason reflects the live cloud metadata
-        // rather than the pre-discovery defaults.
+        // Read the metadata if discovery has completed, so the reason reflects
+        // the live cloud metadata rather than the pre-discovery defaults.
         self.ensure_metadata();
-        let ctx = EngineMissingPropertyContext {
-            element_data_key: self.data_key(),
-            deployment: self.deployment(),
-            data_source_tier: self.data_source_tier(),
-            properties_loaded: self.has_loaded_properties(),
-            properties: self.aspect_properties(),
-        };
-        missing_property_reason(property_name, &ctx)
+        default_missing_property_reason(self, property_name)
     }
 }
 
@@ -353,6 +463,11 @@ impl IpIntelligenceCloudEngineBuilder {
 
     /// Build the engine, returning an [`Error::PipelineConfiguration`] if no
     /// cloud request engine was supplied.
+    ///
+    /// The metadata is read from the request engine here, which makes no cloud
+    /// request, and an error is logged when the request engine has a resource
+    /// key that is not granted the IP Intelligence product. When the request
+    /// engine's discovery has not completed, both wait until it has.
     pub fn build(self) -> Result<IpIntelligenceCloudEngine> {
         let request_engine = self.request_engine.ok_or_else(|| {
             Error::configuration(
@@ -361,15 +476,18 @@ impl IpIntelligenceCloudEngineBuilder {
             )
         })?;
 
-        Ok(IpIntelligenceCloudEngine {
+        let engine = IpIntelligenceCloudEngine {
             request_engine,
             evidence_filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
             properties: OnceCell::new(),
             aspect_properties: OnceCell::new(),
+            missing: OnceCell::new(),
             value_kinds: OnceCell::new(),
             default_properties: default_property_metadata(),
             default_aspect_properties: default_aspect_property_metadata(),
-        })
+        };
+        engine.ensure_metadata();
+        Ok(engine)
     }
 }
 
@@ -386,14 +504,14 @@ mod tests {
         CloudEngineState, CloudHttpClient, CloudHttpRequest, CloudHttpResponse,
     };
     use fiftyone_ip_intelligence_shared::IpIntelligenceData;
+    use fiftyone_pipeline_core::MissingPropertyReason;
 
     /// A request engine wired to a stub HTTP client, so no network is touched.
     ///
     /// An empty state is supplied so the builder resolves without a discovery
     /// fetch (the stub would otherwise error). The empty accessible-properties set
-    /// leaves the engine with no metadata, which exercises the graceful fall back
-    /// to inferred value kinds, the same scenario discovery being unavailable
-    /// produced before.
+    /// grants no `ip` product, which leaves the engine with no metadata and
+    /// exercises the fall back to inferred value kinds.
     fn request_engine() -> Arc<CloudRequestEngine> {
         struct Stub;
         impl CloudHttpClient for Stub {
@@ -428,6 +546,18 @@ mod tests {
             Err(other) => panic!("expected a configuration error, got {other:?}"),
             Ok(_) => panic!("expected a configuration error without a request engine"),
         }
+    }
+
+    #[test]
+    fn a_key_without_the_ip_product_has_no_properties_and_says_why() {
+        let engine = engine();
+        assert!(engine.has_loaded_properties());
+        assert!(engine.properties().is_empty());
+        assert!(engine.aspect_properties().is_empty());
+        assert_eq!(
+            engine.missing_property_reason("RegisteredName").reason,
+            MissingPropertyReason::ProductNotAccessibleWithResourceKey
+        );
     }
 
     #[test]
@@ -633,7 +763,7 @@ mod tests {
             let unpacks = match declared {
                 PropertyValueType::Bool => ip.boolean(name).value().is_ok(),
                 PropertyValueType::Integer => ip.integer(name).value().is_ok(),
-                PropertyValueType::Double => ip.float(name).value().is_ok(),
+                PropertyValueType::Float => ip.float(name).value().is_ok(),
                 PropertyValueType::KeyValueList => ip.weighted_string(name).value().is_ok(),
                 _ => ip.string(name).value().is_ok(),
             };
@@ -652,7 +782,8 @@ mod tests {
     fn a_failed_cloud_request_is_not_reported_as_a_configuration_error() {
         // The request engine records its own error when its call fails and
         // leaves no response. Nothing in the configuration is wrong, so this
-        // engine adds no error of its own, as the device engine adds none.
+        // engine only records that it did not process, as an error that does
+        // not fail processing, as .NET's cloud aspect engines do.
         use fiftyone_pipeline_core::{Evidence, Pipeline};
         let request_engine = request_engine();
         let ip_engine = IpIntelligenceCloudEngine::builder()
@@ -679,9 +810,12 @@ mod tests {
             .collect();
         assert_eq!(
             reported.len(),
-            1,
-            "only the request engine's own failure is reported, got {reported:?}"
+            2,
+            "the request engine's failure and this engine's record, got {reported:?}"
         );
+        assert_eq!(data.errors()[1].element_data_key, IP_DATA_KEY_NAME);
+        assert!(!data.errors()[1].should_throw);
+        assert!(matches!(data.errors()[1].source, Error::Pipeline { .. }));
         assert!(
             !data
                 .errors()

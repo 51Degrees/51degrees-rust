@@ -13,15 +13,12 @@ name: Mustache Drift Check
 # fails the build so the bundled template is refreshed deliberately rather than
 # silently going stale.
 #
-# Why the upstream reference is pinned. The canonical template is being changed
-# by the create last programme in the cloud service, so comparing every push and
-# pull request against the moving branch would fail work in this repository that
-# has nothing to do with that programme. Push and pull request builds therefore
-# compare against the commit the bundled asset was taken from, whilst the weekly
-# schedule and a manual run still compare against the branch so a real drift is
-# reported. 51Degrees/51degrees-rust#52 is the issue that lifts the pin, by moving the
-# bundled asset and UPSTREAM_PINNED_REF to the same new commit in one pull
-# request, which is then green on its own.
+# Why the upstream reference is pinned. Push and pull request builds compare
+# against the commit the bundled asset was taken from, so a change upstream
+# does not fail work in this repository that has nothing to do with it. The
+# weekly schedule and a manual run compare against the branch, so a real drift
+# is still reported. To refresh, move the bundled asset and UPSTREAM_PINNED_REF
+# to the same new commit in one pull request, which is then green on its own.
 
 on:
   push:
@@ -44,7 +41,7 @@ jobs:
       # The commit the bundled asset was taken from, used by push and pull
       # request builds. Move this and the bundled asset together, never one
       # without the other.
-      UPSTREAM_PINNED_REF: ede377cc9ef17de8b4d76c80f77fa54c988a7ce6
+      UPSTREAM_PINNED_REF: c773ce221ccec6fcb67fbdd5ad2175a66fab11d6
       # The moving branch, used by the weekly schedule and by a manual run, so
       # an upstream change is still reported once a week. A failure here is the
       # signal to prepare the refresh, not a fault in whatever was pushed.
@@ -91,6 +88,6 @@ jobs:
           if diff -u "$BUNDLED" upstream.mustache; then
             echo "Bundled JavaScriptResource.mustache matches ${UPSTREAM_REPO}@${UPSTREAM_REF}, the ${UPSTREAM_REF_KIND}."
           else
-            echo "::error file=${BUNDLED}::Bundled JavaScriptResource.mustache differs from ${UPSTREAM_REPO}@${UPSTREAM_REF}, the ${UPSTREAM_REF_KIND}. Refresh the bundled copy, and where the refresh is deliberate move UPSTREAM_PINNED_REF to the same commit in the same pull request. See 51Degrees/51degrees-rust#52."
+            echo "::error file=${BUNDLED}::Bundled JavaScriptResource.mustache differs from ${UPSTREAM_REPO}@${UPSTREAM_REF}, the ${UPSTREAM_REF_KIND}. Refresh the bundled copy, and where the refresh is deliberate move UPSTREAM_PINNED_REF to the same commit in the same pull request."
             exit 1
           fi

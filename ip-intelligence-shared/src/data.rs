@@ -56,6 +56,7 @@
 //! candidates high weighting first and writes the flattened dynamic-bag mirror.
 
 use std::any::Any;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -91,6 +92,9 @@ pub const WEIGHTED_RECORD_VALUE_KEY: &str = "value";
 /// The key under which each flattened weighted record stores its `0.0..=1.0`
 /// weighting multiplier in the dynamic property bag mirror.
 pub const WEIGHTED_RECORD_WEIGHT_KEY: &str = "weight";
+
+/// The type the warning for a read of a missing property names.
+const DATA_TYPE_NAME: &str = "IpIntelligenceDataBase";
 
 // ---------------------------------------------------------------------------
 // Value stores
@@ -262,20 +266,18 @@ impl DeferredValues {
         failure
     }
 
-    /// Look at the values read so far, after reading the named property if it
-    /// has not been read. `Err` carries the message of a read that failed.
+    /// Look at the values read so far, after reading the property at `position`
+    /// if it has not been read. `Err` carries the message of a read that
+    /// failed.
     fn with<R>(
         &self,
-        name: &str,
+        position: usize,
         look: impl FnOnce(&IpIntelligenceDataBase) -> R,
     ) -> Result<R, String> {
-        let position = self.position(name);
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let state = &mut *state;
-        if let Some(position) = position {
-            if let Some(message) = self.read(state, position) {
-                return Err(message);
-            }
+        if let Some(message) = self.read(state, position) {
+            return Err(message);
         }
         Ok(look(&state.values))
     }
@@ -325,6 +327,17 @@ impl fmt::Debug for DeferredValues {
 /// through [`IpIntelligenceDataBase::with_reader`], and a property not set on
 /// the data directly is then read from the native results the first time it is
 /// requested.
+///
+/// A cloud engine sets a property the response gives as null through the
+/// `set_*_no_value` setters, so the data holds the property with no value and
+/// the response's message, and lists it among its keys.
+///
+/// A property neither set directly nor one the reader can read is missing.
+/// When the engine added a
+/// [`MissingPropertySource`](fiftyone_pipeline_engines::MissingPropertySource)
+/// to the embedded [`AspectDataBase`], its no-value carries the reason, as
+/// .NET's `PropertyMissingException` does, and each read of the property logs
+/// a warning, as .NET's aspect data does.
 #[derive(Debug, Clone)]
 pub struct IpIntelligenceDataBase {
     base: AspectDataBase,
@@ -333,6 +346,10 @@ pub struct IpIntelligenceDataBase {
     integers: BTreeMap<String, ValueStore<i32>>,
     booleans: BTreeMap<String, ValueStore<bool>>,
     weighted_strings: BTreeMap<String, WeightedStore<String>>,
+    /// The lowercase name of each property set with no value, in the order
+    /// first set, with how many names the bag held then, so that `keys`
+    /// lists it among the bag's names where it was set.
+    no_value_places: Vec<(String, usize)>,
     /// The values read on request, when an engine attached a reader.
     deferred: Option<Arc<DeferredValues>>,
 }
@@ -354,6 +371,7 @@ impl IpIntelligenceDataBase {
             integers: BTreeMap::new(),
             booleans: BTreeMap::new(),
             weighted_strings: BTreeMap::new(),
+            no_value_places: Vec::new(),
             deferred: None,
         }
     }
@@ -374,19 +392,68 @@ impl IpIntelligenceDataBase {
         self
     }
 
-    /// A typed value read through the reader, or the default no-value when
-    /// there is no reader.
+    /// The reader, and the position of `name` in its names, when there is a
+    /// reader that can read the property.
+    fn readable(&self, name: &str) -> Option<(&DeferredValues, usize)> {
+        let deferred = self.deferred.as_deref()?;
+        Some((deferred, deferred.position(name)?))
+    }
+
+    /// A typed value read through the reader, or the no-value for a missing
+    /// property when the reader cannot read it.
     fn deferred_value<T>(
         &self,
         name: &str,
         look: impl FnOnce(&IpIntelligenceDataBase) -> AspectPropertyValue<T>,
     ) -> AspectPropertyValue<T> {
-        match &self.deferred {
-            Some(deferred) => deferred
-                .with(name, look)
+        match self.readable(name) {
+            Some((deferred, position)) => deferred
+                .with(position, look)
                 .unwrap_or_else(|message| AspectPropertyValue::no_value(message)),
+            None => self.missing(name),
+        }
+    }
+
+    /// The no-value for a property this data does not hold, carrying the
+    /// reason it is missing when the engine gave a source for one, and the
+    /// default no-value otherwise. A reason also logs a warning.
+    fn missing<T>(&self, name: &str) -> AspectPropertyValue<T> {
+        match self.base.missing_property(name, DATA_TYPE_NAME) {
+            Some(missing) => AspectPropertyValue::no_value(missing.description),
             None => AspectPropertyValue::empty(),
         }
+    }
+
+    /// Whether the property is set on this data directly, with or without a
+    /// value, or the reader can read it.
+    fn holds(&self, name: &str) -> bool {
+        let key = key(name);
+        self.base.values().get_value(name).is_some()
+            || self.strings.contains_key(&key)
+            || self.floats.contains_key(&key)
+            || self.integers.contains_key(&key)
+            || self.booleans.contains_key(&key)
+            || self.weighted_strings.contains_key(&key)
+            || self.readable(name).is_some()
+    }
+
+    /// The message of a property recorded through one of the
+    /// `set_*_no_value` setters.
+    fn stored_no_value(&self, name: &str) -> Option<&str> {
+        let key = if needs_lowercase(name) {
+            Cow::Owned(key(name))
+        } else {
+            Cow::Borrowed(name)
+        };
+        let key = key.as_ref();
+        no_value_message(self.strings.get(key))
+            .or_else(|| no_value_message(self.floats.get(key)))
+            .or_else(|| no_value_message(self.integers.get(key)))
+            .or_else(|| no_value_message(self.booleans.get(key)))
+            .or_else(|| match self.weighted_strings.get(key) {
+                Some(WeightedStore::NoValue { message }) => Some(message.as_str()),
+                _ => None,
+            })
     }
 
     /// Borrow the embedded [`AspectDataBase`], which holds the values set on
@@ -427,10 +494,10 @@ impl IpIntelligenceDataBase {
     }
 
     /// Store a plain single-precision float property (`Latitude`, `Longitude`)
-    /// and its dynamic-bag mirror.
+    /// and its dynamic-bag mirror, which is a [`PropertyValue::Float`] so the
+    /// value is written with a 32-bit float's own digits.
     pub fn set_float(&mut self, name: impl AsRef<str>, value: f32) {
-        self.base
-            .insert(name.as_ref(), PropertyValue::Double(f64::from(value)));
+        self.base.insert(name.as_ref(), PropertyValue::Float(value));
         self.floats
             .insert(key(name.as_ref()), ValueStore::Value(value));
     }
@@ -474,10 +541,12 @@ impl IpIntelligenceDataBase {
     }
 
     /// Record that a string-valued property had no value, with an explanatory
-    /// message. The matching accessor then returns a no-value carrying it.
+    /// message. The matching accessor then returns a no-value carrying it,
+    /// and [`ElementData::keys`] lists the property.
     pub fn set_string_no_value(&mut self, name: impl AsRef<str>, message: impl Into<String>) {
+        let key = self.no_value_key(name.as_ref());
         self.strings.insert(
-            key(name.as_ref()),
+            key,
             ValueStore::NoValue {
                 message: message.into(),
             },
@@ -486,8 +555,9 @@ impl IpIntelligenceDataBase {
 
     /// Record that a float-valued property had no value, with a message.
     pub fn set_float_no_value(&mut self, name: impl AsRef<str>, message: impl Into<String>) {
+        let key = self.no_value_key(name.as_ref());
         self.floats.insert(
-            key(name.as_ref()),
+            key,
             ValueStore::NoValue {
                 message: message.into(),
             },
@@ -496,8 +566,9 @@ impl IpIntelligenceDataBase {
 
     /// Record that an integer property had no value, with a message.
     pub fn set_integer_no_value(&mut self, name: impl AsRef<str>, message: impl Into<String>) {
+        let key = self.no_value_key(name.as_ref());
         self.integers.insert(
-            key(name.as_ref()),
+            key,
             ValueStore::NoValue {
                 message: message.into(),
             },
@@ -506,8 +577,9 @@ impl IpIntelligenceDataBase {
 
     /// Record that a boolean property had no value, with a message.
     pub fn set_boolean_no_value(&mut self, name: impl AsRef<str>, message: impl Into<String>) {
+        let key = self.no_value_key(name.as_ref());
         self.booleans.insert(
-            key(name.as_ref()),
+            key,
             ValueStore::NoValue {
                 message: message.into(),
             },
@@ -520,8 +592,24 @@ impl IpIntelligenceDataBase {
         name: impl AsRef<str>,
         message: impl Into<String>,
     ) {
+        let key = self.no_value_key(name.as_ref());
         self.weighted_strings
-            .insert(key(name.as_ref()), WeightedStore::no_value(message));
+            .insert(key, WeightedStore::no_value(message));
+    }
+
+    /// The store key for a property being set with no value, noting where
+    /// [`ElementData::keys`] lists the property the first time it is set.
+    fn no_value_key(&mut self, name: &str) -> String {
+        let key = key(name);
+        if !self
+            .no_value_places
+            .iter()
+            .any(|(placed, _)| *placed == key)
+        {
+            self.no_value_places
+                .push((key.clone(), self.base.values().len()));
+        }
+        key
     }
 
     // -- plain getters ------------------------------------------------------
@@ -595,24 +683,70 @@ fn value_store_to_aspect<T: Clone>(store: Option<&ValueStore<T>>) -> AspectPrope
     }
 }
 
+/// The message of a [`ValueStore::NoValue`].
+fn no_value_message<T>(store: Option<&ValueStore<T>>) -> Option<&str> {
+    match store {
+        Some(ValueStore::NoValue { message }) => Some(message),
+        _ => None,
+    }
+}
+
 impl ElementData for IpIntelligenceDataBase {
     fn get(&self, name: &str) -> Result<PropertyValue, NoValueError> {
         if let Some(value) = self.base.values().get_value(name) {
             return Ok(value.clone());
         }
-        match &self.deferred {
-            Some(deferred) => deferred
-                .with(name, |values| values.base.get(name))
+        // A no-value set directly is held, so it is not missing, and it takes
+        // precedence over the reader, as it does in the typed getters.
+        if let Some(message) = self.stored_no_value(name) {
+            return Err(NoValueError::new(message));
+        }
+        match self.readable(name) {
+            Some((deferred, position)) => deferred
+                .with(position, |values| values.base.get(name))
                 .unwrap_or_else(|message| Err(NoValueError::new(message))),
-            None => self.base.get(name),
+            // The property is missing, and the embedded base gives the reason.
+            None => self.base.values().get(name).map_err(|absent| {
+                self.base
+                    .missing_property(name, DATA_TYPE_NAME)
+                    .map_or(absent, |missing| NoValueError::new(missing.description))
+            }),
         }
     }
 
-    /// The names of the properties that have a value. With a reader attached
-    /// this reads every property not yet read, because whether a property has
-    /// a value is only known once it is read.
+    /// Whether the property is set on this data or the reader can read it.
+    /// Unless the embedded [`AspectDataBase`] knows its missing properties,
+    /// through a
+    /// [`MissingPropertySource`](fiftyone_pipeline_engines::MissingPropertySource)
+    /// or a failed cloud request, it answers `true`, as the [`AspectDataBase`]
+    /// does.
+    fn has_property(&self, name: &str) -> bool {
+        !self.base.knows_missing_properties() || self.holds(name)
+    }
+
+    /// The names of the properties set on this data, with a value or with
+    /// none, in the order they were first set, then those the reader gives a
+    /// value. A property set with no value is listed so the JSON builder
+    /// writes it as null with the reason, among the values where the cloud
+    /// engine set it, as .NET's cloud data lists it. With a reader attached
+    /// this reads every property not yet read, because whether a property
+    /// has a value is only known once it is read.
     fn keys(&self) -> Vec<String> {
-        let mut keys = self.base.keys();
+        let bag = self.base.keys();
+        let mut keys = Vec::with_capacity(bag.len() + self.no_value_places.len());
+        let mut listed = 0;
+        for (name, place) in &self.no_value_places {
+            // The bag only grows, so each place is at least the one before
+            // and at most the bag's length.
+            let place = (*place).clamp(listed, bag.len());
+            keys.extend_from_slice(&bag[listed..place]);
+            listed = place;
+            // A value set for the same name is listed in the bag's place.
+            if self.base.values().get_value(name).is_none() {
+                keys.push(name.clone());
+            }
+        }
+        keys.extend_from_slice(&bag[listed..]);
         if let Some(deferred) = &self.deferred {
             // The reader's names are distinct, so only the names set directly
             // can repeat one of them.
@@ -708,6 +842,9 @@ pub fn default_aspect_property_metadata() -> Vec<AspectPropertyMetaData> {
 mod tests {
     use super::*;
     use crate::IpIntelligenceData;
+    use fiftyone_pipeline_engines::{
+        EngineDeployment, MissingPropertyReason, MissingPropertySource, DEFAULT_NO_VALUE_MESSAGE,
+    };
 
     /// A small weighted string list, deliberately out of weighting order so the
     /// setter's sort is exercised.
@@ -753,6 +890,17 @@ mod tests {
         assert!(*data.is_vpn().value().unwrap());
         // The boolean is mirrored into the dynamic bag as a bool.
         assert_eq!(data.get("IsVPN").unwrap(), PropertyValue::Bool(true));
+    }
+
+    /// A float is mirrored into the dynamic bag as a 32-bit float rather than
+    /// widened to a double, which would add digits it never had, and reads as
+    /// a double as the double nearest the same decimal.
+    #[test]
+    fn a_float_is_mirrored_as_a_32_bit_float() {
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        data.set_float("Latitude", 18.543);
+        assert_eq!(data.get("Latitude").unwrap(), PropertyValue::Float(18.543));
+        assert_eq!(data.get("latitude").unwrap().as_double(), Some(18.543));
     }
 
     #[test]
@@ -821,7 +969,7 @@ mod tests {
         let meta = default_property_metadata();
         assert_eq!(meta.len(), GENERATED_PROPERTY_TYPES.len());
         let lat = meta.iter().find(|m| m.name == "Latitude").unwrap();
-        assert_eq!(lat.value_type, PropertyValueType::Double);
+        assert_eq!(lat.value_type, PropertyValueType::Float);
         let tz = meta.iter().find(|m| m.name == "TimeZoneOffset").unwrap();
         assert_eq!(tz.value_type, PropertyValueType::Integer);
         let vpn = meta.iter().find(|m| m.name == "IsVPN").unwrap();
@@ -971,6 +1119,81 @@ mod tests {
     }
 
     #[test]
+    fn a_no_value_set_directly_wins_over_the_reader() {
+        let (reader, reads) = CountingReader::new();
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader);
+        data.set_string_no_value("Country", "not in this tier");
+        data.set_weighted_string_no_value("CountryCodesGeographical", "no codes");
+        assert_eq!(data.country().no_value_message(), Some("not in this tier"));
+        assert_eq!(data.get("country").unwrap_err().message, "not in this tier");
+        assert_eq!(
+            data.get("COUNTRYCODESGEOGRAPHICAL").unwrap_err().message,
+            "no codes"
+        );
+        assert_eq!(reads_of(&reads, "country"), 0);
+        assert_eq!(reads_of(&reads, "countrycodesgeographical"), 0);
+    }
+
+    #[test]
+    fn keys_list_a_property_set_with_no_value_where_it_was_set() {
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        data.set_string_no_value("Town", "no location for this range");
+        data.set_string("RegisteredName", "Example Networks");
+        data.set_weighted_string_no_value("CountryCodesGeographical", "no codes");
+        data.set_float_no_value("Latitude", "no location");
+        data.set_integer_no_value("TimeZoneOffset", "no location");
+        data.set_boolean_no_value("IsVPN", "not in this tier");
+        data.set_string("Country", "United Kingdom");
+        assert_eq!(
+            data.keys(),
+            [
+                "town",
+                "registeredname",
+                "countrycodesgeographical",
+                "latitude",
+                "timezoneoffset",
+                "isvpn",
+                "country"
+            ]
+        );
+        // The bag holds only the values.
+        assert_eq!(data.base().keys(), ["registeredname", "country"]);
+        assert_eq!(
+            data.get("CountryCodesGeographical").unwrap_err().message,
+            "no codes"
+        );
+    }
+
+    #[test]
+    fn a_property_set_with_no_value_is_listed_once_and_a_value_wins() {
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        data.set_string_no_value("Town", "first");
+        data.set_string("Country", "United Kingdom");
+        data.set_string_no_value("TOWN", "second");
+        data.set_string_no_value("Region", "no region");
+        data.set_string("Region", "Berkshire");
+        assert_eq!(data.keys(), ["town", "country", "region"]);
+        assert_eq!(data.town().no_value_message(), Some("second"));
+        assert_eq!(data.region().value().unwrap().as_str(), "Berkshire");
+        assert_eq!(
+            data.get("region").unwrap(),
+            PropertyValue::String("Berkshire".to_owned())
+        );
+    }
+
+    #[test]
+    fn keys_list_a_no_value_set_directly_once_with_a_reader() {
+        let (reader, _) = CountingReader::new();
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader);
+        data.set_string_no_value("Country", "not in this tier");
+        assert_eq!(
+            data.keys(),
+            ["country", "isvpn", "countrycodesgeographical"]
+        );
+        assert_eq!(data.get("Country").unwrap_err().message, "not in this tier");
+    }
+
+    #[test]
     fn a_property_without_a_value_reads_as_absent() {
         let (reader, _) = CountingReader::new();
         let data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader);
@@ -991,6 +1214,114 @@ mod tests {
             data.string("Areas").no_value_message(),
             Some("the native read failed")
         );
+    }
+
+    /// The details of an engine whose metadata lists `Country` and `Region`.
+    fn missing_property_source() -> Arc<MissingPropertySource> {
+        let properties = ["Country", "Region"]
+            .iter()
+            .map(|name| {
+                AspectPropertyMetaData::new(*name, IP_DATA_KEY_NAME, PropertyValueType::String)
+                    .with_data_tiers(["Lite"])
+            })
+            .collect();
+        Arc::new(
+            MissingPropertySource::new(
+                IP_DATA_KEY_NAME,
+                "TestEngine",
+                EngineDeployment::OnPremise,
+                "Lite",
+                properties,
+            )
+            .with_typed_properties(|name: &str| declared_property_value_type(name).is_some()),
+        )
+    }
+
+    #[test]
+    fn a_property_the_reader_cannot_read_gives_the_missing_reason() {
+        let (reader, _) = CountingReader::new();
+        let source = missing_property_source();
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader);
+        data.base_mut()
+            .add_missing_property_source(Arc::clone(&source));
+
+        // Town has an accessor, and the metadata does not list it.
+        let town = source.reason("Town");
+        assert_eq!(town.reason, MissingPropertyReason::DataFileUpgradeRequired);
+        assert_eq!(
+            data.town().no_value_message(),
+            Some(town.description.as_str())
+        );
+        assert_eq!(data.get("Town").unwrap_err().message, town.description);
+
+        let unknown = source.reason("NotAProperty");
+        assert_eq!(unknown.reason, MissingPropertyReason::Unknown);
+        assert_eq!(
+            data.get("NotAProperty").unwrap_err().message,
+            unknown.description
+        );
+        assert_eq!(
+            data.string("NotAProperty").no_value_message(),
+            Some(unknown.description.as_str())
+        );
+    }
+
+    #[test]
+    fn a_property_the_reader_reads_without_a_value_is_not_missing() {
+        let (reader, _) = CountingReader::new();
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader);
+        data.base_mut()
+            .add_missing_property_source(missing_property_source());
+        assert_eq!(
+            data.region().no_value_message(),
+            Some(DEFAULT_NO_VALUE_MESSAGE)
+        );
+        assert_eq!(
+            data.get("Region").unwrap_err().message,
+            "No value for property 'Region'."
+        );
+        assert_eq!(data.country().value().unwrap().as_str(), "United Kingdom");
+    }
+
+    #[test]
+    fn without_a_source_a_missing_property_is_the_default_no_value() {
+        let (reader, _) = CountingReader::new();
+        let data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader);
+        assert_eq!(
+            data.town().no_value_message(),
+            Some(DEFAULT_NO_VALUE_MESSAGE)
+        );
+        assert_eq!(
+            data.get("Town").unwrap_err().message,
+            "No value for property 'Town'."
+        );
+    }
+
+    #[test]
+    fn a_source_lets_the_data_say_what_it_holds() {
+        let (reader, reads) = CountingReader::new();
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader);
+        data.set_string("IpRangeStart", "192.0.2.0");
+        data.set_float_no_value("AccuracyRadiusMin", "no radius for this range");
+        assert!(data.has_property("Town"));
+
+        data.base_mut()
+            .add_missing_property_source(missing_property_source());
+        // Set directly, set with no value, then read with a value, with none,
+        // and failing.
+        for name in [
+            "IpRangeStart",
+            "accuracyradiusmin",
+            "Country",
+            "Region",
+            "Areas",
+        ] {
+            assert!(data.has_property(name), "{name}");
+        }
+        assert!(!data.has_property("Town"));
+        assert!(!data.has_property("NotAProperty"));
+        // Asking reads nothing.
+        assert_eq!(reads_of(&reads, "country"), 0);
     }
 
     // WebAssembly has no threads to spawn.

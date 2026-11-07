@@ -20,28 +20,35 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! Evidence: the immutable, case-insensitive input to a flow data instance.
+//! Evidence: the case-insensitive input to a flow data instance.
 //!
 //! This module implements the
 //! [evidence specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/evidence.md).
 //! The key points it enforces:
 //!
-//! - Keys are case-insensitive. They are lowercased when an [`Evidence`] is
-//!   built, so all later lookups are exact and need no per-lookup case folding.
+//! - Keys are case-insensitive. Each is lowercased when it is added, so later
+//!   lookups are exact and need no per-lookup case folding.
+//! - Each key is also kept as it was first spelled, and entries keep the order
+//!   they were first added in, for reading back with [`Evidence::entries()`].
+//!   The usage sharing record writes them that way.
 //! - Values are kept exactly as supplied (values are case-sensitive).
 //! - Keys are usually `prefix.field`. [`EvidencePrefix`] models the known
 //!   prefixes and their precedence: `query` > `header` > `cookie` > `server` >
 //!   `fiftyone` > `location`, then any other prefix in alphabetical order.
-//! - Once built, an [`Evidence`] is immutable, so concurrent `&` reads are safe
-//!   with no locking (see the
+//! - Once built, an [`Evidence`] cannot be changed by whoever holds it, so
+//!   concurrent `&` reads are safe with no locking (see the
 //!   [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#evidence)).
+//!   A flow data's own evidence gains the values its elements add with
+//!   [`crate::FlowData::add_evidence`], which needs the flow data mutably.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use ahash::RandomState;
+use indexmap::map::Entry;
+use indexmap::IndexMap;
 
-use crate::ci_map::ci_get;
+use crate::ci_map::{ci_get, ci_lookup};
 use crate::constants;
 
 /// A known evidence prefix, in precedence order.
@@ -148,15 +155,44 @@ pub fn compare_keys(left: &str, right: &str) -> Ordering {
     lp.cmp(&rp).then_with(|| lk.cmp(rk))
 }
 
+/// One stored value, with the key as first spelled when that differs from
+/// the lowercase key the map holds it under.
+#[derive(Debug, Clone)]
+struct Stored {
+    key_as_given: Option<Box<str>>,
+    value: String,
+}
+
+/// Lowercase key to stored value, in the order each key was first added.
+type EntryMap = IndexMap<String, Stored, RandomState>;
+
+/// Add one entry. A key already present in any case keeps its first spelling
+/// and position and takes the new value.
+fn insert(entries: &mut EntryMap, key: &str, value: String) {
+    match entries.entry(key.to_lowercase()) {
+        Entry::Occupied(mut occupied) => occupied.get_mut().value = value,
+        Entry::Vacant(vacant) => {
+            let key_as_given = (vacant.key().as_str() != key).then(|| Box::<str>::from(key));
+            vacant.insert(Stored {
+                key_as_given,
+                value,
+            });
+        }
+    }
+}
+
 /// An immutable, case-insensitive store of evidence key-value pairs.
 ///
 /// Build one with an [`EvidenceBuilder`] (via [`Evidence::builder`]). Keys are
-/// lowercased on insertion. Values are stored verbatim. Once built the store
-/// cannot change, so it is cheap to share by reference across threads during
-/// processing.
+/// lowercased on insertion for lookups, and each is also kept as first
+/// spelled. Entries keep the order their keys were first added in. Values are
+/// stored verbatim. Once built the store cannot be changed by whoever holds
+/// it, so it is cheap to share by reference across threads during processing.
+/// Only a flow data adds to its own evidence, through
+/// [`crate::FlowData::add_evidence`].
 #[derive(Debug, Clone, Default)]
 pub struct Evidence {
-    entries: HashMap<String, String, RandomState>,
+    entries: EntryMap,
 }
 
 impl Evidence {
@@ -165,9 +201,30 @@ impl Evidence {
         EvidenceBuilder::new()
     }
 
+    /// An empty evidence using this one's hasher. Seeding a new hasher writes
+    /// a counter every thread shares, so copying one is cheaper under load.
+    pub(crate) fn empty_with_same_hasher(&self) -> Evidence {
+        Evidence {
+            entries: IndexMap::with_hasher(self.entries.hasher().clone()),
+        }
+    }
+
+    /// Add one entry as [`EvidenceBuilder::add`] does, for
+    /// [`crate::FlowData::add_evidence`]. A key already present in any case
+    /// keeps its first spelling and position and takes the new value.
+    pub(crate) fn insert(&mut self, key: &str, value: String) {
+        insert(&mut self.entries, key, value);
+    }
+
+    /// The hasher of the entries, so a test can check that a copy has it.
+    #[cfg(test)]
+    pub(crate) fn hasher(&self) -> &RandomState {
+        self.entries.hasher()
+    }
+
     /// Look up a value by key. The key is matched case-insensitively.
     pub fn get(&self, key: &str) -> Option<&str> {
-        ci_get(&self.entries, key).map(|value| value.as_str())
+        ci_lookup(key, |exact| self.entries.get(exact)).map(|stored| stored.value.as_str())
     }
 
     /// True if the store contains the given key (matched case-insensitively).
@@ -185,11 +242,23 @@ impl Evidence {
         self.entries.is_empty()
     }
 
-    /// Iterate over the `(key, value)` pairs. Keys are lowercase. The iteration
-    /// order is unspecified; use [`Evidence::generate_key`] when a stable order
-    /// is required.
+    /// Iterate over the `(key, value)` pairs, in the order each key was first
+    /// added. Keys are lowercase. Use [`Evidence::generate_key`] for the
+    /// precedence order, and [`Evidence::entries()`] for the keys as spelled.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.entries.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+        self.entries
+            .iter()
+            .map(|(key, stored)| (key.as_str(), stored.value.as_str()))
+    }
+
+    /// Iterate over the entries in the order each key was first added, each
+    /// giving its key as first spelled, its key in lowercase and its value.
+    pub fn entries(&self) -> impl Iterator<Item = EvidenceEntry<'_>> {
+        self.entries.iter().map(|(key, stored)| EvidenceEntry {
+            key,
+            key_as_given: stored.key_as_given.as_deref().unwrap_or(key),
+            value: &stored.value,
+        })
     }
 
     /// Build a deterministic [`DataKey`] from the evidence entries selected by
@@ -205,7 +274,7 @@ impl Evidence {
             .entries
             .iter()
             .filter(|(k, _)| filter.include(k))
-            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .map(|(k, stored)| (k.as_str(), stored.value.as_str()))
             .collect();
         // Order primarily by the filter's declared precedence, falling back to
         // the global key precedence so the result is fully deterministic even
@@ -227,25 +296,26 @@ impl Evidence {
 /// Builder for an immutable [`Evidence`] instance.
 ///
 /// Adding a key that already exists (after case folding) overwrites the earlier
-/// value, because evidence keys are matched case-insensitively.
+/// value, because evidence keys are matched case-insensitively. The key keeps
+/// its first spelling and its place in the order.
 #[derive(Debug, Default)]
 pub struct EvidenceBuilder {
-    entries: HashMap<String, String, RandomState>,
+    entries: EntryMap,
 }
 
 impl EvidenceBuilder {
     /// Create an empty builder.
     pub fn new() -> Self {
         EvidenceBuilder {
-            entries: HashMap::default(),
+            entries: EntryMap::default(),
         }
     }
 
-    /// Add a single evidence entry. The key is lowercased; the value is kept
-    /// verbatim. Returns `self` for chaining.
+    /// Add a single evidence entry. The key is lowercased for lookups and kept
+    /// as spelled for [`Evidence::entries()`]. The value is kept verbatim.
+    /// Returns `self` for chaining.
     pub fn add(mut self, key: impl AsRef<str>, value: impl Into<String>) -> Self {
-        self.entries
-            .insert(key.as_ref().to_lowercase(), value.into());
+        insert(&mut self.entries, key.as_ref(), value.into());
         self
     }
 
@@ -257,8 +327,7 @@ impl EvidenceBuilder {
         I: IntoIterator<Item = (K, V)>,
     {
         for (key, value) in entries {
-            self.entries
-                .insert(key.as_ref().to_lowercase(), value.into());
+            insert(&mut self.entries, key.as_ref(), value.into());
         }
         self
     }
@@ -268,6 +337,32 @@ impl EvidenceBuilder {
         Evidence {
             entries: self.entries,
         }
+    }
+}
+
+/// One evidence entry, as [`Evidence::entries()`] gives it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EvidenceEntry<'a> {
+    key: &'a str,
+    key_as_given: &'a str,
+    value: &'a str,
+}
+
+impl<'a> EvidenceEntry<'a> {
+    /// The key in lowercase, as [`Evidence::iter`] gives it and as an
+    /// [`EvidenceKeyFilter`] is asked about it.
+    pub fn key(&self) -> &'a str {
+        self.key
+    }
+
+    /// The key as it was spelled when first added.
+    pub fn key_as_given(&self) -> &'a str {
+        self.key_as_given
+    }
+
+    /// The value last added under the key.
+    pub fn value(&self) -> &'a str {
+        self.value
     }
 }
 
@@ -438,5 +533,37 @@ impl EvidenceKeyFilter for EvidenceKeyFilterAggregator {
         keys.sort();
         keys.dedup();
         Some(keys)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Evidence made for a parallel group copies the hasher of the evidence
+    /// it was made from, so a key hashes the same through both, where a
+    /// freshly seeded hasher hashes it differently.
+    #[test]
+    fn empty_with_same_hasher_copies_the_hasher() {
+        const KEY: &str = "header.user-agent";
+        let evidence = Evidence::builder().add(KEY, "A").build();
+        let hash = evidence.entries.hasher().hash_one(KEY);
+        assert_ne!(RandomState::new().hash_one(KEY), hash);
+
+        let copy = evidence.empty_with_same_hasher();
+        assert_eq!(copy.entries.hasher().hash_one(KEY), hash);
+    }
+
+    /// A key added in lowercase stores no second spelling, so evidence with
+    /// lowercase keys holds one copy of each key.
+    #[test]
+    fn a_lowercase_key_stores_no_second_spelling() {
+        let evidence = Evidence::builder()
+            .add("header.user-agent", "A")
+            .add("header.X-Test", "B")
+            .build();
+        let stored = |key: &str| evidence.entries.get(key).unwrap().key_as_given.as_deref();
+        assert_eq!(stored("header.user-agent"), None);
+        assert_eq!(stored("header.x-test"), Some("header.X-Test"));
     }
 }

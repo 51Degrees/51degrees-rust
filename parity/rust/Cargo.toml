@@ -1,0 +1,47 @@
+[package]
+name = "parity-rust"
+version = "0.0.0"
+description = "Writes the crates' answers for each corpus case, for the comparison with the .NET packages."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+fiftyone-pipeline-core = { path = "../../pipeline-core" }
+fiftyone-pipeline-engines = { path = "../../pipeline-engines", default-features = false }
+fiftyone-agent-signature = { path = "../../agent-signature" }
+# The cloud translation pipeline gives the cloud request engine a stand-in
+# cloud, so the built-in transport is left out.
+fiftyone-cloud-request-engine = { path = "../../cloud-request-engine", default-features = false }
+fiftyone-pipeline-engines-fiftyone = { path = "../../pipeline-engines-fiftyone" }
+fiftyone-native = { path = "../../native" }
+fiftyone-device-detection-onpremise = { path = "../../device-detection-onpremise" }
+# The robots.txt cases give the engine a resolver inside this program, so the
+# built-in GitHub resolver and its client are left out.
+fiftyone-device-detection-robots-txt = { path = "../../device-detection-robots-txt" }
+fiftyone-ip-intelligence-onpremise = { path = "../../ip-intelligence-onpremise" }
+fiftyone-ip-intelligence-shared = { path = "../../ip-intelligence-shared" }
+fiftyone-json-builder = { path = "../../json-builder" }
+fiftyone-pipeline-translation = { path = "../../pipeline-translation" }
+fiftyone-ip-intelligence-translation = { path = "../../ip-intelligence-translation" }
+# The IP Intelligence cloud engine's builder, which the .NET program loads.
+fiftyone-ip-intelligence-cloud = { path = "../../ip-intelligence-cloud" }
+# The comparison is made before minification, so the minifier is left out.
+fiftyone-javascript-builder = { path = "../../javascript-builder", default-features = false }
+# The 51Did cases sign their own payloads, so the reader's creator is on.
+fodid = { path = "../../fodid", features = ["creator"] }
+fiftyone-fodid-core = { path = "../../fodid-core" }
+# The derived property cases run the built-in scripts on their shared case
+# files, read with the YAML library the crate reads scripts with.
+fiftyone-derived-properties = { path = "../../derived-properties" }
+serde_norway = "0.9"
+# Writes the signed 51Dids in each base64 alphabet. The version fodid uses.
+base64 = "0.22"
+# The robots.txt resolver gives each source id's URI as a URL.
+url = "2"

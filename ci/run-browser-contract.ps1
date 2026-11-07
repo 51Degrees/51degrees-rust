@@ -161,15 +161,16 @@ function Show-Includes([string]$Url, [string]$Directory) {
 # Build first, so the wait below only covers the example starting. The release
 # profile compiles the native Hash code with optimisation, which keeps the
 # TAC file load and each detection fast enough for the suite's timeouts.
-# --config source.toml builds against the crates in this checkout rather than
-# the published ones.
+# The examples depend on the published crates, and Cargo only takes a patch in
+# source.toml whose version is the one it would pick.
+# ci/test-examples-against-source.ps1 versions this checkout's crates above
+# every release, fails if the lock still takes one from crates.io, and puts
+# the manifests and the lock back after the build.
 Write-Host "::group::Build $Bin"
-Push-Location $Examples
-try {
+$build = {
     cargo build --release --config source.toml -p device-detection-examples --bin $Bin
-} finally {
-    Pop-Location
-}
+}.GetNewClosure()
+& (Join-Path $PSScriptRoot "test-examples-against-source.ps1") -Command $build
 Write-Host "::endgroup::"
 
 $Exe = Join-Path $Examples "target/release/$Bin"

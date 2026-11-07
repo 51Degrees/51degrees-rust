@@ -71,7 +71,7 @@ use std::hash::{Hash, Hasher};
 use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -85,12 +85,21 @@ use crate::on_premise_aspect_engine::OnPremiseAspectEngine;
 
 /// One registered data file together with the engine that owns it.
 struct Registration {
-    engine: Arc<dyn OnPremiseAspectEngine>,
+    /// Held weakly, so dropping the engine frees its data set and ends the
+    /// registration.
+    engine: Weak<dyn OnPremiseAspectEngine>,
     data_file: Arc<AspectEngineDataFile>,
     /// The next time the scheduler should poll this file's update URL.
     next_poll: Mutex<Option<Instant>>,
     /// The file-system watcher kept alive for this file, if watching is on.
     watcher: Mutex<Option<Box<dyn notify::Watcher + Send>>>,
+}
+
+impl Registration {
+    /// The engine, unless it has been dropped.
+    fn engine(&self) -> Option<Arc<dyn OnPremiseAspectEngine>> {
+        self.engine.upgrade()
+    }
 }
 
 /// The shared inner state of the service, behind one lock plus a condition
@@ -104,12 +113,39 @@ struct Inner {
     shutting_down: Mutex<bool>,
 }
 
+impl Inner {
+    /// The registrations whose engines are still alive, after removing the
+    /// others. A removed registration is dropped after the lock is released,
+    /// which stops its watcher.
+    fn live_registrations(&self) -> Vec<Arc<Registration>> {
+        let mut ended = Vec::new();
+        let live = {
+            let mut registrations = self.registrations.lock().unwrap_or_else(|e| e.into_inner());
+            registrations.retain(|registration| {
+                let alive = registration.engine.strong_count() > 0;
+                if !alive {
+                    ended.push(Arc::clone(registration));
+                }
+                alive
+            });
+            registrations.clone()
+        };
+        drop(ended);
+        live
+    }
+}
+
 /// Keeps on-premise engine data files current.
 ///
 /// Construct one with [`DataUpdateService::new`], then register each data file
 /// with [`DataUpdateService::register`]. The background scheduler starts on the
 /// first registration. Dropping the service stops the scheduler and releases the
 /// watchers.
+///
+/// The service holds each engine weakly, as a .NET engine unregisters its data
+/// files when it is disposed. Dropping an engine, or the pipeline holding it,
+/// frees its data set and ends its registration, so the caller keeps the
+/// engine for as long as it is to be updated.
 pub struct DataUpdateService {
     inner: Arc<Inner>,
     client: reqwest::blocking::Client,
@@ -166,17 +202,31 @@ impl DataUpdateService {
     /// engine on the data it loaded, as the specification says. It is logged
     /// and returned as an error, and the file is registered all the same, so
     /// the updates that follow still run.
+    ///
+    /// The registration lasts as long as the caller keeps `engine`. Given the
+    /// only reference, the registration ends as this returns, which is logged
+    /// as a warning.
     pub fn register(
         &self,
         engine: Arc<dyn OnPremiseAspectEngine>,
         data_file: Arc<AspectEngineDataFile>,
     ) -> DataUpdateResult {
+        if Arc::strong_count(&engine) == 1 {
+            log::warn!(
+                "The data file for {} will not be updated, because the data update \
+                 service was given the only reference to its engine, which is dropped \
+                 when registration ends. Keep a reference to the engine for as long as \
+                 it is to be updated.",
+                engine.data_key()
+            );
+        }
         let config = data_file.configuration();
         let already_registered = data_file.is_registered();
         data_file.set_registered(true);
+        self.inner.live_registrations();
 
         let registration = Arc::new(Registration {
-            engine: Arc::clone(&engine),
+            engine: Arc::downgrade(&engine),
             data_file: Arc::clone(&data_file),
             next_poll: Mutex::new(None),
             watcher: Mutex::new(None),
@@ -193,7 +243,7 @@ impl DataUpdateService {
                 log::warn!(
                     "An error occurred while updating the data file for {} on start-up. \
                      The data it has is used. Error detail: {error}",
-                    registration.engine.data_key()
+                    engine.data_key()
                 );
             }
         }
@@ -250,7 +300,7 @@ impl DataUpdateService {
                 let data_file = engine.data_file_meta_data(data_file_identifier).cloned();
                 match data_file {
                     Some(data_file) => Arc::new(Registration {
-                        engine: Arc::clone(engine),
+                        engine: Arc::downgrade(engine),
                         data_file,
                         next_poll: Mutex::new(None),
                         watcher: Mutex::new(None),
@@ -264,7 +314,7 @@ impl DataUpdateService {
             self.check_for_update_from_url(&registration)
         } else if registration.data_file.data_file_path().is_some() {
             // No URL: refresh from the file on disk.
-            self.refresh_engine(&registration)
+            Self::refresh_engine(engine, &registration)
         } else {
             Ok(AutoUpdateStatus::NoConfiguration)
         }
@@ -287,13 +337,10 @@ impl DataUpdateService {
             .map_err(|e| DataUpdateError::new(AutoUpdateStatus::RefreshFailed, e.to_string()))
     }
 
-    /// The number of data files currently registered.
+    /// The number of data files currently registered, whose engines have
+    /// not been dropped.
     pub fn registered_count(&self) -> usize {
-        self.inner
-            .registrations
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .len()
+        self.inner.live_registrations().len()
     }
 
     // ----- internal -----
@@ -346,28 +393,22 @@ impl DataUpdateService {
         engine: &Arc<dyn OnPremiseAspectEngine>,
         data_file_identifier: Option<&str>,
     ) -> Option<Arc<Registration>> {
-        let regs = self
-            .inner
-            .registrations
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        regs.iter()
-            .find(|r| {
-                Arc::ptr_eq(&r.engine, engine)
-                    && match data_file_identifier {
-                        Some(id) => r.data_file.identifier() == id,
-                        None => true,
-                    }
-            })
-            .cloned()
+        self.inner.live_registrations().into_iter().find(|r| {
+            std::ptr::addr_eq(r.engine.as_ptr(), Arc::as_ptr(engine))
+                && match data_file_identifier {
+                    Some(id) => r.data_file.identifier() == id,
+                    None => true,
+                }
+        })
     }
 
     /// Install a file-system watcher that refreshes the engine when the data
     /// file changes on disk.
     ///
-    /// The registration owns the watcher, so the watcher's callback holds the
-    /// registration weakly. A strong reference would keep the registration,
-    /// its engine and the watcher's thread alive after the service is dropped.
+    /// The registration owns the watcher, so the callback holds the engine
+    /// weakly and the data file, never the registration. A watcher is then
+    /// only ever dropped by a thread that is not its own, which macOS needs,
+    /// because dropping one waits for its callback to finish.
     fn install_watcher(&self, registration: &Arc<Registration>) {
         use notify::{RecursiveMode, Watcher};
 
@@ -385,7 +426,8 @@ impl DataUpdateService {
             }
         }
 
-        let reg = Arc::downgrade(registration);
+        let engine = Weak::clone(&registration.engine);
+        let data_file = Arc::clone(&registration.data_file);
         let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             let Ok(event) = res else {
                 return;
@@ -396,9 +438,7 @@ impl DataUpdateService {
                 .iter()
                 .any(|changed| changed.file_name() == file_name.as_deref());
             if names_the_file && (event.kind.is_modify() || event.kind.is_create()) {
-                if let Some(reg) = reg.upgrade() {
-                    ServiceHandle::on_file_changed(&reg);
-                }
+                ServiceHandle::on_file_changed(&engine, &data_file);
             }
         });
 
@@ -427,10 +467,12 @@ impl DataUpdateService {
         handle.check_for_update_from_url(registration)
     }
 
-    /// Refresh the engine from the data file currently on disk.
-    fn refresh_engine(&self, registration: &Arc<Registration>) -> DataUpdateResult {
-        registration
-            .engine
+    /// Refresh `engine` from its data file currently on disk.
+    fn refresh_engine(
+        engine: &Arc<dyn OnPremiseAspectEngine>,
+        registration: &Registration,
+    ) -> DataUpdateResult {
+        engine
             .refresh(Some(registration.data_file.identifier()))
             .map(|_| AutoUpdateStatus::Success)
             .map_err(|e| DataUpdateError::new(AutoUpdateStatus::RefreshFailed, e.to_string()))
@@ -525,13 +567,7 @@ impl ServiceHandle {
     /// Run every poll that is currently due and return how long to sleep before
     /// the next one.
     fn run_due_polls(&self) -> Duration {
-        let registrations: Vec<Arc<Registration>> = {
-            self.inner
-                .registrations
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone()
-        };
+        let registrations = self.inner.live_registrations();
 
         let now = Instant::now();
         let mut next_wait = Duration::from_secs(60 * 60);
@@ -552,9 +588,13 @@ impl ServiceHandle {
             };
 
             if due <= now {
-                // Poll now. A failure is logged, and the next interval retries.
+                // Poll now, keeping the engine for the poll. A failure is
+                // logged, and the next interval retries.
+                let Some(engine) = registration.engine() else {
+                    continue;
+                };
                 let result = self.check_for_update_from_url(&registration);
-                log_poll(&registration, result);
+                log_poll(engine.data_key(), &registration, result);
                 let interval = DataUpdateService::poll_interval(&registration.data_file);
                 let next = now + interval;
                 *registration
@@ -572,8 +612,8 @@ impl ServiceHandle {
 
     /// Handle a file-system-watcher event by refreshing the engine from disk if
     /// the file is genuinely newer than the one already applied.
-    fn on_file_changed(registration: &Registration) {
-        let path = match registration.data_file.data_file_path() {
+    fn on_file_changed(engine: &Weak<dyn OnPremiseAspectEngine>, data_file: &AspectEngineDataFile) {
+        let path = match data_file.data_file_path() {
             Some(p) => p.to_path_buf(),
             None => return,
         };
@@ -582,23 +622,23 @@ impl ServiceHandle {
             None => return,
         };
         // Debounce: only act if the file is newer than the last one applied.
-        if let Some(last) = registration.data_file.last_applied_modified() {
+        if let Some(last) = data_file.last_applied_modified() {
             if modified <= last {
                 return;
             }
         }
-        registration.data_file.set_last_applied_modified(modified);
-        let engine = registration.engine.data_key();
-        match registration
-            .engine
-            .refresh(Some(registration.data_file.identifier()))
-        {
+        let Some(engine) = engine.upgrade() else {
+            return;
+        };
+        data_file.set_last_applied_modified(modified);
+        let key = engine.data_key();
+        match engine.refresh(Some(data_file.identifier())) {
             Ok(()) => log::info!(
-                "The data file for {engine} was refreshed from '{}'.",
+                "The data file for {key} was refreshed from '{}'.",
                 path.display()
             ),
             Err(error) => log::warn!(
-                "An error occurred while refreshing {engine} from '{}'. Error detail: {error}",
+                "An error occurred while refreshing {key} from '{}'. Error detail: {error}",
                 path.display()
             ),
         }
@@ -629,12 +669,16 @@ impl ServiceHandle {
     }
 
     /// Poll the remote update URL, verify, decompress, write and refresh.
+    /// An engine that has been dropped needs no update.
     fn poll_update_url(&self, registration: &Arc<Registration>) -> DataUpdateResult {
         let data_file = &registration.data_file;
         let config = data_file.configuration();
         let url = match data_file.data_update_url() {
             Some(u) => u.to_owned(),
             None => return Ok(AutoUpdateStatus::NotNeeded),
+        };
+        let Some(engine) = registration.engine() else {
+            return Ok(AutoUpdateStatus::NotNeeded);
         };
 
         // The formatter adds the Distributor's query parameters, the licence
@@ -644,14 +688,17 @@ impl ServiceHandle {
             .formatted_update_url()
             .unwrap_or_else(|| url.clone());
 
-        // Build the request, adding If-Modified-Since when configured.
+        // Build the request, adding If-Modified-Since when configured. It is
+        // the date the data was published, or the file's modified time when
+        // the data holds no publish date, as the specification allows.
         let mut request = self.client.get(&request_url);
         if config.verify_modified_since {
-            if let Some(published) = data_file.data_published() {
-                request = request.header(
-                    reqwest::header::IF_MODIFIED_SINCE,
-                    httpdate_format(published),
-                );
+            let since = data_file
+                .data_published()
+                .or_else(|| data_file.data_file_path().and_then(file_modified_time));
+            if let Some(since) = since {
+                request =
+                    request.header(reqwest::header::IF_MODIFIED_SINCE, httpdate_format(since));
             }
         }
 
@@ -727,13 +774,13 @@ impl ServiceHandle {
             } else {
                 compressed
             };
-            registration
-                .engine
+            let recorded = data_file.published_changes();
+            engine
                 .refresh_from_memory(Some(data_file.identifier()), &data)
                 .map_err(|e| {
                     DataUpdateError::new(AutoUpdateStatus::RefreshFailed, e.to_string())
                 })?;
-            data_file.set_data_published(Utc::now());
+            Self::record_published(data_file, recorded);
             return Ok(AutoUpdateStatus::Success);
         };
 
@@ -766,27 +813,30 @@ impl ServiceHandle {
                 format!("error replacing data file '{}': {e}", path.display()),
             )
         })?;
-        registration
-            .engine
+        let recorded = data_file.published_changes();
+        engine
             .refresh(Some(data_file.identifier()))
             .map_err(|e| DataUpdateError::new(AutoUpdateStatus::RefreshFailed, e.to_string()))?;
-
-        // Record that fresh data is now in use. We mark "now" as a conservative
-        // lower bound so a subsequent If-Modified-Since is not stale. The true
-        // publish timestamp lives in the data-file header; recovering it is the
-        // engine's responsibility and is not exposed by the refresh trait, so
-        // "now" is used here by design.
-        data_file.set_data_published(Utc::now());
+        Self::record_published(data_file, recorded);
 
         Ok(AutoUpdateStatus::Success)
+    }
+
+    /// After an engine has taken a download, keep the publish date it read
+    /// from the new data, which the next `If-Modified-Since` header carries.
+    /// For an engine that records none since `recorded`, use the current time,
+    /// so the next request is no earlier than this update.
+    fn record_published(data_file: &AspectEngineDataFile, recorded: u64) {
+        if data_file.published_changes() == recorded {
+            data_file.set_data_published(Utc::now());
+        }
     }
 }
 
 /// Log the outcome of a scheduled poll, with the messages the specification's
 /// logging section gives. The URL logged is the configured one, which carries
 /// no licence key.
-fn log_poll(registration: &Arc<Registration>, result: DataUpdateResult) {
-    let engine = registration.engine.data_key();
+fn log_poll(engine: &str, registration: &Registration, result: DataUpdateResult) {
     let url = registration.data_file.data_update_url().unwrap_or("");
     match result {
         Ok(AutoUpdateStatus::Success) => {
@@ -1149,9 +1199,10 @@ mod tests {
             }),
         };
         let due = Instant::now();
+        let mut engines = Vec::new();
         for _ in 0..5 {
             let data_file = Arc::new(polled_file(INTERVAL_SECONDS, INTERVAL_SECONDS));
-            let engine = Arc::new(IdleEngine {
+            let engine: Arc<dyn OnPremiseAspectEngine> = Arc::new(IdleEngine {
                 filter: fiftyone_pipeline_core::EvidenceKeyFilterWhitelist::new(
                     Vec::<String>::new(),
                 ),
@@ -1163,11 +1214,12 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(Arc::new(Registration {
-                    engine,
+                    engine: Arc::downgrade(&engine),
                     data_file,
                     next_poll: Mutex::new(Some(due)),
                     watcher: Mutex::new(None),
                 }));
+            engines.push(engine);
         }
 
         handle.run_due_polls();
@@ -1191,5 +1243,175 @@ mod tests {
             })
             .count();
         assert!(delayed > 0, "no poll after the first added a delay");
+    }
+
+    /// How long a test waits for something it expects of a watcher.
+    const WATCHER_WAIT: Duration = Duration::from_secs(10);
+
+    /// How long the watcher is given to start before the file changes.
+    const WATCHER_START: Duration = Duration::from_millis(300);
+
+    /// How often a test checks again for something it is waiting on.
+    const WATCHER_POLL: Duration = Duration::from_millis(20);
+
+    /// An engine with one watched data file, whose refresh tells the test it
+    /// has started and then waits until the test lets it finish.
+    struct WatchedEngine {
+        filter: fiftyone_pipeline_core::EvidenceKeyFilterWhitelist,
+        data_files: Vec<Arc<AspectEngineDataFile>>,
+        started: Mutex<std::sync::mpsc::Sender<()>>,
+        finish: Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl fiftyone_pipeline_core::FlowElement for WatchedEngine {
+        fn process(
+            &self,
+            _data: &mut fiftyone_pipeline_core::FlowData,
+        ) -> fiftyone_pipeline_core::Result<()> {
+            Ok(())
+        }
+        fn data_key(&self) -> &str {
+            "watched"
+        }
+        fn evidence_key_filter(&self) -> &dyn fiftyone_pipeline_core::EvidenceKeyFilter {
+            &self.filter
+        }
+        fn properties(&self) -> &[fiftyone_pipeline_core::PropertyMetaData] {
+            &[]
+        }
+    }
+
+    impl crate::AspectEngine for WatchedEngine {
+        fn data_source_tier(&self) -> &str {
+            "Lite"
+        }
+        fn aspect_properties(&self) -> &[crate::AspectPropertyMetaData] {
+            &[]
+        }
+    }
+
+    impl OnPremiseAspectEngine for WatchedEngine {
+        fn data_files(&self) -> &[Arc<AspectEngineDataFile>] {
+            &self.data_files
+        }
+        fn refresh(&self, _identifier: Option<&str>) -> fiftyone_pipeline_core::Result<()> {
+            let _ = self.started.lock().unwrap().send(());
+            let _ = self.finish.lock().unwrap().recv_timeout(WATCHER_WAIT);
+            Ok(())
+        }
+    }
+
+    /// A watched data file in a new folder for one test, its engine, and the
+    /// ends of the channels its refresh uses.
+    struct Watched {
+        dir: PathBuf,
+        path: PathBuf,
+        engine: Arc<dyn OnPremiseAspectEngine>,
+        data_file: Arc<AspectEngineDataFile>,
+        started: std::sync::mpsc::Receiver<()>,
+        finish: std::sync::mpsc::Sender<()>,
+    }
+
+    fn watched(test: &str) -> Watched {
+        let dir = std::env::temp_dir().join(format!(
+            "fiftyone-update-service-{test}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("device.dat");
+        std::fs::write(&path, b"version 1").unwrap();
+        let data_file = Arc::new(AspectEngineDataFile::new(
+            crate::DataFileConfiguration::builder(&path)
+                .automatic_updates_enabled(true)
+                .file_system_watcher_enabled(true)
+                .build(),
+        ));
+        let (started_sender, started) = std::sync::mpsc::channel();
+        let (finish, finish_receiver) = std::sync::mpsc::channel();
+        let engine: Arc<dyn OnPremiseAspectEngine> = Arc::new(WatchedEngine {
+            filter: fiftyone_pipeline_core::EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+            data_files: vec![Arc::clone(&data_file)],
+            started: Mutex::new(started_sender),
+            finish: Mutex::new(finish_receiver),
+        });
+        Watched {
+            dir,
+            path,
+            engine,
+            data_file,
+            started,
+            finish,
+        }
+    }
+
+    /// The service's only registration.
+    fn only_registration(service: &DataUpdateService) -> Arc<Registration> {
+        let registrations = service.inner.registrations.lock().unwrap();
+        assert_eq!(registrations.len(), 1);
+        Arc::clone(&registrations[0])
+    }
+
+    /// While the watcher's callback refreshes the engine, the callback holds
+    /// no reference to the registration that owns the watcher. Were it to hold
+    /// one, a prune on another thread could leave the callback the last
+    /// reference, and the watcher would be dropped on its own thread, which
+    /// on macOS waits for that same callback to finish and never returns.
+    #[test]
+    fn a_file_event_does_not_hold_its_registration() {
+        let watched = watched("event");
+        let service = DataUpdateService::new();
+        service
+            .register(Arc::clone(&watched.engine), Arc::clone(&watched.data_file))
+            .unwrap();
+        std::thread::sleep(WATCHER_START);
+        let registration = only_registration(&service);
+
+        std::fs::write(&watched.path, b"version 2").unwrap();
+        let started = watched.started.recv_timeout(WATCHER_WAIT);
+        // The service's list and this test hold the registration.
+        let held = Arc::strong_count(&registration);
+        drop(watched.finish);
+
+        assert!(started.is_ok(), "the watcher did not refresh the engine");
+        assert_eq!(held, 2, "the watcher's callback holds the registration");
+        drop(registration);
+        drop(service);
+        let _ = std::fs::remove_dir_all(&watched.dir);
+    }
+
+    /// Dropping the engine drops its registration at the next prune, and with
+    /// it the watcher the registration owns.
+    #[test]
+    fn dropping_the_engine_drops_its_registration_and_watcher() {
+        let watched = watched("drop");
+        let service = DataUpdateService::new();
+        service
+            .register(Arc::clone(&watched.engine), Arc::clone(&watched.data_file))
+            .unwrap();
+        let registration = {
+            let registration = only_registration(&service);
+            assert!(
+                registration.watcher.lock().unwrap().is_some(),
+                "no watcher was installed"
+            );
+            Arc::downgrade(&registration)
+        };
+
+        drop(watched.engine);
+        assert_eq!(service.registered_count(), 0);
+
+        // A scheduler round that began before the prune may hold the
+        // registration until the round ends.
+        let start = Instant::now();
+        while registration.strong_count() > 0 && start.elapsed() < WATCHER_WAIT {
+            std::thread::sleep(WATCHER_POLL);
+        }
+        assert!(
+            registration.upgrade().is_none(),
+            "the registration and its watcher outlived the engine"
+        );
+        drop(service);
+        let _ = std::fs::remove_dir_all(&watched.dir);
     }
 }

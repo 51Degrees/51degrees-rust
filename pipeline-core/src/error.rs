@@ -38,6 +38,7 @@
 //!   the resource key). This is the
 //!   ["missing properties" rule](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#missing-properties).
 
+use std::borrow::Cow;
 use std::fmt;
 
 use thiserror::Error;
@@ -70,6 +71,9 @@ pub enum MissingPropertyReason {
     /// The property is unknown to the element entirely, or the reason could not
     /// be determined.
     Unknown,
+    /// Cloud only. The cloud request for this flow data failed, so the cloud
+    /// engines had no response to populate the property from.
+    CloudRequestFailed,
 }
 
 impl MissingPropertyReason {
@@ -91,6 +95,10 @@ impl MissingPropertyReason {
                 "your resource key does not include access to this property"
             }
             MissingPropertyReason::Unknown => "the property is not available in the result set",
+            MissingPropertyReason::CloudRequestFailed => {
+                "an upstream cloud request failed, so no data was available to populate \
+                 the property"
+            }
         }
     }
 }
@@ -130,8 +138,10 @@ impl NoValueError {
 /// A single error recorded against a [`crate::FlowData`] instance during
 /// processing.
 ///
-/// When `suppress_process_exceptions` is enabled, the pipeline collects one of
-/// these per failing element rather than aborting, per the
+/// The pipeline records one of these for each element that returns an error,
+/// whether or not `suppress_process_exceptions` is enabled, and an element
+/// that carries on past a failure can record one with
+/// [`crate::FlowData::add_error`], per the
 /// [exception-handling specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/exception-handling.md#process-function).
 #[derive(Debug, Error)]
 #[error("error in element '{element_data_key}': {source}")]
@@ -274,6 +284,17 @@ pub enum Error {
         /// The human-readable detail of the failure.
         message: String,
     },
+
+    /// A failure in an element that none of the other variants describes,
+    /// as .NET's `PipelineException`.
+    ///
+    /// A cloud engine records one, without failing processing, when the cloud
+    /// request engine before it left no response.
+    #[error("pipeline error: {}", crate::redact::redact(.message))]
+    Pipeline {
+        /// A description of the failure.
+        message: String,
+    },
 }
 
 /// Debug is written by hand rather than derived so that the free-text fields
@@ -332,6 +353,10 @@ impl fmt::Debug for Error {
                 .field("status", status)
                 .field("message", &crate::redact::redact(message))
                 .finish(),
+            Error::Pipeline { message } => f
+                .debug_struct("Pipeline")
+                .field("message", &crate::redact::redact(message))
+                .finish(),
         }
     }
 }
@@ -341,6 +366,25 @@ impl Error {
     pub fn configuration(message: impl Into<String>) -> Self {
         Error::PipelineConfiguration {
             message: message.into(),
+        }
+    }
+
+    /// The error's message without the words naming its kind, as .NET's
+    /// `Exception.Message` and Java's `getMessage` give it, with credentials
+    /// removed as they are from the display. The JSON builder writes this in
+    /// `errors`.
+    ///
+    /// A missing property and an aggregate give their display, which is
+    /// already the message.
+    pub fn message(&self) -> Cow<'_, str> {
+        match self {
+            Error::NoValue(inner) => crate::redact::redact(&inner.message),
+            Error::PipelineConfiguration { message }
+            | Error::NotProcessed { message }
+            | Error::CloudRequest { message, .. }
+            | Error::Native { message, .. }
+            | Error::Pipeline { message } => crate::redact::redact(message),
+            other => Cow::Owned(other.to_string()),
         }
     }
 }
@@ -467,11 +511,64 @@ mod tests {
     }
 
     #[test]
+    fn a_pipeline_error_is_redacted() {
+        let error = Error::Pipeline {
+            message: format!("the element failed calling '?resource={NOT_A_KEY}'"),
+        };
+        assert!(!error.to_string().contains(NOT_A_KEY));
+        assert!(!format!("{error:?}").contains(NOT_A_KEY));
+        assert!(error
+            .to_string()
+            .starts_with("pipeline error: the element failed"));
+    }
+
+    #[test]
+    fn a_failed_cloud_request_reads_as_dotnet_says() {
+        let error = Error::PropertyMissing {
+            property: "ismobile".to_owned(),
+            element_data_key: "device".to_owned(),
+            reason: MissingPropertyReason::CloudRequestFailed,
+        };
+        assert_eq!(
+            error.to_string(),
+            "property 'ismobile' not found in data for element 'device'. This is because \
+             an upstream cloud request failed, so no data was available to populate the \
+             property."
+        );
+    }
+
+    #[test]
     fn a_no_value_error_is_redacted() {
         let error = NoValueError::new(format!("no value because '{NOT_A_KEY}' is refused"));
         assert!(!error.to_string().contains(NOT_A_KEY));
         assert!(!format!("{error:?}").contains(NOT_A_KEY));
         assert!(error.to_string().contains("is refused"));
+    }
+
+    #[test]
+    fn a_message_leaves_out_the_kind_and_removes_the_key() {
+        let error = Error::Pipeline {
+            message: "carried on".to_owned(),
+        };
+        assert_eq!(error.to_string(), "pipeline error: carried on");
+        assert_eq!(error.message(), "carried on");
+
+        let cloud = cloud_error_carrying_a_key().message().into_owned();
+        assert!(!cloud.contains(NOT_A_KEY), "the key survived: {cloud}");
+        assert!(cloud.starts_with("Cloud service at "), "{cloud}");
+
+        let native = Error::Native {
+            status: "InvalidInput".to_owned(),
+            message: "no address".to_owned(),
+        };
+        assert_eq!(native.message(), "no address");
+
+        let missing = Error::PropertyMissing {
+            property: "ismobile".to_owned(),
+            element_data_key: "device".to_owned(),
+            reason: MissingPropertyReason::PropertyNotAccessibleWithResourceKey,
+        };
+        assert_eq!(missing.message(), missing.to_string());
     }
 
     #[test]

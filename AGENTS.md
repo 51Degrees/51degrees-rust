@@ -136,9 +136,11 @@ workspace of runnable examples.
 
 - **Library workspace** (repository root): the pipeline core and engines,
   Device Detection and IP Intelligence (cloud and on-premise), the cloud
-  request engine, the JSON and JavaScript builders, the axum web integration,
-  and the `fodid` 51Did reader. Each concern is its own crate so a consumer
-  depends only on what it uses.
+  request engine, the translation engine and the IP Intelligence country
+  translation engines, the JSON and JavaScript builders, the axum web
+  integration, the `fodid` 51Did reader and the 51Did data model and cloud
+  engine. Each concern is its own crate so a consumer depends only on what it
+  uses.
 - **Example workspace** (`examples/`): excluded from the root workspace
   (`exclude = ["examples"]`). It depends on the **published** crates from
   crates.io by default, so a fresh checkout of `examples/` builds the way a
@@ -244,6 +246,26 @@ examples against the crates at that version, publishes each crate to crates.io
 in dependency order with `ci/publish-crates.sh`, skipping any version already
 published, and tags the commit.
 
+The crates require each other exactly, as in
+`fiftyone-common-sys = { version = "=4.5.2", path = "../common-sys" }`, so a
+crate of one release builds only with the crates of that release beneath it
+and the C sources they carry. A plain version is a caret requirement, which
+would let a fresh build of an older crate take newer `-sys` crates.
+Dev-dependencies are the exception and take the plain version, because they
+never reach a project's build and an exact one would force a new release of a
+crate whenever a crate its tests use is released. `set-crate-versions.ps1`
+writes the release's version into each requirement in that form, and
+`ci/check-crate-requirements.ps1`, which it runs before and after writing,
+fails on a requirement in the other form, on a published crate that requires
+one `ci/crates.txt` does not publish, on a `ci/crates.txt` order that
+publishes a crate before one it requires, and on finding nothing to check.
+
+Cargo will not take two crates that share a crate beneath them from different
+releases. It takes both from one release, even if that means an older version
+of one, or stops with an error when the project's requirements allow none.
+Crates that share nothing beneath them, such as `fodid` and
+`fiftyone-device-detection`, can still come from different releases.
+
 Authentication uses crates.io **Trusted Publishing**, where the publish workflow
 exchanges the run's GitHub OIDC identity for a short-lived token, so no API
 token is stored. Each crate has this repository and `publish.yml` registered as
@@ -269,13 +291,17 @@ workspace reads the submodule and never needs the copy.
 ## CI gates
 
 - `pull-request.yml` runs fmt, build, test, clippy and doc on Windows, Linux
-  (two LTS) and macOS (Apple Silicon), plus a wasm32-wasip1 job for the cloud
-  crates, on pushes to `main` and on PRs into `main`, `rc` and `release/**`.
-  It builds the C sources and restores the data files into `cxx/data` from
-  the entry `data-files.yml` keeps in the Actions cache, downloading with the
-  data repository's script only a file it lacks. It also runs
+  (two LTS) and macOS (Apple Silicon), plus a wasm32-wasip1 job, on pushes to
+  `main` and on PRs into `main`, `rc` and `release/**`. It builds the C
+  sources and restores the data files into `cxx/data` from the entry
+  `data-files.yml` keeps in the Actions cache, downloading with the data
+  repository's script only a file it lacks. It also runs
   `ci/check-native-symbols.ps1` and the property lookup scaling test in
-  release.
+  release. The wasm job builds the crates in its build list and runs the
+  tests of those in its test list under wasmtime, with crates for the cloud,
+  51Did, derived properties and translation among them. It then runs
+  `ci/measure-wasm-size.sh` over the separate `ci/wasm-size` workspace, which
+  gives the module size in `ip-intelligence-translation/README.md`.
 - `data-files.yml` runs each day on `main` and keeps the free data files in
   one Actions cache entry. It restores the newest entry, asks the Distributor
   only whether each file has changed (`-Update`), and saves the files under a
@@ -311,19 +337,25 @@ workspace reads the submodule and never needs the copy.
   tests the crate on wasm32-wasip2 under wasmtime. Same triggers, and it
   reads no secrets.
 - `examples.yml` builds and tests `examples/` against local source
-  (`source.toml`) before a release, on every PR.
+  (`source.toml`) before a release. Its contract job builds the two device
+  detection web examples the same way, through
+  `ci/test-examples-against-source.ps1`, and runs the browser contract
+  against them. Runs on every PR.
 - `publish.yml` publishes on push to `main`, then a `verify-published` job
   builds and tests `examples/` against the just-released crates.io packages.
 - `utm-link-lint.yml` checks the UTM links described below, on every PR.
 - `mustache-drift.yml` guards the generated JavaScript resource template.
   Push and pull request builds compare against a pinned upstream commit
-  rather than the branch, because the canonical template is being changed by
-  the create last programme in the cloud service, so comparing against the
-  branch would fail work here that has nothing to do with that programme.
-  The weekly schedule and a manual run still compare against the branch, so
-  a real drift is still reported. 51Degrees/51degrees-rust#52 lifts the pin, by moving
-  the bundled asset and `UPSTREAM_PINNED_REF` to the same commit in one pull
-  request.
+  rather than the branch, so a change upstream does not fail work here that
+  has nothing to do with it. The weekly schedule and a manual run still
+  compare against the branch, so a real drift is still reported. A refresh
+  moves the bundled asset and `UPSTREAM_PINNED_REF` to the same commit in one
+  pull request.
+- `dotnet-comparison.yml` runs the crates and the published .NET packages
+  over the corpus in `parity/` and fails on any difference that
+  `parity/allowed-differences.json` does not list with its reason. See
+  [parity/README.md](parity/README.md). It runs on pushes to `main` and on
+  pull requests into `main` and `release/**`.
 - `nightly-performance.yml` is the nightly (and on-demand) on-premise
   throughput run that feeds the documentation performance graphs. Its adapter,
   `ci/run-performance-tests.ps1`, runs the performance examples against this

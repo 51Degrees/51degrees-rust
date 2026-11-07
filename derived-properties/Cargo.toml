@@ -10,7 +10,7 @@ repository.workspace = true
 homepage = "https://51degrees.com/build-your-own?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-derived-properties-cargo.toml&utm_term=homepage"
 
 [dependencies]
-fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
 thiserror.workspace = true
 # The script format is YAML, and JSON is read as the JSON subset of YAML so one
 # parser covers both, which is what the format asks for. serde_norway is the
@@ -19,6 +19,10 @@ thiserror.workspace = true
 # are booleans, which is the schema the shared reference tools read with. It is
 # pure Rust, so the crate still builds for wasm32.
 serde_norway.workspace = true
+# Logs each script at build and a source element that did not run before
+# this one, through the log facade, which does nothing until the
+# application installs a logger.
+log = "0.4"
 
 [package.metadata.docs.rs]
 all-features = true

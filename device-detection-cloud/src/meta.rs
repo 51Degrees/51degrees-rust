@@ -29,10 +29,43 @@
 //! element-data key the properties are attributed to. These helpers hold that one
 //! shared mapping so the two engines stay consistent.
 
+use std::sync::{Arc, OnceLock};
+
 use fiftyone_cloud_request_engine::CloudPropertyMetaData;
 use fiftyone_cloud_request_engine::CloudRequestEngine;
+use fiftyone_device_detection_shared::DeviceDataBase;
 use fiftyone_pipeline_core::{Error, FlowData, PropertyMetaData, PropertyValueType, Result};
-use fiftyone_pipeline_engines::AspectPropertyMetaData;
+use fiftyone_pipeline_engines::{AspectPropertyMetaData, EngineDeployment, MissingPropertySource};
+
+/// The property metadata a cloud engine derives from the request engine's
+/// accessible properties, kept for the life of the engine once derived.
+#[derive(Default)]
+pub(crate) struct DiscoveredMetadata {
+    /// The core property metadata for the product.
+    pub(crate) properties: Vec<PropertyMetaData>,
+    /// The aspect view of the same metadata.
+    pub(crate) aspect_properties: Vec<AspectPropertyMetaData>,
+    /// The data tier reported for the product.
+    pub(crate) data_source_tier: String,
+    /// Why a property is missing from data of a successful request, from
+    /// the metadata above. [`None`] when the request engine has no resource
+    /// key, because the properties a license key grants are not listed.
+    pub(crate) missing: Option<Arc<MissingPropertySource>>,
+}
+
+impl DiscoveredMetadata {
+    /// Give `device`, mapped from a successful response, the reason for each
+    /// property the response did not return, so reading one gives that
+    /// reason. The read also logs a warning, as .NET's cloud data does,
+    /// unless logging is stopped, as it is for a hardware profile.
+    pub(crate) fn add_missing_property_source(&self, device: &mut DeviceDataBase) {
+        if let Some(missing) = &self.missing {
+            device
+                .base_mut()
+                .add_missing_property_source(Arc::clone(missing));
+        }
+    }
+}
 
 /// Build the core and aspect property metadata for a set of cloud properties,
 /// attributing every property to `element_data_key` and typing it from the
@@ -57,30 +90,66 @@ pub(crate) fn build_metadata(
     (core, aspect)
 }
 
-/// Pull a product's accessible properties from the request engine and build the
-/// core and aspect metadata, plus its data tier, for that product.
+/// Whether an engine has no metadata because the request engine's property
+/// list request failed. The request engine asks for the list when it is built,
+/// or is given it, so a list it still lacks is one whose request failed.
+pub(crate) fn property_list_request_failed(
+    loaded: bool,
+    request_engine: &CloudRequestEngine,
+) -> bool {
+    !loaded && request_engine.public_properties().is_err()
+}
+
+/// Fill `slot` with the metadata of the product under `element_data_key`,
+/// read from the request engine's accessible properties, unless it is
+/// already filled.
 ///
-/// Both cloud engines derive their metadata identically, differing only in the
-/// `element_data_key` the product is found and attributed under. A resource key
-/// that grants no such product yields empty metadata and no tier rather than an
-/// error, matching how each engine handles an absent product. Triggers the
-/// request engine's lazy accessible-properties fetch, returning an
-/// [`Error::CloudRequest`] if it could not fetch them.
-pub(crate) fn refresh_product_metadata(
+/// Returns the request engine's [`Error::CloudRequest`] while its discovery
+/// has not completed, leaving the slot empty so a later call can fill it. A
+/// resource key that grants no such product, or lists it with no properties,
+/// fills the slot with empty metadata rather than failing, and the call that
+/// fills it logs an error naming `engine_name`, as .NET does, so it is logged
+/// once for the life of the engine. With only a license key there are no
+/// accessible properties to read, so nothing is logged and the metadata
+/// holds no missing property source.
+pub(crate) fn fill_metadata(
+    slot: &OnceLock<DiscoveredMetadata>,
     request_engine: &CloudRequestEngine,
     element_data_key: &str,
-) -> Result<(Vec<PropertyMetaData>, Vec<AspectPropertyMetaData>, String)> {
+    engine_name: &str,
+) -> Result<()> {
+    if slot.get().is_some() {
+        return Ok(());
+    }
     let products = request_engine.public_properties()?;
-
-    Ok(match products.products.get(element_data_key) {
-        Some(product) => {
-            let (core, aspect) = build_metadata(&product.properties, element_data_key);
-            (core, aspect, product.data_tier.clone().unwrap_or_default())
+    let product = products
+        .products
+        .get(element_data_key)
+        .filter(|product| !product.properties.is_empty());
+    let mut metadata = product.map_or_else(DiscoveredMetadata::default, |product| {
+        let (properties, aspect_properties) = build_metadata(&product.properties, element_data_key);
+        DiscoveredMetadata {
+            properties,
+            aspect_properties,
+            data_source_tier: product.data_tier.clone().unwrap_or_default(),
+            missing: None,
         }
-        // The resource key grants no such product. Leave the metadata empty
-        // rather than failing.
-        None => (Vec::new(), Vec::new(), String::new()),
-    })
+    });
+    if request_engine.resource_key().is_some() {
+        metadata.missing = Some(Arc::new(MissingPropertySource::new(
+            element_data_key,
+            engine_name,
+            EngineDeployment::Cloud,
+            metadata.data_source_tier.clone(),
+            metadata.aspect_properties.clone(),
+        )));
+    }
+    if slot.set(metadata).is_ok() && product.is_none() && request_engine.resource_key().is_some() {
+        log::error!(
+            "Aspect properties could not be loaded for {engine_name} - '{element_data_key}'"
+        );
+    }
+    Ok(())
 }
 
 /// Read the cloud request engine's stored JSON for an engine to map, returning
@@ -89,8 +158,8 @@ pub(crate) fn refresh_product_metadata(
 /// Returns an [`Error::PipelineConfiguration`], naming `engine_name`, when no
 /// cloud request engine ran before the calling engine. An empty or absent JSON
 /// response means the request engine failed and already recorded its own error,
-/// which yields `Ok(None)` so the caller produces no result and raises no second
-/// error.
+/// which yields `Ok(None)`, so the caller stores empty data and records that
+/// it did not process, rather than returning a second error.
 pub(crate) fn cloud_json(data: &FlowData, engine_name: &str) -> Result<Option<String>> {
     // The request engine writes its data under the `cloud` key. If it is absent
     // or never started processing, the calling engine has been placed without a

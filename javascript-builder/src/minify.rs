@@ -26,15 +26,10 @@
 //! minified and printed by the pure-Rust oxc parser, minifier and code
 //! generator. A failure at any stage (a parse error, or a panic from an edge
 //! case in the minifier) falls back to the original, unminified content and
-//! flags it through [`MinifyOutcome::had_error`], reverting to the unminified
-//! content on any error so valid JavaScript is always served.
+//! says why in [`MinifyOutcome::errors`], so valid JavaScript is always served.
 //!
-//! The oxc call is wrapped in [`std::panic::catch_unwind`] as defence in depth.
-//! The previously used `minify-js` crate could perform a memory-unsafe
-//! out-of-bounds write that surfaced on Windows as a process access violation
-//! (exit 0xc0000005), which is not a recoverable unwind and so could not be
-//! contained. oxc is safe Rust, so any failure is at worst a catchable panic
-//! that this guard turns into the unminified fallback.
+//! oxc runs on a thread of its own, and a panic in it ends that thread and
+//! becomes the unminified fallback when the thread is joined.
 //!
 //! Without the `minify` feature, and on wasm targets (where the oxc dependency
 //! is not compiled, see the crate's target-specific dependency), the rendered
@@ -45,16 +40,17 @@ pub struct MinifyOutcome {
     /// The content to store. This is the minified JavaScript on success, or the
     /// original rendered content when minification was not performed or failed.
     pub content: String,
-    /// True when minification was attempted but failed and the original content
-    /// was kept. False on success and when the `minify` feature is off.
-    pub had_error: bool,
+    /// What went wrong when minification was attempted but failed and the
+    /// original content was kept. Empty on success and when the `minify`
+    /// feature is off.
+    pub errors: Vec<String>,
 }
 
 /// Return the JavaScript to store for this request.
 ///
 /// With the `minify` feature the content is minified by oxc, falling back to the
-/// original content (with `had_error` set) on any failure. Without the feature
-/// the content is returned unchanged.
+/// original content (with `errors` saying why) on any failure. Without the
+/// feature the content is returned unchanged.
 pub fn minify(content: String) -> MinifyOutcome {
     minify_impl(content)
 }
@@ -62,29 +58,26 @@ pub fn minify(content: String) -> MinifyOutcome {
 #[cfg(all(feature = "minify", not(target_family = "wasm")))]
 fn minify_impl(content: String) -> MinifyOutcome {
     match try_minify(&content) {
-        Some(minified) => MinifyOutcome {
+        Ok(minified) => MinifyOutcome {
             content: minified,
-            had_error: false,
+            errors: Vec::new(),
         },
-        None => MinifyOutcome {
-            content,
-            had_error: true,
-        },
+        Err(errors) => MinifyOutcome { content, errors },
     }
 }
 
 #[cfg(not(all(feature = "minify", not(target_family = "wasm"))))]
 fn minify_impl(content: String) -> MinifyOutcome {
     // No minifier is compiled in. Serving the rendered template unchanged is by
-    // design, not a failure, so had_error stays false.
+    // design, not a failure, so there are no errors.
     MinifyOutcome {
         content,
-        had_error: false,
+        errors: Vec::new(),
     }
 }
 
-/// Minify `source` with oxc on a dedicated thread, returning `None` on any parse
-/// error or panic so the caller serves the unminified content.
+/// Minify `source` with oxc on a dedicated thread, returning what went wrong on
+/// any parse error or panic so the caller serves the unminified content.
 ///
 /// oxc parses and minifies by recursing over the AST. On a thread with a small
 /// stack a deep script could overflow it, which surfaces on Windows as a process
@@ -94,21 +87,24 @@ fn minify_impl(content: String) -> MinifyOutcome {
 /// contains an ordinary panic from an edge case (the join returns an error),
 /// which becomes the unminified fallback.
 #[cfg(all(feature = "minify", not(target_family = "wasm")))]
-fn try_minify(source: &str) -> Option<String> {
+fn try_minify(source: &str) -> Result<String, Vec<String>> {
     std::thread::scope(|scope| {
-        std::thread::Builder::new()
+        match std::thread::Builder::new()
             .stack_size(16 * 1024 * 1024)
             .spawn_scoped(scope, || minify_with_oxc(source))
-            .ok()
-            .and_then(|handle| handle.join().ok())
-            .flatten()
+        {
+            Ok(handle) => handle
+                .join()
+                .unwrap_or_else(|_| Err(vec!["The minifier stopped unexpectedly.".to_owned()])),
+            Err(error) => Err(vec![format!("The minifier could not start: {error}.")]),
+        }
     })
 }
 
-/// Parse, minify and print `source` with oxc. Returns `None` if parsing reported
-/// errors, so only valid JavaScript is compacted.
+/// Parse, minify and print `source` with oxc. Returns the parser's messages if
+/// parsing reported errors, so only valid JavaScript is compacted.
 #[cfg(all(feature = "minify", not(target_family = "wasm")))]
-fn minify_with_oxc(source: &str) -> Option<String> {
+fn minify_with_oxc(source: &str) -> Result<String, Vec<String>> {
     use oxc::allocator::Allocator;
     use oxc::codegen::{Codegen, CodegenOptions};
     use oxc::minifier::{Minifier, MinifierOptions};
@@ -125,7 +121,15 @@ fn minify_with_oxc(source: &str) -> Option<String> {
     let source_type = SourceType::script();
     let parsed = Parser::new(&allocator, source, source_type).parse();
     if parsed.panicked || !parsed.diagnostics.is_empty() {
-        return None;
+        let mut errors: Vec<String> = parsed
+            .diagnostics
+            .iter()
+            .map(|diagnostic| format!("{diagnostic}."))
+            .collect();
+        if errors.is_empty() {
+            errors.push("The parser stopped unexpectedly.".to_owned());
+        }
+        return Err(errors);
     }
 
     let mut program = parsed.program;
@@ -138,7 +142,7 @@ fn minify_with_oxc(source: &str) -> Option<String> {
         })
         .with_scoping(minified.scoping)
         .build(&program);
-    Some(printed.code)
+    Ok(printed.code)
 }
 
 #[cfg(test)]
@@ -150,7 +154,10 @@ mod tests {
     fn minify_compacts_valid_javascript() {
         let content = "function   add ( a , b )  {\n  return a   +   b ;\n}\n".to_owned();
         let outcome = minify(content.clone());
-        assert!(!outcome.had_error, "valid input minifies without error");
+        assert!(
+            outcome.errors.is_empty(),
+            "valid input minifies without error"
+        );
         assert!(
             outcome.content.len() < content.len(),
             "minified output is smaller: {:?}",
@@ -176,7 +183,10 @@ mod tests {
             "function manager() { this.complete = function () {}; }\nvar fod = new manager();\n"
                 .to_owned();
         let outcome = minify(content);
-        assert!(!outcome.had_error, "valid input minifies without error");
+        assert!(
+            outcome.errors.is_empty(),
+            "valid input minifies without error"
+        );
         assert!(
             outcome.content.contains("fod"),
             "the top-level fod binding must survive minification: {:?}",
@@ -187,11 +197,16 @@ mod tests {
     #[cfg(all(feature = "minify", not(target_family = "wasm")))]
     #[test]
     fn minify_falls_back_on_invalid_javascript() {
-        // A parse error must not propagate; the original content is served and
-        // the error is flagged.
+        // A parse error must not propagate. The original content is served and
+        // the parser's message is returned.
         let content = "function (  {{ this is not valid ".to_owned();
         let outcome = minify(content.clone());
-        assert!(outcome.had_error, "invalid input is flagged");
+        assert!(!outcome.errors.is_empty(), "invalid input is flagged");
+        assert!(
+            outcome.errors.iter().all(|error| !error.is_empty()),
+            "each error has a message: {:?}",
+            outcome.errors
+        );
         assert_eq!(outcome.content, content, "the original content is kept");
     }
 
@@ -200,7 +215,7 @@ mod tests {
     fn minify_returns_content_unchanged_without_the_feature() {
         let content = "var  x  =  1 ;".to_owned();
         let outcome = minify(content.clone());
-        assert!(!outcome.had_error);
+        assert!(outcome.errors.is_empty());
         assert_eq!(outcome.content, content);
     }
 }

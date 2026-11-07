@@ -130,10 +130,12 @@ crate accepts and leaves in place. There is no upper bound on a 51Did in this
 crate, so a reader built today keeps reading identifiers issued in a newer,
 longer shape.
 
-`FodId` derefs to the underlying `owid::Owid`, so a `FodId` value can be used
-directly for all OWID level concerns (domain, date, payload bytes, signature,
-base64 round tripping and signature verification) and adds typed accessors
-for the payload fields on top.
+The envelope's own fields and operations (version, domain, date, signature,
+base64 round tripping and signature verification) are methods of `FodId`
+too. The payload bytes are not, because every field in them has a typed
+accessor. `FodId` still derefs to the underlying `fodid::Owid`, and the
+deprecated `owid()` and `into_owid()` still return it, only so that code
+written against earlier releases compiles.
 
 ## Usage
 
@@ -159,7 +161,7 @@ fn read(base64_from_cloud_service: &str, public_pem: &str) -> Result<(), fodid::
     // document where this crate knows the index.
     let terms = fod_id.terms();             // Option<&'static str>
 
-    // Inherited OWID level fields and operations, available through Deref.
+    // The envelope's own fields and operations.
     let domain = fod_id.domain();
     let round_trip = fod_id.as_base64()?;
 
@@ -186,9 +188,9 @@ this order.
 
 | Status | Meaning |
 |---|---|
-| `Error::Parse` | The bytes are not an OWID envelope. The OWID reason is kept unchanged inside and read with `.status()`, for example `ParseStatus::MissingInput`, `InvalidBase64`, `UnexpectedEnd` or `ByteCountMismatch`. |
-| `Error::PayloadTooShort` | The envelope is fine, but the payload cannot hold the 5 byte 51Did header, so the identifier type cannot be read. |
-| `Error::UnsupportedPayloadVersion` | The flags byte names a payload version other than 0, and the variant names the version found. |
+| `Error::Parse` | The bytes are not an OWID envelope. The OWID reason is kept unchanged inside and read with `.status()`, for example `ParseStatus::MissingInput`, `InvalidBase64`, `UnexpectedEnd` or `ByteCountMismatch`. A creator domain that is not ASCII is `InvalidDomainEncoding`, because the 51Did layout gives the domain as ASCII text. |
+| `Error::UnsupportedPayloadVersion` | The flags byte names a payload version other than 0, and the variant names the version found. The version is read before the length, because the header's length is part of the version 0 layout. |
+| `Error::PayloadTooShort` | The envelope is fine, but the payload is empty, or names version 0 and cannot hold the 5 byte 51Did header, so the identifier type cannot be read. |
 | `Error::NoUsage` | The flags byte sets none of usage bits 0 to 2. |
 | `Error::InvalidTypePayloadLength` | The header was read, and the payload is shorter than the value the identifier type requires (21 bytes in all for random, 37 for probabilistic and hashed email). |
 
@@ -227,6 +229,12 @@ byte-level difference is in the **envelope**. The **match key** carried inside
 is stable. To decide whether two 51Dids refer to the same browser instance,
 compare the match keys, never the full base64 envelopes.
 
+`==` on two `FodId` values compares the match key and the identifier type and
+nothing else. The type is compared as well because a probabilistic and a
+hashed email 51Did both carry a 32 byte match key, made from different inputs.
+The date, signature, usage, License Id and terms are not compared. To ask
+whether two values are the same envelope, compare `as_byte_array()`.
+
 ```rust
 use fodid::FodId;
 
@@ -235,13 +243,14 @@ fn same_browser(idprobglobal_a: &str, idprobglobal_b: &str) -> Result<bool, fodi
     let b = FodId::from_base64(idprobglobal_b)?;
 
     // a.date() and a.signature() differ from b's on every issue, because the
-    // envelope is fresh each time. The match key is what stays the same.
-    Ok(a.match_key() == b.match_key())
+    // envelope is fresh each time. The type and match key stay the same.
+    Ok(a == b)
 }
 ```
 
-Use `match_key()` (a 32-byte SHA-256 or 16-byte GUID) as the cache /
-dedup key.
+Use `match_key()` (a 32-byte SHA-256 or 16-byte GUID), with the type where
+identifiers of more than one type are kept together, as the cache / dedup
+key.
 
 ## Migrating from the `owid` 1.0 crate surface
 
@@ -269,9 +278,11 @@ an OWID can no longer be altered after it was read or signed.
 // Before                                // After
 let domain = &fod_id.domain;             let domain = fod_id.domain();
 let issued = fod_id.date;                let issued = fod_id.date();
-let bytes = &fod_id.payload;             let bytes = fod_id.payload();
 let sig = &fod_id.signature;             let sig = fod_id.signature();
 ```
+
+The payload bytes are not read whole. Each field in them has its own accessor
+on `FodId`.
 
 A failed read is `Error::Parse` carrying a `ParseError` with a named status,
 where it used to be `Error::Owid` carrying the OWID error type (re-exported as
@@ -312,8 +323,7 @@ fod_id.verify_with_public_key(pem, &[])  fod_id.verify_with_public_key(pem)
 ## Non goals
 
 - **Signature verification on construction.** Reading a `FodId` does not check
-  the signature. Call `verify_status_with_public_key` (inherited from
-  `fodid::Owid` through `Deref`) when needed.
+  the signature. Call `verify_status_with_public_key` when needed.
 - **Construction of new 51Dids.** This is a reader. New 51Dids are issued by
   the 51Degrees cloud, which alone holds the signing key. The `creator`
   feature exists so tests and tools can stand in for the cloud, and is off by

@@ -58,17 +58,19 @@
 
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
+use std::ops::Range;
 use std::os::raw::{c_char, c_int, c_void};
 use std::path::Path;
 use std::ptr::NonNull;
 use std::sync::{Arc, OnceLock};
 
 use fiftyone_ip_intelligence_sys as sys;
-use fiftyone_pipeline_core::{constants, Error, Evidence, Result};
+use fiftyone_pipeline_core::{constants, round_angle, Error, Evidence, PropertyValueType, Result};
 
 use crate::buffer::with_value_string;
 use crate::evidence::parse_client_ip;
 use crate::file_reads::{FileReadPermit, FileReads};
+use crate::metadata::{metadata_read_failed, read_metadata_string, take_value_string};
 use crate::profile::PerformanceProfile;
 use crate::status::{status_name, status_to_result, take_message, NativeException, NativeStatus};
 
@@ -436,6 +438,411 @@ impl Manager {
     }
 }
 
+pub use crate::metadata::DataFileValue;
+
+// The shared readers in `crate::metadata` take the shim's constants as these.
+const _: () = assert!(
+    sys::SHIM_STRING_FAILED == crate::metadata::STRING_FAILED
+        && sys::SHIM_VALUE_NAME == crate::metadata::VALUE_NAME
+        && sys::SHIM_VALUE_DESCRIPTION == crate::metadata::VALUE_DESCRIPTION
+        && sys::SHIM_VALUE_URL == crate::metadata::VALUE_URL
+);
+
+/// The metadata the data file holds for one of its properties, as the C++
+/// `PropertyMetaDataBuilderIpi` in 51degrees-cxx reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DataFileProperty {
+    /// The property's place among the data file's properties, which
+    /// [`Manager::data_file_property_values`] takes.
+    pub index: u32,
+    /// The property's name.
+    pub name: String,
+    /// The type of the property's values, from the type the data file names.
+    /// Every weighted type is a [`PropertyValueType::KeyValueList`], and an
+    /// IP address, an area or a coordinate is a [`PropertyValueType::String`],
+    /// because the pipeline has no type of its own for them.
+    pub value_type: PropertyValueType,
+    /// True when the data set was opened with the property, so results can
+    /// hold its values.
+    pub available: bool,
+    /// The index [`Results::read_property_by_index`] takes for the property,
+    /// or [`None`] when results do not hold it. The C library finds the
+    /// property among the names the data set was opened with ignoring case,
+    /// so this is found for a property named in another case.
+    pub required_property_index: Option<c_int>,
+    /// The property's category, or empty when it has none.
+    pub category: String,
+    /// The property's description, or empty when it has none.
+    pub description: String,
+    /// A URL with more about the property, or empty when it has none.
+    pub url: String,
+    /// The id of the component the property belongs to, or 0 when the data
+    /// file names none.
+    pub component_id: u8,
+    /// The order to display the property in among the others.
+    pub display_order: u8,
+    /// True when every profile must have a value for the property.
+    pub mandatory: bool,
+    /// True when a profile can have several values for the property.
+    pub list: bool,
+    /// True when the property is kept only for backward compatibility.
+    pub obsolete: bool,
+    /// True when the property should be shown in lists of properties.
+    pub show: bool,
+    /// True when the property's values should be shown in lists of values.
+    pub show_values: bool,
+    /// The data tiers whose data files hold the property, in the data file's
+    /// order.
+    pub data_tiers: Vec<String>,
+    /// The property's default value, or [`None`] when it has none. The C++
+    /// code writes the value the property names as its default as text and
+    /// looks that text up among the property's values, so a default that is
+    /// not among them is none.
+    pub default_value: Option<DataFileValue>,
+    /// The number of values the data file holds for the property. It is 0
+    /// when the property's value indexes are -1 or reach past the data
+    /// file's values.
+    pub value_count: u32,
+}
+
+/// The metadata the data file holds for one of its components, such as the
+/// location or the network.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DataFileComponent {
+    /// The component's id, which stays the same from one data file to the
+    /// next.
+    pub component_id: u8,
+    /// The component's name.
+    pub name: String,
+    /// The offset of the component's default profile in the data file, or
+    /// [`None`] when the component has none. An IP Intelligence data file
+    /// holds no profile ids, so the C++ code, and the .NET package on it,
+    /// give this offset as the default profile's id.
+    pub default_profile_offset: Option<u32>,
+}
+
+/// The fields of a data file property that are not strings.
+struct PropertyFields {
+    value_type: u8,
+    available: u8,
+    required_index: c_int,
+    component_id: u8,
+    display_order: u8,
+    is_mandatory: u8,
+    is_list: u8,
+    is_obsolete: u8,
+    show: u8,
+    show_values: u8,
+    value_count: u32,
+    default_value_number: i32,
+    map_count: u32,
+}
+
+impl Manager {
+    /// Every property the data file defines, in the data file's order. A
+    /// property the data set was opened without is listed as unavailable.
+    ///
+    /// A property that cannot be read is an error rather than left out, as
+    /// the C++ code the other SDKs call raises one.
+    pub fn data_file_properties(&self) -> Result<Vec<DataFileProperty>> {
+        let _file_read = self.file_read();
+        let count = self.data_file_property_count();
+        (0..count)
+            .map(|index| {
+                self.read_data_file_property(index)
+                    .ok_or_else(|| metadata_read_failed(&format!("property {index}")))
+            })
+            .collect()
+    }
+
+    /// The components the data file defines, in the data file's order. A
+    /// default profile or a name that cannot be read is an error, as the C++
+    /// code throws for a default profile it cannot read.
+    pub fn data_file_components(&self) -> Result<Vec<DataFileComponent>> {
+        let _file_read = self.file_read();
+        // Safety: the manager is initialized for the lifetime of `self`.
+        let count = unsafe { sys::fiftyoneDegreesShimIpiGetComponentCount(self.as_ptr()) };
+        let mut components = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            let mut component_id = 0u8;
+            let mut default_profile_offset = 0u32;
+            let mut has_default_profile = 0u8;
+            // Safety: every output pointer is a writable local.
+            let read = unsafe {
+                sys::fiftyoneDegreesShimIpiGetComponent(
+                    self.as_ptr(),
+                    index,
+                    &mut component_id,
+                    &mut default_profile_offset,
+                    &mut has_default_profile,
+                )
+            };
+            if read == 0 {
+                return Err(metadata_read_failed(&format!(
+                    "the default profile of component {index}"
+                )));
+            }
+            // Safety: the buffer is writable for the length given.
+            let name = read_metadata_string(|buffer, length| unsafe {
+                sys::fiftyoneDegreesShimIpiGetComponentName(self.as_ptr(), index, buffer, length)
+            })
+            .ok_or_else(|| metadata_read_failed(&format!("component {index}")))?;
+            components.push(DataFileComponent {
+                component_id,
+                name,
+                default_profile_offset: (has_default_profile != 0)
+                    .then_some(default_profile_offset),
+            });
+        }
+        Ok(components)
+    }
+
+    /// The values the data file holds for the property at `property_index`
+    /// among [`Self::data_file_properties`], in the data file's order, or none
+    /// when the index is out of range. A property or value that cannot be
+    /// read is an error.
+    ///
+    /// Each value's name is its text, written as the C++ code the other SDKs
+    /// call writes it, so a coordinate has three decimal places and an IP
+    /// address is written in full. The values are read from the data set
+    /// each time, because a data file can hold millions of them, and
+    /// [`Self::data_file_property_value_range`] reads part of the list.
+    pub fn data_file_property_values(&self, property_index: u32) -> Result<Vec<DataFileValue>> {
+        self.data_file_property_value_range(property_index, 0..u32::MAX)
+    }
+
+    /// The values at the places `range` covers among those
+    /// [`Self::data_file_property_values`] gives for the property at
+    /// `property_index`, so a caller that shows the first 20 reads only 20.
+    /// The part of `range` past the last value is left out, so a range that
+    /// starts there gives none.
+    pub fn data_file_property_value_range(
+        &self,
+        property_index: u32,
+        range: Range<u32>,
+    ) -> Result<Vec<DataFileValue>> {
+        let _file_read = self.file_read();
+        if property_index >= self.data_file_property_count() {
+            return Ok(Vec::new());
+        }
+        self.read_values(property_index, range)
+            .ok_or_else(|| metadata_read_failed(&format!("values of property {property_index}")))
+    }
+
+    /// The value whose text is `name`, matched exactly, among those
+    /// [`Self::data_file_property_values`] gives for the property at
+    /// `property_index`, or [`None`] when the index is out of range or the
+    /// property has no such value. A property or value that cannot be read is
+    /// an error.
+    ///
+    /// A property's values are in order, so the value is found by the C
+    /// library's binary search, as the C++ code the other SDKs call finds it,
+    /// without reading the others.
+    pub fn data_file_property_value(
+        &self,
+        property_index: u32,
+        name: &str,
+    ) -> Result<Option<DataFileValue>> {
+        let _file_read = self.file_read();
+        if property_index >= self.data_file_property_count() {
+            return Ok(None);
+        }
+        // A data file's strings end at their first null, so no value has a
+        // name holding one.
+        let Ok(c_name) = CString::new(name) else {
+            return Ok(None);
+        };
+        let mut values: Vec<DataFileValue> = Vec::new();
+        // Safety: `c_name` is null terminated, and `take_value_string` treats
+        // the context as the `Vec<DataFileValue>` it points to, which outlives
+        // the call and is not used elsewhere during it.
+        let found = unsafe {
+            sys::fiftyoneDegreesShimIpiFindDataFilePropertyValue(
+                self.as_ptr(),
+                property_index,
+                c_name.as_ptr(),
+                take_value_string,
+                (&mut values as *mut Vec<DataFileValue>).cast::<c_void>(),
+            )
+        };
+        match (found, values.pop()) {
+            (sys::SHIM_FIND_FOUND, Some(value)) if values.is_empty() && value.name == name => {
+                Ok(Some(value))
+            }
+            (sys::SHIM_FIND_NOT_FOUND, None) => Ok(None),
+            _ => Err(metadata_read_failed(&format!(
+                "value {name:?} of property {property_index}"
+            ))),
+        }
+    }
+
+    /// The number of properties the data file defines.
+    fn data_file_property_count(&self) -> u32 {
+        // Safety: the manager is initialized for the lifetime of `self`.
+        unsafe { sys::fiftyoneDegreesShimIpiGetDataFilePropertyCount(self.as_ptr()) }
+    }
+
+    /// The values at the places `range` covers among those the data file
+    /// holds for the property at `property_index`, read in one shim call, or
+    /// [`None`] when the property or any of them cannot be read. The caller
+    /// holds the file read permit.
+    fn read_values(&self, property_index: u32, range: Range<u32>) -> Option<Vec<DataFileValue>> {
+        let mut values: Vec<DataFileValue> = Vec::new();
+        // Safety: `take_value_string` treats the context as the
+        // `Vec<DataFileValue>` it points to, which outlives the call and is
+        // not used elsewhere during it.
+        let read = unsafe {
+            sys::fiftyoneDegreesShimIpiGetDataFilePropertyValues(
+                self.as_ptr(),
+                property_index,
+                range.start,
+                range.end.saturating_sub(range.start),
+                take_value_string,
+                (&mut values as *mut Vec<DataFileValue>).cast::<c_void>(),
+            )
+        };
+        (read != 0).then_some(values)
+    }
+
+    /// The fields of the data file property at `index` that are not strings,
+    /// or [`None`] when the index is out of range or the property, its name
+    /// or its default value cannot be read. The caller holds the file read
+    /// permit.
+    fn read_property_fields(&self, index: u32) -> Option<PropertyFields> {
+        let mut fields = PropertyFields {
+            value_type: 0,
+            available: 0,
+            required_index: -1,
+            component_id: 0,
+            display_order: 0,
+            is_mandatory: 0,
+            is_list: 0,
+            is_obsolete: 0,
+            show: 0,
+            show_values: 0,
+            value_count: 0,
+            default_value_number: -1,
+            map_count: 0,
+        };
+        // Safety: every output pointer is a writable field of `fields`.
+        let read = unsafe {
+            sys::fiftyoneDegreesShimIpiGetDataFileProperty(
+                self.as_ptr(),
+                index,
+                &mut fields.value_type,
+                &mut fields.available,
+                &mut fields.required_index,
+                &mut fields.component_id,
+                &mut fields.display_order,
+                &mut fields.is_mandatory,
+                &mut fields.is_list,
+                &mut fields.is_obsolete,
+                &mut fields.show,
+                &mut fields.show_values,
+                &mut fields.value_count,
+                &mut fields.default_value_number,
+                &mut fields.map_count,
+            )
+        };
+        (read != 0).then_some(fields)
+    }
+
+    /// The data file property at `index`, or [`None`] when the index is out
+    /// of range or any part of it cannot be read. The caller holds the file
+    /// read permit.
+    fn read_data_file_property(&self, index: u32) -> Option<DataFileProperty> {
+        let fields = self.read_property_fields(index)?;
+        let string = |field| {
+            // Safety: the buffer is writable for the length given.
+            read_metadata_string(|buffer, length| unsafe {
+                sys::fiftyoneDegreesShimIpiGetDataFilePropertyString(
+                    self.as_ptr(),
+                    index,
+                    field,
+                    buffer,
+                    length,
+                )
+            })
+        };
+        let data_tiers = (0..fields.map_count)
+            .map(|map| {
+                // Safety: the buffer is writable for the length given.
+                read_metadata_string(|buffer, length| unsafe {
+                    sys::fiftyoneDegreesShimIpiGetDataFilePropertyMap(
+                        self.as_ptr(),
+                        index,
+                        map,
+                        buffer,
+                        length,
+                    )
+                })
+            })
+            .collect::<Option<Vec<String>>>()?
+            .into_iter()
+            .filter(|tier| !tier.is_empty())
+            .collect();
+        let default_value = match u32::try_from(fields.default_value_number) {
+            Ok(number) => Some(self.read_values(index, number..number + 1)?.pop()?),
+            Err(_) => None,
+        };
+        Some(DataFileProperty {
+            index,
+            name: string(sys::SHIM_PROPERTY_NAME)?,
+            value_type: data_file_value_type(fields.value_type, fields.is_list != 0),
+            available: fields.available != 0,
+            required_property_index: (fields.required_index >= 0).then_some(fields.required_index),
+            category: string(sys::SHIM_PROPERTY_CATEGORY)?,
+            description: string(sys::SHIM_PROPERTY_DESCRIPTION)?,
+            url: string(sys::SHIM_PROPERTY_URL)?,
+            component_id: fields.component_id,
+            display_order: fields.display_order,
+            mandatory: fields.is_mandatory != 0,
+            list: fields.is_list != 0,
+            obsolete: fields.is_obsolete != 0,
+            show: fields.show != 0,
+            show_values: fields.show_values != 0,
+            data_tiers,
+            default_value,
+            value_count: fields.value_count,
+        })
+    }
+}
+
+/// The value type of a data file property from the C library's
+/// `fiftyoneDegreesPropertyValueType`, following the type names the C++
+/// `PropertyMetaDataBuilderIpi` gives. Every weighted type is a
+/// [`PropertyValueType::KeyValueList`], as a lookup gives each weighted
+/// property's candidates. That includes `weightedbyte`, which .NET's
+/// `PropertyMetaDataIpi.Type` has no case for and so gives as a string. An
+/// IP address, an area or a coordinate is a [`PropertyValueType::String`],
+/// as is a type the builder does not name, because the pipeline has no type
+/// of its own for them.
+fn data_file_value_type(value_type: u8, is_list: bool) -> PropertyValueType {
+    use sys::PropertyValueType as Ty;
+    let is = |ty: Ty| i32::from(value_type) == ty as i32;
+    if is(Ty::Integer) {
+        PropertyValueType::Integer
+    } else if is(Ty::SinglePrecisionFloat) {
+        PropertyValueType::Float
+    } else if is(Ty::Double) {
+        PropertyValueType::Double
+    } else if is(Ty::Boolean) {
+        PropertyValueType::Bool
+    } else if is(Ty::JavaScript) {
+        PropertyValueType::JavaScript
+    } else if is(Ty::String) && is_list {
+        PropertyValueType::StringList
+    } else if i32::from(value_type) >= Ty::WeightedString as i32
+        && i32::from(value_type) <= Ty::WeightedWkbReduced as i32
+    {
+        PropertyValueType::KeyValueList
+    } else {
+        PropertyValueType::String
+    }
+}
+
 impl Drop for Manager {
     fn drop(&mut self) {
         // Safety: the manager was initialized by a successful `open` and every
@@ -699,6 +1106,10 @@ impl Results {
     /// the Phase 3 on-premise engine surfaces as
     /// `AspectPropertyValue<Vec<WeightedValue<T>>>`.
     ///
+    /// A value the data file stores as an Azimuth or Declination, such as a
+    /// latitude or a longitude, is given to 3 decimal places, as
+    /// [`Results::value_as_string`] gives it.
+    ///
     /// Returns an empty vector when the property is not one of the required
     /// properties or the results carry no value for it, mirroring how
     /// [`Results::value_as_string`] reports an absent value as [`None`].
@@ -765,12 +1176,15 @@ impl Results {
                 &mut exception,
             )
         };
+        // Safety: `results` is valid, and the shim checks the index.
+        let stored_type =
+            unsafe { sys::fiftyoneDegreesShimIpiGetStoredValueType(self.as_ptr(), index) };
 
         // Read the collection while it is alive, then release it regardless of
         // whether reading raised an exception, so no native memory leaks.
         let read = if exception.is_okay() {
             // Safety: the collection came from the getter above and is intact.
-            unsafe { collect_weighted(&collection) }
+            unsafe { collect_weighted(&collection, stored_type) }
         } else {
             Vec::new()
         };
@@ -890,13 +1304,16 @@ pub(crate) fn parse_bool(text: &str) -> Option<bool> {
 /// reinterpreted as the concrete `Weighted*` structure its `value_type`
 /// selects. The raw weighting is a native `u32`, scaled into a `u16` for the
 /// pipeline weighted value width. Items whose value type is not one of the
-/// supported weighted leaf types are skipped.
+/// supported weighted leaf types are skipped. `stored_type` is the type the
+/// data file stores the property's values as, which decides how a double is
+/// rendered.
 ///
 /// # Safety
 /// `collection` must be an intact collection returned by
 /// [`sys::fiftyoneDegreesResultsIpiGetValuesCollection`] and not yet released.
 unsafe fn collect_weighted(
     collection: &sys::WeightedValuesCollection,
+    stored_type: c_int,
 ) -> Vec<(sys::PropertyValueType, String, u16)> {
     use sys::PropertyValueType as Ty;
 
@@ -931,7 +1348,7 @@ unsafe fn collect_weighted(
             }
             Ty::WeightedDouble | Ty::Double => {
                 let wd = header as *const sys::WeightedDouble;
-                Some((*wd).value.to_string())
+                Some(double_text((*wd).value, stored_type))
             }
             Ty::WeightedBool | Ty::Boolean => {
                 let wb = header as *const sys::WeightedBool;
@@ -950,6 +1367,25 @@ unsafe fn collect_weighted(
         }
     }
     out
+}
+
+/// Render a double from a value collection, given the type the data file
+/// stores it as.
+///
+/// A value converted from an Azimuth or Declination is given to 3 decimal
+/// places by [`round_angle`], as the specification requires, so it reads as
+/// the `f32` nearest the rounded decimal. A stored 32-bit float is given with
+/// the float's own digits, as the double holds it exactly. Any other double
+/// keeps every place it has.
+fn double_text(value: f64, stored_type: c_int) -> String {
+    use sys::PropertyValueType as Ty;
+    if stored_type == Ty::Declination as c_int || stored_type == Ty::Azimuth as c_int {
+        round_angle(value).to_string()
+    } else if stored_type == Ty::SinglePrecisionFloat as c_int {
+        (value as f32).to_string()
+    } else {
+        value.to_string()
+    }
 }
 
 /// Whether a property value type is one of the weighted list variants
@@ -1011,6 +1447,9 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    /// The ASN file in the data repository.
+    const ASN_FILE_NAME: &str = "51Degrees-IPIV4AsnIpiV41.ipi";
+
     /// Resolve an IP Intelligence data file at run time, searching the
     /// environment override, the `cxx` submodule and the
     /// wider Workspace tree. Returns [`None`] when none is present so the smoke
@@ -1029,16 +1468,15 @@ mod tests {
         let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()?
             .to_path_buf();
-        let name = "51Degrees-IPIV4AsnIpiV41.ipi";
         let candidates = [
             workspace
                 .join("cxx")
                 .join("data")
                 .join("ip-intelligence")
-                .join(name),
+                .join(ASN_FILE_NAME),
             workspace
                 .parent()
-                .map(|p| p.join("data").join("ip-intelligence").join(name))
+                .map(|p| p.join("data").join("ip-intelligence").join(ASN_FILE_NAME))
                 .unwrap_or_default(),
         ];
         candidates.into_iter().find(|p| p.is_file())
@@ -1230,6 +1668,58 @@ mod tests {
         assert!(results.value_as_string_by_index(count, c"|").is_err());
         assert!(results.value_as_string_by_index(-1, c"|").is_err());
         assert!(results.values_weighted_by_index(count).is_err());
+    }
+
+    /// A double converted from an Azimuth or Declination is given to 3
+    /// decimal places, so a plain float reads as the `f32` nearest the
+    /// rounded decimal.
+    #[test]
+    fn an_angle_is_given_to_three_decimal_places() {
+        use sys::PropertyValueType as Ty;
+        let declination = Ty::Declination as c_int;
+        let azimuth = Ty::Azimuth as c_int;
+        // A stored Declination of 7723 converts to 21.21250038148137.
+        let latitude = 7723.0 * 90.0 / 32767.0;
+        assert_eq!(double_text(latitude, declination), "21.213");
+        assert_eq!(double_text(-latitude, declination), "-21.213");
+        assert_eq!(double_text(180.0, azimuth), "180");
+        // A stored Azimuth of 4274 converts to 23.47849971007416.
+        assert_eq!(double_text(4274.0 * 180.0 / 32767.0, azimuth), "23.478");
+        assert_eq!(
+            property_read_from(vec![(
+                Ty::Double,
+                double_text(latitude, declination),
+                u16::MAX,
+            )]),
+            PropertyRead::Float(21.213)
+        );
+    }
+
+    /// A double the data file does not store as an Azimuth or Declination
+    /// keeps its places, whether stored as a double, a string or an integer,
+    /// and a stored 32-bit float keeps the float's own digits.
+    #[test]
+    fn a_double_that_is_not_an_angle_keeps_its_places() {
+        use sys::PropertyValueType as Ty;
+        let latitude = 7723.0 * 90.0 / 32767.0;
+        assert_eq!(
+            double_text(latitude, Ty::Double as c_int),
+            "21.21250038148137"
+        );
+        assert_eq!(double_text(0.0004, Ty::Double as c_int), "0.0004");
+        assert_eq!(double_text(0.0004, Ty::String as c_int), "0.0004");
+        assert_eq!(double_text(-0.0001, Ty::String as c_int), "-0.0001");
+        assert_eq!(double_text(42.0, Ty::Integer as c_int), "42");
+        assert_eq!(
+            double_text(f64::from(0.1_f32), Ty::SinglePrecisionFloat as c_int),
+            "0.1"
+        );
+        assert_eq!(
+            double_text(f64::from(18.5427_f32), Ty::SinglePrecisionFloat as c_int),
+            "18.5427"
+        );
+        // The type could not be read.
+        assert_eq!(double_text(0.0004, -1), "0.0004");
     }
 
     #[test]
@@ -1427,5 +1917,442 @@ mod tests {
         let err = asn_from(&manager, &[("server.client-ip", "unknown")])
             .expect_err("evidence with no readable address should be an error");
         assert!(matches!(err, Error::Native { ref status, .. } if status == "InvalidInput"));
+    }
+
+    /// The profiles the metadata tests open the data file with, being one
+    /// that reads the file on each call, one that caches and one that holds
+    /// it all in memory.
+    const METADATA_PROFILES: [PerformanceProfile; 3] = [
+        PerformanceProfile::LowMemory,
+        PerformanceProfile::Balanced,
+        PerformanceProfile::InMemory,
+    ];
+
+    /// The data file property named `name`, which the test needs.
+    fn file_property<'a>(properties: &'a [DataFileProperty], name: &str) -> &'a DataFileProperty {
+        properties
+            .iter()
+            .find(|property| property.name == name)
+            .unwrap_or_else(|| panic!("the data file defines {name}"))
+    }
+
+    #[test]
+    fn every_data_file_property_is_listed_and_only_named_ones_are_available() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping property listing");
+            return;
+        };
+        for profile in METADATA_PROFILES {
+            let every = open_found(&data_file, profile);
+            let properties = every
+                .data_file_properties()
+                .expect("the data file's properties should be read");
+            assert!(!properties.is_empty(), "{profile:?}");
+            for (index, property) in properties.iter().enumerate() {
+                assert_eq!(property.index, index as u32, "{}", property.name);
+                assert!(property.available, "{profile:?} {}", property.name);
+                assert_eq!(
+                    property.required_property_index,
+                    every.required_property_index(&property.name),
+                    "{profile:?} {}",
+                    property.name
+                );
+            }
+
+            // Named in another case, as the C library matches names.
+            let named = Manager::open_with_properties(&data_file, profile, Some(&["asnname"]))
+                .expect("the data file should open with AsnName named");
+            let restricted = named
+                .data_file_properties()
+                .expect("the data file's properties should be read");
+            let names = |list: &[DataFileProperty]| -> Vec<String> {
+                list.iter().map(|property| property.name.clone()).collect()
+            };
+            assert_eq!(names(&restricted), names(&properties), "{profile:?}");
+            for property in &restricted {
+                let is_named = property.name == "AsnName";
+                assert_eq!(
+                    property.available, is_named,
+                    "{profile:?} {}",
+                    property.name
+                );
+                assert_eq!(
+                    property.required_property_index,
+                    is_named.then_some(0),
+                    "{profile:?} {}",
+                    property.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_asn_property_is_described_as_the_data_file_gives_it() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping Asn metadata");
+            return;
+        };
+        for profile in METADATA_PROFILES {
+            let manager = open_found(&data_file, profile);
+            let properties = manager
+                .data_file_properties()
+                .expect("the data file's properties should be read");
+            let components = manager
+                .data_file_components()
+                .expect("the data file's components should be read");
+            let asn = file_property(&properties, "Asn");
+            assert_eq!(asn.value_type, PropertyValueType::String);
+            assert_eq!(asn.category, "Asn");
+            assert!(
+                asn.description.starts_with("Autonomous System Number"),
+                "{}",
+                asn.description
+            );
+            assert_eq!(
+                asn.url,
+                "https://en.wikipedia.org/wiki/Autonomous_system_(Internet)"
+            );
+            assert_eq!(asn.data_tiers, ["IPIV4Asn", "IPIV4Enterprise"]);
+            assert_eq!(asn.display_order, 1);
+            assert!(asn.mandatory && !asn.list && !asn.obsolete);
+            assert!(!asn.show && !asn.show_values);
+            let component = components
+                .iter()
+                .find(|component| component.component_id == asn.component_id)
+                .expect("the Asn property's component is listed");
+            assert_eq!(component.name, "Asn");
+            let default = asn.default_value.as_ref().expect("Asn has a default");
+            assert_eq!(default.name, "Unknown");
+            assert_eq!(
+                (default.description.as_str(), default.url.as_str()),
+                ("", "")
+            );
+        }
+    }
+
+    #[test]
+    fn each_property_gives_as_many_values_as_it_counts_and_its_default_among_them() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping property values");
+            return;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::LowMemory);
+        let properties = manager
+            .data_file_properties()
+            .expect("the data file's properties should be read");
+        for property in &properties {
+            // Read up to a thousand, as an Enterprise property can hold
+            // millions.
+            let shown = property.value_count.min(1000);
+            let values = manager
+                .data_file_property_value_range(property.index, 0..shown)
+                .expect("the values should be read");
+            assert_eq!(values.len() as u32, shown, "{}", property.name);
+            if let Some(default) = &property.default_value {
+                let found = manager
+                    .data_file_property_value(property.index, &default.name)
+                    .expect("the default should be searched for");
+                assert_eq!(found.as_ref(), Some(default), "{}", property.name);
+            }
+            let past_end = manager
+                .data_file_property_value_range(property.index, property.value_count..u32::MAX)
+                .expect("a range past the end should be read");
+            assert!(past_end.is_empty(), "{}", property.name);
+        }
+
+        let asn = file_property(&properties, "Asn");
+        let first: Vec<String> = manager
+            .data_file_property_value_range(asn.index, 0..3)
+            .expect("the values should be read")
+            .into_iter()
+            .map(|value| value.name)
+            .collect();
+        let all = manager
+            .data_file_property_values(asn.index)
+            .expect("the values should be read");
+        assert_eq!(all.len() as u32, asn.value_count);
+        let all_first: Vec<&str> = all[..3].iter().map(|value| value.name.as_str()).collect();
+        assert_eq!(first, all_first);
+        // The ASN file in the data repository changes only when the submodule
+        // moves, so its first values are known. Other files gain values.
+        if data_file
+            .file_name()
+            .is_some_and(|name| name == ASN_FILE_NAME)
+        {
+            assert_eq!(first, ["AS0", "AS1", "AS1000"]);
+        }
+        assert_eq!(
+            manager
+                .data_file_property_value_range(asn.index, 1..3)
+                .expect("the values should be read"),
+            all[1..3]
+        );
+
+        let outside = properties.len() as u32;
+        assert!(manager
+            .data_file_property_values(outside)
+            .expect("an index outside the file gives no values")
+            .is_empty());
+        assert_eq!(
+            manager
+                .data_file_property_value(outside, "AS13335")
+                .expect("an index outside the file gives no value"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_value_is_found_by_its_exact_text() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping value search");
+            return;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::LowMemory);
+        let properties = manager
+            .data_file_properties()
+            .expect("the data file's properties should be read");
+        let asn = file_property(&properties, "Asn");
+        let found = manager
+            .data_file_property_value(asn.index, "AS13335")
+            .expect("the value should be searched for")
+            .expect("the data file holds AS13335");
+        assert_eq!(found.name, "AS13335");
+        for missing in ["as13335", "NotAValue", "AS13335 "] {
+            assert_eq!(
+                manager
+                    .data_file_property_value(asn.index, missing)
+                    .expect("the value should be searched for"),
+                None,
+                "{missing}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_property_belongs_to_one_of_the_data_files_components() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping components");
+            return;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::LowMemory);
+        let components = manager
+            .data_file_components()
+            .expect("the data file's components should be read");
+        assert!(!components.is_empty());
+        let mut ids: Vec<u8> = components.iter().map(|c| c.component_id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), components.len(), "{components:?}");
+        for component in &components {
+            assert!(!component.name.is_empty(), "{components:?}");
+        }
+        assert!(components.iter().any(|c| c.name == "Asn"), "{components:?}");
+        for property in manager
+            .data_file_properties()
+            .expect("the data file's properties should be read")
+        {
+            assert!(
+                ids.contains(&property.component_id),
+                "{} has component {}",
+                property.name,
+                property.component_id
+            );
+        }
+    }
+
+    /// Set where the Enterprise file must be given, as in the comparison with
+    /// .NET, so a test that needs it fails rather than skips.
+    const REQUIRE_ENTERPRISE: &str = "51DEGREES_REQUIRE_ENTERPRISE";
+
+    /// The length of the buffer the shim first writes a value's text into,
+    /// `SHIM_TEXT_BUFFER_LENGTH` in `shim.c`.
+    const SHIM_TEXT_BUFFER_LENGTH: usize = 256;
+
+    /// Skip `what` for `reason`, or fail when [`REQUIRE_ENTERPRISE`] is set.
+    fn skip_without_enterprise(reason: &str, what: &str) {
+        assert!(
+            std::env::var_os(REQUIRE_ENTERPRISE).is_none(),
+            "{REQUIRE_ENTERPRISE} is set, but {reason}"
+        );
+        eprintln!("{reason}; skipping {what}");
+    }
+
+    /// The Enterprise file `51DEGREES_IPI_PATH` names, opened in LowMemory,
+    /// and its properties, or [`None`] after skipping `what` when there is
+    /// none.
+    fn enterprise_file(what: &str) -> Option<(Arc<Manager>, Vec<DataFileProperty>)> {
+        let Some(data_file) = ipi_data_file() else {
+            skip_without_enterprise("no IP Intelligence data file found", what);
+            return None;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::LowMemory);
+        let properties = manager
+            .data_file_properties()
+            .expect("the data file's properties should be read");
+        if !properties
+            .iter()
+            .any(|property| property.name == "Latitude")
+        {
+            let reason = format!("{} is not an Enterprise file", data_file.display());
+            skip_without_enterprise(&reason, what);
+            return None;
+        }
+        Some((manager, properties))
+    }
+
+    /// The types of the properties an Enterprise file defines that are not
+    /// strings, as the data file names them.
+    #[test]
+    fn an_enterprise_file_names_each_type() {
+        let Some((_, properties)) = enterprise_file("types") else {
+            return;
+        };
+        for (name, value_type) in [
+            ("Latitude", PropertyValueType::Float),
+            ("IsTor", PropertyValueType::Bool),
+            ("AccuracyRadiusMax", PropertyValueType::Integer),
+            ("CountryCodesGeographical", PropertyValueType::KeyValueList),
+            ("IpRangeStart", PropertyValueType::String),
+            ("Areas", PropertyValueType::String),
+        ] {
+            assert_eq!(
+                file_property(&properties, name).value_type,
+                value_type,
+                "{name}"
+            );
+        }
+    }
+
+    /// An Enterprise file's values are given as text as .NET gives them. An
+    /// IP range starts at an address, a coordinate has at most 3 decimal
+    /// places, and an area is WKT text. The first area is longer than the
+    /// shim's first buffer, so the shim writes it again into a buffer it
+    /// allocates.
+    #[test]
+    fn an_enterprise_file_gives_each_value_as_text() {
+        let Some((manager, properties)) = enterprise_file("value text") else {
+            return;
+        };
+        let first = |name: &str, count: u32| -> Vec<String> {
+            let property = file_property(&properties, name);
+            let values = manager
+                .data_file_property_value_range(property.index, 0..count)
+                .expect("the values should be read");
+            assert_eq!(values.len() as u32, count, "{name}");
+            values.into_iter().map(|value| value.name).collect()
+        };
+
+        let area = &first("Areas", 1)[0];
+        assert!(area.len() > SHIM_TEXT_BUFFER_LENGTH, "{area}");
+        let keyword = area.split('(').next().unwrap_or_default();
+        assert!(
+            ["POLYGON", "MULTIPOLYGON", "GEOMETRYCOLLECTION"].contains(&keyword),
+            "{area}"
+        );
+        assert!(area.ends_with(')'), "{area}");
+
+        for start in first("IpRangeStart", 10) {
+            assert!(start.parse::<std::net::IpAddr>().is_ok(), "{start}");
+        }
+        for name in ["Latitude", "Longitude"] {
+            for text in first(name, 100) {
+                assert!(text.parse::<f64>().is_ok(), "{name} {text}");
+                let places = text.split_once('.').map_or(0, |(_, places)| places.len());
+                assert!(places <= 3, "{name} {text}");
+            }
+        }
+    }
+
+    /// Calls a shim string reader with a buffer that starts full, and gives
+    /// the length it returns, or [`None`] for `SHIM_STRING_FAILED`, checking
+    /// that a failed read leaves the buffer empty.
+    fn shim_string_length(read: impl FnOnce(*mut c_char, usize) -> usize) -> Option<usize> {
+        let mut buffer = [b'x'; 64];
+        let length = read(buffer.as_mut_ptr() as *mut c_char, buffer.len());
+        if length == sys::SHIM_STRING_FAILED {
+            assert_eq!(buffer[0], 0, "a failed read leaves the buffer empty");
+            return None;
+        }
+        Some(length)
+    }
+
+    #[test]
+    fn each_shim_string_reader_fails_for_an_index_past_the_end() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping string readers");
+            return;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::LowMemory);
+        let count = manager.data_file_property_count();
+        let fields = [
+            sys::SHIM_PROPERTY_NAME,
+            sys::SHIM_PROPERTY_DESCRIPTION,
+            sys::SHIM_PROPERTY_CATEGORY,
+            sys::SHIM_PROPERTY_URL,
+        ];
+        for field in fields {
+            // Safety: the buffer is writable for the length given.
+            let read = |index| {
+                shim_string_length(|buffer, length| unsafe {
+                    sys::fiftyoneDegreesShimIpiGetDataFilePropertyString(
+                        manager.as_ptr(),
+                        index,
+                        field,
+                        buffer,
+                        length,
+                    )
+                })
+            };
+            assert!(read(0).is_some(), "field {field}");
+            assert_eq!(read(count), None, "field {field}");
+        }
+        // Safety: the buffer is writable for the length given.
+        let field_past_url = shim_string_length(|buffer, length| unsafe {
+            sys::fiftyoneDegreesShimIpiGetDataFilePropertyString(
+                manager.as_ptr(),
+                0,
+                sys::SHIM_PROPERTY_URL + 1,
+                buffer,
+                length,
+            )
+        });
+        assert_eq!(field_past_url, None);
+        // Safety: the buffer is writable for the length given.
+        let map = |property, map| {
+            shim_string_length(|buffer, length| unsafe {
+                sys::fiftyoneDegreesShimIpiGetDataFilePropertyMap(
+                    manager.as_ptr(),
+                    property,
+                    map,
+                    buffer,
+                    length,
+                )
+            })
+        };
+        assert!(map(0, 0).is_some());
+        assert_eq!(map(count, 0), None);
+        assert_eq!(map(0, u32::MAX), None);
+        // Safety: the manager is initialized.
+        let components = unsafe { sys::fiftyoneDegreesShimIpiGetComponentCount(manager.as_ptr()) };
+        // Safety: the buffer is writable for the length given.
+        let component = |index| {
+            shim_string_length(|buffer, length| unsafe {
+                sys::fiftyoneDegreesShimIpiGetComponentName(manager.as_ptr(), index, buffer, length)
+            })
+        };
+        assert!(component(0).is_some());
+        assert_eq!(component(components), None);
+        let (mut id, mut offset, mut has) = (0u8, 0u32, 0u8);
+        // Safety: every output pointer is a writable local.
+        let read = unsafe {
+            sys::fiftyoneDegreesShimIpiGetComponent(
+                manager.as_ptr(),
+                components,
+                &mut id,
+                &mut offset,
+                &mut has,
+            )
+        };
+        assert_eq!(read, 0);
     }
 }
