@@ -421,7 +421,7 @@ namespace FiftyOne.Parity
 
         // The type a property's values have, by the names the other lines
         // use. An aspect property value is named by the type it holds.
-        private static string TypeName(Type type)
+        internal static string TypeName(Type type)
         {
             if (type.IsGenericType &&
                 type.GetGenericTypeDefinition() ==
