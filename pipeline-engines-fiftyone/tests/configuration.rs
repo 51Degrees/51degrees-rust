@@ -35,7 +35,7 @@ use fiftyone_pipeline_core::configuration::{
 };
 use fiftyone_pipeline_core::{Error, Pipeline, PipelineBuilder, Result};
 use fiftyone_pipeline_engines_fiftyone::constants::SHARE_USAGE_DEFAULT_URL;
-use fiftyone_pipeline_engines_fiftyone::{configuration, ShareUsageConfig};
+use fiftyone_pipeline_engines_fiftyone::{configuration, ShareUsageConfig, ShareUsageElement};
 
 /// Log records at warning level or above, as "LEVEL message".
 static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -104,11 +104,26 @@ fn share_usage(parameters: &[(&str, &str)]) -> Result<Arc<Pipeline>> {
 }
 
 fn config(result: Result<Arc<Pipeline>>) -> ShareUsageConfig {
-    let pipeline = result.expect("the pipeline is built");
-    let config = pipeline
-        .resource::<ShareUsageConfig>()
-        .expect("the usage sharing configuration");
-    (*config).clone()
+    share_usage_config(&result.expect("the pipeline is built"))
+}
+
+/// The configuration of each usage sharing element in `pipeline`, read from
+/// the elements themselves in the order `flow_elements` lists them.
+fn share_usage_configs(pipeline: &Pipeline) -> Vec<ShareUsageConfig> {
+    pipeline
+        .flow_elements()
+        .iter()
+        .filter_map(|element| Arc::clone(element).into_any())
+        .filter_map(|element| element.downcast::<ShareUsageElement>().ok())
+        .map(|element| element.config().clone())
+        .collect()
+}
+
+/// The configuration of the one usage sharing element in `pipeline`.
+fn share_usage_config(pipeline: &Pipeline) -> ShareUsageConfig {
+    let mut configs = share_usage_configs(pipeline);
+    assert_eq!(configs.len(), 1, "one usage sharing element");
+    configs.remove(0)
 }
 
 fn message(result: Result<Arc<Pipeline>>) -> String {
@@ -231,7 +246,7 @@ fn every_setting_is_read_as_dotnet_reads_it() {
     ])
     .expect("the pipeline is built");
 
-    let config = pipeline.resource::<ShareUsageConfig>().unwrap();
+    let config = share_usage_config(&pipeline);
     assert_eq!(
         config.included_query_string_parameters(),
         Some(&strings(&["a", "b,c", "", "d"])[..])
@@ -298,13 +313,33 @@ fn every_setting_is_read_as_dotnet_reads_it() {
 }
 
 #[test]
+fn the_pipeline_holds_the_usage_sharing_element_it_runs() {
+    let _serial = start();
+    let named = share_usage(&[("SharePercentage", "0.25")]).unwrap();
+    let added = build_fiftyone(&set_headers()).unwrap();
+    for (pipeline, percentage) in [(named, 0.25), (added, 1.0)] {
+        let held = pipeline
+            .resource::<ShareUsageElement>()
+            .expect("the element is held");
+        let running = pipeline
+            .flow_elements()
+            .iter()
+            .find(|element| element.data_key() == "shareusage")
+            .and_then(|element| Arc::clone(element).into_any())
+            .and_then(|element| element.downcast::<ShareUsageElement>().ok())
+            .expect("the element runs");
+        assert!(Arc::ptr_eq(&held, &running));
+        assert_eq!(held.config().share_percentage(), percentage);
+        // The configuration is read from the element, not held beside it.
+        assert!(pipeline.resource::<ShareUsageConfig>().is_none());
+    }
+}
+
+#[test]
 fn sharing_all_evidence_shares_every_key() {
     let _serial = start();
     let pipeline = share_usage(&[("ShareAllEvidence", "true")]).unwrap();
-    assert!(pipeline
-        .resource::<ShareUsageConfig>()
-        .unwrap()
-        .share_all_evidence());
+    assert!(share_usage_config(&pipeline).share_all_evidence());
     let filter = pipeline.flow_elements()[0].evidence_key_filter();
     for key in ["header.cookie", "cookie.session", "query.anything"] {
         assert!(filter.include(key), "{key}");
@@ -732,7 +767,7 @@ fn a_json_file_written_for_dotnet_makes_the_same_elements() {
 
     // .NET applies the names sorted, so the header is added before the
     // list replaces it, and the parameter before every one is shared.
-    let config = pipeline.resource::<ShareUsageConfig>().unwrap();
+    let config = share_usage_config(&pipeline);
     assert_eq!(config.blocked_http_headers(), strings(&["a", "b"]));
     assert_eq!(config.included_query_string_parameters(), None);
     assert_eq!(
@@ -782,7 +817,7 @@ fn the_fiftyone_pipeline_adds_the_sequence_first_and_usage_sharing_last() {
 
     // The usage sharing element added has the settings a usage sharing
     // builder given none has, which are .NET's.
-    let added = pipeline.resource::<ShareUsageConfig>().unwrap();
+    let added = share_usage_config(&pipeline);
     let configured = config(share_usage(&[]));
     assert_eq!(format!("{added:?}"), format!("{configured:?}"));
     assert_eq!(added.share_percentage(), 1.0);
@@ -859,7 +894,8 @@ fn share_usage_that_is_not_a_boolean_fails() {
             ConfigValue::from(""),
             ". Failed to parse value '' using the static 'TryParse' method.",
         ),
-        // .NET names the `List<string>` the probe gave in code as List`1.
+        // A list given in code is named String[] here, where .NET names a
+        // `List<string>` given in code List`1.
         (
             ConfigValue::from(vec!["true"]),
             " but supplied object is of type 'String[]'.",
@@ -929,7 +965,7 @@ fn a_sequence_or_usage_sharing_element_on_its_own_is_kept_where_it_is() {
 
     // The usage sharing element the configuration names keeps its settings.
     let pipeline = build_fiftyone(&PipelineOptions::new().element(share_quarter())).unwrap();
-    let config = pipeline.resource::<ShareUsageConfig>().unwrap();
+    let config = share_usage_config(&pipeline);
     assert_eq!(config.share_percentage(), 0.25);
 }
 
@@ -949,6 +985,20 @@ fn an_element_in_a_parallel_group_is_not_counted() {
         data_keys(&pipeline),
         ["sequence", "shareusage", "shareusage", "set-headers"]
     );
+
+    // Each of the two gives its own settings, the one added with the
+    // defaults and then the group's.
+    let half = ElementOptions::new("ShareUsageBuilder").parameter("SharePercentage", "0.5");
+    let options = PipelineOptions::new().element(ElementOptions::group([
+        half,
+        ElementOptions::new("SetHeadersElementBuilder"),
+    ]));
+    let pipeline = build_fiftyone(&options).unwrap();
+    let percentages: Vec<f64> = share_usage_configs(&pipeline)
+        .iter()
+        .map(ShareUsageConfig::share_percentage)
+        .collect();
+    assert_eq!(percentages, [1.0, 0.5]);
 
     // .NET adds a second Sequence element before the group and builds. The
     // crates refuse a group whose element has the data key of one before it.
@@ -977,7 +1027,7 @@ fn an_element_in_a_parallel_group_is_not_counted() {
         data_keys(&pipeline),
         ["sequence", "set-headers", "shareusage"]
     );
-    let config = pipeline.resource::<ShareUsageConfig>().unwrap();
+    let config = share_usage_config(&pipeline);
     assert_eq!(config.share_percentage(), 0.25);
 }
 
@@ -1054,6 +1104,63 @@ fn the_core_pipeline_settings_name_the_fiftyone_pipeline_builder() {
     );
 }
 
+/// .NET looks a pipeline setting up among every public method of its
+/// builder, so it refuses `Build` and `ToString` as taking no parameters
+/// and `AddFlowElement` as taking an `IFlowElement`, which has no
+/// `TryParse`. The crates ignore each, as any name that is not a setting.
+#[test]
+fn a_pipeline_setting_named_after_a_builder_method_is_ignored() {
+    let _serial = start();
+    for name in ["Build", "AddFlowElement", "ToString"] {
+        LOGGED.lock().unwrap().clear();
+        let pipeline = build_fiftyone(&set_headers().parameter(name, "1")).expect(name);
+        assert_eq!(
+            data_keys(&pipeline),
+            ["sequence", "set-headers", "shareusage"]
+        );
+        assert_eq!(
+            logged(),
+            [format!(
+                "WARN The pipeline has no setting matching the build parameter '{name}', so it \
+                 is ignored."
+            )]
+        );
+    }
+}
+
+/// .NET calls each setting as it reads it, so a value the builder refuses
+/// is reported before a parameter that matches nothing. The crates check
+/// every parameter's name before applying any setting, so the parameter
+/// that matches nothing is reported.
+#[test]
+fn a_parameter_matching_nothing_is_reported_before_a_refused_value() {
+    let _serial = start();
+    let found = message(share_usage(&[
+        ("FailuresToEnterRecovery", "0"),
+        ("NoSuchSetting", "1"),
+    ]));
+    assert!(
+        found.contains(
+            "has no 'Set' methods or 'Build' methods that match (case-insensitively) the \
+             following parameters: NOSUCHSETTING."
+        ),
+        "{found}"
+    );
+    assert!(!found.contains("failuresToEnterRecovery"), "{found}");
+}
+
+/// Names are compared with Unicode's full upper case mapping, so `ß`
+/// matches `SS`. .NET maps each character to one character, so it ignores
+/// this name as matching no setting.
+#[test]
+fn a_name_with_sharp_s_matches_its_double_s_form() {
+    let _serial = start();
+    let pipeline =
+        build_fiftyone(&set_headers().parameter("SuppreßProcessExceptions", "true")).unwrap();
+    assert!(pipeline.is_suppress_process_exceptions());
+    assert!(logged().is_empty(), "{:?}", logged());
+}
+
 #[test]
 fn a_json_file_for_dotnets_fiftyone_pipeline_builder_makes_the_same_pipeline() {
     let _serial = start();
@@ -1091,6 +1198,6 @@ fn a_json_file_for_dotnets_fiftyone_pipeline_builder_makes_the_same_pipeline() {
         ["sequence", "set-headers", "shareusage"]
     );
     assert!(!pipeline.is_suppress_process_exceptions());
-    let config = pipeline.resource::<ShareUsageConfig>().unwrap();
+    let config = share_usage_config(&pipeline);
     assert_eq!(config.share_percentage(), 0.5);
 }

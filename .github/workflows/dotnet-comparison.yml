@@ -434,15 +434,24 @@ jobs:
           grep -q '`usage-evidence`.* at `usage`: ' out/report-usage.md
           grep -q '`ua-iphone`.* at `usageCustom`: ' out/report-usage.md
 
-      # The two configuration cases that build must build on both sides, and
-      # the others fail, so the two cannot agree by both failing. Then a Rust
-      # line with a setting read back differently, or with two elements in
-      # the other order, must fail.
+      # The configuration cases that build must build on both sides, and the
+      # others fail, so none can agree by both failing. Then each changed
+      # Rust answer, compared on its own, must fail at its path: a setting
+      # read back differently, two elements in the other order, the other
+      # answer for the suppress setting, another default usage sharing
+      # setting, a setting given as a number or a fraction read back
+      # differently, and another error for a pipeline setting that does not
+      # parse.
       - name: Check that a changed configuration answer fails
         if: matrix.data == 'lite'
         working-directory: parity
         run: |
           want='configuration-pipeline configuration-no-group'
+          want+=' configuration-setting-in-both-sections'
+          want+=' configuration-setting-forms-in-both-sections'
+          want+=' configuration-setting-case-in-both-sections'
+          want+=' configuration-engines-only configuration-value-forms'
+          want+=' configuration-text-forms configuration-translation-countries'
           for side in dotnet rust; do
             got=$(jq -r 'select(.configuration.error == null) | .id' \
               "out/configuration-$side.jsonl" | paste -sd ' ')
@@ -451,23 +460,44 @@ jobs:
               exit 1
             fi
           done
-          jq -c 'if .id == "configuration-pipeline" then
-              .configuration.elements[2].settings.sharePercentage = 1
-            elif .id == "configuration-no-group" then
-              .configuration.elements |= [.[0], .[2], .[1]] + .[3:]
-            else . end' out/configuration-rust.jsonl > out/configuration-rust-changed.jsonl
-          if target/debug/parity-compare --corpus corpus/configuration.json \
-            --dotnet out/configuration-dotnet.jsonl \
-            --rust out/configuration-rust-changed.jsonl \
-            --allowed allowed-differences.json --data lite \
-            --report out/report-configuration.md > /dev/null; then
-            echo "::error::The comparison passed with a changed configuration answer"
-            exit 1
-          fi
-          grep -q '`configuration-pipeline`.* at `configuration.elements\[2\].settings.sharePercentage`: ' \
-            out/report-configuration.md
-          grep -q '`configuration-no-group`.* at `configuration.elements\[1\].dataKey`: ' \
-            out/report-configuration.md
+          # <case> <jq change to its Rust answer> <path the report must name>
+          changed() {
+            jq -c --arg id "$1" "if .id == \$id then $2 else . end" \
+              out/configuration-rust.jsonl > out/configuration-rust-changed.jsonl
+            if target/debug/parity-compare --corpus corpus/configuration.json \
+              --dotnet out/configuration-dotnet.jsonl \
+              --rust out/configuration-rust-changed.jsonl \
+              --allowed allowed-differences.json --data lite \
+              --report out/report-configuration.md > /dev/null; then
+              echo "::error::The comparison passed with a changed answer for $1"
+              exit 1
+            fi
+            if ! grep -q "\`$1\`.* at \`$3\`: " out/report-configuration.md; then
+              echo "::error::The report does not name $3 for $1"
+              exit 1
+            fi
+          }
+          changed configuration-pipeline \
+            '.configuration.elements[2].settings.sharePercentage = 1' \
+            'configuration.elements\[2\].settings.sharePercentage'
+          changed configuration-no-group \
+            '.configuration.elements |= [.[0], .[2], .[1]] + .[3:]' \
+            'configuration.elements\[1\].dataKey'
+          changed configuration-setting-forms-in-both-sections \
+            '.configuration.suppressProcessExceptions = true' \
+            'configuration.suppressProcessExceptions'
+          changed configuration-engines-only \
+            '.configuration.elements[3].settings.minimumEntriesPerMessage = 49' \
+            'configuration.elements\[3\].settings.minimumEntriesPerMessage'
+          changed configuration-value-forms \
+            '.configuration.elements[3].dataFile.pollingIntervalSeconds = 1800' \
+            'configuration.elements\[3\].dataFile.pollingIntervalSeconds'
+          changed configuration-text-forms \
+            '.configuration.elements[3].settings.sharePercentage = 1' \
+            'configuration.elements\[3\].settings.sharePercentage'
+          changed configuration-pipeline-setting-does-not-parse \
+            '.configuration.error |= sub("sometimes"; "never")' \
+            'configuration.error'
 
       # The translation cases must translate and sort on both sides, or the
       # two could agree by both failing. French must give the United

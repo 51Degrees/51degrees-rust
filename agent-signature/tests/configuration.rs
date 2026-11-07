@@ -111,9 +111,9 @@ fn element(result: Result<Arc<Pipeline>>) -> Arc<AgentSignatureElement> {
         .expect("the agent signature element")
 }
 
-/// .NET's run "name builder, no parameters" held these settings, its
-/// `HttpClient` being null and `Concurrency` the processor count, which
-/// the crates do not have.
+/// The settings .NET held for the element named by its builder with no
+/// parameters. .NET also held a null `HttpClient` and a `Concurrency` of
+/// the processor count, which the crates do not have.
 fn assert_defaults(element: &AgentSignatureElement) {
     assert_eq!(element.cache_size(), 1000);
     assert_eq!(element.cache_lifetime(), DAY);
@@ -460,9 +460,10 @@ fn an_unknown_setting_lists_dotnets_settings() {
     }
 }
 
-/// .NET's run "two elements" made both, each with its own settings, the
-/// second with a cache size of 3. The pipeline holds the first, so here the
-/// second trusts forwarded evidence, which its evidence filter shows.
+/// .NET, given the element twice with a cache size of 3 on the second,
+/// made both, each with its own settings. The pipeline holds the first, so
+/// here the second trusts forwarded evidence, which its evidence filter
+/// shows.
 #[test]
 fn the_element_named_twice_is_made_twice() {
     let pipeline = build(
@@ -483,7 +484,7 @@ fn the_element_named_twice_is_made_twice() {
 }
 
 /// The values .NET's JSON reader gives as numbers and booleans are read as
-/// their text, as in .NET's run "file cfg.json".
+/// their text, as .NET read them from this configuration in a file.
 #[test]
 fn a_json_file_is_read_as_dotnet_reads_it() {
     let options = PipelineOptions::from_json(

@@ -35,8 +35,8 @@ const NO_INNER: &str = "No Inner Exception.";
 
 /// The builders .NET's package gave that make an element, in the order
 /// this crate adds them. .NET's also gave four translation engine builders,
-/// whose engines the crates do not have, and its abstract builder classes,
-/// which make nothing.
+/// which the fiftyone-ip-intelligence-translation crate has and this crate
+/// does not, and its abstract builder classes, which make nothing.
 fn expected_builders() -> Vec<&'static str> {
     let mut names = vec![
         "SequenceElementBuilder",
@@ -85,7 +85,7 @@ fn the_registry_gives_the_builders_dotnets_package_gives() {
 }
 
 #[test]
-fn a_builder_dotnets_package_has_and_the_crates_lack_is_not_found() {
+fn a_builder_dotnets_package_has_and_this_crate_lacks_is_not_found() {
     for name in [
         "CloudCountriesTranslationEngineBuilder",
         "CountriesTranslationEngineBuilder",

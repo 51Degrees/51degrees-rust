@@ -265,8 +265,10 @@ fn starts_like_number(text: &str) -> bool {
     matches!(text.chars().next(), Some('0'..='9' | '+' | '-'))
 }
 
-/// True when the two names are the same ignoring case, as .NET's
-/// `OrdinalIgnoreCase` compares them.
+/// True when the two names are the same ignoring case. Each is upper cased
+/// with Unicode's full mapping, so `ß` matches `SS`, where .NET's
+/// `ToUpperInvariant` maps each character to one and does not. Names in
+/// ASCII compare as in .NET.
 pub(crate) fn equal_ignoring_case(a: &str, b: &str) -> bool {
     a.chars()
         .flat_map(char::to_uppercase)
@@ -545,5 +547,12 @@ mod tests {
             Err(ParseFailure::list_for_text())
         );
         assert_eq!(Vec::<String>::parse_value(&list), Ok(vec!["1".to_string()]));
+    }
+
+    #[test]
+    fn names_are_upper_cased_with_the_full_mapping() {
+        assert!(equal_ignoring_case("SetProperty", "SETPROPERTY"));
+        assert!(equal_ignoring_case("Stra\u{df}e", "STRASSE"));
+        assert!(!equal_ignoring_case("SetProperty", "SetProperties"));
     }
 }

@@ -56,9 +56,10 @@ const LF: &str = "\n";
 /// .NET gives the .NET full name and the crates the Rust name.
 pub const BUILDER_TYPE: &str = "{type}";
 
-/// The text before and after a builder's type name in a configuration error.
+/// The text before a builder's type name in a configuration error, and the
+/// texts that may follow it, for an element's builder and the pipeline's.
 const BEFORE_BUILDER_TYPE: &str = "uilder '";
-const AFTER_BUILDER_TYPE: &str = "' for element";
+const AFTER_BUILDER_TYPE: &[&str] = &["' for element", "' for pipeline"];
 
 /// The end of the line a configuration error lists the builder's settings
 /// after, one to a line, up to the line starting with
@@ -441,7 +442,7 @@ pub fn normalise_configuration_error(error: &str) -> String {
 }
 
 /// `line` with each builder type name, between [`BEFORE_BUILDER_TYPE`] and
-/// [`AFTER_BUILDER_TYPE`], replaced by [`BUILDER_TYPE`].
+/// one of [`AFTER_BUILDER_TYPE`], replaced by [`BUILDER_TYPE`].
 fn without_builder_type(line: &str) -> String {
     let mut out = String::new();
     let mut rest = line;
@@ -449,8 +450,11 @@ fn without_builder_type(line: &str) -> String {
         let start = at + BEFORE_BUILDER_TYPE.len();
         out.push_str(&rest[..start]);
         rest = &rest[start..];
-        if let Some(end) = rest.find(AFTER_BUILDER_TYPE) {
-            if !rest[..end].contains('\'') {
+        if let Some(end) = rest.find('\'') {
+            if AFTER_BUILDER_TYPE
+                .iter()
+                .any(|after| rest[end..].starts_with(after))
+            {
                 out.push_str(BUILDER_TYPE);
                 rest = &rest[end..];
             }
@@ -1644,6 +1648,28 @@ mod tests {
             normalise_configuration_error(dotnet),
             normalise_configuration_error(rust)
         );
+    }
+
+    #[test]
+    fn the_pipeline_builders_type_name_is_the_same_in_both() {
+        let dotnet = "Method 'SetSuppressProcessException' on builder \
+                      'FiftyOne.Pipeline.Engines.FiftyOne.FlowElements.FiftyOnePipelineBuilder' \
+                      for pipeline expects a parameter of type 'Boolean'.";
+        let rust = "Method 'SetSuppressProcessException' on builder \
+                    'fiftyone_pipeline_engines_fiftyone::configuration::FiftyOnePipelineBuilder' \
+                    for pipeline expects a parameter of type 'Boolean'.";
+        assert_eq!(
+            normalise_configuration_error(rust),
+            "Method 'SetSuppressProcessException' on builder '{type}' for pipeline expects a \
+             parameter of type 'Boolean'."
+        );
+        assert_eq!(
+            normalise_configuration_error(dotnet),
+            normalise_configuration_error(rust)
+        );
+        // Quoted text followed by neither ending is kept.
+        let other = "Builder 'a' for something else, and builder 'b' for the pipeline";
+        assert_eq!(normalise_configuration_error(other), other);
     }
 
     #[test]

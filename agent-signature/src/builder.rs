@@ -39,6 +39,11 @@ use crate::fetcher::{is_https_without_user_info, Fetcher};
 use crate::http::HttpClient;
 use crate::Clock;
 
+/// What a build with no client and no built-in one says, for a caller of
+/// the builder in code.
+const NO_CLIENT: &str = "The agent signature element needs an HTTP client. Turn on the \
+                         reqwest-client feature or supply one with set_http_client.";
+
 /// The settings an element runs with, once the builder has checked them.
 pub(crate) struct Settings {
     pub(crate) clock: Clock,
@@ -67,6 +72,8 @@ pub(crate) struct Settings {
 /// year is refused there, so a bad setting never reaches the request path.
 pub struct AgentSignatureElementBuilder {
     http_client: Option<Arc<dyn HttpClient>>,
+    /// What the build says when it has no client and no built-in one.
+    no_client_message: &'static str,
     cache_size: usize,
     cache_lifetime: Duration,
     negative_cache_lifetime: Duration,
@@ -87,6 +94,7 @@ impl Default for AgentSignatureElementBuilder {
     fn default() -> Self {
         AgentSignatureElementBuilder {
             http_client: None,
+            no_client_message: NO_CLIENT,
             cache_size: DEFAULT_CACHE_SIZE,
             cache_lifetime: DEFAULT_CACHE_LIFETIME,
             negative_cache_lifetime: DEFAULT_NEGATIVE_CACHE_LIFETIME,
@@ -118,6 +126,14 @@ impl AgentSignatureElementBuilder {
     /// they decide. The client the element makes for itself follows none.
     pub fn set_http_client(mut self, client: Arc<dyn HttpClient>) -> Self {
         self.http_client = Some(client);
+        self
+    }
+
+    /// Say `message` when the build has no client and no built-in one, for
+    /// a caller that gives the client some other way than
+    /// [`Self::set_http_client`].
+    pub(crate) fn no_client_message(mut self, message: &'static str) -> Self {
+        self.no_client_message = message;
         self
     }
 
@@ -278,7 +294,7 @@ impl AgentSignatureElementBuilder {
         }
         let client = match self.http_client {
             Some(client) => client,
-            None => default_client()?,
+            None => default_client(self.no_client_message)?,
         };
         let fetcher = Arc::new(Fetcher::new(
             client,
@@ -306,16 +322,14 @@ impl AgentSignatureElementBuilder {
 
 /// The client the element makes for itself.
 #[cfg(feature = "reqwest-client")]
-fn default_client() -> Result<Arc<dyn HttpClient>> {
+fn default_client(_: &'static str) -> Result<Arc<dyn HttpClient>> {
     let client = crate::http::ReqwestClient::new().map_err(Error::configuration)?;
     Ok(Arc::new(client))
 }
 
-/// Without the built-in client a caller has to supply one.
+/// Without the built-in client a caller has to supply one, and `message`
+/// says how.
 #[cfg(not(feature = "reqwest-client"))]
-fn default_client() -> Result<Arc<dyn HttpClient>> {
-    Err(Error::configuration(
-        "The agent signature element needs an HTTP client. Turn on the \
-         reqwest-client feature or supply one with set_http_client.",
-    ))
+fn default_client(message: &'static str) -> Result<Arc<dyn HttpClient>> {
+    Err(Error::configuration(message))
 }

@@ -166,8 +166,8 @@ mod on_premise {
         found
     }
 
-    /// An on-premise engine as .NET's run had it, with the data file, no
-    /// copy and no updates.
+    /// An on-premise engine with the data file, no copy and no updates, as
+    /// .NET was given it.
     fn engine(builder: &str, data_file: &str) -> ElementOptions {
         ElementOptions::new(builder)
             .parameter("DataFile", data_file)
