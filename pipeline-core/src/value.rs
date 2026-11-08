@@ -389,6 +389,11 @@ impl ElementDataList {
     }
 }
 
+// The list is never changed once made and is read only through
+// `&dyn ElementData`, so a panic cannot leave it part changed.
+impl std::panic::UnwindSafe for ElementDataList {}
+impl std::panic::RefUnwindSafe for ElementDataList {}
+
 impl FromIterator<Arc<dyn ElementData>> for ElementDataList {
     fn from_iter<I: IntoIterator<Item = Arc<dyn ElementData>>>(items: I) -> Self {
         ElementDataList(items.into_iter().collect())
@@ -506,6 +511,17 @@ mod tests {
         assert_eq!(ElementDataList::default(), list(&[]));
         assert!(list(&[]).is_empty());
         assert_eq!(list(&["Apple", "Samsung"]).len(), 2);
+    }
+
+    /// A call compiles only when `T` can be used inside
+    /// `std::panic::catch_unwind`, by value or by reference.
+    fn assert_unwind_safe<T: std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
+
+    #[test]
+    fn values_and_element_data_stay_unwind_safe() {
+        assert_unwind_safe::<ElementDataList>();
+        assert_unwind_safe::<PropertyValue>();
+        assert_unwind_safe::<MapElementData>();
     }
 
     #[test]
