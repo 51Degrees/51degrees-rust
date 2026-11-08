@@ -228,7 +228,7 @@ impl State {
         let profiles = AspectPropertyMetaData::new(
             PROFILES_PROPERTY_NAME,
             data_key,
-            PropertyValueType::KeyValueList,
+            PropertyValueType::ElementDataList,
         )
         .map_core(|core| core.with_item_properties(items));
         let filter = EvidenceKeyFilterWhitelist::new(
