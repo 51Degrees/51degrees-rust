@@ -30,7 +30,6 @@
 //! `51DEGREES_REQUIRE_TAC` is set, as the comparison workflow sets it, they
 //! fail rather than skip.
 
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
@@ -341,13 +340,15 @@ fn a_value_gives_the_profiles_holding_it() {
     }
 }
 
-/// Each record under `Profiles`, which the JSON builder writes as
-/// `hardware.profiles`, holds only the item properties the engine lists for
-/// `Profiles`, among them the id and the key property, and none of the rest
-/// of a profile's device data, such as its match metrics and its browser
-/// properties.
+/// The engines keep the ids of the profiles they find and write none of the
+/// profiles to the JSON, as .NET's do, so the JSON builder writes
+/// `hardware.profiles` empty however many profiles hold the value, whilst
+/// `profiles()` still gives every one of them.
 #[test]
-fn each_record_holds_only_the_listed_properties() {
+fn the_json_writes_no_on_premise_profiles() {
+    use fiftyone_json_builder::{JsonBuilderElement, JSON_BUILDER_DATA_KEY};
+    use fiftyone_pipeline_engines_fiftyone::SequenceElement;
+
     let Some(device) = device_with_key_properties() else {
         return;
     };
@@ -367,46 +368,47 @@ fn each_record_holds_only_the_listed_properties() {
     ];
     for (engine, key, property, accept) in engines {
         let (value, ids) = held_value(&device, property, accept);
-        let pipeline = pipeline(&device, &[&engine]);
+        let json_builder = JsonBuilderElement::builder()
+            .exclude_element(SequenceElement::DEFAULT_ELEMENT_DATA_KEY)
+            .build();
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(SequenceElement::new()))
+            .add_element(Arc::clone(&device) as Arc<dyn FlowElement>)
+            .add_element(Arc::clone(&engine) as Arc<dyn FlowElement>)
+            .add_element(Arc::new(json_builder))
+            .build()
+            .expect("the pipeline builds");
         let data = process(
             &pipeline,
             &[(key, value.as_str()), (USER_AGENT_KEY, USER_AGENT)],
         );
-        let [profiles] = engine.properties() else {
-            panic!("the engine lists one property");
-        };
-        let listed: HashSet<String> = profiles
-            .item_properties
-            .iter()
-            .map(|item| item.name.to_lowercase())
-            .collect();
         let hardware = data
             .get(HARDWARE_DATA_KEY)
             .unwrap_or_else(|| panic!("no data for {property} {value:?}"));
+        assert_eq!(profile_ids(hardware), ids, "{property} {value:?}");
         let Ok(PropertyValue::KeyValueList(records)) = hardware.get(PROFILES_PROPERTY_NAME) else {
             panic!("{PROFILES_PROPERTY_NAME} is not a list of records");
         };
-        assert_eq!(records.len(), ids.len(), "{property} {value:?}");
-        for record in &records {
-            let unlisted: Vec<&String> = record
-                .keys()
-                .filter(|name| !listed.contains(*name))
-                .collect();
-            assert!(
-                unlisted.is_empty(),
-                "{property} {value:?}: a record holds {unlisted:?}"
-            );
-            for name in ["profileid".to_owned(), property.to_lowercase()] {
-                assert!(
-                    record.contains_key(&name),
-                    "{property} {value:?}: a record has no {name}"
-                );
-            }
-        }
+        assert!(
+            records.is_empty(),
+            "{property} {value:?} gives {} records",
+            records.len()
+        );
+
+        let text = data
+            .get(JSON_BUILDER_DATA_KEY)
+            .expect("the JSON builder's data")
+            .json()
+            .to_owned();
+        let json: serde_json::Value = serde_json::from_str(&text).expect("the output is JSON");
+        assert_eq!(
+            json["hardware"],
+            serde_json::json!({ "profiles": [] }),
+            "{property} {value:?}"
+        );
         println!(
-            "{property} {value:?} gives {} records within the {} listed properties",
-            records.len(),
-            listed.len()
+            "{property} {value:?} gives {} profiles and writes none",
+            ids.len()
         );
     }
 }

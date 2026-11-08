@@ -25,6 +25,11 @@ log = "0.4"
 [dev-dependencies]
 # The performance profile the data file tests open the data file with.
 fiftyone-native = { path = "../native", default-features = false, features = ["dd"] }
+# The JSON builder and the Sequence element it needs, so a test can check what
+# the JSON builder writes for the engines' data.
+fiftyone-json-builder = { path = "../json-builder" }
+fiftyone-pipeline-engines-fiftyone = { path = "../pipeline-engines-fiftyone" }
+serde_json.workspace = true
 
 [package.metadata.docs.rs]
 all-features = true

@@ -756,10 +756,13 @@ version = "4.5.2"
 dependencies = [
  "fiftyone-device-detection-onpremise",
  "fiftyone-device-detection-shared",
+ "fiftyone-json-builder",
  "fiftyone-native",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "fiftyone-pipeline-engines-fiftyone",
  "log",
+ "serde_json",
 ]
 
 [[package]]
