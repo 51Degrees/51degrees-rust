@@ -37,6 +37,11 @@
 //!   [`PerformanceProfile::Balanced`], as .NET's `BalancedTemp` loads the
 //!   data file as `Balanced` does and makes no copy.
 //! - `SetConcurrency`, `SetProperties` and `SetProperty`.
+//! - `SetIndexedProperties`, the properties whose values the data set
+//!   indexes, as [`DeviceDetectionOnPremiseEngineBuilder::indexed_properties`]
+//!   says. Name `TAC` and `NativeModel` for the TAC and Native engines.
+//!   .NET's builder has no such setting, so a .NET configuration naming it
+//!   fails.
 //! - The Hash matching settings `SetDifference`, `SetDrift`,
 //!   `SetAllowUnmatched`, `SetUpdateMatchedUserAgent`,
 //!   `SetUsePerformanceGraph` and `SetUsePredictiveGraph`, which reach the
@@ -137,6 +142,7 @@ struct DeviceDetectionHashEngineSettings {
     use_predictive_graph: Option<bool>,
     reuse_temp_file: Option<bool>,
     properties: Vec<String>,
+    indexed_properties: Vec<String>,
     data_file_settings: DataFileSettings,
 }
 
@@ -154,6 +160,7 @@ impl DeviceDetectionHashEngineSettings {
             use_predictive_graph: None,
             reuse_temp_file: None,
             properties: Vec::new(),
+            indexed_properties: Vec::new(),
             data_file_settings: DataFileSettings::new(),
         }
     }
@@ -182,6 +189,7 @@ impl DeviceDetectionHashEngineSettings {
         };
         let mut builder = DeviceDetectionOnPremiseEngineBuilder::new(&path)
             .properties(self.properties)
+            .indexed_properties(self.indexed_properties)
             .auto_update(
                 settings.configuration(&path),
                 service.filter(|_| settings.updates_requested()),
@@ -245,7 +253,8 @@ fn ignored(setting: &str, why: &str) {
 }
 
 /// The builder, with its settings in the order .NET's
-/// `DeviceDetectionHashEngineBuilder` and its base classes declare them.
+/// `DeviceDetectionHashEngineBuilder` and its base classes declare them,
+/// then `SetIndexedProperties`, which .NET's builder lacks.
 fn device_detection_hash_engine_builder() -> BuilderDefinition<DeviceDetectionHashEngineSettings> {
     let definition = BuilderDefinition::new(
         "DeviceDetectionHashEngineBuilder",
@@ -367,6 +376,13 @@ fn device_detection_hash_engine_builder() -> BuilderDefinition<DeviceDetectionHa
         "SetProperty",
         |mut settings: DeviceDetectionHashEngineSettings, property: String| {
             settings.properties.push(property);
+            settings
+        },
+    )
+    .setting(
+        "SetIndexedProperties",
+        |mut settings: DeviceDetectionHashEngineSettings, names: Vec<String>| {
+            settings.indexed_properties.extend(names);
             settings
         },
     )

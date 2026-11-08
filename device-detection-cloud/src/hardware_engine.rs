@@ -37,7 +37,9 @@ use fiftyone_cloud_request_engine::CloudRequestEngine;
 
 use crate::dto::map_device_object;
 use crate::meta::{cloud_json, fill_metadata, property_list_request_failed, DiscoveredMetadata};
-use crate::multi_device::{MultiDeviceData, HARDWARE_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY};
+use fiftyone_device_detection_shared::{
+    MultiDeviceData, HARDWARE_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY,
+};
 
 /// The engine's name in configuration errors and log records.
 const ENGINE_NAME: &str = "HardwareProfileCloudEngine";
@@ -178,8 +180,10 @@ impl HardwareProfileCloudEngine {
         );
     }
 
-    /// Read the cloud JSON, slice the `hardware.profiles` array, and store the
-    /// resulting [`MultiDeviceData`] under [`HARDWARE_DATA_KEY`].
+    /// Read the cloud JSON, slice the `hardware.profiles` array, and add the
+    /// profiles to the [`MultiDeviceData`] under [`HARDWARE_DATA_KEY`],
+    /// after any that an on-premise TAC or Native engine added before this
+    /// one.
     ///
     /// Returns an [`Error::PipelineConfiguration`] if no cloud request engine ran
     /// before this engine. An empty or absent JSON response, which means the
@@ -203,7 +207,10 @@ impl HardwareProfileCloudEngine {
         };
 
         let result = slice_hardware_profiles(&json, self.metadata.get())?;
-        data.get_or_add(HARDWARE_DATA_KEY, || result)?;
+        let hardware = data.get_or_add(HARDWARE_DATA_KEY, MultiDeviceData::new)?;
+        for profile in result.into_profiles() {
+            hardware.push_profile(profile);
+        }
         Ok(())
     }
 }

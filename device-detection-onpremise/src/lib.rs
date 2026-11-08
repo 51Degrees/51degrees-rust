@@ -116,4 +116,4 @@ mod operational_copy;
 mod retained;
 
 pub use builder::{DeviceDetectionOnPremiseEngineBuilder, DATA_DOWNLOAD_TYPE};
-pub use engine::DeviceDetectionOnPremiseEngine;
+pub use engine::{DeviceDetectionOnPremiseEngine, PROFILE_ID_PROPERTY_NAME};

@@ -42,6 +42,7 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using FiftyOne.DeviceDetection.Hash.Engine.OnPremise.FlowElements;
+using FiftyOne.DeviceDetection.PropertyKeyed.FlowElements;
 using FiftyOne.DeviceDetection.RobotsTxt.FlowElements;
 using FiftyOne.IpIntelligence.Engine.OnPremise.FlowElements;
 using FiftyOne.IpIntelligence.Translation.FlowElements;
@@ -188,6 +189,9 @@ namespace FiftyOne.Parity
             services.AddTransient<JsonBuilderElementBuilder>();
             services.AddTransient<DeviceDetectionHashEngineBuilder>();
             services.AddTransient<RobotsTxtEngineBuilder>();
+            services.AddTransient<TacEngineBuilder>();
+            services.AddTransient<NativeEngineBuilder>();
+            services.AddTransient<PropertyKeyedDeviceEngineBuilder>();
             services.AddTransient<IpiOnPremiseEngineBuilder>();
             services.AddTransient<CountriesTranslationEngineBuilder>();
             services.AddTransient<CountryCodeTranslationEngineBuilder>();

@@ -251,6 +251,17 @@ jobs:
           target/debug/parity-rust robots-txt "${robots[@]}" --out out/robots-txt-rust.jsonl
           dotnet out/dotnet/Parity.dll robots-txt "${robots[@]}" \
             --out out/robots-txt-dotnet.jsonl
+          # The Rust side writes the TAC and Native cases, being the fixed
+          # ones and those for each TAC and NativeModel value the data file
+          # holds, and each side runs them.
+          target/debug/parity-rust property-keyed-cases \
+            --corpus corpus/property-keyed.json --dd "$DD_FILE" \
+            --out out/property-keyed-cases.json
+          keyed=(--corpus out/property-keyed-cases.json --dd "$DD_FILE")
+          target/debug/parity-rust property-keyed "${keyed[@]}" \
+            --out out/property-keyed-rust.jsonl
+          dotnet out/dotnet/Parity.dll property-keyed "${keyed[@]}" \
+            --out out/property-keyed-dotnet.jsonl
           # Each side writes each on-premise engine's metadata for every
           # metadata case, and the reads the restricted engines answer.
           metadata=(--cases corpus/metadata.json --dd "$DD_FILE" --ipi "$IPI_FILE")
@@ -265,13 +276,16 @@ jobs:
           target/debug/parity-compare --corpus corpus/evidence.json \
             --corpus out/fodid-rust.json --corpus out/fodid-dotnet.json \
             --corpus corpus/configuration.json --corpus out/derived-cases.json \
-            --corpus out/robots-txt-cases.json --corpus corpus/metadata.json \
+            --corpus out/robots-txt-cases.json --corpus out/property-keyed-cases.json \
+            --corpus corpus/metadata.json \
             --dotnet out/dotnet.jsonl --dotnet out/fodid-dotnet.jsonl \
             --dotnet out/configuration-dotnet.jsonl --dotnet out/derived-dotnet.jsonl \
-            --dotnet out/robots-txt-dotnet.jsonl --dotnet out/metadata-dotnet.jsonl \
+            --dotnet out/robots-txt-dotnet.jsonl --dotnet out/property-keyed-dotnet.jsonl \
+            --dotnet out/metadata-dotnet.jsonl \
             --rust out/rust.jsonl --rust out/fodid-rust.jsonl \
             --rust out/configuration-rust.jsonl --rust out/derived-rust.jsonl \
-            --rust out/robots-txt-rust.jsonl --rust out/metadata-rust.jsonl \
+            --rust out/robots-txt-rust.jsonl --rust out/property-keyed-rust.jsonl \
+            --rust out/metadata-rust.jsonl \
             --allowed allowed-differences.json --data ${{ matrix.data }} \
             --report out/report.md --strict > /dev/null
           status=$?
@@ -375,6 +389,51 @@ jobs:
           env 51DEGREES_DD_PATH="$DD_FILE" \
             cargo test -p fiftyone-device-detection-robots-txt \
             --test data_file -- --nocapture
+
+      # The TAC and Native engines find profiles only over a file with the
+      # TAC and NativeModel properties, which the Lite file the Pull Request
+      # workflow gives them lacks. 51DEGREES_REQUIRE_TAC makes those tests
+      # fail rather than skip if the file stops carrying them.
+      - name: Test the TAC and Native engines over the TAC file
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        run: |
+          env 51DEGREES_DD_PATH="$DD_FILE" 51DEGREES_REQUIRE_TAC=1 \
+            cargo test -p fiftyone-device-detection-property-keyed \
+            --test data_file -- --nocapture
+
+      # The TAC and Native cases for each value come from the data file, and
+      # the Lite file holds no TAC or NativeModel. Over the TAC file each
+      # side must find profiles for some case and write the values of some
+      # profile, or the comparison would pass with no profile on either side.
+      - name: Check the TAC and Native cases found profiles
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        working-directory: parity
+        run: |
+          echo "$(jq length out/property-keyed-cases.json) TAC and Native cases"
+          ls -l out/property-keyed-cases.json out/property-keyed-*.jsonl
+          for side in rust dotnet; do
+            found=$(jq -c 'select((.profileIds // []) | length > 0) | .id' \
+              "out/property-keyed-$side.jsonl" | wc -l)
+            profiles=$(jq -c 'select(.properties.device != null) | .id' \
+              "out/property-keyed-$side.jsonl" | wc -l)
+            echo "$side: $found cases found profiles, the values of $profiles profiles written"
+            if [ "$found" -lt 1 ] || [ "$profiles" -lt 1 ]; then
+              echo "::error::$side found no profiles or wrote the values of no profile over the TAC file"
+              exit 1
+            fi
+          done
+
+      # .NET finds a native model name in any case, where the crates match it
+      # exactly, which two entries in allowed-differences.json allow. This
+      # step fails on any NativeModel difference that case alone does not
+      # explain, and on any profile case giving a TAC whose ids differ, so
+      # those entries hide nothing else.
+      - name: Check the NativeModel differences are of case alone
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        working-directory: parity
+        run: |
+          pwsh check-native-model-case.ps1 -Cases out/property-keyed-cases.json \
+            -Rust out/property-keyed-rust.jsonl -DotNet out/property-keyed-dotnet.jsonl
 
       # A changed Rust answer must fail the comparison and be named in the
       # report, or the comparison proves nothing.
@@ -524,13 +583,14 @@ jobs:
       # read back differently, two elements in the other order, the other
       # answer for the suppress setting, another default usage sharing
       # setting, a setting given as a number or a fraction read back
-      # differently, and another error for a pipeline setting that does not
-      # parse.
+      # differently, another error for a pipeline setting that does not
+      # parse, and another data key for the property keyed engine.
       - name: Check that a changed configuration answer fails
         if: matrix.data == 'lite'
         working-directory: parity
         run: |
           want='configuration-pipeline configuration-no-group configuration-robots-txt'
+          want+=' configuration-property-keyed configuration-property-keyed-default-key'
           want+=' configuration-setting-in-both-sections'
           want+=' configuration-setting-forms-in-both-sections'
           want+=' configuration-setting-case-in-both-sections'
@@ -582,6 +642,9 @@ jobs:
           changed configuration-pipeline-setting-does-not-parse \
             '.configuration.error |= sub("sometimes"; "never")' \
             'configuration.error'
+          changed configuration-property-keyed \
+            '.configuration.elements[4].dataKey = "profiles-hardwarevendor"' \
+            'configuration.elements\[4\].dataKey'
 
       # The translation cases must translate and sort on both sides, or the
       # two could agree by both failing. French must give the United
