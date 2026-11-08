@@ -1568,6 +1568,7 @@ mod tests {
         for (evidence, added_reasons) in [
             (&[("header.user-agent", "x")][..], ADDED_NOT_SUPPLIED),
             (&[("server.client-ip", "")][..], ADDED_NOT_SUPPLIED),
+            (&[("server.client-ip", " ")][..], ADDED_NOT_SUPPLIED),
             (
                 &[("server.client-ip", "not-an-ip")][..],
                 [ADDED_NOT_VALID; 2],
@@ -1609,8 +1610,9 @@ mod tests {
     /// `Ip` holds the IPv4 address looked up and `IpV6` the IPv6 address, an
     /// IPv4-mapped address being IPv4, each written as .NET writes it. The
     /// other has .NET's reason that no address of its kind was supplied, even
-    /// when a value before the one looked up did not read as an address. Both
-    /// are listed after the data file's properties, with a value or without.
+    /// when a value before the one looked up did not read as an address, or
+    /// one after it was an address of the other kind. Both are listed after
+    /// the data file's properties, with a value or without.
     #[test]
     fn ip_and_ipv6_hold_the_address_looked_up() {
         let Some(engine) = asn_engine() else {
@@ -1662,6 +1664,24 @@ mod tests {
                     ("query.client-ip-51d", "not-an-ip"),
                     ("server.client-ip", "1.1.1.1"),
                 ][..],
+                Some("1.1.1.1"),
+                None,
+            ),
+            (
+                &[
+                    ("query.client-ip-51d", "2606:4700:4700::1111"),
+                    ("server.client-ip", "1.1.1.1"),
+                ][..],
+                None,
+                Some("2606:4700:4700::1111"),
+            ),
+            (
+                &[("server.client-ip", "1.1.1.1:443")][..],
+                Some("1.1.1.1"),
+                None,
+            ),
+            (
+                &[("server.client-ip", "1.1.1.1, 10.0.0.1")][..],
                 Some("1.1.1.1"),
                 None,
             ),

@@ -415,6 +415,56 @@
     }
   },
   {
+    "id": "ip-blank",
+    "about": "A blank address, which counts as no address supplied.",
+    "evidence": {
+      "server.client-ip": " ",
+      "query.session-id": "parity-ip-blank"
+    }
+  },
+  {
+    "id": "ip-query-not-an-address",
+    "about": "Text that is not an address in the query string, with an address from the connection.",
+    "evidence": {
+      "server.client-ip": "1.1.1.1",
+      "query.client-ip-51d": "not-an-ip",
+      "query.session-id": "parity-ip-query-not-an-address"
+    }
+  },
+  {
+    "id": "ip-query-v6-and-server-v4",
+    "about": "An IPv6 address in the query string and an IPv4 address from the connection.",
+    "evidence": {
+      "server.client-ip": "1.1.1.1",
+      "query.client-ip-51d": "2a00:23c5:a1a6:a01::1",
+      "query.session-id": "parity-ip-query-v6-and-server-v4"
+    }
+  },
+  {
+    "id": "ip-v4-port",
+    "about": "An IPv4 address with a port.",
+    "evidence": {
+      "server.client-ip": "1.1.1.1:443",
+      "query.session-id": "parity-ip-v4-port"
+    }
+  },
+  {
+    "id": "ip-v6-bracketed-port",
+    "about": "An IPv6 address in brackets with a port.",
+    "evidence": {
+      "server.client-ip": "[2606:4700:4700::1111]:443",
+      "query.session-id": "parity-ip-v6-bracketed-port"
+    }
+  },
+  {
+    "id": "ip-forwarded-list",
+    "about": "A forwarded list, whose first address is the client.",
+    "evidence": {
+      "server.client-ip": "1.1.1.1, 10.0.0.1",
+      "query.session-id": "parity-ip-forwarded-list"
+    }
+  },
+  {
     "id": "ua-and-ip",
     "about": "A User-Agent and an address together.",
     "evidence": {

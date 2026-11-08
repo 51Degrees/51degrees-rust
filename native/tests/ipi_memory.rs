@@ -178,6 +178,22 @@ fn measure_profile(leaks: &mut Leaks, path: &Path, profile: PerformanceProfile) 
             .process_ip("not an address")
             .expect_err("text is not an address");
     });
+    let no_address = Evidence::builder()
+        .add("header.user-agent", "Mozilla/5.0")
+        .build();
+    leaks.measure(&label("process evidence with no address"), 5, || {
+        let client_ip = results
+            .process_client_ip_evidence(&no_address)
+            .expect("evidence with no address is processed");
+        assert!(client_ip.address.is_none(), "no address is read");
+        for index in &indexes {
+            let has_values = results.has_values_by_index(*index).expect("has values");
+            assert!(!has_values, "empty results hold no values");
+            results
+                .no_value_message_by_index(*index)
+                .expect("the reason");
+        }
+    });
     leaks.measure(&label("read the data file's metadata"), 3, || {
         let properties = manager
             .data_file_properties()
