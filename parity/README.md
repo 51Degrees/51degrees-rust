@@ -298,7 +298,19 @@ builder, a parameter no setting takes or a value that does not parse,
 once at the top level and once inside the group. Two hold the Hash
 engine and then the robots.txt engine, with usage sharing off, one giving
 each setting .NET's robots.txt builder reads and one a parameter it has
-no setting for, whose error lists the builder's settings. Three give a
+no setting for, whose error lists the builder's settings. Six hold the
+Hash engine and then the TAC, Native or property keyed engine, with
+usage sharing off. One gives the three engines, named in full, without
+`Builder` and in lower case, with each setting .NET's builders read,
+one gives the property keyed engine only its key property, so its data
+key is the default, one gives it no key property, which its builder
+refuses, and one for each builder gives a parameter it has no setting
+for, whose error lists its settings in .NET's order. The Hash engine in
+these six indexes no property, because .NET's Hash builder has no
+`IndexedProperties` setting and refuses a configuration naming it. The
+crates' engines then warn that each lookup reads every profile, which
+does not matter here, as a configuration case builds a pipeline and
+processes nothing. Three give a
 pipeline setting under both `PipelineBuilderParameters` and
 `BuildParameters`, two of them with `ShareUsage` false, so no usage
 sharing element is added.

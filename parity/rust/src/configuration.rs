@@ -148,6 +148,7 @@ fn registry() -> BuilderRegistry {
     fiftyone_ip_intelligence_translation::configuration::add_builders(&mut registry);
     fiftyone_ip_intelligence_cloud::configuration::add_builders(&mut registry);
     fiftyone_device_detection_robots_txt::configuration::add_builders(&mut registry);
+    fiftyone_device_detection_property_keyed::configuration::add_builders(&mut registry);
     fiftyone_pipeline_engines_fiftyone::configuration::use_fiftyone_pipeline_builder(&mut registry);
     registry
 }
