@@ -48,9 +48,9 @@
 //! file holds `TAC` and `NativeModel`, and ask that engine to index them so
 //! each lookup is fast, with `indexed_property` in code or its
 //! `IndexedProperties` setting in a configuration. `NativeModel` is in the
-//! Enterprise and TAC data files, and `TAC` only in the TAC file. With the free Lite file, which
-//! holds neither, the engines accept no evidence and write nothing. Then give
-//! the evidence `query.tac` or `query.nativemodel`.
+//! Enterprise and TAC data files, and `TAC` only in the TAC file. With the
+//! free Lite file, which holds neither, the engines accept no evidence and
+//! write nothing. Then give the evidence `query.tac` or `query.nativemodel`.
 //!
 //! ```no_run
 //! use std::sync::Arc;
