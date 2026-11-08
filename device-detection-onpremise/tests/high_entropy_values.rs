@@ -24,11 +24,11 @@
 //! itself.
 //!
 //! The engine passes the base 64 high entropy values to the C library, which
-//! turns them into `sec-ch-ua*` headers before it matches. So a pipeline with
-//! the UA-CH high entropy decoder element before the engine gives the same
-//! device answers as the engine alone. The evidence is that of the
-//! `uach-ghev-*` cases of the comparison with .NET. Skips when the Lite Hash
-//! data file is absent.
+//! turns them into `sec-ch-ua*` headers before it matches. So a pipeline that
+//! still has the deprecated UA-CH high entropy decoder element before the
+//! engine gives the same device answers as the engine alone. The evidence is
+//! that of the `uach-ghev-*` cases of the comparison with .NET. Skips when
+//! the Lite Hash data file is absent.
 
 // The decoder element is deprecated, and these tests use it on purpose.
 #![allow(deprecated)]
@@ -219,7 +219,7 @@ fn the_decoder_element_changes_no_device_answer() {
             assert!(
                 hints.is_some_and(|count| count > 0),
                 "{name}: the decoder element wrote client hints, so the \
-                 comparison is not of two identical evidence sets"
+                 second pipeline's Flow Data holds data the first does not"
             );
         }
         assert_eq!(actual, expected, "{name}");
