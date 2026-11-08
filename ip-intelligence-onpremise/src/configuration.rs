@@ -38,13 +38,15 @@
 //!   data file as `Balanced` does and makes no copy.
 //! - `SetConcurrency`, which holds whatever profile is set with it,
 //!   `SetProperties` and `SetProperty`.
+//! - `SetReuseTempFile`, which reads a copy of the data file already in the
+//!   temporary folder, as
+//!   [`IpIntelligenceOnPremiseEngineBuilder::reuse_temp_file`] says.
 //! - `SetCacheSize`, refused with .NET's message, as the engine keeps no
 //!   results.
-//! - `SetReuseTempFile`, `SetDataDownloadType`, `SetLazyLoadingTimeout` and
-//!   `SetCacheHitOrMiss` set to true are read and have no effect, with a
-//!   warning logged. The engine makes a new copy of the data file each time
-//!   it needs one, the download type is the IP Intelligence one, as in .NET,
-//!   and the engine has no lazy loading and no cache.
+//! - `SetDataDownloadType`, `SetLazyLoadingTimeout` and `SetCacheHitOrMiss`
+//!   set to true are read and have no effect, with a warning logged. The
+//!   download type is the IP Intelligence one, as in .NET, and the engine
+//!   has no lazy loading and no cache.
 //! - The data file settings of [`fiftyone_pipeline_engines::configuration`].
 //!   Automatic updates and the file system watcher are on unless the
 //!   configuration turns them off, as in .NET, and any update needs a
@@ -124,6 +126,7 @@ struct IpiOnPremiseEngineSettings {
     data_file: Option<(String, bool)>,
     profile: Option<PerformanceProfile>,
     concurrency: Option<u16>,
+    reuse_temp_file: Option<bool>,
     properties: Vec<String>,
     data_file_settings: DataFileSettings,
 }
@@ -134,6 +137,7 @@ impl IpiOnPremiseEngineSettings {
             data_file,
             profile: None,
             concurrency: None,
+            reuse_temp_file: None,
             properties: Vec::new(),
             data_file_settings: DataFileSettings::new(),
         }
@@ -172,6 +176,9 @@ impl IpiOnPremiseEngineSettings {
         }
         if let Some(concurrency) = self.concurrency {
             builder = builder.concurrency(concurrency);
+        }
+        if let Some(reuse) = self.reuse_temp_file {
+            builder = builder.reuse_temp_file(reuse);
         }
         // .NET makes no copy when the temporary folder is empty text.
         match settings.temp_dir_path() {
@@ -213,13 +220,8 @@ fn ipi_on_premise_engine_builder() -> BuilderDefinition<IpiOnPremiseEngineSettin
     )
     .setting(
         "SetReuseTempFile",
-        |settings: IpiOnPremiseEngineSettings, reuse: bool| {
-            if reuse {
-                ignored(
-                    "SetReuseTempFile",
-                    "as the engine makes a new copy of the data file each time it needs one",
-                );
-            }
+        |mut settings: IpiOnPremiseEngineSettings, reuse: bool| {
+            settings.reuse_temp_file = Some(reuse);
             settings
         },
     )

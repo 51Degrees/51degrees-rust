@@ -138,6 +138,14 @@ fn config_for(profile: PerformanceProfile) -> *mut sys::ConfigIpi {
     }
 }
 
+/// The size of an IP Intelligence data file's header in bytes, being how much
+/// of a data file the C library compares when it looks for a copy of the file
+/// to reuse.
+pub fn data_file_header_size() -> usize {
+    // Safety: the shim reads no state and takes no arguments.
+    unsafe { sys::fiftyoneDegreesShimIpiGetHeaderSize() }
+}
+
 // ---------------------------------------------------------------------------
 // Manager
 // ---------------------------------------------------------------------------
@@ -1854,6 +1862,36 @@ mod tests {
         (date(PUBLISHED_AT), date(PUBLISHED_AT + 4))
     }
 
+    /// The header ends after the ten collection headers that follow the two
+    /// dates, each 16 bytes as the library is built with 64 bit file offsets,
+    /// and the strings collection, the first in the file, starts there.
+    #[test]
+    fn the_header_size_is_the_ip_intelligence_data_file_header() {
+        use std::io::Read;
+        const DATE_SIZE: usize = 4;
+        const COLLECTION_HEADER_SIZE: usize = 16;
+        const COLLECTION_COUNT: usize = 10;
+        const START_SIZE: usize = std::mem::size_of::<u64>();
+        let strings_at = PUBLISHED_AT + 2 * DATE_SIZE;
+        assert_eq!(
+            data_file_header_size(),
+            strings_at + COLLECTION_COUNT * COLLECTION_HEADER_SIZE
+        );
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping the header size");
+            return;
+        };
+        let mut header = vec![0u8; strings_at + START_SIZE];
+        std::fs::File::open(&data_file)
+            .and_then(|mut file| file.read_exact(&mut header))
+            .expect("the header reads");
+        let start: [u8; START_SIZE] = header[strings_at..].try_into().expect("a start");
+        assert_eq!(
+            u64::from_le_bytes(start),
+            u64::try_from(data_file_header_size()).expect("a header size")
+        );
+    }
+
     /// The dates read are the ones in the data file header, whether the data
     /// set reads the file or holds it in memory.
     #[test]
@@ -2248,6 +2286,48 @@ mod tests {
         assert!(
             asn.as_deref().unwrap_or_default().contains("AS13335"),
             "got {asn:?}"
+        );
+    }
+
+    /// The web request a web integration gives with the evidence, under
+    /// `server.http-request`, is not one of its text values, so no address is
+    /// read from it. The lookup takes the evidence's own address, and with
+    /// none it finds nothing from the request and returns without a panic.
+    #[test]
+    fn no_address_is_read_from_the_web_request() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping the web request");
+            return;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::HighPerformance);
+        let request = || {
+            Evidence::builder()
+                .add("server.client-ip", QUAD9)
+                .add("query.client-ip-51d", QUAD9)
+                .build()
+        };
+        let lookup = |evidence: Evidence| -> Result<Option<String>> {
+            let mut results = manager.create_results()?;
+            results.process_evidence(&evidence)?;
+            results.value_as_string("Asn", ",")
+        };
+
+        let asn = lookup(
+            Evidence::builder()
+                .add("server.client-ip", CLOUDFLARE)
+                .http_request(request())
+                .build(),
+        )
+        .expect("the lookup should succeed");
+        assert!(
+            asn.as_deref().unwrap_or_default().contains("AS13335"),
+            "got {asn:?}"
+        );
+
+        let alone = lookup(Evidence::builder().http_request(request()).build());
+        assert!(
+            !matches!(&alone, Ok(Some(asn)) if asn.contains("AS19281")),
+            "got {alone:?}"
         );
     }
 
