@@ -1,12 +1,16 @@
 name: Publish
 
 # Publish the 51Degrees crates that changed to crates.io when main changes,
-# each at its own version. A crate is released when a file under its folder,
-# or under a submodule it is built from, changed since its last tag
-# '<crate>/<version>', and with it every crate that depends on it. Only the
-# patch number moves, and every other crate keeps the version it last
-# released. The rules are common-ci's steps/release-plan.ps1, read from
-# ci/packages.json, and ci/get-release-plan.ps1 prints the plan.
+# each at its own version. A crate is released when a file that counts
+# changed since its last tag '<crate>/<version>', under its folder or a path
+# ci/packages.json names in its ExtraPaths (the workspace Cargo.toml, and a
+# submodule it is built from with the script that copies it in), and with it
+# every crate that depends on it. common-ci's ignore list and
+# ci/release-plan-filter.ps1 decide which files count, once the common-ci
+# branch this reads calls them. Only the patch number moves, and every other
+# crate keeps the version it last released. The rules are common-ci's
+# steps/release-plan.ps1, read from ci/packages.json, and
+# ci/get-release-plan.ps1 prints the plan.
 #
 # Authentication uses crates.io Trusted Publishing: the
 # rust-lang/crates-io-auth-action exchanges this run's GitHub OIDC identity for a
@@ -69,17 +73,21 @@ jobs:
           path: common-ci
       # The plan is worked out once, before anything is tagged, and every
       # step after reads it from the file, because the tags this run makes
-      # change what the plan would say. A crate with no tag of its own stops
-      # the run here, as there is nothing for its version to count from.
+      # change what the plan would say. A crate with neither a tag of its own
+      # nor a FirstVersion stops the run here, as there is nothing for its
+      # version to count from.
       - name: Work out which crates to release
         id: plan
         shell: pwsh
         run: ./ci/get-release-plan.ps1 -OutFile "$env:RUNNER_TEMP/release-plan.json"
       # Refuses a crate whose version moves the major or minor place against
-      # its own tags, unless this run was dispatched by someone who asked for
-      # it. A push to main carries no inputs, so that route can never allow
-      # one. This runs before any version is written into the manifests, so a
-      # refused run leaves the tree alone as well as publishing nothing.
+      # its own tags, or against its highest version on crates.io that is not
+      # yanked (for a crate crates.io does not have, the major and minor the
+      # others share), unless this run was dispatched by someone who asked
+      # for it. A push to main carries no inputs, so that route can never
+      # allow one. This runs before any version is written into the
+      # manifests, so a refused run leaves the tree alone as well as
+      # publishing nothing.
       - name: Refuse a major or minor bump nobody approved
         if: steps.plan.outputs.count != '0'
         shell: pwsh

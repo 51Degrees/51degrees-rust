@@ -5,9 +5,13 @@ writes the plan for the publish steps that follow.
 
 .DESCRIPTION
 Each crate is tagged '<crate>/<version>'. A crate is released when a file
-under its folder, or under a submodule it is built from, changed since its
-last tag, and with it every crate that depends on it, because the requirement
-on it moves. Only the patch number moves. The rules are common-ci's
+that counts changed since its last tag, under its folder or a path
+ci/packages.json names in its ExtraPaths (the workspace Cargo.toml, and a
+submodule it is built from with the script that copies it in), and with it
+every crate that depends on it, because the requirement on it moves. A crate
+with no tag starts at its FirstVersion. common-ci's ignore list and
+ci/release-plan-filter.ps1 decide which files count, once the common-ci in
+use calls them. Only the patch number moves. The rules are common-ci's
 steps/release-plan.ps1, read from ci/packages.json.
 
 Nothing is changed, so this is the dry run of a publish as well as its first

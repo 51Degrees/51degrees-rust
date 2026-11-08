@@ -246,15 +246,19 @@ that tag, under its folder or a path named in its `ExtraPaths`, and every
 crate that depends on it is released with it. `ExtraPaths` names the
 workspace `Cargo.toml` for every crate, and for a crate built from a
 submodule, the submodule and the script in `ci/` that copies it in.
-`ci/release-plan-filter.ps1` leaves out a change to a crate's `Cargo.toml`
-only in the keys that describe it on crates.io, and a change to the workspace
-`Cargo.toml` outside `[workspace.package]` and `[workspace.dependencies]` or
-only in their descriptive keys. Once common-ci's `main` has the ignore list
-of [common-ci#310](https://github.com/51Degrees/common-ci/pull/310), a change
-only to Markdown, `docs`, `tests`, `test`, `examples` or LICENSE files
-releases nothing either. Until then such a change under a crate's folder
-releases the crate. A change only to CI files other than the copy scripts
-releases nothing. `ci/set-crate-versions.ps1` then writes each
+Only [common-ci#310](https://github.com/51Degrees/common-ci/pull/310) makes
+common-ci's plan call `ci/release-plan-filter.ps1` and leave out common-ci's
+ignore list. Once the common-ci branch a workflow reads holds it, the filter
+leaves out a change to a crate's `Cargo.toml` only in the keys that describe
+it on crates.io, and a change to the workspace `Cargo.toml` outside
+`[workspace.package]` and `[workspace.dependencies]` or only in their
+descriptive keys, and the ignore list leaves out a change only to Markdown,
+`docs`, `tests`, `test`, `examples` or LICENSE files. Until then every change
+under a crate's paths counts, so a change only to the workspace
+`Cargo.toml`'s members, a profile or a comment releases all 26 crates, and a
+change to a crate's README or tests releases that crate. A change only to CI
+files other than the copy scripts releases nothing.
+`ci/set-crate-versions.ps1` then writes each
 planned crate's version, and the version every other crate last released,
 into the manifests and the requirements between them on the build machine.
 The workflow refuses a crate that moves its major or minor number against its
