@@ -34,8 +34,11 @@ use fiftyone_ip_intelligence::{
 
 // Use an on-premise IP Intelligence data file. The free ASN file from the data
 // repository suits quick tests. An Enterprise file has the full property set.
+// LowMemory reads the file from disk, so even the Enterprise file, which is
+// over 6 GB, needs little memory. HighPerformance holds the whole file in
+// memory for faster lookups, where there is memory for it.
 let pipeline = IpIntelligencePipelineBuilder::on_premise("51Degrees-IPIV4AsnIpiV41.ipi")
-    .performance_profile(PerformanceProfile::HighPerformance)
+    .performance_profile(PerformanceProfile::LowMemory)
     // Off because the free ASN file has no licence key for updates.
     .auto_update(false)
     .build()?;
@@ -256,8 +259,11 @@ use fiftyone_ip_intelligence::{
 
 // Use an on-premise IP Intelligence data file. The free ASN file from the data
 // repository suits quick tests. An Enterprise file has the full property set.
+// LowMemory reads the file from disk, so even the Enterprise file, which is
+// over 6 GB, needs little memory. HighPerformance holds the whole file in
+// memory for faster lookups, where there is memory for it.
 let pipeline = IpIntelligencePipelineBuilder::on_premise("51Degrees-IPIV4AsnIpiV41.ipi")
-    .performance_profile(PerformanceProfile::HighPerformance)
+    .performance_profile(PerformanceProfile::LowMemory)
     // Off because the free ASN file has no licence key for updates.
     .auto_update(false)
     .build()?;
