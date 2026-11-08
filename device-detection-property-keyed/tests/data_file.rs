@@ -47,7 +47,7 @@ use fiftyone_device_detection_shared::{
     PROFILES_PROPERTY_NAME,
 };
 use fiftyone_native::PerformanceProfile;
-use fiftyone_pipeline_core::{Evidence, EvidenceKeyFilter, FlowData, FlowElement, Pipeline};
+use fiftyone_pipeline_core::{Evidence, FlowData, FlowElement, Pipeline};
 
 const TAC_KEY: &str = "query.tac";
 const NATIVE_MODEL_KEY: &str = "query.nativemodel";
