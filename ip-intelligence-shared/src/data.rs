@@ -47,9 +47,9 @@
 //! candidate values for them, each with a `0.0..=1.0` confidence weighting. In
 //! the data file these are the `weightedstring` properties
 //! (`CountryCodesGeographical`, `CountryCodesPopulation`, `Mcc` and
-//! `StateGeoNameIdsGeographical`). Their accessors return an ordered
-//! `Vec<`[`WeightedValue`]`<String>>`, and they also appear in the dynamic
-//! [`ElementData::get`] bag as a
+//! `StateGeoNameIdsGeographical`). Their
+//! accessors return an ordered `Vec<`[`WeightedValue`]`<String>>`, and they also
+//! appear in the dynamic [`ElementData::get`] bag as a
 //! [`PropertyValue::KeyValueList`] of `value`/`weight` records.
 //!
 //! Both engines populate the same backing the same way: a plain value is stored
