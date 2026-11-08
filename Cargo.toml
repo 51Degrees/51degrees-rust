@@ -30,6 +30,7 @@ members = [
     "native",
     "device-detection-shared",
     "device-detection-onpremise",
+    "device-detection-property-keyed",
     "device-detection-robots-txt",
     "device-detection-cloud",
     "device-detection",

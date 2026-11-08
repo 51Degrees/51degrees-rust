@@ -39,7 +39,7 @@ use fiftyone_json_builder::{
 use fiftyone_pipeline_core::{
     ElementData, Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData,
     FlowElement, MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue,
-    PropertyValueType, Result, TypedKey,
+    PropertyValueType, Result, TypedKey, WktString,
 };
 use fiftyone_pipeline_engines::AspectDataBase;
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
@@ -876,6 +876,21 @@ fn text_is_in_the_form_dotnet_writes() {
     ]
     .join(NEW_LINE);
     assert_eq!(json, expected);
+}
+
+/// A WKT value is written as an object holding its text under `value`, as
+/// .NET's JSON builder writes its `WktString` and the cloud service sends it.
+#[test]
+fn a_wkt_value_is_an_object_holding_its_text() {
+    let ip = TestElement::new("ip").with_value("areas", WktString::new("POINT(2 4)"));
+
+    let json = run(vec![Arc::new(ip)], JsonBuilderElement::builder());
+
+    assert_eq!(
+        parse(&json)["ip"]["areas"],
+        serde_json::json!({"value": "POINT(2 4)"}),
+        "got {json}"
+    );
 }
 
 #[test]

@@ -460,7 +460,7 @@ impl IpIntelligenceData for IpIntelligenceDataBase {
 pub const GENERATED_PROPERTY_TYPES: &[(&str, PropertyValueType)] = &[
     ("AccuracyRadiusMax", PropertyValueType::Integer),
     ("AccuracyRadiusMin", PropertyValueType::Integer),
-    ("Areas", PropertyValueType::String),
+    ("Areas", PropertyValueType::WktString),
     ("Asn", PropertyValueType::String),
     ("AsnName", PropertyValueType::String),
     ("BrowserDiversity", PropertyValueType::Integer),

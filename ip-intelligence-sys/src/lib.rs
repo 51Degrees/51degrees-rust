@@ -1260,6 +1260,11 @@ extern "C" {
         day: *mut c_int,
     ) -> c_int;
 
+    /// Returns the size of an IP Intelligence data file's header in bytes,
+    /// being how much of a data file the C library compares to find a copy of
+    /// it to reuse. Defined by this crate's `src/shim.c`.
+    pub fn fiftyoneDegreesShimIpiGetHeaderSize() -> usize;
+
     /// Returns the number of headers the data set reads the client IP from, or
     /// zero when no data set is available. Defined by this crate's
     /// `src/shim.c`, reading the data set's `uniqueHeaders`.

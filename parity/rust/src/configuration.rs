@@ -43,7 +43,7 @@ use serde_json::{json, Value};
 use fiftyone_device_detection_onpremise::DeviceDetectionOnPremiseEngine;
 use fiftyone_ip_intelligence_onpremise::IpIntelligenceOnPremiseEngine;
 use fiftyone_pipeline_core::configuration::{BuilderRegistry, PipelineOptions};
-use fiftyone_pipeline_core::{Error, FlowElement, Pipeline, PipelineBuilder};
+use fiftyone_pipeline_core::{Error, EvidenceKeyFilter, FlowElement, Pipeline, PipelineBuilder};
 use fiftyone_pipeline_engines::{AspectEngineDataFile, OnPremiseAspectEngine};
 use fiftyone_pipeline_engines_fiftyone::constants::SHARE_USAGE_DEFAULT_ELEMENT_DATA_KEY;
 use fiftyone_pipeline_engines_fiftyone::{ShareUsageConfig, ShareUsageElement};
@@ -148,6 +148,7 @@ fn registry() -> BuilderRegistry {
     fiftyone_ip_intelligence_translation::configuration::add_builders(&mut registry);
     fiftyone_ip_intelligence_cloud::configuration::add_builders(&mut registry);
     fiftyone_device_detection_robots_txt::configuration::add_builders(&mut registry);
+    fiftyone_device_detection_property_keyed::configuration::add_builders(&mut registry);
     fiftyone_pipeline_engines_fiftyone::configuration::use_fiftyone_pipeline_builder(&mut registry);
     registry
 }
@@ -238,13 +239,15 @@ fn describe_element(
             .and_then(|element| element.downcast::<ShareUsageElement>().ok())
         {
             out["settings"] = describe_share_usage(share.config());
+            // The rules for what is shared. The element accepts no evidence,
+            // and .NET's element holds these rules as its evidence filter.
+            let filter = share.shared_evidence_filter();
+            out["evidenceFilter"] = USAGE_FILTER_KEYS
+                .iter()
+                .map(|key| (key.to_string(), json!(filter.include(key))))
+                .collect::<serde_json::Map<_, _>>()
+                .into();
         }
-        let filter = element.evidence_key_filter();
-        out["evidenceFilter"] = USAGE_FILTER_KEYS
-            .iter()
-            .map(|key| (key.to_string(), json!(filter.include(key))))
-            .collect::<serde_json::Map<_, _>>()
-            .into();
     }
     out
 }

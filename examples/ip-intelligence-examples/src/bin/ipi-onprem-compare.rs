@@ -57,7 +57,22 @@ pub struct ExampleOptions {
     pub profiles: Vec<PerformanceProfile>,
     /// The two IP addresses to compare side by side.
     pub ips: (String, String),
+    /// The performance profile the two IP addresses are compared under.
+    pub profile: PerformanceProfile,
 }
+
+/// The profile the two IP addresses are compared under unless `--profile`
+/// names another. LowMemory reads the data file from disk, so the comparison
+/// needs little memory even with the Enterprise file, which is over 6 GB.
+/// Reading from disk is much slower, and the .NET metrics example read a
+/// profile's values about 166 times a second with LowMemory against 2,013
+/// with the file held in memory, so `--profile HighPerformance` is offered
+/// where there is memory for the whole file.
+const DEFAULT_PROFILE: PerformanceProfile = PerformanceProfile::LowMemory;
+
+/// The command that compares the two IP addresses with the faster profile.
+const FASTER_PROFILE_COMMAND: &str =
+    "cargo run -p ip-intelligence-examples --bin ipi-onprem-compare -- --profile HighPerformance";
 
 impl ExampleOptions {
     /// Default options, reading the Enterprise file when its share is
@@ -77,6 +92,7 @@ impl ExampleOptions {
                 PerformanceProfile::Balanced,
             ],
             ips: ("1.1.1.1".to_owned(), "8.8.8.8".to_owned()),
+            profile: DEFAULT_PROFILE,
         })
     }
 }
@@ -207,7 +223,7 @@ fn compare_two_ips(
     available: &[String],
     out: &mut dyn Write,
 ) -> anyhow::Result<()> {
-    let profile = PerformanceProfile::HighPerformance;
+    let profile = options.profile;
     let (a, b) = &options.ips;
 
     let values_a = lookup(&options.data_file, profile, a, available)?;
@@ -231,6 +247,14 @@ fn compare_two_ips(
             "a different"
         }
     )?;
+    if profile == PerformanceProfile::LowMemory {
+        writeln!(
+            out,
+            "\tLowMemory reads the data file from disk. To compare with the \
+             file held in memory for faster lookups, where there is memory \
+             for it, run\n\t\t{FASTER_PROFILE_COMMAND}"
+        )?;
+    }
     Ok(())
 }
 
@@ -239,15 +263,17 @@ fn main() -> anyhow::Result<()> {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
 
-    let options = match std::env::args().nth(1) {
-        Some(path) => ExampleOptions {
-            data_file: std::path::PathBuf::from(path),
+    let arguments = ip_intelligence_examples::profile_arguments(std::env::args().skip(1))?;
+    let mut options = match arguments.data_file {
+        Some(data_file) => ExampleOptions {
+            data_file,
             profiles: vec![
                 PerformanceProfile::HighPerformance,
                 PerformanceProfile::LowMemory,
                 PerformanceProfile::Balanced,
             ],
             ips: ("1.1.1.1".to_owned(), "8.8.8.8".to_owned()),
+            profile: DEFAULT_PROFILE,
         },
         None => match ExampleOptions::from_env() {
             Some(options) => options,
@@ -258,6 +284,9 @@ fn main() -> anyhow::Result<()> {
             ),
         },
     };
+    if let Some(profile) = arguments.profile {
+        options.profile = profile;
+    }
 
     run(&options, &mut out)
 }
@@ -306,7 +335,16 @@ mod tests {
  *    they agree. This is a quick way to confirm that a profile change made for
  *    performance reasons has not altered detection.
  * 2. Two IP addresses looked up under one profile and compared against each
- *    other, reporting whether they map to the same network.
+ *    other, reporting whether they map to the same network. The profile is
+ *    `LowMemory`, which reads the data file from disk, so the comparison runs
+ *    in little memory even with the Enterprise file. Where there is memory
+ *    for the whole file, this command compares them with it held in memory
+ *    for faster lookups.
+ *
+ *      cargo run -p ip-intelligence-examples --bin ipi-onprem-compare -- --profile HighPerformance
+ *
+ *    `--profile` takes any profile name, and a data-file path can be given as
+ *    well. The profile changes memory use and speed, not the answers.
  *
  * Each value is shown as the single plain value the data file resolves. The
  * example compares `Asn`, which the free ASN file carries, `RegisteredName`,
