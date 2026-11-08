@@ -72,14 +72,6 @@
     "reason": "json-builder.md says the nullreason meta-Property \"MUST be added with a string message that explains why this Property does not have a value\" where the Property's value is null, so the crates write the reason .NET gives for IpV6 having no value. .NET leaves IpV6 out of its JSON then, and writes no reason."
   },
   {
-    "path": "*ip.areas",
-    "kind": "type",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "data": "enterprise",
-    "reason": "The crates give Areas as a string, where .NET gives it as a WKT value, which its JSON writes as an object.",
-    "issue": 226
-  },
-  {
     "path": "properties.ip.iprange*",
     "kind": "type",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
@@ -102,8 +94,18 @@
     "issue": 226
   },
   {
+    "path": "properties.device.hardware*",
+    "kind": "noValueMessage",
+    "cases": ["metadata-device-ismobile"],
+    "data": "lite",
+    "dotnet": {"pattern": ["Property 'Hardware*' not found in data for element 'device'. The reason for this is unknown. Please check that the aspect and property name are correct."]},
+    "rust": {"pattern": ["Property 'Hardware*' not found in data for element 'device'. This is because your license or data file does not include this property. To see which licenses include it, see *"]},
+    "reason": "The Lite file has no HardwareVendor, HardwareModel or HardwareName. For a property the data file does not hold, both sides give the upgrade reason when the engine's data type has a typed accessor for the name. .NET's MissingPropertyService looks for the accessor among the properties IDeviceDataHash declares, which are none, as Type.GetProperties on an interface leaves out those of the interfaces it extends, so it never sees IDeviceData's HardwareVendor and gives the unknown reason. The crates find the accessor and give the upgrade reason the service's own documentation describes."
+  },
+  {
     "path": "properties.device.*",
     "kind": "noValueMessage",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "reason": "Every Device Detection property with no value gives the same sentence, where .NET gives the reason for each.",
     "issue": 223
   },
@@ -114,107 +116,18 @@
     "issue": 223
   },
   {
-    "path": "*device.crawler*",
-    "kind": "value",
-    "cases": ["ua-curl"],
-    "data": "enterprise",
-    "dotnet": {"value": [[""]]},
-    "rust": {"value": [[]]},
-    "reason": "The crates give an empty list where .NET gives a list holding one empty string.",
-    "issue": 224
-  },
-  {
-    "path": "properties.device.*",
-    "kind": "state",
-    "cases": ["no-evidence", "ua-empty", "ua-long", "uach-android-no-ua", "ip-*"],
-    "dotnet": {"noValue": true},
-    "rust": {"value": ["", []]},
-    "reason": "With no User-Agent, an empty one, or one longer than the C code reads (a 2,000 character User-Agent, which 51degrees-cxx ignores on both sides), the crates give an empty string or an empty list where .NET gives no value.",
-    "issue": 224
-  },
-  {
-    "path": "properties.device.*javascript*",
-    "kind": "state",
-    "dotnet": {"noValue": true},
-    "rust": {"value": [""]},
-    "reason": "For a JavaScript property whose value in the matched profile is empty, the crates give the empty string where .NET gives no value.",
-    "issue": 224
-  },
-  {
-    "path": "properties.device.screenpixels*",
-    "kind": "state",
-    "data": "lite",
-    "dotnet": {"value": [0]},
-    "rust": {"noValue": true},
-    "reason": "A screen size whose data file value does not parse, such as Unknown, has no value in the crates (native_value in device-detection-onpremise), where .NET gives 0. A lost screen size that .NET gives as 0 also passes until the difference is removed.",
-    "issue": 224
-  },
-  {
-    "path": "properties.device.*",
-    "kind": "state",
-    "data": "enterprise",
-    "dotnet": {"value": [0, false]},
-    "rust": {"noValue": true},
-    "reason": "A number or true or false property whose data file value does not parse, such as Unknown or N/A, has no value in the crates (native_value in device-detection-onpremise), where .NET gives 0 or false. This covers more than a hundred properties, and it also lets through a lost answer that .NET gives as 0 or false, such as a false IsMobile, because a value that does not parse and a lost value look the same to the comparer. Removing the difference removes both.",
-    "issue": 224
-  },
-  {
-    "path": "json.device.*",
-    "kind": "type",
-    "dotnet": {"value": [null]},
-    "rust": {"value": ["", []]},
-    "reason": "The JSON holds the empty strings and lists the crates give where .NET gives no value and writes null (properties.device state).",
-    "issue": 224
-  },
-  {
-    "path": "json.device.screenpixels*",
-    "kind": "type",
-    "data": "lite",
-    "dotnet": {"value": [0]},
-    "rust": {"value": [null]},
-    "reason": "A screen size whose data file value does not parse has no value in the crates, so their JSON writes null where .NET writes 0 (properties.device.screenpixels* state). A lost screen size that .NET gives as 0 also passes until the difference is removed.",
-    "issue": 224
-  },
-  {
-    "path": "json.device.screenpixels*nullreason",
-    "kind": "onlyInRust",
-    "data": "lite",
-    "reason": "The crates' JSON gives the reason a screen size whose data file value does not parse has no value, where .NET gives 0 and so no reason (properties.device.screenpixels* state).",
-    "issue": 224
-  },
-  {
-    "path": "json.device.*",
-    "kind": "type",
-    "data": "enterprise",
-    "dotnet": {"value": [0, false]},
-    "rust": {"value": [null]},
-    "reason": "A number or true or false property whose data file value does not parse has no value in the crates, so their JSON writes null where .NET writes 0 or false (properties.device state). It also lets through a lost answer that .NET gives as 0 or false, as that entry says.",
-    "issue": 224
-  },
-  {
-    "path": "json.device.*nullreason",
-    "kind": "onlyInRust",
-    "data": "enterprise",
-    "reason": "The crates' JSON gives the reason a number or true or false property whose data file value does not parse has no value, where .NET gives 0 or false and so no reason (properties.device state).",
-    "issue": 224
-  },
-  {
-    "path": "json.device.*nullreason",
-    "kind": "onlyInDotnet",
-    "reason": "The crates give an empty string or an empty list where .NET gives no value, so only .NET's JSON gives a reason (properties.device state).",
-    "issue": 224
-  },
-  {
     "path": "json.device.*nullreason",
     "kind": "value",
     "reason": "The crates give every Device Detection property with no value the reason No value for property and its name, where .NET says why it has none, such as that the evidence it needs was not supplied (properties.device.* noValueMessage).",
     "issue": 223
   },
   {
-    "path": "json.device",
-    "kind": "order",
-    "reason": "The crates' Device Detection engine adds the match metrics and the matched User-Agents to its data before the data file's values, so the JSON lists them first. .NET lists them after the data file's properties.",
-    "issue": 224
+    "path": "json.device.*javascript*nullreason",
+    "kind": "type",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "dotnet": {"value": [null]},
+    "rust": {"pattern": ["No value for property *"]},
+    "reason": "json-builder.md line 52 says that where the Property value is null the nullreason meta-Property \"MUST be added with a string message that explains why this Property does not have a value\", so the crates give their sentence when the matched profile holds no value for a property. .NET gives no reason then, because the C++ ResultsBase sets no message when the profile holds no value, so its JSON writes null. In the corpus only the JavaScript properties have no value in a matched profile. This entry stays until .NET gives a reason or the specification changes."
   },
   {
     "path": "javascript",
@@ -281,8 +194,8 @@
     "path": "configuration.error",
     "kind": "value",
     "cases": ["configuration-unknown-builder", "configuration-unknown-builder-in-group"],
-    "dotnet": {"value": ["Configuration failed to build.\nBuilderName: NoSuchElementBuilder\nSubElement Builder Names: No SubElements\nCould not find builder matching 'NoSuchElementBuilder' for element 2. Available builders are: CustomShareUsageBuilder,SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder\nNo Inner Exception.\n", "Configuration failed to build.\nBuilderName: BuilderName not set\nSubElement Builder Names: DeviceDetectionHashEngineBuilder,NoSuchEngineBuilder\nCould not find builder matching 'NoSuchEngineBuilder' for element 1 in element 1. Available builders are: CustomShareUsageBuilder,SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder\nNo Inner Exception.\n"]},
-    "rust": {"value": ["Configuration failed to build.\nBuilderName: NoSuchElementBuilder\nSubElement Builder Names: No SubElements\nCould not find builder matching 'NoSuchElementBuilder' for element 2. Available builders are: SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder\nNo Inner Exception.\n", "Configuration failed to build.\nBuilderName: BuilderName not set\nSubElement Builder Names: DeviceDetectionHashEngineBuilder,NoSuchEngineBuilder\nCould not find builder matching 'NoSuchEngineBuilder' for element 1 in element 1. Available builders are: SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder\nNo Inner Exception.\n"]},
+    "dotnet": {"value": ["Configuration failed to build.\nBuilderName: NoSuchElementBuilder\nSubElement Builder Names: No SubElements\nCould not find builder matching 'NoSuchElementBuilder' for element 2. Available builders are: CustomShareUsageBuilder,SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder,NativeEngineBuilder,PropertyKeyedDeviceEngineBuilder,TacEngineBuilder\nNo Inner Exception.\n", "Configuration failed to build.\nBuilderName: BuilderName not set\nSubElement Builder Names: DeviceDetectionHashEngineBuilder,NoSuchEngineBuilder\nCould not find builder matching 'NoSuchEngineBuilder' for element 1 in element 1. Available builders are: CustomShareUsageBuilder,SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder,NativeEngineBuilder,PropertyKeyedDeviceEngineBuilder,TacEngineBuilder\nNo Inner Exception.\n"]},
+    "rust": {"value": ["Configuration failed to build.\nBuilderName: NoSuchElementBuilder\nSubElement Builder Names: No SubElements\nCould not find builder matching 'NoSuchElementBuilder' for element 2. Available builders are: SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder,NativeEngineBuilder,PropertyKeyedDeviceEngineBuilder,TacEngineBuilder\nNo Inner Exception.\n", "Configuration failed to build.\nBuilderName: BuilderName not set\nSubElement Builder Names: DeviceDetectionHashEngineBuilder,NoSuchEngineBuilder\nCould not find builder matching 'NoSuchEngineBuilder' for element 1 in element 1. Available builders are: SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder,NativeEngineBuilder,PropertyKeyedDeviceEngineBuilder,TacEngineBuilder\nNo Inner Exception.\n"]},
     "reason": "A builder name that matches no builder. .NET lists every type in the loaded assemblies that has a Build method returning a Flow Element, so it also lists CustomShareUsageBuilder, the builder of the .NET program's own usage sharing element, which is in the program's own assembly. The crates list the builders added to the program's registry, which are the others .NET lists, in .NET's order. The comparison leaves the abstract base builders .NET lists out of both sides before comparing, so the .NET side is pinned without them."
   },
   {
@@ -292,6 +205,14 @@
     "dotnet": {"value": ["Configuration failed to build.\nBuilderName: TranslationEngineBuilder\nSubElement Builder Names: No SubElements\nException has been thrown by the target of an invocation.\nAt least one property translation must be configured. (Parameter 'translations')\n"]},
     "rust": {"value": ["Configuration failed to build.\nBuilderName: TranslationEngineBuilder\nSubElement Builder Names: No SubElements\nAt least one property translation must be configured. (Parameter 'translations')\nNo Inner Exception.\n"]},
     "reason": "The translation engine refuses to be built with no translation, and a configuration cannot give one. .NET gives the engine's refusal as the inner message of Exception has been thrown by the target of an invocation., as it gives anything a builder throws, and the crates give the refusal itself, as each crate's configuration tests record. The refusal's text is the same."
+  },
+  {
+    "path": "configuration.error",
+    "kind": "value",
+    "cases": ["configuration-property-keyed-no-key-property"],
+    "dotnet": {"value": ["Configuration failed to build.\nBuilderName: PropertyKeyedDeviceEngineBuilder\nSubElement Builder Names: No SubElements\nException has been thrown by the target of an invocation.\nKeyProperty must be set before building\n"]},
+    "rust": {"value": ["Configuration failed to build.\nBuilderName: PropertyKeyedDeviceEngineBuilder\nSubElement Builder Names: No SubElements\nKeyProperty must be set before building\nNo Inner Exception.\n"]},
+    "reason": "The property keyed engine refuses to be built with no key property, and the configuration gives none. .NET gives the builder's refusal as the inner message of Exception has been thrown by the target of an invocation., as it gives anything a builder throws, and the crates give the refusal itself, as the crate's configuration tests record. The refusal's text is the same."
   },
   {
     "path": "configuration.concurrent",
@@ -388,5 +309,71 @@
     "dotnet": {"pattern": ["line *: # Terms file:///terms/1.txt"]},
     "rust": {"pattern": ["line *: Allow: /"]},
     "reason": "An entry starting with a slash, here /terms/1.txt, is an absolute-path reference by RFC 3986 section 4.2, not a URI, so the crate leaves it out, as .NET's engine documentation asks when it says each entry must be a valid absolute URI. .NET's Uri.TryCreate with UriKind.Absolute reads such a string as a file path on Linux and macOS but not on Windows, so .NET writes file:///terms/1.txt on the comparison's Linux runner and leaves the entry out on Windows. Over the Enterprise file this case first differs at a crawler the two entries for crawlers with no usable product token allow, so this entry is for the Lite file until those entries come out."
+  },
+  {
+    "path": "propertyKeyedEngines[*].properties[*].type",
+    "kind": "value",
+    "dotnet": {"value": ["dotnet:IReadOnlyList`1"]},
+    "rust": {"value": ["keyValueList"]},
+    "reason": "Profiles is a list of each profile's device data. .NET types it as IReadOnlyList<IDeviceData>, which the .NET program writes as its .NET type name, and the crates as keyValueList, the type they give a list of records, which the JSON builder writes as a list of objects.",
+    "issue": 225
+  },
+  {
+    "path": "indexedValues.NativeModel.*",
+    "data": "enterprise",
+    "cases": ["property-keyed-none"],
+    "reason": "The crates list each NativeModel value the C library's index holds exactly, as the draft specification of the lookup, specifications#62, asks. .NET 4.5.180's engine keys its own index ignoring case, so it counts the values that differ only in case together under the spelling it met first. The step \"Check the NativeModel differences are of case alone\" fails on any difference here that case alone does not explain. This comes out when .NET's engines use the C library's index, 51degrees-dotnet#30.",
+    "issue": 225
+  },
+  {
+    "path": "profileIds*",
+    "data": "enterprise",
+    "cases": ["property-keyed-native-*", "property-keyed-profile-*"],
+    "reason": "The crates find a native model name exactly, through the C library's index, as the draft specification of the lookup, specifications#62, asks. .NET 4.5.180's engine finds it ignoring case, so it gives the profiles of every value that differs only in case, in ascending order, and a profile holding two such values twice. A profile case gives the value that first found its profile, which may be a native model name. The step \"Check the NativeModel differences are of case alone\" fails on any difference here that case alone does not explain, and on any profile case giving a TAC whose ids differ. This comes out when .NET's engines use the C library's index, 51degrees-dotnet#30.",
+    "issue": 225
+  },
+  {
+    "path": "engineMetadata.dataSourceTier",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "dotnet": {"value": ["IPIV41"]},
+    "reason": "The crates' IP Intelligence engine gives the tier the data file's header names, where .NET gives IPIV41.",
+    "issue": 226
+  },
+  {
+    "path": "engineMetadata.properties.Ip*.type",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "dotnet": {"value": ["ipAddress"]},
+    "rust": {"value": ["string"]},
+    "reason": "The crates' value types have no IP address, so Ip, IpV6, IpRangeStart and IpRangeEnd are strings, where .NET gives IP addresses.",
+    "issue": 226
+  },
+  {
+    "path": "engineMetadata.properties.*.type",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "data": "enterprise",
+    "dotnet": {"value": ["weightedList"]},
+    "rust": {"value": ["keyValueList"]},
+    "reason": "The crates' value types have no weighted list, so each weighted property, being CountryCodesGeographical, CountryCodesPopulation, Mcc and StateGeoNameIdsGeographical, has the type of a list of records, each a value and a weight, which is how the crates give its values. .NET gives a list of weighted values."
+  },
+  {
+    "path": "properties.ip.*",
+    "kind": "noValueMessage",
+    "cases": ["metadata-ip-asn"],
+    "dotnet": {"pattern": ["Property '*' not found in data for element 'ip'. This is because your license or data file does not include this property. It is available with the * license/data for the IpiOnPremiseEngine. To upgrade, see *"]},
+    "rust": {"pattern": ["Property '*' not found in data for element 'ip'. This is because the property has been excluded when configuring the engine."]},
+    "reason": "For a property the data file holds and the engine was opened without, both sides first check that the engine's tier is among the property's data tiers. .NET's IP Intelligence tier, IPIV41, is in none, so .NET gives the upgrade reason. The crates' tier is the name the data file's header gives, which is among them, so they go on to the excluded reason. This follows from the engineMetadata.dataSourceTier entry.",
+    "issue": 226
+  },
+  {
+    "path": "properties.ip.country",
+    "kind": "noValueMessage",
+    "cases": ["metadata-ip-asn"],
+    "data": "lite",
+    "dotnet": {"pattern": ["Property 'Country' not found in data for element 'ip'. The reason for this is unknown. Please check that the aspect and property name are correct."]},
+    "rust": {"pattern": ["Property 'Country' not found in data for element 'ip'. This is because your license or data file does not include this property. To see which licenses include it, see *"]},
+    "reason": "The ASN file has no Country. For a property the data file does not hold, both sides give the upgrade reason when the engine's data type has a typed accessor for the name. .NET's MissingPropertyService looks for the accessor among the properties IIpDataOnPremise declares, which are none, as Type.GetProperties on an interface leaves out those of the interfaces it extends, so it never sees IIpIntelligenceData's Country and gives the unknown reason. The crates find the accessor and give the upgrade reason the service's own documentation describes."
   }
 ]

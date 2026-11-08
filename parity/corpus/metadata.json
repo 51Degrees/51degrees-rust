@@ -1,0 +1,36 @@
+[
+  {
+    "id": "metadata-device",
+    "about": "The Device Detection engine opened with every property. Its properties, components, and up to 1,000 values of each property.",
+    "engine": "device",
+    "valueLimit": 1000
+  },
+  {
+    "id": "metadata-device-ismobile",
+    "about": "The Device Detection engine opened with IsMobile alone, so every other data file property is unavailable. Then a request read for BrowserName, the three hardware properties, of which the Lite file lacks some, and NotAProperty.",
+    "engine": "device",
+    "properties": ["IsMobile"],
+    "valueLimit": 5,
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1"
+    },
+    "read": ["BrowserName", "HardwareVendor", "HardwareModel", "HardwareName", "NotAProperty"]
+  },
+  {
+    "id": "metadata-ip",
+    "about": "The IP Intelligence engine opened with every property. Its properties, components, and up to 200 values of each property.",
+    "engine": "ip",
+    "valueLimit": 200
+  },
+  {
+    "id": "metadata-ip-asn",
+    "about": "The IP Intelligence engine opened with Asn alone, so every other data file property is unavailable. Then a request read for AsnName, Country, which the ASN file lacks, and NotAProperty.",
+    "engine": "ip",
+    "properties": ["Asn"],
+    "valueLimit": 5,
+    "evidence": {
+      "server.client-ip": "1.1.1.1"
+    },
+    "read": ["AsnName", "Country", "NotAProperty"]
+  }
+]

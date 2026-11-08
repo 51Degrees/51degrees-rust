@@ -150,14 +150,18 @@ mod dto;
 mod engine;
 mod hardware_engine;
 mod meta;
-mod multi_device;
 
 pub use engine::{DeviceDetectionCloudEngine, DeviceDetectionCloudEngineBuilder};
 pub use hardware_engine::{HardwareProfileCloudEngine, HardwareProfileCloudEngineBuilder};
-pub use multi_device::{MultiDeviceData, HARDWARE_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY};
 
 // Re-export the shared device data model so consumers of the cloud engine have
 // the result types and key to hand without a separate dependency line. These are
 // the same items the on-premise engine surfaces, which is what makes the engines
 // swappable.
 pub use fiftyone_device_detection_shared::{DeviceData, DeviceDataBase, DEVICE_DATA_KEY};
+
+// The hardware-profile lookup's result type and key live in the shared model
+// too, so the on-premise TAC and Native engines add to the same data.
+pub use fiftyone_device_detection_shared::{
+    MultiDeviceData, HARDWARE_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY,
+};

@@ -138,6 +138,14 @@ fn config_for(profile: PerformanceProfile) -> *mut sys::ConfigIpi {
     }
 }
 
+/// The size of an IP Intelligence data file's header in bytes, being how much
+/// of a data file the C library compares when it looks for a copy of the file
+/// to reuse.
+pub fn data_file_header_size() -> usize {
+    // Safety: the shim reads no state and takes no arguments.
+    unsafe { sys::fiftyoneDegreesShimIpiGetHeaderSize() }
+}
+
 // ---------------------------------------------------------------------------
 // Manager
 // ---------------------------------------------------------------------------
@@ -544,9 +552,10 @@ pub struct DataFileProperty {
     /// The property's name.
     pub name: String,
     /// The type of the property's values, from the type the data file names.
-    /// Every weighted type is a [`PropertyValueType::KeyValueList`], and an
-    /// IP address, an area or a coordinate is a [`PropertyValueType::String`],
-    /// because the pipeline has no type of its own for them.
+    /// Every weighted type is a [`PropertyValueType::KeyValueList`], an area
+    /// is a [`PropertyValueType::WktString`], and an IP address or a
+    /// coordinate is a [`PropertyValueType::String`], because the pipeline
+    /// has no type of its own for them.
     pub value_type: PropertyValueType,
     /// True when the data set was opened with the property, so results can
     /// hold its values.
@@ -728,6 +737,10 @@ impl Manager {
     /// value given can be written otherwise, as `0.063` is given for
     /// `0.0625`, and a number's own text, written to three places, can find
     /// nothing, as it finds nothing in the C++ code.
+    ///
+    /// As in the C++ code, `name` is searched up to its first null, so
+    /// `AS13335\0x` finds `AS13335` and the text after the null is not
+    /// searched.
     pub fn data_file_property_value(
         &self,
         property_index: u32,
@@ -737,11 +750,10 @@ impl Manager {
         if property_index >= self.data_file_property_count() {
             return Ok(None);
         }
-        // A data file's strings end at their first null, so no value has a
-        // name holding one.
-        let Ok(c_name) = CString::new(name) else {
-            return Ok(None);
-        };
+        // The C++ code searches with the text before the first null, where a
+        // C string ends.
+        let searched = name.split('\0').next().unwrap_or(name);
+        let c_name = CString::new(searched).expect("the text before a null holds none");
         let mut values: Vec<DataFileValue> = Vec::new();
         // Safety: `c_name` is null terminated, and `take_value_string` treats
         // the context as the `Vec<DataFileValue>` it points to, which outlives
@@ -899,7 +911,8 @@ impl Manager {
 /// [`PropertyValueType::KeyValueList`], as a lookup gives each weighted
 /// property's candidates. That includes `weightedbyte`, which .NET's
 /// `PropertyMetaDataIpi.Type` has no case for and so gives as a string. An
-/// IP address, an area or a coordinate is a [`PropertyValueType::String`],
+/// area, `wkb` or `wkbr`, is a [`PropertyValueType::WktString`], as .NET
+/// types it. An IP address or a coordinate is a [`PropertyValueType::String`],
 /// as is a type the builder does not name, because the pipeline has no type
 /// of its own for them.
 fn data_file_value_type(value_type: u8, is_list: bool) -> PropertyValueType {
@@ -917,6 +930,8 @@ fn data_file_value_type(value_type: u8, is_list: bool) -> PropertyValueType {
         PropertyValueType::JavaScript
     } else if is(Ty::String) && is_list {
         PropertyValueType::StringList
+    } else if is(Ty::Wkb) || is(Ty::WkbReduced) {
+        PropertyValueType::WktString
     } else if i32::from(value_type) >= Ty::WeightedString as i32
         && i32::from(value_type) <= Ty::WeightedWkbReduced as i32
     {
@@ -1209,7 +1224,10 @@ impl Results {
     ///
     /// A value the data file stores as an Azimuth or Declination, such as a
     /// latitude or a longitude, is given to 3 decimal places, as
-    /// [`Results::value_as_string`] gives it.
+    /// [`Results::value_as_string`] gives it. A value stored as an IP address,
+    /// such as `IpRangeStart`, is written as [`ip_address_text`] writes it,
+    /// where [`Results::value_as_string`] gives every field of an IPv6
+    /// address in full.
     ///
     /// Returns an empty vector when the property is not one of the required
     /// properties or the results carry no value for it, mirroring how
@@ -1309,7 +1327,8 @@ impl Results {
     /// [`PropertyRead::Weighted`] with every candidate. A plain property yields
     /// the most probable single value as [`PropertyRead::String`],
     /// [`PropertyRead::Float`] or [`PropertyRead::Integer`] according to its
-    /// type. A property with no value yields [`PropertyRead::Absent`].
+    /// type. A property with no value yields [`PropertyRead::Absent`]. Each
+    /// value's text is as [`Self::values_weighted`] writes it.
     pub fn read_property(&self, property_name: &str) -> Result<PropertyRead> {
         Ok(property_read_from(self.read_collection(property_name)?))
     }
@@ -1575,10 +1594,18 @@ const IPV6_TEXT_MAX_BYTES: usize = 45;
 /// bits are written as an IPv4 address when its first four fields are zero,
 /// its seventh is not, and the fifth and sixth are `0:0` (`::8.8.8.8`),
 /// `0:ffff` (`::ffff:8.8.8.8`) or `ffff:0` (`::ffff:0:8.8.8.8`), and for an
-/// ISATAP address (`fe80::5efe:8.8.8.8`).
+/// ISATAP address (`fe80::5efe:8.8.8.8`). Every other address is written in
+/// hexadecimal, including one of those forms whose seventh field is zero
+/// (`::ffff:0:102`) and one under the RFC 6052 prefix `64:ff9b::/96`
+/// (`64:ff9b::808:808`).
+///
 /// [RFC 5952 section 5](https://www.rfc-editor.org/rfc/rfc5952#section-5)
-/// recommends that form for the first three. Rust's `Display` uses it for
-/// `::ffff:` alone, whatever the seventh field.
+/// recommends the IPv4 form only for the prefixes defined in RFC 4291 and
+/// RFC 2765, which RFC 6145 and then RFC 7915 replaced, and
+/// [RFC 6052 section 2.4](https://www.rfc-editor.org/rfc/rfc6052#section-2.4)
+/// allows it for `64:ff9b::/96` without requiring it. Neither settles these
+/// forms, so this function writes them as .NET does. Rust's `Display` uses
+/// the IPv4 form for `::ffff:` alone, whatever the seventh field.
 pub fn ip_address_text(address: IpAddr) -> String {
     use std::fmt::Write as _;
     let address = match address {
@@ -1940,6 +1967,36 @@ mod tests {
             )
         };
         (date(PUBLISHED_AT), date(PUBLISHED_AT + 4))
+    }
+
+    /// The header ends after the ten collection headers that follow the two
+    /// dates, each 16 bytes as the library is built with 64 bit file offsets,
+    /// and the strings collection, the first in the file, starts there.
+    #[test]
+    fn the_header_size_is_the_ip_intelligence_data_file_header() {
+        use std::io::Read;
+        const DATE_SIZE: usize = 4;
+        const COLLECTION_HEADER_SIZE: usize = 16;
+        const COLLECTION_COUNT: usize = 10;
+        const START_SIZE: usize = std::mem::size_of::<u64>();
+        let strings_at = PUBLISHED_AT + 2 * DATE_SIZE;
+        assert_eq!(
+            data_file_header_size(),
+            strings_at + COLLECTION_COUNT * COLLECTION_HEADER_SIZE
+        );
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping the header size");
+            return;
+        };
+        let mut header = vec![0u8; strings_at + START_SIZE];
+        std::fs::File::open(&data_file)
+            .and_then(|mut file| file.read_exact(&mut header))
+            .expect("the header reads");
+        let start: [u8; START_SIZE] = header[strings_at..].try_into().expect("a start");
+        assert_eq!(
+            u64::from_le_bytes(start),
+            u64::try_from(data_file_header_size()).expect("a header size")
+        );
     }
 
     /// The dates read are the ones in the data file header, whether the data
@@ -2336,6 +2393,48 @@ mod tests {
         assert!(
             asn.as_deref().unwrap_or_default().contains("AS13335"),
             "got {asn:?}"
+        );
+    }
+
+    /// The web request a web integration gives with the evidence, under
+    /// `server.http-request`, is not one of its text values, so no address is
+    /// read from it. The lookup takes the evidence's own address, and with
+    /// none it finds nothing from the request and returns without a panic.
+    #[test]
+    fn no_address_is_read_from_the_web_request() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping the web request");
+            return;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::HighPerformance);
+        let request = || {
+            Evidence::builder()
+                .add("server.client-ip", QUAD9)
+                .add("query.client-ip-51d", QUAD9)
+                .build()
+        };
+        let lookup = |evidence: Evidence| -> Result<Option<String>> {
+            let mut results = manager.create_results()?;
+            results.process_evidence(&evidence)?;
+            results.value_as_string("Asn", ",")
+        };
+
+        let asn = lookup(
+            Evidence::builder()
+                .add("server.client-ip", CLOUDFLARE)
+                .http_request(request())
+                .build(),
+        )
+        .expect("the lookup should succeed");
+        assert!(
+            asn.as_deref().unwrap_or_default().contains("AS13335"),
+            "got {asn:?}"
+        );
+
+        let alone = lookup(Evidence::builder().http_request(request()).build());
+        assert!(
+            !matches!(&alone, Ok(Some(asn)) if asn.contains("AS19281")),
+            "got {alone:?}"
         );
     }
 
@@ -2781,6 +2880,31 @@ mod tests {
     }
 
     #[test]
+    fn a_name_is_searched_up_to_its_first_null() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping value search");
+            return;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::LowMemory);
+        let properties = manager
+            .data_file_properties()
+            .expect("the data file's properties should be read");
+        let asn = file_property(&properties, "Asn");
+        let search = |name: &str| {
+            manager
+                .data_file_property_value(asn.index, name)
+                .expect("the value should be searched for")
+                .map(|value| value.name)
+        };
+        // .NET's GetValue gives AS13335 for each, because the C++ search
+        // ends at the null.
+        for name in ["AS13335\0", "AS13335\0x", "AS13335\0AS15169"] {
+            assert_eq!(search(name).as_deref(), Some("AS13335"), "{name:?}");
+        }
+        assert_eq!(search("NotAValue\0AS13335"), None);
+    }
+
+    #[test]
     fn each_property_belongs_to_one_of_the_data_files_components() {
         let Some(data_file) = ipi_data_file() else {
             eprintln!("no IP Intelligence data file found; skipping components");
@@ -2865,7 +2989,7 @@ mod tests {
             ("AccuracyRadiusMax", PropertyValueType::Integer),
             ("CountryCodesGeographical", PropertyValueType::KeyValueList),
             ("IpRangeStart", PropertyValueType::String),
-            ("Areas", PropertyValueType::String),
+            ("Areas", PropertyValueType::WktString),
         ] {
             assert_eq!(
                 file_property(&properties, name).value_type,
@@ -2947,6 +3071,7 @@ mod tests {
             ("::5efe:0.0.0.0", "::5efe:0.0.0.0"),
             ("2001:db8:1:2:0:5efe:1.2.3.4", "2001:db8:1:2:0:5efe:1.2.3.4"),
             ("2001:db8::200:5efe:1.2.3.4", "2001:db8::200:5efe:102:304"),
+            ("64:ff9b::8.8.8.8", "64:ff9b::808:808"),
         ] {
             let address: IpAddr = given.parse().expect("an address");
             assert_eq!(ip_address_text(address), written, "{given}");
