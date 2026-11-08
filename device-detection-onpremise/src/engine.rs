@@ -221,8 +221,8 @@ impl Metric {
     /// metric fails, DeviceId with the native message and the other six with
     /// [`METRICS_UNREADABLE`]. DeviceId also has no value when the results
     /// give none. A graph whose walk failed is not walked again, so a metric
-    /// read after another property's walk failed gives the values the other
-    /// components' walks set, as .NET does.
+    /// read after another property's walk failed walks only the graphs still
+    /// to walk and gives the metrics the results then hold, as .NET does.
     fn read(self, results: &Results) -> ReadOutcome {
         let value: fn(&MatchMetrics) -> PropertyValue = match self {
             Metric::DeviceId => {

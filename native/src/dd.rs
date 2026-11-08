@@ -1498,7 +1498,8 @@ impl Results {
     /// The matched User-Agent of each result, without repeats, in result
     /// order. Each is the evidence value the component was matched from, with
     /// the characters the match did not use replaced by underscores. Empty
-    /// when nothing matched, or a graph cannot be read from the data file.
+    /// when nothing matched, and empty or partial when a graph cannot be
+    /// read from the data file.
     /// Any graph not yet walked is walked first, which can read the data file.
     /// [`try_matched_user_agents`](Self::try_matched_user_agents) tells a
     /// failed walk apart.
