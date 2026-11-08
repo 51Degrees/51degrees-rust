@@ -42,8 +42,10 @@
 //!   naming one fails as it does in .NET.
 //!
 //! The engines need an on-premise Device Detection engine earlier in the
-//! pipeline, so a configuration names one first. The pipeline holds each
-//! engine made, and [`Pipeline::resource`] gives the first.
+//! pipeline, so a configuration names one first, with the key properties in
+//! its `IndexedProperties` setting so each lookup reads the data file's
+//! index. The pipeline holds each engine made, and [`Pipeline::resource`]
+//! gives the first.
 //!
 //! [`Pipeline::resource`]: fiftyone_pipeline_core::Pipeline::resource
 //!
@@ -65,7 +67,8 @@
 //!                         "DataFile": "TAC-HashV41.hash",
 //!                         "CreateTempDataCopy": "false",
 //!                         "AutoUpdate": "false",
-//!                         "DataFileSystemWatcher": "false"
+//!                         "DataFileSystemWatcher": "false",
+//!                         "IndexedProperties": "TAC,NativeModel"
 //!                     }
 //!                 },
 //!                 { "BuilderName": "TacEngine" },

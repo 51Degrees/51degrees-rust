@@ -122,8 +122,9 @@ impl Validation {
 /// The lookup is fast when the Device Detection engine indexes the key
 /// property, which
 /// [`indexed_property`](fiftyone_device_detection_onpremise::DeviceDetectionOnPremiseEngineBuilder::indexed_property)
-/// asks for. Without the index each request reads every profile, and the
-/// engine logs a warning when it is added to the pipeline.
+/// asks for, or `IndexedProperties` in a configuration. Without the index
+/// each request reads every profile, and the engine logs a warning when it
+/// is added to the pipeline.
 pub struct PropertyKeyedDeviceEngine {
     key_property: String,
     data_key: &'static str,
@@ -191,7 +192,8 @@ impl State {
                     log::warn!(
                         "Property '{property_name}' is not indexed by the Device Detection \
                          engine, so each lookup reads every profile. Name it to \
-                         DeviceDetectionOnPremiseEngineBuilder::indexed_property."
+                         DeviceDetectionOnPremiseEngineBuilder::indexed_property, or to the \
+                         engine's IndexedProperties setting in a configuration."
                     );
                 }
                 Some(Lookup {
