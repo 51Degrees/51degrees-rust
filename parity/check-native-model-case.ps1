@@ -8,9 +8,11 @@
 # for a native model name it gives the ids of every value equal to it ignoring
 # case, in ascending order, and counts them together. The crates' ids for each
 # value come from its property-keyed-native-value case. The check fails on a
-# NativeModel case whose .NET ids are not those, and on a NativeModel value
-# whose .NET count is not the crates' counts for the values equal to it
-# ignoring case added together.
+# case giving a native model name alone, a NativeModel case or a profile case,
+# whose .NET ids differ from the crates' and are not those, on a profile case
+# giving a TAC whose ids differ at all, and on a NativeModel value whose .NET
+# count is not the crates' counts for the values equal to it ignoring case
+# added together.
 
 param(
     [Parameter(Mandatory = $true)] [string] $Cases,
@@ -26,13 +28,14 @@ $valuePrefix = 'property-keyed-native-value-'
 $metadataCase = 'property-keyed-none'
 $ignoringCase = [StringComparer]::InvariantCultureIgnoreCase
 
-# The parsed lines of the NativeModel cases and the metadata case, by case
-# id. Other lines are skipped before parsing, as there are many.
+# The parsed lines of the NativeModel cases, the profile cases and the
+# metadata case, by case id. Other lines are skipped before parsing, as there
+# are many.
 function Read-Lines([string] $path) {
     $lines = [Collections.Generic.Dictionary[string, Text.Json.JsonElement]]::new(
         [StringComparer]::Ordinal)
     foreach ($text in [IO.File]::ReadLines($path)) {
-        if ($text -notmatch '"id":"(property-keyed-native[^"]*|property-keyed-none)"') {
+        if ($text -notmatch '"id":"(property-keyed-(native|profile)[^"]*|property-keyed-none)"') {
             continue
         }
         $root = [Text.Json.JsonDocument]::Parse($text).RootElement
@@ -62,19 +65,25 @@ function Format-Ids($ids) {
 $rustLines = Read-Lines $Rust
 $dotnetLines = Read-Lines $DotNet
 
-# Each NativeModel case with the one value it gives, in corpus order.
+# Each NativeModel or profile case giving a native model name alone, with
+# that name, in corpus order, and the ids of the profile cases giving
+# anything else.
 $nativeCases = [Collections.Generic.List[object]]::new()
+$otherProfileCases = [Collections.Generic.List[string]]::new()
 $document = [Text.Json.JsonDocument]::Parse([IO.File]::OpenRead($Cases))
 foreach ($case in $document.RootElement.EnumerateArray()) {
     $id = $case.GetProperty('id').GetString()
-    if (-not $id.StartsWith('property-keyed-native')) {
+    $isProfile = $id.StartsWith('property-keyed-profile-')
+    if (-not ($id.StartsWith('property-keyed-native') -or $isProfile)) {
         continue
     }
     $evidence = @($case.GetProperty('evidence').EnumerateObject())
-    if ($evidence.Count -ne 1 -or $evidence[0].Name -cne $evidenceKey) {
-        continue
+    if ($evidence.Count -eq 1 -and $evidence[0].Name -ceq $evidenceKey) {
+        $nativeCases.Add([pscustomobject]@{ Id = $id; Value = $evidence[0].Value.GetString() })
     }
-    $nativeCases.Add([pscustomobject]@{ Id = $id; Value = $evidence[0].Value.GetString() })
+    elseif ($isProfile) {
+        $otherProfileCases.Add($id)
+    }
 }
 
 # The crates' ids of every value equal to each value ignoring case.
@@ -111,6 +120,15 @@ foreach ($case in $nativeCases) {
     if ($dotnetIds -cne $expected) {
         $problems.Add("$($case.Id) ($($case.Value)): .NET $dotnetIds, Rust $rustIds, " +
             "the crates' ids of the values equal to it ignoring case $expected")
+    }
+}
+
+foreach ($id in $otherProfileCases) {
+    $rustIds = Format-Ids (Get-Ids $rustLines[$id])
+    $dotnetIds = Format-Ids (Get-Ids $dotnetLines[$id])
+    if ($rustIds -cne $dotnetIds) {
+        $differing++
+        $problems.Add("${id}: .NET $dotnetIds, Rust $rustIds, from a TAC, which must match")
     }
 }
 
@@ -165,7 +183,8 @@ foreach ($key in $dotnetCounts.Keys) {
     }
 }
 
-Write-Output ("$($nativeCases.Count) NativeModel cases, $differing with ids that differ, " +
+Write-Output ("$($nativeCases.Count) cases giving a native model name and " +
+    "$($otherProfileCases.Count) profile cases giving a TAC, $differing with ids that differ, " +
     "$countsDiffering NativeModel values whose counts differ, $($problems.Count) not " +
     "from case alone")
 foreach ($problem in $problems) {

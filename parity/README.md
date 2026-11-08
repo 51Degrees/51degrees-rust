@@ -299,7 +299,19 @@ builder, a parameter no setting takes or a value that does not parse,
 once at the top level and once inside the group. Two hold the Hash
 engine and then the robots.txt engine, with usage sharing off, one giving
 each setting .NET's robots.txt builder reads and one a parameter it has
-no setting for, whose error lists the builder's settings. Three give a
+no setting for, whose error lists the builder's settings. Six hold the
+Hash engine and then the TAC, Native or property keyed engine, with
+usage sharing off. One gives the three engines, named in full, without
+`Builder` and in lower case, with each setting .NET's builders read,
+one gives the property keyed engine only its key property, so its data
+key is the default, one gives it no key property, which its builder
+refuses, and one for each builder gives a parameter it has no setting
+for, whose error lists its settings in .NET's order. The Hash engine in
+these six indexes no property, because .NET's Hash builder has no
+`IndexedProperties` setting and refuses a configuration naming it. The
+crates' engines then warn that each lookup reads every profile, which
+does not matter here, as a configuration case builds a pipeline and
+processes nothing. Three give a
 pipeline setting under both `PipelineBuilderParameters` and
 `BuildParameters`, two of them with `ShareUsage` false, so no usage
 sharing element is added.
@@ -508,9 +520,12 @@ in one request, each with the first value a profile holds that the engine
 accepts. Then come `property-keyed-tac-value-NNNNNN` for each TAC and
 `property-keyed-native-value-NNNNNN` for each NativeModel, in the data file's
 order counting from 000001. Last come `property-keyed-profile-<id>` for every
-50th distinct profile those cases find through a value the engine accepts,
-counting from the first, each with the evidence of the first case that finds
-it. Over the Lite file only the fixed cases run.
+50th distinct profile those cases find through a value the engine accepts and
+at most 1,000 profiles hold, counting from the first, each with the evidence
+of the first case that finds it. The limit keeps a profile case from reading
+every profile a placeholder value finds, such as the native model name `N/A`,
+which 34,146 profiles of the TAC file hold. Over the Lite file only the fixed
+cases run.
 
 Each line holds `warnings`, the flow data's warnings, each with its
 element's data key and its message, and `profileIds`, the id of each profile
@@ -534,26 +549,30 @@ so a value one side holds and the other does not shows there, including a
 value .NET finds in another case. The comparer compares each of these fields
 key by key and list item by item.
 
-Three entries in `allowed-differences.json` allow TAC and Native differences.
+Four entries in `allowed-differences.json` allow TAC and Native differences.
 One allows the type of `Profiles`, which .NET gives as its .NET type and the
-crates as `elementDataList`. Over the Enterprise file, two allow .NET finding
-a native model name in any case, as its own index compares values ignoring
-case, where the crates match the name exactly through the C library's index,
-as the draft specification of the lookup asks
+crates as `elementDataList`. Over the Enterprise file, one allows the
+profiles in `hardwareJson`, which the crates write as the Element Data of
+the draft specification gives them, where .NET's on-premise data keeps the
+profiles it finds out of the list its JSON builder reads, so its JSON holds
+none. Two allow .NET finding a native model name in any case, as its own
+index compares values ignoring case, where the crates match the name exactly
+through the C library's index, as the draft specification of the lookup asks
 ([specifications#62](https://github.com/51Degrees/specifications/pull/62)).
 One allows the difference in `indexedValues`, where .NET counts the values
 that differ only in case together under the spelling it met first, and the
-other the difference in `profileIds` in the NativeModel cases, where .NET
-gives the profiles of every such value, and a profile holding two of them
-twice. They come out when .NET's engines use the C library's index
+other the difference in `profileIds` in the NativeModel and profile cases,
+where .NET gives the profiles of every such value, and a profile holding two
+of them twice. They come out when .NET's engines use the C library's index
 ([51degrees-dotnet#30](https://github.com/51Degrees/51degrees-dotnet/issues/30)).
 
 Over the Enterprise file, one step of that job checks that each side found
 profiles for at least one case and wrote the values of at least one profile,
 so the comparison cannot pass with no profile on either side, another runs
 `check-native-model-case.ps1`, which fails on any NativeModel difference that
-case alone does not explain, so the two entries for case hide nothing else,
-and another runs the crate's data file tests over that file.
+case alone does not explain and on any profile case giving a TAC whose ids
+differ, so the two entries for case hide nothing else, and another runs the
+crate's data file tests over that file.
 
 ## The C code
 

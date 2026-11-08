@@ -104,16 +104,17 @@ const NO_CACHE: &str = "Caching is not supported by property keyed engines.";
 /// Why the property settings have no effect.
 const PROFILES_ONLY: &str = "as the engine gives only Profiles, as .NET's does";
 
-/// Add the three engines' builders to `registry`, as `TacEngineBuilder`,
-/// `NativeEngineBuilder` and `PropertyKeyedDeviceEngineBuilder`. Returns
-/// `registry` for chaining.
+/// Add the three engines' builders to `registry`, as `NativeEngineBuilder`,
+/// `PropertyKeyedDeviceEngineBuilder` and `TacEngineBuilder`, the order .NET
+/// lists them in among the available builders. Returns `registry` for
+/// chaining.
 pub fn add_builders(registry: &mut BuilderRegistry) -> &mut BuilderRegistry {
     registry
-        .add(definition::<TacEngineBuilder>("TacEngine"))
         .add(definition::<NativeEngineBuilder>("NativeEngine"))
         .add(definition::<PropertyKeyedDeviceEngineBuilder>(
             "PropertyKeyedDeviceEngine",
         ))
+        .add(definition::<TacEngineBuilder>("TacEngine"))
 }
 
 /// The settings the three builders share, as .NET's

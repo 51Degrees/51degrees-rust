@@ -76,6 +76,10 @@ pub const RUN: &str = "property-keyed";
 /// stay small enough for the job.
 const PROFILE_EVERY: usize = 50;
 
+/// A profile case gives a value no more profiles than this hold, so it does
+/// not read every profile a placeholder value such as `N/A` finds.
+const PROFILE_CASE_MOST_PROFILES: usize = 1000;
+
 /// One case. `serde_json` keeps the evidence in file order.
 #[derive(Deserialize)]
 struct Case {
@@ -208,8 +212,8 @@ pub fn run(args: &[String]) -> Result<()> {
 /// `property-keyed-native-value-NNNNNN` for each NativeModel, in the data
 /// file's order counting from 1. Last, `property-keyed-profile-<id>` for
 /// every [`PROFILE_EVERY`]th distinct profile those cases find through a
-/// value the engine accepts, with the evidence of the first case that finds
-/// it.
+/// value the engine accepts and no more than [`PROFILE_CASE_MOST_PROFILES`]
+/// profiles hold, with the evidence of the first case that finds it.
 fn value_cases(engines: &Engines) -> Result<Vec<Value>> {
     let device = &engines.device;
     let mut values = Vec::new();
@@ -247,14 +251,16 @@ fn value_cases(engines: &Engines) -> Result<Vec<Value>> {
                         upper = Some(value.to_uppercase());
                     }
                 }
-                for id in ids {
-                    if seen.insert(id) && (seen.len() - 1).is_multiple_of(PROFILE_EVERY) {
-                        profiles.push(json!({
-                            "id": format!("property-keyed-profile-{id}"),
-                            "about": format!("The values of profile {id}, which {property} {value:?} finds."),
-                            "evidence": {key: value.clone()},
-                            "profileId": id,
-                        }));
+                if ids.len() <= PROFILE_CASE_MOST_PROFILES {
+                    for id in ids {
+                        if seen.insert(id) && (seen.len() - 1).is_multiple_of(PROFILE_EVERY) {
+                            profiles.push(json!({
+                                "id": format!("property-keyed-profile-{id}"),
+                                "about": format!("The values of profile {id}, which {property} {value:?} finds."),
+                                "evidence": {key: value.clone()},
+                                "profileId": id,
+                            }));
+                        }
                     }
                 }
             }
