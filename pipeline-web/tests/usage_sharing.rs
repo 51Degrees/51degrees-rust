@@ -30,7 +30,7 @@ use std::any::Any;
 use std::sync::{Arc, Mutex};
 
 use fiftyone_pipeline_core::{
-    ElementData, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
     MapElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType, Result,
     TypedKey,
 };
@@ -316,6 +316,74 @@ fn the_ignore_filter_reads_only_the_shared_keys_of_the_web_request() {
     );
 
     assert_eq!(documents("header.x-test", "skip"), 0);
+}
+
+/// The document with its `DateSent` value removed, being the time it was
+/// written and the one part that differs between two runs.
+fn without_date_sent(document: &str) -> String {
+    let start = document.find("<DateSent>").expect("a DateSent") + "<DateSent>".len();
+    let end = start + document[start..].find("</DateSent>").expect("its end");
+    format!("{}{}", &document[..start], &document[end..])
+}
+
+/// A request through the web pipeline gives the record that the same request
+/// gives as Evidence holding each key the pipeline or the rules for what is
+/// shared accept, with no web request, which is how a web integration built
+/// the Evidence while usage sharing accepted the keys it shares. The ignore
+/// pair names a cookie that is not shared, so neither route ignores it.
+#[test]
+fn a_web_request_gives_the_record_its_shared_keys_as_evidence_give() {
+    let request = TestRequest {
+        headers: pairs(&[
+            ("User-Agent", "Mozilla/5.0"),
+            ("Accept-Language", "en-GB"),
+            ("X-Test", "test"),
+            ("X-Blocked", "blocked"),
+            ("Cookie", "51D_Test=kept; internal=1"),
+        ]),
+        cookies: pairs(&[("51D_Test", "kept"), ("internal", "1")]),
+        query: pairs(&[
+            ("session-id", SESSION_ID),
+            ("51D_Query", "q"),
+            ("other", "1"),
+        ]),
+        line: Some(("GET", "/page?51D_Query=q&other=1")),
+    };
+    let record = |through_the_web_request: bool| {
+        let sink = Arc::new(Keep::default());
+        let share = Arc::new(ShareUsageElement::with_sink(
+            ShareUsageConfig::builder()
+                .blocked_http_headers(["x-blocked"])
+                .ignore_flow_data_evidence_filter([("cookie.internal", "1")])
+                .build(),
+            Arc::clone(&sink),
+        ));
+        let web = web_pipeline(&share);
+        let filter = web.pipeline().evidence_key_filter();
+        let mut evidence = build_evidence(&request, filter);
+        if !through_the_web_request {
+            let shared = share.shared_evidence_filter();
+            let mut accepted = Evidence::builder();
+            for entry in evidence.http_request().expect("the request").entries() {
+                if filter.include(entry.key()) || shared.include(entry.key()) {
+                    accepted = accepted.add(entry.key_as_given(), entry.value());
+                }
+            }
+            evidence = accepted.build();
+        }
+        let mut data = web.pipeline().create_flow_data_with(evidence);
+        data.process()
+            .expect("processing does not error (suppressed)");
+        drop(data);
+        // The element delivers what it holds when it is dropped.
+        drop(web);
+        drop(share);
+        let documents = sink.0.lock().unwrap().clone();
+        assert_eq!(documents.len(), 1, "{documents:?}");
+        without_date_sent(&documents[0])
+    };
+
+    assert_eq!(record(true), record(false));
 }
 
 /// The Sequence element the web pipeline adds accepts the session id and the
