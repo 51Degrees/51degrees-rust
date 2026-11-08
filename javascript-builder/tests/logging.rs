@@ -232,6 +232,40 @@ fn a_refused_host_does_not_log_its_user_information() {
     assert!(!js.contains("processRequest"));
 }
 
+/// Everything before the last `@` ahead of the host's first `/` is replaced
+/// by `***` in the record, and an `@` after that `/` is kept.
+#[test]
+fn a_refused_host_logs_only_what_follows_its_user_information() {
+    let cases = [
+        (
+            "a@b@example.com",
+            "\"https://***@example.com/51dpipeline/json\"",
+        ),
+        ("u@[::1]:80x", "\"https://***@[::1]:80x/51dpipeline/json\""),
+        (
+            "u@exa mple.com/a@b",
+            "\"https://***@exa mple.com/a@b/51dpipeline/json\"",
+        ),
+        (
+            "exa mple.com/a@b",
+            "\"https://exa mple.com/a@b/51dpipeline/json\"",
+        ),
+    ];
+    for (host, expected) in cases {
+        let pipeline = pipeline(
+            JavaScriptBuilderElement::builder()
+                .set_minify(false)
+                .build(),
+        );
+        let (_, records) = request(&pipeline, &[("header.host", host)]);
+        assert_eq!(records.len(), 1, "host {host:?}, {records:?}");
+        assert!(
+            records[0].1.contains(expected),
+            "host {host:?}, {records:?}"
+        );
+    }
+}
+
 /// A scheme other than `http` or `https` in the evidence is refused and
 /// logged like any other URL that is not valid.
 #[test]

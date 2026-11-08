@@ -499,38 +499,6 @@ mod tests {
         );
     }
 
-    // The URL kept for the log never holds what comes before an `@` ahead of
-    // the host's first `/`, so a password in a refused host is not logged.
-    #[test]
-    fn the_invalid_url_leaves_out_user_information() {
-        let cases = [
-            (
-                "user:secret@example.com",
-                "https://***@example.com/51dpipeline/json",
-            ),
-            (
-                "a@b@example.com",
-                "https://***@example.com/51dpipeline/json",
-            ),
-            ("u@[::1]:80x", "https://***@[::1]:80x/51dpipeline/json"),
-            (
-                "u@exa mple.com/a@b",
-                "https://***@exa mple.com/a@b/51dpipeline/json",
-            ),
-            (
-                "exa mple.com/a@b",
-                "https://exa mple.com/a@b/51dpipeline/json",
-            ),
-        ];
-        for (host, expected) in cases {
-            assert_eq!(
-                url("https", host),
-                CallbackUrl::Invalid(expected.to_owned()),
-                "host {host:?}"
-            );
-        }
-    }
-
     // Only `http` and `https`, ignoring case, as rule 1 of the callback URL
     // rule in the JavaScript builder specification asks.
     #[test]
