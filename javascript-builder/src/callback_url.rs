@@ -103,8 +103,9 @@ fn is_scheme(protocol: &str) -> bool {
 /// name of non-empty labels separated by dots, with a dot allowed at the end,
 /// and the port is up to 65535 or empty. `Ipv6Addr` takes no zone
 /// identifier, so a `%` inside the brackets is refused, as a browser's URL
-/// parser refuses it. A name that ends in a number must be an IPv4 address,
-/// because a browser's URL parser reads it as one.
+/// parser refuses it. A name that ends in a number, ignoring one `.` at its
+/// end, must be an IPv4 address with no `.` at its end, because a browser's
+/// URL parser reads it as one, and so that it has one written form.
 fn checked_host_port(host_port: &str) -> Option<String> {
     let (host, port) = if let Some(inner) = host_port.strip_prefix('[') {
         let (address, after) = inner.split_once(']')?;
@@ -114,7 +115,7 @@ fn checked_host_port(host_port: &str) -> Option<String> {
         let end = host_port.find(':').unwrap_or(host_port.len());
         let (host, port) = host_port.split_at(end);
         let name = host.strip_suffix('.').unwrap_or(host);
-        if !name.split('.').all(is_label) || (ends_in_a_number(name) && !is_ipv4(name)) {
+        if !name.split('.').all(is_label) || (ends_in_a_number(name) && !is_ipv4(host)) {
             return None;
         }
         (host, port)
