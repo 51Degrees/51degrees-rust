@@ -155,7 +155,8 @@ Each program writes one JSON object per case.
 Value types are `string`, `bool`, `integer`, `double`, `stringList`,
 `javascript`, `ipAddress`, `dateTime` (in .NET only, written as RFC 3339
 text with the offset), `weightedList` (each item a `rawWeighting` and a
-`value`), `keyValueList` and `list`.
+`value`), `keyValueList`, `elementDataList` (in the crates, the type of
+the TAC and Native engines' `Profiles`) and `list`.
 
 ## The comparison
 
@@ -535,8 +536,8 @@ key by key and list item by item.
 
 Three entries in `allowed-differences.json` allow TAC and Native differences.
 One allows the type of `Profiles`, which .NET gives as its .NET type and the
-crates as `keyValueList`. Over the Enterprise file, two allow .NET finding a
-native model name in any case, as its own index compares values ignoring
+crates as `elementDataList`. Over the Enterprise file, two allow .NET finding
+a native model name in any case, as its own index compares values ignoring
 case, where the crates match the name exactly through the C library's index,
 as the draft specification of the lookup asks
 ([specifications#62](https://github.com/51Degrees/specifications/pull/62)).
