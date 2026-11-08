@@ -334,7 +334,7 @@ impl CountriesTranslationEngineBuilder {
         let engine = COUNTRY_SOURCES
             .iter()
             .fold(builder, |builder, (name, text)| {
-                builder.add_source_text(*name, *text)
+                builder.add_source_content(*name, *text)
             })
             .build()?;
 
