@@ -44,7 +44,8 @@ use fiftyone_ip_intelligence_shared::{
     IP_DATA_KEY, IP_DATA_KEY_NAME, WEIGHTED_PROPERTY_VALUE_TYPE,
 };
 use fiftyone_native::ipi::{
-    DataFileComponent, DataFileProperty, DataFileValue, Manager, PropertyRead, Results,
+    ClientIpEvidence, DataFileComponent, DataFileProperty, DataFileValue, Manager, PropertyRead,
+    Results,
 };
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{
@@ -110,6 +111,20 @@ const ADDED_PROPERTIES: [(&str, &str); 2] = [
     ("Ip", "The IPv4 address of the request as a string."),
     ("IpV6", "The IPv6 address of the request as a string."),
 ];
+
+/// The place of `Ip`, which holds an IPv4 address, in [`ADDED_PROPERTIES`].
+const ADDED_IPV4_PLACE: usize = 0;
+
+/// The reason .NET gives each of [`ADDED_PROPERTIES`], in the same order,
+/// when the evidence holds no address of its kind.
+const ADDED_NOT_SUPPLIED: [&str; 2] = [
+    "IPv4 was not supplied as evidence.",
+    "IPv6 was not supplied as evidence.",
+];
+
+/// The reason .NET gives both [`ADDED_PROPERTIES`] when the evidence holds a
+/// client IP value and none reads as an address.
+const ADDED_NOT_VALID: &str = "The IP supplied as evidence was not valid.";
 
 /// The property .NET gives a weighted type when the data file names it a
 /// string, matched ignoring case.
@@ -361,10 +376,10 @@ impl IpIntelligenceOnPremiseEngine {
             .collect()
     }
 
-    /// The names of the properties a lookup reads, being every property the
-    /// loaded data file defines that the engine was opened with, in the data
-    /// file's order and spelling. A name the engine was restricted to that
-    /// the data file lacks is not among them.
+    /// The names of the data file properties a lookup reads, being every
+    /// property the loaded data file defines that the engine was opened with,
+    /// in the data file's order and spelling. A name the engine was
+    /// restricted to that the data file lacks is not among them.
     pub fn populated_property_names(&self) -> &[String] {
         &self.metadata.current().populated
     }
@@ -383,9 +398,9 @@ impl IpIntelligenceOnPremiseEngine {
     /// The names of the properties the data set was opened with, in the order
     /// it holds them. With properties named, these are the names given, in
     /// the order given, including any the data file has no property for, so
-    /// [`Self::populated_property_names`] gives the ones a lookup reads.
-    /// Without, this is every property the data file defines. Intended for
-    /// introspection, such as the metadata example.
+    /// [`Self::populated_property_names`] gives the data file properties a
+    /// lookup reads. Without, this is every property the data file defines.
+    /// Intended for introspection, such as the metadata example.
     pub fn available_property_names(&self) -> Vec<String> {
         self.loaded.load().manager.available_property_names()
     }
@@ -488,7 +503,9 @@ impl IpIntelligenceOnPremiseEngine {
     /// as is a value of `Ip` or `IpV6`. The search compares a number written
     /// to as many places as `value_name` has characters plus three, at most
     /// 15, so the value given can be written otherwise, as `0.063` is given
-    /// for `0.0625`.
+    /// for `0.0625`. A data file property's value is searched with the text
+    /// of `value_name` before any null, as .NET searches it, so `AS13335\0x`
+    /// finds `AS13335`.
     pub fn property_value(
         &self,
         property_name: &str,
@@ -515,23 +532,24 @@ impl IpIntelligenceOnPremiseEngine {
     }
 
     /// Look up the client IP in `data`'s evidence, through
-    /// [`Results::process_evidence`](fiftyone_native::ipi::Results::process_evidence),
+    /// [`Results::process_client_ip_evidence`](fiftyone_native::ipi::Results::process_client_ip_evidence),
     /// into an [`IpIntelligenceDataBase`] that reads each property from the
     /// native results the first time it is requested.
     ///
-    /// Returns an error when the evidence carries no client IP address that
-    /// reads as one. The native results stay with the returned data until it is
-    /// dropped.
+    /// Evidence with no client IP address that reads as one gives data in
+    /// which no property has a value, as .NET's engine gives. The native
+    /// results stay with the returned data until it is dropped.
     fn lookup(&self, data: &FlowData) -> Result<IpIntelligenceDataBase> {
         // Load the current data set without blocking a concurrent refresh.
         let loaded = self.loaded.load_full();
         let mut results = loaded.manager.create_results()?;
-        results.process_evidence(data.evidence())?;
+        let client_ip = results.process_client_ip_evidence(data.evidence())?;
         let mut ip = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
         ip.base_mut()
             .add_missing_property_source(Arc::clone(&loaded.missing));
         Ok(ip.with_reader(LookupReader {
             results: Mutex::new(results),
+            client_ip,
             loaded,
         }))
     }
@@ -820,17 +838,21 @@ struct LoadedDataSet {
 /// set was opened with, each with the index the results getters take for it.
 /// The C library finds a property ignoring case and gives the data file's
 /// spelling, so a property named in another case is read under that spelling.
+///
+/// A lookup also reads [`ADDED_PROPERTIES`], after the data file's, which
+/// hold the address looked up rather than anything in the data file.
 struct ReadableNames {
     /// Each property's name in the data file's spelling.
     names: Vec<String>,
-    /// Each property's name in lowercase, in the same order.
+    /// Each property's name in lowercase, in the same order, then those of
+    /// [`ADDED_PROPERTIES`].
     lowercase_names: Vec<String>,
     /// Each property's required property index in the data set.
     indexes: Vec<c_int>,
     /// Each property's type, as the engine's metadata gives it from the data
     /// file.
     value_types: Vec<PropertyValueType>,
-    /// The position of each property in `names`, by lowercase name.
+    /// The position of each property in `lowercase_names`, by lowercase name.
     by_name: HashMap<String, usize>,
 }
 
@@ -846,7 +868,12 @@ impl ReadableNames {
                 value_types.push(metadata_value_type(&property.name, property.value_type));
             }
         }
-        let lowercase_names: Vec<String> = names.iter().map(|name| name.to_lowercase()).collect();
+        let lowercase_names: Vec<String> = names
+            .iter()
+            .map(String::as_str)
+            .chain(ADDED_PROPERTIES.iter().map(|(name, _)| *name))
+            .map(str::to_lowercase)
+            .collect();
         ReadableNames {
             by_name: lowercase_names
                 .iter()
@@ -868,6 +895,8 @@ struct LookupReader {
     /// holds the lock. Declared first, so they are freed before the data set
     /// they came from.
     results: Mutex<Results>,
+    /// The client IP evidence the lookup read, for [`ADDED_PROPERTIES`].
+    client_ip: ClientIpEvidence,
     /// The data set the results came from, with its properties.
     loaded: Arc<LoadedDataSet>,
 }
@@ -887,12 +916,37 @@ impl IpIntelligencePropertyReader for LookupReader {
         data: &mut IpIntelligenceDataBase,
     ) -> std::result::Result<(), String> {
         let readable = &self.loaded.readable;
+        let Some(&index) = readable.indexes.get(position) else {
+            populate_added_property(data, position - readable.indexes.len(), self.client_ip);
+            return Ok(());
+        };
         let name = &readable.names[position];
-        let index = readable.indexes[position];
         let value_type = readable.value_types[position];
         let results = self.results.lock().unwrap_or_else(PoisonError::into_inner);
         populate_property(data, &results, name, index, value_type)
             .map_err(|error| error.to_string())
+    }
+}
+
+/// Store the property at `added` in [`ADDED_PROPERTIES`], `Ip` or `IpV6`, as
+/// the address looked up when it is of that property's kind, as .NET does.
+/// An IPv4-mapped IPv6 address is the IPv4 address it holds, as
+/// [`ClientIpEvidence::address`] gives it. Otherwise the property has no
+/// value, with .NET's reason, and is listed among the keys, so the JSON
+/// builder writes it as null with the reason, as the JSON builder
+/// specification asks of every property.
+fn populate_added_property(
+    data: &mut IpIntelligenceDataBase,
+    added: usize,
+    client_ip: ClientIpEvidence,
+) {
+    let (name, _) = ADDED_PROPERTIES[added];
+    let ipv4 = added == ADDED_IPV4_PLACE;
+    match client_ip.address {
+        Some(address) if address.is_ipv4() == ipv4 => data.set_string(name, address.to_string()),
+        Some(_) => data.set_string_no_value(name, ADDED_NOT_SUPPLIED[added]),
+        None if client_ip.supplied => data.set_string_no_value(name, ADDED_NOT_VALID),
+        None => data.set_string_no_value(name, ADDED_NOT_SUPPLIED[added]),
     }
 }
 
@@ -907,8 +961,12 @@ impl IpIntelligencePropertyReader for LookupReader {
 /// rendered string (`StoredValueType` is `string`) yet are declared `bool`: a
 /// declared-boolean property is converted from its rendered value and stored
 /// through [`IpIntelligenceDataBase::set_boolean`] so its strongly-typed
-/// accessor reads back a [`bool`]. A property with no value is left unset, so
-/// its accessor reports the default no-value.
+/// accessor reads back a [`bool`].
+///
+/// A property the C library says has no value, as .NET asks it before every
+/// read, has the reason the C library gives, as in .NET. Asking first matters
+/// for a lookup that found nothing, where reading a mandatory property's values
+/// would give its default.
 fn populate_property(
     ip_data: &mut IpIntelligenceDataBase,
     results: &Results,
@@ -917,6 +975,11 @@ fn populate_property(
     value_type: PropertyValueType,
 ) -> Result<()> {
     let declared = declared_property_value_type(name).unwrap_or(value_type);
+    if !results.has_values_by_index(index)? {
+        let message = results.no_value_message_by_index(index)?;
+        set_no_value(ip_data, name, declared, message);
+        return Ok(());
+    }
 
     // A property declared weighted (the country-code distributions and `Mcc`) is
     // always read through the weighted collection, even when the data file stores
@@ -925,7 +988,10 @@ fn populate_property(
     // metadata type is the source of truth for weighted-ness.
     if declared == WEIGHTED_PROPERTY_VALUE_TYPE {
         let pairs = results.values_weighted_by_index(index)?;
-        if !pairs.is_empty() {
+        if pairs.is_empty() {
+            let message = results.no_value_message_by_index(index)?;
+            set_no_value(ip_data, name, declared, message);
+        } else {
             let values = pairs
                 .into_iter()
                 .map(|(value, weighting)| WeightedValue::new(weighting, value))
@@ -936,7 +1002,10 @@ fn populate_property(
     }
 
     match results.read_property_by_index(index)? {
-        PropertyRead::Absent => {}
+        PropertyRead::Absent => {
+            let message = results.no_value_message_by_index(index)?;
+            set_no_value(ip_data, name, declared, message);
+        }
         PropertyRead::Weighted(pairs) => {
             let values = pairs
                 .into_iter()
@@ -978,6 +1047,28 @@ fn populate_property(
         },
     }
     Ok(())
+}
+
+/// Record that a property has no value, with `message`, in the store of its
+/// `declared` type, so its typed accessor gives the reason, and list it among
+/// the keys, so the JSON builder writes it as null with the reason, as .NET's
+/// does.
+fn set_no_value(
+    ip_data: &mut IpIntelligenceDataBase,
+    name: &str,
+    declared: PropertyValueType,
+    message: String,
+) {
+    if declared == WEIGHTED_PROPERTY_VALUE_TYPE {
+        ip_data.set_weighted_string_no_value(name, message);
+        return;
+    }
+    match declared {
+        PropertyValueType::Bool => ip_data.set_boolean_no_value(name, message),
+        PropertyValueType::Integer => ip_data.set_integer_no_value(name, message),
+        PropertyValueType::Float => ip_data.set_float_no_value(name, message),
+        _ => ip_data.set_string_no_value(name, message),
+    }
 }
 
 /// Parse a float property the data file gives as text, or [`None`] when the
@@ -1083,7 +1174,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    use fiftyone_pipeline_core::{Evidence, Pipeline};
+    use fiftyone_pipeline_core::{ElementData, Evidence, Pipeline};
     use fiftyone_pipeline_engines::AspectData;
 
     #[test]
@@ -1433,29 +1524,152 @@ mod tests {
         );
     }
 
-    /// Evidence with no client IP is a clean processing error.
-    #[test]
-    fn missing_client_ip_is_an_error() {
-        let Some(engine) = asn_engine() else {
-            eprintln!("no usable IP-intelligence data file; skipping no-IP test");
-            return;
-        };
-        // The engine drives the FlowData, so add it to the pipeline (a pipeline
-        // must contain at least one element). Keep a concrete handle to the same
-        // engine so the no-IP lookup can be called directly and its error type
-        // asserted. The pipeline takes a trait-object clone of that handle.
-        let engine = Arc::new(engine);
-        let element: Arc<dyn fiftyone_pipeline_core::FlowElement> = Arc::clone(&engine) as _;
+    /// The reason the C library, and so .NET, gives every data file property
+    /// of a lookup that found nothing.
+    const NO_RESULTS_MESSAGE: &str =
+        "The results are empty. This is probably because we don't have this data in our database.";
+
+    /// The IP data `engine` gives for `evidence` in a pipeline of its own,
+    /// which must record no error.
+    fn ip_data_for(
+        engine: &Arc<IpIntelligenceOnPremiseEngine>,
+        evidence: &[(&str, &str)],
+    ) -> IpIntelligenceDataBase {
+        let element: Arc<dyn FlowElement> = Arc::clone(engine) as _;
         let pipeline = Pipeline::builder()
             .add_element(element)
             .build()
             .expect("pipeline should build");
-        let data = pipeline
-            .create_flow_data_with(Evidence::builder().add("header.user-agent", "x").build());
-        let err = engine
-            .lookup(&data)
-            .expect_err("a lookup with no client IP should error");
-        assert!(matches!(err, Error::Native { .. }));
+        let mut builder = Evidence::builder();
+        for (key, value) in evidence {
+            builder = builder.add(*key, *value);
+        }
+        let mut data = pipeline.create_flow_data_with(builder.build());
+        data.process().expect("processing should not error");
+        assert!(data.errors().is_empty(), "{evidence:?}");
+        data.get(IP_DATA_KEY)
+            .expect("ip data should be present")
+            .clone()
+    }
+
+    /// Evidence with no client IP address gives data in which no property has
+    /// a value, as .NET gives. Each data file property has the C library's
+    /// reason, and `Ip` and `IpV6` have .NET's reason, which says whether a
+    /// value was supplied. Every one is listed, so the JSON builder writes it
+    /// as null with the reason.
+    #[test]
+    fn evidence_with_no_client_ip_gives_data_with_no_values() {
+        let Some(engine) = asn_engine() else {
+            eprintln!("no usable IP-intelligence data file; skipping no-IP test");
+            return;
+        };
+        let engine = Arc::new(engine);
+        for (evidence, added_reasons) in [
+            (&[("header.user-agent", "x")][..], ADDED_NOT_SUPPLIED),
+            (&[("server.client-ip", "")][..], ADDED_NOT_SUPPLIED),
+            (
+                &[("server.client-ip", "not-an-ip")][..],
+                [ADDED_NOT_VALID; 2],
+            ),
+        ] {
+            let ip = ip_data_for(&engine, evidence);
+            for name in ASN_PROPERTIES {
+                assert_eq!(
+                    ip.string(name).no_value_message(),
+                    Some(NO_RESULTS_MESSAGE),
+                    "{name} for {evidence:?}"
+                );
+                assert_eq!(
+                    ElementData::get(&ip, name).unwrap_err().message,
+                    NO_RESULTS_MESSAGE,
+                    "{name} for {evidence:?}"
+                );
+            }
+            for ((name, _), reason) in ADDED_PROPERTIES.iter().zip(added_reasons) {
+                assert_eq!(
+                    ip.string(name).no_value_message(),
+                    Some(reason),
+                    "{name} for {evidence:?}"
+                );
+                assert_eq!(
+                    ElementData::get(&ip, name).unwrap_err().message,
+                    reason,
+                    "{name} for {evidence:?}"
+                );
+            }
+            assert_eq!(
+                ElementData::keys(&ip),
+                ["asn", "asnname", "ip", "ipv6"],
+                "{evidence:?}"
+            );
+        }
+    }
+
+    /// `Ip` holds the IPv4 address looked up and `IpV6` the IPv6 address, an
+    /// IPv4-mapped address being IPv4. The other has .NET's reason that no
+    /// address of its kind was supplied, even when a value before the one
+    /// looked up did not read as an address. Both are listed after the data
+    /// file's properties, with a value or without.
+    #[test]
+    fn ip_and_ipv6_hold_the_address_looked_up() {
+        let Some(engine) = asn_engine() else {
+            eprintln!("no usable IP-intelligence data file; skipping Ip and IpV6");
+            return;
+        };
+        let engine = Arc::new(engine);
+        for (evidence, ipv4, ipv6) in [
+            (
+                &[("server.client-ip", "1.1.1.1")][..],
+                Some("1.1.1.1"),
+                None,
+            ),
+            (
+                &[("server.client-ip", "::ffff:1.1.1.1")][..],
+                Some("1.1.1.1"),
+                None,
+            ),
+            (
+                &[("server.client-ip", "[2606:4700:4700::1111]:443")][..],
+                None,
+                Some("2606:4700:4700::1111"),
+            ),
+            (
+                &[
+                    ("query.client-ip-51d", "not-an-ip"),
+                    ("server.client-ip", "1.1.1.1"),
+                ][..],
+                Some("1.1.1.1"),
+                None,
+            ),
+        ] {
+            let ip = ip_data_for(&engine, evidence);
+            let listed: Vec<String> = ASN_PROPERTIES
+                .iter()
+                .copied()
+                .chain(ADDED_PROPERTIES.iter().map(|(name, _)| *name))
+                .map(str::to_lowercase)
+                .collect();
+            for (((name, _), reason), address) in ADDED_PROPERTIES
+                .iter()
+                .zip(ADDED_NOT_SUPPLIED)
+                .zip([ipv4, ipv6])
+            {
+                let value = ip.string(name);
+                match address {
+                    Some(address) => assert_eq!(
+                        value.value().ok().map(String::as_str),
+                        Some(address),
+                        "{name} for {evidence:?}"
+                    ),
+                    None => assert_eq!(
+                        value.no_value_message(),
+                        Some(reason),
+                        "{name} for {evidence:?}"
+                    ),
+                }
+            }
+            assert_eq!(ElementData::keys(&ip), listed, "{evidence:?}");
+        }
     }
 
     /// Refreshing reopens the data file and keeps the engine usable.
