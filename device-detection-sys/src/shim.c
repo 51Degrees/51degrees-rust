@@ -378,6 +378,29 @@ uint32_t fiftyoneDegreesShimHashGetResultCount(
 }
 
 /*
+ * Returns the number of components whose graph the results have still to
+ * walk, or zero when `results` is NULL. When the data set was created with no
+ * properties named, populating the results walks no graph, and the first read
+ * of one of a component's properties walks that component's graph.
+ */
+uint32_t fiftyoneDegreesShimHashGetPendingGraphCount(
+    fiftyoneDegreesResultsHash *results) {
+    uint32_t count = 0;
+    if (results == NULL) {
+        return 0;
+    }
+    for (uint32_t word = 0; word < FIFTYONE_DEGREES_RESULTS_PENDING_WORDS;
+        word++) {
+        uint32_t bits = results->b.b.pending[word];
+        while (bits != 0) {
+            bits &= bits - 1;
+            count++;
+        }
+    }
+    return count;
+}
+
+/*
  * Reads the match metrics of the single result at `resultIndex` into the
  * output parameters and returns 1, or returns 0 when the index is out of range
  * or a graph cannot be walked. Any output pointer may be null to skip that
@@ -1175,6 +1198,53 @@ int fiftyoneDegreesShimHashFindDataFilePropertyValue(
     }
     fiftyoneDegreesDataSetHashRelease(dataSet);
     return result;
+}
+
+/*
+ * Returns the number of properties the data set indexes the profiles of by
+ * value, being the distinct names given when it was created, including any
+ * the data file has no property of. Returns zero when none were named, as the
+ * data set then has no index, or no data set is available.
+ */
+uint32_t fiftyoneDegreesShimHashGetIndexedPropertyCount(
+    fiftyoneDegreesResourceManager *manager) {
+    fiftyoneDegreesDataSetHash *dataSet =
+        fiftyoneDegreesDataSetHashGet(manager);
+    if (dataSet == NULL) {
+        return 0;
+    }
+    uint32_t count = dataSet->valueProfiles == NULL ?
+        0 : dataSet->valueProfiles->propertiesCount;
+    fiftyoneDegreesDataSetHashRelease(dataSet);
+    return count;
+}
+
+/*
+ * Writes the name at `nameIndex` among those the data set indexes, in the
+ * order given, into `buffer` and returns its full length, or
+ * SHIM_STRING_FAILED when the index is out of range or no data set is
+ * available.
+ */
+size_t fiftyoneDegreesShimHashGetIndexedPropertyName(
+    fiftyoneDegreesResourceManager *manager,
+    uint32_t nameIndex,
+    char *buffer,
+    size_t length) {
+    if (buffer != NULL && length > 0) {
+        buffer[0] = '\0';
+    }
+    fiftyoneDegreesDataSetHash *dataSet =
+        fiftyoneDegreesDataSetHashGet(manager);
+    if (dataSet == NULL) {
+        return SHIM_STRING_FAILED;
+    }
+    size_t total = SHIM_STRING_FAILED;
+    const fiftyoneDegreesHashValueProfiles *index = dataSet->valueProfiles;
+    if (index != NULL && nameIndex < index->propertiesCount) {
+        total = copy_measured(buffer, length, index->names[nameIndex]);
+    }
+    fiftyoneDegreesDataSetHashRelease(dataSet);
+    return total;
 }
 
 /*

@@ -46,7 +46,7 @@ use fiftyone_device_detection_shared::{
     DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY, UACH_EVIDENCE_COOKIE_KEY, UACH_EVIDENCE_QUERY_KEY,
 };
 use fiftyone_native::dd::{
-    DataFileComponent, DataFileProperty, DataFileValue, HashOptions, Manager, Results,
+    DataFileComponent, DataFileProperty, DataFileValue, HashOptions, Manager, MatchMetrics, Results,
 };
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{
@@ -63,6 +63,8 @@ use fiftyone_pipeline_engines_fiftyone::{
 
 use crate::operational_copy::OperationalCopy;
 use crate::retained::Retained;
+
+mod profile_lookup;
 
 /// The separator used to join multiple values of a list-typed property into a
 /// single string when reading from the native results. The other ports use a
@@ -83,8 +85,8 @@ const DEFAULT_DATA_SOURCE_TIER: &str = "Lite";
 const ENGINE_TYPE_NAME: &str = "DeviceDetectionOnPremiseEngine";
 
 /// A match-metric pseudo-property, which the Hash engine gives in addition to
-/// the data file's own properties. Its value is read from each result as the
-/// detection finishes, not from the data file.
+/// the data file's own properties. Its value is read from the detection's
+/// results when it is first requested, not from the data file.
 struct MetricProperty {
     name: &'static str,
     value_type: PropertyValueType,
@@ -171,6 +173,83 @@ const METRICS_COMPONENT_NAME: &str = "Metrics";
 
 /// The display order of every match metric.
 const METRIC_DISPLAY_ORDER: u8 = 255;
+
+/// The message a match metric's no-value carries when the results cannot
+/// give the metrics.
+const METRICS_UNREADABLE: &str =
+    "The match metrics could not be read, because a graph could not be read from the data file.";
+
+/// The outcome of reading one property from a detection's results.
+type ReadOutcome = std::result::Result<Option<PropertyValue>, String>;
+
+/// A match metric, which a detection reads from its results rather than from
+/// the data file's values. Reading one walks every graph not yet walked.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Metric {
+    DeviceId,
+    MatchedNodes,
+    Difference,
+    Drift,
+    Iterations,
+    Method,
+    UserAgents,
+}
+
+impl Metric {
+    /// Every match metric, in the order a detection's data lists them.
+    const READ_ORDER: [Metric; 7] = [
+        Metric::DeviceId,
+        Metric::MatchedNodes,
+        Metric::Difference,
+        Metric::Drift,
+        Metric::Iterations,
+        Metric::Method,
+        Metric::UserAgents,
+    ];
+
+    /// The metric's property name.
+    fn name(self) -> &'static str {
+        match self {
+            Metric::DeviceId => "DeviceId",
+            Metric::MatchedNodes => "MatchedNodes",
+            Metric::Difference => "Difference",
+            Metric::Drift => "Drift",
+            Metric::Iterations => "Iterations",
+            Metric::Method => "Method",
+            Metric::UserAgents => "UserAgents",
+        }
+    }
+
+    /// Read the metric from `results`. The device id has no value when the
+    /// results give none, and the others fail only when a graph cannot be
+    /// read from the data file.
+    fn read(self, results: &Results) -> ReadOutcome {
+        let value: fn(&MatchMetrics) -> PropertyValue = match self {
+            Metric::DeviceId => {
+                return results
+                    .device_id()
+                    .map(|id| id.map(PropertyValue::String))
+                    .map_err(|error| error.to_string());
+            }
+            Metric::UserAgents => {
+                return Ok(Some(PropertyValue::StringList(
+                    results.matched_user_agents(),
+                )));
+            }
+            Metric::MatchedNodes => {
+                |metrics| PropertyValue::Integer(i64::from(metrics.matched_nodes))
+            }
+            Metric::Difference => |metrics| PropertyValue::Integer(i64::from(metrics.difference)),
+            Metric::Drift => |metrics| PropertyValue::Integer(i64::from(metrics.drift)),
+            Metric::Iterations => |metrics| PropertyValue::Integer(i64::from(metrics.iterations)),
+            Metric::Method => |metrics| PropertyValue::String(metrics.method_name().to_owned()),
+        };
+        results
+            .match_metrics()
+            .map(|metrics| Some(value(&metrics)))
+            .ok_or_else(|| METRICS_UNREADABLE.to_owned())
+    }
+}
 
 /// An on-premise Hash device-detection engine.
 ///
@@ -428,7 +507,9 @@ impl DeviceDetectionOnPremiseEngine {
     /// The settings the engine opens its data file with over the profile's
     /// own. The concurrency is always set, to the one the builder named or
     /// else [`default_concurrency`](fiftyone_native::dd::default_concurrency),
-    /// and each other field is [`None`] where the builder named none.
+    /// each other setting is [`None`] where the builder named none, and
+    /// [`HashOptions::indexed_properties`] lists the properties the builder
+    /// named to index.
     pub fn hash_options(&self) -> &HashOptions {
         &self.options
     }
@@ -549,17 +630,19 @@ impl DeviceDetectionOnPremiseEngine {
     }
 
     /// The value named `value_name` among those [`Self::property_values`]
-    /// gives for the property named `property_name`, both matched exactly, as
-    /// .NET's `GetValue(valueName)` matches them, or [`None`] when the engine
-    /// lists no such property or the property has no such value. Fails when
-    /// the data file's values cannot be read.
+    /// gives for the property named `property_name`, matched as .NET's
+    /// `GetValue(valueName)` matches them, or [`None`] when the engine lists
+    /// no such property or the property has no such value. Fails when the
+    /// data file's values cannot be read.
     ///
     /// [`FiftyOneAspectPropertyMetaData::value`] finds nothing for a data file
     /// property, because its metadata lists no values. This finds the value in
     /// the loaded data file without reading the property's other values, by
     /// the C library's binary search over values in order of their names, as
     /// .NET finds it. So a value the data file holds out of that order can be
-    /// missed.
+    /// missed. The property's name is matched exactly, and a data file
+    /// property's value by the text of `value_name` before any null, so
+    /// `True\0x` finds `True`.
     pub fn property_value(
         &self,
         property_name: &str,
@@ -589,9 +672,23 @@ impl DeviceDetectionOnPremiseEngine {
     ///
     /// Builds a native evidence set from the flow data (preferring the decoded
     /// UACH element-data `sec-ch-ua*` values over the raw headers) and processes
-    /// it. The match metrics are stored straight away, and each data file
-    /// property is read from the results the first time it is requested.
+    /// it. Each property, the match metrics among them, is read from the
+    /// results the first time it is requested, as .NET's `DeviceDataHash`
+    /// reads them. With no properties named, the C library walks a
+    /// component's graph on the first read of one of its properties, so a
+    /// caller reading only some properties walks only the graphs they need.
     fn detect(&self, data: &FlowData) -> Result<DeviceDataBase> {
+        let reader = self.detection_reader(data)?;
+        let mut device = DeviceDataBase::new();
+        device
+            .base_mut()
+            .add_missing_property_source(Arc::clone(&reader.loaded.missing));
+        Ok(device.with_reader(reader))
+    }
+
+    /// Process the evidence for `data` into new results, and give the reader
+    /// that reads each property from them when it is first requested.
+    fn detection_reader(&self, data: &FlowData) -> Result<DetectionReader> {
         // Snapshot the current data set. The snapshot is an `Arc`, so an
         // in-flight detection keeps the data set alive even if `refresh` swaps a
         // new one in mid-flight.
@@ -603,52 +700,10 @@ impl DeviceDetectionOnPremiseEngine {
         let evidence = self.collect_evidence(data);
         results.process_evidence(&evidence)?;
 
-        let mut device = DeviceDataBase::new();
-        device
-            .base_mut()
-            .add_missing_property_source(Arc::clone(&loaded.missing));
-
-        // The device id is a match metric, not a data-file property, so the
-        // reader does not return it. Read it through the dedicated native
-        // getter and store it under its metric name so the shared `device_id`
-        // accessor resolves it. An absent id (no match) is simply not written.
-        if let Some(device_id) = results.device_id()? {
-            device.insert("DeviceId", PropertyValue::String(device_id));
-        }
-
-        // The numeric match metrics and the match method are also computed
-        // during detection and live on the result, not in the data file's
-        // property values, so the reader does not return them.
-        // Read them from the result and store them under their metric names so
-        // the shared accessors (difference, method, and so on) resolve them.
-        if let Some(metrics) = results.match_metrics() {
-            device.insert(
-                "MatchedNodes",
-                PropertyValue::Integer(metrics.matched_nodes as i64),
-            );
-            device.insert(
-                "Difference",
-                PropertyValue::Integer(metrics.difference as i64),
-            );
-            device.insert("Drift", PropertyValue::Integer(metrics.drift as i64));
-            device.insert(
-                "Iterations",
-                PropertyValue::Integer(metrics.iterations as i64),
-            );
-            device.insert(
-                "Method",
-                PropertyValue::String(metrics.method_name().to_owned()),
-            );
-        }
-        device.insert(
-            "UserAgents",
-            PropertyValue::StringList(results.matched_user_agents()),
-        );
-
-        Ok(device.with_reader(DetectionReader {
+        Ok(DetectionReader {
             results: Mutex::new(results),
             loaded,
-        }))
+        })
     }
 
     /// Collect the evidence the engine reads into a single [`Evidence`] set.
@@ -892,17 +947,32 @@ fn requested(requested_properties: &[String]) -> Option<Vec<&str>> {
     }
 }
 
-/// A data file property a detection can read.
-struct ReadableProperty {
-    /// The property's name as the data file spells it.
-    name: String,
-    /// The type the property's rendered value is converted to.
-    value_type: PropertyValueType,
-    /// The index the results' value reader takes for the property.
-    index: c_int,
+/// Where a detection reads a property's value from.
+enum ReadableProperty {
+    /// A match metric, read from the results.
+    Metric(Metric),
+    /// A data file property.
+    File {
+        /// The property's name as the data file spells it.
+        name: String,
+        /// The type the property's rendered value is converted to.
+        value_type: PropertyValueType,
+        /// The index the results' value reader takes for the property.
+        index: c_int,
+    },
 }
 
-/// The data file properties a detection can read.
+impl ReadableProperty {
+    /// The property's name.
+    fn name(&self) -> &str {
+        match self {
+            ReadableProperty::Metric(metric) => metric.name(),
+            ReadableProperty::File { name, .. } => name.as_str(),
+        }
+    }
+}
+
+/// The properties a detection can read.
 struct ReadableProperties {
     /// Each property a detection can read.
     properties: Vec<ReadableProperty>,
@@ -913,11 +983,12 @@ struct ReadableProperties {
 }
 
 impl ReadableProperties {
-    /// Every data file property the data set was opened with and results hold
-    /// a value for, except any with a match metric's name, which the engine
-    /// reads from each result straight away.
+    /// The match metrics, then every data file property the data set was
+    /// opened with and results hold a value for, except any with a match
+    /// metric's name.
     fn new(file_properties: &[DataFileProperty]) -> Self {
-        let properties: Vec<ReadableProperty> = file_properties
+        let metrics = Metric::READ_ORDER.into_iter().map(ReadableProperty::Metric);
+        let files = file_properties
             .iter()
             .filter(|property| property.available)
             .filter(|property| {
@@ -928,16 +999,16 @@ impl ReadableProperties {
             .filter_map(|property| {
                 property
                     .required_property_index
-                    .map(|index| ReadableProperty {
+                    .map(|index| ReadableProperty::File {
                         name: property.name.clone(),
                         value_type: property.value_type,
                         index,
                     })
-            })
-            .collect();
+            });
+        let properties: Vec<ReadableProperty> = metrics.chain(files).collect();
         let lowercase_names: Vec<String> = properties
             .iter()
-            .map(|property| property.name.to_lowercase())
+            .map(|property| property.name().to_lowercase())
             .collect();
         let by_name = lowercase_names
             .iter()
@@ -973,17 +1044,21 @@ impl DevicePropertyReader for DetectionReader {
         self.loaded.readable.by_name.get(name).copied()
     }
 
-    fn read_property(&self, position: usize) -> std::result::Result<Option<PropertyValue>, String> {
-        let property = &self.loaded.readable.properties[position];
+    fn read_property(&self, position: usize) -> ReadOutcome {
         let results = self.results.lock().unwrap_or_else(PoisonError::into_inner);
+        let (name, value_type, index) = match &self.loaded.readable.properties[position] {
+            ReadableProperty::Metric(metric) => return metric.read(&results),
+            ReadableProperty::File {
+                name,
+                value_type,
+                index,
+            } => (name, *value_type, *index),
+        };
         let raw = results
-            .value_as_string_by_index(property.index, NATIVE_VALUE_SEPARATOR)
+            .value_as_string_by_index(index, NATIVE_VALUE_SEPARATOR)
             .map_err(|error| error.to_string())?;
         Ok(raw.and_then(|raw| {
-            let raw = if property
-                .name
-                .eq_ignore_ascii_case(JAVASCRIPT_HARDWARE_PROFILE)
-            {
+            let raw = if name.eq_ignore_ascii_case(JAVASCRIPT_HARDWARE_PROFILE) {
                 wrap_hardware_profile(raw)
             } else {
                 raw
@@ -991,7 +1066,7 @@ impl DevicePropertyReader for DetectionReader {
             // A typed property whose value does not parse (the `Unknown` or
             // `N/A` no-value sentinels, say) has no value, so its accessor
             // reports a clean no-value.
-            native_value(&raw, property.value_type)
+            native_value(&raw, value_type)
         }))
     }
 }
@@ -1498,5 +1573,123 @@ mod tests {
             engine.refresh(None).expect("the data file loads again");
             assert_eq!(pool(), expected, "{} refreshed", profile.as_str());
         }
+    }
+
+    /// Every match metric listed in the metadata is read from the results,
+    /// and a detection's data lists them in this order.
+    #[test]
+    fn every_listed_metric_is_read_from_the_results() {
+        let mut read: Vec<&str> = Metric::READ_ORDER.iter().map(|m| m.name()).collect();
+        assert_eq!(
+            read,
+            [
+                "DeviceId",
+                "MatchedNodes",
+                "Difference",
+                "Drift",
+                "Iterations",
+                "Method",
+                "UserAgents"
+            ]
+        );
+        let mut listed: Vec<&str> = METRIC_PROPERTIES.iter().map(|m| m.name).collect();
+        listed.sort_unstable();
+        read.sort_unstable();
+        assert_eq!(listed, read);
+    }
+
+    const CHROME_ON_WINDOWS: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
+        AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+    /// An engine over the data file with no properties named, and flow data
+    /// holding a User-Agent for it.
+    fn engine_and_data(path: &Path) -> (Arc<DeviceDetectionOnPremiseEngine>, FlowData) {
+        let engine = crate::DeviceDetectionOnPremiseEngineBuilder::new(path)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            .build()
+            .expect("the data file loads");
+        let element: Arc<dyn FlowElement> = engine.clone();
+        let pipeline = fiftyone_pipeline_core::Pipeline::builder()
+            .add_element(element)
+            .build()
+            .expect("the pipeline builds");
+        let data = pipeline.create_flow_data_with(
+            Evidence::builder()
+                .add("header.user-agent", CHROME_ON_WINDOWS)
+                .build(),
+        );
+        (engine, data)
+    }
+
+    /// A detection walks no graph, reading a property walks only the graph
+    /// of its component, and reading a match metric walks the rest, as
+    /// .NET's results read the metrics only when they are asked for.
+    #[test]
+    fn a_detection_walks_only_the_graphs_of_the_properties_read() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the graph walks");
+            return;
+        };
+        let (engine, data) = engine_and_data(&path);
+        for metric in Metric::READ_ORDER {
+            let reader = engine.detection_reader(&data).expect("detection succeeds");
+            let pending = || {
+                reader
+                    .results
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .pending_graphs()
+            };
+            let all = pending();
+            assert!(all > 1, "a graph for each component: {all}");
+            let position = |name: &str| reader.position(name).expect(name);
+            let is_mobile = reader.read_property(position("ismobile"));
+            assert!(
+                matches!(is_mobile, Ok(Some(PropertyValue::Bool(_)))),
+                "{is_mobile:?}"
+            );
+            assert_eq!(pending(), all - 1, "IsMobile walks one graph");
+            let name = metric.name();
+            let value = reader.read_property(position(name.to_lowercase().as_str()));
+            assert!(matches!(value, Ok(Some(_))), "{name}: {value:?}");
+            assert_eq!(pending(), 0, "{name} walks every graph");
+        }
+    }
+
+    /// A detection stores no value, and its data lists the match metrics
+    /// first, then the data file's properties.
+    #[test]
+    fn a_detection_stores_nothing_until_a_property_is_read() {
+        use fiftyone_pipeline_core::ElementData;
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the stored values");
+            return;
+        };
+        let (engine, data) = engine_and_data(&path);
+        let device = engine.detect(&data).expect("detection succeeds");
+        assert!(
+            device.base().keys().is_empty(),
+            "{:?}",
+            device.base().keys()
+        );
+        let keys = device.keys();
+        assert_eq!(
+            keys[..7],
+            [
+                "deviceid",
+                "matchednodes",
+                "difference",
+                "drift",
+                "iterations",
+                "method",
+                "useragents"
+            ]
+        );
+        assert!(keys.iter().any(|key| key == "ismobile"), "{keys:?}");
+        let method = device.get("Method").expect("Method has a value");
+        assert!(
+            ["NONE", "PERFORMANCE", "COMBINED", "PREDICTIVE"].contains(&method.as_str().unwrap()),
+            "{method:?}"
+        );
     }
 }

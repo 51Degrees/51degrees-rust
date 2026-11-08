@@ -609,9 +609,75 @@ fn etag_is_stable_and_present() {
 
     let etag_a = resp_a.header("ETag").unwrap();
     let etag_b = resp_b.header("ETag").unwrap();
-    // Same evidence => same ETag, and it is a quoted token.
+    // Same evidence => same ETag, and it is a weak entity tag holding 16 hex
+    // digits, because it stands for the evidence rather than the content
+    // (RFC 9110 section 8.8.3).
     assert_eq!(etag_a, etag_b);
-    assert!(etag_a.starts_with('"') && etag_a.ends_with('"'));
+    let digits = etag_a
+        .strip_prefix("W/\"")
+        .and_then(|rest| rest.strip_suffix('"'))
+        .unwrap_or_else(|| panic!("{etag_a} is not W/\"...\""));
+    assert_eq!(digits.len(), 16, "{etag_a}");
+    assert!(
+        digits
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        "{etag_a}"
+    );
+}
+
+/// RFC 9110 sections 8.8.3.2 and 13.1.2: `If-None-Match` takes the weak
+/// comparison, so the tag a `200` sent matches with or without `W/`, alone or
+/// in a list, as does `*`.
+#[test]
+fn the_weak_etag_matches_in_every_form() {
+    let web = web_pipeline(false);
+    let options = EndpointOptions::new(web.vary_whitelist().clone());
+    let serve = |if_none_match: Option<&str>| {
+        let request = TestRequest {
+            headers: if_none_match
+                .map(|value| ("If-None-Match".to_owned(), value.to_owned()))
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        serve_javascript(
+            &processed(web.pipeline(), page_evidence("abc")),
+            &request,
+            &options,
+        )
+    };
+
+    let first = serve(None);
+    assert_eq!(first.status, WebResponse::STATUS_OK);
+    let etag = first
+        .header("ETag")
+        .expect("the 200 has an ETag")
+        .to_owned();
+    let strong = etag.strip_prefix("W/").expect("a weak ETag").to_owned();
+
+    for matching in [
+        etag.clone(),
+        strong.clone(),
+        format!("\"other\", {etag}"),
+        format!("W/\"other\", {strong}"),
+        "*".to_owned(),
+    ] {
+        let response = serve(Some(&matching));
+        assert_eq!(
+            response.status,
+            WebResponse::STATUS_NOT_MODIFIED,
+            "{matching}"
+        );
+        assert_eq!(response.header("ETag"), Some(etag.as_str()), "{matching}");
+    }
+    for other in ["W/\"other\"".to_owned(), format!("w/{strong}")] {
+        assert_eq!(
+            serve(Some(&other)).status,
+            WebResponse::STATUS_OK,
+            "{other}"
+        );
+    }
 }
 
 #[test]

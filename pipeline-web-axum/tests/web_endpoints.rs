@@ -99,11 +99,12 @@ async fn javascript_endpoint_serves_200_with_object_name_and_etag() {
         Some("application/x-javascript")
     );
 
-    // An ETag is present (the caching validator).
+    // An ETag is present (the caching validator), and it is weak because it
+    // stands for the evidence rather than the content (RFC 9110 section 8.8.3).
     let etag = header(&response, "etag").expect("ETag header present");
     assert!(
-        etag.starts_with('"') && etag.ends_with('"'),
-        "ETag is quoted"
+        etag.starts_with("W/\"") && etag.ends_with('"'),
+        "ETag is a weak entity tag, got {etag}"
     );
 
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
@@ -141,8 +142,8 @@ async fn javascript_endpoint_returns_304_for_matching_if_none_match() {
     assert_eq!(first.status(), StatusCode::OK);
     let etag = header(&first, "etag").expect("ETag present on first response");
 
-    // Second request: send the captured ETag as If-None-Match. The same
-    // evidence yields the same ETag, so the endpoint returns 304.
+    // Second request: send the captured ETag, which is weak, as If-None-Match.
+    // The same evidence yields the same ETag, so the endpoint returns 304.
     let second = app()
         .oneshot(
             Request::builder()

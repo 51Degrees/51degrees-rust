@@ -124,10 +124,10 @@ jobs:
       # reads the Lite IP Intelligence file, a download of about 320 MB that
       # the daily entry does not hold, so the file has an entry of its own for
       # the week. Each example that reads it finds it restored, and on a miss
-      # the first one downloads it for the rest. Each system has its own
-      # entry, so on a miss Windows downloads the file through the PowerShell
-      # script, as Linux does through the shell script, rather than restoring
-      # the copy Linux saved.
+      # ci/run-examples-on-free-data.ps1 downloads it once before the examples
+      # start. Each system has its own entry, so on a miss Windows downloads
+      # the file through the PowerShell script, as Linux does through the
+      # shell script, rather than restoring the copy Linux saved.
       - name: Name the week for the Lite IP Intelligence file
         id: week
         if: ${{ !cancelled() }}

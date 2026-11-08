@@ -66,6 +66,8 @@ use crate::metadata::{metadata_read_failed, read_metadata_string, take_value_str
 use crate::profile::PerformanceProfile;
 use crate::status::{status_name, status_to_result, take_message, NativeException, NativeStatus};
 
+mod value_profiles;
+
 /// The character a data set puts between the header names it joins into one
 /// pseudo header, for example the User-Agent Client Hints it reads together.
 const PSEUDO_HEADER_SEPARATOR: char = '\x1F';
@@ -163,10 +165,10 @@ fn set_pool_concurrency(config: &mut sys::ConfigHash, concurrency: u16) {
     }
 }
 
-/// Settings that change a performance profile's native configuration before
-/// a Hash data set loads, as the builders of the other 51Degrees ports set
-/// them. Each is [`None`] to keep the profile's own value. Start from
-/// [`HashOptions::default`] and set the fields wanted.
+/// Settings for loading a Hash data set. Each [`Option`] changes a
+/// performance profile's native configuration, as the builders of the other
+/// 51Degrees ports set them, and is [`None`] to keep the profile's own value.
+/// Start from [`HashOptions::default`] and set the fields wanted.
 #[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub struct HashOptions {
@@ -193,6 +195,15 @@ pub struct HashOptions {
     /// Whether detection tries the predictive graph, after the performance
     /// graph when both are used. The profiles' own value is true.
     pub use_predictive_graph: Option<bool>,
+    /// The properties whose values the data set indexes, when it loads, to
+    /// the profiles holding each, so that
+    /// [`Manager::profile_ids_for_property_value`] finds them without
+    /// reading every profile. A property is indexed whether or not it is
+    /// requested, and whatever the profile. A name the data file has no
+    /// property of indexes nothing. Empty, the default, indexes none. The
+    /// names go to the C library's init function, not into the
+    /// configuration.
+    pub indexed_properties: Vec<String>,
 }
 
 impl HashOptions {
@@ -370,7 +381,8 @@ impl Manager {
     }
 
     /// Open a Hash data file with the named properties, changing the
-    /// profile's native configuration by `options` first.
+    /// profile's native configuration by `options` first, and indexing the
+    /// properties `options` names to index.
     pub fn open_with_hash_options(
         path: impl AsRef<Path>,
         profile: PerformanceProfile,
@@ -380,18 +392,22 @@ impl Manager {
         let path = path.as_ref();
         let path_c = crate::path::native_path(path)?;
         let mut config = profile_config(profile, options);
+        let indexed = value_profiles::IndexedNames::new(&options.indexed_properties)?;
         Self::init(
             properties,
             None,
             |manager, required, exception| {
                 // Safety: every pointer is valid for the call, the config is
-                // read only for the call and the path is null terminated.
+                // read only for the call, the path is null terminated and
+                // `indexed` holds its names until the call returns.
                 unsafe {
-                    sys::fiftyoneDegreesHashInitManagerFromFile(
+                    sys::fiftyoneDegreesHashInitManagerFromFileWithIndexedProperties(
                         manager,
                         &mut config,
                         required,
                         path_c.as_ptr(),
+                        indexed.as_ptr(),
+                        indexed.count(),
                         exception,
                     )
                 }
@@ -402,7 +418,8 @@ impl Manager {
 
     /// Load a Hash data set from `data`, the whole of a data file held in
     /// memory, with the named properties, changing the profile's native
-    /// configuration by `options` first.
+    /// configuration by `options` first, and indexing the properties
+    /// `options` names to index.
     ///
     /// The data set reads its collections from `data` where it lies, so the
     /// manager keeps `data` until the data set is freed. Every profile holds
@@ -429,21 +446,25 @@ impl Manager {
         // library must not free it, and there is no file to copy.
         config.b.b.free_data = false;
         config.b.b.use_temp_file = false;
+        let indexed = value_profiles::IndexedNames::new(&options.indexed_properties)?;
         let start = memory.as_mut_ptr().cast::<c_void>();
         Self::init(
             properties,
             Some(memory),
             |manager, required, exception| {
                 // Safety: every pointer is valid for the call, the config is
-                // read only for the call, and `start` is the first of `size`
-                // bytes that the manager keeps for as long as the data set.
+                // read only for the call, `start` is the first of `size`
+                // bytes that the manager keeps for as long as the data set,
+                // and `indexed` holds its names until the call returns.
                 unsafe {
-                    sys::fiftyoneDegreesHashInitManagerFromMemory(
+                    sys::fiftyoneDegreesHashInitManagerFromMemoryWithIndexedProperties(
                         manager,
                         &mut config,
                         required,
                         start,
                         size,
+                        indexed.as_ptr(),
+                        indexed.count(),
                         exception,
                     )
                 }
@@ -774,7 +795,7 @@ pub struct DataFileProperty {
     /// True when the property's values should be shown in lists of values.
     pub show_values: bool,
     /// The data tiers whose data files hold the property, in the data file's
-    /// order.
+    /// order, an empty name included, as the C++ code gives them.
     pub data_tiers: Vec<String>,
     /// The property's default value, or [`None`] when it has none. As the
     /// C++ code the other SDKs call finds it, it is the property's own value
@@ -917,6 +938,9 @@ impl Manager {
     /// by the C library's binary search, as the C++ code the other SDKs call
     /// finds it, without reading the others. A value the data file holds out
     /// of that order can be missed, as the C++ misses it.
+    ///
+    /// As in the C++ code, `name` is matched up to its first null, so
+    /// `True\0x` finds `True`.
     pub fn data_file_property_value(
         &self,
         property_index: u32,
@@ -928,11 +952,10 @@ impl Manager {
         if property_index >= count {
             return Ok(None);
         }
-        // A data file's strings end at their first null, so no value has a
-        // name holding one.
-        let Ok(c_name) = CString::new(name) else {
-            return Ok(None);
-        };
+        // The C++ code searches with the text before the first null, where a
+        // C string ends.
+        let searched = name.split('\0').next().unwrap_or(name);
+        let c_name = CString::new(searched).expect("the text before a null holds none");
         let mut values: Vec<DataFileValue> = Vec::new();
         // Safety: `c_name` is null terminated, and `take_value_string` treats
         // the context as the `Vec<DataFileValue>` it points to, which outlives
@@ -950,7 +973,7 @@ impl Manager {
         // gives nothing and sets no exception, so a value of another name is a
         // failure.
         match (found, values.pop()) {
-            (sys::SHIM_FIND_FOUND, Some(value)) if values.is_empty() && value.name == name => {
+            (sys::SHIM_FIND_FOUND, Some(value)) if values.is_empty() && value.name == searched => {
                 Ok(Some(value))
             }
             (sys::SHIM_FIND_NOT_FOUND, None) => Ok(None),
@@ -1055,10 +1078,7 @@ impl Manager {
                     )
                 })
             })
-            .collect::<Option<Vec<String>>>()?
-            .into_iter()
-            .filter(|tier| !tier.is_empty())
-            .collect();
+            .collect::<Option<Vec<String>>>()?;
         let default_value = match u32::try_from(fields.default_value_number) {
             Ok(number) => Some(self.read_values(index, number..number + 1)?.pop()?),
             Err(_) => None,
@@ -1454,6 +1474,19 @@ impl Results {
         }
         user_agents
     }
+
+    /// The number of components, such as the hardware or the browser, whose
+    /// graph is still to be walked. When the data set was opened with no
+    /// properties named, a detection walks no graph, and the first read of
+    /// one of a component's properties walks that component's graph. The
+    /// match metrics, the matched User-Agents and the device id need every
+    /// graph, so reading any of them walks the rest. When properties were
+    /// named, the detection walks the graphs they need and this is zero.
+    pub fn pending_graphs(&self) -> u32 {
+        // Safety: the results came from `ResultsHashCreate` and remain valid
+        // for the lifetime of `self`. Counting reads nothing from the file.
+        unsafe { sys::fiftyoneDegreesShimHashGetPendingGraphCount(self.as_ptr()) }
+    }
 }
 
 /// The buffer a matched User-Agent is read into. The native default records at
@@ -1686,6 +1719,51 @@ mod tests {
                 assert!(kept == '_' || kept == original, "{user_agent}");
             }
         }
+    }
+
+    /// With no properties named, a detection walks no graph, reading a
+    /// property walks only its component's graph, and reading what needs
+    /// every component walks the rest.
+    #[test]
+    fn a_read_walks_only_the_graphs_it_needs() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the graph walks");
+            return;
+        };
+        let manager = Manager::open(&path, PerformanceProfile::Default).expect("data file loads");
+        let results = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
+        // Safety: the results are valid for the duration of the borrow.
+        let count = unsafe { sys::fiftyoneDegreesShimHashGetResultCount(results.as_ptr()) };
+        assert!(count > 1, "a result for each component: {count}");
+        assert_eq!(results.pending_graphs(), count);
+        results
+            .value_as_string("IsMobile", "|")
+            .expect("IsMobile reads");
+        assert_eq!(results.pending_graphs(), count - 1);
+        results.match_metrics().expect("metrics are readable");
+        assert_eq!(results.pending_graphs(), 0);
+
+        let results = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
+        results.device_id().expect("the device id reads");
+        assert_eq!(results.pending_graphs(), 0, "the device id");
+        let results = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
+        assert!(!results.matched_user_agents().is_empty());
+        assert_eq!(results.pending_graphs(), 0, "the matched User-Agents");
+    }
+
+    /// With properties named, a detection walks the graphs they need, so
+    /// none is left for a read to walk.
+    #[test]
+    fn named_properties_leave_no_graph_to_walk() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the named graph walks");
+            return;
+        };
+        let manager =
+            Manager::open_with_properties(&path, PerformanceProfile::Default, Some(&["IsMobile"]))
+                .expect("data file loads");
+        let results = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
+        assert_eq!(results.pending_graphs(), 0);
     }
 
     #[test]
@@ -2039,6 +2117,7 @@ mod tests {
             update_matched_user_agent: Some(false),
             use_performance_graph: Some(true),
             use_predictive_graph: Some(false),
+            indexed_properties: vec![String::from("BrowserName")],
         }
         .apply(&mut changed);
         assert_eq!(
@@ -2479,8 +2558,9 @@ mod tests {
             assert!(in_order > 0, "{}", profile.as_str());
             assert!(checked > 0, "{}", profile.as_str());
 
-            // The name must match exactly, so another case, part of the name,
-            // more than the name, or another property's value finds nothing.
+            // The name must match exactly up to any null, so another case,
+            // part of the name, more than the name, or another property's
+            // value finds nothing.
             let index_of = |name: &str| {
                 properties
                     .iter()
@@ -2490,11 +2570,20 @@ mod tests {
             };
             let is_mobile = index_of("IsMobile");
             assert!(find(index_of("BrowserName"), "Safari").is_some());
-            for name in [
-                "true", "TRUE", "Tru", "True ", "TrueX", "", "True\0", "Safari",
-            ] {
+            for name in ["true", "TRUE", "Tru", "True ", "TrueX", "", "Safari"] {
                 assert_eq!(find(is_mobile, name), None, "{name:?} {}", profile.as_str());
             }
+            // .NET's GetValue gives True for each, because the C++ search
+            // ends at the null.
+            for name in ["True\0", "True\0x", "True\0False"] {
+                assert_eq!(
+                    find(is_mobile, name).map(|value| value.name).as_deref(),
+                    Some("True"),
+                    "{name:?} {}",
+                    profile.as_str()
+                );
+            }
+            assert_eq!(find(is_mobile, "Tru\0e"), None, "{}", profile.as_str());
             let outside = u32::try_from(properties.len()).expect("few properties");
             assert_eq!(find(outside, "True"), None, "{}", profile.as_str());
         }
@@ -2504,8 +2593,11 @@ mod tests {
     /// `fiftyoneDegreesDataSetHashHeader` in the C library's `hash.h`,
     /// `fiftyoneDegreesProperty` in `property.h` and `fiftyoneDegreesValue`
     /// in `value.h`. A collection's header is its start, its length in bytes
-    /// and its count, each four bytes.
+    /// and its count, each four bytes, and a string is its length in two bytes,
+    /// then its characters.
+    const NAME_HEADER: usize = 58;
     const STRINGS_HEADER: usize = 74;
+    const MAPS_HEADER: usize = 98;
     const PROPERTIES_HEADER: usize = 110;
     const VALUES_HEADER: usize = 122;
     const PROPERTY_SIZE: usize = 44;
@@ -2516,6 +2608,8 @@ mod tests {
     const URL_OFFSET: usize = 24;
     const FIRST_VALUE_INDEX: usize = 28;
     const LAST_VALUE_INDEX: usize = 32;
+    const MAP_COUNT: usize = 36;
+    const FIRST_MAP_INDEX: usize = 40;
     const VALUE_SIZE: usize = 14;
     const VALUE_NAME_OFFSET: usize = 2;
 
@@ -2882,6 +2976,65 @@ mod tests {
             "{error}"
         );
         drop(manager);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A data tier with an empty name is kept in its place, as the C++
+    /// `PropertyMetaDataBuilderHash` keeps every name it reads. A copy of the
+    /// data file has the first character of the first property's first tier
+    /// other than the file's own made a null, so every property in that
+    /// tier lists an empty name there.
+    #[test]
+    fn an_empty_data_tier_name_is_kept() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping an empty tier name");
+            return;
+        };
+        let mut bytes = std::fs::read(&path).expect("the data file is read");
+        let strings = read_u32(&bytes, STRINGS_HEADER) as usize;
+        let maps = read_u32(&bytes, MAPS_HEADER) as usize;
+        let first_property = read_u32(&bytes, PROPERTIES_HEADER) as usize;
+        let own_name = read_u32(&bytes, NAME_HEADER);
+        let first_map = read_u32(&bytes, first_property + FIRST_MAP_INDEX);
+        let map_count = read_u32(&bytes, first_property + MAP_COUNT);
+        let tier = (first_map..first_map + map_count)
+            .map(|map| read_u32(&bytes, maps + 4 * map as usize))
+            .find(|offset| *offset != own_name)
+            .expect("the first property is in a tier other than the file's own")
+            as usize;
+        let at = strings + tier;
+        let length = u16::from_le_bytes([bytes[at], bytes[at + 1]]) as usize;
+        let name = String::from_utf8(bytes[at + 2..at + 1 + length].to_vec())
+            .expect("the tier's name is text");
+        bytes[at + 2] = 0;
+
+        let original = Manager::open(&path, PerformanceProfile::LowMemory)
+            .expect("data file loads")
+            .data_file_properties()
+            .expect("the properties are read");
+        let mut expected = original.clone();
+        for property in &mut expected {
+            for listed in &mut property.data_tiers {
+                if *listed == name {
+                    listed.clear();
+                }
+            }
+        }
+        assert_ne!(expected, original, "a property is in the {name} tier");
+
+        let dir =
+            std::env::temp_dir().join(format!("fiftyone-native-empty-tier-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the folder is made");
+        let copy = dir.join("51Degrees.hash");
+        std::fs::write(&copy, &bytes).expect("the copy is written");
+        for profile in METADATA_PROFILES {
+            let manager = Manager::open(&copy, profile).expect("the copy loads");
+            let properties = manager
+                .data_file_properties()
+                .expect("the properties are read");
+            assert_eq!(properties, expected, "{}", profile.as_str());
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

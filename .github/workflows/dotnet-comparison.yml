@@ -279,23 +279,51 @@ jobs:
           cat out/report.md >> "$GITHUB_STEP_SUMMARY"
           exit $status
 
+      # Only the TAC file holds the TAC and NativeModel properties, so the
+      # lookup of profiles by their values is checked here over every value
+      # of each, and 51DEGREES_REQUIRE_TAC makes the test fail rather than
+      # skip if the file stops carrying them or does not reach the test.
+      # cargo test passes when no test matches its name, so the step names
+      # the test exactly and fails unless the output says one test passed.
+      - name: Check the profile lookup on the TAC file
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        run: |
+          test=tac_and_native_model_values_find_their_profiles
+          env 51DEGREES_DD_PATH="$DD_FILE" 51DEGREES_REQUIRE_TAC=1 \
+            cargo test -p fiftyone-native --test value_profiles \
+            -- --exact "$test" --nocapture | tee "$RUNNER_TEMP/tac-lookup.txt"
+          if ! grep -qF 'test result: ok. 1 passed;' "$RUNNER_TEMP/tac-lookup.txt"; then
+            echo "::error::$test did not run and pass"
+            exit 1
+          fi
+
       # Latitude, Longitude and the points of Areas are given to 3 decimal
       # places. Only the Enterprise file carries them, so the test runs here,
       # and 51DEGREES_REQUIRE_LOCATION makes it fail rather than skip if the
-      # file stops carrying them or does not reach the test.
+      # file stops carrying them or does not reach the test. As above, the
+      # step names the test exactly and fails unless one test passed.
       - name: Check locations have 3 decimal places
         if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
         run: |
+          test=locations_are_given_to_three_decimal_places
           env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_LOCATION=1 \
             cargo test -p fiftyone-ip-intelligence-onpremise \
-            --test decimal_places -- --nocapture
+            --test decimal_places -- --exact "$test" --nocapture \
+            | tee "$RUNNER_TEMP/decimal-places.txt"
+          if ! grep -qF 'test result: ok. 1 passed;' "$RUNNER_TEMP/decimal-places.txt"; then
+            echo "::error::$test did not run and pass"
+            exit 1
+          fi
 
       # The build jobs read the data file metadata of the ASN file. Only the
       # Enterprise file has float, bool and weighted properties, addresses
       # and areas, so the metadata tests run here too, opening the file in
       # LowMemory, and 51DEGREES_REQUIRE_ENTERPRISE makes a test that needs
       # the Enterprise file fail rather than skip. The failed refresh test
-      # always uses the ASN file.
+      # always uses the ASN file. The leak test runs under LowMemory alone, so
+      # it never holds the whole file in memory, and checks that an area's
+      # text, too long for the shim's first buffer, is written into a block
+      # from the library's allocator and freed.
       - name: Check the IP Intelligence metadata of the Enterprise file
         if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
         run: |
@@ -309,7 +337,12 @@ jobs:
             ipi::tests::each_property_belongs_to_one_of_the_data_files_components \
             ipi::tests::each_shim_string_reader_fails_for_an_index_past_the_end \
             ipi::tests::an_enterprise_file_names_each_type \
-            ipi::tests::an_enterprise_file_gives_each_value_as_text
+            ipi::tests::an_enterprise_file_gives_each_value_as_text \
+            ipi::tests::a_value_is_found_by_its_text_to_more_places
+          env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_ENTERPRISE=1 \
+            51DEGREES_IPI_MEMORY_PROFILES=LowMemory \
+            cargo test -p fiftyone-native --no-default-features --features ipi \
+            --test ipi_memory -- --nocapture
 
       # The robots.txt cases for each usage come from the data file, and the
       # Lite file holds no crawlers. Over the Enterprise file each side must
@@ -813,8 +846,9 @@ jobs:
 
       # Each metadata line on each side must list properties, components and
       # values, so the two cannot agree by both listing none. Then a Rust
-      # line with a changed description and one with a changed value must
-      # each fail the comparison.
+      # line with a changed description, one with a changed value and one
+      # with a changed reason for a property read with no value must each
+      # fail the comparison.
       - name: Check that a changed metadata answer fails
         if: ${{ !cancelled() && env.RUN == 'true' }}
         working-directory: parity
@@ -834,6 +868,8 @@ jobs:
               .engineMetadata.properties.IsMobile.description |= . + " Changed."
             elif .id == "metadata-ip" then
               .engineMetadata.properties.Asn.values[0].name |= . + " Changed."
+            elif .id == "metadata-device-ismobile" then
+              .properties.device.browsername.missing |= . + " Changed."
             else . end' out/metadata-rust.jsonl > out/metadata-rust-changed.jsonl
           if target/debug/parity-compare --corpus corpus/metadata.json \
             --dotnet out/metadata-dotnet.jsonl --rust out/metadata-rust-changed.jsonl \
@@ -845,6 +881,8 @@ jobs:
           grep -q '`metadata-device`.* at `engineMetadata\.properties\.IsMobile\.description`: ' \
             out/report-metadata-changed.md
           grep -q '`metadata-ip`.* at `engineMetadata\.properties\.Asn\.values\[0\]\.name`: ' \
+            out/report-metadata-changed.md
+          grep -q '`metadata-device-ismobile`.* at `properties\.device\.browsername`: ' \
             out/report-metadata-changed.md
 
       - name: Upload the answers and the report
