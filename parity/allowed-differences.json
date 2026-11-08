@@ -323,7 +323,8 @@
     "kind": "value",
     "cases": ["metadata-ip*"],
     "dotnet": {"value": ["IPIV41"]},
-    "reason": "The crates' IP Intelligence engine gives the tier the data file's header names, where .NET gives IPIV41.",
+    "rust": {"value": ["IPIV4Asn", "IPIV4Enterprise"]},
+    "reason": "The crates' IP Intelligence engine gives the tier the data file's header names, IPIV4Asn for the ASN file and IPIV4Enterprise for the Enterprise file, where .NET gives IPIV41.",
     "issue": 226
   },
   {
