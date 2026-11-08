@@ -219,6 +219,7 @@ impl DevicePropertyReader for UnreadProfile {
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
+    use std::sync::atomic::AtomicBool;
 
     use fiftyone_device_detection_shared::DEVICE_ELEMENT_DATA_KEY;
     use fiftyone_pipeline_core::{ElementData, PropertyValue};
@@ -237,7 +238,7 @@ mod tests {
 
     impl log::Log for ThreadLogger {
         fn enabled(&self, metadata: &log::Metadata) -> bool {
-            metadata.level() <= log::Level::Warn
+            metadata.level() <= log::Level::Debug
         }
 
         fn log(&self, record: &log::Record) {
@@ -256,13 +257,22 @@ mod tests {
     /// installs, and clear this thread's records.
     fn start_logging() {
         let _ = log::set_logger(&LOGGER);
-        log::set_max_level(log::LevelFilter::Warn);
+        log::set_max_level(log::LevelFilter::Debug);
         take_logged();
     }
 
     /// The records logged on this thread since the last call.
     fn take_logged() -> Vec<String> {
         LOGGED.with(|logged| std::mem::take(&mut *logged.borrow_mut()))
+    }
+
+    /// The records this module logged on this thread since the last call.
+    fn take_logged_here() -> Vec<String> {
+        let target = module_path!().trim_end_matches("::tests");
+        take_logged()
+            .into_iter()
+            .filter(|line| line.split(' ').nth(1) == Some(target))
+            .collect()
     }
 
     /// The error the native library gives when it cannot allocate the
@@ -313,7 +323,8 @@ mod tests {
     #[test]
     fn a_profile_that_cannot_be_read_holds_its_id_and_gives_the_error() {
         let error = allocation_failure();
-        let device = unread_profile(42, &error, &metrics_only(), &missing());
+        let warned = AtomicBool::new(false);
+        let device = unread_profile(42, &error, &warned, &metrics_only(), &missing());
         assert_eq!(
             device.get(PROFILE_ID_PROPERTY_NAME).ok(),
             Some(PropertyValue::String("42".to_owned()))
@@ -331,16 +342,40 @@ mod tests {
     }
 
     #[test]
-    fn a_profile_that_cannot_be_read_logs_a_warning_naming_its_id_and_the_error() {
+    fn only_the_first_profile_a_lookup_cannot_read_logs_a_warning() {
         start_logging();
         let error = allocation_failure();
-        let _device = unread_profile(42, &error, &metrics_only(), &missing());
-        let logged = take_logged();
-        assert_eq!(logged.len(), 1, "{logged:?}");
-        let warning = &logged[0];
+        let reason = error.to_string();
         let target = module_path!().trim_end_matches("::tests");
+
+        // One lookup, whose reader shares one flag, fails to read two ids.
+        let warned = AtomicBool::new(false);
+        let _first = unread_profile(42, &error, &warned, &metrics_only(), &missing());
+        let _second = unread_profile(43, &error, &warned, &metrics_only(), &missing());
+        let logged = take_logged_here();
+        assert_eq!(logged.len(), 2, "{logged:?}");
+        let (warning, debug) = (&logged[0], &logged[1]);
         assert!(warning.starts_with(&format!("WARN {target} ")), "{warning}");
         assert!(warning.contains("profile 42"), "{warning}");
-        assert!(warning.contains(&error.to_string()), "{warning}");
+        assert!(warning.contains(&reason), "{warning}");
+        assert!(debug.starts_with(&format!("DEBUG {target} ")), "{debug}");
+        assert!(debug.contains("profile 43"), "{debug}");
+        assert!(debug.contains(&reason), "{debug}");
+
+        // Another lookup has its own flag, so its first failure warns again.
+        let _other = unread_profile(
+            44,
+            &error,
+            &AtomicBool::new(false),
+            &metrics_only(),
+            &missing(),
+        );
+        let logged = take_logged_here();
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert!(
+            logged[0].starts_with(&format!("WARN {target} ")),
+            "{logged:?}"
+        );
+        assert!(logged[0].contains("profile 44"), "{logged:?}");
     }
 }
