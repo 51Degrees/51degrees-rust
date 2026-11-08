@@ -58,7 +58,22 @@ pub struct ExampleOptions {
     pub data_file: std::path::PathBuf,
     /// The IP addresses to look up and time.
     pub ips: Vec<String>,
+    /// The performance profile the pipeline is built with.
+    pub profile: PerformanceProfile,
 }
+
+/// The profile the pipeline is built with unless `--profile` names another.
+/// LowMemory reads the data file from disk, so the run needs little memory
+/// even with the Enterprise file, which is over 6 GB. Reading from disk is
+/// much slower, and the .NET metrics example read a profile's values about
+/// 166 times a second with LowMemory against 2,013 with the file held in
+/// memory, so `--profile HighPerformance` is offered where there is memory
+/// for the whole file.
+const DEFAULT_PROFILE: PerformanceProfile = PerformanceProfile::LowMemory;
+
+/// The command that runs this example with the faster profile.
+const FASTER_PROFILE_COMMAND: &str =
+    "cargo run -p ip-intelligence-examples --bin ipi-onprem-metrics -- --profile HighPerformance";
 
 impl ExampleOptions {
     /// Default options, reading the Enterprise file when its share is
@@ -77,6 +92,7 @@ impl ExampleOptions {
                 "8.8.8.8".to_owned(),
                 "2606:4700:4700::1111".to_owned(),
             ],
+            profile: DEFAULT_PROFILE,
         })
     }
 }
@@ -117,11 +133,10 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
     // can answer. The free files carry none of them.
     let available = ip_intelligence_examples::data_file_properties(&options.data_file)?;
 
-    // HighPerformance favours lookup speed, which suits a metrics-focused run.
-    // The other profiles (LowMemory, InMemory, Balanced, Default) trade memory
-    // for speed and are exercised by the performance example.
+    // The profile decides how much of the data file is held in memory, and so
+    // how fast each lookup is, but not the answers. See DEFAULT_PROFILE.
     let pipeline: Arc<Pipeline> = IpIntelligencePipelineBuilder::on_premise(&options.data_file)
-        .performance_profile(PerformanceProfile::HighPerformance)
+        .performance_profile(options.profile)
         .properties(REQUESTED_PROPERTIES.iter().copied())
         .auto_update(false)
         .file_system_watcher(false)
@@ -130,13 +145,24 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
 
     writeln!(
         out,
-        "Per-lookup metrics over {} IP address(es):",
-        options.ips.len()
+        "Per-lookup metrics over {} IP address(es) with the {:?} profile:",
+        options.ips.len(),
+        options.profile
     )?;
     writeln!(out)?;
 
     for ip in &options.ips {
         report_lookup(&pipeline, ip, &available, out)?;
+    }
+
+    if options.profile == PerformanceProfile::LowMemory {
+        writeln!(out)?;
+        writeln!(
+            out,
+            "LowMemory reads the data file from disk. To hold the file in \
+             memory for faster lookups, where there is memory for it, run\n\
+             \t{FASTER_PROFILE_COMMAND}"
+        )?;
     }
 
     writeln!(out)?;
@@ -219,14 +245,16 @@ fn main() -> anyhow::Result<()> {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
 
-    let options = match std::env::args().nth(1) {
-        Some(path) => ExampleOptions {
-            data_file: std::path::PathBuf::from(path),
+    let arguments = ip_intelligence_examples::profile_arguments(std::env::args().skip(1))?;
+    let mut options = match arguments.data_file {
+        Some(data_file) => ExampleOptions {
+            data_file,
             ips: vec![
                 "1.1.1.1".to_owned(),
                 "8.8.8.8".to_owned(),
                 "2606:4700:4700::1111".to_owned(),
             ],
+            profile: DEFAULT_PROFILE,
         },
         None => match ExampleOptions::from_env() {
             Some(options) => options,
@@ -237,6 +265,9 @@ fn main() -> anyhow::Result<()> {
             ),
         },
     };
+    if let Some(profile) = arguments.profile {
+        options.profile = profile;
+    }
 
     run(&options, &mut out)
 }
@@ -300,9 +331,17 @@ mod tests {
  * It also prints the standard data-file warnings and ends with a "Find out
  * more" section.
  *
- * The example builds the pipeline with the `HighPerformance` profile. The
- * performance example explores how the other profiles (LowMemory, InMemory,
- * Balanced, Default) trade memory against speed.
+ * The example builds the pipeline with the `LowMemory` profile, which reads
+ * the data file from disk, so it runs in little memory even with the
+ * Enterprise file. Where there is memory for the whole file, this command
+ * holds it in memory for faster lookups.
+ *
+ *   cargo run -p ip-intelligence-examples --bin ipi-onprem-metrics -- --profile HighPerformance
+ *
+ * `--profile` takes any profile name, and a data-file path can be given as
+ * well. The profile changes memory use and speed, not the answers. The
+ * compare example shows the same lookup giving the same answer under several
+ * profiles.
  *
  * # Data file
  *
