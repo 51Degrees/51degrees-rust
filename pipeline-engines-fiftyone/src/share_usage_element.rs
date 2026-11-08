@@ -55,6 +55,8 @@
 //! [`Evidence::http_request`]), every value of that request. A key found in
 //! both is shared once, with the evidence's value. Which of the keys it finds
 //! are shared is decided by [`ShareUsageElement::shared_evidence_filter`].
+//! The ignore filter reads every key of the evidence, but only the keys of
+//! the web request that are shared.
 //!
 //! # Transport and the `share-usage-transport` feature
 //!
@@ -356,9 +358,10 @@ impl ShareUsageConfigBuilder {
     }
 
     /// Set evidence key and value pairs that stop a request being shared. A
-    /// request whose evidence holds any of the keys with exactly that value is
-    /// not shared. Keys match in any case and values match exactly. Returns
-    /// `self` for chaining.
+    /// request is not shared when its evidence, or a key of its web request
+    /// that would be shared, holds any of the keys with exactly that value.
+    /// Keys match in any case and values match exactly. Returns `self` for
+    /// chaining.
     pub fn ignore_flow_data_evidence_filter<I, K, V>(mut self, entries: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
@@ -707,17 +710,22 @@ impl ShareUsageElement {
         &self.filter
     }
 
-    /// True if what the element finds matches a pair in the ignore filter, so
-    /// the request is not shared. A key in both the evidence and the web
-    /// request has the evidence's value, as `found_evidence` gives it.
+    /// True if a pair in the ignore filter matches, so the request is not
+    /// shared. Each key is read from the evidence, and from the web request
+    /// only when the shared evidence filter includes it, so a key of the
+    /// request that is not shared and that no element accepts never stops a
+    /// request being shared. A key in both has the evidence's value.
     fn is_ignored(&self, evidence: &Evidence) -> bool {
         self.config
             .ignore_flow_data_evidence_filter
             .iter()
             .any(|(key, value)| {
-                let found = evidence
-                    .get(key)
-                    .or_else(|| evidence.http_request().and_then(|request| request.get(key)));
+                let found = evidence.get(key).or_else(|| {
+                    evidence
+                        .http_request()
+                        .filter(|_| self.filter.include(key))
+                        .and_then(|request| request.get(key))
+                });
                 found == Some(value.as_str())
             })
     }
@@ -1601,7 +1609,6 @@ mod tests {
     /// shared, so a pair on a cookie that is not shared, found only in the
     /// web request, does not stop the request being shared.
     #[test]
-    #[ignore = "held back for one run so CI reaches the web tests"]
     fn the_ignore_filter_reads_the_web_request_only_for_shared_keys() {
         let capture = Capture::default();
         let config = ShareUsageConfig::builder()
