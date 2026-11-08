@@ -26,8 +26,11 @@ as .NET's `FiftyOne.DeviceDetection.PropertyKeyed` does.
 
 Each engine writes a `MultiDeviceData` with one property, `Profiles`, which
 lists each profile's `ProfileId` and the values of the properties of the
-key property's component, the hardware for `TAC` and `NativeModel`. Each
-profile reads with the same `DeviceData` accessors as a detection. The TAC
+key property's component that are not JavaScript, the hardware for `TAC`
+and `NativeModel`. The JSON builder writes those values alone for each
+profile under `hardware.profiles`, leaving out a property the profile holds
+with no value. Each profile reads with the same `DeviceData` accessors as a
+detection. The TAC
 and Native engines both write under `HARDWARE_DATA_KEY`, as the cloud's
 hardware lookup does, so when both are in one pipeline the profiles of the
 engine added first come first.

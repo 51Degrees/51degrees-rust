@@ -30,6 +30,7 @@
 //! `51DEGREES_REQUIRE_TAC` is set, as the comparison workflow sets it, they
 //! fail rather than skip.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
@@ -47,7 +48,9 @@ use fiftyone_device_detection_shared::{
     PROFILES_PROPERTY_NAME,
 };
 use fiftyone_native::PerformanceProfile;
-use fiftyone_pipeline_core::{Evidence, FlowData, FlowElement, Pipeline};
+use fiftyone_pipeline_core::{
+    ElementData, Evidence, FlowData, FlowElement, Pipeline, PropertyValue,
+};
 
 const TAC_KEY: &str = "query.tac";
 const NATIVE_MODEL_KEY: &str = "query.nativemodel";
@@ -334,6 +337,76 @@ fn a_value_gives_the_profiles_holding_it() {
         assert!(
             items.iter().any(|item| item.name == property),
             "{property} is not among the listed properties of a profile"
+        );
+    }
+}
+
+/// Each record under `Profiles`, which the JSON builder writes as
+/// `hardware.profiles`, holds only the item properties the engine lists for
+/// `Profiles`, among them the id and the key property, and none of the rest
+/// of a profile's device data, such as its match metrics and its browser
+/// properties.
+#[test]
+fn each_record_holds_only_the_listed_properties() {
+    let Some(device) = device_with_key_properties() else {
+        return;
+    };
+    let engines = [
+        (
+            tac(),
+            TAC_KEY,
+            TAC_PROPERTY_NAME,
+            is_tac as fn(&str) -> bool,
+        ),
+        (
+            native(),
+            NATIVE_MODEL_KEY,
+            NATIVE_MODEL_PROPERTY_NAME,
+            is_native_model as fn(&str) -> bool,
+        ),
+    ];
+    for (engine, key, property, accept) in engines {
+        let (value, ids) = held_value(&device, property, accept);
+        let pipeline = pipeline(&device, &[&engine]);
+        let data = process(
+            &pipeline,
+            &[(key, value.as_str()), (USER_AGENT_KEY, USER_AGENT)],
+        );
+        let [profiles] = engine.properties() else {
+            panic!("the engine lists one property");
+        };
+        let listed: HashSet<String> = profiles
+            .item_properties
+            .iter()
+            .map(|item| item.name.to_lowercase())
+            .collect();
+        let hardware = data
+            .get(HARDWARE_DATA_KEY)
+            .unwrap_or_else(|| panic!("no data for {property} {value:?}"));
+        let Ok(PropertyValue::KeyValueList(records)) = hardware.get(PROFILES_PROPERTY_NAME) else {
+            panic!("{PROFILES_PROPERTY_NAME} is not a list of records");
+        };
+        assert_eq!(records.len(), ids.len(), "{property} {value:?}");
+        for record in &records {
+            let unlisted: Vec<&String> = record
+                .keys()
+                .filter(|name| !listed.contains(*name))
+                .collect();
+            assert!(
+                unlisted.is_empty(),
+                "{property} {value:?}: a record holds {unlisted:?}"
+            );
+            for name in ["profileid".to_owned(), property.to_lowercase()] {
+                assert!(
+                    record.contains_key(&name),
+                    "{property} {value:?}: a record has no {name}"
+                );
+            }
+        }
+        println!(
+            "{property} {value:?} gives {} records within the {} listed properties",
+            records.len(),
+            listed.len()
         );
     }
 }

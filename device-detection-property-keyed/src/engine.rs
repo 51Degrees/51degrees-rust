@@ -144,6 +144,9 @@ struct State {
     lookup: Option<Lookup>,
     tier: String,
     filter: EvidenceKeyFilterWhitelist,
+    /// The names of the item properties of `Profiles`, which each profile's
+    /// record holds.
+    record_properties: Arc<[String]>,
     properties: Vec<PropertyMetaData>,
     aspect_properties: Vec<AspectPropertyMetaData>,
 }
@@ -231,6 +234,7 @@ impl State {
                     }),
             );
         }
+        let record_properties = items.iter().map(|item| item.name.clone()).collect();
         let profiles = AspectPropertyMetaData::new(
             PROFILES_PROPERTY_NAME,
             data_key,
@@ -245,6 +249,7 @@ impl State {
             lookup,
             tier,
             filter,
+            record_properties,
             properties: vec![profiles.core().clone()],
             aspect_properties: vec![profiles],
         }
@@ -294,7 +299,7 @@ impl FlowElement for PropertyKeyedDeviceEngine {
         };
         let hardware = data.get_or_add(TypedKey::new(self.data_key), MultiDeviceData::new)?;
         for profile in profiles {
-            hardware.push_profile(profile);
+            hardware.push_profile_with_properties(profile, Arc::clone(&state.record_properties));
         }
         if let Some(message) = warning {
             data.add_warning(message, Some(self as &dyn FlowElement));

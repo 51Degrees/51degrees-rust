@@ -25,6 +25,7 @@
 
 use std::any::Any;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::DeviceDataBase;
 use fiftyone_pipeline_core::{ElementData, NoValueError, PropertyValue, TypedKey};
@@ -66,21 +67,27 @@ pub const PROFILES_PROPERTY_NAME: &str = "Profiles";
 /// Its dynamic [`ElementData`] view lists one property,
 /// [`PROFILES_PROPERTY_NAME`], holding each profile's values as a
 /// [`PropertyValue::KeyValueList`], so the JSON builder writes
-/// `hardware.profiles`. Each record is keyed by the lower case property
-/// names [`DeviceDataBase`] lists. A property a profile holds with no value
-/// is left out of that profile's record. Any other name is a no-value. Read
-/// typed values through [`MultiDeviceData::profiles`].
+/// `hardware.profiles`. The record of a profile added with
+/// [`push_profile_with_properties`](MultiDeviceData::push_profile_with_properties)
+/// holds the properties named there, which an on-premise engine gives as
+/// the item properties it lists for `Profiles`. The record of a profile
+/// added with [`push_profile`](MultiDeviceData::push_profile) holds every
+/// property the profile lists, as a cloud response gives them. Each record
+/// is keyed by the lower case property name and leaves out a property the
+/// profile holds with no value. Any other name is a no-value. Read typed
+/// values through [`MultiDeviceData::profiles`].
 #[derive(Debug, Clone, Default)]
 pub struct MultiDeviceData {
     profiles: Vec<DeviceDataBase>,
+    /// For each profile, in the same order, the properties its record
+    /// holds, or [`None`] for every property the profile lists.
+    record_properties: Vec<Option<Arc<[String]>>>,
 }
 
 impl MultiDeviceData {
     /// Create an empty result with no matching profiles.
     pub fn new() -> Self {
-        MultiDeviceData {
-            profiles: Vec::new(),
-        }
+        MultiDeviceData::default()
     }
 
     /// The device profiles that matched the lookup, in the order they were
@@ -95,9 +102,24 @@ impl MultiDeviceData {
         self.profiles
     }
 
-    /// Append a matched profile to the result.
+    /// Append a matched profile to the result. Its record under
+    /// [`PROFILES_PROPERTY_NAME`] holds every property the profile lists.
     pub fn push_profile(&mut self, profile: DeviceDataBase) {
         self.profiles.push(profile);
+        self.record_properties.push(None);
+    }
+
+    /// Append a matched profile whose record under
+    /// [`PROFILES_PROPERTY_NAME`] holds only the properties named in
+    /// `properties`, in any case. One list can be shared by every profile an
+    /// engine adds.
+    pub fn push_profile_with_properties(
+        &mut self,
+        profile: DeviceDataBase,
+        properties: Arc<[String]>,
+    ) {
+        self.profiles.push(profile);
+        self.record_properties.push(Some(properties));
     }
 
     /// The number of matching profiles.
@@ -115,7 +137,11 @@ impl ElementData for MultiDeviceData {
     fn get(&self, name: &str) -> Result<PropertyValue, NoValueError> {
         if name.eq_ignore_ascii_case(PROFILES_PROPERTY_NAME) {
             return Ok(PropertyValue::KeyValueList(
-                self.profiles.iter().map(profile_record).collect(),
+                self.profiles
+                    .iter()
+                    .zip(&self.record_properties)
+                    .map(|(profile, properties)| profile_record(profile, properties.as_deref()))
+                    .collect(),
             ));
         }
         Err(NoValueError::new(format!(
@@ -137,13 +163,29 @@ impl ElementData for MultiDeviceData {
     }
 }
 
-/// One profile's values keyed by the lower case property name, leaving out
+/// One profile's values of `properties`, or of every property it lists when
+/// there is no list, keyed by the lower case property name and leaving out
 /// each property the profile holds with no value.
-fn profile_record(profile: &DeviceDataBase) -> BTreeMap<String, PropertyValue> {
-    profile
-        .keys()
-        .into_iter()
-        .filter_map(|name| profile.get(&name).ok().map(|value| (name, value)))
+fn profile_record(
+    profile: &DeviceDataBase,
+    properties: Option<&[String]>,
+) -> BTreeMap<String, PropertyValue> {
+    let listed;
+    let names = match properties {
+        Some(properties) => properties,
+        None => {
+            listed = profile.keys();
+            listed.as_slice()
+        }
+    };
+    names
+        .iter()
+        .filter_map(|name| {
+            profile
+                .get(name)
+                .ok()
+                .map(|value| (name.to_lowercase(), value))
+        })
         .collect()
 }
 
@@ -213,5 +255,45 @@ mod tests {
         // The JSON builder asks in lower case.
         assert_eq!(data.get("profiles").unwrap(), expected);
         assert_eq!(data.get("Profiles").unwrap(), expected);
+    }
+
+    #[test]
+    fn a_profile_added_with_its_properties_records_only_those() {
+        let properties: Arc<[String]> = ["ProfileId", "HardwareVendor", "HardwareModel"]
+            .map(str::to_owned)
+            .into();
+        let mut data = MultiDeviceData::new();
+        data.push_profile_with_properties(
+            DeviceDataBase::new()
+                .set("ProfileId", "12280")
+                .set("HardwareVendor", "Apple")
+                .set("BrowserName", "Safari"),
+            properties,
+        );
+        // A profile added without a list, as the cloud adds them, keeps
+        // every property it lists.
+        data.push_profile(
+            DeviceDataBase::new()
+                .set("HardwareVendor", "Samsung")
+                .set("BrowserName", "Chrome"),
+        );
+
+        let record = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), PropertyValue::from(*value)))
+                .collect::<BTreeMap<_, _>>()
+        };
+        // `BrowserName` is not listed and `HardwareModel` has no value, so
+        // neither is in the first record.
+        assert_eq!(
+            data.get("profiles").unwrap(),
+            PropertyValue::KeyValueList(vec![
+                record(&[("hardwarevendor", "Apple"), ("profileid", "12280")]),
+                record(&[("browsername", "Chrome"), ("hardwarevendor", "Samsung")]),
+            ])
+        );
+        assert_eq!(data.len(), 2);
+        assert_eq!(data.profiles()[0].browser_name().value().unwrap(), "Safari");
     }
 }
