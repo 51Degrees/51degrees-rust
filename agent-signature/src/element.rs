@@ -85,9 +85,27 @@ struct Source {
     signature: &'static str,
     input: &'static str,
     agent: &'static str,
+    host: &'static str,
+    protocol: &'static str,
     method: &'static str,
     path: &'static str,
     query: &'static str,
+}
+
+impl Source {
+    /// The eight evidence keys the element accepts for this source.
+    fn keys(&self) -> [&'static str; 8] {
+        [
+            self.signature,
+            self.input,
+            self.agent,
+            self.host,
+            self.protocol,
+            self.method,
+            self.path,
+            self.query,
+        ]
+    }
 }
 
 /// A request that arrived here directly.
@@ -96,6 +114,8 @@ static HEADER_SOURCE: Source = Source {
     signature: EVIDENCE_SIGNATURE_KEY,
     input: EVIDENCE_SIGNATURE_INPUT_KEY,
     agent: EVIDENCE_SIGNATURE_AGENT_KEY,
+    host: EVIDENCE_HOST_KEY,
+    protocol: EVIDENCE_PROTOCOL_KEY,
     method: EVIDENCE_REQUEST_METHOD_KEY,
     path: EVIDENCE_REQUEST_PATH_KEY,
     query: EVIDENCE_REQUEST_QUERY_KEY,
@@ -108,6 +128,8 @@ static QUERY_SOURCE: Source = Source {
     signature: "query.signature",
     input: "query.signature-input",
     agent: "query.signature-agent",
+    host: "query.host",
+    protocol: "query.protocol",
     method: "query.request-method",
     path: "query.request-path",
     query: "query.request-query",
@@ -135,7 +157,7 @@ static QUERY_SOURCE: Source = Source {
 /// Build one with [`AgentSignatureElement::builder`].
 pub struct AgentSignatureElement {
     settings: Settings,
-    filter: AgentSignatureEvidenceKeyFilter,
+    filter: EvidenceKeyFilterWhitelist,
     properties: Vec<PropertyMetaData>,
     fetcher: Arc<Fetcher>,
     cache: DirectoryCache,
@@ -242,7 +264,7 @@ impl AgentSignatureElement {
             })
             .collect();
         let element = AgentSignatureElement {
-            filter: AgentSignatureEvidenceKeyFilter::new(settings.trust_forwarded_evidence),
+            filter: accepted_evidence(settings.trust_forwarded_evidence),
             properties,
             fetcher,
             cache,
@@ -483,7 +505,11 @@ impl AgentSignatureElement {
                 NO_VALUE_DETAIL_UNBOUND,
             );
         }
-        let resolver = EvidenceResolver { evidence, source };
+        let resolver = EvidenceResolver {
+            evidence,
+            source,
+            filter: &self.filter,
+        };
         let Some(base) = build_signature_base(
             &candidate.covered_components,
             &candidate.signature_params,
@@ -875,22 +901,39 @@ fn find_agent<'a>(
 struct EvidenceResolver<'a> {
     evidence: &'a Evidence,
     source: &'a Source,
+    filter: &'a EvidenceKeyFilterWhitelist,
 }
 
 impl EvidenceResolver<'_> {
-    fn header(&self, name: &str) -> Option<&str> {
-        self.evidence
-            .get(&format!("{}.{}", self.source.prefix, name))
+    fn host(&self) -> Option<&str> {
+        self.evidence.get(self.source.host)
+    }
+
+    /// A header the signature covers, read under the signature's own
+    /// prefix. One the element accepts is read from the evidence alone. Any
+    /// other is read from the evidence, and where the evidence does not hold
+    /// it, from the web request, whose query string values carry the query
+    /// prefix. The element does not accept such a header, so it never adds
+    /// one to a cache key, the ETag or the Vary header.
+    fn covered_header(&self, name: &str) -> Option<&str> {
+        let key = format!("{}.{}", self.source.prefix, name);
+        self.evidence.get(&key).or_else(|| {
+            if self.filter.include(&key) {
+                return None;
+            }
+            self.evidence.http_request()?.get(&key)
+        })
     }
 
     fn scheme(&self) -> Option<String> {
-        self.header("protocol")
+        self.evidence
+            .get(self.source.protocol)
             .map(|protocol| protocol.trim().to_lowercase())
     }
 
     fn derived(&self, name: &str) -> Option<String> {
         match name {
-            "@authority" => build_authority(self.header("host")?, self.scheme().as_deref()),
+            "@authority" => build_authority(self.host()?, self.scheme().as_deref()),
             "@scheme" => self.scheme(),
             // RFC 9421 section 2.2.1 takes the method as the request carried
             // it, with no change to its case.
@@ -923,7 +966,7 @@ impl EvidenceResolver<'_> {
     /// its query is a different address.
     fn target_uri(&self) -> Option<String> {
         let scheme = self.scheme()?;
-        let host = self.header("host")?;
+        let host = self.host()?;
         let path = self.evidence.get(self.source.path)?;
         let query = self.evidence.get(self.source.query)?;
         let authority = build_authority(host, Some(&scheme))?;
@@ -950,7 +993,7 @@ impl ComponentResolver for EvidenceResolver<'_> {
         if name.starts_with('@') {
             return self.derived(name);
         }
-        let header = self.header(name)?;
+        let header = self.covered_header(name)?;
         if let Some(label) = component.string_parameter("key") {
             // RFC 9421 section 2.1.2 puts the strict serialisation of the
             // member value on the line, not the text the sender wrote.
@@ -969,57 +1012,19 @@ impl ComponentResolver for EvidenceResolver<'_> {
     }
 }
 
-/// The evidence the element asks for: every header, because a signature may
-/// cover any header and a web integration only supplies the evidence some
-/// element asks for, the request line, and where forwarded evidence is
-/// trusted, everything under the query prefix. The named keys are the ones
-/// the element cannot work without, so anything that lists accepted
-/// evidence can say what to send.
-struct AgentSignatureEvidenceKeyFilter {
-    trust_forwarded: bool,
-    named: EvidenceKeyFilterWhitelist,
-}
-
-impl AgentSignatureEvidenceKeyFilter {
-    fn new(trust_forwarded: bool) -> Self {
-        AgentSignatureEvidenceKeyFilter {
-            trust_forwarded,
-            named: EvidenceKeyFilterWhitelist::new([
-                EVIDENCE_SIGNATURE_KEY,
-                EVIDENCE_SIGNATURE_INPUT_KEY,
-                EVIDENCE_SIGNATURE_AGENT_KEY,
-                EVIDENCE_HOST_KEY,
-                EVIDENCE_PROTOCOL_KEY,
-                HEADER_SOURCE.method,
-                HEADER_SOURCE.path,
-                HEADER_SOURCE.query,
-            ]),
-        }
+/// The evidence the element accepts, being the three signature headers, the
+/// host, the protocol and the request line, and where forwarded evidence is
+/// trusted, the same eight names under the query prefix. No other query
+/// string parameter is accepted, so an ordinary one never reaches a cache
+/// key or the ETag. Any other header a signature covers is read from the
+/// evidence or the web request without being accepted, so the element never
+/// adds it to a cache key, the ETag or the Vary header.
+fn accepted_evidence(trust_forwarded: bool) -> EvidenceKeyFilterWhitelist {
+    let mut keys = HEADER_SOURCE.keys().to_vec();
+    if trust_forwarded {
+        keys.extend(QUERY_SOURCE.keys());
     }
-}
-
-impl EvidenceKeyFilter for AgentSignatureEvidenceKeyFilter {
-    fn include(&self, key: &str) -> bool {
-        starts_with_prefix(key, HEADER_SOURCE.prefix)
-            || (self.trust_forwarded && starts_with_prefix(key, EVIDENCE_QUERY_PREFIX))
-            || self.named.include(key)
-    }
-
-    fn order(&self, key: &str) -> Option<i32> {
-        self.include(key).then_some(EVIDENCE_ORDER)
-    }
-
-    fn named_keys(&self) -> Option<Vec<String>> {
-        self.named.named_keys()
-    }
-}
-
-/// Whether `key` is `prefix` followed by the separator and a field, ignoring
-/// case.
-fn starts_with_prefix(key: &str, prefix: &str) -> bool {
-    key.len() > prefix.len()
-        && key.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
-        && key.as_bytes()[prefix.len()] == b'.'
+    EvidenceKeyFilterWhitelist::with_orders(keys.into_iter().map(|key| (key, EVIDENCE_ORDER)))
 }
 
 /// Remember `key` in `set`, returning true the first time and false
