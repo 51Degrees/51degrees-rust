@@ -26,10 +26,12 @@
 use std::sync::{Arc, Mutex};
 
 use fiftyone_device_detection_shared::{DeviceDataBase, DevicePropertyReader, ProfileReader};
-use fiftyone_pipeline_core::{Evidence, Result};
+use fiftyone_pipeline_core::{Error, Evidence, Result};
+use fiftyone_pipeline_engines::MissingPropertySource;
 
 use super::{
     device_data, DetectionReader, DeviceDetectionOnPremiseEngine, LoadedDataSet, ReadOutcome,
+    ReadableProperties,
 };
 
 /// The property each device data
@@ -113,9 +115,15 @@ impl DeviceDetectionOnPremiseEngine {
     /// The ids and the reader use the data set loaded when this is called,
     /// so a refresh cannot leave an id without its profile. Give both to
     /// [`MultiDeviceData::push_profile_ids`](fiftyone_device_detection_shared::MultiDeviceData::push_profile_ids)
-    /// to read the profiles only when they are first asked for. A profile the
-    /// reader cannot read gives device data holding its id, whose other
-    /// properties give why as the reason they have no value.
+    /// to read the profiles only when they are first asked for.
+    ///
+    /// A profile the reader cannot read gives device data holding its id,
+    /// whose other properties give the error as the reason they have no
+    /// value, and a warning naming the id and the error is logged. .NET
+    /// throws the error when the profiles are read. This engine gives it as
+    /// the reason instead, because
+    /// [`MultiDeviceData::profiles`](fiftyone_device_detection_shared::MultiDeviceData::profiles)
+    /// gives a slice and cannot fail.
     pub fn profile_ids_and_reader_for_property_value(
         &self,
         property_name: &str,
@@ -154,37 +162,185 @@ struct LoadedProfiles {
 impl ProfileReader for LoadedProfiles {
     fn read_profile(&self, id: u32) -> DeviceDataBase {
         profile(&self.loaded, id).unwrap_or_else(|error| {
-            let mut device = DeviceDataBase::new();
-            device
-                .base_mut()
-                .add_missing_property_source(Arc::clone(&self.loaded.missing));
-            let mut device = device.with_reader(UnreadProfile {
-                loaded: Arc::clone(&self.loaded),
-                reason: error.to_string(),
-            });
-            device.insert(PROFILE_ID_PROPERTY_NAME, id.to_string());
-            device
+            unread_profile(id, &error, &self.loaded.readable, &self.loaded.missing)
         })
     }
+}
+
+/// The device data of the profile with id `id`, which could not be read
+/// because of `error`. [`PROFILE_ID_PROPERTY_NAME`] holds the id as text,
+/// each of `readable` gives `error` as the reason it has no value, and
+/// `missing` gives the reason for any other property. Logs a warning naming
+/// the id and the error, which a caller reading only the id would not see.
+fn unread_profile(
+    id: u32,
+    error: &Error,
+    readable: &Arc<ReadableProperties>,
+    missing: &Arc<MissingPropertySource>,
+) -> DeviceDataBase {
+    log::warn!(
+        "Failed to read profile {id}. Its properties other than \
+         {PROFILE_ID_PROPERTY_NAME} have no value and give this error as the \
+         reason. {error}"
+    );
+    let mut device = DeviceDataBase::new();
+    device
+        .base_mut()
+        .add_missing_property_source(Arc::clone(missing));
+    let mut device = device.with_reader(UnreadProfile {
+        readable: Arc::clone(readable),
+        reason: error.to_string(),
+    });
+    device.insert(PROFILE_ID_PROPERTY_NAME, id.to_string());
+    device
 }
 
 /// Gives the reason a profile could not be read as the outcome of reading
 /// any of its properties.
 struct UnreadProfile {
-    loaded: Arc<LoadedDataSet>,
+    readable: Arc<ReadableProperties>,
     reason: String,
 }
 
 impl DevicePropertyReader for UnreadProfile {
     fn property_names(&self) -> &[String] {
-        &self.loaded.readable.lowercase_names
+        &self.readable.lowercase_names
     }
 
     fn position(&self, name: &str) -> Option<usize> {
-        self.loaded.readable.by_name.get(name).copied()
+        self.readable.by_name.get(name).copied()
     }
 
     fn read_property(&self, _position: usize) -> ReadOutcome {
         Err(self.reason.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use fiftyone_device_detection_shared::DEVICE_ELEMENT_DATA_KEY;
+    use fiftyone_pipeline_core::{ElementData, PropertyValue};
+    use fiftyone_pipeline_engines::EngineDeployment;
+
+    use super::*;
+
+    thread_local! {
+        /// The records logged on this thread, each as "LEVEL target message".
+        static LOGGED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Keeps each record on the thread that logged it, so tests running at
+    /// the same time see only their own.
+    struct ThreadLogger;
+
+    impl log::Log for ThreadLogger {
+        fn enabled(&self, metadata: &log::Metadata) -> bool {
+            metadata.level() <= log::Level::Warn
+        }
+
+        fn log(&self, record: &log::Record) {
+            if self.enabled(record.metadata()) {
+                let line = format!("{} {} {}", record.level(), record.target(), record.args());
+                LOGGED.with(|logged| logged.borrow_mut().push(line));
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    static LOGGER: ThreadLogger = ThreadLogger;
+
+    /// Install the logger, which no other test in this crate's library
+    /// installs, and clear this thread's records.
+    fn start_logging() {
+        let _ = log::set_logger(&LOGGER);
+        log::set_max_level(log::LevelFilter::Warn);
+        take_logged();
+    }
+
+    /// The records logged on this thread since the last call.
+    fn take_logged() -> Vec<String> {
+        LOGGED.with(|logged| std::mem::take(&mut *logged.borrow_mut()))
+    }
+
+    /// The error the native library gives when it cannot allocate the
+    /// results a profile is read into.
+    fn allocation_failure() -> Error {
+        Error::Native {
+            status: "InsufficientMemory".to_owned(),
+            message: "failed to allocate Hash results".to_owned(),
+        }
+    }
+
+    /// The properties a detection reads from a data set with no data file
+    /// properties, being the match metrics.
+    fn metrics_only() -> Arc<ReadableProperties> {
+        Arc::new(ReadableProperties::new(&[]))
+    }
+
+    fn missing() -> Arc<MissingPropertySource> {
+        Arc::new(MissingPropertySource::new(
+            DEVICE_ELEMENT_DATA_KEY,
+            super::super::ENGINE_TYPE_NAME,
+            EngineDeployment::OnPremise,
+            "Lite",
+            Vec::new(),
+        ))
+    }
+
+    #[test]
+    fn an_unread_profile_gives_its_reason_for_every_property() {
+        let readable = metrics_only();
+        let reader = UnreadProfile {
+            readable: Arc::clone(&readable),
+            reason: "the reason".to_owned(),
+        };
+        assert!(!reader.property_names().is_empty());
+        assert_eq!(reader.property_names(), readable.lowercase_names.as_slice());
+        for (position, name) in readable.lowercase_names.iter().enumerate() {
+            assert_eq!(reader.position(name), Some(position), "{name}");
+            assert_eq!(
+                reader.read_property(position),
+                Err("the reason".to_owned()),
+                "{name}"
+            );
+        }
+        assert_eq!(reader.position("hardwarevendor"), None);
+    }
+
+    #[test]
+    fn a_profile_that_cannot_be_read_holds_its_id_and_gives_the_error() {
+        let error = allocation_failure();
+        let device = unread_profile(42, &error, &metrics_only(), &missing());
+        assert_eq!(
+            device.get(PROFILE_ID_PROPERTY_NAME).ok(),
+            Some(PropertyValue::String("42".to_owned()))
+        );
+        let reason = error.to_string();
+        assert_eq!(
+            device.string_property("DeviceId").no_value_message(),
+            Some(reason.as_str())
+        );
+        assert_eq!(
+            device.integer_property("MatchedNodes").no_value_message(),
+            Some(reason.as_str())
+        );
+        assert!(device.get("DeviceId").is_err());
+    }
+
+    #[test]
+    fn a_profile_that_cannot_be_read_logs_a_warning_naming_its_id_and_the_error() {
+        start_logging();
+        let error = allocation_failure();
+        let _device = unread_profile(42, &error, &metrics_only(), &missing());
+        let logged = take_logged();
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        let warning = &logged[0];
+        let target = module_path!().trim_end_matches("::tests");
+        assert!(warning.starts_with(&format!("WARN {target} ")), "{warning}");
+        assert!(warning.contains("profile 42"), "{warning}");
+        assert!(warning.contains(&error.to_string()), "{warning}");
     }
 }
