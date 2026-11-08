@@ -33,6 +33,7 @@
 //! parity-rust robots-txt --corpus <json> --dd <hash file> --out <jsonl>
 //! parity-rust property-keyed-cases --corpus <json> --dd <hash file> --out <json>
 //! parity-rust property-keyed --corpus <json> --dd <hash file> --out <jsonl>
+//! parity-rust metadata --cases <json> --dd <hash file> --ipi <ipi file> --out <jsonl>
 //! ```
 //!
 //! The first form runs the evidence cases through the pipelines. The
@@ -42,14 +43,16 @@
 //! cases, described in `fodid_cases`, the fourth builds pipelines from
 //! configuration files, described in `configuration`, the next two are the
 //! derived property cases, described in `derived`, the next two are the
-//! robots.txt cases, described in `robots_txt`, and the last two are the TAC
-//! and Native cases, described in `property_keyed`.
+//! robots.txt cases, described in `robots_txt`, the next two are the TAC
+//! and Native cases, described in `property_keyed`, and the last is the
+//! engines' metadata, described in `metadata`.
 
 mod agent_signature;
 mod cloud_translation;
 mod configuration;
 mod derived;
 mod fodid_cases;
+mod metadata;
 mod property_keyed;
 mod robots_txt;
 mod translation;
@@ -153,6 +156,7 @@ fn main() -> Result<()> {
         Some(robots_txt::RUN) => return robots_txt::run(&args[1..]),
         Some(property_keyed::CASES) => return property_keyed::cases(&args[1..]),
         Some(property_keyed::RUN) => return property_keyed::run(&args[1..]),
+        Some(metadata::RUN) => return metadata::run(&args[1..]),
         _ => {}
     }
     let args = parse_args(&args)?;

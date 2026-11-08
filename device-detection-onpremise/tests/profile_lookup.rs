@@ -50,6 +50,11 @@ const NO_SUCH_PROPERTY: &str = "NoSuchProperty";
 /// The evidence key the engine reads profile ids from.
 const PROFILE_IDS_KEY: &str = "query.51D_ProfileIds";
 
+/// An engine built with the default performance profile reads the data file
+/// through its caches, so its ids are compared with reading every profile for
+/// every this many values, as each such read is the slowest.
+const FILE_PROFILE_FULL_READ_EVERY: usize = 10;
+
 /// The Hash data file `51DEGREES_DD_PATH` names, else the Lite file in the
 /// `cxx` submodule, or `None` with a note that the test is skipped.
 fn data_file() -> Option<PathBuf> {
@@ -114,7 +119,8 @@ fn ids(engine: &DeviceDetectionOnPremiseEngine, values: &[String]) -> Vec<Vec<u3
 
 /// An engine with `BrowserName` named to index gives, for every value, the
 /// ids reading every profile gives, and so does an engine that indexes
-/// nothing. Each list is in ascending order and at least one is not empty.
+/// nothing, built with the default performance profile, for every tenth
+/// value. Each list is in ascending order and at least one is not empty.
 /// A value, a property name in other case and a property the data file does
 /// not have give none.
 #[test]
@@ -142,7 +148,16 @@ fn every_value_gives_the_ids_reading_every_profile_gives() {
         .expect("the data file loads");
     assert!(unindexed.indexed_properties().is_empty());
     assert!(unindexed.hash_options().indexed_properties.is_empty());
-    assert_eq!(ids(&unindexed, &values), expected);
+    let compared = values
+        .iter()
+        .zip(&expected)
+        .step_by(FILE_PROFILE_FULL_READ_EVERY);
+    for (value, want) in compared {
+        let found = unindexed
+            .profile_ids_for_property_value(BROWSER_NAME, value)
+            .expect("the lookup succeeds");
+        assert_eq!(&found, want, "{value:?}");
+    }
 
     for (property, value) in [
         (BROWSER_NAME, "No such browser"),

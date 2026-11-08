@@ -27,6 +27,7 @@
 //   dotnet run -- configuration ..., see ConfigurationCases
 //   dotnet run -- derived ..., see DerivedCases
 //   dotnet run -- robots-txt ..., see RobotsTxtCases
+//   dotnet run -- metadata ..., see MetadataCases
 //
 // The pipelines and the line format are the same as the Rust producer's, as
 // parity/README.md describes. Usage records go to a handler and to a custom
@@ -144,6 +145,7 @@ namespace FiftyOne.Parity
                 case DerivedCases.Run: return DerivedCases.RunCases(argv[1..]);
                 case RobotsTxtCases.Run: return RobotsTxtCases.RunCases(argv[1..]);
                 case PropertyKeyedCases.Run: return PropertyKeyedCases.RunCases(argv[1..]);
+                case MetadataCases.Run: return MetadataCases.RunCases(argv[1..]);
             }
             var args = Args.Parse(argv);
             var cases = JsonNode.Parse(File.ReadAllText(args.Corpus)).AsArray();
