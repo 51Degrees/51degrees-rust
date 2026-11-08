@@ -243,7 +243,8 @@ impl Evidence {
     /// built from a web request.
     ///
     /// It is not a text value, so [`Evidence::get`], [`Evidence::iter`] and
-    /// [`Evidence::generate_key`] do not see it, and no element accepts it.
+    /// [`Evidence::generate_key`] do not see it, and no element ever receives
+    /// it as an evidence value, whatever its filter names.
     pub fn http_request(&self) -> Option<&Evidence> {
         self.http_request.as_deref()
     }

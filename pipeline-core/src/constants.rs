@@ -97,9 +97,9 @@ pub const EVIDENCE_REQUEST_QUERY_KEY: &str = "server.request-query";
 /// The key under which a web integration gives the elements the whole web
 /// request, whether or not any element accepts it, read with
 /// [`crate::Evidence::http_request`]. It is not a text value, so no element
-/// can accept it and it never takes part in a cache key, an ETag or a Vary
-/// header. The usage sharing element reads it to share headers no other
-/// element accepts.
+/// ever receives it as an evidence value, whatever its filter names, and it
+/// never takes part in a cache key, an ETag or a Vary header. The usage
+/// sharing element reads it to share headers no other element accepts.
 pub const EVIDENCE_HTTP_REQUEST_KEY: &str = "server.http-request";
 
 /// The prefix added to all cookies set by 51Degrees client-side code that can
