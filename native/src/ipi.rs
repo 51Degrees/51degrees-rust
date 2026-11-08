@@ -2285,6 +2285,48 @@ mod tests {
         );
     }
 
+    /// The web request a web integration gives with the evidence, under
+    /// `server.http-request`, is not one of its text values, so no address is
+    /// read from it. The lookup takes the evidence's own address, and with
+    /// none it finds nothing from the request and returns without a panic.
+    #[test]
+    fn no_address_is_read_from_the_web_request() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping the web request");
+            return;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::HighPerformance);
+        let request = || {
+            Evidence::builder()
+                .add("server.client-ip", QUAD9)
+                .add("query.client-ip-51d", QUAD9)
+                .build()
+        };
+        let lookup = |evidence: Evidence| -> Result<Option<String>> {
+            let mut results = manager.create_results()?;
+            results.process_evidence(&evidence)?;
+            results.value_as_string("Asn", ",")
+        };
+
+        let asn = lookup(
+            Evidence::builder()
+                .add("server.client-ip", CLOUDFLARE)
+                .http_request(request())
+                .build(),
+        )
+        .expect("the lookup should succeed");
+        assert!(
+            asn.as_deref().unwrap_or_default().contains("AS13335"),
+            "got {asn:?}"
+        );
+
+        let alone = lookup(Evidence::builder().http_request(request()).build());
+        assert!(
+            !matches!(&alone, Ok(Some(asn)) if asn.contains("AS19281")),
+            "got {alone:?}"
+        );
+    }
+
     #[test]
     fn a_51d_key_and_an_address_with_a_port_are_read() {
         let Some(data_file) = ipi_data_file() else {

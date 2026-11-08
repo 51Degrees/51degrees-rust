@@ -191,6 +191,55 @@ fn evidence_is_filtered_to_accepted_keys_and_prefixes_stripped() {
     assert!(!data_request.form.iter().any(|(k, _)| k == "not-accepted"));
 }
 
+/// A web integration gives the whole web request with the evidence, under
+/// `server.http-request`. It is not one of the evidence's text values, so it
+/// is never sent to the cloud, even when the cloud lists its key, and nor is
+/// a value only the request holds.
+#[test]
+fn the_web_request_is_never_sent_to_the_cloud() {
+    let client = Arc::new(FakeClient::default());
+    client.set_evidence_keys(FakeClient::ok(
+        r#"["header.user-agent","header.x-test","server.client-ip","server.http-request"]"#,
+    ));
+    client.set_data(FakeClient::ok(r#"{"device":{}}"#));
+
+    let engine = engine_with(client.clone());
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(engine))
+        .build()
+        .unwrap();
+
+    let request = Evidence::builder()
+        .add("header.user-agent", "UA")
+        .add("header.x-test", "only in the request")
+        .add("server.client-ip", "192.0.2.1")
+        .build();
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("header.user-agent", "UA")
+            .http_request(request)
+            .build(),
+    );
+    data.process().unwrap();
+
+    let requests = client.requests.lock().unwrap();
+    let data_request = requests
+        .iter()
+        .find(|r| r.method == HttpMethod::Post)
+        .expect("a POST to the data endpoint");
+    let form = &data_request.form;
+    assert!(
+        form.iter().any(|(k, v)| k == "user-agent" && v == "UA"),
+        "{form:?}"
+    );
+    for field in ["http-request", "x-test", "client-ip"] {
+        assert!(!form.iter().any(|(k, _)| k == field), "{field} in {form:?}");
+    }
+    for value in ["only in the request", "192.0.2.1"] {
+        assert!(!form.iter().any(|(_, v)| v == value), "{value} in {form:?}");
+    }
+}
+
 #[test]
 fn data_request_carries_resource_key_in_form_and_origin_header() {
     let client = Arc::new(FakeClient::default());
