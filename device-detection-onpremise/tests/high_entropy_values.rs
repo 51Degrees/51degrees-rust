@@ -24,11 +24,13 @@
 //! itself.
 //!
 //! The engine passes the base 64 high entropy values to the C library, which
-//! turns them into `sec-ch-ua*` headers before it matches. So a pipeline that
+//! turns them into `sec-ch-ua*` headers before it matches. Each case checks
+//! the platform name and version the engine alone gives, which come from the
+//! high entropy values wherever they can be read, and that a pipeline that
 //! still has the deprecated UA-CH high entropy decoder element before the
-//! engine gives the same device answers as the engine alone. The evidence is
-//! that of the `uach-ghev-*` cases of the comparison with .NET. Skips when
-//! the Lite Hash data file is absent.
+//! engine gives the same device answers. The evidence is that of the
+//! `uach-ghev-*` cases of the comparison with .NET. Skips when the Lite Hash
+//! data file is absent.
 
 // The decoder element is deprecated, and these tests use it on purpose.
 #![allow(deprecated)]
@@ -66,33 +68,76 @@ const QUERY_KEY: &str = "query.51D_GetHighEntropyValues";
 /// The cookie key of the high entropy values.
 const COOKIE_KEY: &str = "cookie.51D_GetHighEntropyValues";
 
-/// Each case's name and its evidence, in the order it is added.
-fn cases() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
+/// One case of evidence and the platform the engine gives for it.
+struct Case {
+    /// The case's name in assertion messages.
+    name: &'static str,
+    /// The `PlatformName` the engine gives.
+    platform_name: &'static str,
+    /// The `PlatformVersion` the engine gives.
+    platform_version: &'static str,
+    /// The evidence, in the order it is added.
+    evidence: Vec<(&'static str, &'static str)>,
+}
+
+/// A case of `evidence` named `name`, for which the engine gives the
+/// platform `platform_name` at `platform_version`.
+fn case(
+    name: &'static str,
+    platform_name: &'static str,
+    platform_version: &'static str,
+    evidence: Vec<(&'static str, &'static str)>,
+) -> Case {
+    Case {
+        name,
+        platform_name,
+        platform_version,
+        evidence,
+    }
+}
+
+/// Every case, with the platform both the Lite and the Enterprise file give.
+fn cases() -> Vec<Case> {
     vec![
-        (
+        case(
             "query",
+            "macOS",
+            "15.1.1",
             vec![
                 ("header.user-agent", MAC_USER_AGENT),
                 (QUERY_KEY, MAC_VALUES),
             ],
         ),
-        (
+        case(
             "cookie",
+            "macOS",
+            "15.1.1",
             vec![
                 ("header.user-agent", MAC_USER_AGENT),
                 (COOKIE_KEY, MAC_VALUES),
             ],
         ),
-        (
+        case(
             "query then cookie",
+            "macOS",
+            "15.1.1",
             vec![(QUERY_KEY, MAC_VALUES), (COOKIE_KEY, ANDROID_VALUES)],
         ),
-        (
+        // The C library uses the first high entropy value it meets, here the
+        // cookie's, where evidence.md and the decoder specification give the
+        // query string's value precedence. This case gives macOS 15.1.1 once
+        // the C library looks at the query string first, which is also when
+        // the comparison's allowance for `uach-ghev-query-then-cookie` goes.
+        case(
             "cookie then query",
+            "Android",
+            "13.0",
             vec![(COOKIE_KEY, ANDROID_VALUES), (QUERY_KEY, MAC_VALUES)],
         ),
-        (
+        case(
             "over headers",
+            "Android",
+            "13.0",
             vec![
                 (
                     "header.sec-ch-ua",
@@ -115,16 +160,26 @@ fn cases() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 (QUERY_KEY, ANDROID_VALUES),
             ],
         ),
-        (
+        case(
             "User-Agent in the query",
+            "macOS",
+            "15.1.1",
             vec![
                 ("query.user-agent", MAC_USER_AGENT),
                 (QUERY_KEY, MAC_VALUES),
             ],
         ),
-        ("no User-Agent", vec![(QUERY_KEY, ANDROID_VALUES)]),
-        (
+        case(
+            "no User-Agent",
+            "Android",
+            "13.0",
+            vec![(QUERY_KEY, ANDROID_VALUES)],
+        ),
+        // The User-Agent alone gives the platform.
+        case(
             "not base 64",
+            "macOS",
+            "10.15.7",
             vec![
                 ("header.user-agent", MAC_USER_AGENT),
                 (QUERY_KEY, "This is not base 64!"),
@@ -193,6 +248,16 @@ fn answers(pipeline: &Arc<Pipeline>, evidence: &[(&str, &str)]) -> (Answers, Opt
     (answers, hints)
 }
 
+/// The text of the property `name` in `answers`, or `None` when it has no
+/// text value there.
+fn text<'a>(answers: &'a Answers, name: &str) -> Option<&'a str> {
+    answers
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .and_then(|(_, value)| value.as_ref().ok())
+        .and_then(PropertyValue::as_str)
+}
+
 #[test]
 fn the_decoder_element_changes_no_device_answer() {
     let Some(engine) = build_engine() else {
@@ -210,11 +275,20 @@ fn the_decoder_element_changes_no_device_answer() {
         .build()
         .expect("the pipeline with the decoder element builds");
 
-    for (name, evidence) in cases() {
-        let (expected, none) = answers(&alone, &evidence);
-        let (actual, hints) = answers(&decoded, &evidence);
+    for case in cases() {
+        let name = case.name;
+        let (expected, none) = answers(&alone, &case.evidence);
+        let (actual, hints) = answers(&decoded, &case.evidence);
         assert!(none.is_none(), "{name}: the engine alone has no decoder");
         assert!(!expected.is_empty(), "{name}: the engine lists properties");
+        assert_eq!(
+            (
+                text(&expected, "PlatformName"),
+                text(&expected, "PlatformVersion"),
+            ),
+            (Some(case.platform_name), Some(case.platform_version)),
+            "{name}: the platform the engine alone gives"
+        );
         if name != "not base 64" {
             assert!(
                 hints.is_some_and(|count| count > 0),
