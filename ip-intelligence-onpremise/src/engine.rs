@@ -981,11 +981,12 @@ fn populate_property(
         return Ok(());
     }
 
-    // A property declared weighted (the country-code distributions and `Mcc`) is
-    // always read through the weighted collection, even when the data file stores
-    // its candidates as plain strings (their `StoredValueType` is `string`, so the
-    // native value type alone would misclassify them as plain). The declared
-    // metadata type is the source of truth for weighted-ness.
+    // A property declared weighted (the country-code distributions, `Mcc` and
+    // `StateGeoNameIdsGeographical`) is always read through the weighted
+    // collection, even when the data file stores its candidates as plain
+    // strings (their `StoredValueType` is `string`, so the native value type
+    // alone would misclassify them as plain). The declared metadata type is
+    // the source of truth for weighted-ness.
     if declared == WEIGHTED_PROPERTY_VALUE_TYPE {
         let pairs = results.values_weighted_by_index(index)?;
         if pairs.is_empty() {

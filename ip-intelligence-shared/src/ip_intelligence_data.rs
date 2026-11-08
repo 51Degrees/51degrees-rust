@@ -32,8 +32,8 @@
 //! per documented property, and implements it for the hand-written
 //! [`IpIntelligenceDataBase`] by delegating to its by-name stores. Plain
 //! properties resolve to a single typed value; the weighted properties
-//! (the country-code distributions and `Mcc`) resolve to an ordered list of
-//! weighted candidates.
+//! (the country-code distributions, `Mcc` and `StateGeoNameIdsGeographical`)
+//! resolve to an ordered list of weighted candidates.
 #![allow(rustdoc::bare_urls, rustdoc::invalid_html_tags)]
 
 use crate::data::IpIntelligenceDataBase;
@@ -70,6 +70,9 @@ pub trait IpIntelligenceData: AspectData {
     /// The 3-character ISO 3166-1 continent code for the supplied location.
     fn continent_code2(&self) -> AspectPropertyValue<String>;
 
+    /// The GeoNames identifier of the continent associated with the supplied location.
+    fn continent_geo_name_id(&self) -> AspectPropertyValue<String>;
+
     /// The name of the continent the supplied location is in.
     fn continent_name(&self) -> AspectPropertyValue<String>;
 
@@ -88,8 +91,14 @@ pub trait IpIntelligenceData: AspectData {
     /// A list of countries in ISO 3166-1 alpha-2 country code format that overlap with the area likely associated with the provided evidence, weighted and ordered by each country's proportion of the total population within the area. Administrative areas that cannot be cleanly resolved to the country level will not contribute to the resulting data.
     fn country_codes_population(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>>;
 
+    /// The GeoNames identifier of the country associated with the supplied location.
+    fn country_geo_name_id(&self) -> AspectPropertyValue<String>;
+
     /// The name of the county that the supplied location is in. In this case, a county is defined as an administrative sub-section of a country or state.
     fn county(&self) -> AspectPropertyValue<String>;
+
+    /// The GeoNames identifier of the county, a second-level administrative subdivision (admin2) associated with the supplied location. Unknown where the nearest subdivision lies in a different country from the location.
+    fn county_geo_name_id(&self) -> AspectPropertyValue<String>;
 
     /// The Alpha-3 ISO 4217 code of the currency associated with the supplied location.
     fn currency_code(&self) -> AspectPropertyValue<String>;
@@ -175,6 +184,9 @@ pub trait IpIntelligenceData: AspectData {
     /// Country code of the registered range.
     fn registered_country(&self) -> AspectPropertyValue<String>;
 
+    /// The GeoNames identifier of the country in which the IP address range is registered.
+    fn registered_country_geo_name_id(&self) -> AspectPropertyValue<String>;
+
     /// Name of the IP range. This is usually the owner.
     fn registered_name(&self) -> AspectPropertyValue<String>;
 
@@ -183,6 +195,12 @@ pub trait IpIntelligenceData: AspectData {
 
     /// The name of the state that the supplied location is in.
     fn state(&self) -> AspectPropertyValue<String>;
+
+    /// The GeoNames database identifier for the state (first-level administrative subdivision, admin1) that the supplied location is in. Unknown where the nearest subdivision lies in a different country from the location.
+    fn state_geo_name_id(&self) -> AspectPropertyValue<String>;
+
+    /// GeoNames identifiers of the first-level administrative subdivisions (admin1) of the location's country that overlap the area associated with the supplied evidence, weighted and ordered by each subdivision's share of that area. Subdivisions covering less than 1% of the area are omitted, at most the 20 largest are returned, and the weights of those returned are scaled to sum to 100%.
+    fn state_geo_name_ids_geographical(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>>;
 
     /// The name of the suburb that the supplied location is in.
     fn suburb(&self) -> AspectPropertyValue<String>;
@@ -195,6 +213,9 @@ pub trait IpIntelligenceData: AspectData {
 
     /// The name of the town that the supplied location is in.
     fn town(&self) -> AspectPropertyValue<String>;
+
+    /// The GeoNames identifier of the town or populated place nearest to the supplied location. Unknown where the nearest populated place lies in a different country from the location.
+    fn town_geo_name_id(&self) -> AspectPropertyValue<String>;
 
     /// The zip or postal code that the supplied location falls under.
     fn zip_code(&self) -> AspectPropertyValue<String>;
@@ -233,6 +254,10 @@ impl IpIntelligenceData for IpIntelligenceDataBase {
         self.string("ContinentCode2")
     }
 
+    fn continent_geo_name_id(&self) -> AspectPropertyValue<String> {
+        self.string("ContinentGeoNameId")
+    }
+
     fn continent_name(&self) -> AspectPropertyValue<String> {
         self.string("ContinentName")
     }
@@ -257,8 +282,16 @@ impl IpIntelligenceData for IpIntelligenceDataBase {
         self.weighted_string("CountryCodesPopulation")
     }
 
+    fn country_geo_name_id(&self) -> AspectPropertyValue<String> {
+        self.string("CountryGeoNameId")
+    }
+
     fn county(&self) -> AspectPropertyValue<String> {
         self.string("County")
+    }
+
+    fn county_geo_name_id(&self) -> AspectPropertyValue<String> {
+        self.string("CountyGeoNameId")
     }
 
     fn currency_code(&self) -> AspectPropertyValue<String> {
@@ -373,6 +406,10 @@ impl IpIntelligenceData for IpIntelligenceDataBase {
         self.string("RegisteredCountry")
     }
 
+    fn registered_country_geo_name_id(&self) -> AspectPropertyValue<String> {
+        self.string("RegisteredCountryGeoNameId")
+    }
+
     fn registered_name(&self) -> AspectPropertyValue<String> {
         self.string("RegisteredName")
     }
@@ -383,6 +420,14 @@ impl IpIntelligenceData for IpIntelligenceDataBase {
 
     fn state(&self) -> AspectPropertyValue<String> {
         self.string("State")
+    }
+
+    fn state_geo_name_id(&self) -> AspectPropertyValue<String> {
+        self.string("StateGeoNameId")
+    }
+
+    fn state_geo_name_ids_geographical(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
+        self.weighted_string("StateGeoNameIdsGeographical")
     }
 
     fn suburb(&self) -> AspectPropertyValue<String> {
@@ -401,6 +446,10 @@ impl IpIntelligenceData for IpIntelligenceDataBase {
         self.string("Town")
     }
 
+    fn town_geo_name_id(&self) -> AspectPropertyValue<String> {
+        self.string("TownGeoNameId")
+    }
+
     fn zip_code(&self) -> AspectPropertyValue<String> {
         self.string("ZipCode")
     }
@@ -417,13 +466,16 @@ pub const GENERATED_PROPERTY_TYPES: &[(&str, PropertyValueType)] = &[
     ("BrowserDiversity", PropertyValueType::Integer),
     ("ConnectionType", PropertyValueType::String),
     ("ContinentCode2", PropertyValueType::String),
+    ("ContinentGeoNameId", PropertyValueType::String),
     ("ContinentName", PropertyValueType::String),
     ("Country", PropertyValueType::String),
     ("CountryCode", PropertyValueType::String),
     ("CountryCode3", PropertyValueType::String),
     ("CountryCodesGeographical", PropertyValueType::KeyValueList),
     ("CountryCodesPopulation", PropertyValueType::KeyValueList),
+    ("CountryGeoNameId", PropertyValueType::String),
     ("County", PropertyValueType::String),
+    ("CountyGeoNameId", PropertyValueType::String),
     ("CurrencyCode", PropertyValueType::String),
     ("DialCode", PropertyValueType::String),
     ("HardwareDiversity", PropertyValueType::Integer),
@@ -452,12 +504,19 @@ pub const GENERATED_PROPERTY_TYPES: &[(&str, PropertyValueType)] = &[
     ("PlatformDiversity", PropertyValueType::Integer),
     ("Region", PropertyValueType::String),
     ("RegisteredCountry", PropertyValueType::String),
+    ("RegisteredCountryGeoNameId", PropertyValueType::String),
     ("RegisteredName", PropertyValueType::String),
     ("RegisteredOwner", PropertyValueType::String),
     ("State", PropertyValueType::String),
+    ("StateGeoNameId", PropertyValueType::String),
+    (
+        "StateGeoNameIdsGeographical",
+        PropertyValueType::KeyValueList,
+    ),
     ("Suburb", PropertyValueType::String),
     ("TimeZoneIana", PropertyValueType::String),
     ("TimeZoneOffset", PropertyValueType::Integer),
     ("Town", PropertyValueType::String),
+    ("TownGeoNameId", PropertyValueType::String),
     ("ZipCode", PropertyValueType::String),
 ];

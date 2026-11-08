@@ -982,6 +982,62 @@ mod tests {
         assert_eq!(as_trait.country_code().value().unwrap().as_str(), "GB");
     }
 
+    /// The generated model weights the four properties .NET's
+    /// `IIpIntelligenceData` declares as weighted lists, and no other.
+    #[test]
+    fn the_weighted_properties_are_the_four_dotnet_declares() {
+        let weighted: Vec<&str> = GENERATED_PROPERTY_TYPES
+            .iter()
+            .filter(|(_, value_type)| *value_type == WEIGHTED_PROPERTY_VALUE_TYPE)
+            .map(|(name, _)| *name)
+            .collect();
+        assert_eq!(
+            weighted,
+            [
+                "CountryCodesGeographical",
+                "CountryCodesPopulation",
+                "Mcc",
+                "StateGeoNameIdsGeographical",
+            ]
+        );
+    }
+
+    /// The six GeoNames identifiers .NET declares as strings, and the
+    /// weighted list of state identifiers, read through typed accessors.
+    #[test]
+    fn the_geonames_identifiers_read_through_typed_accessors() {
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        data.set_string("ContinentGeoNameId", "6255148");
+        data.set_string("CountryGeoNameId", "2635167");
+        data.set_string("CountyGeoNameId", "2639842");
+        data.set_string("RegisteredCountryGeoNameId", "2635167");
+        data.set_string("StateGeoNameId", "6269131");
+        data.set_string("TownGeoNameId", "2639577");
+        data.set_weighted_string(
+            "StateGeoNameIdsGeographical",
+            vec![
+                WeightedValue::new(13_107, "2634895".to_owned()),
+                WeightedValue::new(52_428, "6269131".to_owned()),
+            ],
+        );
+        let as_trait: &dyn IpIntelligenceData = &data;
+        let value = |read: AspectPropertyValue<String>| read.value().unwrap().clone();
+        assert_eq!(value(as_trait.continent_geo_name_id()), "6255148");
+        assert_eq!(value(as_trait.country_geo_name_id()), "2635167");
+        assert_eq!(value(as_trait.county_geo_name_id()), "2639842");
+        assert_eq!(value(as_trait.registered_country_geo_name_id()), "2635167");
+        assert_eq!(value(as_trait.state_geo_name_id()), "6269131");
+        assert_eq!(value(as_trait.town_geo_name_id()), "2639577");
+        let states = as_trait.state_geo_name_ids_geographical();
+        let states: Vec<(&str, u16)> = states
+            .value()
+            .unwrap()
+            .iter()
+            .map(|state| (state.value.as_str(), state.raw_weighting))
+            .collect();
+        assert_eq!(states, [("6269131", 52_428), ("2634895", 13_107)]);
+    }
+
     #[test]
     fn typed_metadata_carries_declared_types() {
         let meta = default_property_metadata();

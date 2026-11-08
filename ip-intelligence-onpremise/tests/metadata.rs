@@ -338,11 +338,11 @@ fn a_property_left_out_by_configuration_is_excluded() {
     assert_eq!(data.get("AsnName").unwrap_err().message, expected);
 }
 
-/// A property the shared model does not declare is read as the type the data
-/// file names for it, so on an Enterprise file `StateGeoNameIdsGeographical`
-/// is a weighted list and `ContinentGeoNameId` a string.
+/// On an Enterprise file the GeoNames identifiers read through their typed
+/// accessors, `StateGeoNameIdsGeographical` as a weighted list and
+/// `ContinentGeoNameId` as a string, and the property bag holds the same.
 #[test]
-fn a_property_the_shared_model_does_not_declare_is_read_as_the_data_file_types_it() {
+fn the_geonames_identifiers_read_through_their_typed_accessors() {
     let Some(engine) = engine(&[]) else {
         skip_without_enterprise(
             "no IP Intelligence data file found",
@@ -374,6 +374,18 @@ fn a_property_the_shared_model_does_not_declare_is_read_as_the_data_file_types_i
         "{:?}",
         data.get("ContinentGeoNameId")
     );
+    let states = data.state_geo_name_ids_geographical();
+    let states = states.value().expect("the weighted state identifiers");
+    assert!(!states.is_empty());
+    let mut previous = u16::MAX;
+    for state in states {
+        assert!(state.raw_weighting <= previous, "highest weighting first");
+        previous = state.raw_weighting;
+        assert!(!state.value.is_empty());
+    }
+    let continent = data.continent_geo_name_id();
+    let continent = continent.value().expect("the continent identifier");
+    assert!(!continent.is_empty());
 }
 
 /// A refresh reads the metadata of the data file again into new lists.

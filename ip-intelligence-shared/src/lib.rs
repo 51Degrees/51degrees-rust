@@ -41,7 +41,8 @@
 //!   per documented network and location property. Most properties are *plain*
 //!   (a single typed value, for example a [`String`] country name, a [`bool`]
 //!   `IsVPN` flag, an [`f32`] latitude or an [`i32`] offset); the few weighted
-//!   properties (the country-code distributions and `Mcc`) return an ordered
+//!   properties (the country-code distributions, `Mcc` and
+//!   `StateGeoNameIdsGeographical`) return an ordered
 //!   `Vec<`[`WeightedValue`](fiftyone_pipeline_core::WeightedValue)`<String>>`.
 //!   Every accessor wraps its value in an
 //!   [`AspectPropertyValue`](fiftyone_pipeline_engines::AspectPropertyValue) so
