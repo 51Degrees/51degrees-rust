@@ -160,9 +160,12 @@ fn profiles() -> Vec<PerformanceProfile> {
 
 /// Check that each of the first 20 values of every property whose text is
 /// too long for the shim's first buffer is written into a block from the
-/// library's allocator, one byte longer than the text, so the leak stages
-/// count it. Returns how many values were checked. Only the Enterprise file
-/// holds such values, being its areas.
+/// library's allocator, so the leak stages count it. Returns how many values
+/// were checked. Only the Enterprise file holds such values, being its areas.
+///
+/// The shim allocates the length its first write counted, plus one. The C
+/// library's string builder always keeps a byte free for the null, writes the
+/// null there and counts it, so the block is two bytes longer than the text.
 fn check_long_values(manager: &ipi::Manager, profile: PerformanceProfile) -> usize {
     let mut checked = 0;
     let properties = manager
@@ -182,7 +185,7 @@ fn check_long_values(manager: &ipi::Manager, profile: PerformanceProfile) -> usi
                     .expect("the value is read");
             });
             assert!(
-                sizes.contains(&(value.name.len() + 1)),
+                sizes.contains(&(value.name.len() + 2)),
                 "{} {} value {place} of {} bytes, blocks {sizes:?}",
                 profile.as_str(),
                 property.name,
