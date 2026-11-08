@@ -43,6 +43,31 @@ const REQUEST_LINE: [(&str, &str); 3] = [
     ("server.request-query", ""),
 ];
 
+/// The eight evidence keys the element accepts, as the specification lists
+/// them.
+const ACCEPTED_KEYS: [&str; 8] = [
+    "header.signature",
+    "header.signature-input",
+    "header.signature-agent",
+    "header.host",
+    "header.protocol",
+    "server.request-method",
+    "server.request-path",
+    "server.request-query",
+];
+
+/// A header none of the accepted keys names, with the value it is signed
+/// with.
+const X_TEST: (&str, &str) = ("header.x-test", "covered");
+
+/// A signer that also covers the `x-test` header.
+fn x_test_signer() -> Signer {
+    Signer {
+        extra: vec![("\"x-test\"".to_owned(), X_TEST.1.to_owned())],
+        ..Signer::default()
+    }
+}
+
 /// A signer that also covers the method and the path.
 fn request_line_signer() -> Signer {
     Signer {
@@ -650,24 +675,32 @@ fn a_query_string_cannot_stand_in_for_the_request() {
 }
 
 #[test]
-fn the_element_asks_for_every_header_and_the_request_line() {
+fn the_element_accepts_its_eight_keys_and_no_others() {
     let element = AgentSignatureElement::builder()
         .set_http_client(Arc::new(FakeClient::default()))
         .build()
         .unwrap();
     let filter = element.evidence_key_filter();
-    for key in [
-        "header.signature",
-        "header.Signature-Input",
-        "header.x-anything",
-        "server.request-method",
-        "server.request-path",
-        "server.request-query",
-    ] {
-        assert!(filter.include(&key.to_lowercase()), "{key}");
+    for key in ACCEPTED_KEYS {
+        assert!(filter.include(key), "{key}");
+        assert!(filter.include(&key.to_uppercase()), "{key}");
     }
-    assert!(!filter.include("query.signature"));
-    assert!(!filter.include("cookie.signature"));
+    for key in [
+        "header.x-test",
+        "header.content-type",
+        "header.user-agent",
+        "server.http-request",
+        "server.client-ip",
+        "query.signature",
+        "cookie.signature",
+    ] {
+        assert!(!filter.include(key), "{key}");
+    }
+    let mut named = filter.named_keys().unwrap();
+    named.sort();
+    let mut expected: Vec<String> = ACCEPTED_KEYS.iter().map(|key| key.to_string()).collect();
+    expected.sort();
+    assert_eq!(named, expected);
     let names: Vec<&str> = element
         .properties()
         .iter()
@@ -676,6 +709,119 @@ fn the_element_asks_for_every_header_and_the_request_line() {
     assert_eq!(names.len(), 12);
     assert_eq!(names[0], PROPERTY_STATUS);
     assert_eq!(element.data_key(), DEFAULT_ELEMENT_DATA_KEY);
+}
+
+#[test]
+fn trusting_forwarded_evidence_adds_the_query_keys_and_no_headers() {
+    let element = AgentSignatureElement::builder()
+        .set_http_client(Arc::new(FakeClient::default()))
+        .set_trust_forwarded_evidence(true)
+        .build()
+        .unwrap();
+    let filter = element.evidence_key_filter();
+    for key in ACCEPTED_KEYS {
+        assert!(filter.include(key), "{key}");
+    }
+    assert!(filter.include("query.signature"));
+    assert!(filter.include("query.x-test"));
+    assert!(!filter.include(X_TEST.0));
+}
+
+#[test]
+fn the_pipeline_does_not_accept_a_header_only_a_signature_covers() {
+    let harness = Harness::with_test_key();
+    let filter = harness.pipeline.evidence_key_filter();
+    assert!(!filter.include(X_TEST.0));
+    assert!(!filter.include("server.http-request"));
+    for key in ACCEPTED_KEYS {
+        assert!(filter.include(key), "{key}");
+    }
+}
+
+#[test]
+fn a_covered_header_in_the_evidence_verifies() {
+    let harness = Harness::with_test_key();
+    let data = harness.process_signed(&x_test_signer().sign(), &[X_TEST]);
+    assert_eq!(
+        outcome(&data),
+        (STATUS_VERIFIED.to_owned(), REASON_VERIFIED.to_owned())
+    );
+}
+
+#[test]
+fn a_covered_header_only_in_the_web_request_verifies() {
+    let harness = Harness::with_test_key();
+    let data =
+        process_signed_with_request(&harness.pipeline, &x_test_signer().sign(), &[], &[X_TEST]);
+    assert_eq!(
+        outcome(&data),
+        (STATUS_VERIFIED.to_owned(), REASON_VERIFIED.to_owned())
+    );
+}
+
+#[test]
+fn a_covered_header_in_neither_place_is_unavailable() {
+    let harness = Harness::with_test_key();
+    let signed = x_test_signer().sign();
+    let unavailable = (
+        STATUS_UNVERIFIED.to_owned(),
+        REASON_COMPONENT_UNAVAILABLE.to_owned(),
+    );
+    assert_eq!(outcome(&harness.process_signed(&signed, &[])), unavailable);
+    assert_eq!(
+        outcome(&process_signed_with_request(
+            &harness.pipeline,
+            &signed,
+            &[],
+            &[("header.x-other", "covered")],
+        )),
+        unavailable
+    );
+    // The signature base is rebuilt before the key directory is looked up.
+    assert_eq!(harness.client.total(), 0);
+}
+
+#[test]
+fn a_covered_header_takes_the_evidence_value_before_the_web_request() {
+    let harness = Harness::with_test_key();
+    let signed = x_test_signer().sign();
+    let other = (X_TEST.0, "other");
+    let data = process_signed_with_request(&harness.pipeline, &signed, &[X_TEST], &[other]);
+    assert_eq!(outcome(&data).1, REASON_VERIFIED);
+    let data = process_signed_with_request(&harness.pipeline, &signed, &[other], &[X_TEST]);
+    assert_eq!(
+        outcome(&data),
+        (
+            STATUS_INVALID.to_owned(),
+            REASON_SIGNATURE_MISMATCH.to_owned()
+        )
+    );
+}
+
+#[test]
+fn an_accepted_key_is_not_read_from_the_web_request() {
+    let harness = Harness::with_test_key();
+    let signed = Signer::default().sign();
+    let agent = signed.signature_agent.clone().unwrap();
+    let mut evidence = vec![
+        ("header.signature", signed.signature.as_str()),
+        ("header.signature-input", signed.signature_input.as_str()),
+        ("header.signature-agent", agent.as_str()),
+        ("header.protocol", "https"),
+    ];
+    let mut request = evidence.clone();
+    request.push(("header.host", "example.com"));
+    let data = process_with_request(&harness.pipeline, &evidence, &request);
+    assert_eq!(
+        outcome(&data),
+        (
+            STATUS_UNVERIFIED.to_owned(),
+            REASON_COMPONENT_UNAVAILABLE.to_owned()
+        )
+    );
+    evidence.push(("header.host", "example.com"));
+    let data = process_with_request(&harness.pipeline, &evidence, &request);
+    assert_eq!(outcome(&data).1, REASON_VERIFIED);
 }
 
 #[test]
