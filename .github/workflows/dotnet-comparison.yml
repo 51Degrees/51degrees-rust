@@ -349,6 +349,17 @@ jobs:
             cargo test -p fiftyone-device-detection-robots-txt \
             --test data_file -- --nocapture
 
+      # The TAC and Native engines find profiles only over a file with the
+      # TAC and NativeModel properties, which the Lite file the Pull Request
+      # workflow gives them lacks. 51DEGREES_REQUIRE_TAC makes those tests
+      # fail rather than skip if the file stops carrying them.
+      - name: Test the TAC and Native engines over the TAC file
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        run: |
+          env 51DEGREES_DD_PATH="$DD_FILE" 51DEGREES_REQUIRE_TAC=1 \
+            cargo test -p fiftyone-device-detection-property-keyed \
+            --test data_file -- --nocapture
+
       # A changed Rust answer must fail the comparison and be named in the
       # report, or the comparison proves nothing.
       - name: Check that a changed answer fails
