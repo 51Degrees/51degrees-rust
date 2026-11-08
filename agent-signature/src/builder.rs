@@ -201,10 +201,14 @@ impl AgentSignatureElementBuilder {
     }
 
     /// Whether evidence under the `query` prefix is trusted to describe the
-    /// request that was signed. Default false. Only a service that knows it
-    /// receives evidence forwarded by a caller's own pipeline may turn this
-    /// on, because forwarded evidence and a typed query string cannot be
-    /// told apart once they have arrived.
+    /// request that was signed. Default false. Turning it on adds to the
+    /// evidence the element accepts the eight names it reads, under
+    /// `query.`, such as `query.signature` and `query.request-path`, and no
+    /// other `query.` key. A request holding `query.signature` or
+    /// `query.signature-input` is then read wholly from the `query.` keys.
+    /// Only a service that knows it receives evidence forwarded by a
+    /// caller's own pipeline may turn this on, because forwarded evidence
+    /// and a typed query string cannot be told apart once they have arrived.
     pub fn set_trust_forwarded_evidence(mut self, trust: bool) -> Self {
         self.trust_forwarded_evidence = trust;
         self

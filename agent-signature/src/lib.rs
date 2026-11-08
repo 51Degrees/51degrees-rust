@@ -54,23 +54,37 @@
 //!
 //! ## The evidence
 //!
-//! The element accepts eight evidence keys and no others, being
-//! `header.signature`, `header.signature-input`, `header.signature-agent`,
-//! `header.host`, `header.protocol`, `server.request-method`,
-//! `server.request-path` and `server.request-query`. A signature covering
-//! `@method`, `@path`, `@query` or `@target-uri` needs the last three, exactly
-//! as the request line carried them. Where they are missing, such a signature
-//! reports Unverified with the reason ComponentUnavailable. A signature
-//! covering `@authority` and `signature-agent`, which is what the protocol
-//! draft's own example does, needs only the headers.
+//! The element accepts eight evidence keys, being `header.signature`,
+//! `header.signature-input`, `header.signature-agent`, `header.host`,
+//! `header.protocol`, `server.request-method`, `server.request-path` and
+//! `server.request-query`. A signature covering `@method`, `@path`, `@query`
+//! or `@target-uri` needs the last three, exactly as the request line carried
+//! them. Where they are missing, such a signature reports Unverified with the
+//! reason ComponentUnavailable. A signature covering `@authority` and
+//! `signature-agent`, which is what the protocol draft's own example does,
+//! needs only the headers.
+//!
+//! With forwarded evidence trusted, through
+//! [`AgentSignatureElementBuilder::set_trust_forwarded_evidence`], the element
+//! also accepts the same eight names under `query.`, being `query.signature`,
+//! `query.signature-input`, `query.signature-agent`, `query.host`,
+//! `query.protocol`, `query.request-method`, `query.request-path` and
+//! `query.request-query`. It accepts no other key. With the option off, which
+//! is the default, it accepts no `query.` key at all. A request holding
+//! `query.signature` or `query.signature-input` is then read wholly from the
+//! `query.` keys, and never from a mix of those and the `header.` and
+//! `server.` keys, because the two describe different requests.
 //!
 //! A signature may cover any other header. Such a header is read from the
 //! evidence where the flow data holds it, and otherwise from the web request
 //! a web integration gives, read with
-//! [`fiftyone_pipeline_core::Evidence::http_request`]. The element does not
-//! accept such a header, so it never adds one to a cache key, the ETag or the
-//! Vary header. Where neither place holds a covered header, the signature
-//! reports Unverified with the reason ComponentUnavailable.
+//! [`fiftyone_pipeline_core::Evidence::http_request`]. Both are read under the
+//! prefix the signature arrived under, which for a forwarded signature is
+//! `query.`, where a web integration puts the query string's values. The
+//! element does not accept such a header, so it never adds one to a cache
+//! key, the ETag or the Vary header. Where neither place holds a covered
+//! header, the signature reports Unverified with the reason
+//! ComponentUnavailable.
 //!
 //! ## Fetching keys
 //!
