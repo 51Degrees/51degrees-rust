@@ -138,12 +138,12 @@
     "issue": 223
   },
   {
-    "path": "json.device.*nullreason",
+    "path": "json.device.*javascript*nullreason",
     "kind": "type",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "dotnet": {"value": [null]},
     "rust": {"pattern": ["No value for property *"]},
-    "reason": "When the matched profile holds no value for a property, .NET has no reason to give and its JSON writes null, where the crates give their sentence (properties.device.* noValueMessage).",
-    "issue": 223
+    "reason": "json-builder.md line 52 says that where the Property value is null the nullreason meta-Property \"MUST be added with a string message that explains why this Property does not have a value\", so the crates give their sentence when the matched profile holds no value for a property. .NET gives no reason then, because the C++ ResultsBase sets no message when the profile holds no value, so its JSON writes null. In the corpus only the JavaScript properties have no value in a matched profile. This entry stays until .NET gives a reason or the specification changes."
   },
   {
     "path": "javascript",
