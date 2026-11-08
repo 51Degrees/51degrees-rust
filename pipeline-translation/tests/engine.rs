@@ -643,6 +643,26 @@ fn the_engine_gives_each_option_under_the_specifications_name() {
 }
 
 #[test]
+fn a_source_given_as_content_is_translated() {
+    let engine = TranslationEngine::builder()
+        .set_source_element_data_key(SOURCE_KEY)
+        .add_source_content("animals.fr_FR.yml", FRENCH_ANIMALS)
+        .add_translation("Animal", "AnimalTranslated")
+        .build()
+        .unwrap();
+    let (locale, french) = engine
+        .languages()
+        .try_get_translator("fr")
+        .unwrap()
+        .unwrap();
+    assert_eq!(locale, "fr_FR");
+    assert_eq!(
+        french.translate("dog", &mut Vec::new()).as_deref(),
+        Some("chien")
+    );
+}
+
+#[test]
 fn the_language_comes_from_the_first_evidence_with_a_value() {
     let engine = || {
         TranslationEngine::builder()
