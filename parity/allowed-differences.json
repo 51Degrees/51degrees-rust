@@ -300,8 +300,8 @@
     "path": "propertyKeyedEngines[*].properties[*].type",
     "kind": "value",
     "dotnet": {"value": ["dotnet:IReadOnlyList`1"]},
-    "rust": {"value": ["keyValueList"]},
-    "reason": "Profiles is a list of each profile's device data. .NET types it as IReadOnlyList<IDeviceData>, which the .NET program writes as its .NET type name, and the crates as keyValueList, the type they give a list of records, which the JSON builder writes as a list of objects.",
+    "rust": {"value": ["elementDataList"]},
+    "reason": "Profiles is a list of each profile's device data. .NET types it as IReadOnlyList<IDeviceData>, which the .NET program writes as its .NET type name, and the crates as elementDataList, the type they give a list of results each read like an element's own data, which the JSON builder writes as a list of objects with a property that has no value as null with its reason.",
     "issue": 225
   },
   {
