@@ -32,7 +32,9 @@
 //! - **Automatic update via HTTP.** A background scheduler thread polls each
 //!   file's update URL on its configured interval (offset by a random amount to
 //!   stagger many instances), sending an `If-Modified-Since` header so the
-//!   server can answer `304 Not Modified` cheaply.
+//!   server can answer `304 Not Modified` cheaply. The first poll, and the
+//!   first after an update is applied, waits instead for the next update date
+//!   the data gives while that date is ahead.
 //! - **Automatic update from file.** A [`notify`] file-system watcher refreshes
 //!   the engine when the data file changes on disk. Like polling, it runs only
 //!   while automatic updates are on, which the specification makes the master
@@ -261,7 +263,7 @@ impl DataUpdateService {
 
         // Schedule the first poll if automatic updates are enabled.
         if config.automatic_updates_enabled {
-            let due = self.initial_poll_due(&data_file);
+            let due = Self::poll_due(&data_file);
             *registration
                 .next_poll
                 .lock()
@@ -289,6 +291,10 @@ impl DataUpdateService {
     /// URL the remote server is polled immediately; otherwise, if the file has
     /// a path on disk, the engine is refreshed from that file. A single-file
     /// engine ignores the identifier.
+    ///
+    /// When the check applies new data to a registered file whose updates are
+    /// scheduled, the next scheduled poll waits for the next update date the
+    /// new data gives, as it does after a scheduled poll applies new data.
     pub fn check_for_update(
         &self,
         engine: &Arc<dyn OnPremiseAspectEngine>,
@@ -312,14 +318,18 @@ impl DataUpdateService {
             }
         };
 
-        if registration.data_file.data_update_url().is_some() {
+        let result = if registration.data_file.data_update_url().is_some() {
             self.check_for_update_from_url(&registration)
         } else if registration.data_file.data_file_path().is_some() {
             // No URL: refresh from the file on disk.
             Self::refresh_engine(engine, &registration)
         } else {
             Ok(AutoUpdateStatus::NoConfiguration)
+        };
+        if matches!(result, Ok(AutoUpdateStatus::Success)) {
+            self.reschedule_after_update(&registration);
         }
+        result
     }
 
     /// Apply an in-memory data update to the engine's matching data file.
@@ -347,8 +357,11 @@ impl DataUpdateService {
 
     // ----- internal -----
 
-    /// Decide when the first scheduled poll for a file is due.
-    fn initial_poll_due(&self, data_file: &AspectEngineDataFile) -> Instant {
+    /// When the next scheduled poll for a file is due, at registration and
+    /// once an update has been applied. While the time the engine expects
+    /// new data is still ahead, that time plus a random delay, otherwise one
+    /// polling interval plus a random delay.
+    fn poll_due(data_file: &AspectEngineDataFile) -> Instant {
         let now = Utc::now();
         if let Some(available) = data_file.update_available_time() {
             if available > now {
@@ -386,6 +399,23 @@ impl DataUpdateService {
         let mut hasher = std::hash::BuildHasher::build_hasher(&RandomState::new());
         std::time::SystemTime::now().hash(&mut hasher);
         Duration::from_secs(hasher.finish() % max_seconds)
+    }
+
+    /// After an update has been applied, take the next scheduled poll from
+    /// the dates the new data gives, and wake the scheduler so it sleeps
+    /// until then. A file with no scheduled poll keeps none.
+    fn reschedule_after_update(&self, registration: &Registration) {
+        {
+            let mut next_poll = registration
+                .next_poll
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if next_poll.is_none() {
+                return;
+            }
+            *next_poll = Some(Self::poll_due(&registration.data_file));
+        }
+        self.inner.wake.notify_all();
     }
 
     /// Find the registration for an engine's data file, by identity and
@@ -596,14 +626,21 @@ impl ServiceHandle {
                     continue;
                 };
                 let result = self.check_for_update_from_url(&registration);
+                let applied = matches!(result, Ok(AutoUpdateStatus::Success));
                 log_poll(engine.data_key(), &registration, result);
-                let interval = DataUpdateService::poll_interval(&registration.data_file);
-                let next = now + interval;
+                // Once new data is in use, the next poll waits for the next
+                // update date that data gives, as at registration. A poll
+                // that applied nothing tries again after one interval.
+                let next = if applied {
+                    DataUpdateService::poll_due(&registration.data_file)
+                } else {
+                    now + DataUpdateService::poll_interval(&registration.data_file)
+                };
                 *registration
                     .next_poll
                     .lock()
                     .unwrap_or_else(|e| e.into_inner()) = Some(next);
-                next_wait = next_wait.min(interval);
+                next_wait = next_wait.min(next.saturating_duration_since(Instant::now()));
             } else {
                 next_wait = next_wait.min(due - now);
             }
@@ -1168,13 +1205,11 @@ mod tests {
     /// give about 170 different delays.
     #[test]
     fn the_first_poll_is_delayed_at_random() {
-        let service = DataUpdateService::new();
         let data_file = polled_file(0, 600);
         let delays: std::collections::BTreeSet<u64> = (0..200)
             .map(|_| {
                 let start = Instant::now();
-                service
-                    .initial_poll_due(&data_file)
+                DataUpdateService::poll_due(&data_file)
                     .duration_since(start)
                     .as_secs()
             })
@@ -1245,6 +1280,278 @@ mod tests {
             })
             .count();
         assert!(delayed > 0, "no poll after the first added a delay");
+    }
+
+    /// How far ahead [`DatedEngine`]'s new data says the next data is due.
+    const NEXT_UPDATE: Duration = Duration::from_secs(24 * 60 * 60);
+
+    /// More than a slow test takes between noting the time and scheduling
+    /// the next poll.
+    const SLOW_TEST: Duration = Duration::from_secs(30);
+
+    /// The polling interval of [`dated_engine`]'s data file.
+    const POLL_SECONDS: u64 = 60;
+
+    /// The next update date [`NEXT_UPDATE`] from now.
+    fn next_update_date() -> DateTime<Utc> {
+        Utc::now() + chrono::TimeDelta::from_std(NEXT_UPDATE).unwrap()
+    }
+
+    /// An engine whose refresh from memory records the next update date the
+    /// new data gives, [`NEXT_UPDATE`] from now, as a data file's header
+    /// does, and counts the refreshes.
+    struct DatedEngine {
+        filter: fiftyone_pipeline_core::EvidenceKeyFilterWhitelist,
+        data_files: Vec<Arc<AspectEngineDataFile>>,
+        refreshes: std::sync::atomic::AtomicUsize,
+    }
+
+    impl fiftyone_pipeline_core::FlowElement for DatedEngine {
+        fn process(
+            &self,
+            _data: &mut fiftyone_pipeline_core::FlowData,
+        ) -> fiftyone_pipeline_core::Result<()> {
+            Ok(())
+        }
+        fn data_key(&self) -> &str {
+            "dated"
+        }
+        fn evidence_key_filter(&self) -> &dyn fiftyone_pipeline_core::EvidenceKeyFilter {
+            &self.filter
+        }
+        fn properties(&self) -> &[fiftyone_pipeline_core::PropertyMetaData] {
+            &[]
+        }
+    }
+
+    impl crate::AspectEngine for DatedEngine {
+        fn data_source_tier(&self) -> &str {
+            "Lite"
+        }
+        fn aspect_properties(&self) -> &[crate::AspectPropertyMetaData] {
+            &[]
+        }
+    }
+
+    impl OnPremiseAspectEngine for DatedEngine {
+        fn data_files(&self) -> &[Arc<AspectEngineDataFile>] {
+            &self.data_files
+        }
+        fn refresh(&self, _identifier: Option<&str>) -> fiftyone_pipeline_core::Result<()> {
+            Ok(())
+        }
+        fn refresh_from_memory(
+            &self,
+            _identifier: Option<&str>,
+            _data: &[u8],
+        ) -> fiftyone_pipeline_core::Result<()> {
+            self.refreshes.fetch_add(1, Ordering::SeqCst);
+            self.data_files[0].set_update_available_time(next_update_date());
+            Ok(())
+        }
+    }
+
+    /// A [`DatedEngine`] with one memory data file updated from `url`, with
+    /// automatic updates as `automatic` says, polled every [`POLL_SECONDS`]
+    /// with no random delay. The engine is returned twice, once to count its
+    /// refreshes and once as the service takes it.
+    fn dated_engine(
+        url: &str,
+        automatic: bool,
+    ) -> (Arc<DatedEngine>, Arc<dyn OnPremiseAspectEngine>) {
+        let data_file = Arc::new(AspectEngineDataFile::new(
+            crate::DataFileConfiguration::memory_builder()
+                .data_update_url(url)
+                .automatic_updates_enabled(automatic)
+                .polling_interval_seconds(POLL_SECONDS)
+                .max_randomisation_seconds(0)
+                .decompress_content(false)
+                .build(),
+        ));
+        let engine = Arc::new(DatedEngine {
+            filter: fiftyone_pipeline_core::EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+            data_files: vec![data_file],
+            refreshes: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let shared: Arc<dyn OnPremiseAspectEngine> = engine.clone();
+        (engine, shared)
+    }
+
+    /// Answer one request to a URL on this machine with the status line
+    /// `status` and `body`.
+    fn answer_once(status: &'static str, body: &'static [u8]) -> (String, JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/datafile", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let _ = Read::read(&mut stream, &mut request);
+            let head = format!(
+                "{status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            Write::write_all(&mut stream, head.as_bytes()).unwrap();
+            Write::write_all(&mut stream, body).unwrap();
+        });
+        (url, server)
+    }
+
+    /// A scheduler handle with no registrations, for a test to add its own.
+    fn empty_handle() -> ServiceHandle {
+        ServiceHandle {
+            client: reqwest::blocking::Client::new(),
+            inner: Arc::new(Inner {
+                registrations: Mutex::new(Vec::new()),
+                wake: Condvar::new(),
+                shutting_down: Mutex::new(false),
+            }),
+        }
+    }
+
+    /// Add a registration for `engine`'s data file whose poll is due now.
+    fn add_due(
+        handle: &ServiceHandle,
+        engine: &Arc<dyn OnPremiseAspectEngine>,
+    ) -> Arc<Registration> {
+        let registration = Arc::new(Registration {
+            engine: Arc::downgrade(engine),
+            data_file: Arc::clone(&engine.data_files()[0]),
+            next_poll: Mutex::new(Some(Instant::now())),
+            watcher: Mutex::new(None),
+        });
+        handle
+            .inner
+            .registrations
+            .lock()
+            .unwrap()
+            .push(Arc::clone(&registration));
+        registration
+    }
+
+    /// How long after `from` the registration's next poll is due.
+    fn next_poll_after(registration: &Registration, from: Instant) -> Duration {
+        registration
+            .next_poll
+            .lock()
+            .unwrap()
+            .expect("no poll is scheduled")
+            .saturating_duration_since(from)
+    }
+
+    /// A scheduled poll that applies new data waits next for the next update
+    /// date the new data gives, as registration does, rather than one
+    /// polling interval.
+    #[test]
+    fn a_scheduled_poll_that_applies_data_waits_for_its_next_update_date() {
+        let (url, server) = answer_once("HTTP/1.1 200 OK", b"new data");
+        let (engine, shared) = dated_engine(&url, true);
+        let handle = empty_handle();
+        let registration = add_due(&handle, &shared);
+
+        let polled = Instant::now();
+        handle.run_due_polls();
+        server.join().unwrap();
+
+        assert_eq!(
+            engine.refreshes.load(Ordering::SeqCst),
+            1,
+            "no update was applied"
+        );
+        let wait = next_poll_after(&registration, polled);
+        assert!(
+            wait > NEXT_UPDATE - SLOW_TEST && wait < NEXT_UPDATE + SLOW_TEST,
+            "the next poll is due after {wait:?}, not at the next update date"
+        );
+    }
+
+    /// A scheduled poll that applies nothing tries again after one polling
+    /// interval, even with a next update date ahead.
+    #[test]
+    fn a_scheduled_poll_that_applies_nothing_waits_one_interval() {
+        let (url, server) = answer_once("HTTP/1.1 304 Not Modified", b"");
+        let (engine, shared) = dated_engine(&url, true);
+        shared.data_files()[0].set_update_available_time(next_update_date());
+        let handle = empty_handle();
+        let registration = add_due(&handle, &shared);
+
+        let polled = Instant::now();
+        handle.run_due_polls();
+        server.join().unwrap();
+
+        assert_eq!(
+            engine.refreshes.load(Ordering::SeqCst),
+            0,
+            "an update was applied"
+        );
+        let wait = next_poll_after(&registration, polled);
+        assert!(
+            wait < Duration::from_secs(POLL_SECONDS) + SLOW_TEST,
+            "the next poll is due after {wait:?}, not one interval"
+        );
+    }
+
+    /// A programmatic check that applies new data to a registered file moves
+    /// its next scheduled poll to the next update date the new data gives.
+    #[test]
+    fn a_programmatic_update_that_applies_data_waits_for_its_next_update_date() {
+        let (url, server) = answer_once("HTTP/1.1 200 OK", b"new data");
+        let (engine, shared) = dated_engine(&url, true);
+        let service = DataUpdateService::new();
+        service
+            .register(Arc::clone(&shared), Arc::clone(&shared.data_files()[0]))
+            .unwrap();
+        let registration = only_registration(&service);
+        assert!(
+            next_poll_after(&registration, Instant::now()) <= Duration::from_secs(POLL_SECONDS),
+            "the first poll is not one interval away"
+        );
+
+        let checked = Instant::now();
+        let status = service.check_for_update(&shared, None);
+        server.join().unwrap();
+
+        assert_eq!(
+            status.map_err(|error| error.to_string()),
+            Ok(AutoUpdateStatus::Success)
+        );
+        assert_eq!(engine.refreshes.load(Ordering::SeqCst), 1);
+        let wait = next_poll_after(&registration, checked);
+        assert!(
+            wait > NEXT_UPDATE - SLOW_TEST && wait < NEXT_UPDATE + SLOW_TEST,
+            "the next poll is due after {wait:?}, not at the next update date"
+        );
+        drop(registration);
+        drop(service);
+    }
+
+    /// A programmatic update of a file whose automatic updates are off
+    /// schedules no poll.
+    #[test]
+    fn a_programmatic_update_schedules_no_poll_when_automatic_updates_are_off() {
+        let (url, server) = answer_once("HTTP/1.1 200 OK", b"new data");
+        let (engine, shared) = dated_engine(&url, false);
+        let service = DataUpdateService::new();
+        service
+            .register(Arc::clone(&shared), Arc::clone(&shared.data_files()[0]))
+            .unwrap();
+
+        let status = service.check_for_update(&shared, None);
+        server.join().unwrap();
+
+        assert_eq!(
+            status.map_err(|error| error.to_string()),
+            Ok(AutoUpdateStatus::Success)
+        );
+        assert_eq!(engine.refreshes.load(Ordering::SeqCst), 1);
+        assert!(
+            only_registration(&service)
+                .next_poll
+                .lock()
+                .unwrap()
+                .is_none(),
+            "a poll was scheduled"
+        );
+        drop(service);
     }
 
     /// How long a test waits for something it expects of a watcher.

@@ -343,8 +343,8 @@ struct DataFileState {
     /// service can tell whether an engine recorded one during a refresh.
     #[cfg(feature = "data-update")]
     published_changes: u64,
-    /// When an updated data file is expected to be available. Polling does not
-    /// start before this time.
+    /// When an updated data file is expected to be available. The scheduled
+    /// poll after registration, and after each applied update, waits for it.
     update_available: Option<DateTime<Utc>>,
     /// The last-modified time of the file the service most recently applied,
     /// used to debounce duplicate file-system-watcher events. Only the
