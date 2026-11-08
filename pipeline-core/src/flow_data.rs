@@ -37,9 +37,10 @@
 //!
 //! A parallel group gives each of its elements a flow data of its own, which
 //! reads the evidence, element data, errors and warnings from before the group
-//! through a shared view and keeps what the element adds. The pipeline moves
-//! what each element added back into the original flow data once they have all
-//! finished.
+//! through a shared view and keeps the element data, errors and warnings the
+//! element adds. The pipeline moves those back into the original flow data
+//! once every element has finished. An element of a group adds no evidence,
+//! because the others read the evidence at the same time.
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -70,10 +71,9 @@ pub struct FlowData {
     order: Vec<String>,
     errors: Vec<FlowError>,
     warnings: Vec<FlowWarning>,
-    /// For an element in a parallel group, the evidence it added, in order.
-    /// Once there is any, `evidence` holds the group's evidence with these
-    /// added, so the element sees its own values.
-    added_evidence: Vec<(String, String)>,
+    /// For an element in a parallel group, the keys of the evidence it tried
+    /// to add, in order. None of them was added.
+    refused_evidence: Vec<String>,
     processed: bool,
 }
 
@@ -110,8 +110,8 @@ pub(crate) struct GroupMemberAdded {
     pub(crate) errors: Vec<FlowError>,
     /// The warnings it recorded.
     pub(crate) warnings: Vec<FlowWarning>,
-    /// The evidence it added, in order.
-    pub(crate) evidence: Vec<(String, String)>,
+    /// The keys of the evidence it tried to add, in order.
+    pub(crate) refused_evidence: Vec<String>,
 }
 
 impl FlowData {
@@ -127,7 +127,7 @@ impl FlowData {
             order: Vec::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
-            added_evidence: Vec::new(),
+            refused_evidence: Vec::new(),
             processed: false,
         }
     }
@@ -144,13 +144,11 @@ impl FlowData {
     /// have added with [`FlowData::add_evidence`].
     ///
     /// An element in a parallel group sees the evidence from before the
-    /// group and what it added itself. What the group's elements add is
-    /// added once every element in it has finished, in the order the
-    /// elements were given.
+    /// group.
     pub fn evidence(&self) -> &Evidence {
         match self.before_group() {
-            Some(before) if self.added_evidence.is_empty() => &before.evidence,
-            _ => &self.evidence,
+            Some(before) => &before.evidence,
+            None => &self.evidence,
         }
     }
 
@@ -159,11 +157,13 @@ impl FlowData {
     /// does. A key already present, ignoring case, keeps its first spelling
     /// and place and takes the new value, and a new key goes last.
     ///
-    /// An element in a parallel group sees what it adds at once, and the
-    /// others in the group do not. The pipeline adds it to the group's flow
-    /// data once every element in the group has finished, in the order the
-    /// elements were given, so of two elements adding one key the later one's
-    /// value is kept, as in sequence.
+    /// An element in a parallel group must not add evidence, because the
+    /// other elements of the group read the evidence at the same time, as the
+    /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#evidence)
+    /// says. The value is not added, and once the group has finished the
+    /// pipeline records a configuration error against the element. An
+    /// element that adds evidence runs on its own, before the elements that
+    /// read the value, and says so with [`FlowElement::adds_evidence`].
     ///
     /// It can also be called after processing, as .NET's and Java's
     /// `AddEvidence` can. Evidence added then changes no element's results,
@@ -175,15 +175,12 @@ impl FlowData {
     /// can carry credentials.
     pub fn add_evidence(&mut self, key: impl AsRef<str>, value: impl Into<String>) {
         let key = key.as_ref();
-        let value = value.into();
-        log::debug!("Evidence '{key}' was added to a flow data.");
-        if let Source::Group(before) = &self.source {
-            if self.added_evidence.is_empty() {
-                self.evidence = before.evidence.clone();
-            }
-            self.added_evidence.push((key.to_owned(), value.clone()));
+        if matches!(self.source, Source::Group(_)) {
+            self.refused_evidence.push(key.to_owned());
+            return;
         }
-        self.evidence.insert(key, value);
+        log::debug!("Evidence '{key}' was added to a flow data.");
+        self.evidence.insert(key, value.into());
     }
 
     /// The errors recorded during processing. Empty if processing has not run
@@ -289,15 +286,6 @@ impl FlowData {
         self.warnings.extend(warnings);
     }
 
-    /// Add the evidence one element of a parallel group added, in the order
-    /// it added it. [`FlowData::add_evidence`] logged each key as it was
-    /// added.
-    pub(crate) fn add_group_member_evidence(&mut self, evidence: Vec<(String, String)>) {
-        for (key, value) in evidence {
-            self.evidence.insert(&key, value);
-        }
-    }
-
     /// Move the evidence, element data, errors and warnings into the view
     /// every element of a parallel group shares. [`FlowData::end_group`] puts
     /// them back.
@@ -327,7 +315,7 @@ impl FlowData {
             order: Vec::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
-            added_evidence: Vec::new(),
+            refused_evidence: Vec::new(),
             processed: true,
         }
     }
@@ -340,7 +328,7 @@ impl FlowData {
             order: self.order,
             errors: self.errors,
             warnings: self.warnings,
-            evidence: self.added_evidence,
+            refused_evidence: self.refused_evidence,
         }
     }
 

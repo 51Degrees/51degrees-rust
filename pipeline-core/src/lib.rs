@@ -146,5 +146,7 @@ pub use flow_element::FlowElement;
 pub use pipeline::{Pipeline, PipelineBuilder};
 pub use property::PropertyMetaData;
 pub use typed_key::TypedKey;
-pub use value::{round_angle, PropertyValue, PropertyValueType, WeightedValue, WktString};
+pub use value::{
+    round_angle, ElementDataList, PropertyValue, PropertyValueType, WeightedValue, WktString,
+};
 pub use warning::FlowWarning;

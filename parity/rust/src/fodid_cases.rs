@@ -418,6 +418,7 @@ pub(crate) fn value_type_name(value_type: PropertyValueType) -> String {
         PropertyValueType::JavaScript => "javascript",
         PropertyValueType::KeyValueList => "keyValueList",
         PropertyValueType::WktString => "wktString",
+        PropertyValueType::ElementDataList => "elementDataList",
         other => return format!("rust:{other:?}"),
     };
     name.to_owned()

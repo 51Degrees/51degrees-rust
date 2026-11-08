@@ -54,7 +54,10 @@
 //!     .expect("French is held");
 //! assert_eq!(locale, "fr_FR");
 //! assert_eq!(translator.translate("Dog", &mut Vec::new()).as_deref(), Some("chien"));
-//! assert_eq!(translator.behavior(), MissingTranslationBehavior::Original);
+//! assert_eq!(
+//!     translator.missing_translation_behavior(),
+//!     MissingTranslationBehavior::Original
+//! );
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
