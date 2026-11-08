@@ -19,8 +19,10 @@ named before the run stops, so nothing is written, published or tagged.
    last release. The version must keep the major and minor of the crate's
    highest version on crates.io that is not yanked. A crate crates.io does
    not have must keep the major and minor that the crates of
-   ci/packages.json on crates.io share, and the check stops when they do not
-   all share one, as there is then nothing to compare it with.
+   ci/packages.json on crates.io share. When they do not all share one there
+   is nothing to compare it with, so the check stops, unless
+   ALLOW_VERSION_BUMP is 'true', when it prints the major and minor numbers
+   it found and goes on.
 
 A move in either check is allowed only when ALLOW_VERSION_BUMP is 'true'.
 
@@ -85,14 +87,19 @@ if ($unknown.Count -gt 0) {
     }
     $lines = @($highest.Values | Where-Object { $null -ne $_ } |
         ForEach-Object { "$($_.Major).$($_.Minor)" } | Sort-Object -Unique)
-    if ($lines.Count -ne 1) {
+    if ($lines.Count -eq 1) {
+        $shared = $lines[0]
+    } else {
         $found = if ($lines.Count -eq 0) { 'none' } else { $lines -join ', ' }
-        throw "crates.io does not have $($unknown.Name -join ', '), so its " +
-            "version is compared with the major and minor that the crates of " +
-            "ci/packages.json on crates.io share, and they do not share one " +
-            "(found $found). Nothing is published."
+        $problem = "crates.io does not have $($unknown.Name -join ', '), so " +
+            "its version is compared with the major and minor that the crates " +
+            "of ci/packages.json on crates.io share, and they do not share one " +
+            "(found $found)."
+        if ($allowed -eq $false) {
+            throw "$problem Nothing is published."
+        }
+        Write-Output "$problem It is not compared, allowed by ALLOW_VERSION_BUMP."
     }
-    $shared = $lines[0]
 }
 
 foreach ($release in $plan.Releases) {
@@ -105,6 +112,12 @@ foreach ($release in $plan.Releases) {
     }
     $planned = "$($parts.Groups[1].Value).$($parts.Groups[2].Value)"
     $against = $highest[$name]
+    if ($null -eq $against -and $null -eq $shared) {
+        # Only reached when ALLOW_VERSION_BUMP is 'true', as above.
+        Write-Output ("$name $version against crates.io has nothing to be " +
+            "compared with, allowed by ALLOW_VERSION_BUMP.")
+        continue
+    }
     if ($null -ne $against) {
         $line = "$($against.Major).$($against.Minor)"
         $what = "$line, the major and minor of $against, its highest version " +

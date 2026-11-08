@@ -633,6 +633,19 @@ Describe 'ci/check-version-bump.ps1' {
         $result.Failure | Should -BeLike '*crates.io does not have fiftyone-fodid-core*do not share one (found 4.5, 4.6)*'
     }
 
+    It 'goes on, naming the numbers found, when the crates on crates.io do not share one and a person set ALLOW_VERSION_BUMP' {
+        $env:ALLOW_VERSION_BUMP = 'true'
+        $registry = New-Registry
+        $registry['fiftyone-caching'] = New-CrateRecord '4.6.3'
+        $result = Invoke-BumpCheck (Write-Plan 'fiftyone-fodid-core' '4.5.19') $registry
+        $result.Failure | Should -BeNullOrEmpty
+        $result.Output | Should -BeLike ('*crates.io does not have fiftyone-fodid-core*' +
+            'do not share one (found 4.5, 4.6). It is not compared, allowed by ALLOW_VERSION_BUMP.*')
+        $result.Output | Should -BeLike ('*fiftyone-fodid-core 4.5.19 against crates.io has ' +
+            'nothing to be compared with, allowed by ALLOW_VERSION_BUMP.*')
+        $result.Output | Should -BeLike '*Every crate in the plan keeps its major and minor number, or was allowed to move them.*'
+    }
+
     It 'allows the move when a person set ALLOW_VERSION_BUMP' {
         $env:ALLOW_VERSION_BUMP = 'true'
         $result = Invoke-BumpCheck (Write-Plan 'fodid' '4.6.0')
