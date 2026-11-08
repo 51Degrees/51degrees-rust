@@ -23,6 +23,7 @@
 //! The profiles that hold a value of a property, looked up in the data set
 //! the engine has loaded.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use fiftyone_device_detection_shared::{DeviceDataBase, DevicePropertyReader, ProfileReader};
@@ -119,9 +120,12 @@ impl DeviceDetectionOnPremiseEngine {
     ///
     /// A profile the reader cannot read gives device data holding its id,
     /// whose other properties give the error as the reason they have no
-    /// value, and a warning naming the id and the error is logged. .NET
-    /// throws the error when the profiles are read. This engine gives it as
-    /// the reason instead, because
+    /// value. The first profile the reader cannot read logs a warning naming
+    /// its id and the error, and each later one logs the same at debug
+    /// level, so a cause every read shares, such as native memory running
+    /// short, gives one warning however many ids are found. .NET throws the
+    /// error when the profiles are read. This engine gives it as the reason
+    /// instead, because
     /// [`MultiDeviceData::profiles`](fiftyone_device_detection_shared::MultiDeviceData::profiles)
     /// gives a slice and cannot fail.
     pub fn profile_ids_and_reader_for_property_value(
@@ -133,7 +137,11 @@ impl DeviceDetectionOnPremiseEngine {
         let ids = loaded
             .manager
             .profile_ids_for_property_value(property_name, value)?;
-        Ok((ids, Arc::new(LoadedProfiles { loaded })))
+        let reader = LoadedProfiles {
+            loaded,
+            warned: AtomicBool::new(false),
+        };
+        Ok((ids, Arc::new(reader)))
     }
 }
 
@@ -154,15 +162,24 @@ fn profile(loaded: &Arc<LoadedDataSet>, id: u32) -> Result<DeviceDataBase> {
     Ok(device)
 }
 
-/// Reads profiles by id from the data set their ids were found in.
+/// Reads profiles by id from the data set their ids were found in, for the
+/// ids of one lookup.
 struct LoadedProfiles {
     loaded: Arc<LoadedDataSet>,
+    /// Set once a profile of this lookup has failed to read.
+    warned: AtomicBool,
 }
 
 impl ProfileReader for LoadedProfiles {
     fn read_profile(&self, id: u32) -> DeviceDataBase {
         profile(&self.loaded, id).unwrap_or_else(|error| {
-            unread_profile(id, &error, &self.loaded.readable, &self.loaded.missing)
+            unread_profile(
+                id,
+                &error,
+                &self.warned,
+                &self.loaded.readable,
+                &self.loaded.missing,
+            )
         })
     }
 }
@@ -170,15 +187,23 @@ impl ProfileReader for LoadedProfiles {
 /// The device data of the profile with id `id`, which could not be read
 /// because of `error`. [`PROFILE_ID_PROPERTY_NAME`] holds the id as text,
 /// each of `readable` gives `error` as the reason it has no value, and
-/// `missing` gives the reason for any other property. Logs a warning naming
-/// the id and the error, which a caller reading only the id would not see.
+/// `missing` gives the reason for any other property. Logs the id and the
+/// error, which a caller reading only the id would not see, as a warning
+/// when `warned` is unset and at debug level when it is set, and sets it.
 fn unread_profile(
     id: u32,
     error: &Error,
+    warned: &AtomicBool,
     readable: &Arc<ReadableProperties>,
     missing: &Arc<MissingPropertySource>,
 ) -> DeviceDataBase {
-    log::warn!(
+    let level = if warned.swap(true, Ordering::Relaxed) {
+        log::Level::Debug
+    } else {
+        log::Level::Warn
+    };
+    log::log!(
+        level,
         "Failed to read profile {id}. Its properties other than \
          {PROFILE_ID_PROPERTY_NAME} have no value and give this error as the \
          reason. {error}"
