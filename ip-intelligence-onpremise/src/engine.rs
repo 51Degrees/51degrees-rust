@@ -159,6 +159,9 @@ pub struct IpIntelligenceOnPremiseEngine {
     /// Whether a refresh reads a copy of the data file under every profile,
     /// as the builder's `create_temp_data_copy` asked.
     temp_data_copy: bool,
+    /// Whether a refresh reads a copy of the data file already in the
+    /// temporary folder, as the builder's `reuse_temp_file` asked.
+    reuse_temp_file: bool,
     /// The single data file this engine reads, as shared run-time state for the
     /// data update service.
     data_files: Vec<Arc<AspectEngineDataFile>>,
@@ -326,16 +329,24 @@ impl IpIntelligenceOnPremiseEngine {
             refresh_lock: Mutex::new(()),
             temp_dir: None,
             temp_data_copy: false,
+            reuse_temp_file: false,
             data_files: vec![data_file],
         })
     }
 
     /// Copy the data file into `temp_dir` on refresh, the folder the builder
-    /// copied it into, or the system's temporary folder when `None`, and
-    /// under every profile when `always` is true.
-    pub(crate) fn with_temp_dir(mut self, temp_dir: Option<PathBuf>, always: bool) -> Self {
+    /// copied it into, or the system's temporary folder when `None`, under
+    /// every profile when `always` is true, and read a copy already there
+    /// when `reuse` is true.
+    pub(crate) fn with_temp_dir(
+        mut self,
+        temp_dir: Option<PathBuf>,
+        always: bool,
+        reuse: bool,
+    ) -> Self {
         self.temp_dir = temp_dir;
         self.temp_data_copy = always;
+        self.reuse_temp_file = reuse;
         self
     }
 
@@ -565,6 +576,7 @@ impl IpIntelligenceOnPremiseEngine {
                 self.profile,
                 file.configuration(),
                 self.temp_data_copy,
+                self.reuse_temp_file,
             )
         });
         let manager = Manager::open_with_options(
