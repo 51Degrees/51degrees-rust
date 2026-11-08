@@ -54,6 +54,9 @@
 //!   use to type and publish the generated property set.
 //! - [`UACH_EVIDENCE_QUERY_KEY`] and [`UACH_EVIDENCE_COOKIE_KEY`], the keys
 //!   the high entropy values are supplied under.
+//! - [`MultiDeviceData`], the list of device profiles a hardware-profile
+//!   lookup by TAC or native model gives, stored under [`HARDWARE_DATA_KEY`]
+//!   (data key string `"hardware"`) by the cloud and on-premise lookups alike.
 //! - [`UachJsConversionElement`], deprecated, the User-Agent Client Hints
 //!   high-entropy decoder element described in the
 //!   [UA-CH high-entropy decoder specification](https://github.com/51Degrees/specifications/blob/main/device-detection-specification/pipeline-elements/uach-high-entropy-decoder.md).
@@ -73,6 +76,7 @@
 
 mod data;
 mod device_data;
+mod multi_device;
 mod uach;
 
 pub use data::{
@@ -81,6 +85,10 @@ pub use data::{
     DEVICE_ELEMENT_DATA_KEY,
 };
 pub use device_data::{DeviceData, GENERATED_PROPERTY_TYPES};
+pub use multi_device::{
+    MultiDeviceData, ProfileReader, HARDWARE_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY,
+    PROFILES_PROPERTY_NAME,
+};
 #[allow(deprecated)]
 pub use uach::UachJsConversionElement;
 pub use uach::{

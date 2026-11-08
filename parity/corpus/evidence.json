@@ -389,6 +389,30 @@
     }
   },
   {
+    "id": "ip-v6-compatible",
+    "about": "An IPv4-compatible IPv6 address, which .NET writes with the IPv4 address in dotted form.",
+    "evidence": {
+      "server.client-ip": "::8.8.8.8",
+      "query.session-id": "parity-ip-v6-compatible"
+    }
+  },
+  {
+    "id": "ip-v6-translated",
+    "about": "An IPv4-translated IPv6 address, which .NET writes with the IPv4 address in dotted form.",
+    "evidence": {
+      "server.client-ip": "::ffff:0:8.8.8.8",
+      "query.session-id": "parity-ip-v6-translated"
+    }
+  },
+  {
+    "id": "ip-v6-isatap",
+    "about": "An ISATAP IPv6 address, which .NET writes with the IPv4 address in dotted form.",
+    "evidence": {
+      "server.client-ip": "fe80::5efe:808:808",
+      "query.session-id": "parity-ip-v6-isatap"
+    }
+  },
+  {
     "id": "ip-v4-loopback",
     "about": "The IPv4 loopback address.",
     "evidence": {

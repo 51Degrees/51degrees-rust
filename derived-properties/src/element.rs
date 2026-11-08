@@ -768,6 +768,7 @@ fn lookup_of(value: PropertyValue) -> Lookup {
         PropertyValue::String(text) | PropertyValue::JavaScript(text) => {
             Lookup::Value(SourceValue::Text(text))
         }
+        PropertyValue::WktString(text) => Lookup::Value(SourceValue::Text(text.into_string())),
         PropertyValue::Bool(flag) => Lookup::Value(SourceValue::Bool(flag)),
         PropertyValue::Integer(number) => Lookup::Value(SourceValue::Int(number)),
         PropertyValue::Double(number) => Lookup::Value(SourceValue::Double(number)),
@@ -808,6 +809,7 @@ fn single_value(value: &PropertyValue) -> Option<SourceValue> {
         PropertyValue::String(text) | PropertyValue::JavaScript(text) => {
             Some(SourceValue::Text(text.clone()))
         }
+        PropertyValue::WktString(text) => Some(SourceValue::Text(text.as_str().to_owned())),
         PropertyValue::Bool(flag) => Some(SourceValue::Bool(*flag)),
         PropertyValue::Integer(number) => Some(SourceValue::Int(*number)),
         PropertyValue::Double(number) => Some(SourceValue::Double(*number)),
@@ -862,5 +864,20 @@ fn property_value_type(value_type: ValueType) -> PropertyValueType {
 impl From<Faults> for Error {
     fn from(faults: Faults) -> Self {
         Error::configuration(faults.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fiftyone_pipeline_core::WktString;
+
+    /// A WKT value, such as an IP Intelligence area, is read as its text.
+    #[test]
+    fn a_wkt_value_is_read_as_its_text() {
+        let text = || SourceValue::Text("POINT(2 4)".to_owned());
+        let value = PropertyValue::WktString(WktString::new("POINT(2 4)"));
+        assert_eq!(single_value(&value), Some(text()));
+        assert_eq!(lookup_of(value), Lookup::Value(text()));
     }
 }

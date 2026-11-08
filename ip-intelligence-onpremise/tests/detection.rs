@@ -371,6 +371,7 @@ fn every_present_property_unpacks_as_its_declared_type() {
                 PropertyValueType::Float => ip_data.float(name).value().is_ok(),
                 // The weighted properties are published as a key-value list.
                 PropertyValueType::KeyValueList => ip_data.weighted_string(name).value().is_ok(),
+                PropertyValueType::WktString => ip_data.wkt_string(name).value().is_ok(),
                 _ => ip_data.string(name).value().is_ok(),
             };
             if !unpacks {

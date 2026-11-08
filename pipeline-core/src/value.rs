@@ -29,6 +29,8 @@
 //! ([`crate::ElementData::get`]) self-describing and avoids reflection.
 
 use std::collections::BTreeMap;
+use std::fmt;
+use std::ops::Deref;
 
 /// The declared type of a property's values, as carried in property metadata.
 ///
@@ -56,6 +58,8 @@ pub enum PropertyValueType {
     JavaScript,
     /// A list of key-value-pair collections.
     KeyValueList,
+    /// Text in the well-known text form of a geometry. See [`WktString`].
+    WktString,
 }
 
 /// A weighted property value.
@@ -90,6 +94,98 @@ impl<T> WeightedValue<T> {
     }
 }
 
+/// Text in the well-known text (WKT) form of a geometry, such as
+/// `POLYGON((10 10,10 20,20 20,20 15,10 10))`, which the
+/// [value types specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/value-types.md#wkt)
+/// defines. An IP Intelligence engine gives its `Areas` property as one.
+///
+/// It reads as the text it holds, and the JSON builder writes it as an object
+/// holding the text under `value`, as .NET writes its `WktString`.
+///
+/// ```
+/// use fiftyone_pipeline_core::WktString;
+///
+/// let area = WktString::new("POINT(2 4)");
+/// assert_eq!(area, "POINT(2 4)");
+/// assert!(area.starts_with("POINT"));
+/// assert_eq!(area.to_string(), "POINT(2 4)");
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WktString(String);
+
+impl WktString {
+    /// A WKT value holding `text`, kept as it is given.
+    pub fn new(text: impl Into<String>) -> Self {
+        WktString(text.into())
+    }
+
+    /// The text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The text, taken out of the value.
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl Deref for WktString {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for WktString {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for WktString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<String> for WktString {
+    fn from(text: String) -> Self {
+        WktString(text)
+    }
+}
+
+impl From<&str> for WktString {
+    fn from(text: &str) -> Self {
+        WktString(text.to_owned())
+    }
+}
+
+impl From<WktString> for String {
+    fn from(value: WktString) -> Self {
+        value.0
+    }
+}
+
+impl PartialEq<str> for WktString {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl PartialEq<&str> for WktString {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<String> for WktString {
+    fn eq(&self, other: &String) -> bool {
+        &self.0 == other
+    }
+}
+
 /// A value populated by a flow element for one of its properties.
 ///
 /// The variants map onto the
@@ -106,6 +202,8 @@ impl<T> WeightedValue<T> {
 /// - [`PropertyValue::KeyValueList`] is the "array of key-value-pair
 ///   collections" type, used where an element returns several sub-records (for
 ///   example TAC lookup or hardware-profile lookup).
+/// - [`PropertyValue::WktString`] is the WKT type, the text of a geometry such
+///   as an IP Intelligence area.
 ///
 /// `i64` and `f64` are used for the numeric types so that the full range of
 /// values seen in 51Degrees data files round-trips without loss.
@@ -134,14 +232,17 @@ pub enum PropertyValue {
     /// A list of key-value-pair collections, used to return multiple
     /// sub-records. Each entry is keyed and ordered by property name.
     KeyValueList(Vec<BTreeMap<String, PropertyValue>>),
+    /// Text in the well-known text form of a geometry. See [`WktString`].
+    WktString(WktString),
 }
 
 impl PropertyValue {
-    /// Borrow the value as a string slice if it is a [`PropertyValue::String`]
-    /// or [`PropertyValue::JavaScript`].
+    /// Borrow the value as a string slice if it is a [`PropertyValue::String`],
+    /// a [`PropertyValue::JavaScript`] or a [`PropertyValue::WktString`].
     pub fn as_str(&self) -> Option<&str> {
         match self {
             PropertyValue::String(s) | PropertyValue::JavaScript(s) => Some(s.as_str()),
+            PropertyValue::WktString(wkt) => Some(wkt.as_str()),
             _ => None,
         }
     }
@@ -185,6 +286,15 @@ impl PropertyValue {
             _ => None,
         }
     }
+
+    /// Borrow the value as a [`WktString`] if it is a
+    /// [`PropertyValue::WktString`].
+    pub fn as_wkt_string(&self) -> Option<&WktString> {
+        match self {
+            PropertyValue::WktString(wkt) => Some(wkt),
+            _ => None,
+        }
+    }
 }
 
 impl From<&str> for PropertyValue {
@@ -220,6 +330,12 @@ impl From<f64> for PropertyValue {
 impl From<Vec<String>> for PropertyValue {
     fn from(value: Vec<String>) -> Self {
         PropertyValue::StringList(value)
+    }
+}
+
+impl From<WktString> for PropertyValue {
+    fn from(value: WktString) -> Self {
+        PropertyValue::WktString(value)
     }
 }
 
@@ -277,6 +393,27 @@ pub fn round_angle(value: f64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_wkt_value_reads_as_its_text() {
+        let value = PropertyValue::from(WktString::new("POINT(2 4)"));
+        assert_eq!(value.as_str(), Some("POINT(2 4)"));
+        assert_eq!(
+            value.as_wkt_string().map(WktString::as_str),
+            Some("POINT(2 4)")
+        );
+        assert_eq!(PropertyValue::from("POINT(2 4)").as_wkt_string(), None);
+
+        let wkt = WktString::from("POINT(2 4)".to_owned());
+        let text: &str = "POINT(2 4)";
+        assert!(wkt == *text);
+        assert_eq!(wkt, text);
+        assert_eq!(wkt, text.to_owned());
+        assert_eq!(wkt.len(), 10);
+        assert_eq!(wkt.to_string(), text);
+        assert_eq!(String::from(wkt.clone()), text);
+        assert_eq!(wkt.into_string(), text);
+    }
 
     /// A stored Declination or Azimuth converted as the C library converts
     /// it, multiplying before dividing.

@@ -105,7 +105,7 @@ pub use fiftyone_ip_intelligence_shared::{
     IpIntelligenceData, IpIntelligenceDataBase, IP_DATA_KEY, IP_DATA_KEY_NAME,
 };
 
-// Re-export the weighted-value and aspect-value types used in this engine's
-// public surface, for the same reason.
-pub use fiftyone_pipeline_core::WeightedValue;
+// Re-export the weighted-value, WKT and aspect-value types used in this
+// engine's public surface, for the same reason.
+pub use fiftyone_pipeline_core::{WeightedValue, WktString};
 pub use fiftyone_pipeline_engines::AspectPropertyValue;

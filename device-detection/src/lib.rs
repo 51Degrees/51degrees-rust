@@ -120,7 +120,8 @@
 #[allow(deprecated)]
 pub use fiftyone_device_detection_shared::UachJsConversionElement;
 pub use fiftyone_device_detection_shared::{
-    DeviceData, DeviceDataBase, DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY,
+    DeviceData, DeviceDataBase, MultiDeviceData, DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY,
+    HARDWARE_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY,
 };
 
 // The typed result wrapper a `DeviceData` accessor returns. Re-exported so a
@@ -166,8 +167,7 @@ pub use fiftyone_native::PerformanceProfile;
 #[cfg(feature = "cloud")]
 pub use fiftyone_device_detection_cloud::{
     DeviceDetectionCloudEngine, DeviceDetectionCloudEngineBuilder, HardwareProfileCloudEngine,
-    HardwareProfileCloudEngineBuilder, MultiDeviceData, HARDWARE_DATA_KEY,
-    HARDWARE_ELEMENT_DATA_KEY,
+    HardwareProfileCloudEngineBuilder,
 };
 
 #[cfg(feature = "cloud")]

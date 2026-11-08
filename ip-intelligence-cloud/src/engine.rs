@@ -196,6 +196,7 @@ impl IpIntelligenceCloudEngine {
                 ValueKind::Bool => PropertyValueType::Bool,
                 ValueKind::WeightedString => WEIGHTED_PROPERTY_VALUE_TYPE,
                 ValueKind::String => PropertyValueType::String,
+                ValueKind::WktString => PropertyValueType::WktString,
             };
             let mut core_meta = PropertyMetaData::new(&property.name, IP_DATA_KEY_NAME, value_type);
             if let Some(category) = &property.category {
@@ -765,6 +766,7 @@ mod tests {
                 PropertyValueType::Integer => ip.integer(name).value().is_ok(),
                 PropertyValueType::Float => ip.float(name).value().is_ok(),
                 PropertyValueType::KeyValueList => ip.weighted_string(name).value().is_ok(),
+                PropertyValueType::WktString => ip.wkt_string(name).value().is_ok(),
                 _ => ip.string(name).value().is_ok(),
             };
             if !unpacks {

@@ -33,6 +33,7 @@
 //!
 //! @snippet ipi-onprem-metadata.rs example
 
+use std::borrow::Cow;
 use std::io::Write;
 
 use anyhow::Context;
@@ -241,8 +242,8 @@ fn shorten(value: &str) -> String {
 }
 
 /// A short display name for a property value type.
-fn value_type_name(value_type: PropertyValueType) -> &'static str {
-    match value_type {
+fn value_type_name(value_type: PropertyValueType) -> Cow<'static, str> {
+    Cow::Borrowed(match value_type {
         PropertyValueType::String => "String",
         PropertyValueType::Bool => "Boolean",
         PropertyValueType::Integer => "Integer",
@@ -251,10 +252,11 @@ fn value_type_name(value_type: PropertyValueType) -> &'static str {
         PropertyValueType::StringList => "String[]",
         PropertyValueType::JavaScript => "JavaScript",
         PropertyValueType::KeyValueList => "KeyValue[]",
-        // PropertyValueType is non-exhaustive, so a later variant is named
-        // generically rather than failing to compile.
-        _ => "Other",
-    }
+        // PropertyValueType is non-exhaustive, so a type not named here, such
+        // as WktString for Areas, is named as Rust names it. Naming it would
+        // not build against crates without it.
+        other => return Cow::Owned(format!("{other:?}")),
+    })
 }
 
 /// Print whether the data file carries each property only the Enterprise data

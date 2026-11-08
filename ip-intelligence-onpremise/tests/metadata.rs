@@ -376,6 +376,64 @@ fn a_property_the_shared_model_does_not_declare_is_read_as_the_data_file_types_i
     );
 }
 
+/// `areas()` gives the text of the WKT value `wkt_string("Areas")` reads from
+/// the data file, or the same reason when there is no area.
+#[test]
+fn areas_gives_the_text_of_the_wkt_value() {
+    let Some(engine) = engine(&[]) else {
+        skip_without_enterprise("no IP Intelligence data file found", "areas");
+        return;
+    };
+    if !engine
+        .populated_property_names()
+        .iter()
+        .any(|name| name == "Areas")
+    {
+        let file = data_file().expect("the engine's data file");
+        let reason = format!("{} is not an Enterprise file", file.display());
+        skip_without_enterprise(&reason, "areas");
+        return;
+    }
+    let element: Arc<dyn FlowElement> = Arc::new(engine);
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("pipeline builds");
+    let mut areas = 0;
+    for ip in [
+        "185.28.167.77",
+        "81.2.69.142",
+        "1.1.1.1",
+        "2001:4860:4860::8888",
+    ] {
+        let mut flow =
+            pipeline.create_flow_data_with(Evidence::builder().add("query.client-ip", ip).build());
+        flow.process().expect("processing succeeds");
+        let data = flow
+            .get(IP_DATA_KEY)
+            .expect("ip intelligence data was produced");
+        let wkt = data.wkt_string("Areas");
+        let text = data.areas();
+        match wkt.value() {
+            Ok(wkt) => {
+                assert_eq!(
+                    text.value().expect("areas() has a value"),
+                    wkt.as_str(),
+                    "{ip}"
+                );
+                assert_eq!(
+                    data.get("Areas").expect("the bag holds the area"),
+                    PropertyValue::WktString(wkt.clone()),
+                    "{ip}"
+                );
+                areas += 1;
+            }
+            Err(_) => assert_eq!(text.no_value_message(), wkt.no_value_message(), "{ip}"),
+        }
+    }
+    assert!(areas > 0, "no address was given an area");
+}
+
 /// A refresh reads the metadata of the data file again into new lists.
 #[test]
 fn a_refresh_reads_the_metadata_again() {
