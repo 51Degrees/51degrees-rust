@@ -1220,7 +1220,10 @@ impl Results {
     ///
     /// A value the data file stores as an Azimuth or Declination, such as a
     /// latitude or a longitude, is given to 3 decimal places, as
-    /// [`Results::value_as_string`] gives it.
+    /// [`Results::value_as_string`] gives it. A value stored as an IP address,
+    /// such as `IpRangeStart`, is written as [`ip_address_text`] writes it,
+    /// where [`Results::value_as_string`] gives every field of an IPv6
+    /// address in full.
     ///
     /// Returns an empty vector when the property is not one of the required
     /// properties or the results carry no value for it, mirroring how
@@ -1320,7 +1323,8 @@ impl Results {
     /// [`PropertyRead::Weighted`] with every candidate. A plain property yields
     /// the most probable single value as [`PropertyRead::String`],
     /// [`PropertyRead::Float`] or [`PropertyRead::Integer`] according to its
-    /// type. A property with no value yields [`PropertyRead::Absent`].
+    /// type. A property with no value yields [`PropertyRead::Absent`]. Each
+    /// value's text is as [`Self::values_weighted`] writes it.
     pub fn read_property(&self, property_name: &str) -> Result<PropertyRead> {
         Ok(property_read_from(self.read_collection(property_name)?))
     }
@@ -1586,10 +1590,18 @@ const IPV6_TEXT_MAX_BYTES: usize = 45;
 /// bits are written as an IPv4 address when its first four fields are zero,
 /// its seventh is not, and the fifth and sixth are `0:0` (`::8.8.8.8`),
 /// `0:ffff` (`::ffff:8.8.8.8`) or `ffff:0` (`::ffff:0:8.8.8.8`), and for an
-/// ISATAP address (`fe80::5efe:8.8.8.8`).
+/// ISATAP address (`fe80::5efe:8.8.8.8`). Every other address is written in
+/// hexadecimal, including one of those forms whose seventh field is zero
+/// (`::ffff:0:102`) and one under the RFC 6052 prefix `64:ff9b::/96`
+/// (`64:ff9b::808:808`).
+///
 /// [RFC 5952 section 5](https://www.rfc-editor.org/rfc/rfc5952#section-5)
-/// recommends that form for the first three. Rust's `Display` uses it for
-/// `::ffff:` alone, whatever the seventh field.
+/// recommends the IPv4 form only for the prefixes defined in RFC 4291 and
+/// RFC 2765, which RFC 6145 and then RFC 7915 replaced, and
+/// [RFC 6052 section 2.4](https://www.rfc-editor.org/rfc/rfc6052#section-2.4)
+/// allows it for `64:ff9b::/96` without requiring it. Neither settles these
+/// forms, so this function writes them as .NET does. Rust's `Display` uses
+/// the IPv4 form for `::ffff:` alone, whatever the seventh field.
 pub fn ip_address_text(address: IpAddr) -> String {
     use std::fmt::Write as _;
     let address = match address {
@@ -3055,6 +3067,7 @@ mod tests {
             ("::5efe:0.0.0.0", "::5efe:0.0.0.0"),
             ("2001:db8:1:2:0:5efe:1.2.3.4", "2001:db8:1:2:0:5efe:1.2.3.4"),
             ("2001:db8::200:5efe:1.2.3.4", "2001:db8::200:5efe:102:304"),
+            ("64:ff9b::8.8.8.8", "64:ff9b::808:808"),
         ] {
             let address: IpAddr = given.parse().expect("an address");
             assert_eq!(ip_address_text(address), written, "{given}");

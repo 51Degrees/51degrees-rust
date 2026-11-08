@@ -450,9 +450,12 @@ impl IpIntelligenceOnPremiseEngine {
     /// A data file property's values are read from the loaded data file on
     /// each call, in the data file's order, each written as text as .NET
     /// gives it, so a coordinate has three decimal places and an IP address is
-    /// written in full. The `Ip` and `IpV6` properties give the one value
-    /// their metadata lists. A data file can hold millions of values for one
-    /// property, so [`Self::property_value_range`] reads part of the list.
+    /// written in full. A lookup gives an IPv6 range compressed, as
+    /// [`fiftyone_native::ipi::ip_address_text`] writes it, so its text can
+    /// differ from the value listed here. The `Ip` and `IpV6` properties give
+    /// the one value their metadata lists. A data file can hold millions of
+    /// values for one property, so [`Self::property_value_range`] reads part
+    /// of the list.
     pub fn property_values(&self, property_name: &str) -> Result<Option<Vec<ValueMetaData>>> {
         self.property_value_range(property_name, 0..usize::MAX)
     }
