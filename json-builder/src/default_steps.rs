@@ -162,6 +162,14 @@ pub fn add_json_values_for_property<S: JsonBuilderSteps + ?Sized>(
                             })
                             .collect(),
                     ),
+                    PropertyValue::ElementDataList(items) => JsonValue::Array(
+                        items
+                            .iter()
+                            .map(|item| {
+                                JsonValue::Object(steps.get_values(context, &complete_name, item))
+                            })
+                            .collect(),
+                    ),
                     other => element.built_in_json_value(other),
                 },
             };

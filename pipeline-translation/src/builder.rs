@@ -111,8 +111,8 @@ impl TranslationEngineBuilder {
     ) -> Self {
         self.translations.push((
             TranslationProperty {
-                source: source.into(),
-                destination: destination.into(),
+                source_property: source.into(),
+                destination_property: destination.into(),
             },
             value_type,
         ));
