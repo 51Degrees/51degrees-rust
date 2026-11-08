@@ -396,7 +396,8 @@ jobs:
       # .NET finds a native model name in any case, where the crates match it
       # exactly, which two entries in allowed-differences.json allow. This
       # step fails on any NativeModel difference that case alone does not
-      # explain, so those entries hide nothing else.
+      # explain, and on any profile case giving a TAC whose ids differ, so
+      # those entries hide nothing else.
       - name: Check the NativeModel differences are of case alone
         if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
         working-directory: parity

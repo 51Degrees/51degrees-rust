@@ -533,26 +533,30 @@ so a value one side holds and the other does not shows there, including a
 value .NET finds in another case. The comparer compares each of these fields
 key by key and list item by item.
 
-Three entries in `allowed-differences.json` allow TAC and Native differences.
+Four entries in `allowed-differences.json` allow TAC and Native differences.
 One allows the type of `Profiles`, which .NET gives as its .NET type and the
-crates as `keyValueList`. Over the Enterprise file, two allow .NET finding a
-native model name in any case, as its own index compares values ignoring
-case, where the crates match the name exactly through the C library's index,
-as the draft specification of the lookup asks
+crates as `keyValueList`. Over the Enterprise file, one allows the profiles
+in `hardwareJson`, which the crates write as the Element Data of the draft
+specification gives them, where .NET's on-premise data keeps the profiles it
+finds out of the list its JSON builder reads, so its JSON holds none. Two
+allow .NET finding a native model name in any case, as its own index compares
+values ignoring case, where the crates match the name exactly through the C
+library's index, as the draft specification of the lookup asks
 ([specifications#62](https://github.com/51Degrees/specifications/pull/62)).
 One allows the difference in `indexedValues`, where .NET counts the values
 that differ only in case together under the spelling it met first, and the
-other the difference in `profileIds` in the NativeModel cases, where .NET
-gives the profiles of every such value, and a profile holding two of them
-twice. They come out when .NET's engines use the C library's index
+other the difference in `profileIds` in the NativeModel and profile cases,
+where .NET gives the profiles of every such value, and a profile holding two
+of them twice. They come out when .NET's engines use the C library's index
 ([51degrees-dotnet#30](https://github.com/51Degrees/51degrees-dotnet/issues/30)).
 
 Over the Enterprise file, one step of that job checks that each side found
 profiles for at least one case and wrote the values of at least one profile,
 so the comparison cannot pass with no profile on either side, another runs
 `check-native-model-case.ps1`, which fails on any NativeModel difference that
-case alone does not explain, so the two entries for case hide nothing else,
-and another runs the crate's data file tests over that file.
+case alone does not explain and on any profile case giving a TAC whose ids
+differ, so the two entries for case hide nothing else, and another runs the
+crate's data file tests over that file.
 
 ## The C code
 
