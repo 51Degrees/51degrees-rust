@@ -320,7 +320,10 @@ jobs:
       # and areas, so the metadata tests run here too, opening the file in
       # LowMemory, and 51DEGREES_REQUIRE_ENTERPRISE makes a test that needs
       # the Enterprise file fail rather than skip. The failed refresh test
-      # always uses the ASN file.
+      # always uses the ASN file. The leak test runs under LowMemory alone, so
+      # it never holds the whole file in memory, and checks that an area's
+      # text, too long for the shim's first buffer, is written into a block
+      # from the library's allocator and freed.
       - name: Check the IP Intelligence metadata of the Enterprise file
         if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
         run: |
@@ -336,6 +339,10 @@ jobs:
             ipi::tests::an_enterprise_file_names_each_type \
             ipi::tests::an_enterprise_file_gives_each_value_as_text \
             ipi::tests::a_value_is_found_by_its_text_to_more_places
+          env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_ENTERPRISE=1 \
+            51DEGREES_IPI_MEMORY_PROFILES=LowMemory \
+            cargo test -p fiftyone-native --no-default-features --features ipi \
+            --test ipi_memory -- --nocapture
 
       # The robots.txt cases for each usage come from the data file, and the
       # Lite file holds no crawlers. Over the Enterprise file each side must

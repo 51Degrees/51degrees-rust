@@ -503,7 +503,9 @@ impl IpIntelligenceOnPremiseEngine {
     /// as is a value of `Ip` or `IpV6`. The search compares a number written
     /// to as many places as `value_name` has characters plus three, at most
     /// 15, so the value given can be written otherwise, as `0.063` is given
-    /// for `0.0625`.
+    /// for `0.0625`. A data file property's value is searched with the text
+    /// of `value_name` before any null, as .NET searches it, so `AS13335\0x`
+    /// finds `AS13335`.
     pub fn property_value(
         &self,
         property_name: &str,
