@@ -1230,10 +1230,10 @@ extern "C" {
         length: usize,
     ) -> usize;
 
-    /// Writes the data set's published date into `*year`, `*month` and `*day`
-    /// and returns `1` on success or `0` when no data set is available. Any
-    /// output pointer may be null. Defined by this crate's `src/shim.c`, reading
-    /// the embedded publish date from the data set header.
+    /// Writes the date the data file was published, from its header, into
+    /// `*year`, `*month` and `*day` and returns `1`, or `0` when no data set
+    /// is available. Any output pointer may be null. Defined by this crate's
+    /// `src/shim.c`.
     ///
     /// # Safety
     /// `manager` must be initialized. Each non-null output pointer must be
@@ -1244,6 +1244,26 @@ extern "C" {
         month: *mut c_int,
         day: *mut c_int,
     ) -> c_int;
+
+    /// Writes the date the next data file is expected, from the data file
+    /// header, into `*year`, `*month` and `*day` and returns `1`, or `0` when
+    /// no data set is available. Any output pointer may be null. Defined by
+    /// this crate's `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be initialized. Each non-null output pointer must be
+    /// writable.
+    pub fn fiftyoneDegreesShimIpiGetDataSetNextUpdate(
+        manager: *mut ResourceManager,
+        year: *mut c_int,
+        month: *mut c_int,
+        day: *mut c_int,
+    ) -> c_int;
+
+    /// Returns the size of an IP Intelligence data file's header in bytes,
+    /// being how much of a data file the C library compares to find a copy of
+    /// it to reuse. Defined by this crate's `src/shim.c`.
+    pub fn fiftyoneDegreesShimIpiGetHeaderSize() -> usize;
 
     /// Returns the number of headers the data set reads the client IP from, or
     /// zero when no data set is available. Defined by this crate's
@@ -1287,6 +1307,25 @@ extern "C" {
         concurrency: i32,
         properties: *mut PropertiesRequired,
         file_name: *const c_char,
+        exception: *mut Exception,
+    ) -> StatusCode;
+
+    /// Initializes `manager` from the `size` bytes at `memory`, the whole of
+    /// a data file, with a copy of `config` that neither frees the memory nor
+    /// copies it to a temporary file. The data set reads every collection
+    /// from the memory where it lies. The configuration `config` points to is
+    /// not changed. Defined by this crate's `src/shim.c`.
+    ///
+    /// # Safety
+    /// As for [`fiftyoneDegreesIpiInitManagerFromMemory`]: `memory` must point
+    /// to `size` readable bytes that outlive the manager. `config` must point
+    /// to a configuration.
+    pub fn fiftyoneDegreesShimIpiInitManagerFromMemory(
+        manager: *mut ResourceManager,
+        config: *const ConfigIpi,
+        properties: *mut PropertiesRequired,
+        memory: *mut c_void,
+        size: FileOffset,
         exception: *mut Exception,
     ) -> StatusCode;
 

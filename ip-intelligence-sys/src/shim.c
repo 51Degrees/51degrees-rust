@@ -189,13 +189,13 @@ size_t fiftyoneDegreesShimIpiGetDataSetName(
 }
 
 /*
- * Writes the data set's published date into `*year`, `*month` and `*day` and
- * returns 1 on success, or 0 when no data set is available. Any of the output
- * pointers may be NULL. The date is read from the data set header, which carries
- * the embedded publish date of the data file.
+ * Writes the year, month and day of the published date (`next` zero) or the
+ * next update date (`next` not zero) in the data file header and returns 1,
+ * or 0 when no data set is available. Any of the output pointers may be NULL.
  */
-int fiftyoneDegreesShimIpiGetDataSetPublished(
+static int get_header_date(
     fiftyoneDegreesResourceManager *manager,
+    int next,
     int32_t *year,
     int32_t *month,
     int32_t *day) {
@@ -204,17 +204,54 @@ int fiftyoneDegreesShimIpiGetDataSetPublished(
     if (dataSet == NULL) {
         return 0;
     }
+    const fiftyoneDegreesDate *date = next
+        ? &dataSet->header.nextUpdate
+        : &dataSet->header.published;
     if (year != NULL) {
-        *year = (int32_t)dataSet->header.published.year;
+        *year = (int32_t)date->year;
     }
     if (month != NULL) {
-        *month = (int32_t)dataSet->header.published.month;
+        *month = (int32_t)date->month;
     }
     if (day != NULL) {
-        *day = (int32_t)dataSet->header.published.day;
+        *day = (int32_t)date->day;
     }
     fiftyoneDegreesDataSetIpiRelease(dataSet);
     return 1;
+}
+
+/*
+ * Writes the date the data file was published, from its header, into `*year`,
+ * `*month` and `*day` and returns 1, or 0 when no data set is available.
+ */
+int fiftyoneDegreesShimIpiGetDataSetPublished(
+    fiftyoneDegreesResourceManager *manager,
+    int32_t *year,
+    int32_t *month,
+    int32_t *day) {
+    return get_header_date(manager, 0, year, month, day);
+}
+
+/*
+ * Writes the date the next data file is expected, from the data file header,
+ * into `*year`, `*month` and `*day` and returns 1, or 0 when no data set is
+ * available.
+ */
+int fiftyoneDegreesShimIpiGetDataSetNextUpdate(
+    fiftyoneDegreesResourceManager *manager,
+    int32_t *year,
+    int32_t *month,
+    int32_t *day) {
+    return get_header_date(manager, 1, year, month, day);
+}
+
+/*
+ * Returns the size of an IP Intelligence data file's header in bytes, being
+ * how much of a data file the C library compares to find a copy of it to
+ * reuse.
+ */
+size_t fiftyoneDegreesShimIpiGetHeaderSize(void) {
+    return sizeof(fiftyoneDegreesDataSetIpiHeader);
 }
 
 /*
@@ -312,6 +349,33 @@ fiftyoneDegreesStatusCode fiftyoneDegreesShimIpiInitManagerFromFile(
         &copy,
         properties,
         fileName,
+        exception);
+}
+
+/*
+ * Initialises `manager` from the `size` bytes at `memory`, the whole of a data
+ * file, with a copy of `config` that neither frees the memory nor copies it to
+ * a temporary file, because the memory belongs to the caller and must outlive
+ * the data set. The data set reads every collection from the memory where it
+ * lies, so the configuration's collection settings do not apply. The
+ * configuration `config` points to is not changed.
+ */
+fiftyoneDegreesStatusCode fiftyoneDegreesShimIpiInitManagerFromMemory(
+    fiftyoneDegreesResourceManager *manager,
+    const fiftyoneDegreesConfigIpi *config,
+    fiftyoneDegreesPropertiesRequired *properties,
+    void *memory,
+    fiftyoneDegreesFileOffset size,
+    fiftyoneDegreesException *exception) {
+    fiftyoneDegreesConfigIpi copy = *config;
+    copy.b.freeData = false;
+    copy.b.useTempFile = false;
+    return fiftyoneDegreesIpiInitManagerFromMemory(
+        manager,
+        &copy,
+        properties,
+        memory,
+        size,
         exception);
 }
 

@@ -60,7 +60,7 @@ const SEPARATOR: &str = "\u{1F}";
 const FILE_PROFILE_FULL_READ_EVERY: usize = 10;
 
 /// On the TAC file, the ids are compared with reading every profile for
-/// every this many values, being about 320 of its 161,365.
+/// about one value in 500.
 const TAC_FULL_READ_EVERY: usize = 500;
 
 /// The Hash data file `51DEGREES_DD_PATH` names, or the Lite file in the
@@ -234,9 +234,12 @@ fn every_value_finds_the_profiles_reading_every_profile_finds() {
     }
 }
 
-/// A value no profile holds, a value or property name in other case, a
-/// property the data file does not have, and a name or value holding a null
-/// byte give no profiles, from the index and from reading every profile.
+/// A value no profile holds, an empty value, a held value with more text
+/// after it, a value or property name in other case, a property the data
+/// file does not have, and a name or value holding a null byte give no
+/// profiles, from the index and from reading every profile. The value with
+/// more text after it shows that a value is matched in full, not by its
+/// start.
 #[test]
 fn what_the_data_file_does_not_hold_finds_no_profiles() {
     let Some(path) = data_file() else {
@@ -260,6 +263,8 @@ fn what_the_data_file_does_not_hold_finds_no_profiles() {
     let unindexed = open(&path, PerformanceProfile::InMemory, &[]);
     let misses = [
         (BROWSER_NAME.to_owned(), String::from("No such browser")),
+        (BROWSER_NAME.to_owned(), String::new()),
+        (BROWSER_NAME.to_owned(), format!("{value} No such suffix")),
         (BROWSER_NAME.to_owned(), value.to_lowercase()),
         (BROWSER_NAME.to_lowercase(), value.clone()),
         (NO_SUCH_PROPERTY.to_owned(), value.clone()),

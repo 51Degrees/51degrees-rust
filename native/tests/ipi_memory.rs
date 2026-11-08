@@ -25,6 +25,12 @@
 //! The test counts the blocks the native library allocates by giving it a
 //! counting allocator, which every test in the same process would share. It
 //! is therefore the only test in this file.
+//!
+//! `51DEGREES_IPI_MEMORY_PROFILES` names the profiles to measure, separated
+//! by commas, such as `LowMemory`, and every profile is measured when it is
+//! not set. The stages that hold the whole data file in memory run only when
+//! the list names InMemory, so a large file can be measured under LowMemory
+//! alone.
 
 #![cfg(feature = "ipi")]
 
@@ -33,6 +39,7 @@ mod support;
 use std::ffi::CString;
 use std::os::raw::{c_int, c_void};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use fiftyone_ip_intelligence_sys as sys;
 use fiftyone_native::{ipi, PerformanceProfile};
@@ -58,15 +65,48 @@ extern "C" {
     fn standard_free_aligned(pointer: *mut c_void);
 }
 
+/// Names the profiles to measure, separated by commas.
+const PROFILES: &str = "51DEGREES_IPI_MEMORY_PROFILES";
+
+/// Set where the Enterprise file must be given, as in the comparison with
+/// .NET, so the check of long values must find one.
+const REQUIRE_ENTERPRISE: &str = "51DEGREES_REQUIRE_ENTERPRISE";
+
+/// `SHIM_TEXT_BUFFER_LENGTH` in the shim, the length of the buffer a value's
+/// text is first written into. A longer text is written again into a block
+/// from the library's allocator.
+const SHIM_TEXT_BUFFER_LENGTH: usize = 256;
+
+/// The size of each block the native library allocates while
+/// [`sizes_allocated_by`] runs a stage.
+static RECORDED: Mutex<Option<Vec<usize>>> = Mutex::new(None);
+
+fn record(size: usize) {
+    let mut recorded = RECORDED.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(sizes) = recorded.as_mut() {
+        sizes.push(size);
+    }
+}
+
+/// The sizes of the blocks the native library allocated while `stage` ran.
+fn sizes_allocated_by(stage: impl FnOnce()) -> Vec<usize> {
+    *RECORDED.lock().unwrap_or_else(PoisonError::into_inner) = Some(Vec::new());
+    stage();
+    let mut recorded = RECORDED.lock().unwrap_or_else(PoisonError::into_inner);
+    recorded.take().unwrap_or_default()
+}
+
 unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
     let pointer = standard_malloc(size);
     support::allocated(pointer, size);
+    record(size);
     pointer
 }
 
 unsafe extern "C" fn malloc_aligned(alignment: c_int, size: usize) -> *mut c_void {
     let pointer = standard_malloc_aligned(alignment, size);
     support::allocated(pointer, size);
+    record(size);
     pointer
 }
 
@@ -98,7 +138,70 @@ fn data_file() -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
-fn measure_profile(leaks: &mut Leaks, path: &Path, profile: PerformanceProfile) {
+/// The profiles [`PROFILES`] names, or every profile when it is not set.
+fn profiles() -> Vec<PerformanceProfile> {
+    let Ok(names) = std::env::var(PROFILES) else {
+        return vec![
+            PerformanceProfile::InMemory,
+            PerformanceProfile::HighPerformance,
+            PerformanceProfile::LowMemory,
+            PerformanceProfile::Balanced,
+            PerformanceProfile::Default,
+        ];
+    };
+    names
+        .split(',')
+        .map(|name| {
+            PerformanceProfile::parse(name)
+                .unwrap_or_else(|| panic!("{PROFILES} holds {name:?}, which is no profile"))
+        })
+        .collect()
+}
+
+/// Check that each of the first 20 values of every property whose text is
+/// too long for the shim's first buffer is written into a block from the
+/// library's allocator, so the leak stages count it. Returns how many values
+/// were checked. Only the Enterprise file holds such values, being its areas.
+///
+/// The shim allocates the length its first write counted, plus one. The C
+/// library's string builder always keeps a byte free for the null, writes the
+/// null there and counts it, so the block is two bytes longer than the text.
+fn check_long_values(manager: &ipi::Manager, profile: PerformanceProfile) -> usize {
+    let mut checked = 0;
+    let properties = manager
+        .data_file_properties()
+        .expect("the properties are read");
+    for property in &properties {
+        let values = manager
+            .data_file_property_value_range(property.index, 0..20)
+            .expect("the values are read");
+        for (place, value) in (0u32..).zip(&values) {
+            if value.name.len() < SHIM_TEXT_BUFFER_LENGTH {
+                continue;
+            }
+            let sizes = sizes_allocated_by(|| {
+                manager
+                    .data_file_property_value_range(property.index, place..place + 1)
+                    .expect("the value is read");
+            });
+            assert!(
+                sizes.contains(&(value.name.len() + 2)),
+                "{} {} value {place} of {} bytes, blocks {sizes:?}",
+                profile.as_str(),
+                property.name,
+                value.name.len()
+            );
+            checked += 1;
+        }
+    }
+    println!(
+        "{}: {checked} values longer than the shim's first buffer",
+        profile.as_str()
+    );
+    checked
+}
+
+fn measure_profile(leaks: &mut Leaks, path: &Path, profile: PerformanceProfile) -> usize {
     let label = |stage: &str| format!("{} {stage}", profile.as_str());
     let open = || ipi::Manager::open(path, profile).expect("the data file loads");
 
@@ -199,6 +302,7 @@ fn measure_profile(leaks: &mut Leaks, path: &Path, profile: PerformanceProfile) 
                 .expect("a value is searched for");
         }
     });
+    let long_values = check_long_values(&manager, profile);
 
     // A new data set loaded while results from the old one are alive, as an
     // engine refresh does.
@@ -219,6 +323,7 @@ fn measure_profile(leaks: &mut Leaks, path: &Path, profile: PerformanceProfile) 
 
     drop(results);
     drop(manager);
+    long_values
 }
 
 /// Load the data file with the native API, reload it in place and free it.
@@ -257,18 +362,46 @@ fn every_entry_point_leaves_no_native_memory_allocated() {
     count_native_allocations();
     let baseline = support::held();
 
+    let profiles = profiles();
     let mut leaks = Leaks::default();
-    for profile in [
-        PerformanceProfile::InMemory,
-        PerformanceProfile::HighPerformance,
-        PerformanceProfile::LowMemory,
-        PerformanceProfile::Balanced,
-        PerformanceProfile::Default,
-    ] {
-        measure_profile(&mut leaks, &path, profile);
+    let mut long_values = 0;
+    for &profile in &profiles {
+        long_values += measure_profile(&mut leaks, &path, profile);
         leaks.compare(&format!("{} everything freed", profile.as_str()), baseline);
     }
-    leaks.measure("native reload", 2, || native_reload(&path));
+    assert!(
+        long_values > 0 || std::env::var_os(REQUIRE_ENTERPRISE).is_none(),
+        "{REQUIRE_ENTERPRISE} is set, but no value read was longer than the shim's first buffer"
+    );
+    // These stages hold the whole data file in memory.
+    if profiles.contains(&PerformanceProfile::InMemory) {
+        leaks.measure("native reload", 2, || native_reload(&path));
+        let bytes = std::fs::read(&path).expect("the data file reads");
+        for profile in [PerformanceProfile::InMemory, PerformanceProfile::LowMemory] {
+            leaks.measure(
+                &format!("{} load from memory, look up and free", profile.as_str()),
+                2,
+                || {
+                    let manager = ipi::Manager::open_from_memory(bytes.clone(), profile, None)
+                        .expect("the data loads");
+                    manager.data_set_published();
+                    manager.data_set_next_update();
+                    let mut results = manager.create_results().expect("results allocate");
+                    drop(manager);
+                    results
+                        .process_ip("1.1.1.1")
+                        .expect("an address is processed");
+                    let asn = results.value_as_string("Asn", ",").expect("a value");
+                    assert!(asn.unwrap_or_default().contains("AS13335"));
+                },
+            );
+        }
+        leaks.measure("refuse half the data from memory", 3, || {
+            let half = bytes[..bytes.len() / 2].to_vec();
+            let opened = ipi::Manager::open_from_memory(half, PerformanceProfile::InMemory, None);
+            assert!(opened.is_err(), "half the data does not load");
+        });
+    }
     leaks.measure("open a missing file", 3, || {
         let opened =
             ipi::Manager::open(path.with_extension("missing"), PerformanceProfile::Default);
