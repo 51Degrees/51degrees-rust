@@ -136,6 +136,21 @@ pub trait FlowElement: Send + Sync {
         false
     }
 
+    /// True if this element adds values to the evidence while it processes,
+    /// with [`FlowData::add_evidence`], as the Sequence element does.
+    /// Defaults to `false`.
+    ///
+    /// [`crate::PipelineBuilder::build`] refuses a parallel group holding an
+    /// element that says so, because the other elements of a group read the
+    /// evidence at the same time, as the
+    /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#evidence)
+    /// says. Evidence that an element of a group adds without saying so is
+    /// not added, and the pipeline records a configuration error against the
+    /// element instead. An element that wraps another forwards this.
+    fn adds_evidence(&self) -> bool {
+        false
+    }
+
     /// The fully qualified name of the element's type, for example
     /// `fiftyone_pipeline_engines_fiftyone::share_usage_element::ShareUsageElement`.
     ///
@@ -212,6 +227,14 @@ mod tests {
         assert!(element.properties_loaded());
         let element: &dyn FlowElement = &element;
         assert!(element.properties_loaded());
+    }
+
+    #[test]
+    fn an_element_adds_no_evidence_unless_it_says_otherwise() {
+        let element: &dyn FlowElement = &Plain {
+            filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+        };
+        assert!(!element.adds_evidence());
     }
 
     #[test]
