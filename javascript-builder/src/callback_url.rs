@@ -217,7 +217,8 @@ mod tests {
 
     // The hosts .NET 4.5.128's JavaScript builder accepts, with the URL the
     // crate writes. The hosts .NET accepts that hold a zone identifier, user
-    // information, a `?` or a `#` are refused, in the tests further down.
+    // information, a `?` or a `#`, or that end in a number without being an
+    // IPv4 address, are refused, in the tests further down.
     #[test]
     fn accepts_the_hosts_dotnet_accepts() {
         let cases = [
@@ -268,10 +269,7 @@ mod tests {
             ("a-b.com", "https://a-b.com/51dpipeline/json"),
             ("ab-.com", "https://ab-.com/51dpipeline/json"),
             ("127.0.0.1", "https://127.0.0.1/51dpipeline/json"),
-            ("300.1.1.1", "https://300.1.1.1/51dpipeline/json"),
             ("localhost", "https://localhost/51dpipeline/json"),
-            ("1", "https://1/51dpipeline/json"),
-            ("0x7f.1", "https://0x7f.1/51dpipeline/json"),
             ("a.b.c.d.e.f", "https://a.b.c.d.e.f/51dpipeline/json"),
             (
                 "xn--bcher-kva.de",
@@ -447,6 +445,50 @@ mod tests {
                 matches!(url("https", host), CallbackUrl::Invalid(_)),
                 "host {host:?}"
             );
+        }
+    }
+
+    // A host whose last label is all digits, or `0x` or `0X` and hex digits,
+    // is read by a browser's URL parser as an IPv4 address, so it must be
+    // four decimal parts of 0 to 255 with no leading zero. One `.` at the end
+    // is dropped first, so `example.123.` ends in a number too.
+    #[test]
+    fn a_host_ending_in_a_number_must_be_ipv4() {
+        let hosts = [
+            "example.123",
+            "example.0x1f",
+            "example.0X",
+            "1.2.3.999",
+            "1.2.3",
+            "127.1",
+            "0x7f.0.0.1",
+            "01.2.3.4",
+            "example.123.",
+            "1.2.3.4.5",
+            "1",
+            "300.1.1.1",
+            "0x7f.1",
+        ];
+        for host in hosts {
+            assert!(
+                matches!(url("https", host), CallbackUrl::Invalid(_)),
+                "host {host:?}"
+            );
+        }
+        let cases = [
+            ("1.2.3.4", "https://1.2.3.4/51dpipeline/json"),
+            ("1.2.3.4:8080", "https://1.2.3.4:8080/51dpipeline/json"),
+            ("1.2.3.4/path", "https://1.2.3.4/path/51dpipeline/json"),
+            ("example.com", "https://example.com/51dpipeline/json"),
+            ("example.co1", "https://example.co1/51dpipeline/json"),
+            (
+                "123.example.com",
+                "https://123.example.com/51dpipeline/json",
+            ),
+            ("0.0.0.0", "https://0.0.0.0/51dpipeline/json"),
+        ];
+        for (host, expected) in cases {
+            assert_eq!(url("https", host), valid(expected), "host {host:?}");
         }
     }
 
