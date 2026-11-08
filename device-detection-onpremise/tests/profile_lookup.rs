@@ -270,6 +270,58 @@ fn the_profiles_of_a_value_are_those_its_ids_give() {
     assert!(none.is_empty());
 }
 
+/// The ids and reader of a value are the ids the engine gives for it, and
+/// the reader gives each id the profile `profiles_for_property_value` gives,
+/// with the same properties and values.
+#[test]
+fn the_reader_of_a_value_gives_the_profiles_of_its_ids() {
+    let Some(path) = data_file() else {
+        return;
+    };
+    let engine = DeviceDetectionOnPremiseEngineBuilder::new(&path)
+        .indexed_property(BROWSER_NAME)
+        .build()
+        .expect("the data file loads");
+    let Some(values) = browser_names(&engine) else {
+        return;
+    };
+    let mut compared = 0;
+    for (value, found) in values.iter().zip(ids(&engine, &values)) {
+        let (ids, reader) = engine
+            .profile_ids_and_reader_for_property_value(BROWSER_NAME, value)
+            .expect("the ids are found");
+        assert_eq!(ids, found, "{value}");
+        let profiles = engine
+            .profiles_for_property_value(BROWSER_NAME, value)
+            .expect("the profiles read");
+        assert_eq!(profiles.len(), ids.len(), "{value}");
+        for (id, profile) in ids.iter().zip(&profiles) {
+            let read = reader.read_profile(*id);
+            let keys = profile.keys();
+            assert_eq!(read.keys(), keys, "profile {id}");
+            // Every value of the first profile, and the id and key property
+            // of the rest, as reading every value of every profile is slow.
+            let names: Vec<&str> = if compared == 0 {
+                keys.iter().map(String::as_str).collect()
+            } else {
+                vec![PROFILE_ID_PROPERTY_NAME, BROWSER_NAME]
+            };
+            for name in names {
+                assert_eq!(
+                    read.get(name).ok(),
+                    profile.get(name).ok(),
+                    "profile {id} {name}"
+                );
+            }
+            compared += 1;
+        }
+    }
+    assert!(
+        compared > 0,
+        "no value of {BROWSER_NAME} is held by a profile"
+    );
+}
+
 /// An engine restricted to another property still indexes and finds the
 /// profiles of the property named to index, which it does not give.
 #[test]

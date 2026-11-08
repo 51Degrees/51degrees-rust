@@ -43,6 +43,7 @@ use fiftyone_device_detection_cloud::{
     DeviceData, DeviceDataBase, HardwareProfileCloudEngine, MultiDeviceData, HARDWARE_DATA_KEY,
     HARDWARE_ELEMENT_DATA_KEY,
 };
+use fiftyone_device_detection_shared::ProfileReader;
 
 /// A fake transport that answers the cloud endpoints from in-memory fixtures.
 struct FakeCloud {
@@ -155,23 +156,26 @@ fn fake_pipeline_after(earlier: Vec<Arc<dyn FlowElement>>, data: &str) -> Arc<Pi
         .expect("pipeline builds")
 }
 
-/// Adds one profile under `hardware` before the cloud engines run, as an
-/// on-premise TAC or Native engine earlier in the pipeline does, with a
-/// record that holds `HardwareVendor` alone.
+/// Gives each profile the hardware vendor `Earlier`, as an on-premise data
+/// set gives the profile of an id.
+struct EarlierReader;
+
+impl ProfileReader for EarlierReader {
+    fn read_profile(&self, _id: u32) -> DeviceDataBase {
+        DeviceDataBase::new().set("HardwareVendor", "Earlier")
+    }
+}
+
+/// Adds one profile by id under `hardware` before the cloud engines run, as
+/// an on-premise TAC or Native engine earlier in the pipeline does.
 struct EarlierProfile {
     filter: EvidenceKeyFilterWhitelist,
 }
 
 impl FlowElement for EarlierProfile {
     fn process(&self, data: &mut FlowData) -> PipelineResult<()> {
-        let properties: Arc<[String]> = Arc::from(["HardwareVendor".to_owned()]);
         data.get_or_add(HARDWARE_DATA_KEY, MultiDeviceData::new)?
-            .push_profile_with_properties(
-                DeviceDataBase::new()
-                    .set("HardwareVendor", "Earlier")
-                    .set("BrowserName", "Safari"),
-                properties,
-            );
+            .push_profile_ids(Arc::new(EarlierReader), vec![12280]);
         Ok(())
     }
 
@@ -263,8 +267,8 @@ fn device_only_response_yields_no_profiles() {
 }
 
 /// The cloud's profiles follow those an earlier engine added under
-/// `hardware`, rather than being dropped, and each record holds the
-/// properties of the engine that added its profile.
+/// `hardware`, rather than being dropped, and only the cloud's, which it
+/// adds with their values, are written under `profiles`.
 #[test]
 fn profiles_follow_those_already_under_hardware() {
     let earlier = EarlierProfile {
@@ -308,7 +312,6 @@ fn profiles_follow_those_already_under_hardware() {
     assert_eq!(
         keys,
         [
-            vec!["hardwarevendor"],
             vec!["hardwaremodel", "hardwarename", "hardwarevendor"],
             vec!["hardwaremodel", "hardwarename"],
         ]

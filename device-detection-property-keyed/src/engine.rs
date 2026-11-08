@@ -119,6 +119,12 @@ impl Validation {
 /// flow data, never an error, and no profiles. The value is matched exactly,
 /// including case.
 ///
+/// The engine keeps the ids of the profiles it finds, and
+/// [`MultiDeviceData::profiles`] reads the profiles on its first call, from
+/// the data set the ids were found in. As .NET's engines do, it writes none
+/// of them to the JSON, so the JSON builder writes `hardware.profiles`
+/// empty.
+///
 /// The lookup is fast when the Device Detection engine indexes the key
 /// property, which
 /// [`indexed_property`](fiftyone_device_detection_onpremise::DeviceDetectionOnPremiseEngineBuilder::indexed_property)
@@ -144,9 +150,6 @@ struct State {
     lookup: Option<Lookup>,
     tier: String,
     filter: EvidenceKeyFilterWhitelist,
-    /// The names of the item properties of `Profiles`, which each profile's
-    /// record holds.
-    record_properties: Arc<[String]>,
     properties: Vec<PropertyMetaData>,
     aspect_properties: Vec<AspectPropertyMetaData>,
 }
@@ -234,7 +237,6 @@ impl State {
                     }),
             );
         }
-        let record_properties = items.iter().map(|item| item.name.clone()).collect();
         let profiles = AspectPropertyMetaData::new(
             PROFILES_PROPERTY_NAME,
             data_key,
@@ -249,7 +251,6 @@ impl State {
             lookup,
             tier,
             filter,
-            record_properties,
             properties: vec![profiles.core().clone()],
             aspect_properties: vec![profiles],
         }
@@ -291,15 +292,17 @@ impl FlowElement for PropertyKeyedDeviceEngine {
             return Ok(());
         };
         let warning = self.validation.check(&value);
-        let profiles = match warning {
-            Some(_) => Vec::new(),
-            None => state
-                .source
-                .profiles_for_property_value(&lookup.property_name, &value)?,
+        let found = match warning {
+            Some(_) => None,
+            None => Some(
+                state
+                    .source
+                    .profile_ids_and_reader_for_property_value(&lookup.property_name, &value)?,
+            ),
         };
         let hardware = data.get_or_add(TypedKey::new(self.data_key), MultiDeviceData::new)?;
-        for profile in profiles {
-            hardware.push_profile_with_properties(profile, Arc::clone(&state.record_properties));
+        if let Some((ids, reader)) = found {
+            hardware.push_profile_ids(reader, ids);
         }
         if let Some(message) = warning {
             data.add_warning(message, Some(self as &dyn FlowElement));

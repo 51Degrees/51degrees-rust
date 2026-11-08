@@ -182,7 +182,8 @@ impl HardwareProfileCloudEngine {
 
     /// Read the cloud JSON, slice the `hardware.profiles` array, and add the
     /// profiles to the [`MultiDeviceData`] under [`HARDWARE_DATA_KEY`],
-    /// after any an on-premise TAC or Native engine added before this one.
+    /// after any that an on-premise TAC or Native engine added before this
+    /// one.
     ///
     /// Returns an [`Error::PipelineConfiguration`] if no cloud request engine ran
     /// before this engine. An empty or absent JSON response, which means the

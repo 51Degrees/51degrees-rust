@@ -438,14 +438,6 @@
     "issue": 225
   },
   {
-    "path": "hardwareJson.profiles[*]",
-    "kind": "onlyInRust",
-    "data": "enterprise",
-    "cases": ["property-keyed-both"],
-    "reason": "The crates' JSON writes each profile the engines find, as the draft specification of the lookup, specifications#62, gives profiles in its Element Data. .NET 4.5.180's on-premise MultiDeviceData stores an empty list under Profiles when it is made and keeps the profile ids it finds in another list, which the JSON builder does not read, so its JSON writes profiles empty however many profiles match. .NET's cloud engine fills the list it writes.",
-    "issue": 225
-  },
-  {
     "path": "engineMetadata.dataSourceTier",
     "kind": "value",
     "cases": ["metadata-ip*"],
