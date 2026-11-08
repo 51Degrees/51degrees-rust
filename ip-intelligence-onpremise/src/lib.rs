@@ -83,8 +83,11 @@
 //! use fiftyone_native::PerformanceProfile;
 //!
 //! # fn main() -> fiftyone_pipeline_core::Result<()> {
+//! // LowMemory reads the file from disk, so even the Enterprise file, which is
+//! // over 6 GB, needs little memory. HighPerformance holds the whole file in
+//! // memory for faster lookups, where there is memory for it.
 //! let engine = IpIntelligenceOnPremiseEngine::builder("51Degrees-IPIV4AsnIpiV41.ipi")
-//!     .performance_profile(PerformanceProfile::HighPerformance)
+//!     .performance_profile(PerformanceProfile::LowMemory)
 //!     // Off because the free ASN file has no licence key for updates.
 //!     .auto_update(false)
 //!     .build()?;

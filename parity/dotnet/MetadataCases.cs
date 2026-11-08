@@ -355,8 +355,7 @@ namespace FiftyOne.Parity
         }
 
         // The type a property's values have, by the names the other lines
-        // use. The crates have no type for an IP address, an area or a
-        // weighted list.
+        // use. The crates have no type for an IP address or a weighted list.
         private static string TypeName(Type type)
         {
             if (type == typeof(IPAddress))

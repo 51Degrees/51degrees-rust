@@ -24,6 +24,7 @@
   <ItemGroup>
     <PackageReference Include="FiftyOne.DeviceDetection.Hash.Engine.OnPremise" Version="$(DeviceDetectionVersion)" />
     <PackageReference Include="FiftyOne.DeviceDetection.RobotsTxt" Version="$(DeviceDetectionVersion)" />
+    <PackageReference Include="FiftyOne.DeviceDetection.PropertyKeyed" Version="$(DeviceDetectionVersion)" />
     <PackageReference Include="FiftyOne.IpIntelligence.Engine.OnPremise" Version="$(IpIntelligenceVersion)" />
     <PackageReference Include="FiftyOne.IpIntelligence.Translation" Version="$(IpIntelligenceVersion)" />
     <PackageReference Include="FiftyOne.IpIntelligence.Cloud" Version="$(IpIntelligenceVersion)" />

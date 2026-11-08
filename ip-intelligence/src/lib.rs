@@ -106,9 +106,10 @@ pub use fiftyone_ip_intelligence_shared::{
     IpIntelligenceData, IpIntelligenceDataBase, WeightedStore, IP_DATA_KEY, IP_DATA_KEY_NAME,
 };
 
-// The value wrappers the typed accessors return. Re-exported here so a consumer
-// does not have to name the core or engines crate to handle a result.
-pub use fiftyone_pipeline_core::WeightedValue;
+// The value wrappers the typed accessors and the by-name getters return.
+// Re-exported here so a consumer does not have to name the core or engines
+// crate to handle a result.
+pub use fiftyone_pipeline_core::{WeightedValue, WktString};
 pub use fiftyone_pipeline_engines::AspectPropertyValue;
 
 // The performance profile selects how the on-premise data file is opened. It is
