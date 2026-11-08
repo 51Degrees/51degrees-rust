@@ -72,14 +72,6 @@
     "reason": "json-builder.md says the nullreason meta-Property \"MUST be added with a string message that explains why this Property does not have a value\" where the Property's value is null, so the crates write the reason .NET gives for IpV6 having no value. .NET leaves IpV6 out of its JSON then, and writes no reason."
   },
   {
-    "path": "*ip.areas",
-    "kind": "type",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "data": "enterprise",
-    "reason": "The crates give Areas as a string, where .NET gives it as a WKT value, which its JSON writes as an object.",
-    "issue": 226
-  },
-  {
     "path": "properties.ip.iprange*",
     "kind": "type",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
@@ -422,16 +414,6 @@
     "dotnet": {"value": ["ipAddress"]},
     "rust": {"value": ["string"]},
     "reason": "The crates' value types have no IP address, so Ip, IpV6, IpRangeStart and IpRangeEnd are strings, where .NET gives IP addresses.",
-    "issue": 226
-  },
-  {
-    "path": "engineMetadata.properties.Areas.type",
-    "kind": "value",
-    "cases": ["metadata-ip*"],
-    "data": "enterprise",
-    "dotnet": {"value": ["wktString"]},
-    "rust": {"value": ["string"]},
-    "reason": "The crates' value types have no WKT value, so Areas is a string, where .NET gives a WKT value.",
     "issue": 226
   },
   {

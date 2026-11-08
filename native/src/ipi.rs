@@ -544,9 +544,10 @@ pub struct DataFileProperty {
     /// The property's name.
     pub name: String,
     /// The type of the property's values, from the type the data file names.
-    /// Every weighted type is a [`PropertyValueType::KeyValueList`], and an
-    /// IP address, an area or a coordinate is a [`PropertyValueType::String`],
-    /// because the pipeline has no type of its own for them.
+    /// Every weighted type is a [`PropertyValueType::KeyValueList`], an area
+    /// is a [`PropertyValueType::WktString`], and an IP address or a
+    /// coordinate is a [`PropertyValueType::String`], because the pipeline
+    /// has no type of its own for them.
     pub value_type: PropertyValueType,
     /// True when the data set was opened with the property, so results can
     /// hold its values.
@@ -902,7 +903,8 @@ impl Manager {
 /// [`PropertyValueType::KeyValueList`], as a lookup gives each weighted
 /// property's candidates. That includes `weightedbyte`, which .NET's
 /// `PropertyMetaDataIpi.Type` has no case for and so gives as a string. An
-/// IP address, an area or a coordinate is a [`PropertyValueType::String`],
+/// area, `wkb` or `wkbr`, is a [`PropertyValueType::WktString`], as .NET
+/// types it. An IP address or a coordinate is a [`PropertyValueType::String`],
 /// as is a type the builder does not name, because the pipeline has no type
 /// of its own for them.
 fn data_file_value_type(value_type: u8, is_list: bool) -> PropertyValueType {
@@ -920,6 +922,8 @@ fn data_file_value_type(value_type: u8, is_list: bool) -> PropertyValueType {
         PropertyValueType::JavaScript
     } else if is(Ty::String) && is_list {
         PropertyValueType::StringList
+    } else if is(Ty::Wkb) || is(Ty::WkbReduced) {
+        PropertyValueType::WktString
     } else if i32::from(value_type) >= Ty::WeightedString as i32
         && i32::from(value_type) <= Ty::WeightedWkbReduced as i32
     {
@@ -2798,7 +2802,7 @@ mod tests {
             ("AccuracyRadiusMax", PropertyValueType::Integer),
             ("CountryCodesGeographical", PropertyValueType::KeyValueList),
             ("IpRangeStart", PropertyValueType::String),
-            ("Areas", PropertyValueType::String),
+            ("Areas", PropertyValueType::WktString),
         ] {
             assert_eq!(
                 file_property(&properties, name).value_type,

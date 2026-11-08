@@ -37,7 +37,7 @@
 #![allow(rustdoc::bare_urls, rustdoc::invalid_html_tags)]
 
 use crate::data::IpIntelligenceDataBase;
-use fiftyone_pipeline_core::{PropertyValueType, WeightedValue};
+use fiftyone_pipeline_core::{PropertyValueType, WeightedValue, WktString};
 use fiftyone_pipeline_engines::{AspectData, AspectPropertyValue};
 
 /// Strongly-typed read accessors for IP Intelligence properties.
@@ -53,7 +53,7 @@ pub trait IpIntelligenceData: AspectData {
     fn accuracy_radius_min(&self) -> AspectPropertyValue<i32>;
 
     /// Any shapes associated with the location. Usually this is the area which the IP range covers. This is returned as a WKT String stored as a reduced format of WKB.
-    fn areas(&self) -> AspectPropertyValue<String>;
+    fn areas(&self) -> AspectPropertyValue<WktString>;
 
     /// Autonomous System Number associated with the IP address.
     fn asn(&self) -> AspectPropertyValue<String>;
@@ -209,8 +209,8 @@ impl IpIntelligenceData for IpIntelligenceDataBase {
         self.integer("AccuracyRadiusMin")
     }
 
-    fn areas(&self) -> AspectPropertyValue<String> {
-        self.string("Areas")
+    fn areas(&self) -> AspectPropertyValue<WktString> {
+        self.wkt_string("Areas")
     }
 
     fn asn(&self) -> AspectPropertyValue<String> {
@@ -411,7 +411,7 @@ impl IpIntelligenceData for IpIntelligenceDataBase {
 pub const GENERATED_PROPERTY_TYPES: &[(&str, PropertyValueType)] = &[
     ("AccuracyRadiusMax", PropertyValueType::Integer),
     ("AccuracyRadiusMin", PropertyValueType::Integer),
-    ("Areas", PropertyValueType::String),
+    ("Areas", PropertyValueType::WktString),
     ("Asn", PropertyValueType::String),
     ("AsnName", PropertyValueType::String),
     ("BrowserDiversity", PropertyValueType::Integer),

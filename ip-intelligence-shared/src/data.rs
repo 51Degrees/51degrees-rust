@@ -36,8 +36,8 @@
 //!
 //! Most IP Intelligence properties are *plain*: a single IP resolves to one
 //! definite value of the property's declared type, for example the country name
-//! ([`String`]), an `IsVPN` flag ([`bool`]), the latitude ([`f32`]) or the UTC
-//! offset ([`i32`]). The generated accessors return those directly, wrapped in
+//! ([`String`]), an `IsVPN` flag ([`bool`]), the latitude ([`f32`]), the UTC
+//! offset ([`i32`]) or the area ([`WktString`]). The generated accessors return those directly, wrapped in
 //! an [`AspectPropertyValue`] so an absent value carries the engine's no-value
 //! reason.
 //!
@@ -63,7 +63,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use fiftyone_pipeline_core::{
     ElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType, TypedKey,
-    WeightedValue,
+    WeightedValue, WktString,
 };
 use fiftyone_pipeline_engines::{
     AspectData, AspectDataBase, AspectPropertyMetaData, AspectPropertyValue,
@@ -350,6 +350,7 @@ impl fmt::Debug for DeferredValues {
 pub struct IpIntelligenceDataBase {
     base: AspectDataBase,
     strings: BTreeMap<String, ValueStore<String>>,
+    wkt_strings: BTreeMap<String, ValueStore<WktString>>,
     floats: BTreeMap<String, ValueStore<f32>>,
     integers: BTreeMap<String, ValueStore<i32>>,
     booleans: BTreeMap<String, ValueStore<bool>>,
@@ -375,6 +376,7 @@ impl IpIntelligenceDataBase {
         IpIntelligenceDataBase {
             base,
             strings: BTreeMap::new(),
+            wkt_strings: BTreeMap::new(),
             floats: BTreeMap::new(),
             integers: BTreeMap::new(),
             booleans: BTreeMap::new(),
@@ -446,6 +448,7 @@ impl IpIntelligenceDataBase {
         let key = key(name);
         self.base.values().get_value(name).is_some()
             || self.strings.contains_key(&key)
+            || self.wkt_strings.contains_key(&key)
             || self.floats.contains_key(&key)
             || self.integers.contains_key(&key)
             || self.booleans.contains_key(&key)
@@ -463,6 +466,7 @@ impl IpIntelligenceDataBase {
         };
         let key = key.as_ref();
         no_value_message(self.strings.get(key))
+            .or_else(|| no_value_message(self.wkt_strings.get(key)))
             .or_else(|| no_value_message(self.floats.get(key)))
             .or_else(|| no_value_message(self.integers.get(key)))
             .or_else(|| no_value_message(self.booleans.get(key)))
@@ -506,6 +510,16 @@ impl IpIntelligenceDataBase {
         self.base
             .insert(name.as_ref(), PropertyValue::String(value.clone()));
         self.strings
+            .insert(key(name.as_ref()), ValueStore::Value(value));
+    }
+
+    /// Store a plain WKT property (`Areas`) and its dynamic-bag mirror, which
+    /// is a [`PropertyValue::WktString`].
+    pub fn set_wkt_string(&mut self, name: impl AsRef<str>, value: impl Into<WktString>) {
+        let value = value.into();
+        self.base
+            .insert(name.as_ref(), PropertyValue::WktString(value.clone()));
+        self.wkt_strings
             .insert(key(name.as_ref()), ValueStore::Value(value));
     }
 
@@ -562,6 +576,17 @@ impl IpIntelligenceDataBase {
     pub fn set_string_no_value(&mut self, name: impl AsRef<str>, message: impl Into<String>) {
         let key = self.no_value_key(name.as_ref());
         self.strings.insert(
+            key,
+            ValueStore::NoValue {
+                message: message.into(),
+            },
+        );
+    }
+
+    /// Record that a WKT property had no value, with a message.
+    pub fn set_wkt_string_no_value(&mut self, name: impl AsRef<str>, message: impl Into<String>) {
+        let key = self.no_value_key(name.as_ref());
+        self.wkt_strings.insert(
             key,
             ValueStore::NoValue {
                 message: message.into(),
@@ -631,11 +656,28 @@ impl IpIntelligenceDataBase {
     // -- plain getters ------------------------------------------------------
 
     /// Read a plain string property by name, as the generated string accessors
-    /// do.
+    /// do. A WKT property reads as its text.
     pub fn string(&self, name: &str) -> AspectPropertyValue<String> {
-        match self.strings.get(&key(name)) {
-            Some(store) => value_store_to_aspect(Some(store)),
+        let key = key(name);
+        if let Some(store) = self.strings.get(&key) {
+            return value_store_to_aspect(Some(store));
+        }
+        match self.wkt_strings.get(&key) {
+            Some(store) => value_store_converted(store),
             None => self.deferred_value(name, |values| values.string(name)),
+        }
+    }
+
+    /// Read a plain WKT property by name, as the generated WKT accessors do. A
+    /// property set as a string reads as WKT holding that text.
+    pub fn wkt_string(&self, name: &str) -> AspectPropertyValue<WktString> {
+        let key = key(name);
+        if let Some(store) = self.wkt_strings.get(&key) {
+            return value_store_to_aspect(Some(store));
+        }
+        match self.strings.get(&key) {
+            Some(store) => value_store_converted(store),
+            None => self.deferred_value(name, |values| values.wkt_string(name)),
         }
     }
 
@@ -696,6 +738,15 @@ fn value_store_to_aspect<T: Clone>(store: Option<&ValueStore<T>>) -> AspectPrope
         Some(ValueStore::Value(value)) => AspectPropertyValue::new(value.clone()),
         Some(ValueStore::NoValue { message }) => AspectPropertyValue::no_value(message.clone()),
         None => AspectPropertyValue::empty(),
+    }
+}
+
+/// Convert a [`ValueStore`] into an [`AspectPropertyValue`] of another type,
+/// for a WKT value read as a string or a string read as WKT.
+fn value_store_converted<T: Clone, U: From<T>>(store: &ValueStore<T>) -> AspectPropertyValue<U> {
+    match store {
+        ValueStore::Value(value) => AspectPropertyValue::new(U::from(value.clone())),
+        ValueStore::NoValue { message } => AspectPropertyValue::no_value(message.clone()),
     }
 }
 
@@ -997,6 +1048,53 @@ mod tests {
             .find(|m| m.name == "CountryCodesGeographical")
             .unwrap();
         assert_eq!(codes.value_type, PropertyValueType::KeyValueList);
+        let areas = meta.iter().find(|m| m.name == "Areas").unwrap();
+        assert_eq!(areas.value_type, PropertyValueType::WktString);
+    }
+
+    #[test]
+    fn a_wkt_value_reads_as_wkt_and_as_text() {
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        data.set_wkt_string("Areas", "POINT(2 4)");
+        assert_eq!(data.areas().value().unwrap().as_str(), "POINT(2 4)");
+        assert_eq!(
+            data.wkt_string("areas").value().unwrap().as_str(),
+            "POINT(2 4)"
+        );
+        assert_eq!(data.string("Areas").value().unwrap(), "POINT(2 4)");
+        assert_eq!(
+            data.get("Areas").unwrap(),
+            PropertyValue::WktString(WktString::new("POINT(2 4)"))
+        );
+        assert_eq!(data.keys(), ["areas"]);
+    }
+
+    #[test]
+    fn a_wkt_value_with_no_value_carries_its_reason() {
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        data.set_wkt_string_no_value("Areas", "no area for this range");
+        assert_eq!(
+            data.areas().no_value_message(),
+            Some("no area for this range")
+        );
+        assert_eq!(
+            data.string("Areas").no_value_message(),
+            Some("no area for this range")
+        );
+        assert_eq!(
+            data.get("Areas").unwrap_err().message,
+            "no area for this range"
+        );
+        assert_eq!(data.keys(), ["areas"]);
+    }
+
+    /// A reader written for the crates before `Areas` had a WKT type sets it
+    /// as a string, and the WKT accessor still reads it.
+    #[test]
+    fn an_area_set_as_a_string_reads_as_wkt() {
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        data.set_string("Areas", "POINT(2 4)");
+        assert_eq!(data.areas().value().unwrap().as_str(), "POINT(2 4)");
     }
 
     /// A reader over fixed values that counts how often each property is read.
@@ -1299,6 +1397,10 @@ mod tests {
         );
         assert_eq!(
             data.string("Areas").no_value_message(),
+            Some("the native read failed")
+        );
+        assert_eq!(
+            data.areas().no_value_message(),
             Some("the native read failed")
         );
     }
