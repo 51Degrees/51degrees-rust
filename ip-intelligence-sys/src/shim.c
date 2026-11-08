@@ -246,6 +246,15 @@ int fiftyoneDegreesShimIpiGetDataSetNextUpdate(
 }
 
 /*
+ * Returns the size of an IP Intelligence data file's header in bytes, being
+ * how much of a data file the C library compares to find a copy of it to
+ * reuse.
+ */
+size_t fiftyoneDegreesShimIpiGetHeaderSize(void) {
+    return sizeof(fiftyoneDegreesDataSetIpiHeader);
+}
+
+/*
  * Returns the number of headers the data set reads the client IP from, or zero
  * when no data set is available. Their names are read one at a time with
  * fiftyoneDegreesShimIpiGetUniqueHeaderName, in the data set's priority order.
