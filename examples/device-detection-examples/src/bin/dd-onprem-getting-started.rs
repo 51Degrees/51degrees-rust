@@ -310,9 +310,8 @@ mod tests {
  * simplest end-to-end use of the native Hash engine for device detection.
  *
  * The example builds an on-premise pipeline from a Hash data file with the
- * convenience `DeviceDetectionPipelineBuilder::on_premise(data_file)`. The builder
- * places an optional UA-CH high-entropy decoder before the native Hash engine,
- * with usage sharing turned off. The pipeline is built once and reused as a factory for
+ * convenience `DeviceDetectionPipelineBuilder::on_premise(data_file)`, with
+ * usage sharing turned off. The pipeline is built once and reused as a factory for
  * many `FlowData` instances, which is the recommended lifecycle: one long-lived
  * pipeline (often a process-wide singleton) and a short-lived flow data per
  * request.

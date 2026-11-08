@@ -44,8 +44,7 @@ use axum::response::Html;
 use axum::routing::get;
 use axum::Router;
 use fiftyone_device_detection::{
-    DeviceDetectionOnPremiseEngineBuilder, PerformanceProfile, UachJsConversionElement,
-    DEVICE_DATA_KEY,
+    DeviceDetectionOnPremiseEngineBuilder, PerformanceProfile, DEVICE_DATA_KEY,
 };
 use fiftyone_pipeline_core::FlowElement;
 use fiftyone_pipeline_engines_fiftyone::ShareUsageElement;
@@ -97,11 +96,10 @@ pub fn build_app(
     let available = Arc::new(engine.available_properties());
 
     // Assemble the application's own elements: usage sharing first (REQUIRED for
-    // a web example), then the UA-CH high-entropy decoder, then the Hash engine.
-    // WebPipeline wraps these with the sequence, set-headers, JSON and
-    // JavaScript elements.
-    let mut elements: Vec<Arc<dyn FlowElement>> =
-        vec![Arc::new(UachJsConversionElement::new()), engine];
+    // a web example), then the Hash engine, which reads the high-entropy client
+    // hints itself. WebPipeline wraps these with the sequence, set-headers, JSON
+    // and JavaScript elements.
+    let mut elements: Vec<Arc<dyn FlowElement>> = vec![engine];
     if share_usage {
         elements.insert(0, Arc::new(ShareUsageElement::with_defaults()));
     }

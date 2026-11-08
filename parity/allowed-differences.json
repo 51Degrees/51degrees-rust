@@ -361,5 +361,10 @@
     "dotnet": {"pattern": ["Property 'Country' not found in data for element 'ip'. The reason for this is unknown. Please check that the aspect and property name are correct."]},
     "rust": {"pattern": ["Property 'Country' not found in data for element 'ip'. This is because your license or data file does not include this property. To see which licenses include it, see *"]},
     "reason": "The ASN file has no Country. For a property the data file does not hold, both sides give the upgrade reason when the engine's data type has a typed accessor for the name. .NET's MissingPropertyService looks for the accessor among the properties IIpDataOnPremise declares, which are none, as Type.GetProperties on an interface leaves out those of the interfaces it extends, so it never sees IIpIntelligenceData's Country and gives the unknown reason. The crates find the accessor and give the upgrade reason the service's own documentation describes."
+  },
+  {
+    "path": "*device.*",
+    "cases": ["uach-ghev-query-then-cookie"],
+    "reason": "With high entropy values in both the query string and a cookie, the C library turns whichever it meets first in the evidence it is given into client hints. The crates give it the evidence in the order it was added, so here it uses the query string's macOS values. .NET gives it the evidence from a map ordered by key, so the cookie always comes first and it uses the Android values. evidence.md and uach-high-entropy-decoder.md say the query string value is used, so the crates follow the specification in this case and .NET does not. With the cookie first, both use the cookie. The entry goes when the C library looks at the query string first whatever the order. the_decoder_element_changes_no_device_answer in device-detection-onpremise/tests/high_entropy_values.rs holds the crates' PlatformName and PlatformVersion for this evidence. A web request through build_evidence adds cookies before query parameters, so there the crates use the cookie as .NET does, while the cloud engine sends the query value."
   }
 ]

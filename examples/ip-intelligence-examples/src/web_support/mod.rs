@@ -94,9 +94,8 @@ fn display_value<T>(
 /// candidate as `value (weight)` ordered high weighting first and joined with
 /// commas. A no-value carries the engine's explanation.
 ///
-/// This is how the genuinely weighted properties (the country-code distributions
-/// and `Mcc`) are shown: a single IP can overlap several countries, so the value
-/// is a weighted list rather than one definite value.
+/// This is how a weighted property is shown: a single IP can overlap several
+/// countries, so the value is a weighted list rather than one definite value.
 fn display_weighted(
     property: &str,
     label: &str,
