@@ -465,6 +465,46 @@
     }
   },
   {
+    "id": "ip-v6-well-known-prefix",
+    "about": "An IPv6 address holding an IPv4 address under the RFC 6052 prefix 64:ff9b::/96, which is looked up as IPv6 and written in hexadecimal.",
+    "evidence": {
+      "server.client-ip": "64:ff9b::8.8.8.8",
+      "query.session-id": "parity-ip-v6-well-known-prefix"
+    }
+  },
+  {
+    "id": "ip-v6-zone",
+    "about": "An IPv6 address with a zone index, which is dropped.",
+    "evidence": {
+      "server.client-ip": "fe80::1%1",
+      "query.session-id": "parity-ip-v6-zone"
+    }
+  },
+  {
+    "id": "ip-v4-number",
+    "about": "An IPv4 address written as one number, which is not read as an address.",
+    "evidence": {
+      "server.client-ip": "3232235521",
+      "query.session-id": "parity-ip-v4-number"
+    }
+  },
+  {
+    "id": "ip-v4-three-parts",
+    "about": "An IPv4 address with three parts, which is not read as an address.",
+    "evidence": {
+      "server.client-ip": "1.2.3",
+      "query.session-id": "parity-ip-v4-three-parts"
+    }
+  },
+  {
+    "id": "ip-v4-leading-zero",
+    "about": "An IPv4 address with a leading zero in one part, which is not read as an address.",
+    "evidence": {
+      "server.client-ip": "012.1.2.3",
+      "query.session-id": "parity-ip-v4-leading-zero"
+    }
+  },
+  {
     "id": "ua-and-ip",
     "about": "A User-Agent and an address together.",
     "evidence": {
