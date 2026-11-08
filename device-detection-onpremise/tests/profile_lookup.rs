@@ -21,8 +21,9 @@
  * ********************************************************************* */
 
 //! The engine looks up the profiles holding a property value in the data
-//! set it has loaded, from the index of the properties the builder names, and
-//! a refresh indexes the same properties again.
+//! set it has loaded, from the index of the properties the builder names,
+//! gives each profile's values, and a refresh indexes the same properties
+//! again.
 //!
 //! The tests need a Hash data file with the `BrowserName` property, the one
 //! `51DEGREES_DD_PATH` names or the Lite file in the `cxx` submodule, and skip
@@ -32,7 +33,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fiftyone_device_detection_onpremise::{
-    DeviceDetectionOnPremiseEngine, DeviceDetectionOnPremiseEngineBuilder,
+    DeviceDetectionOnPremiseEngine, DeviceDetectionOnPremiseEngineBuilder, PROFILE_ID_PROPERTY_NAME,
 };
 use fiftyone_device_detection_shared::DEVICE_DATA_KEY;
 use fiftyone_native::dd::{HashOptions, Manager};
@@ -205,6 +206,120 @@ fn an_id_given_as_profile_ids_evidence_gives_the_value() {
         }
     }
     assert!(checked > 0, "no value is held by any profile");
+}
+
+/// Each value's profiles are those its ids give, in the same order, each
+/// holding its id as text and the value. The first profile found gives every
+/// property the engine gives for its id as profile ids evidence, with the
+/// same value, and a value no profile holds gives none.
+#[test]
+fn the_profiles_of_a_value_are_those_its_ids_give() {
+    let Some(path) = data_file() else {
+        return;
+    };
+    let engine = DeviceDetectionOnPremiseEngineBuilder::new(&path)
+        .indexed_property(BROWSER_NAME)
+        .build()
+        .expect("the data file loads");
+    let Some(values) = browser_names(&engine) else {
+        return;
+    };
+    let mut first = None;
+    for (value, found) in values.iter().zip(ids(&engine, &values)) {
+        let profiles = engine
+            .profiles_for_property_value(BROWSER_NAME, value)
+            .expect("the profiles read");
+        assert_eq!(profiles.len(), found.len(), "{value}");
+        for (profile, id) in profiles.iter().zip(&found) {
+            let held = profile
+                .get(PROFILE_ID_PROPERTY_NAME)
+                .expect("ProfileId has a value");
+            assert_eq!(held.as_str(), Some(id.to_string().as_str()));
+            let name = profile.get(BROWSER_NAME).expect("BrowserName has a value");
+            assert_eq!(name.as_str(), Some(value.as_str()), "profile {id}");
+        }
+        if first.is_none() {
+            first = found.first().copied().zip(profiles.into_iter().next());
+        }
+    }
+    let (id, profile) = first.expect("a value is held by a profile");
+
+    let element: Arc<dyn FlowElement> = engine.clone();
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("the pipeline builds");
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add(PROFILE_IDS_KEY, id.to_string())
+            .build(),
+    );
+    data.process().expect("the profile id processes");
+    let device = data.get(DEVICE_DATA_KEY).expect("device data");
+    let keys = device.keys();
+    assert!(keys
+        .iter()
+        .any(|key| key.eq_ignore_ascii_case(BROWSER_NAME)));
+    for key in &keys {
+        assert_eq!(profile.get(key).ok(), device.get(key).ok(), "{key}");
+    }
+
+    let none = engine
+        .profiles_for_property_value(BROWSER_NAME, "No such browser")
+        .expect("the lookup succeeds");
+    assert!(none.is_empty());
+}
+
+/// The ids and reader of a value are the ids the engine gives for it, and
+/// the reader gives each id the profile `profiles_for_property_value` gives,
+/// with the same properties and values.
+#[test]
+fn the_reader_of_a_value_gives_the_profiles_of_its_ids() {
+    let Some(path) = data_file() else {
+        return;
+    };
+    let engine = DeviceDetectionOnPremiseEngineBuilder::new(&path)
+        .indexed_property(BROWSER_NAME)
+        .build()
+        .expect("the data file loads");
+    let Some(values) = browser_names(&engine) else {
+        return;
+    };
+    let mut compared = 0;
+    for (value, found) in values.iter().zip(ids(&engine, &values)) {
+        let (ids, reader) = engine
+            .profile_ids_and_reader_for_property_value(BROWSER_NAME, value)
+            .expect("the ids are found");
+        assert_eq!(ids, found, "{value}");
+        let profiles = engine
+            .profiles_for_property_value(BROWSER_NAME, value)
+            .expect("the profiles read");
+        assert_eq!(profiles.len(), ids.len(), "{value}");
+        for (id, profile) in ids.iter().zip(&profiles) {
+            let read = reader.read_profile(*id);
+            let keys = profile.keys();
+            assert_eq!(read.keys(), keys, "profile {id}");
+            // Every value of the first profile, and the id and key property
+            // of the rest, as reading every value of every profile is slow.
+            let names: Vec<&str> = if compared == 0 {
+                keys.iter().map(String::as_str).collect()
+            } else {
+                vec![PROFILE_ID_PROPERTY_NAME, BROWSER_NAME]
+            };
+            for name in names {
+                assert_eq!(
+                    read.get(name).ok(),
+                    profile.get(name).ok(),
+                    "profile {id} {name}"
+                );
+            }
+            compared += 1;
+        }
+    }
+    assert!(
+        compared > 0,
+        "no value of {BROWSER_NAME} is held by a profile"
+    );
 }
 
 /// An engine restricted to another property still indexes and finds the

@@ -72,27 +72,11 @@
     "reason": "json-builder.md says the nullreason meta-Property \"MUST be added with a string message that explains why this Property does not have a value\" where the Property's value is null, so the crates write the reason .NET gives for IpV6 having no value. .NET leaves IpV6 out of its JSON then, and writes no reason."
   },
   {
-    "path": "*ip.areas",
-    "kind": "type",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "data": "enterprise",
-    "reason": "The crates give Areas as a string, where .NET gives it as a WKT value, which its JSON writes as an object.",
-    "issue": 226
-  },
-  {
     "path": "properties.ip.iprange*",
     "kind": "type",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "data": "enterprise",
     "reason": "The crates give IpRangeStart and IpRangeEnd as strings, where .NET gives IP addresses.",
-    "issue": 226
-  },
-  {
-    "path": "*ip.iprange*",
-    "kind": "value",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "data": "enterprise",
-    "reason": "The crates give an IPv6 range in full, 2a00:23c0:0000:0000:0000:0000:0000:0000, where .NET gives the compressed form RFC 5952 recommends, 2a00:23c0::, in the properties and in the JSON.",
     "issue": 226
   },
   {
@@ -196,8 +180,8 @@
     "path": "configuration.error",
     "kind": "value",
     "cases": ["configuration-unknown-builder", "configuration-unknown-builder-in-group"],
-    "dotnet": {"value": ["Configuration failed to build.\nBuilderName: NoSuchElementBuilder\nSubElement Builder Names: No SubElements\nCould not find builder matching 'NoSuchElementBuilder' for element 2. Available builders are: CustomShareUsageBuilder,SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder\nNo Inner Exception.\n", "Configuration failed to build.\nBuilderName: BuilderName not set\nSubElement Builder Names: DeviceDetectionHashEngineBuilder,NoSuchEngineBuilder\nCould not find builder matching 'NoSuchEngineBuilder' for element 1 in element 1. Available builders are: CustomShareUsageBuilder,SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder\nNo Inner Exception.\n"]},
-    "rust": {"value": ["Configuration failed to build.\nBuilderName: NoSuchElementBuilder\nSubElement Builder Names: No SubElements\nCould not find builder matching 'NoSuchElementBuilder' for element 2. Available builders are: SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder\nNo Inner Exception.\n", "Configuration failed to build.\nBuilderName: BuilderName not set\nSubElement Builder Names: DeviceDetectionHashEngineBuilder,NoSuchEngineBuilder\nCould not find builder matching 'NoSuchEngineBuilder' for element 1 in element 1. Available builders are: SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder\nNo Inner Exception.\n"]},
+    "dotnet": {"value": ["Configuration failed to build.\nBuilderName: NoSuchElementBuilder\nSubElement Builder Names: No SubElements\nCould not find builder matching 'NoSuchElementBuilder' for element 2. Available builders are: CustomShareUsageBuilder,SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder,NativeEngineBuilder,PropertyKeyedDeviceEngineBuilder,TacEngineBuilder\nNo Inner Exception.\n", "Configuration failed to build.\nBuilderName: BuilderName not set\nSubElement Builder Names: DeviceDetectionHashEngineBuilder,NoSuchEngineBuilder\nCould not find builder matching 'NoSuchEngineBuilder' for element 1 in element 1. Available builders are: CustomShareUsageBuilder,SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder,NativeEngineBuilder,PropertyKeyedDeviceEngineBuilder,TacEngineBuilder\nNo Inner Exception.\n"]},
+    "rust": {"value": ["Configuration failed to build.\nBuilderName: NoSuchElementBuilder\nSubElement Builder Names: No SubElements\nCould not find builder matching 'NoSuchElementBuilder' for element 2. Available builders are: SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder,NativeEngineBuilder,PropertyKeyedDeviceEngineBuilder,TacEngineBuilder\nNo Inner Exception.\n", "Configuration failed to build.\nBuilderName: BuilderName not set\nSubElement Builder Names: DeviceDetectionHashEngineBuilder,NoSuchEngineBuilder\nCould not find builder matching 'NoSuchEngineBuilder' for element 1 in element 1. Available builders are: SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder,NativeEngineBuilder,PropertyKeyedDeviceEngineBuilder,TacEngineBuilder\nNo Inner Exception.\n"]},
     "reason": "A builder name that matches no builder. .NET lists every type in the loaded assemblies that has a Build method returning a Flow Element, so it also lists CustomShareUsageBuilder, the builder of the .NET program's own usage sharing element, which is in the program's own assembly. The crates list the builders added to the program's registry, which are the others .NET lists, in .NET's order. The comparison leaves the abstract base builders .NET lists out of both sides before comparing, so the .NET side is pinned without them."
   },
   {
@@ -207,6 +191,14 @@
     "dotnet": {"value": ["Configuration failed to build.\nBuilderName: TranslationEngineBuilder\nSubElement Builder Names: No SubElements\nException has been thrown by the target of an invocation.\nAt least one property translation must be configured. (Parameter 'translations')\n"]},
     "rust": {"value": ["Configuration failed to build.\nBuilderName: TranslationEngineBuilder\nSubElement Builder Names: No SubElements\nAt least one property translation must be configured. (Parameter 'translations')\nNo Inner Exception.\n"]},
     "reason": "The translation engine refuses to be built with no translation, and a configuration cannot give one. .NET gives the engine's refusal as the inner message of Exception has been thrown by the target of an invocation., as it gives anything a builder throws, and the crates give the refusal itself, as each crate's configuration tests record. The refusal's text is the same."
+  },
+  {
+    "path": "configuration.error",
+    "kind": "value",
+    "cases": ["configuration-property-keyed-no-key-property"],
+    "dotnet": {"value": ["Configuration failed to build.\nBuilderName: PropertyKeyedDeviceEngineBuilder\nSubElement Builder Names: No SubElements\nException has been thrown by the target of an invocation.\nKeyProperty must be set before building\n"]},
+    "rust": {"value": ["Configuration failed to build.\nBuilderName: PropertyKeyedDeviceEngineBuilder\nSubElement Builder Names: No SubElements\nKeyProperty must be set before building\nNo Inner Exception.\n"]},
+    "reason": "The property keyed engine refuses to be built with no key property, and the configuration gives none. .NET gives the builder's refusal as the inner message of Exception has been thrown by the target of an invocation., as it gives anything a builder throws, and the crates give the refusal itself, as the crate's configuration tests record. The refusal's text is the same."
   },
   {
     "path": "configuration.concurrent",
@@ -305,6 +297,28 @@
     "reason": "An entry starting with a slash, here /terms/1.txt, is an absolute-path reference by RFC 3986 section 4.2, not a URI, so the crate leaves it out, as .NET's engine documentation asks when it says each entry must be a valid absolute URI. .NET's Uri.TryCreate with UriKind.Absolute reads such a string as a file path on Linux and macOS but not on Windows, so .NET writes file:///terms/1.txt on the comparison's Linux runner and leaves the entry out on Windows. Over the Enterprise file this case first differs at a crawler the two entries for crawlers with no usable product token allow, so this entry is for the Lite file until those entries come out."
   },
   {
+    "path": "propertyKeyedEngines[*].properties[*].type",
+    "kind": "value",
+    "dotnet": {"value": ["dotnet:IReadOnlyList`1"]},
+    "rust": {"value": ["keyValueList"]},
+    "reason": "Profiles is a list of each profile's device data. .NET types it as IReadOnlyList<IDeviceData>, which the .NET program writes as its .NET type name, and the crates as keyValueList, the type they give a list of records, which the JSON builder writes as a list of objects.",
+    "issue": 225
+  },
+  {
+    "path": "indexedValues.NativeModel.*",
+    "data": "enterprise",
+    "cases": ["property-keyed-none"],
+    "reason": "The crates list each NativeModel value the C library's index holds exactly, as the draft specification of the lookup, specifications#62, asks. .NET 4.5.180's engine keys its own index ignoring case, so it counts the values that differ only in case together under the spelling it met first. The step \"Check the NativeModel differences are of case alone\" fails on any difference here that case alone does not explain. This comes out when .NET's engines use the C library's index, 51degrees-dotnet#30.",
+    "issue": 225
+  },
+  {
+    "path": "profileIds*",
+    "data": "enterprise",
+    "cases": ["property-keyed-native-*", "property-keyed-profile-*"],
+    "reason": "The crates find a native model name exactly, through the C library's index, as the draft specification of the lookup, specifications#62, asks. .NET 4.5.180's engine finds it ignoring case, so it gives the profiles of every value that differs only in case, in ascending order, and a profile holding two such values twice. A profile case gives the value that first found its profile, which may be a native model name. The step \"Check the NativeModel differences are of case alone\" fails on any difference here that case alone does not explain, and on any profile case giving a TAC whose ids differ. This comes out when .NET's engines use the C library's index, 51degrees-dotnet#30.",
+    "issue": 225
+  },
+  {
     "path": "engineMetadata.dataSourceTier",
     "kind": "value",
     "cases": ["metadata-ip*"],
@@ -319,16 +333,6 @@
     "dotnet": {"value": ["ipAddress"]},
     "rust": {"value": ["string"]},
     "reason": "The crates' value types have no IP address, so Ip, IpV6, IpRangeStart and IpRangeEnd are strings, where .NET gives IP addresses.",
-    "issue": 226
-  },
-  {
-    "path": "engineMetadata.properties.Areas.type",
-    "kind": "value",
-    "cases": ["metadata-ip*"],
-    "data": "enterprise",
-    "dotnet": {"value": ["wktString"]},
-    "rust": {"value": ["string"]},
-    "reason": "The crates' value types have no WKT value, so Areas is a string, where .NET gives a WKT value.",
     "issue": 226
   },
   {

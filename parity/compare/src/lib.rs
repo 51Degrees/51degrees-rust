@@ -398,6 +398,11 @@ pub fn compare_case(case: &Case, dotnet: &Value, rust: &Value) -> Vec<Difference
         "engineMetadata",
         "derived",
         "robotsTxtEngine",
+        "propertyKeyedEngines",
+        "indexedValues",
+        "profileIds",
+        "warnings",
+        "hardwareJson",
     ] {
         out.data(field, field_of(&dotnet, field), field_of(&rust, field));
     }
@@ -1925,6 +1930,59 @@ mod tests {
         let differences = compare_case(&case, &robots_txt_line(None), &rust);
         assert_eq!(differences.len(), 1);
         assert_eq!(differences[0].path, "robotsTxtEngine.evidenceKeys[0]");
+    }
+
+    /// A line for a TAC and Native case, as both producers write it.
+    fn property_keyed_line(ids: Option<Vec<u64>>) -> Value {
+        json!({
+            "id": "property-keyed-tac-value-000001",
+            "processError": null,
+            "errors": [],
+            "warnings": [],
+            "profileIds": ids,
+            "properties": {"device": {
+                "profileid": {"name": "ProfileId", "type": "string", "value": "17"}
+            }},
+            "hardwareJson": {"profiles": []},
+            "propertyKeyedEngines": null,
+            "indexedValues": {"TAC": {"00000000": 7}}
+        })
+    }
+
+    #[test]
+    fn a_changed_property_keyed_answer_is_named_by_its_field() {
+        let case = data_case("property-keyed-tac-value-000001");
+        let line = property_keyed_line(Some(vec![17, 18]));
+        assert!(compare_case(&case, &line, &line).is_empty());
+
+        let differences = compare_case(&case, &line, &property_keyed_line(Some(vec![18, 17])));
+        let paths: Vec<&str> = differences.iter().map(|d| d.path.as_str()).collect();
+        assert_eq!(paths, ["profileIds[0]", "profileIds[1]"]);
+
+        let differences = compare_case(&case, &line, &property_keyed_line(None));
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].path, "profileIds");
+        assert_eq!(differences[0].kind, Kind::Presence);
+
+        let mut rust = line.clone();
+        rust["properties"]["device"]["profileid"]["value"] = json!("18");
+        rust["indexedValues"]["TAC"]["00000001"] = json!(1);
+        rust["warnings"] = json!([{"element": "hardware", "message": "The warning."}]);
+        rust["hardwareJson"]["profiles"] = json!([{"profileid": "17"}]);
+        let differences = compare_case(&case, &line, &rust);
+        let paths: Vec<(&str, Kind)> = differences
+            .iter()
+            .map(|d| (d.path.as_str(), d.kind))
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                ("properties.device.profileid", Kind::Value),
+                ("indexedValues.TAC.00000001", Kind::OnlyInRust),
+                ("warnings[0]", Kind::OnlyInRust),
+                ("hardwareJson.profiles[0]", Kind::OnlyInRust),
+            ]
+        );
     }
 
     #[test]
