@@ -183,11 +183,7 @@ impl State {
         let lookup = match key {
             Some(key) => {
                 let property_name = key.name().to_owned();
-                if !source
-                    .indexed_properties()
-                    .iter()
-                    .any(|indexed| *indexed == property_name)
-                {
+                if !source.indexed_properties().contains(&property_name) {
                     log::warn!(
                         "Property '{property_name}' is not indexed by the Device Detection \
                          engine, so each lookup reads every profile. Name it to \
