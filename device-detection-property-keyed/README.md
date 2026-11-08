@@ -80,6 +80,13 @@ and TAC data files. The free Lite file holds neither, so with it the
 engines accept no evidence and write nothing. "Data files and pricing"
 under "Find out more" says how to get the other files.
 
+A pipeline made from a configuration file written for .NET finds the
+engines under .NET's names, `TacEngineBuilder`, `NativeEngineBuilder` and
+`PropertyKeyedDeviceEngineBuilder`, each also without `Builder`, once
+`configuration::add_builders` has added them to the registry. Their
+settings are .NET's, being `KeyProperty` and `ElementDataKey`, with .NET's
+cache, lazy loading and property settings read and having no effect.
+
 ## License
 
 Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the

@@ -52,11 +52,15 @@ const NATIVE_MODEL_MIN_LENGTH: usize = 2;
 /// .NET's message for a generic builder given no key property.
 const NO_KEY_PROPERTY: &str = "KeyProperty must be set before building";
 
-/// .NET's message for an engine given an empty key property.
-const EMPTY_KEY_PROPERTY: &str = "keyProperty is required and cannot be null or empty.";
+/// .NET's message for an engine given an empty key property, with the
+/// parameter name its `ArgumentException` adds.
+const EMPTY_KEY_PROPERTY: &str =
+    "keyProperty is required and cannot be null or empty. (Parameter 'keyProperty')";
 
-/// .NET's message for an engine given an empty data key.
-const EMPTY_DATA_KEY: &str = "elementDataKey is required and cannot be null or empty.";
+/// .NET's message for an engine given an empty data key, with the parameter
+/// name its `ArgumentException` adds.
+const EMPTY_DATA_KEY: &str =
+    "elementDataKey is required and cannot be null or empty. (Parameter 'elementDataKey')";
 
 /// Which values of the key property an engine looks up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -95,9 +95,14 @@
 //! When both engines are in one pipeline and the request gives both values,
 //! the profiles of the engine added first come first, and a profile both
 //! engines find is listed twice, as in .NET.
+//!
+//! A pipeline made from a configuration file written for .NET finds the
+//! engines under .NET's builder names once [`configuration::add_builders`]
+//! has added them to the registry.
 
 #![warn(missing_docs)]
 
+pub mod configuration;
 pub mod constants;
 mod engine;
 mod number;
