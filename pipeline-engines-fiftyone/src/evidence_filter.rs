@@ -22,16 +22,20 @@
 
 //! The evidence filter used by usage sharing.
 //!
-//! Usage sharing accepts evidence by rule rather than by a fixed whitelist, so
-//! it implements [`EvidenceKeyFilter`] directly. It realises the
-//! [accepted-evidence rules](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/usage-sharing-element.md#accepted-evidence).
+//! Usage sharing accepts no evidence. It shares what it finds in the flow
+//! data's evidence and in the web request, and this filter decides which of
+//! those keys are shared, by rule rather than by a fixed whitelist, so it
+//! implements [`EvidenceKeyFilter`] directly. It realises the rules of the
+//! [usage sharing specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/usage-sharing-element.md).
 //! The prefix of a key is everything before its first `.`, and keys are
 //! compared without regard to case.
 //!
 //! `id.email`, `id.salt`, `request-query` and `request-path`, as the whole key
 //! or after a `.`, are never shared, even when sharing all evidence. So
 //! `server.request-path` and `query.id.email` are never shared, while
-//! `query.valid.email` is an ordinary query string parameter.
+//! `query.valid.email` is an ordinary query string parameter. Nor is the key
+//! `server.http-request`, under which a web integration gives the web
+//! request, only the values read from it.
 //!
 //! Unless all evidence is shared:
 //!
@@ -48,8 +52,8 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 
 use fiftyone_pipeline_core::constants::{
-    EVIDENCE_COOKIE_PREFIX, EVIDENCE_HTTP_HEADER_PREFIX, EVIDENCE_QUERY_PREFIX, EVIDENCE_SEPARATOR,
-    EVIDENCE_SESSION_PREFIX,
+    EVIDENCE_COOKIE_PREFIX, EVIDENCE_HTTP_HEADER_PREFIX, EVIDENCE_HTTP_REQUEST_KEY,
+    EVIDENCE_QUERY_PREFIX, EVIDENCE_SEPARATOR, EVIDENCE_SESSION_PREFIX,
 };
 use fiftyone_pipeline_core::EvidenceKeyFilter;
 
@@ -147,7 +151,7 @@ impl EvidenceKeyFilterShareUsage {
     /// The core rule, shared by this filter and the tracker filter.
     fn include_inner(&self, key: &str) -> bool {
         let key = lowercase(key);
-        if is_never_shared(&key) {
+        if is_never_shared(&key) || key == EVIDENCE_HTTP_REQUEST_KEY {
             return false;
         }
         if self.share_all {
@@ -229,6 +233,19 @@ impl EvidenceKeyFilter for EvidenceKeyFilterShareUsageTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_web_request_key_is_never_shared() {
+        for filter in [
+            EvidenceKeyFilterShareUsage::new(Vec::<&str>::new(), None),
+            EvidenceKeyFilterShareUsage::share_all(),
+        ] {
+            assert!(!filter.include("server.http-request"));
+            assert!(!filter.include("Server.HTTP-Request"));
+            assert!(filter.include("server.http-requests"));
+            assert!(filter.include("query.http-request"));
+        }
+    }
 
     #[test]
     fn headers_share_by_default_but_blocked_are_excluded() {

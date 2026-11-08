@@ -118,107 +118,18 @@
     "issue": 223
   },
   {
-    "path": "*device.crawler*",
-    "kind": "value",
-    "cases": ["ua-curl"],
-    "data": "enterprise",
-    "dotnet": {"value": [[""]]},
-    "rust": {"value": [[]]},
-    "reason": "The crates give an empty list where .NET gives a list holding one empty string.",
-    "issue": 224
-  },
-  {
-    "path": "properties.device.*",
-    "kind": "state",
-    "cases": ["no-evidence", "ua-empty", "ua-long", "uach-android-no-ua", "ip-*"],
-    "dotnet": {"noValue": true},
-    "rust": {"value": ["", []]},
-    "reason": "With no User-Agent, an empty one, or one longer than the C code reads (a 2,000 character User-Agent, which 51degrees-cxx ignores on both sides), the crates give an empty string or an empty list where .NET gives no value.",
-    "issue": 224
-  },
-  {
-    "path": "properties.device.*javascript*",
-    "kind": "state",
-    "dotnet": {"noValue": true},
-    "rust": {"value": [""]},
-    "reason": "For a JavaScript property whose value in the matched profile is empty, the crates give the empty string where .NET gives no value.",
-    "issue": 224
-  },
-  {
-    "path": "properties.device.screenpixels*",
-    "kind": "state",
-    "data": "lite",
-    "dotnet": {"value": [0]},
-    "rust": {"noValue": true},
-    "reason": "A screen size whose data file value does not parse, such as Unknown, has no value in the crates (native_value in device-detection-onpremise), where .NET gives 0. A lost screen size that .NET gives as 0 also passes until the difference is removed.",
-    "issue": 224
-  },
-  {
-    "path": "properties.device.*",
-    "kind": "state",
-    "data": "enterprise",
-    "dotnet": {"value": [0, false]},
-    "rust": {"noValue": true},
-    "reason": "A number or true or false property whose data file value does not parse, such as Unknown or N/A, has no value in the crates (native_value in device-detection-onpremise), where .NET gives 0 or false. This covers more than a hundred properties, and it also lets through a lost answer that .NET gives as 0 or false, such as a false IsMobile, because a value that does not parse and a lost value look the same to the comparer. Removing the difference removes both.",
-    "issue": 224
-  },
-  {
-    "path": "json.device.*",
-    "kind": "type",
-    "dotnet": {"value": [null]},
-    "rust": {"value": ["", []]},
-    "reason": "The JSON holds the empty strings and lists the crates give where .NET gives no value and writes null (properties.device state).",
-    "issue": 224
-  },
-  {
-    "path": "json.device.screenpixels*",
-    "kind": "type",
-    "data": "lite",
-    "dotnet": {"value": [0]},
-    "rust": {"value": [null]},
-    "reason": "A screen size whose data file value does not parse has no value in the crates, so their JSON writes null where .NET writes 0 (properties.device.screenpixels* state). A lost screen size that .NET gives as 0 also passes until the difference is removed.",
-    "issue": 224
-  },
-  {
-    "path": "json.device.screenpixels*nullreason",
-    "kind": "onlyInRust",
-    "data": "lite",
-    "reason": "The crates' JSON gives the reason a screen size whose data file value does not parse has no value, where .NET gives 0 and so no reason (properties.device.screenpixels* state).",
-    "issue": 224
-  },
-  {
-    "path": "json.device.*",
-    "kind": "type",
-    "data": "enterprise",
-    "dotnet": {"value": [0, false]},
-    "rust": {"value": [null]},
-    "reason": "A number or true or false property whose data file value does not parse has no value in the crates, so their JSON writes null where .NET writes 0 or false (properties.device state). It also lets through a lost answer that .NET gives as 0 or false, as that entry says.",
-    "issue": 224
-  },
-  {
-    "path": "json.device.*nullreason",
-    "kind": "onlyInRust",
-    "data": "enterprise",
-    "reason": "The crates' JSON gives the reason a number or true or false property whose data file value does not parse has no value, where .NET gives 0 or false and so no reason (properties.device state).",
-    "issue": 224
-  },
-  {
-    "path": "json.device.*nullreason",
-    "kind": "onlyInDotnet",
-    "reason": "The crates give an empty string or an empty list where .NET gives no value, so only .NET's JSON gives a reason (properties.device state).",
-    "issue": 224
-  },
-  {
     "path": "json.device.*nullreason",
     "kind": "value",
     "reason": "The crates give every Device Detection property with no value the reason No value for property and its name, where .NET says why it has none, such as that the evidence it needs was not supplied (properties.device.* noValueMessage).",
     "issue": 223
   },
   {
-    "path": "json.device",
-    "kind": "order",
-    "reason": "The crates' Device Detection engine adds the match metrics and the matched User-Agents to its data before the data file's values, so the JSON lists them first. .NET lists them after the data file's properties.",
-    "issue": 224
+    "path": "json.device.*javascript*nullreason",
+    "kind": "type",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "dotnet": {"value": [null]},
+    "rust": {"pattern": ["No value for property *"]},
+    "reason": "json-builder.md line 52 says that where the Property value is null the nullreason meta-Property \"MUST be added with a string message that explains why this Property does not have a value\", so the crates give their sentence when the matched profile holds no value for a property. .NET gives no reason then, because the C++ ResultsBase sets no message when the profile holds no value, so its JSON writes null. In the corpus only the JavaScript properties have no value in a matched profile. This entry stays until .NET gives a reason or the specification changes."
   },
   {
     "path": "javascript",
@@ -428,21 +339,6 @@
     "dotnet": {"value": ["weightedList"]},
     "rust": {"value": ["keyValueList"]},
     "reason": "The crates' value types have no weighted list, so each weighted property, being CountryCodesGeographical, CountryCodesPopulation, Mcc and StateGeoNameIdsGeographical, has the type of a list of records, each a value and a weight, which is how the crates give its values. .NET gives a list of weighted values."
-  },
-  {
-    "path": "engineMetadata.properties.*.defaultValue",
-    "kind": "presence",
-    "cases": ["metadata-device*"],
-    "data": "enterprise",
-    "dotnet": {
-      "value": [
-        {"name": "", "description": "", "url": ""},
-        {"name": "", "description": "Indicates that the crawler has unknown use.", "url": ""}
-      ]
-    },
-    "rust": {"value": [null]},
-    "reason": "For CrawlerProductTokens, CrawlerUsage and HardwareName in the Enterprise file, each of which has a value with an empty name, .NET gives that value as the default and the crates give none. The C++ code .NET calls takes the name of the value at the property's default value index, or an empty name when the index is none, and looks that name up among the property's own values. The crates give a default only when the index falls among the property's own values. Every other property's default is the same on both sides.",
-    "issue": 223
   },
   {
     "path": "properties.ip.*",

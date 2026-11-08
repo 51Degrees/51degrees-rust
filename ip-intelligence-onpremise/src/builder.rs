@@ -87,6 +87,7 @@ pub struct IpIntelligenceOnPremiseEngineBuilder {
     data_update_service: Option<Arc<DataUpdateService>>,
     temp_dir: Option<PathBuf>,
     temp_data_copy: bool,
+    reuse_temp_file: bool,
     /// The expected concurrency, or [`None`] to keep the profile's own.
     concurrency: Option<u16>,
     /// The whole data file configuration a pipeline configuration gave, used
@@ -120,6 +121,7 @@ impl IpIntelligenceOnPremiseEngineBuilder {
             data_update_service: None,
             temp_dir: None,
             temp_data_copy: false,
+            reuse_temp_file: false,
             concurrency: None,
             data_file_settings: None,
         }
@@ -167,6 +169,24 @@ impl IpIntelligenceOnPremiseEngineBuilder {
     /// longer reads it. Defaults to false.
     pub fn create_temp_data_copy(mut self, create: bool) -> Self {
         self.temp_data_copy = create;
+        self
+    }
+
+    /// Read a copy of the data file already in the temporary folder, when the
+    /// engine reads a copy, rather than making a new one, as .NET's
+    /// `SetReuseTempFile` does. A file there is taken as the C library takes
+    /// one, when its name starts with the data file's name without its
+    /// extension and is not the data file's name, and it has the data file's
+    /// length and header. The engine removes the copy once it no longer reads
+    /// it, whether it made the copy or found it, as the C library does.
+    /// Defaults to false.
+    ///
+    /// A file in the folder that passes those checks is read as the data, and
+    /// the default folder can be one every local user writes to, as `/tmp` is
+    /// on Linux when `TMPDIR` is not set. With reuse on, name with
+    /// [`Self::temp_dir_path`] a folder only the service writes to.
+    pub fn reuse_temp_file(mut self, reuse: bool) -> Self {
+        self.reuse_temp_file = reuse;
         self
     }
 
@@ -348,6 +368,7 @@ impl IpIntelligenceOnPremiseEngineBuilder {
             self.profile,
             &configuration,
             self.temp_data_copy,
+            self.reuse_temp_file,
         );
         let manager = Manager::open_with_options(
             copy.as_ref()
@@ -368,7 +389,7 @@ impl IpIntelligenceOnPremiseEngineBuilder {
             self.data_source_tier,
             data_file,
         )?
-        .with_temp_dir(self.temp_dir, self.temp_data_copy)
+        .with_temp_dir(self.temp_dir, self.temp_data_copy, self.reuse_temp_file)
         .with_concurrency(self.concurrency))
     }
 
