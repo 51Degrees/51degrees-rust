@@ -79,7 +79,8 @@ pub(crate) enum ValueKind {
     /// holding its text under `value`, as .NET's JSON builder writes it.
     WktString,
     /// A weighted list of string values, the only weighted form IP Intelligence
-    /// uses (`CountryCodesGeographical`, `CountryCodesPopulation`, `Mcc`).
+    /// uses (`CountryCodesGeographical`, `CountryCodesPopulation`, `Mcc` and
+    /// `StateGeoNameIdsGeographical`).
     WeightedString,
 }
 

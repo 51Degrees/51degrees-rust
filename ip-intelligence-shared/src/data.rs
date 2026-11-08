@@ -46,7 +46,8 @@
 //! A small number of properties are *weighted*: the engine returns several
 //! candidate values for them, each with a `0.0..=1.0` confidence weighting. In
 //! the data file these are the `weightedstring` properties
-//! (`CountryCodesGeographical`, `CountryCodesPopulation` and `Mcc`). Their
+//! (`CountryCodesGeographical`, `CountryCodesPopulation`, `Mcc` and
+//! `StateGeoNameIdsGeographical`). Their
 //! accessors return an ordered `Vec<`[`WeightedValue`]`<String>>`, and they also
 //! appear in the dynamic [`ElementData::get`] bag as a
 //! [`PropertyValue::KeyValueList`] of records, each holding the raw weighting
@@ -131,8 +132,9 @@ pub enum ValueStore<T> {
 
 /// A weighted value store for a single weighted property.
 ///
-/// Held only for the genuinely weighted properties (`CountryCodesGeographical`,
-/// `CountryCodesPopulation`, `Mcc`). It mirrors the two states of an
+/// Held only for the weighted properties (`CountryCodesGeographical`,
+/// `CountryCodesPopulation`, `Mcc` and `StateGeoNameIdsGeographical`). It
+/// mirrors the two states of an
 /// [`AspectPropertyValue`]: an ordered list of weighted candidates, or a
 /// no-value message. The list is held high weighting first; the constructor
 /// sorts it for you.
@@ -564,7 +566,8 @@ impl IpIntelligenceDataBase {
     }
 
     /// Store a weighted string property (`CountryCodesGeographical`,
-    /// `CountryCodesPopulation`, `Mcc`) and its dynamic-bag mirror.
+    /// `CountryCodesPopulation`, `Mcc` or `StateGeoNameIdsGeographical`) and
+    /// its dynamic-bag mirror.
     ///
     /// The list is sorted high weighting first and mirrored into the dynamic bag
     /// as a [`PropertyValue::KeyValueList`] of `rawweighting`/`value` records.
@@ -723,8 +726,9 @@ impl IpIntelligenceDataBase {
     ///
     /// Returns [`AspectPropertyValue::NoValue`] when the property is absent or
     /// was recorded as a no-value. The list is ordered high weighting first.
-    /// This is how the genuinely weighted properties (`CountryCodesGeographical`,
-    /// `CountryCodesPopulation`, `Mcc`) are read.
+    /// This is how the weighted properties (`CountryCodesGeographical`,
+    /// `CountryCodesPopulation`, `Mcc` and `StateGeoNameIdsGeographical`) are
+    /// read.
     pub fn weighted_string(&self, name: &str) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
         match self.weighted_strings.get(&key(name)) {
             Some(WeightedStore::Values(list)) => AspectPropertyValue::new(list.clone()),
@@ -1072,6 +1076,62 @@ mod tests {
         data.set_string("CountryCode", "GB");
         let as_trait: &dyn IpIntelligenceData = &data;
         assert_eq!(as_trait.country_code().value().unwrap().as_str(), "GB");
+    }
+
+    /// The generated model weights the four properties .NET's
+    /// `IIpIntelligenceData` declares as weighted lists, and no other.
+    #[test]
+    fn the_weighted_properties_are_the_four_dotnet_declares() {
+        let weighted: Vec<&str> = GENERATED_PROPERTY_TYPES
+            .iter()
+            .filter(|(_, value_type)| *value_type == WEIGHTED_PROPERTY_VALUE_TYPE)
+            .map(|(name, _)| *name)
+            .collect();
+        assert_eq!(
+            weighted,
+            [
+                "CountryCodesGeographical",
+                "CountryCodesPopulation",
+                "Mcc",
+                "StateGeoNameIdsGeographical",
+            ]
+        );
+    }
+
+    /// The six GeoNames identifiers .NET declares as strings, and the
+    /// weighted list of state identifiers, read through typed accessors.
+    #[test]
+    fn the_geonames_identifiers_read_through_typed_accessors() {
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        data.set_string("ContinentGeoNameId", "6255148");
+        data.set_string("CountryGeoNameId", "2635167");
+        data.set_string("CountyGeoNameId", "2639842");
+        data.set_string("RegisteredCountryGeoNameId", "2635167");
+        data.set_string("StateGeoNameId", "6269131");
+        data.set_string("TownGeoNameId", "2639577");
+        data.set_weighted_string(
+            "StateGeoNameIdsGeographical",
+            vec![
+                WeightedValue::new(13_107, "2634895".to_owned()),
+                WeightedValue::new(52_428, "6269131".to_owned()),
+            ],
+        );
+        let as_trait: &dyn IpIntelligenceData = &data;
+        let value = |read: AspectPropertyValue<String>| read.value().unwrap().clone();
+        assert_eq!(value(as_trait.continent_geo_name_id()), "6255148");
+        assert_eq!(value(as_trait.country_geo_name_id()), "2635167");
+        assert_eq!(value(as_trait.county_geo_name_id()), "2639842");
+        assert_eq!(value(as_trait.registered_country_geo_name_id()), "2635167");
+        assert_eq!(value(as_trait.state_geo_name_id()), "6269131");
+        assert_eq!(value(as_trait.town_geo_name_id()), "2639577");
+        let states = as_trait.state_geo_name_ids_geographical();
+        let states: Vec<(&str, u16)> = states
+            .value()
+            .unwrap()
+            .iter()
+            .map(|state| (state.value.as_str(), state.raw_weighting))
+            .collect();
+        assert_eq!(states, [("6269131", 52_428), ("2634895", 13_107)]);
     }
 
     #[test]

@@ -343,6 +343,49 @@ pub fn process_signed(
     signed: &Signed,
     extra: &[(&str, &str)],
 ) -> AgentSignatureData {
+    let mut evidence = signed_evidence(signed);
+    evidence.extend_from_slice(extra);
+    process(pipeline, &evidence)
+}
+
+/// Process a signed request as [`process_signed`] does, and give the web
+/// request a web integration supplies as `server.http-request` with it. The
+/// web request holds every value the evidence holds, as a web integration
+/// gives it, then `request`, whose values replace any of the same key.
+pub fn process_signed_with_request(
+    pipeline: &Arc<Pipeline>,
+    signed: &Signed,
+    extra: &[(&str, &str)],
+    request: &[(&str, &str)],
+) -> AgentSignatureData {
+    let mut evidence = signed_evidence(signed);
+    evidence.extend_from_slice(extra);
+    let mut whole = evidence.clone();
+    whole.extend_from_slice(request);
+    process_with_request(pipeline, &evidence, &whole)
+}
+
+/// Process the evidence with `request` given as the web request.
+pub fn process_with_request(
+    pipeline: &Arc<Pipeline>,
+    evidence: &[(&str, &str)],
+    request: &[(&str, &str)],
+) -> AgentSignatureData {
+    let mut web = Evidence::builder();
+    for (key, value) in request {
+        web = web.add(key, *value);
+    }
+    let mut builder = Evidence::builder().http_request(web.build());
+    for (key, value) in evidence {
+        builder = builder.add(key, *value);
+    }
+    let mut data = pipeline.create_flow_data_with(builder.build());
+    data.process().unwrap();
+    data.get(AgentSignatureElement::KEY).unwrap().clone()
+}
+
+/// The evidence of a signed request arriving at `example.com` over HTTPS.
+fn signed_evidence(signed: &Signed) -> Vec<(&str, &str)> {
     let mut evidence = vec![
         ("header.signature", signed.signature.as_str()),
         ("header.signature-input", signed.signature_input.as_str()),
@@ -352,8 +395,7 @@ pub fn process_signed(
     if let Some(agent) = &signed.signature_agent {
         evidence.push(("header.signature-agent", agent.as_str()));
     }
-    evidence.extend_from_slice(extra);
-    process(pipeline, &evidence)
+    evidence
 }
 
 /// Join several signed requests into one request carrying every signature.

@@ -229,6 +229,85 @@
     }
   },
   {
+    "id": "uach-ghev-query",
+    "about": "The high entropy values of Chrome on macOS as a base 64 query value, with the User-Agent as a header.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "query.51D_GetHighEntropyValues": "eyJhcmNoaXRlY3R1cmUiOiJhcm0iLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMxIn0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lvbkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJDaHJvbWl1bSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJOb3RfQSBCcmFuZCIsInZlcnNpb24iOiIyNC4wLjAuMCJ9XSwibW9iaWxlIjpmYWxzZSwibW9kZWwiOiIiLCJwbGF0Zm9ybSI6Im1hY09TIiwicGxhdGZvcm1WZXJzaW9uIjoiMTUuMS4xIn0=",
+      "query.session-id": "parity-uach-ghev-query"
+    }
+  },
+  {
+    "id": "uach-ghev-cookie",
+    "about": "The high entropy values of Chrome on macOS as a base 64 cookie, with the User-Agent as a header.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "cookie.51D_GetHighEntropyValues": "eyJhcmNoaXRlY3R1cmUiOiJhcm0iLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMxIn0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lvbkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJDaHJvbWl1bSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJOb3RfQSBCcmFuZCIsInZlcnNpb24iOiIyNC4wLjAuMCJ9XSwibW9iaWxlIjpmYWxzZSwibW9kZWwiOiIiLCJwbGF0Zm9ybSI6Im1hY09TIiwicGxhdGZvcm1WZXJzaW9uIjoiMTUuMS4xIn0=",
+      "query.session-id": "parity-uach-ghev-cookie"
+    }
+  },
+  {
+    "id": "uach-ghev-query-then-cookie",
+    "about": "The macOS values in the query string, then the Android values in a cookie, with no User-Agent.",
+    "evidence": {
+      "query.51D_GetHighEntropyValues": "eyJhcmNoaXRlY3R1cmUiOiJhcm0iLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMxIn0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lvbkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJDaHJvbWl1bSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJOb3RfQSBCcmFuZCIsInZlcnNpb24iOiIyNC4wLjAuMCJ9XSwibW9iaWxlIjpmYWxzZSwibW9kZWwiOiIiLCJwbGF0Zm9ybSI6Im1hY09TIiwicGxhdGZvcm1WZXJzaW9uIjoiMTUuMS4xIn0=",
+      "cookie.51D_GetHighEntropyValues": "eyJhcmNoaXRlY3R1cmUiOiIiLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMxIn0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lvbkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjgxIn0seyJicmFuZCI6IkNocm9taXVtIiwidmVyc2lvbiI6IjEzMS4wLjY3NzguODEifSx7ImJyYW5kIjoiTm90X0EgQnJhbmQiLCJ2ZXJzaW9uIjoiMjQuMC4wLjAifV0sIm1vYmlsZSI6dHJ1ZSwibW9kZWwiOiJTTS1TOTExQiIsInBsYXRmb3JtIjoiQW5kcm9pZCIsInBsYXRmb3JtVmVyc2lvbiI6IjEzLjAuMCJ9",
+      "query.session-id": "parity-uach-ghev-query-then-cookie"
+    }
+  },
+  {
+    "id": "uach-ghev-cookie-then-query",
+    "about": "The Android values in a cookie, then the macOS values in the query string, with no User-Agent.",
+    "evidence": {
+      "cookie.51D_GetHighEntropyValues": "eyJhcmNoaXRlY3R1cmUiOiIiLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMxIn0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lvbkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjgxIn0seyJicmFuZCI6IkNocm9taXVtIiwidmVyc2lvbiI6IjEzMS4wLjY3NzguODEifSx7ImJyYW5kIjoiTm90X0EgQnJhbmQiLCJ2ZXJzaW9uIjoiMjQuMC4wLjAifV0sIm1vYmlsZSI6dHJ1ZSwibW9kZWwiOiJTTS1TOTExQiIsInBsYXRmb3JtIjoiQW5kcm9pZCIsInBsYXRmb3JtVmVyc2lvbiI6IjEzLjAuMCJ9",
+      "query.51D_GetHighEntropyValues": "eyJhcmNoaXRlY3R1cmUiOiJhcm0iLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMxIn0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lvbkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJDaHJvbWl1bSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJOb3RfQSBCcmFuZCIsInZlcnNpb24iOiIyNC4wLjAuMCJ9XSwibW9iaWxlIjpmYWxzZSwibW9kZWwiOiIiLCJwbGF0Zm9ybSI6Im1hY09TIiwicGxhdGZvcm1WZXJzaW9uIjoiMTUuMS4xIn0=",
+      "query.session-id": "parity-uach-ghev-cookie-then-query"
+    }
+  },
+  {
+    "id": "uach-ghev-over-headers",
+    "about": "Chrome on Windows with every client hint as headers, and the Android values as a base 64 query value.",
+    "evidence": {
+      "header.sec-ch-ua": "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+      "header.sec-ch-ua-mobile": "?0",
+      "header.sec-ch-ua-platform": "\"Windows\"",
+      "header.sec-ch-ua-platform-version": "\"15.0.0\"",
+      "header.sec-ch-ua-full-version-list": "\"Google Chrome\";v=\"131.0.6778.86\", \"Chromium\";v=\"131.0.6778.86\", \"Not_A Brand\";v=\"24.0.0.0\"",
+      "header.sec-ch-ua-arch": "\"x86\"",
+      "header.sec-ch-ua-bitness": "\"64\"",
+      "header.sec-ch-ua-model": "\"\"",
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "query.51D_GetHighEntropyValues": "eyJhcmNoaXRlY3R1cmUiOiIiLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMxIn0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lvbkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjgxIn0seyJicmFuZCI6IkNocm9taXVtIiwidmVyc2lvbiI6IjEzMS4wLjY3NzguODEifSx7ImJyYW5kIjoiTm90X0EgQnJhbmQiLCJ2ZXJzaW9uIjoiMjQuMC4wLjAifV0sIm1vYmlsZSI6dHJ1ZSwibW9kZWwiOiJTTS1TOTExQiIsInBsYXRmb3JtIjoiQW5kcm9pZCIsInBsYXRmb3JtVmVyc2lvbiI6IjEzLjAuMCJ9",
+      "query.session-id": "parity-uach-ghev-over-headers"
+    }
+  },
+  {
+    "id": "uach-ghev-query-ua",
+    "about": "The User-Agent and the macOS values both in the query string.",
+    "evidence": {
+      "query.user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "query.51D_GetHighEntropyValues": "eyJhcmNoaXRlY3R1cmUiOiJhcm0iLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMxIn0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lvbkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJDaHJvbWl1bSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJOb3RfQSBCcmFuZCIsInZlcnNpb24iOiIyNC4wLjAuMCJ9XSwibW9iaWxlIjpmYWxzZSwibW9kZWwiOiIiLCJwbGF0Zm9ybSI6Im1hY09TIiwicGxhdGZvcm1WZXJzaW9uIjoiMTUuMS4xIn0=",
+      "query.session-id": "parity-uach-ghev-query-ua"
+    }
+  },
+  {
+    "id": "uach-ghev-no-ua",
+    "about": "The Android values as a base 64 query value, with no User-Agent.",
+    "evidence": {
+      "query.51D_GetHighEntropyValues": "eyJhcmNoaXRlY3R1cmUiOiIiLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMxIn0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lvbkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjgxIn0seyJicmFuZCI6IkNocm9taXVtIiwidmVyc2lvbiI6IjEzMS4wLjY3NzguODEifSx7ImJyYW5kIjoiTm90X0EgQnJhbmQiLCJ2ZXJzaW9uIjoiMjQuMC4wLjAifV0sIm1vYmlsZSI6dHJ1ZSwibW9kZWwiOiJTTS1TOTExQiIsInBsYXRmb3JtIjoiQW5kcm9pZCIsInBsYXRmb3JtVmVyc2lvbiI6IjEzLjAuMCJ9",
+      "query.session-id": "parity-uach-ghev-no-ua"
+    }
+  },
+  {
+    "id": "uach-ghev-invalid",
+    "about": "A high entropy values query value that is not base 64, with the User-Agent as a header.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "query.51D_GetHighEntropyValues": "This is not base 64!",
+      "query.session-id": "parity-uach-ghev-invalid"
+    }
+  },
+  {
     "id": "screen-pixels-width",
     "about": "An iPhone with the screen width from the client.",
     "evidence": {
@@ -412,6 +491,96 @@
       "server.client-ip": "1.1.1.1",
       "query.client-ip-51d": "81.2.69.142",
       "query.session-id": "parity-ip-query-and-server"
+    }
+  },
+  {
+    "id": "ip-blank",
+    "about": "A blank address, which counts as no address supplied.",
+    "evidence": {
+      "server.client-ip": " ",
+      "query.session-id": "parity-ip-blank"
+    }
+  },
+  {
+    "id": "ip-query-not-an-address",
+    "about": "Text that is not an address in the query string, with an address from the connection.",
+    "evidence": {
+      "server.client-ip": "1.1.1.1",
+      "query.client-ip-51d": "not-an-ip",
+      "query.session-id": "parity-ip-query-not-an-address"
+    }
+  },
+  {
+    "id": "ip-query-v6-and-server-v4",
+    "about": "An IPv6 address in the query string and an IPv4 address from the connection.",
+    "evidence": {
+      "server.client-ip": "1.1.1.1",
+      "query.client-ip-51d": "2a00:23c5:a1a6:a01::1",
+      "query.session-id": "parity-ip-query-v6-and-server-v4"
+    }
+  },
+  {
+    "id": "ip-v4-port",
+    "about": "An IPv4 address with a port.",
+    "evidence": {
+      "server.client-ip": "1.1.1.1:443",
+      "query.session-id": "parity-ip-v4-port"
+    }
+  },
+  {
+    "id": "ip-v6-bracketed-port",
+    "about": "An IPv6 address in brackets with a port.",
+    "evidence": {
+      "server.client-ip": "[2606:4700:4700::1111]:443",
+      "query.session-id": "parity-ip-v6-bracketed-port"
+    }
+  },
+  {
+    "id": "ip-forwarded-list",
+    "about": "A forwarded list, whose first address is the client.",
+    "evidence": {
+      "server.client-ip": "1.1.1.1, 10.0.0.1",
+      "query.session-id": "parity-ip-forwarded-list"
+    }
+  },
+  {
+    "id": "ip-v6-well-known-prefix",
+    "about": "An IPv6 address holding an IPv4 address under the RFC 6052 prefix 64:ff9b::/96, which is looked up as IPv6 and written in hexadecimal.",
+    "evidence": {
+      "server.client-ip": "64:ff9b::8.8.8.8",
+      "query.session-id": "parity-ip-v6-well-known-prefix"
+    }
+  },
+  {
+    "id": "ip-v6-zone",
+    "about": "An IPv6 address with a zone index, which is dropped.",
+    "evidence": {
+      "server.client-ip": "fe80::1%1",
+      "query.session-id": "parity-ip-v6-zone"
+    }
+  },
+  {
+    "id": "ip-v4-number",
+    "about": "An IPv4 address written as one number, which is not read as an address.",
+    "evidence": {
+      "server.client-ip": "3232235521",
+      "query.session-id": "parity-ip-v4-number"
+    }
+  },
+  {
+    "id": "ip-v4-three-parts",
+    "about": "An IPv4 address with three parts, which is not read as an address.",
+    "evidence": {
+      "server.client-ip": "1.2.3",
+      "query.session-id": "parity-ip-v4-three-parts"
+    }
+  },
+  {
+    "id": "ip-v4-leading-zero",
+    "about": "An IPv4 address with a leading zero in one part, which is not read as an address.",
+    "evidence": {
+      "server.client-ip": "012.1.2.3",
+      "query.session-id": "parity-ip-v4-leading-zero"
     }
   },
   {

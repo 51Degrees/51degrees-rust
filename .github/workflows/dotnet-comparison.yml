@@ -334,15 +334,26 @@ jobs:
       # and areas, so the metadata tests run here too, opening the file in
       # LowMemory, and 51DEGREES_REQUIRE_ENTERPRISE makes a test that needs
       # the Enterprise file fail rather than skip. The failed refresh test
-      # always uses the ASN file. The leak test runs under LowMemory alone, so
-      # it never holds the whole file in memory, and checks that an area's
-      # text, too long for the shim's first buffer, is written into a block
-      # from the library's allocator and freed.
+      # always uses the ASN file. Every property the Enterprise file gives
+      # must read as its declared type, and that test is named exactly, so
+      # the step fails unless it ran and passed. The leak test runs under
+      # LowMemory alone, so it never holds the whole file in memory, and
+      # checks that an area's text, too long for the shim's first buffer, is
+      # written into a block from the library's allocator and freed.
       - name: Check the IP Intelligence metadata of the Enterprise file
         if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
         run: |
           env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_ENTERPRISE=1 \
             cargo test -p fiftyone-ip-intelligence-onpremise --test metadata
+          test=every_present_property_unpacks_as_its_declared_type
+          env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_ENTERPRISE=1 \
+            cargo test -p fiftyone-ip-intelligence-onpremise \
+            --test detection -- --exact "$test" --nocapture \
+            | tee "$RUNNER_TEMP/declared-types.txt"
+          if ! grep -qF 'test result: ok. 1 passed;' "$RUNNER_TEMP/declared-types.txt"; then
+            echo "::error::$test did not run and pass"
+            exit 1
+          fi
           env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_ENTERPRISE=1 \
             cargo test -p fiftyone-native --no-default-features --features ipi \
             --lib -- --exact \
