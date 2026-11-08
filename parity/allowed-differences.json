@@ -398,5 +398,27 @@
     "dotnet": {"pattern": ["line *: # Terms file:///terms/1.txt"]},
     "rust": {"pattern": ["line *: Allow: /"]},
     "reason": "An entry starting with a slash, here /terms/1.txt, is an absolute-path reference by RFC 3986 section 4.2, not a URI, so the crate leaves it out, as .NET's engine documentation asks when it says each entry must be a valid absolute URI. .NET's Uri.TryCreate with UriKind.Absolute reads such a string as a file path on Linux and macOS but not on Windows, so .NET writes file:///terms/1.txt on the comparison's Linux runner and leaves the entry out on Windows. Over the Enterprise file this case first differs at a crawler the two entries for crawlers with no usable product token allow, so this entry is for the Lite file until those entries come out."
+  },
+  {
+    "path": "propertyKeyedEngines[*].properties[*].type",
+    "kind": "value",
+    "dotnet": {"value": ["dotnet:IReadOnlyList`1"]},
+    "rust": {"value": ["keyValueList"]},
+    "reason": "Profiles is a list of each profile's device data. .NET types it as IReadOnlyList<IDeviceData>, which the .NET program writes as its .NET type name, and the crates as keyValueList, the type they give a list of records, which the JSON builder writes as a list of objects.",
+    "issue": 225
+  },
+  {
+    "path": "indexedValues.NativeModel.*",
+    "data": "enterprise",
+    "cases": ["property-keyed-none"],
+    "reason": "The crates list each NativeModel value the C library's index holds exactly, as the draft specification of the lookup, specifications#62, asks. .NET 4.5.180's engine keys its own index ignoring case, so it counts the values that differ only in case together under the spelling it met first. The step \"Check the NativeModel differences are of case alone\" fails on any difference here that case alone does not explain. This comes out when .NET's engines use the C library's index, 51degrees-dotnet#30.",
+    "issue": 225
+  },
+  {
+    "path": "profileIds*",
+    "data": "enterprise",
+    "cases": ["property-keyed-native-*"],
+    "reason": "The crates find a native model name exactly, through the C library's index, as the draft specification of the lookup, specifications#62, asks. .NET 4.5.180's engine finds it ignoring case, so it gives the profiles of every value that differs only in case, in ascending order, and a profile holding two such values twice. The step \"Check the NativeModel differences are of case alone\" fails on any difference here that case alone does not explain. This comes out when .NET's engines use the C library's index, 51degrees-dotnet#30.",
+    "issue": 225
   }
 ]

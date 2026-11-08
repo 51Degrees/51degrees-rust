@@ -46,8 +46,9 @@
 //!
 //! Add the engines after an on-premise Device Detection engine whose data
 //! file holds `TAC` and `NativeModel`, and ask that engine to index them so
-//! each lookup is fast. `NativeModel` is in the Enterprise and TAC data
-//! files, and `TAC` only in the TAC file. With the free Lite file, which
+//! each lookup is fast, with `indexed_property` in code or its
+//! `IndexedProperties` setting in a configuration. `NativeModel` is in the
+//! Enterprise and TAC data files, and `TAC` only in the TAC file. With the free Lite file, which
 //! holds neither, the engines accept no evidence and write nothing. Then give
 //! the evidence `query.tac` or `query.nativemodel`.
 //!
@@ -95,9 +96,14 @@
 //! When both engines are in one pipeline and the request gives both values,
 //! the profiles of the engine added first come first, and a profile both
 //! engines find is listed twice, as in .NET.
+//!
+//! A pipeline made from a configuration file written for .NET finds the
+//! engines under .NET's builder names once [`configuration::add_builders`]
+//! has added them to the registry.
 
 #![warn(missing_docs)]
 
+pub mod configuration;
 pub mod constants;
 mod engine;
 mod number;

@@ -22,5 +22,9 @@ fiftyone-device-detection-onpremise = { version = "=4.5.2", path = "../device-de
 # facade, which does nothing until the application installs a logger.
 log = "0.4"
 
+[dev-dependencies]
+# The performance profile the data file tests open the data file with.
+fiftyone-native = { path = "../native", default-features = false, features = ["dd"] }
+
 [package.metadata.docs.rs]
 all-features = true

@@ -143,6 +143,7 @@ namespace FiftyOne.Parity
                 case ConfigurationCases.Run: return ConfigurationCases.RunCases(argv[1..]);
                 case DerivedCases.Run: return DerivedCases.RunCases(argv[1..]);
                 case RobotsTxtCases.Run: return RobotsTxtCases.RunCases(argv[1..]);
+                case PropertyKeyedCases.Run: return PropertyKeyedCases.RunCases(argv[1..]);
             }
             var args = Args.Parse(argv);
             var cases = JsonNode.Parse(File.ReadAllText(args.Corpus)).AsArray();
@@ -450,7 +451,7 @@ namespace FiftyOne.Parity
             return elements;
         }
 
-        private static JsonObject Read(IElementData data, string name)
+        internal static JsonObject Read(IElementData data, string name)
         {
             object value;
             try

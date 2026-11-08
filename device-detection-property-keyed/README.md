@@ -36,7 +36,8 @@ engine added first come first.
 
 Add the engines after an on-premise Device Detection engine whose data file
 holds the key property, and name the property to that engine's
-`indexed_property` so each lookup reads the data file's index rather than
+`indexed_property`, or to its `IndexedProperties` setting in a
+configuration, so each lookup reads the data file's index rather than
 every profile. Without the index, the engine logs a warning when the
 pipeline is built.
 
@@ -79,6 +80,15 @@ engines ignore the case of a value.
 and TAC data files. The free Lite file holds neither, so with it the
 engines accept no evidence and write nothing. "Data files and pricing"
 under "Find out more" says how to get the other files.
+
+A pipeline made from a configuration file written for .NET finds the
+engines under .NET's names, `TacEngineBuilder`, `NativeEngineBuilder` and
+`PropertyKeyedDeviceEngineBuilder`, each also without `Builder`, once
+`configuration::add_builders` has added them to the registry. Their
+settings are .NET's, being `KeyProperty` and `ElementDataKey`, with .NET's
+cache, lazy loading and property settings read and having no effect. The
+Device Detection engine before them names the key properties in
+`IndexedProperties`, which .NET's builder does not have.
 
 ## License
 
