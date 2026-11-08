@@ -282,8 +282,8 @@ impl DeviceDetectionPipelineBuilder {
 /// Builds an `Arc<`[`Pipeline`]`>` around the on-premise Hash engine.
 ///
 /// Defaults: the [`PerformanceProfile::Default`] profile, every property the
-/// data file supports, share usage enabled with the `share-usage` feature,
-/// and automatic data updates on.
+/// data file supports, no UA-CH high-entropy decoder, share usage enabled
+/// with the `share-usage` feature, and automatic data updates on.
 /// Override any of these before [`Self::build`].
 #[cfg(feature = "on-premise")]
 pub struct DeviceDetectionOnPremisePipelineBuilder {
@@ -296,6 +296,7 @@ pub struct DeviceDetectionOnPremisePipelineBuilder {
     allow_unmatched: Option<bool>,
     use_performance_graph: Option<bool>,
     use_predictive_graph: Option<bool>,
+    use_uach: bool,
     share_usage: bool,
     auto_update: bool,
     file_system_watcher: bool,
@@ -321,6 +322,7 @@ impl DeviceDetectionOnPremisePipelineBuilder {
             allow_unmatched: None,
             use_performance_graph: None,
             use_predictive_graph: None,
+            use_uach: false,
             share_usage: cfg!(feature = "share-usage"),
             auto_update: true,
             file_system_watcher: true,
@@ -492,11 +494,17 @@ impl DeviceDetectionOnPremisePipelineBuilder {
         self
     }
 
-    /// Does nothing. The Hash engine turns `51D_GetHighEntropyValues`
-    /// evidence into the `sec-ch-ua*` headers itself, so the pipeline needs
-    /// no decoder element before it.
-    #[deprecated(note = "does nothing, as the Hash engine reads high entropy values itself")]
-    pub fn use_uach(self, _enabled: bool) -> Self {
+    /// Place the deprecated UA-CH high-entropy decoder before the Hash engine
+    /// when `enabled` is true, for a caller that reads its `uach` data, which
+    /// the JSON builder then writes too. Off by default. The Hash engine does
+    /// not read that data, because the C library turns
+    /// `51D_GetHighEntropyValues` evidence into the `sec-ch-ua*` headers
+    /// itself, so the device answers are the same either way.
+    #[deprecated(
+        note = "the Hash engine reads high entropy values itself, so the decoder is only for a caller that reads its data"
+    )]
+    pub fn use_uach(mut self, enabled: bool) -> Self {
+        self.use_uach = enabled;
         self
     }
 
@@ -518,7 +526,8 @@ impl DeviceDetectionOnPremisePipelineBuilder {
     /// Assemble the pipeline.
     ///
     /// The element order is: the sequence element when usage sharing is on, the
-    /// Hash engine, then usage sharing when it is on. Returns the same kind of
+    /// UA-CH decoder when [`Self::use_uach`] asked for it, the Hash engine,
+    /// then usage sharing when it is on. Returns the same kind of
     /// `Arc<`[`Pipeline`]`>` that [`Pipeline::builder`] does, so a caller
     /// drives it identically whichever deployment built it. Refuses when
     /// automatic updates or update on startup are on and no licence key is
@@ -582,6 +591,11 @@ impl DeviceDetectionOnPremisePipelineBuilder {
         }
         if self.share_usage {
             pipeline_builder = pipeline_builder.add_element(Arc::new(SequenceElement::new()));
+        }
+        if self.use_uach {
+            #[allow(deprecated)]
+            let decoder = Arc::new(UachJsConversionElement::new());
+            pipeline_builder = pipeline_builder.add_element(decoder);
         }
         pipeline_builder = pipeline_builder.add_element(engine);
         if self.share_usage {

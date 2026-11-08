@@ -23,7 +23,8 @@
 //! The on-premise pipeline leaves `51D_GetHighEntropyValues` evidence to the
 //! engine, which the C library turns into client hints, so the pipeline holds
 //! no decoder element and its Flow Data no `uach` data for the JSON builder
-//! to write. Skips when the Lite Hash data file is absent.
+//! to write, unless the deprecated `use_uach(true)` asks for the element.
+//! Skips when the Lite Hash data file is absent.
 
 #![cfg(feature = "on-premise")]
 
@@ -31,6 +32,7 @@ use std::path::PathBuf;
 
 use fiftyone_device_detection::{
     DeviceData, DeviceDetectionPipelineBuilder, Evidence, PerformanceProfile, DEVICE_DATA_KEY,
+    DEVICE_ELEMENT_DATA_KEY,
 };
 use fiftyone_pipeline_core::FlowElement;
 
@@ -99,4 +101,57 @@ fn the_on_premise_pipeline_leaves_high_entropy_values_to_the_engine() {
         !data.data_keys().iter().any(|key| key == DECODER_DATA_KEY),
         "the Flow Data holds uach data, which the JSON builder would write"
     );
+}
+
+#[test]
+#[allow(deprecated)]
+fn use_uach_adds_the_decoder_element_only_when_asked() {
+    let Some(path) = data_file() else {
+        eprintln!("no Lite Hash data file found; skipping the use_uach test");
+        return;
+    };
+    for enabled in [true, false] {
+        let pipeline = DeviceDetectionPipelineBuilder::on_premise(&path)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            .auto_update(false)
+            .file_system_watcher(false)
+            .share_usage(false)
+            .use_uach(enabled)
+            .build()
+            .expect("the pipeline builds over the Lite file");
+
+        // The decoder comes straight before the engine when asked for.
+        let keys: Vec<&str> = pipeline
+            .flow_elements()
+            .iter()
+            .map(|element| FlowElement::data_key(&**element))
+            .collect();
+        let expected = if enabled {
+            vec![DECODER_DATA_KEY, DEVICE_ELEMENT_DATA_KEY]
+        } else {
+            vec![DEVICE_ELEMENT_DATA_KEY]
+        };
+        assert_eq!(keys, expected, "use_uach({enabled})");
+
+        let mut data = pipeline.create_flow_data_with(
+            Evidence::builder()
+                .add("query.51D_GetHighEntropyValues", MAC_VALUES)
+                .build(),
+        );
+        data.process().expect("processing succeeds");
+        assert_eq!(
+            data.data_keys().iter().any(|key| key == DECODER_DATA_KEY),
+            enabled,
+            "use_uach({enabled}): the Flow Data holds uach data"
+        );
+
+        // The engine gives the same platform with or without the decoder.
+        let device = data.get(DEVICE_DATA_KEY).expect("device data was produced");
+        let platform = device.platform_name();
+        assert_eq!(
+            platform.value().expect("PlatformName has a value"),
+            "macOS",
+            "use_uach({enabled})"
+        );
+    }
 }
