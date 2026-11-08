@@ -223,7 +223,8 @@ mod tests {
     }
 
     // The hosts .NET 4.5.128's JavaScript builder accepts, with the URL the
-    // crate writes.
+    // crate writes. The hosts .NET accepts that hold a zone identifier, user
+    // information, a `?` or a `#` are refused, in the tests further down.
     #[test]
     fn accepts_the_hosts_dotnet_accepts() {
         let cases = [
@@ -242,28 +243,11 @@ mod tests {
             ("127.0.0.1:80", "https://127.0.0.1:80/51dpipeline/json"),
             ("[::1]", "https://[::1]/51dpipeline/json"),
             ("[::1]:8080", "https://[::1]:8080/51dpipeline/json"),
-            (
-                "[fe80::1%25eth0]",
-                "https://[fe80::1%25eth0]/51dpipeline/json",
-            ),
-            (
-                "user:pw@example.com",
-                "https://user:pw@example.com/51dpipeline/json",
-            ),
-            (
-                "u x@example.com",
-                "https://u%20x@example.com/51dpipeline/json",
-            ),
-            (
-                "u\tx@example.com",
-                "https://u%09x@example.com/51dpipeline/json",
-            ),
             ("example.com.", "https://example.com./51dpipeline/json"),
             (
                 "example.com/path",
                 "https://example.com/path/51dpipeline/json",
             ),
-            ("example.com?x", "https://example.com?x/51dpipeline/json"),
             (
                 "example.com/a b",
                 "https://example.com/a%20b/51dpipeline/json",
@@ -300,27 +284,6 @@ mod tests {
                 "xn--bcher-kva.de",
                 "https://xn--bcher-kva.de/51dpipeline/json",
             ),
-            (
-                "user@example.com",
-                "https://user@example.com/51dpipeline/json",
-            ),
-            (
-                "u%41@example.com",
-                "https://u%41@example.com/51dpipeline/json",
-            ),
-            (
-                "u\"x@example.com",
-                "https://u%22x@example.com/51dpipeline/json",
-            ),
-            (
-                "u\nx@example.com",
-                "https://u%0Ax@example.com/51dpipeline/json",
-            ),
-            (
-                "u\u{1}x@example.com",
-                "https://u%01x@example.com/51dpipeline/json",
-            ),
-            ("example.com#x", "https://example.com#x/51dpipeline/json"),
             (
                 "example.com:8080/x",
                 "https://example.com:8080/x/51dpipeline/json",
@@ -392,8 +355,7 @@ mod tests {
         }
     }
 
-    // Inside the brackets only an IPv6 address, optionally followed by `%25`
-    // and a zone of unreserved characters, and after them only a port.
+    // Inside the brackets only an IPv6 address, and after them only a port.
     #[test]
     fn refuses_a_zone_or_text_after_the_bracket_that_is_not_valid() {
         let hosts = [
@@ -412,10 +374,87 @@ mod tests {
                 "host {host:?}"
             );
         }
+    }
+
+    // A `%` inside the brackets is refused, zone identifier or not, because
+    // the URL Standard's IPv6 parser fails on it, so a browser could not
+    // parse the URL.
+    #[test]
+    fn refuses_a_zone_identifier() {
+        let hosts = [
+            "[fe80::1%25eth0]",
+            "[fe80::1%25eth0]:8080",
+            "[FE80::1%25ETH0]",
+            "[fe80::1%251]",
+            "[::1%25lo]",
+            "[fe80::1%]",
+            "[fe80::1%25eth0]/path",
+        ];
+        for host in hosts {
+            assert!(
+                matches!(url("https", host), CallbackUrl::Invalid(_)),
+                "host {host:?}"
+            );
+        }
+    }
+
+    // Any `@` in the authority is refused, because `fetch` throws a
+    // TypeError for a URL with a user name or a password. An `@` after the
+    // authority is part of the path.
+    #[test]
+    fn refuses_user_information() {
+        let hosts = [
+            "user@example.com",
+            "user:pw@example.com",
+            "@example.com",
+            ":@example.com",
+            "user@example.com:8080",
+            "user@[::1]",
+            "user@example.com/path",
+            "u%41@example.com",
+            "u x@example.com",
+            "u\tx@example.com",
+            "u\"x@example.com",
+            "u'x@example.com",
+            "u\\x@example.com",
+            "u\nx@example.com",
+            "u\u{1}x@example.com",
+        ];
+        for host in hosts {
+            assert!(
+                matches!(url("https", host), CallbackUrl::Invalid(_)),
+                "host {host:?}"
+            );
+        }
         assert_eq!(
-            url("https", "[fe80::1%25eth0]:8080"),
-            valid("https://[fe80::1%25eth0]:8080/51dpipeline/json")
+            url("https", "example.com/a@b"),
+            valid("https://example.com/a@b/51dpipeline/json")
         );
+    }
+
+    // A `?` or `#` anywhere in the host is refused, because it would start
+    // the query or the fragment before the endpoint, so the script would
+    // call back to the wrong path.
+    #[test]
+    fn refuses_a_query_or_fragment_in_the_host() {
+        let hosts = [
+            "example.com?x",
+            "example.com#x",
+            "example.com?",
+            "example.com#",
+            "example.com:8080?x",
+            "[::1]#x",
+            "example.com/path?x",
+            "example.com/path#x",
+            "example.com?');alert(1);//",
+            "example.com#');alert(1);//",
+        ];
+        for host in hosts {
+            assert!(
+                matches!(url("https", host), CallbackUrl::Invalid(_)),
+                "host {host:?}"
+            );
+        }
     }
 
     // A port goes by its value, so leading zeros are allowed, and a port too
@@ -443,17 +482,13 @@ mod tests {
         }
     }
 
-    // Each character rule 8 lists, in the user information, after the host
-    // and in the endpoint, and a `%` without two hexadecimal digits after it,
-    // even at the end.
+    // Each character rule 8 lists, after the host and in the endpoint, and a
+    // `%` without two hexadecimal digits after it, even at the end.
     #[test]
     fn encodes_the_characters_rule_8_lists() {
         assert_eq!(
-            callback_url("https", "u\"^`{|}@example.com/\"^`{|}", "/j\"^`{|}"),
-            valid(
-                "https://u%22%5E%60%7B%7C%7D@example.com/%22%5E%60%7B%7C%7D\
-                 /j%22%5E%60%7B%7C%7D"
-            )
+            callback_url("https", "example.com/\"^`{|}", "/j\"^`{|}"),
+            valid("https://example.com/%22%5E%60%7B%7C%7D/j%22%5E%60%7B%7C%7D")
         );
         let cases = [
             (
@@ -525,11 +560,8 @@ mod tests {
     fn nothing_given_can_end_the_string() {
         let hosts = [
             "example.com/');alert(1);//",
-            "example.com?');alert(1);//",
-            "example.com#');alert(1);//",
-            "u'x@example.com",
-            "u\\x@example.com",
             "example.com/a\\b",
+            "example.com/a\"b",
             "example.com/</script>",
         ];
         for host in hosts {
