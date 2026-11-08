@@ -2969,10 +2969,16 @@ mod tests {
                 .process_ip(address)
                 .expect("the lookup should succeed");
             for name in ["IpRangeStart", "IpRangeEnd"] {
-                let native = results
+                let written = results
                     .value_as_string(name, "|")
                     .expect("the C library's text reads")
                     .unwrap_or_else(|| panic!("{name} for {address} has a value"));
+                // The C library writes each value as `"text":weighting`.
+                let native = written
+                    .strip_prefix('"')
+                    .and_then(|rest| rest.rsplit_once('"'))
+                    .map(|(text, _)| text)
+                    .unwrap_or_else(|| panic!("{name} for {address}: {written}"));
                 let values = results.values_weighted(name).expect("the values read");
                 let [(text, _)] = values.as_slice() else {
                     panic!("{name} for {address} has one value: {values:?}");
