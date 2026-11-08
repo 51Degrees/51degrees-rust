@@ -218,9 +218,13 @@ impl Metric {
         }
     }
 
-    /// Read the metric from `results`. The device id has no value when the
-    /// results give none, and the others fail only when a graph cannot be
-    /// read from the data file.
+    /// Read the metric from `results`, walking each graph not yet walked.
+    /// When a graph its read walks cannot be read from the data file the
+    /// metric fails, DeviceId with the native message and the other six with
+    /// [`METRICS_UNREADABLE`]. DeviceId also has no value when the results
+    /// give none. A graph whose walk failed is not walked again, so a metric
+    /// read after another property's walk failed walks only the graphs still
+    /// to walk and gives the metrics the results then hold, as .NET does.
     fn read(self, results: &Results) -> ReadOutcome {
         let value: fn(&MatchMetrics) -> PropertyValue = match self {
             Metric::DeviceId => {
@@ -230,9 +234,10 @@ impl Metric {
                     .map_err(|error| error.to_string());
             }
             Metric::UserAgents => {
-                return Ok(Some(PropertyValue::StringList(
-                    results.matched_user_agents(),
-                )));
+                return results
+                    .try_matched_user_agents()
+                    .map(|agents| Some(PropertyValue::StringList(agents)))
+                    .ok_or_else(|| METRICS_UNREADABLE.to_owned());
             }
             Metric::MatchedNodes => {
                 |metrics| PropertyValue::Integer(i64::from(metrics.matched_nodes))
@@ -1791,6 +1796,67 @@ mod tests {
             assert!(matches!(value, Ok(Some(_))), "{name}: {value:?}");
             assert_eq!(pending(), 0, "{name} walks every graph");
         }
+    }
+
+    /// Read the property `name` from `reader`.
+    fn read(reader: &DetectionReader, name: &str) -> ReadOutcome {
+        reader.read_property(reader.position(name).expect(name))
+    }
+
+    /// Each match metric gives the same value as when it is read first when
+    /// it is read after another property, from a reader kept across a refresh
+    /// of the engine's data file, and on another thread, because each walk
+    /// sets only its own component's result and the reader keeps the data set
+    /// its results came from.
+    #[test]
+    fn a_metric_gives_the_same_value_whatever_was_read_before_it() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the metric values");
+            return;
+        };
+        let (engine, data) = engine_and_data(&path);
+        let new_reader = || engine.detection_reader(&data).expect("detection succeeds");
+        let names: Vec<String> = Metric::READ_ORDER
+            .iter()
+            .map(|metric| metric.name().to_lowercase())
+            .collect();
+        let first: Vec<ReadOutcome> = names.iter().map(|name| read(&new_reader(), name)).collect();
+        for (name, value) in names.iter().zip(&first) {
+            assert!(matches!(value, Ok(Some(_))), "{name}: {value:?}");
+        }
+
+        let after_another: Vec<ReadOutcome> = names
+            .iter()
+            .map(|name| {
+                let reader = new_reader();
+                let is_mobile = read(&reader, "ismobile");
+                assert!(matches!(is_mobile, Ok(Some(_))), "{is_mobile:?}");
+                read(&reader, name)
+            })
+            .collect();
+        assert_eq!(after_another, first, "read after IsMobile");
+
+        let kept: Vec<DetectionReader> = names.iter().map(|_| new_reader()).collect();
+        engine.refresh(None).expect("the data file loads again");
+        let after_refresh: Vec<ReadOutcome> = kept
+            .iter()
+            .zip(&names)
+            .map(|(reader, name)| read(reader, name))
+            .collect();
+        assert_eq!(after_refresh, first, "read after a refresh");
+
+        let moved: Vec<DetectionReader> = names.iter().map(|_| new_reader()).collect();
+        let moved_names = names.clone();
+        let on_thread = std::thread::spawn(move || {
+            moved
+                .iter()
+                .zip(&moved_names)
+                .map(|(reader, name)| read(reader, name))
+                .collect::<Vec<ReadOutcome>>()
+        })
+        .join()
+        .expect("the other thread reads");
+        assert_eq!(on_thread, first, "read on another thread");
     }
 
     /// A detection stores no value, and its data lists the data file's

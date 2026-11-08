@@ -1459,7 +1459,11 @@ impl Results {
     /// [`value_as_string`](Self::value_as_string) (which only resolves real
     /// data-file properties). Any graph not yet walked is walked first, which
     /// can read the data file. Returns [`None`] only when the native results
-    /// cannot be read, or a graph cannot be read from the data file.
+    /// cannot be read, or a graph this call walks cannot be read from the
+    /// data file. The walks stop at the first that fails, and a graph is never
+    /// walked twice, so after a failed walk a later call walks only the graphs
+    /// still to walk and gives the metrics the results then hold, as the C++
+    /// results do.
     pub fn match_metrics(&self) -> Option<MatchMetrics> {
         let mut method = 0;
         let mut difference = 0;
@@ -1494,10 +1498,53 @@ impl Results {
     /// The matched User-Agent of each result, without repeats, in result
     /// order. Each is the evidence value the component was matched from, with
     /// the characters the match did not use replaced by underscores. Empty
-    /// when nothing matched, or a graph cannot be read from the data file.
+    /// when nothing matched, and empty or partial when a graph cannot be
+    /// read from the data file.
     /// Any graph not yet walked is walked first, which can read the data file.
+    /// [`try_matched_user_agents`](Self::try_matched_user_agents) tells a
+    /// failed walk apart.
     pub fn matched_user_agents(&self) -> Vec<String> {
         let _file_read = self.manager.file_read();
+        self.read_matched_user_agents()
+    }
+
+    /// The matched User-Agents, as
+    /// [`matched_user_agents`](Self::matched_user_agents) gives them, or
+    /// [`None`] when a graph this call walks cannot be read from the data
+    /// file. As with [`match_metrics`](Self::match_metrics), after a failed
+    /// walk a later call walks only the graphs still to walk and gives the
+    /// User-Agents the results then hold.
+    pub fn try_matched_user_agents(&self) -> Option<Vec<String>> {
+        let _file_read = self.manager.file_read();
+        if !self.walk_pending_graphs() {
+            return None;
+        }
+        Some(self.read_matched_user_agents())
+    }
+
+    /// Walk the graph of each component not yet walked, and return false
+    /// when a walk fails. The caller holds the file read permit.
+    fn walk_pending_graphs(&self) -> bool {
+        // Safety: the results came from `ResultsHashCreate` and remain valid
+        // for the lifetime of `self`. A null output pointer skips its metric,
+        // so the call only walks the graphs.
+        let ok = unsafe {
+            sys::fiftyoneDegreesShimHashGetResultMetrics(
+                self.as_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        ok != 0
+    }
+
+    /// The matched User-Agent of each result, without repeats, in result
+    /// order, walking any graph not yet walked. The caller holds the file
+    /// read permit.
+    fn read_matched_user_agents(&self) -> Vec<String> {
         // Safety: the results came from `ResultsHashCreate` and remain valid
         // for the lifetime of `self`.
         let count = unsafe { sys::fiftyoneDegreesShimHashGetResultCount(self.as_ptr()) };
@@ -1815,6 +1862,13 @@ mod tests {
         let results = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
         assert!(!results.matched_user_agents().is_empty());
         assert_eq!(results.pending_graphs(), 0, "the matched User-Agents");
+        let results = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
+        let checked = results
+            .try_matched_user_agents()
+            .expect("every graph walks");
+        assert_eq!(results.pending_graphs(), 0, "the checked User-Agents");
+        assert!(!checked.is_empty());
+        assert_eq!(checked, results.matched_user_agents());
     }
 
     /// With properties named, a detection walks the graphs they need, so

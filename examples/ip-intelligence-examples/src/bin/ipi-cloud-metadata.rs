@@ -92,7 +92,8 @@ pub fn run(options: Options) -> Result<()> {
 /// The properties available depend on the resource key, not on the full cloud
 /// catalogue, so this is the list this key returns. Each line shows the property
 /// name, its category, and its value type. IP-intelligence properties are
-/// weighted, so they surface as a `KeyValueList` of value/weight records.
+/// weighted, so they surface as a `KeyValueList` of rawweighting/value
+/// records.
 fn output_properties(pipeline: &fiftyone_pipeline_core::Pipeline) {
     println!("Available properties:");
     let mut any = false;
@@ -198,8 +199,8 @@ mod tests {
  *    resource key.
  * 2. How to list the properties the resource key exposes, with each property's
  *    category and value type. IP-intelligence properties are weighted, so they
- *    are reported as a KeyValueList of value/weight records rather than a plain
- *    scalar type.
+ *    are reported as a KeyValueList of rawweighting/value records rather than
+ *    a plain scalar type.
  * 3. How to determine which evidence keys the pipeline accepts. The pipeline
  *    evidence filter is the union of every element's filter; the cloud request
  *    engine is the element that forwards evidence to the service, so its keys

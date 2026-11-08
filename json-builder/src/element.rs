@@ -27,13 +27,13 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use fiftyone_pipeline_core::{
-    Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
-    PropertyValue, PropertyValueType, Result,
+    ElementData, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    PropertyMetaData, PropertyValue, PropertyValueType, Result,
 };
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 
 use crate::builder::JsonBuilderElementBuilder;
-use crate::constants::{JSON_BUILDER_ELEMENT_DATA_KEY, JSON_PROPERTY_KEY};
+use crate::constants::{JSON_BUILDER_ELEMENT_DATA_KEY, JSON_PROPERTY_KEY, NULL_REASON_SUFFIX};
 use crate::converter::JsonValueConverter;
 use crate::data::{JsonBuilderData, JSON_BUILDER_DATA_KEY};
 use crate::steps::{JsonBuilderContext, JsonBuilderSteps, PipelineConfig};
@@ -231,9 +231,10 @@ impl JsonBuilderElement {
     /// builder first, in order, and then using the builder's own conversion.
     ///
     /// The builder's own conversion writes a string or JavaScript as a string,
-    /// a list of strings as an array, a list of records as an array of objects
-    /// with lowercased keys, and a WKT value as an object holding its text
-    /// under `value`.
+    /// a list of strings as an array, a list of records or of element data
+    /// as an array of objects with lowercased keys, where a property of
+    /// element data with no value is null with its reason, and a WKT value
+    /// as an object holding its text under `value`.
     pub fn to_json_value(&self, value: &PropertyValue) -> JsonValue {
         self.convert_by_caller(value)
             .unwrap_or_else(|| self.built_in_json_value(value))
@@ -276,10 +277,36 @@ impl JsonBuilderElement {
                 object.insert(WKT_VALUE_KEY, JsonValue::String(text.as_str().to_owned()));
                 JsonValue::Object(object)
             }
+            PropertyValue::ElementDataList(items) => JsonValue::Array(
+                items
+                    .iter()
+                    .map(|item| JsonValue::Object(self.built_in_values(item)))
+                    .collect(),
+            ),
             // PropertyValue is non_exhaustive, so a variant added later is
             // written as null until it is given a form here.
             _ => JsonValue::Null,
         }
+    }
+
+    /// The values of one result in a list of element data, with each
+    /// property that has no value written as null with its reason.
+    fn built_in_values(&self, item: &dyn ElementData) -> JsonObject {
+        let mut values = JsonObject::new();
+        for name in item.keys() {
+            let name = name.to_lowercase();
+            match item.get(&name) {
+                Ok(value) => {
+                    values.insert(name, self.to_json_value(&value));
+                }
+                Err(no_value) => {
+                    let reason = format!("{name}{NULL_REASON_SUFFIX}");
+                    values.insert(name, JsonValue::Null);
+                    values.insert(reason, no_value.message);
+                }
+            }
+        }
+        values
     }
 
     /// Internal constructor used by the builder.

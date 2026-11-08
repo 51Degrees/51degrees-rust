@@ -34,9 +34,9 @@ use fiftyone_json_builder::{
     JSON_BUILDER_DATA_KEY,
 };
 use fiftyone_pipeline_core::{
-    ElementData, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
-    MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue, PropertyValueType,
-    Result, TypedKey,
+    ElementData, ElementDataList, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData,
+    FlowElement, MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue,
+    PropertyValueType, Result, TypedKey,
 };
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 use serde_json::{json, Value};
@@ -661,6 +661,120 @@ fn records_are_collected_by_get_values() {
         *paths.lock().unwrap(),
         ["hardware", "hardware.profiles", "hardware.profiles"]
     );
+}
+
+/// A matched hardware profile, whose vendor has no value when `vendor` is
+/// `None`.
+struct Profile {
+    vendor: Option<&'static str>,
+}
+
+/// The reason the second matched profile has no vendor.
+const NO_VENDOR: &str = "The vendor is not known for this TAC.";
+
+impl ElementData for Profile {
+    fn get(&self, name: &str) -> std::result::Result<PropertyValue, NoValueError> {
+        match (name.to_lowercase().as_str(), self.vendor) {
+            ("hardwarevendor", Some(vendor)) => Ok(vendor.into()),
+            ("hardwarevendor", None) => Err(NoValueError::new(NO_VENDOR)),
+            ("hardwaremodel", _) => Ok("iPhone12,3".into()),
+            _ => Err(NoValueError::new(format!("No property '{name}'."))),
+        }
+    }
+
+    fn keys(&self) -> Vec<String> {
+        vec!["HardwareVendor".to_owned(), "HardwareModel".to_owned()]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+/// Two matched profiles, the second with no vendor.
+fn matched_profiles() -> ElementDataList {
+    let apple: Arc<dyn ElementData> = Arc::new(Profile {
+        vendor: Some("Apple"),
+    });
+    let unknown: Arc<dyn ElementData> = Arc::new(Profile { vendor: None });
+    ElementDataList::new(vec![apple, unknown])
+}
+
+/// The JSON of [`matched_profiles`], as .NET's builder writes a list of
+/// element data.
+fn matched_profiles_json() -> Value {
+    json!([
+        { "hardwarevendor": "Apple", "hardwaremodel": "iPhone12,3" },
+        {
+            "hardwarevendor": null,
+            "hardwarevendornullreason": NO_VENDOR,
+            "hardwaremodel": "iPhone12,3"
+        }
+    ])
+}
+
+#[test]
+fn a_list_of_element_data_is_written_with_null_reasons() {
+    let paths = Arc::new(Mutex::new(Vec::new()));
+    let element: Arc<dyn FlowElement> =
+        Arc::new(ValuesElement::new("hardware").value("profiles", matched_profiles()));
+    let json = run(
+        vec![element],
+        JsonBuilderElement::builder().set_steps(RecordPaths(Arc::clone(&paths))),
+    );
+    let value = parse(&json);
+    assert_eq!(
+        value["hardware"],
+        json!({ "profiles": matched_profiles_json() })
+    );
+    // Each profile's values are collected by get_values, under the
+    // profiles' path, as an element's own values are.
+    assert_eq!(
+        *paths.lock().unwrap(),
+        ["hardware", "hardware.profiles", "hardware.profiles"]
+    );
+    // The reason follows the null it explains.
+    let vendor = json.find("\"hardwarevendor\": null").unwrap();
+    let reason = json.find("\"hardwarevendornullreason\"").unwrap();
+    assert!(vendor < reason);
+}
+
+#[test]
+fn to_json_value_writes_a_list_of_element_data_with_null_reasons() {
+    let element = JsonBuilderElement::builder().build();
+    let json = element.to_json_value(&PropertyValue::from(matched_profiles()));
+    let JsonValue::Array(items) = &json else {
+        panic!("a list of element data is an array, not {json:?}");
+    };
+    let names: Vec<Vec<&str>> = items
+        .iter()
+        .map(|item| match item {
+            JsonValue::Object(values) => values.keys().collect(),
+            other => panic!("each result is an object, not {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [
+            vec!["hardwarevendor", "hardwaremodel"],
+            vec![
+                "hardwarevendor",
+                "hardwarevendornullreason",
+                "hardwaremodel"
+            ],
+        ]
+    );
+    if let JsonValue::Object(second) = &items[1] {
+        assert_eq!(second.get("hardwarevendor"), Some(&JsonValue::Null));
+        assert_eq!(
+            second.get("hardwarevendornullreason"),
+            Some(&JsonValue::from(NO_VENDOR))
+        );
+    }
 }
 
 #[test]
