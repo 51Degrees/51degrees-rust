@@ -121,7 +121,7 @@ impl CountryCodeTranslationEngineBuilder {
         let builder = COUNTRY_CODE_SOURCES
             .iter()
             .fold(builder, |builder, (name, text)| {
-                builder.add_source_text(*name, *text)
+                builder.add_source_content(*name, *text)
             });
         Ok(CountryCodeTranslationEngine {
             engine: builder.build()?,
