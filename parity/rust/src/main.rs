@@ -31,6 +31,7 @@
 //! parity-rust derived --cases <folder> --out <jsonl>
 //! parity-rust robots-txt-cases --corpus <json> --dd <hash file> --out <json>
 //! parity-rust robots-txt --corpus <json> --dd <hash file> --out <jsonl>
+//! parity-rust metadata --cases <json> --dd <hash file> --ipi <ipi file> --out <jsonl>
 //! ```
 //!
 //! The first form runs the evidence cases through the pipelines. The
@@ -39,14 +40,16 @@
 //! program, so nothing is sent anywhere. The next two forms are the 51Did
 //! cases, described in `fodid_cases`, the fourth builds pipelines from
 //! configuration files, described in `configuration`, the next two are the
-//! derived property cases, described in `derived`, and the last two are the
-//! robots.txt cases, described in `robots_txt`.
+//! derived property cases, described in `derived`, the next two are the
+//! robots.txt cases, described in `robots_txt`, and the last is the engines'
+//! metadata, described in `metadata`.
 
 mod agent_signature;
 mod cloud_translation;
 mod configuration;
 mod derived;
 mod fodid_cases;
+mod metadata;
 mod robots_txt;
 mod translation;
 mod usage;
@@ -147,6 +150,7 @@ fn main() -> Result<()> {
         Some(derived::RUN) => return derived::run(&args[1..]),
         Some(robots_txt::CASES) => return robots_txt::cases(&args[1..]),
         Some(robots_txt::RUN) => return robots_txt::run(&args[1..]),
+        Some(metadata::RUN) => return metadata::run(&args[1..]),
         _ => {}
     }
     let args = parse_args(&args)?;

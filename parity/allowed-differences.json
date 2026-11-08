@@ -11,17 +11,13 @@
             "message": "The value for the 'sequence' parameter is not valid. See https://51degrees.com/documentation/4.5/_services__cloud__error_messages.html?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=pipeline-engines-fiftyone-src-sequence_element.rs&utm_term=sequence-not-valid for more information."
           },
           {
-            "element": "ip",
-            "message": "evidence contains no client IP address to look up"
-          },
-          {
             "element": "json-builder",
             "message": "The value for the 'sequence' parameter could not be found. A Sequence element needs to be placed before the JSON builder element in the pipeline. See https://51degrees.com/documentation/4.5/_services__cloud__error_messages.html?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=json-builder-src-element.rs&utm_term=sequence-number-not-present for more information."
           }
         ]
       ]
     },
-    "reason": "For a sequence that is not a 32-bit integer each side gives an error from the Sequence element and another from the JSON builder, and each message starts with the same sentence. The links in the messages carry each repository's own campaign tags, and the crates' JSON builder message adds a sentence saying where the Sequence element goes. The crates' errors also hold the IP Intelligence error that the #226 entry for errors allows in the other cases. The crates' side is pinned, so the entry allows only .NET's tags and wording. When #226 removes the IP Intelligence error, it comes out of the pinned side too."
+    "reason": "For a sequence that is not a 32-bit integer each side gives an error from the Sequence element and another from the JSON builder, and each message starts with the same sentence. The links in the messages carry each repository's own campaign tags, and the crates' JSON builder message adds a sentence saying where the Sequence element goes. The crates' side is pinned, so the entry allows only .NET's tags and wording."
   },
   {
     "path": "properties.sequence",
@@ -34,44 +30,46 @@
     "reason": "The JSON builder writes the data of the crates' Sequence element, being the session-id and sequence the specification's Element Data gives. .NET's Sequence element has no data."
   },
   {
-    "path": "properties.ip",
-    "kind": "presence",
+    "path": "properties.ip.ip",
+    "kind": "type",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "reason": "With no address in the evidence the crates' IP Intelligence engine gives an error and no data, where .NET gives data in which no property has a value.",
+    "reason": "The crates give Ip as a string, where .NET gives an IP address. The values are still compared, and are the same.",
     "issue": 226
   },
   {
-    "path": "errors",
-    "kind": "value",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-absent", "sequence-5", "sequence-9", "sequence-10", "sequence-int-max", "sequence-space", "sequence-plus", "sequence-nul", "sequence-int-min", "session-*", "javascript-*", "usage-*"],
-    "reason": "The crates' IP Intelligence engine gives an error when the evidence holds no address it can read. .NET gives none. The four sequence cases that are not a 32-bit integer are left out, so their errors meet only the entry that pins the crates' side.",
+    "path": "properties.ip.ipv6",
+    "kind": "type",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "reason": "The crates give IpV6 as a string, where .NET gives an IP address. The values are still compared, and are the same.",
     "issue": 226
   },
   {
-    "path": "json.errors",
+    "path": "json.ip.ip",
     "kind": "onlyInRust",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "reason": "The JSON builder writes the IP Intelligence error the crates give when the evidence holds no address it can read.",
-    "issue": 226
+    "rust": {"value": [null]},
+    "reason": "json-builder.md says \"There MUST be a top-level entry for each Element Data containing sub-entries for each Property and its value (set to 'null' if there is no value)\", so the crates write Ip as null when the evidence holds no IPv4 address. .NET's IpDataOnPremise.AsStrippedDictionary leaves Ip out then, so its JSON has no ip."
   },
   {
-    "path": "json.ip",
-    "kind": "onlyInDotnet",
+    "path": "json.ip.ipnullreason",
+    "kind": "onlyInRust",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "reason": "The crates' IP Intelligence engine writes no data when the evidence holds no address it can read, so the JSON has no ip object.",
-    "issue": 226
+    "rust": {"value": ["IPv4 was not supplied as evidence.", "The IP supplied as evidence was not valid."]},
+    "reason": "json-builder.md says the nullreason meta-Property \"MUST be added with a string message that explains why this Property does not have a value\" where the Property's value is null, so the crates write the reason .NET gives for Ip having no value. .NET leaves Ip out of its JSON then, and writes no reason."
   },
   {
-    "path": "*ip.ip",
+    "path": "json.ip.ipv6",
+    "kind": "onlyInRust",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "reason": "The crates do not fill the Ip property with the address looked up, as .NET does.",
-    "issue": 226
+    "rust": {"value": [null]},
+    "reason": "json-builder.md says \"There MUST be a top-level entry for each Element Data containing sub-entries for each Property and its value (set to 'null' if there is no value)\", so the crates write IpV6 as null when the evidence holds no IPv6 address. .NET's IpDataOnPremise.AsStrippedDictionary leaves IpV6 out then, so its JSON has no ipv6."
   },
   {
-    "path": "*ip.ipv6",
+    "path": "json.ip.ipv6nullreason",
+    "kind": "onlyInRust",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "reason": "The crates do not fill the IpV6 property with the address looked up, as .NET does.",
-    "issue": 226
+    "rust": {"value": ["IPv6 was not supplied as evidence.", "The IP supplied as evidence was not valid."]},
+    "reason": "json-builder.md says the nullreason meta-Property \"MUST be added with a string message that explains why this Property does not have a value\" where the Property's value is null, so the crates write the reason .NET gives for IpV6 having no value. .NET leaves IpV6 out of its JSON then, and writes no reason."
   },
   {
     "path": "*ip.areas",
@@ -112,8 +110,18 @@
     "issue": 226
   },
   {
+    "path": "properties.device.hardware*",
+    "kind": "noValueMessage",
+    "cases": ["metadata-device-ismobile"],
+    "data": "lite",
+    "dotnet": {"pattern": ["Property 'Hardware*' not found in data for element 'device'. The reason for this is unknown. Please check that the aspect and property name are correct."]},
+    "rust": {"pattern": ["Property 'Hardware*' not found in data for element 'device'. This is because your license or data file does not include this property. To see which licenses include it, see *"]},
+    "reason": "The Lite file has no HardwareVendor, HardwareModel or HardwareName. For a property the data file does not hold, both sides give the upgrade reason when the engine's data type has a typed accessor for the name. .NET's MissingPropertyService looks for the accessor among the properties IDeviceDataHash declares, which are none, as Type.GetProperties on an interface leaves out those of the interfaces it extends, so it never sees IDeviceData's HardwareVendor and gives the unknown reason. The crates find the accessor and give the upgrade reason the service's own documentation describes."
+  },
+  {
     "path": "properties.device.*",
     "kind": "noValueMessage",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "reason": "Every Device Detection property with no value gives the same sentence, where .NET gives the reason for each.",
     "issue": 223
   },
@@ -309,5 +317,74 @@
     "dotnet": {"pattern": ["line *: # Terms file:///terms/1.txt"]},
     "rust": {"pattern": ["line *: Allow: /"]},
     "reason": "An entry starting with a slash, here /terms/1.txt, is an absolute-path reference by RFC 3986 section 4.2, not a URI, so the crate leaves it out, as .NET's engine documentation asks when it says each entry must be a valid absolute URI. .NET's Uri.TryCreate with UriKind.Absolute reads such a string as a file path on Linux and macOS but not on Windows, so .NET writes file:///terms/1.txt on the comparison's Linux runner and leaves the entry out on Windows. Over the Enterprise file this case first differs at a crawler the two entries for crawlers with no usable product token allow, so this entry is for the Lite file until those entries come out."
+  },
+  {
+    "path": "engineMetadata.dataSourceTier",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "dotnet": {"value": ["IPIV41"]},
+    "reason": "The crates' IP Intelligence engine gives the tier the data file's header names, where .NET gives IPIV41.",
+    "issue": 226
+  },
+  {
+    "path": "engineMetadata.properties.Ip*.type",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "dotnet": {"value": ["ipAddress"]},
+    "rust": {"value": ["string"]},
+    "reason": "The crates' value types have no IP address, so Ip, IpV6, IpRangeStart and IpRangeEnd are strings, where .NET gives IP addresses.",
+    "issue": 226
+  },
+  {
+    "path": "engineMetadata.properties.Areas.type",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "data": "enterprise",
+    "dotnet": {"value": ["wktString"]},
+    "rust": {"value": ["string"]},
+    "reason": "The crates' value types have no WKT value, so Areas is a string, where .NET gives a WKT value.",
+    "issue": 226
+  },
+  {
+    "path": "engineMetadata.properties.*.type",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "data": "enterprise",
+    "dotnet": {"value": ["weightedList"]},
+    "rust": {"value": ["keyValueList"]},
+    "reason": "The crates' value types have no weighted list, so each weighted property, being CountryCodesGeographical, CountryCodesPopulation, Mcc and StateGeoNameIdsGeographical, has the type of a list of records, each a value and a weight, which is how the crates give its values. .NET gives a list of weighted values."
+  },
+  {
+    "path": "engineMetadata.properties.*.defaultValue",
+    "kind": "presence",
+    "cases": ["metadata-device*"],
+    "data": "enterprise",
+    "dotnet": {
+      "value": [
+        {"name": "", "description": "", "url": ""},
+        {"name": "", "description": "Indicates that the crawler has unknown use.", "url": ""}
+      ]
+    },
+    "rust": {"value": [null]},
+    "reason": "For CrawlerProductTokens, CrawlerUsage and HardwareName in the Enterprise file, each of which has a value with an empty name, .NET gives that value as the default and the crates give none. The C++ code .NET calls takes the name of the value at the property's default value index, or an empty name when the index is none, and looks that name up among the property's own values. The crates give a default only when the index falls among the property's own values. Every other property's default is the same on both sides.",
+    "issue": 223
+  },
+  {
+    "path": "properties.ip.*",
+    "kind": "noValueMessage",
+    "cases": ["metadata-ip-asn"],
+    "dotnet": {"pattern": ["Property '*' not found in data for element 'ip'. This is because your license or data file does not include this property. It is available with the * license/data for the IpiOnPremiseEngine. To upgrade, see *"]},
+    "rust": {"pattern": ["Property '*' not found in data for element 'ip'. This is because the property has been excluded when configuring the engine."]},
+    "reason": "For a property the data file holds and the engine was opened without, both sides first check that the engine's tier is among the property's data tiers. .NET's IP Intelligence tier, IPIV41, is in none, so .NET gives the upgrade reason. The crates' tier is the name the data file's header gives, which is among them, so they go on to the excluded reason. This follows from the engineMetadata.dataSourceTier entry.",
+    "issue": 226
+  },
+  {
+    "path": "properties.ip.country",
+    "kind": "noValueMessage",
+    "cases": ["metadata-ip-asn"],
+    "data": "lite",
+    "dotnet": {"pattern": ["Property 'Country' not found in data for element 'ip'. The reason for this is unknown. Please check that the aspect and property name are correct."]},
+    "rust": {"pattern": ["Property 'Country' not found in data for element 'ip'. This is because your license or data file does not include this property. To see which licenses include it, see *"]},
+    "reason": "The ASN file has no Country. For a property the data file does not hold, both sides give the upgrade reason when the engine's data type has a typed accessor for the name. .NET's MissingPropertyService looks for the accessor among the properties IIpDataOnPremise declares, which are none, as Type.GetProperties on an interface leaves out those of the interfaces it extends, so it never sees IIpIntelligenceData's Country and gives the unknown reason. The crates find the accessor and give the upgrade reason the service's own documentation describes."
   }
 ]

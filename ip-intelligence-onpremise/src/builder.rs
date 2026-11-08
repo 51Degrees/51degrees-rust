@@ -38,7 +38,7 @@ use fiftyone_pipeline_engines::{
     OnPremiseAspectEngine, DISTRIBUTOR_URL,
 };
 
-use crate::engine::{record_published, IpIntelligenceOnPremiseEngine};
+use crate::engine::{record_dates, IpIntelligenceOnPremiseEngine};
 use crate::operational_copy::OperationalCopy;
 
 /// The download type the Distributor serves IP Intelligence data files as,
@@ -358,7 +358,7 @@ impl IpIntelligenceOnPremiseEngineBuilder {
         )?;
 
         let data_file = Arc::new(AspectEngineDataFile::new(configuration));
-        record_published(&manager, &data_file);
+        record_dates(&manager, &data_file);
 
         Ok(IpIntelligenceOnPremiseEngine::from_parts(
             copy,

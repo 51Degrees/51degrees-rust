@@ -215,9 +215,11 @@ pub trait IpIntelligencePropertyReader: Send + Sync {
     /// when this reader cannot read it.
     fn position(&self, name: &str) -> Option<usize>;
 
-    /// Read the property at `position` into `data` through its `set_*` methods,
-    /// leaving `data` unchanged when the property has no value. `Err` carries
-    /// the message of a read that failed.
+    /// Read the property at `position` into `data` through its `set_*` methods.
+    /// For a property with no value, a `set_*_no_value` method records the
+    /// reason and lists the property among the keys, so the JSON builder
+    /// writes it as null with the reason. Leaving `data` unchanged gives the
+    /// default reason. `Err` carries the message of a read that failed.
     fn read_property(
         &self,
         position: usize,
@@ -282,15 +284,21 @@ impl DeferredValues {
         Ok(look(&state.values))
     }
 
-    /// The lowercase names of the properties that have a value, reading any not
-    /// yet read.
+    /// The lowercase names of the properties read with a value or with a
+    /// reason for none, in the reader's order whatever order they were read
+    /// in, reading any not yet read.
     fn keys(&self) -> Vec<String> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let state = &mut *state;
         for position in 0..self.reader.property_names().len() {
             self.read(state, position);
         }
-        state.values.base.keys()
+        self.reader
+            .property_names()
+            .iter()
+            .filter(|name| state.values.lists(name))
+            .cloned()
+            .collect()
     }
 }
 
@@ -422,6 +430,14 @@ impl IpIntelligenceDataBase {
             Some(missing) => AspectPropertyValue::no_value(missing.description),
             None => AspectPropertyValue::empty(),
         }
+    }
+
+    /// Whether [`ElementData::keys`] lists the property with the lowercase
+    /// name `key` among those set on this data directly, with a value or with
+    /// none.
+    fn lists(&self, key: &str) -> bool {
+        self.base.values().get_value(key).is_some()
+            || self.no_value_places.iter().any(|(placed, _)| placed == key)
     }
 
     /// Whether the property is set on this data directly, with or without a
@@ -702,8 +718,10 @@ impl ElementData for IpIntelligenceDataBase {
             return Err(NoValueError::new(message));
         }
         match self.readable(name) {
+            // The values read hold the reason a property read with no value
+            // has none.
             Some((deferred, position)) => deferred
-                .with(position, |values| values.base.get(name))
+                .with(position, |values| values.get(name))
                 .unwrap_or_else(|message| Err(NoValueError::new(message))),
             // The property is missing, and the embedded base gives the reason.
             None => self.base.values().get(name).map_err(|absent| {
@@ -725,12 +743,12 @@ impl ElementData for IpIntelligenceDataBase {
     }
 
     /// The names of the properties set on this data, with a value or with
-    /// none, in the order they were first set, then those the reader gives a
-    /// value. A property set with no value is listed so the JSON builder
-    /// writes it as null with the reason, among the values where the cloud
-    /// engine set it, as .NET's cloud data lists it. With a reader attached
-    /// this reads every property not yet read, because whether a property
-    /// has a value is only known once it is read.
+    /// none, in the order they were first set, then those the reader reads
+    /// in the same way. A property set with no value is listed so the JSON
+    /// builder writes it as null with the reason, among the values where the
+    /// engine set it, as .NET's data lists it. With a reader attached this
+    /// reads every property not yet read, because whether a property has a
+    /// value is only known once it is read.
     fn keys(&self) -> Vec<String> {
         let bag = self.base.keys();
         let mut keys = Vec::with_capacity(bag.len() + self.no_value_places.len());
@@ -1103,6 +1121,75 @@ mod tests {
         ] {
             assert_eq!(reads_of(&reads, name), 1, "{name}");
         }
+    }
+
+    /// A reader that records a reason for each property it gives no value,
+    /// as the on-premise engine does.
+    struct NoValueReader {
+        names: Vec<String>,
+    }
+
+    impl NoValueReader {
+        fn new() -> Self {
+            NoValueReader {
+                names: ["asn", "latitude", "countrycodespopulation", "ip", "ipv6"]
+                    .iter()
+                    .map(|name| (*name).to_owned())
+                    .collect(),
+            }
+        }
+    }
+
+    impl IpIntelligencePropertyReader for NoValueReader {
+        fn property_names(&self) -> &[String] {
+            &self.names
+        }
+
+        fn position(&self, name: &str) -> Option<usize> {
+            self.names.iter().position(|known| known == name)
+        }
+
+        fn read_property(
+            &self,
+            position: usize,
+            data: &mut IpIntelligenceDataBase,
+        ) -> Result<(), String> {
+            match self.names[position].as_str() {
+                "asn" => data.set_string_no_value("Asn", "no asn"),
+                "latitude" => data.set_float_no_value("Latitude", "no latitude"),
+                "countrycodespopulation" => {
+                    data.set_weighted_string_no_value("CountryCodesPopulation", "no codes")
+                }
+                "ip" => data.set_string("Ip", "192.0.2.1"),
+                _ => data.set_string_no_value("IpV6", "no IPv6"),
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_property_read_with_no_value_gives_its_reason_and_is_listed() {
+        let data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(NoValueReader::new());
+        assert_eq!(data.asn().no_value_message(), Some("no asn"));
+        assert_eq!(data.get("ASN").unwrap_err().message, "no asn");
+        assert_eq!(data.latitude().no_value_message(), Some("no latitude"));
+        assert_eq!(data.get("latitude").unwrap_err().message, "no latitude");
+        assert_eq!(
+            data.country_codes_population().no_value_message(),
+            Some("no codes")
+        );
+        assert_eq!(
+            data.get("CountryCodesPopulation").unwrap_err().message,
+            "no codes"
+        );
+        assert_eq!(data.ip().value().unwrap().as_str(), "192.0.2.1");
+        assert_eq!(data.ip_v6().no_value_message(), Some("no IPv6"));
+        assert_eq!(data.get("IpV6").unwrap_err().message, "no IPv6");
+        assert!(data.has_property("ipv6"));
+        assert_eq!(
+            data.keys(),
+            ["asn", "latitude", "countrycodespopulation", "ip", "ipv6"]
+        );
     }
 
     #[test]
