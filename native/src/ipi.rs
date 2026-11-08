@@ -1600,12 +1600,13 @@ const IPV6_TEXT_MAX_BYTES: usize = 45;
 /// (`64:ff9b::808:808`).
 ///
 /// [RFC 5952 section 5](https://www.rfc-editor.org/rfc/rfc5952#section-5)
-/// recommends the IPv4 form only for the prefixes defined in RFC 4291 and
-/// RFC 2765, which RFC 6145 and then RFC 7915 replaced, and
+/// recommends the IPv4 form for addresses under the prefixes of RFC 4291
+/// and RFC 2765 (replaced by RFC 6145 and then RFC 7915), `::ffff:0:102`
+/// among them, and
 /// [RFC 6052 section 2.4](https://www.rfc-editor.org/rfc/rfc6052#section-2.4)
-/// allows it for `64:ff9b::/96` without requiring it. Neither settles these
-/// forms, so this function writes them as .NET does. Rust's `Display` uses
-/// the IPv4 form for `::ffff:` alone, whatever the seventh field.
+/// allows it for `64:ff9b::/96`. Neither requires it, so this function
+/// writes these forms as .NET does. Rust's `Display` uses the IPv4 form
+/// for `::ffff:` alone, whatever the seventh field.
 pub fn ip_address_text(address: IpAddr) -> String {
     use std::fmt::Write as _;
     let address = match address {
