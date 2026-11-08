@@ -204,9 +204,8 @@ impl DeviceDetectionPipelineBuilder {
     /// Start building an on-premise pipeline that loads the Hash data file at
     /// `data_file_path`.
     ///
-    /// The returned [`DeviceDetectionOnPremisePipelineBuilder`] places an
-    /// optional UA-CH high-entropy decoder before the Hash engine (on by
-    /// default), with share usage on.
+    /// The returned [`DeviceDetectionOnPremisePipelineBuilder`] has share
+    /// usage on.
     ///
     /// # Example
     ///
@@ -281,8 +280,8 @@ impl DeviceDetectionPipelineBuilder {
 /// Builds an `Arc<`[`Pipeline`]`>` around the on-premise Hash engine.
 ///
 /// Defaults: the [`PerformanceProfile::Default`] profile, every property the
-/// data file supports, the UA-CH high-entropy decoder enabled, share usage
-/// enabled with the `share-usage` feature, and automatic data updates on.
+/// data file supports, share usage enabled with the `share-usage` feature,
+/// and automatic data updates on.
 /// Override any of these before [`Self::build`].
 #[cfg(feature = "on-premise")]
 pub struct DeviceDetectionOnPremisePipelineBuilder {
@@ -295,7 +294,6 @@ pub struct DeviceDetectionOnPremisePipelineBuilder {
     allow_unmatched: Option<bool>,
     use_performance_graph: Option<bool>,
     use_predictive_graph: Option<bool>,
-    use_uach: bool,
     share_usage: bool,
     auto_update: bool,
     file_system_watcher: bool,
@@ -321,7 +319,6 @@ impl DeviceDetectionOnPremisePipelineBuilder {
             allow_unmatched: None,
             use_performance_graph: None,
             use_predictive_graph: None,
-            use_uach: true,
             share_usage: cfg!(feature = "share-usage"),
             auto_update: true,
             file_system_watcher: true,
@@ -493,12 +490,11 @@ impl DeviceDetectionOnPremisePipelineBuilder {
         self
     }
 
-    /// Place a UA-CH high-entropy decoder before the Hash engine. On by default
-    /// so a high-entropy client-hint blob is turned into the `sec-ch-ua*`
-    /// headers the engine understands. Turn it off if the application never
-    /// supplies that blob.
-    pub fn use_uach(mut self, enabled: bool) -> Self {
-        self.use_uach = enabled;
+    /// Does nothing. The Hash engine turns `51D_GetHighEntropyValues`
+    /// evidence into the `sec-ch-ua*` headers itself, so the pipeline needs
+    /// no decoder element before it.
+    #[deprecated(note = "does nothing, as the Hash engine reads high entropy values itself")]
+    pub fn use_uach(self, _enabled: bool) -> Self {
         self
     }
 
@@ -520,11 +516,11 @@ impl DeviceDetectionOnPremisePipelineBuilder {
     /// Assemble the pipeline.
     ///
     /// The element order is: the sequence element when usage sharing is on, the
-    /// optional UA-CH decoder, the Hash engine, then usage sharing when it is
-    /// on. Returns the same kind of `Arc<`[`Pipeline`]`>` that
-    /// [`Pipeline::builder`] does, so a caller drives it identically whichever
-    /// deployment built it. Refuses when automatic updates or update on
-    /// startup are on and no licence key is set.
+    /// Hash engine, then usage sharing when it is on. Returns the same kind of
+    /// `Arc<`[`Pipeline`]`>` that [`Pipeline::builder`] does, so a caller
+    /// drives it identically whichever deployment built it. Refuses when
+    /// automatic updates or update on startup are on and no licence key is
+    /// set.
     pub fn build(self) -> Result<std::sync::Arc<Pipeline>> {
         use std::sync::Arc;
 
@@ -584,10 +580,6 @@ impl DeviceDetectionOnPremisePipelineBuilder {
         }
         if self.share_usage {
             pipeline_builder = pipeline_builder.add_element(Arc::new(SequenceElement::new()));
-        }
-        if self.use_uach {
-            pipeline_builder =
-                pipeline_builder.add_element(Arc::new(UachJsConversionElement::new()));
         }
         pipeline_builder = pipeline_builder.add_element(engine);
         if self.share_usage {
