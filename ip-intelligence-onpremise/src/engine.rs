@@ -1055,6 +1055,7 @@ fn populate_property(
                     ip_data.set_float(name, float);
                 }
             }
+            PropertyValueType::WktString => ip_data.set_wkt_string(name, value),
             _ => ip_data.set_string(name, value),
         },
     }
@@ -1079,6 +1080,7 @@ fn set_no_value(
         PropertyValueType::Bool => ip_data.set_boolean_no_value(name, message),
         PropertyValueType::Integer => ip_data.set_integer_no_value(name, message),
         PropertyValueType::Float => ip_data.set_float_no_value(name, message),
+        PropertyValueType::WktString => ip_data.set_wkt_string_no_value(name, message),
         _ => ip_data.set_string_no_value(name, message),
     }
 }
