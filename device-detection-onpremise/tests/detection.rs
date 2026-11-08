@@ -418,6 +418,72 @@ fn method_and_user_agents_are_written() {
     assert!(!user_agents.is_empty());
 }
 
+/// A screen size the data file holds as `Unknown` is 0, and a JavaScript
+/// property the matched profile holds no value for has none, as .NET gives
+/// them for `curl/8.5.0` over the Lite file in the comparison with .NET.
+#[test]
+fn values_are_read_as_dotnet_reads_them() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the values test");
+        return;
+    };
+    if engine.data_source_tier() != "Lite" {
+        eprintln!("the values test holds the Lite file's answers; skipping");
+        return;
+    }
+    let device = detect(engine, "curl/8.5.0");
+    assert_eq!(device.screen_pixels_width().value().ok(), Some(&0));
+    assert_eq!(device.screen_pixels_height().value().ok(), Some(&0));
+    assert_eq!(device.is_mobile().value().ok(), Some(&false));
+    assert_eq!(
+        device.platform_name().value().ok().map(String::as_str),
+        Some("Unknown")
+    );
+    assert!(!device.javascript_hardware_profile().has_value());
+    assert!(!device.javascript_get_high_entropy_values().has_value());
+}
+
+/// With no evidence no data file property has a value, where an empty string
+/// would be one, as .NET gives none, and the match metrics say that nothing
+/// matched.
+#[test]
+fn with_no_evidence_no_data_file_property_has_a_value() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the no evidence test");
+        return;
+    };
+    let element: Arc<dyn FlowElement> = engine;
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("pipeline builds");
+    let mut data = pipeline.create_flow_data_with(Evidence::builder().build());
+    data.process().expect("processing succeeds");
+    let device = data.get(DEVICE_DATA_KEY).expect("device data was produced");
+    let metrics = [
+        "matchednodes",
+        "difference",
+        "drift",
+        "deviceid",
+        "useragents",
+        "iterations",
+        "method",
+    ];
+    let keys = device.keys();
+    let files: Vec<&String> = keys
+        .iter()
+        .filter(|key| !metrics.contains(&key.as_str()))
+        .collect();
+    assert!(files.len() > 1, "{keys:?}");
+    for key in files {
+        assert!(device.get(key).is_err(), "{key}: {:?}", device.get(key));
+    }
+    assert_eq!(
+        device.method().value().ok().map(String::as_str),
+        Some("NONE")
+    );
+}
+
 #[test]
 fn paid_tier_data_resolves_hardware_vendor() {
     // Uses whatever `51DEGREES_DD_PATH` points at (or the bundled Lite file as a

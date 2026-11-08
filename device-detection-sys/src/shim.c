@@ -541,7 +541,8 @@ uint16_t fiftyoneDegreesShimHashGetFilePoolSize(
 
 /*
  * Takes one string of a property value, `field` being one of the
- * SHIM_VALUE_ constants, from fiftyoneDegreesShimHashGetDataFilePropertyValues.
+ * SHIM_VALUE_ constants, from fiftyoneDegreesShimHashGetDataFilePropertyValues
+ * or fiftyoneDegreesShimHashGetResultValues.
  */
 typedef void (*fiftyoneDegreesShimValueStringCallback)(
     void *context,
@@ -555,6 +556,11 @@ typedef void (*fiftyoneDegreesShimValueStringCallback)(
 #define SHIM_FIND_FAILED 0
 #define SHIM_FIND_FOUND 1
 #define SHIM_FIND_NOT_FOUND 2
+
+/* What fiftyoneDegreesShimHashGetResultValues returns. */
+#define SHIM_VALUES_FAILED 0
+#define SHIM_VALUES_READ 1
+#define SHIM_VALUES_NONE 2
 
 /*
  * Writes as much of `value` as fits into `buffer` and returns the full length
@@ -1118,6 +1124,52 @@ size_t fiftyoneDegreesShimHashGetIndexedPropertyName(
     }
     fiftyoneDegreesDataSetHashRelease(dataSet);
     return total;
+}
+
+/*
+ * Gives `callback` each value the results hold for the property at
+ * `requiredPropertyIndex`, in order, with SHIM_VALUE_NAME and the value as a
+ * null terminated string valid only for that call, and returns
+ * SHIM_VALUES_READ. These are the values the C++
+ * ResultsHash::getValuesInternal reads, and the matched profile can hold
+ * none. A value with no string is left out, as the C++ leaves it out. Returns
+ * SHIM_VALUES_NONE, giving nothing, when
+ * fiftyoneDegreesResultsHashGetHasValues finds the results hold no value for
+ * the property, which the C++ ResultsBase checks before reading any. Returns
+ * SHIM_VALUES_FAILED when the values cannot be read, with `exception` set
+ * when the C library set it.
+ */
+int fiftyoneDegreesShimHashGetResultValues(
+    fiftyoneDegreesResultsHash *results,
+    int requiredPropertyIndex,
+    fiftyoneDegreesShimValueStringCallback callback,
+    void *context,
+    fiftyoneDegreesException *exception) {
+    const bool hasValues = fiftyoneDegreesResultsHashGetHasValues(
+        results, requiredPropertyIndex, exception);
+    if (FIFTYONE_DEGREES_EXCEPTION_FAILED) {
+        return SHIM_VALUES_FAILED;
+    }
+    if (hasValues == false) {
+        return SHIM_VALUES_NONE;
+    }
+    const fiftyoneDegreesCollectionItem *values =
+        fiftyoneDegreesResultsHashGetValues(
+            results, requiredPropertyIndex, exception);
+    if (values == NULL || FIFTYONE_DEGREES_EXCEPTION_FAILED) {
+        return SHIM_VALUES_FAILED;
+    }
+    for (uint32_t i = 0; i < results->values.count; i++) {
+        const fiftyoneDegreesString *value =
+            (const fiftyoneDegreesString *)values[i].data.ptr;
+        if (value != NULL) {
+            callback(
+                context,
+                SHIM_VALUE_NAME,
+                FIFTYONE_DEGREES_STRING(value));
+        }
+    }
+    return SHIM_VALUES_READ;
 }
 
 /*
