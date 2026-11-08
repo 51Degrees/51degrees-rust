@@ -338,6 +338,7 @@ jobs:
             ipi::tests::each_shim_string_reader_fails_for_an_index_past_the_end \
             ipi::tests::an_enterprise_file_names_each_type \
             ipi::tests::an_enterprise_file_gives_each_value_as_text \
+            ipi::tests::an_ip_range_is_written_as_dotnet_writes_it \
             ipi::tests::a_value_is_found_by_its_text_to_more_places
           env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_ENTERPRISE=1 \
             51DEGREES_IPI_MEMORY_PROFILES=LowMemory \
