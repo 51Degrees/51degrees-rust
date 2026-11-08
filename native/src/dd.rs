@@ -62,6 +62,7 @@ use fiftyone_pipeline_core::{constants, Error, PropertyValueType, Result};
 use crate::buffer::with_value_string;
 use crate::evidence::with_native_evidence;
 use crate::file_reads::{FileReadPermit, FileReads};
+use crate::held_memory::HeldMemory;
 use crate::metadata::{metadata_read_failed, read_metadata_string, take_value_string};
 use crate::profile::PerformanceProfile;
 use crate::status::{status_name, status_to_result, take_message, NativeException, NativeStatus};
@@ -319,7 +320,7 @@ pub struct Manager {
     file_reads: Option<FileReads>,
     /// The data a load from memory reads in place. Fields drop after
     /// [`Drop::drop`] has freed the data set, so the data outlives it.
-    _memory: Option<Box<[u8]>>,
+    _memory: Option<HeldMemory>,
 }
 
 // Safety: the native resource manager is internally reference counted and
@@ -432,13 +433,13 @@ impl Manager {
         properties: Option<&[&str]>,
         options: &HashOptions,
     ) -> Result<Arc<Manager>> {
-        let mut memory = data.into_boxed_slice();
-        let size = c_long::try_from(memory.len()).map_err(|_| Error::Native {
+        let memory = HeldMemory::new(data);
+        let size = c_long::try_from(memory.length()).map_err(|_| Error::Native {
             status: String::from("InvalidInput"),
             message: format!(
                 "the data is {} bytes, more than the C library reads from \
                  memory on this platform",
-                memory.len()
+                memory.length()
             ),
         })?;
         let mut config = profile_config(profile, options);
@@ -447,7 +448,7 @@ impl Manager {
         config.b.b.free_data = false;
         config.b.b.use_temp_file = false;
         let indexed = value_profiles::IndexedNames::new(&options.indexed_properties)?;
-        let start = memory.as_mut_ptr().cast::<c_void>();
+        let start = memory.start();
         Self::init(
             properties,
             Some(memory),
@@ -480,7 +481,7 @@ impl Manager {
     /// gives the message for a failed status.
     fn init(
         properties: Option<&[&str]>,
-        memory: Option<Box<[u8]>>,
+        memory: Option<HeldMemory>,
         init: impl FnOnce(
             *mut sys::ResourceManager,
             *mut sys::PropertiesRequired,
