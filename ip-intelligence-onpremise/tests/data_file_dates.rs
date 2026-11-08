@@ -25,8 +25,9 @@
 //! engine loads the file, data given in memory or a file the data update
 //! service downloads.
 //!
-//! The tests need the ASN file `51DEGREES_IPI_PATH` names and skip with a
-//! note when it is missing.
+//! Each test holds several copies of the data at once, so the tests use the
+//! ASN file in the data repository inside the `cxx` submodule whatever
+//! `51DEGREES_IPI_PATH` names, and skip with a note when it is missing.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -50,16 +51,26 @@ const PUBLISHED_AT: usize = 66;
 const PUBLISHED: (i16, u8, u8) = (2001, 2, 3);
 const NEXT_UPDATE: (i16, u8, u8) = (2001, 2, 4);
 
-/// The ASN file, or [`None`] with a note when it is missing.
+/// The name of the ASN data file in the data repository.
+const ASN_FILE_NAME: &str = "51Degrees-IPIV4AsnIpiV41.ipi";
+
+/// The ASN file in the data repository inside the `cxx` submodule, or
+/// [`None`] with a note when it is missing.
 fn asn_file() -> Option<PathBuf> {
-    let path = std::env::var("51DEGREES_IPI_PATH")
-        .ok()
-        .map(PathBuf::from)
-        .filter(|path| path.is_file());
-    if path.is_none() {
-        eprintln!("skipping the data file dates tests: set 51DEGREES_IPI_PATH to the ASN file");
+    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    loop {
+        let candidate = dir.join("cxx/data/ip-intelligence").join(ASN_FILE_NAME);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if !dir.pop() {
+            eprintln!(
+                "skipping the data file dates tests: {ASN_FILE_NAME} is not in \
+                 cxx/data/ip-intelligence"
+            );
+            return None;
+        }
     }
-    path
 }
 
 /// The ASN data with [`PUBLISHED`] and [`NEXT_UPDATE`] in its header.
@@ -147,8 +158,9 @@ fn the_dates_recorded_are_the_ones_the_data_file_header_holds() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A refresh from memory records the dates the new data holds, and the
-/// engine answers from the new data.
+/// A refresh from memory records the dates the new data holds, keeps the
+/// properties the engine was built with, and the engine answers from the
+/// new data.
 #[test]
 fn a_refresh_from_memory_records_the_dates_of_the_new_data() {
     let Some(asn) = asn_file() else {
@@ -164,6 +176,12 @@ fn a_refresh_from_memory_records_the_dates_of_the_new_data() {
             .refresh_from_memory(None, &dated(&asn))
             .expect("the data loads from memory");
         assert_dates(&engine, profile.as_str());
+        assert_eq!(
+            engine.available_property_names(),
+            ["Asn"],
+            "{}",
+            profile.as_str()
+        );
         assert!(answers(&engine), "{}", profile.as_str());
     }
 }

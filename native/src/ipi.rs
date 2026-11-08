@@ -1759,9 +1759,9 @@ mod tests {
         asn_file()
     }
 
-    /// The ASN file from the data repository, for a test that copies the
-    /// data file and so needs a small one whatever `51DEGREES_IPI_PATH`
-    /// names.
+    /// The ASN file from the data repository, for a test that holds several
+    /// copies of the data file and so needs a small one whatever
+    /// `51DEGREES_IPI_PATH` names.
     fn asn_file() -> Option<PathBuf> {
         let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()?
@@ -2003,8 +2003,8 @@ mod tests {
     /// set reads the file or holds it in memory.
     #[test]
     fn the_dates_are_the_ones_the_data_file_header_holds() {
-        let Some(data_file) = ipi_data_file() else {
-            eprintln!("no IP Intelligence data file found; skipping the header dates");
+        let Some(data_file) = asn_file() else {
+            eprintln!("no ASN data file found; skipping the header dates");
             return;
         };
         let bytes = std::fs::read(&data_file).expect("data file reads");
@@ -2025,8 +2025,8 @@ mod tests {
     /// -1 would otherwise be read as a date before year 1.
     #[test]
     fn a_header_holding_no_valid_date_gives_no_dates() {
-        let Some(data_file) = ipi_data_file() else {
-            eprintln!("no IP Intelligence data file found; skipping dates not valid");
+        let Some(data_file) = asn_file() else {
+            eprintln!("no ASN data file found; skipping dates not valid");
             return;
         };
         let bytes = std::fs::read(&data_file).expect("data file reads");
@@ -2066,8 +2066,8 @@ mod tests {
     /// reference to the manager.
     #[test]
     fn a_data_set_loads_from_memory_as_it_does_from_the_file() {
-        let Some(data_file) = ipi_data_file() else {
-            eprintln!("no IP Intelligence data file found; skipping loading from memory");
+        let Some(data_file) = asn_file() else {
+            eprintln!("no ASN data file found; skipping loading from memory");
             return;
         };
         let bytes = std::fs::read(&data_file).expect("data file reads");
@@ -2129,8 +2129,8 @@ mod tests {
     /// out of bounds.
     #[test]
     fn data_that_is_not_a_whole_data_file_is_refused() {
-        let Some(data_file) = ipi_data_file() else {
-            eprintln!("no IP Intelligence data file found; skipping refused data");
+        let Some(data_file) = asn_file() else {
+            eprintln!("no ASN data file found; skipping refused data");
             return;
         };
         let bytes = std::fs::read(&data_file).expect("data file reads");
