@@ -112,24 +112,30 @@ pub fn run(options: Options) -> Result<()> {
 /// Render any property value for display.
 ///
 /// IP-intelligence properties are weighted, so in the dynamic bag they appear as
-/// a `KeyValueList` of `{value, weight}` records. This renders each record as
-/// `value (weighting w)` so the weighting is visible, and falls back to the
-/// shared string rendering for any non-weighted property the key might also
-/// return. Long results are truncated.
+/// a `KeyValueList` of `{rawweighting, value}` records. This renders each
+/// record as `value (weighting w)` so the weighting is visible, and falls back
+/// to the shared string rendering for any non-weighted property the key might
+/// also return. Long results are truncated.
 fn render_value(value: &PropertyValue) -> String {
     let rendered = match value {
         PropertyValue::KeyValueList(records) => {
             let parts: Vec<String> = records
                 .iter()
                 .map(|record| {
-                    // Each record carries a `value` candidate and a `weight`
-                    // multiplier (see the shared IP-intelligence data model).
+                    // Each record carries a `value` candidate and its raw
+                    // weighting, from 0 to 65,535, under `rawweighting`. The
+                    // crates up to 4.5.18 give a weighting from 0 to 1 under
+                    // `weight` instead, so that is read too.
                     let candidate = record
                         .get("value")
                         .map(examples_shared::property_value_to_string)
                         .unwrap_or_else(|| "Unknown".to_owned());
-                    match record.get("weight").and_then(PropertyValue::as_double) {
-                        Some(weight) => format!("{candidate} (weighting {weight:.3})"),
+                    let weighting = match record.get("rawweighting") {
+                        Some(raw) => raw.as_double().map(|raw| raw / f64::from(u16::MAX)),
+                        None => record.get("weight").and_then(PropertyValue::as_double),
+                    };
+                    match weighting {
+                        Some(weighting) => format!("{candidate} (weighting {weighting:.3})"),
                         None => candidate,
                     }
                 })
@@ -206,6 +212,12 @@ mod tests {
 
         let mut record = BTreeMap::new();
         record.insert("value".to_owned(), PropertyValue::String("US".to_owned()));
+        record.insert("rawweighting".to_owned(), PropertyValue::Integer(59_965));
+        let value = PropertyValue::KeyValueList(vec![record]);
+        assert_eq!(render_value(&value), "US (weighting 0.915)");
+
+        let mut record = BTreeMap::new();
+        record.insert("value".to_owned(), PropertyValue::String("US".to_owned()));
         record.insert("weight".to_owned(), PropertyValue::Double(0.915));
         let value = PropertyValue::KeyValueList(vec![record]);
         assert_eq!(render_value(&value), "US (weighting 0.915)");
@@ -231,7 +243,7 @@ mod tests {
  * IP Intelligence properties are weighted, so each property can carry several
  * candidate values, each with a weighting that says how strongly the data
  * supports it. In the dynamic bag each weighted property appears as a list of
- * value/weight records; this example renders each candidate as
+ * rawweighting/value records, and this example renders each candidate as
  * `value (weighting w)` so the distribution is visible. Long results are
  * truncated for readability.
  *

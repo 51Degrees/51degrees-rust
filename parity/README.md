@@ -12,11 +12,13 @@ change by a difference this comparison stops reporting.
 | `corpus/fodid.json` | The 51Did cases. Each is a payload to sign, a text to read as it is, or the 51Did metadata (see "The 51Did comparison"). |
 | `corpus/configuration.json` | The configuration cases. Each is a configuration file in .NET's shape to build a pipeline from (see "The configuration comparison"). |
 | `corpus/robots-txt.json` | The fixed robots.txt cases. The cases for each usage come from the data file (see "The robots.txt comparison"). |
+| `corpus/property-keyed.json` | The fixed TAC and Native cases. The cases for each TAC and NativeModel value come from the data file (see "The TAC and Native comparison"). |
 | `corpus/metadata.json` | The metadata cases. Each opens one on-premise engine and writes its metadata (see "The metadata comparison"). |
 | `dotnet/` | A .NET 8 console program that runs the cases through the .NET packages and writes one JSON line for each. |
 | `rust/` | The same program over the crates in this checkout. |
 | `compare/` | The comparer, which reports each difference with the case that caused it. |
 | `allowed-differences.json` | The differences that are known, each with its reason and, where there is one, the issue that removes it. |
+| `check-native-model-case.ps1` | Checks that every NativeModel difference in the TAC and Native comparison comes from case alone (see "The TAC and Native comparison"). |
 
 The workflow
 [dotnet-comparison.yml](../.github/workflows/dotnet-comparison.yml) runs all
@@ -97,13 +99,11 @@ there is no IP Intelligence data. The element is part of each program, and on
 each side it writes that side's IP Intelligence data, so the engines read the
 codes as they read an IP Intelligence engine's. In the crates that is
 `IpIntelligenceDataBase` with a missing property source, as both IP
-Intelligence engines write it, so a weighted record is a `value` and a
-`weight` and a property the evidence did not give is missing. .NET's JSON
-writes a record as `rawweighting` and `value`, which the
-[#226](https://github.com/51Degrees/51degrees-rust/issues/226) entries in
-`allowed-differences.json` allow. It lists no properties, so only the JSON
-shows its data. The JSON builder leaves the crates' Sequence element's data
-out, as in the values pipeline. The countries engine sorts every country by
+Intelligence engines write it, so a weighted record is a `rawweighting` and a
+`value`, as in .NET's JSON, and a property the evidence did not give is
+missing. It lists no properties, so only the JSON shows its data. The JSON
+builder leaves the crates' Sequence element's data out, as in the values
+pipeline. The countries engine sorts every country by
 the collation of the language asked for, being the ICU on the runner in .NET
 and ICU4X's compiled data in the crates, so any difference in how the two sort
 shows in the lists of every country.
@@ -149,12 +149,14 @@ Each program writes one JSON object per case.
 | `configuration` | For a configuration case, what was built or the error (see "The configuration comparison"). |
 | `derived` | For a derived property case, the script's source properties and its answer (see "The derived property comparison"). |
 | `robotsTxtEngine`, `plainText`, `annotatedText` | For a robots.txt case, the engine's evidence keys and properties, and the two texts (see "The robots.txt comparison"). |
+| `warnings`, `profileIds`, `hardwareJson`, `propertyKeyedEngines`, `indexedValues` | For a TAC and Native case, the warnings and the ids of the profiles found, and for some cases the JSON's `hardware`, the engines' evidence keys and properties, and the values each side indexes (see "The TAC and Native comparison"). |
 | `engineMetadata` | For a metadata case, the engine's metadata (see "The metadata comparison"). |
 
 Value types are `string`, `bool`, `integer`, `double`, `stringList`,
 `javascript`, `ipAddress`, `dateTime` (in .NET only, written as RFC 3339
 text with the offset), `weightedList` (each item a `rawWeighting` and a
-`value`), `keyValueList` and `list`.
+`value`), `keyValueList`, `elementDataList` (in the crates, the type of
+the TAC and Native engines' `Profiles`) and `list`.
 
 ## The comparison
 
@@ -297,7 +299,19 @@ builder, a parameter no setting takes or a value that does not parse,
 once at the top level and once inside the group. Two hold the Hash
 engine and then the robots.txt engine, with usage sharing off, one giving
 each setting .NET's robots.txt builder reads and one a parameter it has
-no setting for, whose error lists the builder's settings. Three give a
+no setting for, whose error lists the builder's settings. Six hold the
+Hash engine and then the TAC, Native or property keyed engine, with
+usage sharing off. One gives the three engines, named in full, without
+`Builder` and in lower case, with each setting .NET's builders read,
+one gives the property keyed engine only its key property, so its data
+key is the default, one gives it no key property, which its builder
+refuses, and one for each builder gives a parameter it has no setting
+for, whose error lists its settings in .NET's order. The Hash engine in
+these six indexes no property, because .NET's Hash builder has no
+`IndexedProperties` setting and refuses a configuration naming it. The
+crates' engines then warn that each lookup reads every profile, which
+does not matter here, as a configuration case builds a pipeline and
+processes nothing. Three give a
 pipeline setting under both `PipelineBuilderParameters` and
 `BuildParameters`, two of them with `ShareUsage` false, so no usage
 sharing element is added.
@@ -479,6 +493,86 @@ pass with no crawler in either text, and another runs the crate's data file
 tests over that file. Over the Lite file, one step checks that a Rust text
 with one line changed fails the comparison.
 
+## The TAC and Native comparison
+
+The TAC and Native cases check that the TAC and Native engines find the same
+hardware profiles, with the same values, in both languages
+([#225](https://github.com/51Degrees/51degrees-rust/issues/225)). .NET's
+engines come from the FiftyOne.DeviceDetection.PropertyKeyed package at the
+Device Detection version. Each program builds the on-premise Device Detection
+engine with the LowMemory profile, then two pipelines, each holding that
+engine and then a TAC engine and a Native engine of its own, the second with
+the Sequence element first, whose sequence the JSON builder reads, and the
+JSON builder last. A case runs through the second when its `json` is true.
+Both collect process errors rather than throwing them. The crates' Device
+Detection engine indexes `TAC` and `NativeModel`, and .NET's engines build
+their own index of each when they join a pipeline. The Lite file holds
+neither property, so over it neither engine accepts evidence or writes data.
+
+`parity-rust property-keyed-cases` writes the cases as a corpus for the
+comparer and for both programs. First come the fixed cases of
+`corpus/property-keyed.json`, which give no evidence, a User-Agent alone,
+TACs and native model names each engine accepts or refuses, both refused in
+one request, and query values neither engine reads. Then, from the values the
+crates' Device Detection engine lists for each key property, come each key in
+capitals, a native model name in lower case and in upper case, and both keys
+in one request, each with the first value a profile holds that the engine
+accepts. Then come `property-keyed-tac-value-NNNNNN` for each TAC and
+`property-keyed-native-value-NNNNNN` for each NativeModel, in the data file's
+order counting from 000001. Last come `property-keyed-profile-<id>` for every
+50th distinct profile those cases find through a value the engine accepts and
+at most 1,000 profiles hold, counting from the first, each with the evidence
+of the first case that finds it. The limit keeps a profile case from reading
+every profile a placeholder value finds, such as the native model name `N/A`,
+which 34,146 profiles of the TAC file hold. Over the Lite file only the fixed
+cases run.
+
+Each line holds `warnings`, the flow data's warnings, each with its
+element's data key and its message, and `profileIds`, the id of each profile
+in the `hardware` data in order, or null when neither engine wrote data. The
+line for a profile case holds that profile's values in `properties.device`,
+one for each property the engines list for a profile, read as the evidence
+cases read a property, so the entries for Device Detection values apply to
+them as they do to a detection. It holds null there when the case does not
+find the profile. The line for a case whose `json` is true holds the JSON
+builder's `hardware` in `hardwareJson`, or null when the JSON has none.
+
+The line for `property-keyed-none` also holds `propertyKeyedEngines` and
+`indexedValues`. The first holds each engine's `dataKey`, `dataSourceTier`,
+`evidenceKeys` (in ordinal order) and `properties` (each with its `name`,
+`category`, `type`, `available`, `dataTiers`, `description` and
+`itemProperties`, and each of those with its `name`, `category`, `type` and
+`available`). The second holds, for each key property the data file has,
+each value some profile holds with how many profiles hold it. The crates
+read those from the C library's index and .NET from its engine's own index,
+so a value one side holds and the other does not shows there, including a
+value .NET finds in another case. The comparer compares each of these fields
+key by key and list item by item.
+
+Both sides' JSON writes `hardware.profiles` empty, because the engines keep
+the ids of the profiles they find and write none of the profiles to the JSON,
+so `hardwareJson` needs no entry. Three entries in `allowed-differences.json`
+allow TAC and Native differences. One allows the type of `Profiles`, which
+.NET gives as its .NET type and the crates as `elementDataList`. Two allow
+.NET finding a native model name in any case, as its own index compares
+values ignoring case, where the crates match the name exactly through the C
+library's index, as the draft specification of the lookup asks
+([specifications#62](https://github.com/51Degrees/specifications/pull/62)).
+One allows the difference in `indexedValues`, where .NET counts the values
+that differ only in case together under the spelling it met first, and the
+other the difference in `profileIds` in the NativeModel and profile cases,
+where .NET gives the profiles of every such value, and a profile holding two
+of them twice. They come out when .NET's engines use the C library's index
+([51degrees-dotnet#30](https://github.com/51Degrees/51degrees-dotnet/issues/30)).
+
+Over the Enterprise file, one step of that job checks that each side found
+profiles for at least one case and wrote the values of at least one profile,
+so the comparison cannot pass with no profile on either side, another runs
+`check-native-model-case.ps1`, which fails on any NativeModel difference that
+case alone does not explain and on any profile case giving a TAC whose ids
+differ, so the two entries for case hide nothing else, and another runs the
+crate's data file tests over that file.
+
 ## The metadata comparison
 
 Each case in `corpus/metadata.json` opens one on-premise engine on its own,
@@ -507,8 +601,8 @@ components in list order as `componentNames`, and under `components` each
 component's `id`, `defaultProfileId` and the names of its `properties`,
 keyed by its name. Because properties and components are keyed by name, one
 that only one side lists is a single difference rather than moving every
-one after it. Types have the names the other lines use, and .NET's IP
-addresses, areas and weighted lists are `ipAddress`, `wktString` and
+one after it. Types have the names the other lines use. An area is `wktString` on
+both sides, and .NET's IP addresses and weighted lists are `ipAddress` and
 `weightedList`, which the crates' value types do not have. Each side counts
 an IP Intelligence data file property's values without reading them,
 because one can hold millions, and the .NET program counts any other
@@ -600,18 +694,24 @@ DD="--dd ../cxx/data/device-detection/51Degrees-LiteV4.1.hash"
 target/debug/parity-rust robots-txt-cases --corpus corpus/robots-txt.json $DD --out out/robots-txt-cases.json
 target/debug/parity-rust robots-txt --corpus out/robots-txt-cases.json $DD --out out/robots-txt-rust.jsonl
 dotnet out/dotnet/Parity.dll robots-txt --corpus out/robots-txt-cases.json $DD --out out/robots-txt-dotnet.jsonl
+target/debug/parity-rust property-keyed-cases --corpus corpus/property-keyed.json $DD --out out/property-keyed-cases.json
+target/debug/parity-rust property-keyed --corpus out/property-keyed-cases.json $DD --out out/property-keyed-rust.jsonl
+dotnet out/dotnet/Parity.dll property-keyed --corpus out/property-keyed-cases.json $DD --out out/property-keyed-dotnet.jsonl
 METADATA="--cases corpus/metadata.json --dd ../cxx/data/device-detection/51Degrees-LiteV4.1.hash --ipi ../cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi"
 target/debug/parity-rust metadata $METADATA --out out/metadata-rust.jsonl
 dotnet out/dotnet/Parity.dll metadata $METADATA --out out/metadata-dotnet.jsonl
 target/debug/parity-compare --corpus corpus/evidence.json $SIGNED \
   --corpus corpus/configuration.json --corpus out/derived-cases.json \
-  --corpus out/robots-txt-cases.json --corpus corpus/metadata.json \
+  --corpus out/robots-txt-cases.json --corpus out/property-keyed-cases.json \
+  --corpus corpus/metadata.json \
   --dotnet out/dotnet.jsonl --dotnet out/fodid-dotnet.jsonl \
   --dotnet out/configuration-dotnet.jsonl --dotnet out/derived-dotnet.jsonl \
-  --dotnet out/robots-txt-dotnet.jsonl --dotnet out/metadata-dotnet.jsonl \
+  --dotnet out/robots-txt-dotnet.jsonl --dotnet out/property-keyed-dotnet.jsonl \
+  --dotnet out/metadata-dotnet.jsonl \
   --rust out/rust.jsonl --rust out/fodid-rust.jsonl \
   --rust out/configuration-rust.jsonl --rust out/derived-rust.jsonl \
-  --rust out/robots-txt-rust.jsonl --rust out/metadata-rust.jsonl \
+  --rust out/robots-txt-rust.jsonl --rust out/property-keyed-rust.jsonl \
+  --rust out/metadata-rust.jsonl \
   --allowed allowed-differences.json --data lite --strict --report out/report.md
 ```
 
@@ -641,7 +741,9 @@ same pull request.
 
 A fixed robots.txt case goes in `corpus/robots-txt.json` in the same way.
 The cases for each usage are written from the data file, so a usage the data
-adds gives its cases with no change here.
+adds gives its cases with no change here. A fixed TAC and Native case goes
+in `corpus/property-keyed.json` in the same way, and the cases for each
+value are written from the data file too.
 
 A metadata case goes in `corpus/metadata.json` in the same way. The step
 "Check that a changed metadata answer fails" changes the cases

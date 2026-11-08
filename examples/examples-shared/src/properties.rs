@@ -80,9 +80,12 @@ pub fn property_value_to_string(value: &PropertyValue) -> String {
                 .collect();
             format!("[{}]", rendered.join(", "))
         }
-        // `PropertyValue` is non-exhaustive, so a future value type renders with
-        // the no-value marker rather than failing to compile here.
-        _ => NO_VALUE_MARKER.to_owned(),
+        // `PropertyValue` is non-exhaustive, so a type not named here, such as
+        // a WKT value, renders as its text where it has one and as the no-value
+        // marker otherwise. Naming it would not build against crates without it.
+        other => other
+            .as_str()
+            .map_or_else(|| NO_VALUE_MARKER.to_owned(), str::to_owned),
     }
 }
 

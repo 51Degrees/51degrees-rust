@@ -54,11 +54,16 @@ use crate::source::{Lookup, PropertySource, SourceValue, WeightedSourceValue};
 pub const DERIVED_DEFAULT_ELEMENT_DATA_KEY: &str = "derived";
 
 /// The key a weighted value carries its value under, as the 51Degrees element
-/// data publishes one. The two names are repeated here rather than taken from
-/// a product crate, because this element sits above the products and must not
+/// data publishes one. The names are repeated here rather than taken from a
+/// product crate, because this element sits above the products and must not
 /// depend on either of them.
 const WEIGHTED_VALUE_KEY: &str = "value";
-/// The key a weighted value carries its weight under.
+/// The key a weighted value carries its raw weighting under, from 0 to
+/// 65,535.
+const WEIGHTED_RAW_WEIGHTING_KEY: &str = "rawweighting";
+/// The key a weighted value from other element data may carry a weight under
+/// instead. Only the order of the weights matters here, so either is read as
+/// the number it holds.
 const WEIGHTED_WEIGHT_KEY: &str = "weight";
 
 /// The element data the [`DerivedPropertyElement`] produces.
@@ -768,6 +773,7 @@ fn lookup_of(value: PropertyValue) -> Lookup {
         PropertyValue::String(text) | PropertyValue::JavaScript(text) => {
             Lookup::Value(SourceValue::Text(text))
         }
+        PropertyValue::WktString(text) => Lookup::Value(SourceValue::Text(text.into_string())),
         PropertyValue::Bool(flag) => Lookup::Value(SourceValue::Bool(flag)),
         PropertyValue::Integer(number) => Lookup::Value(SourceValue::Int(number)),
         PropertyValue::Double(number) => Lookup::Value(SourceValue::Double(number)),
@@ -788,7 +794,8 @@ fn lookup_of(value: PropertyValue) -> Lookup {
                     Some(value) => value,
                 };
                 let weight = record
-                    .get(WEIGHTED_WEIGHT_KEY)
+                    .get(WEIGHTED_RAW_WEIGHTING_KEY)
+                    .or_else(|| record.get(WEIGHTED_WEIGHT_KEY))
                     .and_then(PropertyValue::as_double)
                     .unwrap_or(0.0);
                 candidates.push(WeightedSourceValue { weight, value });
@@ -808,6 +815,7 @@ fn single_value(value: &PropertyValue) -> Option<SourceValue> {
         PropertyValue::String(text) | PropertyValue::JavaScript(text) => {
             Some(SourceValue::Text(text.clone()))
         }
+        PropertyValue::WktString(text) => Some(SourceValue::Text(text.as_str().to_owned())),
         PropertyValue::Bool(flag) => Some(SourceValue::Bool(*flag)),
         PropertyValue::Integer(number) => Some(SourceValue::Int(*number)),
         PropertyValue::Double(number) => Some(SourceValue::Double(*number)),
@@ -862,5 +870,20 @@ fn property_value_type(value_type: ValueType) -> PropertyValueType {
 impl From<Faults> for Error {
     fn from(faults: Faults) -> Self {
         Error::configuration(faults.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fiftyone_pipeline_core::WktString;
+
+    /// A WKT value, such as an IP Intelligence area, is read as its text.
+    #[test]
+    fn a_wkt_value_is_read_as_its_text() {
+        let text = || SourceValue::Text("POINT(2 4)".to_owned());
+        let value = PropertyValue::WktString(WktString::new("POINT(2 4)"));
+        assert_eq!(single_value(&value), Some(text()));
+        assert_eq!(lookup_of(value), Lookup::Value(text()));
     }
 }

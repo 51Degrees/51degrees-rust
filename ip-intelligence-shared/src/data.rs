@@ -39,7 +39,9 @@
 //! ([`String`]), an `IsVPN` flag ([`bool`]), the latitude ([`f32`]) or the UTC
 //! offset ([`i32`]). The generated accessors return those directly, wrapped in
 //! an [`AspectPropertyValue`] so an absent value carries the engine's no-value
-//! reason.
+//! reason. The area is held as a [`WktString`], which
+//! [`IpIntelligenceDataBase::wkt_string`] reads, and the generated `areas`
+//! accessor gives its text as a [`String`].
 //!
 //! A small number of properties are *weighted*: the engine returns several
 //! candidate values for them, each with a `0.0..=1.0` confidence weighting. In
@@ -47,7 +49,9 @@
 //! (`CountryCodesGeographical`, `CountryCodesPopulation` and `Mcc`). Their
 //! accessors return an ordered `Vec<`[`WeightedValue`]`<String>>`, and they also
 //! appear in the dynamic [`ElementData::get`] bag as a
-//! [`PropertyValue::KeyValueList`] of `value`/`weight` records.
+//! [`PropertyValue::KeyValueList`] of records, each holding the raw weighting
+//! (0 to 65,535) under `rawweighting` and the candidate under `value`, which is
+//! how the JSON builder writes them and the cloud service sends them.
 //!
 //! Both engines populate the same backing the same way: a plain value is stored
 //! through one of the `set_*` builders (for example
@@ -63,7 +67,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use fiftyone_pipeline_core::{
     ElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType, TypedKey,
-    WeightedValue,
+    WeightedValue, WktString,
 };
 use fiftyone_pipeline_engines::{
     AspectData, AspectDataBase, AspectPropertyMetaData, AspectPropertyValue,
@@ -89,8 +93,17 @@ pub const IP_DATA_KEY: TypedKey<IpIntelligenceDataBase> = TypedKey::new(IP_DATA_
 /// value in the dynamic property bag mirror.
 pub const WEIGHTED_RECORD_VALUE_KEY: &str = "value";
 
-/// The key under which each flattened weighted record stores its `0.0..=1.0`
-/// weighting multiplier in the dynamic property bag mirror.
+/// The key under which each flattened weighted record stores its raw
+/// weighting in the dynamic property bag mirror, as a
+/// [`PropertyValue::Integer`] from 0 to 65,535. Divide it by 65,535 for the
+/// weighting from 0 to 1 that [`WeightedValue::weighting`] gives.
+pub const WEIGHTED_RECORD_RAW_WEIGHTING_KEY: &str = "rawweighting";
+
+/// A key no weighted record carries. Records hold the raw weighting under
+/// [`WEIGHTED_RECORD_RAW_WEIGHTING_KEY`].
+#[deprecated(note = "weighted records do not carry `weight`. Read \
+            `WEIGHTED_RECORD_RAW_WEIGHTING_KEY` and divide by 65,535, or use \
+            `WeightedValue::weighting` from the typed accessor")]
 pub const WEIGHTED_RECORD_WEIGHT_KEY: &str = "weight";
 
 /// The type the warning for a read of a missing property names.
@@ -168,8 +181,9 @@ impl<T> WeightedStore<T> {
 /// Build the flattened key-value mirror of a weighted list for the dynamic
 /// property bag.
 ///
-/// Each weighted candidate becomes a small ordered record with a `value` entry
-/// (`to_value(&candidate)`) and a `weight` entry (the `0.0..=1.0` multiplier).
+/// Each weighted candidate becomes a small ordered record with a
+/// `rawweighting` entry (the raw weighting as an integer) and a `value` entry
+/// (`to_value(&candidate)`), as .NET's property bag and JSON give it.
 /// The result is wrapped as a [`PropertyValue::KeyValueList`] so it can be
 /// stored in the embedded [`AspectDataBase`] and read through
 /// [`ElementData::get`].
@@ -186,8 +200,8 @@ where
                 to_value(&weighted.value),
             );
             record.insert(
-                WEIGHTED_RECORD_WEIGHT_KEY.to_owned(),
-                PropertyValue::Double(f64::from(weighted.weighting())),
+                WEIGHTED_RECORD_RAW_WEIGHTING_KEY.to_owned(),
+                PropertyValue::Integer(i64::from(weighted.raw_weighting)),
             );
             record
         })
@@ -350,6 +364,7 @@ impl fmt::Debug for DeferredValues {
 pub struct IpIntelligenceDataBase {
     base: AspectDataBase,
     strings: BTreeMap<String, ValueStore<String>>,
+    wkt_strings: BTreeMap<String, ValueStore<WktString>>,
     floats: BTreeMap<String, ValueStore<f32>>,
     integers: BTreeMap<String, ValueStore<i32>>,
     booleans: BTreeMap<String, ValueStore<bool>>,
@@ -375,6 +390,7 @@ impl IpIntelligenceDataBase {
         IpIntelligenceDataBase {
             base,
             strings: BTreeMap::new(),
+            wkt_strings: BTreeMap::new(),
             floats: BTreeMap::new(),
             integers: BTreeMap::new(),
             booleans: BTreeMap::new(),
@@ -446,6 +462,7 @@ impl IpIntelligenceDataBase {
         let key = key(name);
         self.base.values().get_value(name).is_some()
             || self.strings.contains_key(&key)
+            || self.wkt_strings.contains_key(&key)
             || self.floats.contains_key(&key)
             || self.integers.contains_key(&key)
             || self.booleans.contains_key(&key)
@@ -463,6 +480,7 @@ impl IpIntelligenceDataBase {
         };
         let key = key.as_ref();
         no_value_message(self.strings.get(key))
+            .or_else(|| no_value_message(self.wkt_strings.get(key)))
             .or_else(|| no_value_message(self.floats.get(key)))
             .or_else(|| no_value_message(self.integers.get(key)))
             .or_else(|| no_value_message(self.booleans.get(key)))
@@ -509,6 +527,16 @@ impl IpIntelligenceDataBase {
             .insert(key(name.as_ref()), ValueStore::Value(value));
     }
 
+    /// Store a plain WKT property (`Areas`) and its dynamic-bag mirror, which
+    /// is a [`PropertyValue::WktString`].
+    pub fn set_wkt_string(&mut self, name: impl AsRef<str>, value: impl Into<WktString>) {
+        let value = value.into();
+        self.base
+            .insert(name.as_ref(), PropertyValue::WktString(value.clone()));
+        self.wkt_strings
+            .insert(key(name.as_ref()), ValueStore::Value(value));
+    }
+
     /// Store a plain single-precision float property (`Latitude`, `Longitude`)
     /// and its dynamic-bag mirror, which is a [`PropertyValue::Float`] so the
     /// value is written with a 32-bit float's own digits.
@@ -539,7 +567,7 @@ impl IpIntelligenceDataBase {
     /// `CountryCodesPopulation`, `Mcc`) and its dynamic-bag mirror.
     ///
     /// The list is sorted high weighting first and mirrored into the dynamic bag
-    /// as a [`PropertyValue::KeyValueList`] of `value`/`weight` records.
+    /// as a [`PropertyValue::KeyValueList`] of `rawweighting`/`value` records.
     pub fn set_weighted_string(
         &mut self,
         name: impl AsRef<str>,
@@ -562,6 +590,17 @@ impl IpIntelligenceDataBase {
     pub fn set_string_no_value(&mut self, name: impl AsRef<str>, message: impl Into<String>) {
         let key = self.no_value_key(name.as_ref());
         self.strings.insert(
+            key,
+            ValueStore::NoValue {
+                message: message.into(),
+            },
+        );
+    }
+
+    /// Record that a WKT property had no value, with a message.
+    pub fn set_wkt_string_no_value(&mut self, name: impl AsRef<str>, message: impl Into<String>) {
+        let key = self.no_value_key(name.as_ref());
+        self.wkt_strings.insert(
             key,
             ValueStore::NoValue {
                 message: message.into(),
@@ -631,11 +670,28 @@ impl IpIntelligenceDataBase {
     // -- plain getters ------------------------------------------------------
 
     /// Read a plain string property by name, as the generated string accessors
-    /// do.
+    /// do. A WKT property reads as its text.
     pub fn string(&self, name: &str) -> AspectPropertyValue<String> {
-        match self.strings.get(&key(name)) {
-            Some(store) => value_store_to_aspect(Some(store)),
+        let key = key(name);
+        if let Some(store) = self.strings.get(&key) {
+            return value_store_to_aspect(Some(store));
+        }
+        match self.wkt_strings.get(&key) {
+            Some(store) => value_store_converted(store),
             None => self.deferred_value(name, |values| values.string(name)),
+        }
+    }
+
+    /// Read a plain WKT property by name, as the generated WKT accessors do. A
+    /// property set as a string reads as WKT holding that text.
+    pub fn wkt_string(&self, name: &str) -> AspectPropertyValue<WktString> {
+        let key = key(name);
+        if let Some(store) = self.wkt_strings.get(&key) {
+            return value_store_to_aspect(Some(store));
+        }
+        match self.strings.get(&key) {
+            Some(store) => value_store_converted(store),
+            None => self.deferred_value(name, |values| values.wkt_string(name)),
         }
     }
 
@@ -696,6 +752,15 @@ fn value_store_to_aspect<T: Clone>(store: Option<&ValueStore<T>>) -> AspectPrope
         Some(ValueStore::Value(value)) => AspectPropertyValue::new(value.clone()),
         Some(ValueStore::NoValue { message }) => AspectPropertyValue::no_value(message.clone()),
         None => AspectPropertyValue::empty(),
+    }
+}
+
+/// Convert a [`ValueStore`] into an [`AspectPropertyValue`] of another type,
+/// for a WKT value read as a string or a string read as WKT.
+fn value_store_converted<T: Clone, U: From<T>>(store: &ValueStore<T>) -> AspectPropertyValue<U> {
+    match store {
+        ValueStore::Value(value) => AspectPropertyValue::new(U::from(value.clone())),
+        ValueStore::NoValue { message } => AspectPropertyValue::no_value(message.clone()),
     }
 }
 
@@ -804,9 +869,9 @@ impl AspectData for IpIntelligenceDataBase {
 /// The value type a weighted property is reported as in metadata.
 ///
 /// Weighted lists are surfaced through the dynamic bag as
-/// [`PropertyValueType::KeyValueList`] (the flattened `value`/`weight` records),
-/// so that is the type published for a weighted property, regardless of the
-/// underlying candidate type.
+/// [`PropertyValueType::KeyValueList`] (the flattened `rawweighting`/`value`
+/// records), so that is the type published for a weighted property,
+/// regardless of the underlying candidate type.
 pub const WEIGHTED_PROPERTY_VALUE_TYPE: PropertyValueType = PropertyValueType::KeyValueList;
 
 /// Every property name the generated model surfaces, in name order.
@@ -968,10 +1033,37 @@ mod tests {
             PropertyValue::KeyValueList(records) => {
                 assert_eq!(records.len(), 3);
                 assert!(records[0].contains_key(WEIGHTED_RECORD_VALUE_KEY));
-                assert!(records[0].contains_key(WEIGHTED_RECORD_WEIGHT_KEY));
+                assert!(records[0].contains_key(WEIGHTED_RECORD_RAW_WEIGHTING_KEY));
             }
             other => panic!("expected a key-value list, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_weighted_record_is_its_raw_weighting_and_value() {
+        // .NET's property bag holds each candidate's RawWeighting and Value,
+        // and its JSON writes them as rawweighting and value, with no weight.
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        data.set_weighted_string("CountryCodesPopulation", sample_countries());
+        let Ok(PropertyValue::KeyValueList(records)) = data.get("CountryCodesPopulation") else {
+            panic!("expected a key-value list");
+        };
+        let record = |raw: i64, code: &str| {
+            BTreeMap::from([
+                ("rawweighting".to_owned(), PropertyValue::Integer(raw)),
+                ("value".to_owned(), PropertyValue::String(code.to_owned())),
+            ])
+        };
+        assert_eq!(
+            records,
+            vec![
+                record(60_000, "FR"),
+                record(40_000, "DE"),
+                record(20_000, "GB"),
+            ]
+        );
+        assert_eq!(WEIGHTED_RECORD_RAW_WEIGHTING_KEY, "rawweighting");
+        assert_eq!(WEIGHTED_RECORD_VALUE_KEY, "value");
     }
 
     #[test]
@@ -997,6 +1089,106 @@ mod tests {
             .find(|m| m.name == "CountryCodesGeographical")
             .unwrap();
         assert_eq!(codes.value_type, PropertyValueType::KeyValueList);
+        let areas = meta.iter().find(|m| m.name == "Areas").unwrap();
+        assert_eq!(areas.value_type, PropertyValueType::WktString);
+    }
+
+    #[test]
+    fn a_wkt_value_reads_as_wkt_and_as_text() {
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        data.set_wkt_string("Areas", "POINT(2 4)");
+        assert_eq!(data.areas().value().unwrap().as_str(), "POINT(2 4)");
+        assert_eq!(
+            data.wkt_string("areas").value().unwrap().as_str(),
+            "POINT(2 4)"
+        );
+        assert_eq!(data.string("Areas").value().unwrap(), "POINT(2 4)");
+        assert_eq!(
+            data.get("Areas").unwrap(),
+            PropertyValue::WktString(WktString::new("POINT(2 4)"))
+        );
+        assert_eq!(data.keys(), ["areas"]);
+    }
+
+    #[test]
+    fn a_wkt_value_with_no_value_carries_its_reason() {
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        data.set_wkt_string_no_value("Areas", "no area for this range");
+        assert_eq!(
+            data.areas().no_value_message(),
+            Some("no area for this range")
+        );
+        assert_eq!(
+            data.string("Areas").no_value_message(),
+            Some("no area for this range")
+        );
+        assert_eq!(
+            data.wkt_string("Areas").no_value_message(),
+            Some("no area for this range")
+        );
+        assert_eq!(
+            data.get("Areas").unwrap_err().message,
+            "no area for this range"
+        );
+        assert_eq!(data.keys(), ["areas"]);
+    }
+
+    /// A reader that stores `Areas` with `set_string` still has it read as
+    /// WKT.
+    #[test]
+    fn an_area_set_as_a_string_reads_as_wkt() {
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        data.set_string("Areas", "POINT(2 4)");
+        assert_eq!(
+            data.wkt_string("Areas").value().unwrap().as_str(),
+            "POINT(2 4)"
+        );
+        assert_eq!(data.areas().value().unwrap(), "POINT(2 4)");
+    }
+
+    /// Gives `Areas` as WKT when it is read, as the on-premise engine's
+    /// reader does.
+    struct AreaReader {
+        names: Vec<String>,
+    }
+
+    impl IpIntelligencePropertyReader for AreaReader {
+        fn property_names(&self) -> &[String] {
+            &self.names
+        }
+
+        fn position(&self, name: &str) -> Option<usize> {
+            self.names.iter().position(|known| known == name)
+        }
+
+        fn read_property(
+            &self,
+            _position: usize,
+            data: &mut IpIntelligenceDataBase,
+        ) -> Result<(), String> {
+            data.set_wkt_string("Areas", "POLYGON((1 2,3 4,5 6,1 2))");
+            Ok(())
+        }
+    }
+
+    /// `areas()` gives the text of the WKT value, whether the value was set
+    /// on the data or read on request.
+    #[test]
+    fn areas_gives_the_text_of_the_wkt_value() {
+        let mut set = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        set.set_wkt_string("Areas", "POLYGON((1 2,3 4,5 6,1 2))");
+        let read = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(AreaReader {
+            names: vec!["areas".to_owned()],
+        });
+        for data in [set, read] {
+            let wkt = data.wkt_string("Areas");
+            let wkt = wkt.value().expect("a WKT value");
+            assert_eq!(data.areas().value().unwrap(), wkt.as_str());
+            assert_eq!(
+                data.get("Areas").unwrap(),
+                PropertyValue::WktString(wkt.clone())
+            );
+        }
     }
 
     /// A reader over fixed values that counts how often each property is read.
@@ -1299,6 +1491,10 @@ mod tests {
         );
         assert_eq!(
             data.string("Areas").no_value_message(),
+            Some("the native read failed")
+        );
+        assert_eq!(
+            data.areas().no_value_message(),
             Some("the native read failed")
         );
     }

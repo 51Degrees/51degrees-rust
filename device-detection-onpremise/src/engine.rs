@@ -65,6 +65,8 @@ use crate::retained::Retained;
 
 mod profile_lookup;
 
+pub use profile_lookup::PROFILE_ID_PROPERTY_NAME;
+
 /// The separator between the values of a string or JavaScript property that
 /// holds several, as the C++ `ResultsBase` in 51degrees-cxx joins them.
 const VALUE_SEPARATOR: &str = "|";
@@ -679,12 +681,7 @@ impl DeviceDetectionOnPremiseEngine {
     /// component's graph on the first read of one of its properties, so a
     /// caller reading only some properties walks only the graphs they need.
     fn detect(&self, data: &FlowData) -> Result<DeviceDataBase> {
-        let reader = self.detection_reader(data)?;
-        let mut device = DeviceDataBase::new();
-        device
-            .base_mut()
-            .add_missing_property_source(Arc::clone(&reader.loaded.missing));
-        Ok(device.with_reader(reader))
+        Ok(device_data(self.detection_reader(data)?))
     }
 
     /// Process the evidence for `data` into new results, and give the reader
@@ -1034,6 +1031,16 @@ struct DetectionReader {
     /// The data set snapshot the results came from, which the property indexes
     /// belong to.
     loaded: Arc<LoadedDataSet>,
+}
+
+/// New device data reading each property from `reader` when it is first
+/// requested, giving the reason a property its data set lacks is missing.
+fn device_data(reader: DetectionReader) -> DeviceDataBase {
+    let mut device = DeviceDataBase::new();
+    device
+        .base_mut()
+        .add_missing_property_source(Arc::clone(&reader.loaded.missing));
+    device.with_reader(reader)
 }
 
 impl DevicePropertyReader for DetectionReader {

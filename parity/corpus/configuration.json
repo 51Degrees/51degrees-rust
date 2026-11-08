@@ -462,6 +462,208 @@
     }
   },
   {
+    "id": "configuration-property-keyed",
+    "about": "The Hash engine then the TAC, Native and property keyed engines, named in full, without Builder and in lower case, given each setting .NET's builders read, with usage sharing off. The Hash engine indexes no property, because .NET's Hash builder has no IndexedProperties setting.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "TacEngineBuilder",
+            "BuildParameters": {
+              "CacheSize": "100",
+              "CacheHitOrMiss": "false",
+              "LazyLoadingTimeout": "1000",
+              "Properties": "Profiles"
+            }
+          },
+          {
+            "BuilderName": "NativeEngine"
+          },
+          {
+            "BuilderName": "propertykeyeddeviceenginebuilder",
+            "BuildParameters": {
+              "KeyProperty": "HardwareVendor",
+              "ElementDataKey": "vendor-profiles"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SetShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-property-keyed-default-key",
+    "about": "The property keyed engine given only its key property, so its data key is profiles- and the key property in lower case. The Hash engine indexes no property, because .NET's Hash builder has no IndexedProperties setting.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "PropertyKeyedDeviceEngineBuilder",
+            "BuildParameters": {
+              "KeyProperty": "HardwareModel"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SetShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-property-keyed-no-key-property",
+    "about": "The property keyed engine given no key property, which its builder refuses.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "PropertyKeyedDeviceEngineBuilder"
+          }
+        ],
+        "BuildParameters": {
+          "SetShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-tac-unknown-parameter",
+    "about": "A parameter the TAC engine has no setting for, so the error lists the settings of .NET's TAC builder.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "TacEngineBuilder",
+            "BuildParameters": {
+              "NoSuchSetting": "1"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SetShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-native-unknown-parameter",
+    "about": "A parameter the Native engine has no setting for, so the error lists the settings of .NET's Native builder.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "NativeEngineBuilder",
+            "BuildParameters": {
+              "NoSuchSetting": "1"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SetShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-property-keyed-unknown-parameter",
+    "about": "A parameter the property keyed engine has no setting for, so the error lists the settings of .NET's property keyed builder.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "PropertyKeyedDeviceEngineBuilder",
+            "BuildParameters": {
+              "NoSuchSetting": "1"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SetShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
     "id": "configuration-value-does-not-parse",
     "about": "A share percentage that is not a number.",
     "configuration": {

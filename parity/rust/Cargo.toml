@@ -25,6 +25,9 @@ fiftyone-device-detection-onpremise = { path = "../../device-detection-onpremise
 # The robots.txt cases give the engine a resolver inside this program, so the
 # built-in GitHub resolver and its client are left out.
 fiftyone-device-detection-robots-txt = { path = "../../device-detection-robots-txt" }
+# The TAC and Native cases, and the hardware data the two engines write.
+fiftyone-device-detection-property-keyed = { path = "../../device-detection-property-keyed" }
+fiftyone-device-detection-shared = { path = "../../device-detection-shared" }
 fiftyone-ip-intelligence-onpremise = { path = "../../ip-intelligence-onpremise" }
 fiftyone-ip-intelligence-shared = { path = "../../ip-intelligence-shared" }
 fiftyone-json-builder = { path = "../../json-builder" }

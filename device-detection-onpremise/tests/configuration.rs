@@ -743,6 +743,38 @@ fn properties_restrict_the_engine() {
     );
 }
 
+/// `IndexedProperties`, which .NET's builder lacks, names the properties the
+/// data set indexes, kept in the order given with one the data file lacks
+/// among them. The engine still gives every property, and the lookup gives
+/// the ids it gives with nothing indexed, which is the default.
+#[test]
+fn indexed_properties_reach_the_engine() {
+    let Some(lite) = lite() else { return };
+    let unindexed = build(base(&lite, &[])).unwrap();
+    assert!(engine(&unindexed).indexed_properties().is_empty());
+    let expected = engine(&unindexed)
+        .profile_ids_for_property_value("IsMobile", "True")
+        .unwrap();
+    assert!(!expected.is_empty());
+    for element in [
+        base(&lite, &[("IndexedProperties", "IsMobile,Bogus")]),
+        base(&lite, &[("SetIndexedProperties", "IsMobile,Bogus")]),
+        base(&lite, &[("indexedproperties", "IsMobile,Bogus")]),
+        base(&lite, &[]).parameter("IndexedProperties", vec!["IsMobile", "Bogus"]),
+    ] {
+        let pipeline = build(element).unwrap();
+        let engine = engine(&pipeline);
+        assert_eq!(engine.indexed_properties(), ["IsMobile", "Bogus"]);
+        assert_eq!(
+            engine
+                .profile_ids_for_property_value("IsMobile", "True")
+                .unwrap(),
+            expected
+        );
+        assert_eq!(detect(&pipeline, MOBILE), (Ok(true), Ok("iOS".to_string())));
+    }
+}
+
 /// .NET read a copy of the data file made in the temporary folder when
 /// `CreateTempDataCopy` was true, under every profile, and removed it with
 /// the engine. It made none with an empty temporary folder, or for
@@ -899,7 +931,8 @@ fn the_build_methods_are_dotnets() {
 /// .NET lists every setting and build method of the builder, giving
 /// `RuntimeParameterInfo` as each type, where the crates give the type. The
 /// crates leave out .NET's `Build (Stream)`, which is a build method. The
-/// crates also list `SetLicenseKeyRequired`, which .NET's builder lacks.
+/// crates also list `SetLicenseKeyRequired` and `SetIndexedProperties`,
+/// which .NET's builder lacks.
 #[test]
 fn an_unknown_setting_lists_the_settings_and_build_methods() {
     let Some(lite) = lite() else { return };
@@ -942,6 +975,7 @@ fn an_unknown_setting_lists_the_settings_and_build_methods() {
         "SetCacheHitOrMiss (Boolean)",
         "SetProperties (List`1)",
         "SetProperty (String)",
+        "SetIndexedProperties (List`1)",
     ]
     .iter()
     .map(|s| format!("{s}\n"))
