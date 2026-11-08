@@ -419,6 +419,49 @@ mod tests {
         assert_eq!(native_prefix_for("no-separator"), None);
     }
 
+    /// The web request a web integration gives with the evidence, under
+    /// `server.http-request`, is not one of its text values, so it never
+    /// reaches the C library, which reads a `server.` value as client IP
+    /// addresses. Nor does a value only the request holds.
+    #[cfg(feature = "dd")]
+    #[test]
+    fn the_web_request_is_not_handed_to_the_c_library() {
+        use std::ffi::CStr;
+
+        let request = Evidence::builder()
+            .add("header.user-agent", "UA")
+            .add("header.x-test", "only in the request")
+            .add("server.client-ip", "192.0.2.1")
+            .build();
+        let evidence = Evidence::builder()
+            .add("header.user-agent", "UA")
+            .http_request(request)
+            .build();
+        // Safety: the array and its strings are read only inside the call.
+        let handed = unsafe {
+            with_native_evidence(&evidence, |array| {
+                assert!(!array.is_null(), "the native array is allocated");
+                let array = &*array;
+                (0..array.count as usize)
+                    .map(|index| {
+                        let pair = &*array.items.add(index);
+                        let text =
+                            |pointer| CStr::from_ptr(pointer).to_str().expect("UTF-8").to_owned();
+                        (pair.prefix, text(pair.item.key), text(pair.item.value))
+                    })
+                    .collect::<Vec<_>>()
+            })
+        };
+        assert_eq!(
+            handed,
+            [(
+                NativeEvidencePrefix::HttpHeaderString,
+                "user-agent".to_owned(),
+                "UA".to_owned()
+            )]
+        );
+    }
+
     #[test]
     #[allow(deprecated)]
     fn client_ip_prefers_canonical_key() {

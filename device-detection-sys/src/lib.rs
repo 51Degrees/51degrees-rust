@@ -870,7 +870,8 @@ pub const SHIM_VALUE_DESCRIPTION: c_int = 1;
 pub const SHIM_VALUE_URL: c_int = 2;
 
 /// Takes one string of a property value from
-/// [`fiftyoneDegreesShimHashGetDataFilePropertyValues`]. `field` is one of the
+/// [`fiftyoneDegreesShimHashGetDataFilePropertyValues`] or
+/// [`fiftyoneDegreesShimHashGetResultValues`]. `field` is one of the
 /// `SHIM_VALUE_` constants and `value` a null terminated string valid only
 /// for the call. `context` is the pointer the caller passed.
 pub type ShimValueStringCallback =
@@ -891,6 +892,16 @@ pub const SHIM_FIND_FOUND: c_int = 1;
 /// Returned by [`fiftyoneDegreesShimHashFindDataFilePropertyValue`] when the
 /// property has no value with the name.
 pub const SHIM_FIND_NOT_FOUND: c_int = 2;
+
+/// Returned by [`fiftyoneDegreesShimHashGetResultValues`] when the values
+/// cannot be read.
+pub const SHIM_VALUES_FAILED: c_int = 0;
+/// Returned by [`fiftyoneDegreesShimHashGetResultValues`] when it gave every
+/// value the results hold for the property, of which there can be none.
+pub const SHIM_VALUES_READ: c_int = 1;
+/// Returned by [`fiftyoneDegreesShimHashGetResultValues`] when the results
+/// hold no value for the property.
+pub const SHIM_VALUES_NONE: c_int = 2;
 
 extern "C" {
     /// Returns the number of properties the data file defines, including
@@ -1039,6 +1050,28 @@ extern "C" {
         buffer: *mut c_char,
         length: usize,
     ) -> usize;
+
+    /// Calls `callback` with `context`, [`SHIM_VALUE_NAME`] and each value the
+    /// results hold for the property at `required_property_index`, in order,
+    /// and returns [`SHIM_VALUES_READ`]. These are the values the C++
+    /// `ResultsHash::getValuesInternal` in 51degrees-cxx reads, and the
+    /// matched profile can hold none. A value with no string is left out.
+    /// Returns [`SHIM_VALUES_NONE`], giving nothing, when
+    /// [`fiftyoneDegreesResultsHashGetHasValues`] finds the results hold no
+    /// value for the property, or [`SHIM_VALUES_FAILED`] when the values
+    /// cannot be read, with `exception` set when the C library set it. See
+    /// `src/shim.c`.
+    ///
+    /// # Safety
+    /// `results` must be valid and hold a detection, `exception` must be
+    /// valid, and `context` must be what `callback` expects.
+    pub fn fiftyoneDegreesShimHashGetResultValues(
+        results: *mut ResultsHash,
+        required_property_index: c_int,
+        callback: ShimValueStringCallback,
+        context: *mut c_void,
+        exception: *mut Exception,
+    ) -> c_int;
 
     /// Returns the number of components the data set lists, or zero when no
     /// data set is available. See `src/shim.c`.
