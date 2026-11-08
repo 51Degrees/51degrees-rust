@@ -295,13 +295,18 @@ fn a_value_gives_the_profiles_holding_it() {
     let Some(device) = device_with_key_properties() else {
         return;
     };
-    let engines: [(_, _, _, fn(&str) -> bool); 2] = [
-        (tac(), TAC_KEY, TAC_PROPERTY_NAME, is_tac),
+    let engines = [
+        (
+            tac(),
+            TAC_KEY,
+            TAC_PROPERTY_NAME,
+            is_tac as fn(&str) -> bool,
+        ),
         (
             native(),
             NATIVE_MODEL_KEY,
             NATIVE_MODEL_PROPERTY_NAME,
-            is_native_model,
+            is_native_model as fn(&str) -> bool,
         ),
     ];
     for (engine, key, property, accept) in engines {
