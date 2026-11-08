@@ -88,14 +88,6 @@
     "issue": 226
   },
   {
-    "path": "*ip.iprange*",
-    "kind": "value",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "data": "enterprise",
-    "reason": "The crates give an IPv6 range in full, 2a00:23c0:0000:0000:0000:0000:0000:0000, where .NET gives the compressed form RFC 5952 recommends, 2a00:23c0::, in the properties and in the JSON.",
-    "issue": 226
-  },
-  {
     "path": "json.ip.*].rawweighting",
     "kind": "onlyInDotnet",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*", "translation-*"],

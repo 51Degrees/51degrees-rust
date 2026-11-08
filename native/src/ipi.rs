@@ -58,7 +58,7 @@
 
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::ops::Range;
 use std::os::raw::{c_char, c_int, c_void};
 use std::path::Path;
@@ -1471,7 +1471,7 @@ pub(crate) fn parse_bool(text: &str) -> Option<bool> {
 /// pipeline weighted value width. Items whose value type is not one of the
 /// supported weighted leaf types are skipped. `stored_type` is the type the
 /// data file stores the property's values as, which decides how a double is
-/// rendered.
+/// rendered, and an IP address is written as [`ip_address_text`] writes it.
 ///
 /// # Safety
 /// `collection` must be an intact collection returned by
@@ -1504,7 +1504,12 @@ unsafe fn collect_weighted(
                 if value.is_null() {
                     None
                 } else {
-                    Some(CStr::from_ptr(value).to_string_lossy().into_owned())
+                    let text = CStr::from_ptr(value).to_string_lossy().into_owned();
+                    Some(if stored_type == Ty::IpAddress as c_int {
+                        address_text_of(text)
+                    } else {
+                        text
+                    })
                 }
             }
             Ty::WeightedInt | Ty::Integer => {
@@ -1550,6 +1555,96 @@ fn double_text(value: f64, stored_type: c_int) -> String {
         (value as f32).to_string()
     } else {
         value.to_string()
+    }
+}
+
+/// The sixth field of an ISATAP address, whose last 32 bits are an IPv4
+/// address.
+const ISATAP_FIELD: u16 = 0x5efe;
+
+/// The longest text of an IPv6 address, being six fields and an IPv4
+/// address.
+const IPV6_TEXT_MAX_BYTES: usize = 45;
+
+/// The text of `address` as .NET's `IPAddress.ToString` writes it.
+///
+/// An IPv6 address follows
+/// [RFC 5952 section 4](https://www.rfc-editor.org/rfc/rfc5952#section-4),
+/// in lower case, without leading zeros, and with the longest run of two or
+/// more zero fields, the first of equal runs, written as `::`. Its last 32
+/// bits are written as an IPv4 address when its first four fields are zero,
+/// its seventh is not, and the fifth and sixth are `0:0` (`::8.8.8.8`),
+/// `0:ffff` (`::ffff:8.8.8.8`) or `ffff:0` (`::ffff:0:8.8.8.8`), and for an
+/// ISATAP address (`fe80::5efe:8.8.8.8`).
+/// [RFC 5952 section 5](https://www.rfc-editor.org/rfc/rfc5952#section-5)
+/// recommends that form for the first three. Rust's `Display` uses it for
+/// `::ffff:` alone, whatever the seventh field.
+pub fn ip_address_text(address: IpAddr) -> String {
+    use std::fmt::Write as _;
+    let address = match address {
+        IpAddr::V4(address) => return address.to_string(),
+        IpAddr::V6(address) => address,
+    };
+    let fields = address.segments();
+    let ipv4 = writes_ipv4_in_ipv6(&fields);
+    let mut text = String::with_capacity(IPV6_TEXT_MAX_BYTES);
+    push_ipv6_fields(&mut text, &fields[..if ipv4 { 6 } else { 8 }]);
+    if ipv4 {
+        if !text.ends_with(':') {
+            text.push(':');
+        }
+        let [.., a, b, c, d] = address.octets();
+        write!(text, "{}", Ipv4Addr::new(a, b, c, d)).expect("a String takes any text");
+    }
+    text
+}
+
+/// Whether [`ip_address_text`] writes the last 32 bits of the IPv6 address
+/// with these `fields` as an IPv4 address.
+fn writes_ipv4_in_ipv6(fields: &[u16; 8]) -> bool {
+    let ipv4_prefix = fields[..4].iter().all(|field| *field == 0)
+        && fields[6] != 0
+        && matches!((fields[4], fields[5]), (0, 0) | (0, 0xffff) | (0xffff, 0));
+    let isatap = fields[4] == 0 && fields[5] == ISATAP_FIELD;
+    ipv4_prefix || isatap
+}
+
+/// Write `fields` to `text` in hexadecimal with `:` between them, and the
+/// longest run of two or more zero fields, the first of equal runs, as `::`.
+fn push_ipv6_fields(text: &mut String, fields: &[u16]) {
+    use std::fmt::Write as _;
+    let mut longest = 0..0;
+    let mut start = 0;
+    for (place, field) in fields.iter().enumerate() {
+        if *field != 0 {
+            start = place + 1;
+        } else if place + 1 - start > longest.len() {
+            longest = start..place + 1;
+        }
+    }
+    let push = |text: &mut String, part: &[u16]| {
+        for (place, field) in part.iter().enumerate() {
+            if place > 0 {
+                text.push(':');
+            }
+            write!(text, "{field:x}").expect("a String takes any text");
+        }
+    };
+    if longest.len() > 1 {
+        push(text, &fields[..longest.start]);
+        text.push_str("::");
+        push(text, &fields[longest.end..]);
+    } else {
+        push(text, fields);
+    }
+}
+
+/// `text` as [`ip_address_text`] writes the address it holds, or `text`
+/// itself when it holds none.
+fn address_text_of(text: String) -> String {
+    match text.parse::<IpAddr>() {
+        Ok(address) => ip_address_text(address),
+        Err(_) => text,
     }
 }
 
@@ -2818,6 +2913,81 @@ mod tests {
                 assert!(places <= 3, "{name} {text}");
             }
         }
+    }
+
+    /// Each address is written as .NET's `IPAddress.ToString` writes it.
+    #[test]
+    fn an_address_is_written_as_dotnet_writes_it() {
+        for (given, written) in [
+            ("185.28.167.0", "185.28.167.0"),
+            ("0.0.0.0", "0.0.0.0"),
+            ("2a00:23c0:0000:0000:0000:0000:0000:0000", "2a00:23c0::"),
+            ("2A00:23C0::", "2a00:23c0::"),
+            ("2a00:23c5:a1a6:a01::1", "2a00:23c5:a1a6:a01::1"),
+            (
+                "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+                "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+            ),
+            ("2001:db8:0:0:1:0:0:1", "2001:db8::1:0:0:1"),
+            ("2001:0:0:1:0:0:0:1", "2001:0:0:1::1"),
+            ("1:0:0:2:0:0:0:3", "1:0:0:2::3"),
+            ("0:0:0:1:0:0:0:0", "0:0:0:1::"),
+            ("::", "::"),
+            ("::1", "::1"),
+            ("::8.8.8.8", "::8.8.8.8"),
+            ("::0.0.1.2", "::102"),
+            ("::ffff:8.8.8.8", "::ffff:8.8.8.8"),
+            ("::ffff:0.0.1.2", "::ffff:0:102"),
+            ("::ffff:0:0", "::ffff:0:0"),
+            ("::ffff:0:8.8.8.8", "::ffff:0:8.8.8.8"),
+            ("::ffff:0:0.0.1.2", "::ffff:0:0:102"),
+            ("0:0:0:0:ffff:0:0:0", "::ffff:0:0:0"),
+            ("fe80::5efe:8.8.8.8", "fe80::5efe:8.8.8.8"),
+            ("fe80::5efe:0.0.0.1", "fe80::5efe:0.0.0.1"),
+            ("::5efe:0.0.0.0", "::5efe:0.0.0.0"),
+            ("2001:db8:1:2:0:5efe:1.2.3.4", "2001:db8:1:2:0:5efe:1.2.3.4"),
+            ("2001:db8::200:5efe:1.2.3.4", "2001:db8::200:5efe:102:304"),
+        ] {
+            let address: IpAddr = given.parse().expect("an address");
+            assert_eq!(ip_address_text(address), written, "{given}");
+        }
+        assert_eq!(address_text_of(String::from("N/A")), "N/A");
+    }
+
+    /// An Enterprise file's IP ranges are written as .NET writes them, so an
+    /// IPv6 range the C library writes with every field in full is
+    /// compressed.
+    #[test]
+    fn an_ip_range_is_written_as_dotnet_writes_it() {
+        let Some((manager, _)) = enterprise_file("IP range text") else {
+            return;
+        };
+        let mut compressed = 0;
+        for address in ["185.28.167.77", "2a00:23c5:a1a6:a01::1"] {
+            let mut results = manager.create_results().expect("results allocate");
+            results
+                .process_ip(address)
+                .expect("the lookup should succeed");
+            for name in ["IpRangeStart", "IpRangeEnd"] {
+                let native = results
+                    .value_as_string(name, "|")
+                    .expect("the C library's text reads")
+                    .unwrap_or_else(|| panic!("{name} for {address} has a value"));
+                let values = results.values_weighted(name).expect("the values read");
+                let [(text, _)] = values.as_slice() else {
+                    panic!("{name} for {address} has one value: {values:?}");
+                };
+                let range: IpAddr = native
+                    .parse()
+                    .unwrap_or_else(|_| panic!("{name} for {address}: {native}"));
+                assert_eq!(*text, ip_address_text(range), "{name} for {address}");
+                compressed += usize::from(*text != native);
+            }
+        }
+        assert!(
+            compressed > 0,
+            "the C library wrote every range as .NET does"
+        );
     }
 
     /// The text the C library writes for `value` to `places` decimal places,

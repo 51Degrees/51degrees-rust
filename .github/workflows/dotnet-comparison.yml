@@ -316,6 +316,7 @@ jobs:
             ipi::tests::each_shim_string_reader_fails_for_an_index_past_the_end \
             ipi::tests::an_enterprise_file_names_each_type \
             ipi::tests::an_enterprise_file_gives_each_value_as_text \
+            ipi::tests::an_ip_range_is_written_as_dotnet_writes_it \
             ipi::tests::a_value_is_found_by_its_text_to_more_places
 
       # The robots.txt cases for each usage come from the data file, and the

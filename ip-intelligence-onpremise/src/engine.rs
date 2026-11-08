@@ -44,8 +44,8 @@ use fiftyone_ip_intelligence_shared::{
     IP_DATA_KEY, IP_DATA_KEY_NAME, WEIGHTED_PROPERTY_VALUE_TYPE,
 };
 use fiftyone_native::ipi::{
-    ClientIpEvidence, DataFileComponent, DataFileProperty, DataFileValue, Manager, PropertyRead,
-    Results,
+    ip_address_text, ClientIpEvidence, DataFileComponent, DataFileProperty, DataFileValue, Manager,
+    PropertyRead, Results,
 };
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{
@@ -927,7 +927,8 @@ impl IpIntelligencePropertyReader for LookupReader {
 }
 
 /// Store the property at `added` in [`ADDED_PROPERTIES`], `Ip` or `IpV6`, as
-/// the address looked up when it is of that property's kind, as .NET does.
+/// the address looked up when it is of that property's kind, as .NET does,
+/// written as [`ip_address_text`] writes it.
 /// An IPv4-mapped IPv6 address is the IPv4 address it holds, as
 /// [`ClientIpEvidence::address`] gives it. Otherwise the property has no
 /// value, with .NET's reason, and is listed among the keys, so the JSON
@@ -941,7 +942,9 @@ fn populate_added_property(
     let (name, _) = ADDED_PROPERTIES[added];
     let ipv4 = added == ADDED_IPV4_PLACE;
     match client_ip.address {
-        Some(address) if address.is_ipv4() == ipv4 => data.set_string(name, address.to_string()),
+        Some(address) if address.is_ipv4() == ipv4 => {
+            data.set_string(name, ip_address_text(address))
+        }
         Some(_) => data.set_string_no_value(name, ADDED_NOT_SUPPLIED[added]),
         None if client_ip.supplied => data.set_string_no_value(name, ADDED_NOT_VALID),
         None => data.set_string_no_value(name, ADDED_NOT_SUPPLIED[added]),
@@ -1604,10 +1607,10 @@ mod tests {
     }
 
     /// `Ip` holds the IPv4 address looked up and `IpV6` the IPv6 address, an
-    /// IPv4-mapped address being IPv4. The other has .NET's reason that no
-    /// address of its kind was supplied, even when a value before the one
-    /// looked up did not read as an address. Both are listed after the data
-    /// file's properties, with a value or without.
+    /// IPv4-mapped address being IPv4, each written as .NET writes it. The
+    /// other has .NET's reason that no address of its kind was supplied, even
+    /// when a value before the one looked up did not read as an address. Both
+    /// are listed after the data file's properties, with a value or without.
     #[test]
     fn ip_and_ipv6_hold_the_address_looked_up() {
         let Some(engine) = asn_engine() else {
@@ -1630,6 +1633,29 @@ mod tests {
                 &[("server.client-ip", "[2606:4700:4700::1111]:443")][..],
                 None,
                 Some("2606:4700:4700::1111"),
+            ),
+            (
+                &[(
+                    "server.client-ip",
+                    "2606:4700:4700:0000:0000:0000:0000:1111",
+                )][..],
+                None,
+                Some("2606:4700:4700::1111"),
+            ),
+            (
+                &[("server.client-ip", "::808:808")][..],
+                None,
+                Some("::8.8.8.8"),
+            ),
+            (
+                &[("server.client-ip", "::ffff:0:8.8.8.8")][..],
+                None,
+                Some("::ffff:0:8.8.8.8"),
+            ),
+            (
+                &[("server.client-ip", "fe80::5efe:808:808")][..],
+                None,
+                Some("fe80::5efe:8.8.8.8"),
             ),
             (
                 &[
