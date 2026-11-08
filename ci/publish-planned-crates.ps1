@@ -71,11 +71,16 @@ if ($null -eq $new) {
     return
 }
 
-# The commands that publish the new crate by hand. The versions are those
-# this run wrote, so the crate is published as the run would have published
-# it. A submodule the crate takes files from is checked out and copied in, as
-# the publish workflow does.
+# The commands that publish the new crate by hand, as one PowerShell 7 block
+# that stops at its first failure, so a step that fails is never followed by
+# cargo publish. The versions are those this run wrote, and the block checks
+# that the manifests give the crate its planned version before publishing, so
+# it is published as the run would have published it. A submodule the crate
+# takes files from is checked out and copied in, as the publish workflow
+# does. On Windows the bash on the path can start WSL, which does not see
+# the token, so the block takes Git Bash's where it is installed.
 $package = Get-Packages $RepoPath | Where-Object Name -eq $new
+$planned = "$($plan.Versions[$new])"
 $extra = @($package.ExtraPaths | Where-Object { $_ })
 $scripts = @($extra | Where-Object { $_ -match '^ci/copy-[^/]+\.ps1$' })
 $submodules = @($extra | Where-Object {
@@ -90,25 +95,49 @@ $json = @{ Versions = $versions } | ConvertTo-Json -Compress -Depth 3
 $head = git -C $RepoPath rev-parse HEAD
 
 $commands = @(
-    "git fetch origin"
-    "git checkout --detach $head"
+    "& {"
+    "    `$ErrorActionPreference = 'Stop'"
+    "    `$PSNativeCommandUseErrorActionPreference = `$true"
+    "    if (`$PSVersionTable.PSVersion.Major -lt 7 -or"
+    "        (`$PSVersionTable.PSVersion.Major -eq 7 -and `$PSVersionTable.PSVersion.Minor -lt 3)) {"
+    "        throw 'Run this block in PowerShell 7.3 or later (pwsh).'"
+    "    }"
+    "    if (-not `$env:CARGO_REGISTRY_TOKEN) {"
+    "        throw 'Set `$env:CARGO_REGISTRY_TOKEN to a crates.io token of an owner of the other crates first.'"
+    "    }"
+    "    if (-not (Test-Path ci/set-crate-versions.ps1)) {"
+    "        throw 'Run this block from the root of a checkout of this repository.'"
+    "    }"
+    "    git fetch origin"
+    "    git checkout --detach $head"
 )
 if ($submodules.Count -gt 0) {
-    $commands += "git submodule update --init $($submodules -join ' ')"
+    $commands += "    git submodule update --init $($submodules -join ' ')"
 }
 $commands += @(
-    "`$plan = Join-Path ([IO.Path]::GetTempPath()) 'release-plan.json'"
-    "Set-Content `$plan '$json'"
-    "./ci/set-crate-versions.ps1 -PlanFile `$plan"
+    "    `$plan = Join-Path ([IO.Path]::GetTempPath()) 'release-plan.json'"
+    "    Set-Content `$plan '$json'"
+    "    ./ci/set-crate-versions.ps1 -PlanFile `$plan"
 )
-$commands += @($scripts | ForEach-Object { "./$_" })
+$commands += @($scripts | ForEach-Object { "    ./$_" })
 $commands += @(
-    "`$env:CARGO_REGISTRY_TOKEN = '<a crates.io token of an owner of the other crates>'"
-    "cargo publish -p $new --allow-dirty"
-    "`$env:CRATES_IO_TOKEN = `$env:CARGO_REGISTRY_TOKEN"
-    "# On Windows, run Git Bash's bash.exe here, as the bash on the path can start WSL, which does not see the token."
-    "bash ci/setup-trusted-publishing.sh"
-    "git checkout -- ."
+    "    `$metadata = (cargo metadata --no-deps --format-version 1) -join `"``n`" | ConvertFrom-Json"
+    "    `$found = (`$metadata.packages | Where-Object name -eq '$new').version"
+    "    if (`$found -ne '$planned') {"
+    "        throw `"The manifests give $new `$found, not $planned, so it is not published.`""
+    "    }"
+    "    cargo publish -p $new --allow-dirty"
+    "    `$env:CRATES_IO_TOKEN = `$env:CARGO_REGISTRY_TOKEN"
+    "    `$bash = 'bash'"
+    "    if (`$IsWindows) {"
+    "        `$gitBash = Join-Path `$env:ProgramFiles 'Git' 'bin' 'bash.exe'"
+    "        if (Test-Path `$gitBash) {"
+    "            `$bash = `$gitBash"
+    "        }"
+    "    }"
+    "    & `$bash ci/setup-trusted-publishing.sh"
+    "    git checkout -- ."
+    "}"
 )
 
 $before = "The $($ready.Count) crate(s) of the plan before it are on crates.io"
@@ -129,15 +158,19 @@ if ($DryRun) {
 }
 Write-Output "$before."
 Write-Output ""
-Write-Output ("Publish its first version by hand from a clean checkout, in " +
-    "PowerShell, with a crates.io token of an owner of the other crates:")
+Write-Output ("Publish its first version by hand from the root of a clean " +
+    "checkout, in PowerShell 7 (pwsh). Set `$env:CARGO_REGISTRY_TOKEN to a " +
+    "crates.io token of an owner of the other crates, then paste this block, " +
+    "which runs once its closing brace is entered and stops at the first " +
+    "failure:")
 Write-Output ""
 foreach ($command in $commands) {
     Write-Output "    $command"
 }
 Write-Output ""
-Write-Output ("Then run the failed publish job again. It skips every version " +
-    "crates.io has and publishes the rest.")
+Write-Output ("If the block stops, git checkout -- . puts the manifests back. " +
+    "Once it has published $new, run the failed publish job again. It skips " +
+    "every version crates.io has and publishes the rest.")
 if ($DryRun -eq $false) {
     throw "Stopped before $new, which is not on crates.io. Publish it by hand as above, then run the job again."
 }

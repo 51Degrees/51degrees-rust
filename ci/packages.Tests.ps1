@@ -883,6 +883,138 @@ Describe 'ci/publish-planned-crates.ps1' {
     }
 }
 
+Describe 'The block ci/publish-planned-crates.ps1 prints for a publish by hand' {
+    BeforeAll {
+        $script:Repo = New-PlanRepo
+        $script:Head = git -C $script:Repo rev-parse HEAD
+        $script:RealCargo = (Get-Command cargo -CommandType Application |
+            Select-Object -First 1).Source
+
+        # The block printed for a first release of every crate, with crates.io
+        # lacking fiftyone-fodid-core, as one script without its indent.
+        $versions = [ordered]@{}
+        foreach ($name in $script:Order) { $versions[$name] = '4.5.19' }
+        $plan = Join-Path (New-TempFolder) 'plan.json'
+        @{
+            Releases = @($script:Order | ForEach-Object {
+                @{ Name = $_; Version = '4.5.19'; Previous = ''; Reason = 'test' } })
+            Versions = $versions
+        } | ConvertTo-Json -Depth 4 | Set-Content $plan
+        $lines = @(& (Join-Path $script:Root 'ci/publish-planned-crates.ps1') `
+            -PlanFile $plan -RepoPath $script:Repo -Registry (New-Registry) -DryRun)
+        $start = [array]::IndexOf($lines, '    & {')
+        $end = [array]::IndexOf($lines, '    }', $start)
+        $script:Block = @($lines[$start..$end] | ForEach-Object { $_.Substring(4) }) -join "`n"
+
+        # A copy of the workspace holding the scripts the block runs.
+        function New-HandCopy {
+            $copy = Copy-Workspace
+            foreach ($file in @('ci/set-crate-versions.ps1',
+                    'ci/check-crate-requirements.ps1')) {
+                Copy-RepoFile $copy $file
+            }
+            return $copy
+        }
+
+        # Runs the block in the given folder, with git, bash and cargo publish
+        # recorded rather than run, and any other cargo command run, so the
+        # requirement check and the block's own version check read the real
+        # manifests. Git Bash is not found, so bash is the recorded one on
+        # every system.
+        function Invoke-HandBlock([string]$Folder, [switch]$NoToken) {
+            # The stubs find these by name from whichever script calls them.
+            $handCalls = [Collections.Generic.List[string]]::new()
+            $handCargo = $script:RealCargo
+            # The line as written, as PowerShell takes '--' out of the
+            # arguments it gives a function, though git receives it.
+            function git { $handCalls.Add($MyInvocation.Line.Trim()) }
+            function bash { $handCalls.Add("bash $args with CRATES_IO_TOKEN $env:CRATES_IO_TOKEN") }
+            function cargo {
+                if ($args[0] -eq 'publish') {
+                    $handCalls.Add("cargo $args")
+                    return
+                }
+                & $handCargo @args
+            }
+            $saved = @{}
+            foreach ($name in @('CARGO_REGISTRY_TOKEN', 'CRATES_IO_TOKEN', 'ProgramFiles')) {
+                $saved[$name] = [Environment]::GetEnvironmentVariable($name)
+            }
+            $token = if ($NoToken) { $null } else { 'test-token' }
+            [Environment]::SetEnvironmentVariable('CARGO_REGISTRY_TOKEN', $token)
+            [Environment]::SetEnvironmentVariable('CRATES_IO_TOKEN', $null)
+            [Environment]::SetEnvironmentVariable('ProgramFiles', (New-TempFolder))
+            $failure = $null
+            Push-Location $Folder
+            try {
+                & ([scriptblock]::Create($script:Block))
+            } catch {
+                $failure = "$_"
+            } finally {
+                Pop-Location
+                foreach ($name in $saved.Keys) {
+                    [Environment]::SetEnvironmentVariable($name, $saved[$name])
+                }
+            }
+            return [pscustomobject]@{ Failure = $failure; Calls = @($handCalls) }
+        }
+    }
+
+    It 'is one block that stops at the first failure' {
+        $script:Block | Should -BeLike "& {`n    `$ErrorActionPreference = 'Stop'`n    `$PSNativeCommandUseErrorActionPreference = `$true`n*"
+        $script:Block | Should -BeLike '*}'
+        $tokens = $null
+        $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseInput(
+            $script:Block, [ref]$tokens, [ref]$errors)
+        $errors | Should -BeNullOrEmpty
+        # One statement, so nothing runs until the closing brace is entered.
+        $ast.EndBlock.Statements.Count | Should -Be 1
+    }
+
+    It 'publishes the crate once the manifests give it the planned version' {
+        $copy = New-HandCopy
+        $result = Invoke-HandBlock $copy
+        $result.Failure | Should -BeNullOrEmpty
+        $result.Calls | Should -Be @(
+            'git fetch origin'
+            "git checkout --detach $script:Head"
+            'cargo publish -p fiftyone-fodid-core --allow-dirty'
+            'bash ci/setup-trusted-publishing.sh with CRATES_IO_TOKEN test-token'
+            'git checkout -- .')
+        $core = Get-Content -Raw (Join-Path $copy 'fodid-core' 'Cargo.toml')
+        $core | Should -Match '(?m)^version = "4\.5\.19"'
+        $core | Should -Match 'fodid = \{ version = "=4\.5\.19", path'
+    }
+
+    It 'stops before cargo publish when the versions were not written' {
+        $copy = New-HandCopy
+        # A script that writes nothing, as when it cannot run at all.
+        Set-Content -Path (Join-Path $copy 'ci' 'set-crate-versions.ps1') -Value 'param($PlanFile)'
+        $own = Get-OwnVersion $copy 'fodid-core'
+        $own | Should -Not -Be '4.5.19'
+        $result = Invoke-HandBlock $copy
+        $result.Failure | Should -Be ("The manifests give fiftyone-fodid-core $own, " +
+            "not 4.5.19, so it is not published.")
+        $result.Calls | Should -Not -Contain 'cargo publish -p fiftyone-fodid-core --allow-dirty'
+        @($result.Calls | Where-Object { $_ -like 'bash *' }) | Should -BeNullOrEmpty
+    }
+
+    It 'stops before cargo publish when writing the versions fails' {
+        $copy = New-HandCopy
+        Remove-Item (Join-Path $copy 'fodid-core' 'Cargo.toml')
+        $result = Invoke-HandBlock $copy
+        $result.Failure | Should -BeLike '*fodid-core*missing*'
+        $result.Calls | Should -Be @('git fetch origin', "git checkout --detach $script:Head")
+    }
+
+    It 'stops before changing anything when no token is set' {
+        $result = Invoke-HandBlock (New-HandCopy) -NoToken
+        $result.Failure | Should -BeLike 'Set $env:CARGO_REGISTRY_TOKEN*'
+        $result.Calls | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'ci/tag-crate-releases.ps1 -DryRun' {
     BeforeAll {
         $script:Repo = New-PlanRepo
