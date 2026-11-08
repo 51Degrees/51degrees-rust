@@ -34,6 +34,7 @@ use std::sync::Arc;
 use fiftyone_ip_intelligence_onpremise::{
     IpIntelligenceData, IpIntelligenceOnPremiseEngine, IP_DATA_KEY,
 };
+use fiftyone_ip_intelligence_shared::WEIGHTED_RECORD_VALUE_KEY;
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{ElementData, Evidence, FlowElement, Pipeline, PropertyValue};
 use fiftyone_pipeline_engines::{AspectEngine, MissingPropertyReason, OnPremiseAspectEngine};
@@ -338,15 +339,16 @@ fn a_property_left_out_by_configuration_is_excluded() {
     assert_eq!(data.get("AsnName").unwrap_err().message, expected);
 }
 
-/// On an Enterprise file the GeoNames identifiers read through their typed
-/// accessors, `StateGeoNameIdsGeographical` as a weighted list and
-/// `ContinentGeoNameId` as a string, and the property bag holds the same.
+/// On an Enterprise file each of the seven GeoNames identifiers reads through
+/// its typed accessor what the property bag holds for it, a value or the same
+/// no-value message. `StateGeoNameIdsGeographical` is a weighted list, highest
+/// weighting first, and `ContinentGeoNameId` has a value.
 #[test]
 fn the_geonames_identifiers_read_through_their_typed_accessors() {
     let Some(engine) = engine(&[]) else {
         skip_without_enterprise(
             "no IP Intelligence data file found",
-            "undeclared properties",
+            "the GeoNames accessors",
         );
         return;
     };
@@ -357,7 +359,7 @@ fn the_geonames_identifiers_read_through_their_typed_accessors() {
     {
         let file = data_file().expect("the engine's data file");
         let reason = format!("{} is not an Enterprise file", file.display());
-        skip_without_enterprise(&reason, "undeclared properties");
+        skip_without_enterprise(&reason, "the GeoNames accessors");
         return;
     }
     let data = lookup(engine, "1.1.1.1");
@@ -386,6 +388,42 @@ fn the_geonames_identifiers_read_through_their_typed_accessors() {
     let continent = data.continent_geo_name_id();
     let continent = continent.value().expect("the continent identifier");
     assert!(!continent.is_empty());
+    let Ok(PropertyValue::KeyValueList(records)) = data.get("StateGeoNameIdsGeographical") else {
+        unreachable!("checked above");
+    };
+    let held: Vec<_> = records
+        .iter()
+        .map(|record| record.get(WEIGHTED_RECORD_VALUE_KEY).cloned())
+        .collect();
+    let accessed: Vec<_> = states
+        .iter()
+        .map(|state| Some(PropertyValue::String(state.value.clone())))
+        .collect();
+    assert_eq!(accessed, held);
+    let plain = [
+        ("ContinentGeoNameId", data.continent_geo_name_id()),
+        ("CountryGeoNameId", data.country_geo_name_id()),
+        ("CountyGeoNameId", data.county_geo_name_id()),
+        (
+            "RegisteredCountryGeoNameId",
+            data.registered_country_geo_name_id(),
+        ),
+        ("StateGeoNameId", data.state_geo_name_id()),
+        ("TownGeoNameId", data.town_geo_name_id()),
+    ];
+    for (name, read) in plain {
+        match data.get(name) {
+            Ok(PropertyValue::String(text)) => {
+                assert_eq!(read.value().ok(), Some(&text), "{name}");
+            }
+            Ok(other) => panic!("{name} is {other:?} in the property bag"),
+            Err(error) => assert_eq!(
+                read.no_value_message(),
+                Some(error.message.as_str()),
+                "{name}"
+            ),
+        }
+    }
 }
 
 /// `areas()` gives the text of the WKT value `wkt_string("Areas")` reads from

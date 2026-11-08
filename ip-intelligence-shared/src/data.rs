@@ -46,9 +46,10 @@
 //! A small number of properties are *weighted*: the engine returns several
 //! candidate values for them, each with a `0.0..=1.0` confidence weighting. In
 //! the data file these are the `weightedstring` properties
-//! (`CountryCodesGeographical`, `CountryCodesPopulation` and `Mcc`). Their
-//! accessors return an ordered `Vec<`[`WeightedValue`]`<String>>`, and they also
-//! appear in the dynamic [`ElementData::get`] bag as a
+//! (`CountryCodesGeographical`, `CountryCodesPopulation`, `Mcc` and
+//! `StateGeoNameIdsGeographical`). Their accessors return an ordered
+//! `Vec<`[`WeightedValue`]`<String>>`, and they also appear in the dynamic
+//! [`ElementData::get`] bag as a
 //! [`PropertyValue::KeyValueList`] of `value`/`weight` records.
 //!
 //! Both engines populate the same backing the same way: a plain value is stored
@@ -120,8 +121,9 @@ pub enum ValueStore<T> {
 
 /// A weighted value store for a single weighted property.
 ///
-/// Held only for the genuinely weighted properties (`CountryCodesGeographical`,
-/// `CountryCodesPopulation`, `Mcc`). It mirrors the two states of an
+/// Held only for the weighted properties (`CountryCodesGeographical`,
+/// `CountryCodesPopulation`, `Mcc` and `StateGeoNameIdsGeographical`). It
+/// mirrors the two states of an
 /// [`AspectPropertyValue`]: an ordered list of weighted candidates, or a
 /// no-value message. The list is held high weighting first; the constructor
 /// sorts it for you.
@@ -552,7 +554,8 @@ impl IpIntelligenceDataBase {
     }
 
     /// Store a weighted string property (`CountryCodesGeographical`,
-    /// `CountryCodesPopulation`, `Mcc`) and its dynamic-bag mirror.
+    /// `CountryCodesPopulation`, `Mcc` or `StateGeoNameIdsGeographical`) and
+    /// its dynamic-bag mirror.
     ///
     /// The list is sorted high weighting first and mirrored into the dynamic bag
     /// as a [`PropertyValue::KeyValueList`] of `value`/`weight` records.
@@ -711,8 +714,9 @@ impl IpIntelligenceDataBase {
     ///
     /// Returns [`AspectPropertyValue::NoValue`] when the property is absent or
     /// was recorded as a no-value. The list is ordered high weighting first.
-    /// This is how the genuinely weighted properties (`CountryCodesGeographical`,
-    /// `CountryCodesPopulation`, `Mcc`) are read.
+    /// This is how the weighted properties (`CountryCodesGeographical`,
+    /// `CountryCodesPopulation`, `Mcc` and `StateGeoNameIdsGeographical`) are
+    /// read.
     pub fn weighted_string(&self, name: &str) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
         match self.weighted_strings.get(&key(name)) {
             Some(WeightedStore::Values(list)) => AspectPropertyValue::new(list.clone()),
