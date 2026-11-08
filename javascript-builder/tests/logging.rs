@@ -208,6 +208,30 @@ fn an_invalid_callback_url_is_logged_on_one_line() {
     assert!(!js.contains("processRequest"));
 }
 
+/// A host with user information is refused, and the record replaces the
+/// user information with `***`, so a user name or password never reaches
+/// the log.
+#[test]
+fn a_refused_host_does_not_log_its_user_information() {
+    let pipeline = pipeline(
+        JavaScriptBuilderElement::builder()
+            .set_minify(false)
+            .build(),
+    );
+    let (js, records) = request(&pipeline, &[("header.host", "user:secret@example.com")]);
+    assert_eq!(records.len(), 1, "{records:?}");
+    assert_eq!(records[0].0, log::Level::Error);
+    assert!(!records[0].1.contains("secret"), "{records:?}");
+    assert!(!records[0].1.contains("user"), "{records:?}");
+    assert!(
+        records[0]
+            .1
+            .contains("\"https://***@example.com/51dpipeline/json\""),
+        "{records:?}"
+    );
+    assert!(!js.contains("processRequest"));
+}
+
 /// A scheme other than `http` or `https` in the evidence is refused and
 /// logged like any other URL that is not valid.
 #[test]
