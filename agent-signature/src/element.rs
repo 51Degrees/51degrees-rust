@@ -483,7 +483,11 @@ impl AgentSignatureElement {
                 NO_VALUE_DETAIL_UNBOUND,
             );
         }
-        let resolver = EvidenceResolver { evidence, source };
+        let resolver = EvidenceResolver {
+            evidence,
+            source,
+            filter: &self.filter,
+        };
         let Some(base) = build_signature_base(
             &candidate.covered_components,
             &candidate.signature_params,
@@ -875,12 +879,28 @@ fn find_agent<'a>(
 struct EvidenceResolver<'a> {
     evidence: &'a Evidence,
     source: &'a Source,
+    filter: &'a AgentSignatureEvidenceKeyFilter,
 }
 
 impl EvidenceResolver<'_> {
     fn header(&self, name: &str) -> Option<&str> {
         self.evidence
             .get(&format!("{}.{}", self.source.prefix, name))
+    }
+
+    /// A header the signature covers. One the element accepts is read from
+    /// the evidence alone. Any other is read from the evidence, and where the
+    /// evidence does not hold it, from the web request, which no element
+    /// accepts, so such a header never reaches a cache key, the ETag or the
+    /// Vary header.
+    fn covered_header(&self, name: &str) -> Option<&str> {
+        let key = format!("{}.{}", self.source.prefix, name);
+        self.evidence.get(&key).or_else(|| {
+            if self.filter.include(&key) {
+                return None;
+            }
+            self.evidence.http_request()?.get(&key)
+        })
     }
 
     fn scheme(&self) -> Option<String> {
@@ -950,7 +970,7 @@ impl ComponentResolver for EvidenceResolver<'_> {
         if name.starts_with('@') {
             return self.derived(name);
         }
-        let header = self.header(name)?;
+        let header = self.covered_header(name)?;
         if let Some(label) = component.string_parameter("key") {
             // RFC 9421 section 2.1.2 puts the strict serialisation of the
             // member value on the line, not the text the sender wrote.
@@ -969,12 +989,12 @@ impl ComponentResolver for EvidenceResolver<'_> {
     }
 }
 
-/// The evidence the element asks for: every header, because a signature may
-/// cover any header and a web integration only supplies the evidence some
-/// element asks for, the request line, and where forwarded evidence is
-/// trusted, everything under the query prefix. The named keys are the ones
-/// the element cannot work without, so anything that lists accepted
-/// evidence can say what to send.
+/// The evidence the element accepts, being the three signature headers, the
+/// host, the protocol and the request line, and where forwarded evidence is
+/// trusted, everything under the query prefix. Only these can change the
+/// element's results for every signature, so only these reach a cache key,
+/// the ETag or the Vary header. Any other header a signature covers is read
+/// from the evidence or the web request without being accepted.
 struct AgentSignatureEvidenceKeyFilter {
     trust_forwarded: bool,
     named: EvidenceKeyFilterWhitelist,
@@ -1000,8 +1020,7 @@ impl AgentSignatureEvidenceKeyFilter {
 
 impl EvidenceKeyFilter for AgentSignatureEvidenceKeyFilter {
     fn include(&self, key: &str) -> bool {
-        starts_with_prefix(key, HEADER_SOURCE.prefix)
-            || (self.trust_forwarded && starts_with_prefix(key, EVIDENCE_QUERY_PREFIX))
+        (self.trust_forwarded && starts_with_prefix(key, EVIDENCE_QUERY_PREFIX))
             || self.named.include(key)
     }
 

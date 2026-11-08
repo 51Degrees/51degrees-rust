@@ -70,12 +70,19 @@ let result = data.get(AgentSignatureElement::KEY).unwrap();
 println!("{:?}", result.agent_signature());
 ```
 
-The element asks for every `header.` evidence key, because a signature may
-cover any header. A signature that covers the method, the path or the query
-also needs `server.request-method`, `server.request-path` and
-`server.request-query`, exactly as the request line carried them. The web
-integration in `fiftyone-pipeline-web` fills them where its adapter supplies
-the request line.
+The element accepts eight evidence keys and no others, being the three
+signature headers, `header.host`, `header.protocol`, `server.request-method`,
+`server.request-path` and `server.request-query`. A signature that covers the
+method, the path or the query needs the last three, exactly as the request
+line carried them. The web integration in `fiftyone-pipeline-web` fills them
+where its adapter supplies the request line.
+
+A signature may cover any other header. Such a header is read from the
+evidence where the flow data holds it, and otherwise from the web request the
+web integration gives as `server.http-request`. The element does not accept
+such a header, so it never reaches a cache key, the ETag or the `Vary` header.
+Where neither holds a covered header, the signature reports Unverified with
+the reason ComponentUnavailable.
 
 ## Fetching keys
 

@@ -54,14 +54,22 @@
 //!
 //! ## The evidence
 //!
-//! The element asks for every `header.` evidence key, because a signature may
-//! cover any header. A signature covering `@method`, `@path`, `@query` or
-//! `@target-uri` also needs `server.request-method`, `server.request-path`
-//! and `server.request-query`, exactly as the request line carried them.
-//! Where they are missing such a signature reports Unverified with the reason
-//! ComponentUnavailable. A signature covering `@authority` and
+//! The element accepts eight evidence keys and no others, being
+//! `header.signature`, `header.signature-input`, `header.signature-agent`,
+//! `header.host`, `header.protocol`, `server.request-method`,
+//! `server.request-path` and `server.request-query`. A signature covering
+//! `@method`, `@path`, `@query` or `@target-uri` needs the last three, exactly
+//! as the request line carried them. A signature covering `@authority` and
 //! `signature-agent`, which is what the protocol draft's own example does,
 //! needs only the headers.
+//!
+//! A signature may cover any other header. Such a header is read from the
+//! evidence where the flow data holds it, and otherwise from the web request
+//! a web integration gives, read with
+//! [`fiftyone_pipeline_core::Evidence::http_request`]. The element does not
+//! accept such a header, so it never reaches a cache key, the ETag or the
+//! Vary header. Where a covered component is in neither place, the signature
+//! reports Unverified with the reason ComponentUnavailable.
 //!
 //! ## Fetching keys
 //!
