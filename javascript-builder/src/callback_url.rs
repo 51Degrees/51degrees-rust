@@ -472,8 +472,9 @@ mod tests {
 
     // A host whose last label is all digits, or `0x` or `0X` and hex digits,
     // is read by a browser's URL parser as an IPv4 address, so it must be
-    // four decimal parts of 0 to 255 with no leading zero. One `.` at the end
-    // is dropped first, so `example.123.` ends in a number too.
+    // four decimal parts of 0 to 255 with no leading zero and no `.` at the
+    // end. One `.` at the end is dropped before the last label is read, so
+    // `example.123.` ends in a number too.
     #[test]
     fn a_host_ending_in_a_number_must_be_ipv4() {
         let hosts = [
@@ -486,6 +487,7 @@ mod tests {
             "0x7f.0.0.1",
             "01.2.3.4",
             "example.123.",
+            "1.2.3.4.",
             "1.2.3.4.5",
             "1",
             "300.1.1.1",
