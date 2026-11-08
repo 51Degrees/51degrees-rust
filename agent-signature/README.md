@@ -80,9 +80,9 @@ where its adapter supplies the request line.
 A signature may cover any other header. Such a header is read from the
 evidence where the flow data holds it, and otherwise from the web request the
 web integration gives as `server.http-request`. The element does not accept
-such a header, so it never reaches a cache key, the ETag or the `Vary` header.
-Where neither holds a covered header, the signature reports Unverified with
-the reason ComponentUnavailable.
+such a header, so it never adds one to a cache key, the ETag or the `Vary`
+header. Where neither holds a covered header, the signature reports Unverified
+with the reason ComponentUnavailable.
 
 ## Fetching keys
 

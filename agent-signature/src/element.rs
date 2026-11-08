@@ -890,9 +890,9 @@ impl EvidenceResolver<'_> {
 
     /// A header the signature covers. One the element accepts is read from
     /// the evidence alone. Any other is read from the evidence, and where the
-    /// evidence does not hold it, from the web request, which no element
-    /// accepts, so such a header never reaches a cache key, the ETag or the
-    /// Vary header.
+    /// evidence does not hold it, from the web request. The element does not
+    /// accept such a header, so it never adds one to a cache key, the ETag or
+    /// the Vary header.
     fn covered_header(&self, name: &str) -> Option<&str> {
         let key = format!("{}.{}", self.source.prefix, name);
         self.evidence.get(&key).or_else(|| {
@@ -991,10 +991,10 @@ impl ComponentResolver for EvidenceResolver<'_> {
 
 /// The evidence the element accepts, being the three signature headers, the
 /// host, the protocol and the request line, and where forwarded evidence is
-/// trusted, everything under the query prefix. Only these can change the
-/// element's results for every signature, so only these reach a cache key,
-/// the ETag or the Vary header. Any other header a signature covers is read
-/// from the evidence or the web request without being accepted.
+/// trusted, everything under the query prefix. Any other header a signature
+/// covers is read from the evidence or the web request without being
+/// accepted, so the element never adds it to a cache key, the ETag or the
+/// Vary header.
 struct AgentSignatureEvidenceKeyFilter {
     trust_forwarded: bool,
     named: EvidenceKeyFilterWhitelist,
