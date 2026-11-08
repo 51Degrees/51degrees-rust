@@ -751,6 +751,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fiftyone-device-detection-property-keyed"
+version = "4.5.2"
+dependencies = [
+ "fiftyone-device-detection-onpremise",
+ "fiftyone-device-detection-shared",
+ "fiftyone-pipeline-core",
+ "fiftyone-pipeline-engines",
+ "log",
+]
+
+[[package]]
 name = "fiftyone-device-detection-robots-txt"
 version = "4.5.2"
 dependencies = [

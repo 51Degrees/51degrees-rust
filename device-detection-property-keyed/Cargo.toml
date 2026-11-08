@@ -1,0 +1,26 @@
+[package]
+name = "fiftyone-device-detection-property-keyed"
+version = "4.5.2"
+description = "TacEngine and NativeEngine: the hardware profiles in a 51Degrees Device Detection data file that hold a TAC or a native model name, for the 51Degrees pipeline."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage = "https://51degrees.com/device-detection?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-device-detection-property-keyed-cargo.toml&utm_term=homepage"
+
+[dependencies]
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
+# AspectEngine and AspectPropertyMetaData. default-features = false leaves out
+# the data-update service, which these engines never use.
+fiftyone-pipeline-engines = { version = "=4.5.2", path = "../pipeline-engines", default-features = false }
+# MultiDeviceData, the hardware data the engines add their profiles to.
+fiftyone-device-detection-shared = { version = "=4.5.2", path = "../device-detection-shared" }
+# The on-premise Device Detection engine, whose data set holds the profiles.
+fiftyone-device-detection-onpremise = { version = "=4.5.2", path = "../device-detection-onpremise" }
+# Logs a key property the data file lacks or does not index through the log
+# facade, which does nothing until the application installs a logger.
+log = "0.4"
+
+[package.metadata.docs.rs]
+all-features = true
