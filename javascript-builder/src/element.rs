@@ -133,8 +133,9 @@ fn parse_boolean(text: &str) -> Option<bool> {
 ///   that is not valid is left out and logged at error level the first time,
 ///   and characters after the host and in the endpoint that could end the
 ///   string the script holds the URL in are percent-encoded. The protocol
-///   must be `http` or `https`, ignoring case, and a host holding user
-///   information, a zone identifier, `?` or `#` is not valid. The log shows
+///   must be `http` or `https`, ignoring case. A host holding user
+///   information, a zone identifier, `?` or `#` is not valid, and nor is one
+///   whose last label is a number unless it is an IPv4 address. The log shows
 ///   `***` in place of a refused host's user information, so a user name or
 ///   password is never logged. When a URL is built the background-update
 ///   mechanism is enabled.

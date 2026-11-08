@@ -103,7 +103,8 @@ fn is_scheme(protocol: &str) -> bool {
 /// name of non-empty labels separated by dots, with a dot allowed at the end,
 /// and the port is up to 65535 or empty. `Ipv6Addr` takes no zone
 /// identifier, so a `%` inside the brackets is refused, as a browser's URL
-/// parser refuses it.
+/// parser refuses it. A name that ends in a number must be an IPv4 address,
+/// because a browser's URL parser reads it as one.
 fn checked_host_port(host_port: &str) -> Option<String> {
     let (host, port) = if let Some(inner) = host_port.strip_prefix('[') {
         let (address, after) = inner.split_once(']')?;
@@ -113,7 +114,7 @@ fn checked_host_port(host_port: &str) -> Option<String> {
         let end = host_port.find(':').unwrap_or(host_port.len());
         let (host, port) = host_port.split_at(end);
         let name = host.strip_suffix('.').unwrap_or(host);
-        if !name.split('.').all(is_label) {
+        if !name.split('.').all(is_label) || (ends_in_a_number(name) && !is_ipv4(name)) {
             return None;
         }
         (host, port)
@@ -138,6 +139,27 @@ fn is_label(label: &str) -> bool {
         && label
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Whether the last label of a name is a number as the URL Standard's ends in
+/// a number checker reads one, being all ASCII digits, or `0x` or `0X`
+/// followed by hex digits. The name has had one `.` at its end removed.
+fn ends_in_a_number(name: &str) -> bool {
+    let last = name.rsplit_once('.').map_or(name, |(_, last)| last);
+    match last.strip_prefix("0x").or_else(|| last.strip_prefix("0X")) {
+        Some(hex) => hex.bytes().all(|b| b.is_ascii_hexdigit()),
+        None => !last.is_empty() && last.bytes().all(|b| b.is_ascii_digit()),
+    }
+}
+
+/// Four decimal parts of 0 to 255 separated by dots, with no leading zero.
+fn is_ipv4(name: &str) -> bool {
+    let is_part = |part: &str| {
+        part.bytes().all(|b| b.is_ascii_digit())
+            && (part == "0" || !part.starts_with('0'))
+            && part.parse::<u8>().is_ok()
+    };
+    name.split('.').count() == 4 && name.split('.').all(is_part)
 }
 
 /// Percent-encode the characters a URL cannot hold as they are and those that
