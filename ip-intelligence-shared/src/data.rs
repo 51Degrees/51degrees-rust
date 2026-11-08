@@ -36,10 +36,12 @@
 //!
 //! Most IP Intelligence properties are *plain*: a single IP resolves to one
 //! definite value of the property's declared type, for example the country name
-//! ([`String`]), an `IsVPN` flag ([`bool`]), the latitude ([`f32`]), the UTC
-//! offset ([`i32`]) or the area ([`WktString`]). The generated accessors return those directly, wrapped in
+//! ([`String`]), an `IsVPN` flag ([`bool`]), the latitude ([`f32`]) or the UTC
+//! offset ([`i32`]). The generated accessors return those directly, wrapped in
 //! an [`AspectPropertyValue`] so an absent value carries the engine's no-value
-//! reason.
+//! reason. The area is held as a [`WktString`], which
+//! [`IpIntelligenceDataBase::wkt_string`] reads, and the generated `areas`
+//! accessor gives its text as a [`String`].
 //!
 //! A small number of properties are *weighted*: the engine returns several
 //! candidate values for them, each with a `0.0..=1.0` confidence weighting. In
@@ -1082,19 +1084,72 @@ mod tests {
             Some("no area for this range")
         );
         assert_eq!(
+            data.wkt_string("Areas").no_value_message(),
+            Some("no area for this range")
+        );
+        assert_eq!(
             data.get("Areas").unwrap_err().message,
             "no area for this range"
         );
         assert_eq!(data.keys(), ["areas"]);
     }
 
-    /// A reader written for the crates before `Areas` had a WKT type sets it
-    /// as a string, and the WKT accessor still reads it.
+    /// A reader that stores `Areas` with `set_string` still has it read as
+    /// WKT.
     #[test]
     fn an_area_set_as_a_string_reads_as_wkt() {
         let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
         data.set_string("Areas", "POINT(2 4)");
-        assert_eq!(data.areas().value().unwrap().as_str(), "POINT(2 4)");
+        assert_eq!(
+            data.wkt_string("Areas").value().unwrap().as_str(),
+            "POINT(2 4)"
+        );
+        assert_eq!(data.areas().value().unwrap(), "POINT(2 4)");
+    }
+
+    /// Gives `Areas` as WKT when it is read, as the on-premise engine's
+    /// reader does.
+    struct AreaReader {
+        names: Vec<String>,
+    }
+
+    impl IpIntelligencePropertyReader for AreaReader {
+        fn property_names(&self) -> &[String] {
+            &self.names
+        }
+
+        fn position(&self, name: &str) -> Option<usize> {
+            self.names.iter().position(|known| known == name)
+        }
+
+        fn read_property(
+            &self,
+            _position: usize,
+            data: &mut IpIntelligenceDataBase,
+        ) -> Result<(), String> {
+            data.set_wkt_string("Areas", "POLYGON((1 2,3 4,5 6,1 2))");
+            Ok(())
+        }
+    }
+
+    /// `areas()` gives the text of the WKT value, whether the value was set
+    /// on the data or read on request.
+    #[test]
+    fn areas_gives_the_text_of_the_wkt_value() {
+        let mut set = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        set.set_wkt_string("Areas", "POLYGON((1 2,3 4,5 6,1 2))");
+        let read = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(AreaReader {
+            names: vec!["areas".to_owned()],
+        });
+        for data in [set, read] {
+            let wkt = data.wkt_string("Areas");
+            let wkt = wkt.value().expect("a WKT value");
+            assert_eq!(data.areas().value().unwrap(), wkt.as_str());
+            assert_eq!(
+                data.get("Areas").unwrap(),
+                PropertyValue::WktString(wkt.clone())
+            );
+        }
     }
 
     /// A reader over fixed values that counts how often each property is read.
