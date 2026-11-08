@@ -138,6 +138,14 @@ fn config_for(profile: PerformanceProfile) -> *mut sys::ConfigIpi {
     }
 }
 
+/// The size of an IP Intelligence data file's header in bytes, being how much
+/// of a data file the C library compares when it looks for a copy of the file
+/// to reuse.
+pub fn data_file_header_size() -> usize {
+    // Safety: the shim reads no state and takes no arguments.
+    unsafe { sys::fiftyoneDegreesShimIpiGetHeaderSize() }
+}
+
 // ---------------------------------------------------------------------------
 // Manager
 // ---------------------------------------------------------------------------
@@ -728,6 +736,10 @@ impl Manager {
     /// value given can be written otherwise, as `0.063` is given for
     /// `0.0625`, and a number's own text, written to three places, can find
     /// nothing, as it finds nothing in the C++ code.
+    ///
+    /// As in the C++ code, `name` is searched up to its first null, so
+    /// `AS13335\0x` finds `AS13335` and the text after the null is not
+    /// searched.
     pub fn data_file_property_value(
         &self,
         property_index: u32,
@@ -737,11 +749,10 @@ impl Manager {
         if property_index >= self.data_file_property_count() {
             return Ok(None);
         }
-        // A data file's strings end at their first null, so no value has a
-        // name holding one.
-        let Ok(c_name) = CString::new(name) else {
-            return Ok(None);
-        };
+        // The C++ code searches with the text before the first null, where a
+        // C string ends.
+        let searched = name.split('\0').next().unwrap_or(name);
+        let c_name = CString::new(searched).expect("the text before a null holds none");
         let mut values: Vec<DataFileValue> = Vec::new();
         // Safety: `c_name` is null terminated, and `take_value_string` treats
         // the context as the `Vec<DataFileValue>` it points to, which outlives
@@ -1942,6 +1953,36 @@ mod tests {
         (date(PUBLISHED_AT), date(PUBLISHED_AT + 4))
     }
 
+    /// The header ends after the ten collection headers that follow the two
+    /// dates, each 16 bytes as the library is built with 64 bit file offsets,
+    /// and the strings collection, the first in the file, starts there.
+    #[test]
+    fn the_header_size_is_the_ip_intelligence_data_file_header() {
+        use std::io::Read;
+        const DATE_SIZE: usize = 4;
+        const COLLECTION_HEADER_SIZE: usize = 16;
+        const COLLECTION_COUNT: usize = 10;
+        const START_SIZE: usize = std::mem::size_of::<u64>();
+        let strings_at = PUBLISHED_AT + 2 * DATE_SIZE;
+        assert_eq!(
+            data_file_header_size(),
+            strings_at + COLLECTION_COUNT * COLLECTION_HEADER_SIZE
+        );
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping the header size");
+            return;
+        };
+        let mut header = vec![0u8; strings_at + START_SIZE];
+        std::fs::File::open(&data_file)
+            .and_then(|mut file| file.read_exact(&mut header))
+            .expect("the header reads");
+        let start: [u8; START_SIZE] = header[strings_at..].try_into().expect("a start");
+        assert_eq!(
+            u64::from_le_bytes(start),
+            u64::try_from(data_file_header_size()).expect("a header size")
+        );
+    }
+
     /// The dates read are the ones in the data file header, whether the data
     /// set reads the file or holds it in memory.
     #[test]
@@ -2336,6 +2377,48 @@ mod tests {
         assert!(
             asn.as_deref().unwrap_or_default().contains("AS13335"),
             "got {asn:?}"
+        );
+    }
+
+    /// The web request a web integration gives with the evidence, under
+    /// `server.http-request`, is not one of its text values, so no address is
+    /// read from it. The lookup takes the evidence's own address, and with
+    /// none it finds nothing from the request and returns without a panic.
+    #[test]
+    fn no_address_is_read_from_the_web_request() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping the web request");
+            return;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::HighPerformance);
+        let request = || {
+            Evidence::builder()
+                .add("server.client-ip", QUAD9)
+                .add("query.client-ip-51d", QUAD9)
+                .build()
+        };
+        let lookup = |evidence: Evidence| -> Result<Option<String>> {
+            let mut results = manager.create_results()?;
+            results.process_evidence(&evidence)?;
+            results.value_as_string("Asn", ",")
+        };
+
+        let asn = lookup(
+            Evidence::builder()
+                .add("server.client-ip", CLOUDFLARE)
+                .http_request(request())
+                .build(),
+        )
+        .expect("the lookup should succeed");
+        assert!(
+            asn.as_deref().unwrap_or_default().contains("AS13335"),
+            "got {asn:?}"
+        );
+
+        let alone = lookup(Evidence::builder().http_request(request()).build());
+        assert!(
+            !matches!(&alone, Ok(Some(asn)) if asn.contains("AS19281")),
+            "got {alone:?}"
         );
     }
 
@@ -2778,6 +2861,31 @@ mod tests {
                 "{missing}"
             );
         }
+    }
+
+    #[test]
+    fn a_name_is_searched_up_to_its_first_null() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping value search");
+            return;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::LowMemory);
+        let properties = manager
+            .data_file_properties()
+            .expect("the data file's properties should be read");
+        let asn = file_property(&properties, "Asn");
+        let search = |name: &str| {
+            manager
+                .data_file_property_value(asn.index, name)
+                .expect("the value should be searched for")
+                .map(|value| value.name)
+        };
+        // .NET's GetValue gives AS13335 for each, because the C++ search
+        // ends at the null.
+        for name in ["AS13335\0", "AS13335\0x", "AS13335\0AS15169"] {
+            assert_eq!(search(name).as_deref(), Some("AS13335"), "{name:?}");
+        }
+        assert_eq!(search("NotAValue\0AS13335"), None);
     }
 
     #[test]

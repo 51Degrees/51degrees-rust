@@ -35,11 +35,18 @@
 //! Session id and sequence are excluded from the dedup key (by the
 //! [`crate::EvidenceKeyFilterShareUsageTracker`]) so they cannot make every
 //! request look unique.
+//!
+//! The key is made from the values that would be shared, being the flow
+//! data's evidence and, when a web integration gave it, the web request, as
+//! the usage sharing element finds them. The element accepts no evidence, so
+//! there is no accepted evidence to make it from.
 
 use std::time::{Duration, Instant};
 
 use fiftyone_caching::{Cache, CacheBuilder, LruCache, PutCache};
-use fiftyone_pipeline_core::{DataKey, EvidenceKeyFilter, FlowData};
+use fiftyone_pipeline_core::{DataKey, Evidence, EvidenceKeyFilter, FlowData};
+
+use crate::share_usage_element::found_evidence;
 
 /// Tracks recently shared evidence to suppress duplicate usage data.
 ///
@@ -72,9 +79,16 @@ impl ShareUsageTracker {
     ///
     /// Returns `true` if the evidence has not been seen within the interval (and
     /// records it), or `false` if it matches a recent entry (refreshing that
-    /// entry's time so the window slides).
+    /// entry's time so the window slides). The evidence is the flow data's
+    /// with the web request, when a web integration gave one.
     pub fn track(&self, data: &FlowData) -> bool {
-        let key = data.generate_key(self.filter.as_ref());
+        self.track_evidence(&found_evidence(data.evidence()))
+    }
+
+    /// [`ShareUsageTracker::track`] for the evidence the usage sharing
+    /// element has already found, so it is not found twice.
+    pub(crate) fn track_evidence(&self, evidence: &Evidence) -> bool {
+        let key = evidence.generate_key(self.filter.as_ref());
         // Evidence that produces an empty key (nothing matched the filter) is
         // always shared; there is nothing meaningful to deduplicate on.
         if key.is_empty() {

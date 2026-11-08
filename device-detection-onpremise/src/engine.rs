@@ -31,7 +31,6 @@
 use std::any::Any;
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
-use std::ffi::CStr;
 use std::hash::BuildHasher;
 use std::ops::Range;
 use std::os::raw::c_int;
@@ -66,14 +65,9 @@ use crate::retained::Retained;
 
 mod profile_lookup;
 
-/// The separator used to join multiple values of a list-typed property into a
-/// single string when reading from the native results. The other ports use a
-/// vertical bar between values, which the shared device-data list accessor then
-/// splits back out if needed.
+/// The separator between the values of a string or JavaScript property that
+/// holds several, as the C++ `ResultsBase` in 51degrees-cxx joins them.
 const VALUE_SEPARATOR: &str = "|";
-
-/// [`VALUE_SEPARATOR`] as the C string the native reader takes.
-const NATIVE_VALUE_SEPARATOR: &CStr = c"|";
 
 /// The data-source tier reported when the native tier could not be read from the
 /// data set. The Lite data file is the free tier, so this is the safe default
@@ -196,15 +190,17 @@ enum Metric {
 }
 
 impl Metric {
-    /// Every match metric, in the order a detection's data lists them.
+    /// Every match metric, in the order a detection's data lists them after
+    /// the data file's properties, which is the order of
+    /// [`METRIC_PROPERTIES`] and of the .NET engine.
     const READ_ORDER: [Metric; 7] = [
-        Metric::DeviceId,
         Metric::MatchedNodes,
         Metric::Difference,
         Metric::Drift,
+        Metric::DeviceId,
+        Metric::UserAgents,
         Metric::Iterations,
         Metric::Method,
-        Metric::UserAgents,
     ];
 
     /// The metric's property name.
@@ -630,17 +626,19 @@ impl DeviceDetectionOnPremiseEngine {
     }
 
     /// The value named `value_name` among those [`Self::property_values`]
-    /// gives for the property named `property_name`, both matched exactly, as
-    /// .NET's `GetValue(valueName)` matches them, or [`None`] when the engine
-    /// lists no such property or the property has no such value. Fails when
-    /// the data file's values cannot be read.
+    /// gives for the property named `property_name`, matched as .NET's
+    /// `GetValue(valueName)` matches them, or [`None`] when the engine lists
+    /// no such property or the property has no such value. Fails when the
+    /// data file's values cannot be read.
     ///
     /// [`FiftyOneAspectPropertyMetaData::value`] finds nothing for a data file
     /// property, because its metadata lists no values. This finds the value in
     /// the loaded data file without reading the property's other values, by
     /// the C library's binary search over values in order of their names, as
     /// .NET finds it. So a value the data file holds out of that order can be
-    /// missed.
+    /// missed. The property's name is matched exactly, and a data file
+    /// property's value by the text of `value_name` before any null, so
+    /// `True\0x` finds `True`.
     pub fn property_value(
         &self,
         property_name: &str,
@@ -981,9 +979,9 @@ struct ReadableProperties {
 }
 
 impl ReadableProperties {
-    /// The match metrics, then every data file property the data set was
-    /// opened with and results hold a value for, except any with a match
-    /// metric's name.
+    /// Every data file property the data set was opened with and results
+    /// hold a value for, except any with a match metric's name, then the
+    /// match metrics, as the .NET engine lists them.
     fn new(file_properties: &[DataFileProperty]) -> Self {
         let metrics = Metric::READ_ORDER.into_iter().map(ReadableProperty::Metric);
         let files = file_properties
@@ -1003,7 +1001,7 @@ impl ReadableProperties {
                         index,
                     })
             });
-        let properties: Vec<ReadableProperty> = metrics.chain(files).collect();
+        let properties: Vec<ReadableProperty> = files.chain(metrics).collect();
         let lowercase_names: Vec<String> = properties
             .iter()
             .map(|property| property.name().to_lowercase())
@@ -1052,20 +1050,15 @@ impl DevicePropertyReader for DetectionReader {
                 index,
             } => (name, *value_type, *index),
         };
-        let raw = results
-            .value_as_string_by_index(index, NATIVE_VALUE_SEPARATOR)
+        let values = results
+            .values_by_index(index)
             .map_err(|error| error.to_string())?;
-        Ok(raw.and_then(|raw| {
-            let raw = if name.eq_ignore_ascii_case(JAVASCRIPT_HARDWARE_PROFILE) {
-                wrap_hardware_profile(raw)
-            } else {
-                raw
-            };
-            // A typed property whose value does not parse (the `Unknown` or
-            // `N/A` no-value sentinels, say) has no value, so its accessor
-            // reports a clean no-value.
-            native_value(&raw, value_type)
-        }))
+        let values = if name.eq_ignore_ascii_case(JAVASCRIPT_HARDWARE_PROFILE) {
+            values.map(|values| values.into_iter().map(wrap_hardware_profile).collect())
+        } else {
+            values
+        };
+        Ok(native_value(values, value_type))
     }
 }
 
@@ -1193,39 +1186,119 @@ fn value_metadata(value: &DataFileValue) -> ValueMetaData {
         .with_url(&value.url)
 }
 
-/// Convert a native string value into the property value of the declared type,
-/// or [`None`] when a typed property has no real value.
+/// The value of a property from the values the results hold for it, or
+/// [`None`] when it has none, as the C++ `ResultsBase` in 51degrees-cxx gives
+/// it to the .NET engine.
 ///
-/// The native results reader returns every value as a string. A boolean comes
-/// back as the words `True` or `False`; an integer or double as its decimal
-/// form. A property with no value for this device comes back as a sentinel such
-/// as `Unknown` or `N/A`. For a boolean, integer or double property that
-/// sentinel (or any other text that does not parse as the declared type) is
-/// surfaced as a no-value by returning [`None`] (the property is then simply not
-/// written, so its strongly-typed accessor reports a clean no-value) rather than
-/// a wrong-typed string the typed accessor could not unpack. String and
-/// string-list properties take the value verbatim, so a string property that
-/// resolves to `Unknown` keeps that as its value, matching the other SDKs.
-fn native_value(raw: &str, value_type: PropertyValueType) -> Option<PropertyValue> {
-    match value_type {
-        PropertyValueType::Bool => match raw.trim().to_ascii_lowercase().as_str() {
-            "true" | "1" | "yes" => Some(PropertyValue::Bool(true)),
-            "false" | "0" | "no" => Some(PropertyValue::Bool(false)),
-            _ => None,
-        },
-        PropertyValueType::Integer => raw.trim().parse::<i64>().ok().map(PropertyValue::Integer),
-        PropertyValueType::Double => raw.trim().parse::<f64>().ok().map(PropertyValue::Double),
-        PropertyValueType::StringList => {
-            // The native reader joins list values with the separator. Split them
-            // back into a list so the list accessors see every value.
-            let parts: Vec<String> = raw
-                .split(VALUE_SEPARATOR)
-                .filter(|s| !s.is_empty())
-                .map(str::to_owned)
-                .collect();
-            Some(PropertyValue::StringList(parts))
+/// `values` is [`None`] when the results hold no value for the property, such
+/// as with no evidence, and then no type has a value. Otherwise a list is
+/// every value, an empty one included, and an empty list when the matched
+/// profile holds none. Any other type has no value when the profile holds
+/// none. A string or JavaScript property joins several values with
+/// [`VALUE_SEPARATOR`]. A boolean, integer or double has no value when there
+/// are several, and otherwise reads its one value as C does: a boolean is
+/// true only for the exact text `True`, an integer is what `atoi` reads and a
+/// double what `strtod` reads. So a value such as `Unknown` or `N/A` gives
+/// false or 0.
+fn native_value(
+    values: Option<Vec<String>>,
+    value_type: PropertyValueType,
+) -> Option<PropertyValue> {
+    let values = values?;
+    if value_type == PropertyValueType::StringList {
+        return Some(PropertyValue::StringList(values));
+    }
+    match (value_type, values.as_slice()) {
+        (_, []) => None,
+        (PropertyValueType::Bool, [value]) => Some(PropertyValue::Bool(value == "True")),
+        (PropertyValueType::Integer, [value]) => Some(PropertyValue::Integer(c_atoi(value))),
+        (PropertyValueType::Double, [value]) => Some(PropertyValue::Double(c_strtod(value))),
+        (PropertyValueType::Bool | PropertyValueType::Integer | PropertyValueType::Double, _) => {
+            None
         }
-        _ => Some(PropertyValue::String(raw.to_owned())),
+        _ => Some(PropertyValue::String(values.join(VALUE_SEPARATOR))),
+    }
+}
+
+/// True for the characters C's `isspace` finds in the C locale, which
+/// `atoi` and `strtod` skip at the start of their text.
+fn is_c_space(character: char) -> bool {
+    matches!(character, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r')
+}
+
+/// The text after any white space and sign at the start of `text`, and
+/// whether the sign was a minus.
+fn c_sign(text: &str) -> (bool, &str) {
+    let text = text.trim_start_matches(is_c_space);
+    match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text.strip_prefix('+').unwrap_or(text)),
+    }
+}
+
+/// The integer C's `atoi` reads from the start of `text`, being the decimal
+/// digits after any white space and sign, or 0 when there are none. C leaves
+/// a number too large for its type undefined, and here it stops at the
+/// largest.
+fn c_atoi(text: &str) -> i64 {
+    let (negative, rest) = c_sign(text);
+    let magnitude = rest
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .fold(0i64, |number, digit| {
+            number
+                .saturating_mul(10)
+                .saturating_add(i64::from(digit - b'0'))
+        });
+    if negative {
+        -magnitude
+    } else {
+        magnitude
+    }
+}
+
+/// The number C's `strtod` reads from the start of `text`, or 0 when it does
+/// not start with one. After any white space and sign that is `inf`,
+/// `infinity` or `nan` in any case, or decimal digits with an optional point
+/// and exponent. A hexadecimal number, which `strtod` also reads, gives 0.
+fn c_strtod(text: &str) -> f64 {
+    let (negative, rest) = c_sign(text);
+    let lower = rest.get(..8).unwrap_or(rest).to_ascii_lowercase();
+    let magnitude = if lower.starts_with("inf") {
+        f64::INFINITY
+    } else if lower.starts_with("nan") {
+        f64::NAN
+    } else {
+        let bytes = rest.as_bytes();
+        let digits = |from: usize| {
+            bytes[from..]
+                .iter()
+                .take_while(|byte| byte.is_ascii_digit())
+                .count()
+        };
+        let whole = digits(0);
+        let mut end = whole;
+        let mut fraction = 0;
+        if bytes.get(end) == Some(&b'.') {
+            fraction = digits(end + 1);
+            end += 1 + fraction;
+        }
+        if whole + fraction == 0 {
+            return 0.0;
+        }
+        if matches!(bytes.get(end), Some(b'e' | b'E')) {
+            let sign = usize::from(matches!(bytes.get(end + 1), Some(b'+' | b'-')));
+            let exponent = digits(end + 1 + sign);
+            if exponent > 0 {
+                end += 1 + sign + exponent;
+            }
+        }
+        rest[..end].parse::<f64>().unwrap_or(0.0)
+    };
+    if negative {
+        -magnitude
+    } else {
+        magnitude
     }
 }
 
@@ -1241,12 +1314,9 @@ const JAVASCRIPT_HARDWARE_PROFILE: &str = "JavascriptHardwareProfile";
 /// declares the array first and afterwards writes the ids to the
 /// `51D_ProfileIds` cookie, which the engine reads back as evidence. Without
 /// the wrapper the script fails on the undeclared array, and the include that
-/// carries it stops running. An empty body, which a profile that needs no
-/// script has, is left empty.
+/// carries it stops running. Each value is wrapped, an empty one included, as
+/// the C++ wraps them.
 fn wrap_hardware_profile(body: String) -> String {
-    if body.is_empty() {
-        return body;
-    }
     format!(
         "var profileIds = []\n{body}\n\
          document.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")"
@@ -1375,64 +1445,152 @@ mod tests {
         assert!(full.ends_with(&format!("::{ENGINE_TYPE_NAME}")), "{full}");
     }
 
+    /// The values given, as the results would hold them.
+    fn values(values: &[&str]) -> Option<Vec<String>> {
+        Some(values.iter().map(|value| (*value).to_owned()).collect())
+    }
+
+    const EVERY_TYPE: [PropertyValueType; 6] = [
+        PropertyValueType::String,
+        PropertyValueType::Bool,
+        PropertyValueType::Integer,
+        PropertyValueType::Double,
+        PropertyValueType::StringList,
+        PropertyValueType::JavaScript,
+    ];
+
     #[test]
-    fn native_bool_words_parse_both_cases() {
-        // The native string reader renders a boolean as the word True or False.
-        assert_eq!(
-            native_value("True", PropertyValueType::Bool),
-            Some(PropertyValue::Bool(true))
-        );
-        assert_eq!(
-            native_value("false", PropertyValueType::Bool),
-            Some(PropertyValue::Bool(false))
-        );
-        // An unexpected boolean rendering (including the Unknown no-value
-        // sentinel) is a no-value, so it is not written and the typed accessor
-        // reports a clean no-value rather than failing to unpack a string.
-        assert_eq!(native_value("maybe", PropertyValueType::Bool), None);
-        assert_eq!(native_value("Unknown", PropertyValueType::Bool), None);
+    fn a_property_the_results_hold_no_value_for_has_none() {
+        for value_type in EVERY_TYPE {
+            assert_eq!(native_value(None, value_type), None, "{value_type:?}");
+        }
     }
 
     #[test]
-    fn native_numbers_parse_and_fall_back() {
-        assert_eq!(
-            native_value("1170", PropertyValueType::Integer),
-            Some(PropertyValue::Integer(1170))
-        );
-        assert_eq!(
-            native_value("71.5", PropertyValueType::Double),
-            Some(PropertyValue::Double(71.5))
-        );
-        // A non-numeric value for a numeric property is a no-value, not a string.
-        assert_eq!(native_value("n/a", PropertyValueType::Integer), None);
-        assert_eq!(native_value("Unknown", PropertyValueType::Double), None);
+    fn only_a_list_has_a_value_when_the_profile_holds_none() {
+        for value_type in EVERY_TYPE {
+            let expected = (value_type == PropertyValueType::StringList)
+                .then_some(PropertyValue::StringList(Vec::new()));
+            assert_eq!(
+                native_value(values(&[]), value_type),
+                expected,
+                "{value_type:?}"
+            );
+        }
     }
 
     #[test]
-    fn native_string_keeps_sentinel_verbatim() {
-        // A string property takes its value verbatim, including the Unknown
-        // sentinel, matching the other SDKs.
+    fn a_list_keeps_every_value() {
         assert_eq!(
-            native_value("Unknown", PropertyValueType::String),
-            Some(PropertyValue::String("Unknown".to_owned()))
-        );
-    }
-
-    #[test]
-    fn native_list_splits_on_separator() {
-        let value = native_value("iPhone|iPhone 15", PropertyValueType::StringList);
-        assert_eq!(
-            value,
+            native_value(
+                values(&["iPhone", "", "a|b"]),
+                PropertyValueType::StringList
+            ),
             Some(PropertyValue::StringList(vec![
                 "iPhone".to_owned(),
-                "iPhone 15".to_owned()
+                String::new(),
+                "a|b".to_owned()
             ]))
         );
     }
 
     #[test]
-    fn the_native_separator_is_the_value_separator() {
-        assert_eq!(NATIVE_VALUE_SEPARATOR.to_str(), Ok(VALUE_SEPARATOR));
+    fn a_string_joins_its_values_and_keeps_text_as_it_is() {
+        for value_type in [PropertyValueType::String, PropertyValueType::JavaScript] {
+            assert_eq!(
+                native_value(values(&["a", "b"]), value_type),
+                Some(PropertyValue::String("a|b".to_owned()))
+            );
+            assert_eq!(
+                native_value(values(&[""]), value_type),
+                Some(PropertyValue::String(String::new()))
+            );
+            assert_eq!(
+                native_value(values(&["Unknown"]), value_type),
+                Some(PropertyValue::String("Unknown".to_owned()))
+            );
+        }
+    }
+
+    #[test]
+    fn a_boolean_is_true_only_for_the_text_true() {
+        let read = |value: &str| native_value(values(&[value]), PropertyValueType::Bool);
+        assert_eq!(read("True"), Some(PropertyValue::Bool(true)));
+        for value in ["False", "true", "TRUE", "1", "Unknown", "N/A", "", " True"] {
+            assert_eq!(read(value), Some(PropertyValue::Bool(false)), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn a_number_or_boolean_with_several_values_has_none() {
+        for value_type in [
+            PropertyValueType::Bool,
+            PropertyValueType::Integer,
+            PropertyValueType::Double,
+        ] {
+            assert_eq!(
+                native_value(values(&["1", "1"]), value_type),
+                None,
+                "{value_type:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_integer_is_what_atoi_reads() {
+        let read = |value: &str| native_value(values(&[value]), PropertyValueType::Integer);
+        for (value, expected) in [
+            ("1170", 1170),
+            ("-7", -7),
+            ("+5", 5),
+            (" \t\x0b\x0c\r\n42", 42),
+            ("12.9", 12),
+            ("42abc", 42),
+            ("Unknown", 0),
+            ("N/A", 0),
+            ("", 0),
+            ("-", 0),
+            ("- 3", 0),
+            ("99999999999999999999", i64::MAX),
+        ] {
+            assert_eq!(
+                read(value),
+                Some(PropertyValue::Integer(expected)),
+                "{value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_double_is_what_strtod_reads() {
+        let read = |value: &str| match native_value(values(&[value]), PropertyValueType::Double) {
+            Some(PropertyValue::Double(number)) => number,
+            other => panic!("{value:?} gave {other:?}"),
+        };
+        for (value, expected) in [
+            ("71.5", 71.5),
+            ("  3.25", 3.25),
+            ("-2.5e-1", -0.25),
+            ("+.5e+1", 5.0),
+            ("5.", 5.0),
+            (".5", 0.5),
+            ("1e3x", 1000.0),
+            ("1e", 1.0),
+            ("1e+", 1.0),
+            ("2.5.1", 2.5),
+            ("Unknown", 0.0),
+            ("N/A", 0.0),
+            ("", 0.0),
+            (".", 0.0),
+            ("e5", 0.0),
+            ("inf", f64::INFINITY),
+            ("-Infinity", f64::NEG_INFINITY),
+            ("1e999", f64::INFINITY),
+        ] {
+            assert_eq!(read(value).to_bits(), expected.to_bits(), "{value:?}");
+        }
+        assert!(read("NaN").is_nan());
+        assert!(read("nan(1)").is_nan());
     }
 
     #[test]
@@ -1507,8 +1665,12 @@ mod tests {
             "var profileIds = []\nprofileIds.push(1)\n\
              document.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")"
         );
-        // A profile that needs no script keeps an empty body.
-        assert_eq!(wrap_hardware_profile(String::new()), "");
+        // An empty value is wrapped too, as the C++ wraps it.
+        assert_eq!(
+            wrap_hardware_profile(String::new()),
+            "var profileIds = []\n\n\
+             document.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")"
+        );
     }
 
     #[test]
@@ -1574,26 +1736,18 @@ mod tests {
     }
 
     /// Every match metric listed in the metadata is read from the results,
-    /// and a detection's data lists them in this order.
+    /// and a detection's data lists them in the metadata's order.
     #[test]
     fn every_listed_metric_is_read_from_the_results() {
-        let mut read: Vec<&str> = Metric::READ_ORDER.iter().map(|m| m.name()).collect();
-        assert_eq!(
-            read,
-            [
-                "DeviceId",
-                "MatchedNodes",
-                "Difference",
-                "Drift",
-                "Iterations",
-                "Method",
-                "UserAgents"
-            ]
-        );
-        let mut listed: Vec<&str> = METRIC_PROPERTIES.iter().map(|m| m.name).collect();
-        listed.sort_unstable();
-        read.sort_unstable();
-        assert_eq!(listed, read);
+        let read: Vec<&str> = Metric::READ_ORDER.iter().map(|m| m.name()).collect();
+        let listed: Vec<&str> = METRIC_PROPERTIES.iter().map(|m| m.name).collect();
+        assert_eq!(read, listed);
+        let readable = ReadableProperties::new(&[]);
+        let lowercase: Vec<String> = listed.iter().map(|name| name.to_lowercase()).collect();
+        assert_eq!(readable.lowercase_names, lowercase);
+        for (position, name) in lowercase.iter().enumerate() {
+            assert_eq!(readable.by_name.get(name), Some(&position), "{name}");
+        }
     }
 
     const CHROME_ON_WINDOWS: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
@@ -1654,8 +1808,8 @@ mod tests {
         }
     }
 
-    /// A detection stores no value, and its data lists the match metrics
-    /// first, then the data file's properties.
+    /// A detection stores no value, and its data lists the data file's
+    /// properties first, then the match metrics, as the .NET engine does.
     #[test]
     fn a_detection_stores_nothing_until_a_property_is_read() {
         use fiftyone_pipeline_core::ElementData;
@@ -1671,19 +1825,20 @@ mod tests {
             device.base().keys()
         );
         let keys = device.keys();
+        let (files, metrics) = keys.split_at(keys.len() - Metric::READ_ORDER.len());
         assert_eq!(
-            keys[..7],
+            metrics,
             [
-                "deviceid",
                 "matchednodes",
                 "difference",
                 "drift",
+                "deviceid",
+                "useragents",
                 "iterations",
-                "method",
-                "useragents"
+                "method"
             ]
         );
-        assert!(keys.iter().any(|key| key == "ismobile"), "{keys:?}");
+        assert!(files.iter().any(|key| key == "ismobile"), "{keys:?}");
         let method = device.get("Method").expect("Method has a value");
         assert!(
             ["NONE", "PERFORMANCE", "COMBINED", "PREDICTIVE"].contains(&method.as_str().unwrap()),

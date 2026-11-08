@@ -174,6 +174,9 @@ pub struct IpIntelligenceOnPremiseEngine {
     /// Whether a refresh reads a copy of the data file under every profile,
     /// as the builder's `create_temp_data_copy` asked.
     temp_data_copy: bool,
+    /// Whether a refresh reads a copy of the data file already in the
+    /// temporary folder, as the builder's `reuse_temp_file` asked.
+    reuse_temp_file: bool,
     /// The single data file this engine reads, as shared run-time state for the
     /// data update service.
     data_files: Vec<Arc<AspectEngineDataFile>>,
@@ -341,16 +344,24 @@ impl IpIntelligenceOnPremiseEngine {
             refresh_lock: Mutex::new(()),
             temp_dir: None,
             temp_data_copy: false,
+            reuse_temp_file: false,
             data_files: vec![data_file],
         })
     }
 
     /// Copy the data file into `temp_dir` on refresh, the folder the builder
-    /// copied it into, or the system's temporary folder when `None`, and
-    /// under every profile when `always` is true.
-    pub(crate) fn with_temp_dir(mut self, temp_dir: Option<PathBuf>, always: bool) -> Self {
+    /// copied it into, or the system's temporary folder when `None`, under
+    /// every profile when `always` is true, and read a copy already there
+    /// when `reuse` is true.
+    pub(crate) fn with_temp_dir(
+        mut self,
+        temp_dir: Option<PathBuf>,
+        always: bool,
+        reuse: bool,
+    ) -> Self {
         self.temp_dir = temp_dir;
         self.temp_data_copy = always;
+        self.reuse_temp_file = reuse;
         self
     }
 
@@ -503,7 +514,9 @@ impl IpIntelligenceOnPremiseEngine {
     /// as is a value of `Ip` or `IpV6`. The search compares a number written
     /// to as many places as `value_name` has characters plus three, at most
     /// 15, so the value given can be written otherwise, as `0.063` is given
-    /// for `0.0625`.
+    /// for `0.0625`. A data file property's value is searched with the text
+    /// of `value_name` before any null, as .NET searches it, so `AS13335\0x`
+    /// finds `AS13335`.
     pub fn property_value(
         &self,
         property_name: &str,
@@ -581,6 +594,7 @@ impl IpIntelligenceOnPremiseEngine {
                 self.profile,
                 file.configuration(),
                 self.temp_data_copy,
+                self.reuse_temp_file,
             )
         });
         let manager = Manager::open_with_options(
