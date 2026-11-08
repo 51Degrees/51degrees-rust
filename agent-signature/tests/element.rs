@@ -56,9 +56,25 @@ const ACCEPTED_KEYS: [&str; 8] = [
     "server.request-query",
 ];
 
+/// The same eight names under the query prefix, which the element also
+/// accepts where forwarded evidence is trusted.
+const FORWARDED_KEYS: [&str; 8] = [
+    "query.signature",
+    "query.signature-input",
+    "query.signature-agent",
+    "query.host",
+    "query.protocol",
+    "query.request-method",
+    "query.request-path",
+    "query.request-query",
+];
+
 /// A header none of the accepted keys names, with the value it is signed
 /// with.
 const X_TEST: (&str, &str) = ("header.x-test", "covered");
+
+/// The `x-test` header as a caller's pipeline forwards it.
+const FORWARDED_X_TEST: (&str, &str) = ("query.x-test", "covered");
 
 /// A signer that also covers the `x-test` header.
 fn x_test_signer() -> Signer {
@@ -66,6 +82,41 @@ fn x_test_signer() -> Signer {
         extra: vec![("\"x-test\"".to_owned(), X_TEST.1.to_owned())],
         ..Signer::default()
     }
+}
+
+/// A signer that also covers the `protocol` header, which is one of the
+/// accepted keys.
+fn protocol_signer() -> Signer {
+    Signer {
+        extra: vec![("\"protocol\"".to_owned(), "https".to_owned())],
+        ..Signer::default()
+    }
+}
+
+/// A harness whose element trusts forwarded evidence.
+fn trusting_harness() -> Harness {
+    Harness::new(
+        FakeClient::default().with(
+            DIRECTORY_URL,
+            FakeResponse::directory(test_key_directory(None)),
+        ),
+        |builder| builder.set_trust_forwarded_evidence(true),
+    )
+}
+
+/// The evidence of a signed request arriving at `example.com` over HTTPS,
+/// forwarded by a caller's pipeline, which takes the prefix off each key.
+fn forwarded_evidence(signed: &Signed) -> Vec<(&str, &str)> {
+    let mut evidence = vec![
+        ("query.signature", signed.signature.as_str()),
+        ("query.signature-input", signed.signature_input.as_str()),
+        ("query.host", "example.com"),
+        ("query.protocol", "https"),
+    ];
+    if let Some(agent) = &signed.signature_agent {
+        evidence.push(("query.signature-agent", agent.as_str()));
+    }
+    evidence
 }
 
 /// A signer that also covers the method and the path.
@@ -712,19 +763,37 @@ fn the_element_accepts_its_eight_keys_and_no_others() {
 }
 
 #[test]
-fn trusting_forwarded_evidence_adds_the_query_keys_and_no_headers() {
+fn trusting_forwarded_evidence_adds_the_eight_names_under_query_and_no_others() {
     let element = AgentSignatureElement::builder()
         .set_http_client(Arc::new(FakeClient::default()))
         .set_trust_forwarded_evidence(true)
         .build()
         .unwrap();
     let filter = element.evidence_key_filter();
-    for key in ACCEPTED_KEYS {
+    for key in ACCEPTED_KEYS.iter().chain(FORWARDED_KEYS.iter()) {
         assert!(filter.include(key), "{key}");
+        assert!(filter.include(&key.to_uppercase()), "{key}");
     }
-    assert!(filter.include("query.signature"));
-    assert!(filter.include("query.x-test"));
-    assert!(!filter.include(X_TEST.0));
+    // An ordinary query string parameter is not accepted, so it never
+    // reaches a cache key or the ETag.
+    for key in [
+        FORWARDED_X_TEST.0,
+        "query.content-type",
+        "query.page",
+        X_TEST.0,
+        "server.http-request",
+    ] {
+        assert!(!filter.include(key), "{key}");
+    }
+    let mut named = filter.named_keys().unwrap();
+    named.sort();
+    let mut expected: Vec<String> = ACCEPTED_KEYS
+        .iter()
+        .chain(FORWARDED_KEYS.iter())
+        .map(|key| key.to_string())
+        .collect();
+    expected.sort();
+    assert_eq!(named, expected);
 }
 
 #[test]
@@ -799,7 +868,7 @@ fn a_covered_header_takes_the_evidence_value_before_the_web_request() {
 }
 
 #[test]
-fn an_accepted_key_is_not_read_from_the_web_request() {
+fn the_authority_is_not_rebuilt_from_the_web_request() {
     let harness = Harness::with_test_key();
     let signed = Signer::default().sign();
     let agent = signed.signature_agent.clone().unwrap();
@@ -822,6 +891,99 @@ fn an_accepted_key_is_not_read_from_the_web_request() {
     evidence.push(("header.host", "example.com"));
     let data = process_with_request(&harness.pipeline, &evidence, &request);
     assert_eq!(outcome(&data).1, REASON_VERIFIED);
+}
+
+#[test]
+fn a_covered_accepted_key_is_not_read_from_the_web_request() {
+    let unavailable = (
+        STATUS_UNVERIFIED.to_owned(),
+        REASON_COMPONENT_UNAVAILABLE.to_owned(),
+    );
+    let signed = protocol_signer().sign();
+
+    // A direct request, with `header.protocol` only in the web request.
+    let harness = Harness::with_test_key();
+    let agent = signed.signature_agent.clone().unwrap();
+    let evidence = vec![
+        ("header.signature", signed.signature.as_str()),
+        ("header.signature-input", signed.signature_input.as_str()),
+        ("header.signature-agent", agent.as_str()),
+        ("header.host", "example.com"),
+    ];
+    let mut request = evidence.clone();
+    request.push(("header.protocol", "https"));
+    let data = process_with_request(&harness.pipeline, &evidence, &request);
+    assert_eq!(outcome(&data), unavailable);
+    let data = process_with_request(&harness.pipeline, &request, &request);
+    assert_eq!(outcome(&data).1, REASON_VERIFIED);
+
+    // A forwarded request, with `query.protocol` only in the web request.
+    let trusting = trusting_harness();
+    let request = forwarded_evidence(&signed);
+    let evidence: Vec<(&str, &str)> = request
+        .iter()
+        .filter(|(key, _)| *key != "query.protocol")
+        .copied()
+        .collect();
+    let data = process_with_request(&trusting.pipeline, &evidence, &request);
+    assert_eq!(outcome(&data), unavailable);
+    let data = process_with_request(&trusting.pipeline, &request, &request);
+    assert_eq!(outcome(&data).1, REASON_VERIFIED);
+}
+
+#[test]
+fn a_forwarded_covered_header_comes_from_the_evidence_then_the_web_request() {
+    let harness = trusting_harness();
+    assert!(!harness
+        .pipeline
+        .evidence_key_filter()
+        .include(FORWARDED_X_TEST.0));
+    let signed = x_test_signer().sign();
+    let forwarded = forwarded_evidence(&signed);
+    let verified = (STATUS_VERIFIED.to_owned(), REASON_VERIFIED.to_owned());
+
+    let mut with_header = forwarded.clone();
+    with_header.push(FORWARDED_X_TEST);
+    assert_eq!(outcome(&harness.process(&with_header)), verified);
+
+    let data = process_with_request(&harness.pipeline, &forwarded, &with_header);
+    assert_eq!(outcome(&data), verified);
+
+    let mut other = forwarded.clone();
+    other.push((FORWARDED_X_TEST.0, "other"));
+    let data = process_with_request(&harness.pipeline, &other, &with_header);
+    assert_eq!(
+        outcome(&data),
+        (
+            STATUS_INVALID.to_owned(),
+            REASON_SIGNATURE_MISMATCH.to_owned()
+        )
+    );
+
+    let data = process_with_request(&harness.pipeline, &forwarded, &forwarded);
+    assert_eq!(
+        outcome(&data),
+        (
+            STATUS_UNVERIFIED.to_owned(),
+            REASON_COMPONENT_UNAVAILABLE.to_owned()
+        )
+    );
+}
+
+#[test]
+fn a_forwarded_signature_reads_no_header_key() {
+    let harness = trusting_harness();
+    let signed = x_test_signer().sign();
+    let forwarded = forwarded_evidence(&signed);
+    let mut with_header = forwarded.clone();
+    with_header.push(X_TEST);
+    let unavailable = (
+        STATUS_UNVERIFIED.to_owned(),
+        REASON_COMPONENT_UNAVAILABLE.to_owned(),
+    );
+    assert_eq!(outcome(&harness.process(&with_header)), unavailable);
+    let data = process_with_request(&harness.pipeline, &forwarded, &with_header);
+    assert_eq!(outcome(&data), unavailable);
 }
 
 #[test]
