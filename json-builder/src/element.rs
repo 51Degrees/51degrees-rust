@@ -39,6 +39,10 @@ use crate::data::{JsonBuilderData, JSON_BUILDER_DATA_KEY};
 use crate::steps::{JsonBuilderContext, JsonBuilderSteps, PipelineConfig};
 use crate::value::{JsonObject, JsonValue};
 
+/// The key a WKT value's text is written under, being .NET's `WktString.Value`
+/// lowercased, as .NET's JSON builder writes it and the cloud service sends it.
+const WKT_VALUE_KEY: &str = "value";
+
 /// The message of the error processing gives when no Sequence element gave a
 /// sequence number. It starts with .NET's message and says where the
 /// Sequence element goes, as the specification asks.
@@ -227,9 +231,10 @@ impl JsonBuilderElement {
     /// builder first, in order, and then using the builder's own conversion.
     ///
     /// The builder's own conversion writes a string or JavaScript as a string,
-    /// a list of strings as an array, and a list of records or of element
-    /// data as an array of objects with lowercased keys, where a property
-    /// of element data with no value is null with its reason.
+    /// a list of strings as an array, a list of records or of element data
+    /// as an array of objects with lowercased keys, where a property of
+    /// element data with no value is null with its reason, and a WKT value
+    /// as an object holding its text under `value`.
     pub fn to_json_value(&self, value: &PropertyValue) -> JsonValue {
         self.convert_by_caller(value)
             .unwrap_or_else(|| self.built_in_json_value(value))
@@ -267,6 +272,11 @@ impl JsonBuilderElement {
                     })
                     .collect(),
             ),
+            PropertyValue::WktString(text) => {
+                let mut object = JsonObject::new();
+                object.insert(WKT_VALUE_KEY, JsonValue::String(text.as_str().to_owned()));
+                JsonValue::Object(object)
+            }
             PropertyValue::ElementDataList(items) => JsonValue::Array(
                 items
                     .iter()

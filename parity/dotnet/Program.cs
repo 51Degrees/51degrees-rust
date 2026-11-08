@@ -524,6 +524,9 @@ namespace FiftyOne.Parity
                             ["type"] = Typed(item).Item1,
                             ["value"] = Typed(item).Item2
                         }).ToArray()));
+                // The type the crates and the metadata lines name a WKT value.
+                case object wkt when wkt.GetType().Name == "WktString":
+                    return ("wktString", wkt.ToString());
                 default:
                     return ("other:" + value.GetType().Name, value.ToString());
             }

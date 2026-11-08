@@ -603,8 +603,8 @@ components in list order as `componentNames`, and under `components` each
 component's `id`, `defaultProfileId` and the names of its `properties`,
 keyed by its name. Because properties and components are keyed by name, one
 that only one side lists is a single difference rather than moving every
-one after it. Types have the names the other lines use, and .NET's IP
-addresses, areas and weighted lists are `ipAddress`, `wktString` and
+one after it. Types have the names the other lines use. An area is `wktString` on
+both sides, and .NET's IP addresses and weighted lists are `ipAddress` and
 `weightedList`, which the crates' value types do not have. Each side counts
 an IP Intelligence data file property's values without reading them,
 because one can hold millions, and the .NET program counts any other

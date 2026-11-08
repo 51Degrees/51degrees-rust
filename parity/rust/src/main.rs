@@ -470,6 +470,7 @@ fn typed(value: PropertyValue) -> (&'static str, Value) {
         PropertyValue::Float(f) => ("double", json!(f64::from(f))),
         PropertyValue::StringList(list) => ("stringList", json!(list)),
         PropertyValue::JavaScript(s) => ("javascript", json!(s)),
+        PropertyValue::WktString(text) => ("wktString", json!(text.as_str())),
         PropertyValue::KeyValueList(records) => (
             "keyValueList",
             Value::Array(
