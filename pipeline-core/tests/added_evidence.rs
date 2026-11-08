@@ -21,22 +21,17 @@
  * ********************************************************************* */
 
 //! Evidence an element adds with `FlowData::add_evidence`, read by the
-//! elements after it and by the caller, on its own and in a parallel group.
+//! elements after it and by the caller, and refused from an element of a
+//! parallel group.
 
 use std::any::Any;
 use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
 
 use fiftyone_pipeline_core::{
-    ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
-    MapElementData, NoValueError, Pipeline, PipelineBuilder, PropertyMetaData, PropertyValue,
-    Result, TypedKey,
+    ElementData, Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData,
+    FlowElement, FlowError, MapElementData, NoValueError, Pipeline, PipelineBuilder,
+    PropertyMetaData, PropertyValue, Result, TypedKey,
 };
-
-/// How long the first element of a group waits, so the second finishes
-/// first.
-const WAIT_MILLISECONDS: u64 = 200;
 
 /// Element data holding what an element read from the evidence.
 struct SeenData(MapElementData);
@@ -63,6 +58,7 @@ struct TestElement {
     key: &'static str,
     action: Box<Action>,
     filter: EvidenceKeyFilterWhitelist,
+    adds_evidence: bool,
 }
 
 impl FlowElement for TestElement {
@@ -79,29 +75,52 @@ impl FlowElement for TestElement {
     fn properties(&self) -> &[PropertyMetaData] {
         &[]
     }
+    fn adds_evidence(&self) -> bool {
+        self.adds_evidence
+    }
 }
 
 fn element(
     key: &'static str,
     action: impl Fn(&mut FlowData) + Send + Sync + 'static,
 ) -> Arc<dyn FlowElement> {
+    test_element(key, false, action)
+}
+
+fn test_element(
+    key: &'static str,
+    adds_evidence: bool,
+    action: impl Fn(&mut FlowData) + Send + Sync + 'static,
+) -> Arc<dyn FlowElement> {
     Arc::new(TestElement {
         key,
         action: Box::new(action),
         filter: EvidenceKeyFilterWhitelist::default(),
+        adds_evidence,
     })
 }
 
-/// An element that adds each of `added` to the evidence.
+/// An element that adds each of `added` to the evidence, without saying so
+/// with `FlowElement::adds_evidence`.
 fn adder(
     key: &'static str,
     added: &'static [(&'static str, &'static str)],
 ) -> Arc<dyn FlowElement> {
-    element(key, move |data| {
-        for (name, value) in added {
-            data.add_evidence(*name, *value);
-        }
-    })
+    element(key, move |data| add_each(data, added))
+}
+
+/// An element that adds each of `added` to the evidence, and says so.
+fn declared_adder(
+    key: &'static str,
+    added: &'static [(&'static str, &'static str)],
+) -> Arc<dyn FlowElement> {
+    test_element(key, true, move |data| add_each(data, added))
+}
+
+fn add_each(data: &mut FlowData, added: &[(&str, &str)]) {
+    for (name, value) in added {
+        data.add_evidence(*name, *value);
+    }
 }
 
 /// Record under `key` what the evidence holds for each of `names`, or
@@ -210,85 +229,130 @@ fn the_caller_can_add_evidence_before_processing() {
     assert_eq!(seen(&data, "reader", "query.added"), "by the caller");
 }
 
-/// Each element of a group sees the evidence from before the group and what
-/// it added itself, never what another adds. Afterwards the group's additions
-/// are in the evidence in the order the elements were given, though the first
-/// finishes last, and of two adding one key the later element's value is kept.
-#[test]
-fn each_element_of_a_group_sees_its_own_added_evidence_and_not_anothers() {
-    const NAMES: &[&str] = &[
-        "header.user-agent",
-        "query.slower",
-        "query.faster",
-        "query.shared",
-    ];
-    let group = [
-        element("slower", |data| {
-            thread::sleep(Duration::from_millis(WAIT_MILLISECONDS));
-            data.add_evidence("query.shared", "from slower");
-            data.add_evidence("query.slower", "1");
-            record_seen(data, "slower", NAMES);
-        }),
-        element("faster", |data| {
-            record_seen(data, "faster-first", NAMES);
-            data.add_evidence("query.faster", "2");
-            data.add_evidence("query.shared", "from faster");
-            record_seen(data, "faster", NAMES);
-        }),
-    ];
-    let data = process(
-        Pipeline::builder()
-            .add_parallel_elements(group)
-            .add_element(reader("after", NAMES)),
-    );
+/// The message of an error recorded for evidence an element of a group tried
+/// to add under `key`.
+fn refused(key: &str) -> String {
+    format!(
+        "An element of a parallel group tried to add the evidence '{key}', which was refused, \
+         because the other elements of the group read the evidence at the same time. Add the \
+         element on its own, before the elements that read the value."
+    )
+}
 
-    let seen_by =
-        |key: &str| -> Vec<String> { NAMES.iter().map(|name| seen(&data, key, name)).collect() };
-    assert_eq!(
-        seen_by("faster-first"),
-        ["test", "absent", "absent", "absent"]
-    );
-    assert_eq!(seen_by("slower"), ["test", "1", "absent", "from slower"]);
-    assert_eq!(seen_by("faster"), ["test", "absent", "2", "from faster"]);
-    assert_eq!(seen_by("after"), ["test", "1", "2", "from faster"]);
+fn configuration_message(error: &FlowError) -> String {
+    match &error.source {
+        Error::PipelineConfiguration { message } => message.clone(),
+        other => panic!("not a configuration error: {other}"),
+    }
+}
+
+/// An element of a group that adds evidence without saying so adds nothing,
+/// so it, the other element of the group and the element after the group all
+/// see the evidence from before the group. The pipeline records a
+/// configuration error against it for each key, in the order it tried them,
+/// and with errors suppressed processing carries on.
+#[test]
+fn evidence_an_element_of_a_group_adds_is_refused_with_an_error_for_each_key() {
+    const NAMES: &[&str] = &["query.added", "query.sequence"];
+    let group = [
+        element("adder", |data| {
+            data.add_evidence("query.added", "1");
+            data.add_evidence("QUERY.SEQUENCE", "6");
+            record_seen(data, "adder", NAMES);
+        }),
+        reader("other", NAMES),
+    ];
+    let pipeline = Pipeline::builder()
+        .add_parallel_elements(group)
+        .add_element(reader("after", NAMES))
+        .suppress_process_exceptions(true)
+        .build()
+        .unwrap();
+    let mut data = pipeline.create_flow_data_with(supplied());
+    data.process().unwrap();
+
+    for key in ["adder", "other", "after"] {
+        assert_eq!(seen(&data, key, "query.added"), "absent", "{key}");
+        assert_eq!(seen(&data, key, "query.sequence"), "5", "{key}");
+    }
     assert_eq!(
         entries(data.evidence()),
-        pairs(&[
-            ("header.User-Agent", "test"),
-            ("query.Sequence", "5"),
-            ("query.shared", "from faster"),
-            ("query.slower", "1"),
-            ("query.faster", "2"),
-        ])
+        pairs(&[("header.User-Agent", "test"), ("query.Sequence", "5")])
+    );
+    let errors: Vec<(&str, String)> = data
+        .errors()
+        .iter()
+        .map(|error| {
+            (
+                error.element_data_key.as_str(),
+                configuration_message(error),
+            )
+        })
+        .collect();
+    assert_eq!(
+        errors,
+        [
+            ("adder", refused("query.added")),
+            ("adder", refused("QUERY.SEQUENCE")),
+        ]
     );
 }
 
-/// An element of a group that adds a key already supplied sees its value in
-/// place of the supplied one, keeping the supplied spelling and place, and
-/// the others see the supplied value.
+/// With errors not suppressed, refused evidence fails processing with the
+/// error, once every element has run.
 #[test]
-fn an_element_of_a_group_replacing_a_supplied_value_sees_its_own() {
-    const NAMES: &[&str] = &["query.sequence"];
-    let group = [
-        element("changer", |data| {
-            data.add_evidence("QUERY.SEQUENCE", "6");
-            record_seen(data, "changer", NAMES);
-            assert_eq!(
-                entries(data.evidence()),
-                pairs(&[("header.User-Agent", "test"), ("query.Sequence", "6")])
-            );
-        }),
-        element("other", |data| {
-            thread::sleep(Duration::from_millis(WAIT_MILLISECONDS));
-            record_seen(data, "other", NAMES);
-        }),
-    ];
-    let data = process(Pipeline::builder().add_parallel_elements(group));
+fn refused_evidence_fails_processing_unless_errors_are_suppressed() {
+    let pipeline = Pipeline::builder()
+        .add_parallel_elements([
+            adder("adder", &[("query.added", "1")]),
+            reader("other", &["query.added"]),
+        ])
+        .add_element(reader("after", &["query.added"]))
+        .build()
+        .unwrap();
+    let mut data = pipeline.create_flow_data_with(supplied());
 
-    assert_eq!(seen(&data, "changer", "query.sequence"), "6");
-    assert_eq!(seen(&data, "other", "query.sequence"), "5");
-    assert_eq!(
-        entries(data.evidence()),
-        pairs(&[("header.User-Agent", "test"), ("query.Sequence", "6")])
-    );
+    match data.process() {
+        Err(Error::Aggregate(errors)) => {
+            assert_eq!(errors.len(), 1, "{errors:?}");
+            assert_eq!(errors[0].element_data_key, "adder");
+            assert_eq!(configuration_message(&errors[0]), refused("query.added"));
+        }
+        other => panic!("not an aggregate error: {other:?}"),
+    }
+    assert_eq!(seen(&data, "after", "query.added"), "absent");
+    assert_eq!(data.evidence().get("query.added"), None);
+}
+
+/// A pipeline refuses a group holding an element that says it adds
+/// evidence, wherever it is in the group. The element builds on its own, and
+/// as a group of one, which is the element on its own.
+#[test]
+fn a_group_holding_an_element_that_adds_evidence_is_refused() {
+    const ADDED: &[(&str, &str)] = &[("query.added", "1")];
+    const EXPECTED: &str = "An element of a parallel group with the data key 'Adder' adds \
+                            evidence, which the other elements of the group read at the same \
+                            time. Add it on its own, before the elements that read what it adds.";
+    for group in [
+        vec![declared_adder("Adder", ADDED), reader("other", &[])],
+        vec![reader("other", &[]), declared_adder("Adder", ADDED)],
+    ] {
+        match Pipeline::builder()
+            .add_parallel_elements(group)
+            .build()
+            .err()
+        {
+            Some(Error::PipelineConfiguration { message }) => assert_eq!(message, EXPECTED),
+            Some(other) => panic!("not a configuration error: {other}"),
+            None => panic!("the pipeline was built"),
+        }
+    }
+
+    for builder in [
+        Pipeline::builder().add_element(declared_adder("adder", ADDED)),
+        Pipeline::builder().add_parallel_elements([declared_adder("adder", ADDED)]),
+    ] {
+        let data = process(builder.add_element(reader("after", &["query.added"])));
+        assert_eq!(seen(&data, "after", "query.added"), "1");
+    }
 }
