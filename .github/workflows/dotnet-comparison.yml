@@ -550,13 +550,14 @@ jobs:
       # read back differently, two elements in the other order, the other
       # answer for the suppress setting, another default usage sharing
       # setting, a setting given as a number or a fraction read back
-      # differently, and another error for a pipeline setting that does not
-      # parse.
+      # differently, another error for a pipeline setting that does not
+      # parse, and another data key for the property keyed engine.
       - name: Check that a changed configuration answer fails
         if: matrix.data == 'lite'
         working-directory: parity
         run: |
           want='configuration-pipeline configuration-no-group configuration-robots-txt'
+          want+=' configuration-property-keyed configuration-property-keyed-default-key'
           want+=' configuration-setting-in-both-sections'
           want+=' configuration-setting-forms-in-both-sections'
           want+=' configuration-setting-case-in-both-sections'
@@ -608,6 +609,9 @@ jobs:
           changed configuration-pipeline-setting-does-not-parse \
             '.configuration.error |= sub("sometimes"; "never")' \
             'configuration.error'
+          changed configuration-property-keyed \
+            '.configuration.elements[4].dataKey = "profiles-hardwarevendor"' \
+            'configuration.elements\[4\].dataKey'
 
       # The translation cases must translate and sort on both sides, or the
       # two could agree by both failing. French must give the United
