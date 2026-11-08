@@ -83,13 +83,14 @@ impl Translator {
     }
 
     /// What this translator gives for a value it has no translation for.
-    pub fn behavior(&self) -> MissingTranslationBehavior {
+    pub fn missing_translation_behavior(&self) -> MissingTranslationBehavior {
         self.behavior
     }
 
     /// Translate one value.
     ///
-    /// A value with no translation is given as [`Translator::behavior`] says.
+    /// A value with no translation is given as
+    /// [`Translator::missing_translation_behavior`] says.
     /// With [`MissingTranslationBehavior::FlowError`] it is `None`, and the
     /// reason is added to `errors`.
     pub fn translate(&self, value: &str, errors: &mut Vec<String>) -> Option<String> {

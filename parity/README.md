@@ -99,13 +99,11 @@ there is no IP Intelligence data. The element is part of each program, and on
 each side it writes that side's IP Intelligence data, so the engines read the
 codes as they read an IP Intelligence engine's. In the crates that is
 `IpIntelligenceDataBase` with a missing property source, as both IP
-Intelligence engines write it, so a weighted record is a `value` and a
-`weight` and a property the evidence did not give is missing. .NET's JSON
-writes a record as `rawweighting` and `value`, which the
-[#226](https://github.com/51Degrees/51degrees-rust/issues/226) entries in
-`allowed-differences.json` allow. It lists no properties, so only the JSON
-shows its data. The JSON builder leaves the crates' Sequence element's data
-out, as in the values pipeline. The countries engine sorts every country by
+Intelligence engines write it, so a weighted record is a `rawweighting` and a
+`value`, as in .NET's JSON, and a property the evidence did not give is
+missing. It lists no properties, so only the JSON shows its data. The JSON
+builder leaves the crates' Sequence element's data out, as in the values
+pipeline. The countries engine sorts every country by
 the collation of the language asked for, being the ICU on the runner in .NET
 and ICU4X's compiled data in the crates, so any difference in how the two sort
 shows in the lists of every country.
@@ -157,7 +155,8 @@ Each program writes one JSON object per case.
 Value types are `string`, `bool`, `integer`, `double`, `stringList`,
 `javascript`, `ipAddress`, `dateTime` (in .NET only, written as RFC 3339
 text with the offset), `weightedList` (each item a `rawWeighting` and a
-`value`), `keyValueList` and `list`.
+`value`), `keyValueList`, `elementDataList` (in the crates, the type of
+the TAC and Native engines' `Profiles`) and `list`.
 
 ## The comparison
 
@@ -554,10 +553,10 @@ Both sides' JSON writes `hardware.profiles` empty, because the engines keep
 the ids of the profiles they find and write none of the profiles to the JSON,
 so `hardwareJson` needs no entry. Three entries in `allowed-differences.json`
 allow TAC and Native differences. One allows the type of `Profiles`, which
-.NET gives as its .NET type and the crates as `keyValueList`. Two allow .NET
-finding a native model name in any case, as its own index compares values
-ignoring case, where the crates match the name exactly through the C library's
-index, as the draft specification of the lookup asks
+.NET gives as its .NET type and the crates as `elementDataList`. Two allow
+.NET finding a native model name in any case, as its own index compares
+values ignoring case, where the crates match the name exactly through the C
+library's index, as the draft specification of the lookup asks
 ([specifications#62](https://github.com/51Degrees/specifications/pull/62)).
 One allows the difference in `indexedValues`, where .NET counts the values
 that differ only in case together under the spelling it met first, and the

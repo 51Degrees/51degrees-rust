@@ -54,11 +54,16 @@ use crate::source::{Lookup, PropertySource, SourceValue, WeightedSourceValue};
 pub const DERIVED_DEFAULT_ELEMENT_DATA_KEY: &str = "derived";
 
 /// The key a weighted value carries its value under, as the 51Degrees element
-/// data publishes one. The two names are repeated here rather than taken from
-/// a product crate, because this element sits above the products and must not
+/// data publishes one. The names are repeated here rather than taken from a
+/// product crate, because this element sits above the products and must not
 /// depend on either of them.
 const WEIGHTED_VALUE_KEY: &str = "value";
-/// The key a weighted value carries its weight under.
+/// The key a weighted value carries its raw weighting under, from 0 to
+/// 65,535.
+const WEIGHTED_RAW_WEIGHTING_KEY: &str = "rawweighting";
+/// The key a weighted value from other element data may carry a weight under
+/// instead. Only the order of the weights matters here, so either is read as
+/// the number it holds.
 const WEIGHTED_WEIGHT_KEY: &str = "weight";
 
 /// The element data the [`DerivedPropertyElement`] produces.
@@ -789,7 +794,8 @@ fn lookup_of(value: PropertyValue) -> Lookup {
                     Some(value) => value,
                 };
                 let weight = record
-                    .get(WEIGHTED_WEIGHT_KEY)
+                    .get(WEIGHTED_RAW_WEIGHTING_KEY)
+                    .or_else(|| record.get(WEIGHTED_WEIGHT_KEY))
                     .and_then(PropertyValue::as_double)
                     .unwrap_or(0.0);
                 candidates.push(WeightedSourceValue { weight, value });

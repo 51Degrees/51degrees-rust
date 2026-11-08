@@ -386,13 +386,14 @@ fn the_json_writes_no_on_premise_profiles() {
             .get(HARDWARE_DATA_KEY)
             .unwrap_or_else(|| panic!("no data for {property} {value:?}"));
         assert_eq!(profile_ids(hardware), ids, "{property} {value:?}");
-        let Ok(PropertyValue::KeyValueList(records)) = hardware.get(PROFILES_PROPERTY_NAME) else {
-            panic!("{PROFILES_PROPERTY_NAME} is not a list of records");
+        let Ok(PropertyValue::ElementDataList(written)) = hardware.get(PROFILES_PROPERTY_NAME)
+        else {
+            panic!("{PROFILES_PROPERTY_NAME} is not a list of element data");
         };
         assert!(
-            records.is_empty(),
-            "{property} {value:?} gives {} records",
-            records.len()
+            written.is_empty(),
+            "{property} {value:?} writes {} profiles",
+            written.len()
         );
 
         let text = data

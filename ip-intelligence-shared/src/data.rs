@@ -50,7 +50,9 @@
 //! `StateGeoNameIdsGeographical`). Their
 //! accessors return an ordered `Vec<`[`WeightedValue`]`<String>>`, and they also
 //! appear in the dynamic [`ElementData::get`] bag as a
-//! [`PropertyValue::KeyValueList`] of `value`/`weight` records.
+//! [`PropertyValue::KeyValueList`] of records, each holding the raw weighting
+//! (0 to 65,535) under `rawweighting` and the candidate under `value`, which is
+//! how the JSON builder writes them and the cloud service sends them.
 //!
 //! Both engines populate the same backing the same way: a plain value is stored
 //! through one of the `set_*` builders (for example
@@ -92,8 +94,17 @@ pub const IP_DATA_KEY: TypedKey<IpIntelligenceDataBase> = TypedKey::new(IP_DATA_
 /// value in the dynamic property bag mirror.
 pub const WEIGHTED_RECORD_VALUE_KEY: &str = "value";
 
-/// The key under which each flattened weighted record stores its `0.0..=1.0`
-/// weighting multiplier in the dynamic property bag mirror.
+/// The key under which each flattened weighted record stores its raw
+/// weighting in the dynamic property bag mirror, as a
+/// [`PropertyValue::Integer`] from 0 to 65,535. Divide it by 65,535 for the
+/// weighting from 0 to 1 that [`WeightedValue::weighting`] gives.
+pub const WEIGHTED_RECORD_RAW_WEIGHTING_KEY: &str = "rawweighting";
+
+/// A key no weighted record carries. Records hold the raw weighting under
+/// [`WEIGHTED_RECORD_RAW_WEIGHTING_KEY`].
+#[deprecated(note = "weighted records do not carry `weight`. Read \
+            `WEIGHTED_RECORD_RAW_WEIGHTING_KEY` and divide by 65,535, or use \
+            `WeightedValue::weighting` from the typed accessor")]
 pub const WEIGHTED_RECORD_WEIGHT_KEY: &str = "weight";
 
 /// The type the warning for a read of a missing property names.
@@ -172,8 +183,9 @@ impl<T> WeightedStore<T> {
 /// Build the flattened key-value mirror of a weighted list for the dynamic
 /// property bag.
 ///
-/// Each weighted candidate becomes a small ordered record with a `value` entry
-/// (`to_value(&candidate)`) and a `weight` entry (the `0.0..=1.0` multiplier).
+/// Each weighted candidate becomes a small ordered record with a
+/// `rawweighting` entry (the raw weighting as an integer) and a `value` entry
+/// (`to_value(&candidate)`), as .NET's property bag and JSON give it.
 /// The result is wrapped as a [`PropertyValue::KeyValueList`] so it can be
 /// stored in the embedded [`AspectDataBase`] and read through
 /// [`ElementData::get`].
@@ -190,8 +202,8 @@ where
                 to_value(&weighted.value),
             );
             record.insert(
-                WEIGHTED_RECORD_WEIGHT_KEY.to_owned(),
-                PropertyValue::Double(f64::from(weighted.weighting())),
+                WEIGHTED_RECORD_RAW_WEIGHTING_KEY.to_owned(),
+                PropertyValue::Integer(i64::from(weighted.raw_weighting)),
             );
             record
         })
@@ -558,7 +570,7 @@ impl IpIntelligenceDataBase {
     /// its dynamic-bag mirror.
     ///
     /// The list is sorted high weighting first and mirrored into the dynamic bag
-    /// as a [`PropertyValue::KeyValueList`] of `value`/`weight` records.
+    /// as a [`PropertyValue::KeyValueList`] of `rawweighting`/`value` records.
     pub fn set_weighted_string(
         &mut self,
         name: impl AsRef<str>,
@@ -861,9 +873,9 @@ impl AspectData for IpIntelligenceDataBase {
 /// The value type a weighted property is reported as in metadata.
 ///
 /// Weighted lists are surfaced through the dynamic bag as
-/// [`PropertyValueType::KeyValueList`] (the flattened `value`/`weight` records),
-/// so that is the type published for a weighted property, regardless of the
-/// underlying candidate type.
+/// [`PropertyValueType::KeyValueList`] (the flattened `rawweighting`/`value`
+/// records), so that is the type published for a weighted property,
+/// regardless of the underlying candidate type.
 pub const WEIGHTED_PROPERTY_VALUE_TYPE: PropertyValueType = PropertyValueType::KeyValueList;
 
 /// Every property name the generated model surfaces, in name order.
@@ -1025,10 +1037,37 @@ mod tests {
             PropertyValue::KeyValueList(records) => {
                 assert_eq!(records.len(), 3);
                 assert!(records[0].contains_key(WEIGHTED_RECORD_VALUE_KEY));
-                assert!(records[0].contains_key(WEIGHTED_RECORD_WEIGHT_KEY));
+                assert!(records[0].contains_key(WEIGHTED_RECORD_RAW_WEIGHTING_KEY));
             }
             other => panic!("expected a key-value list, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_weighted_record_is_its_raw_weighting_and_value() {
+        // .NET's property bag holds each candidate's RawWeighting and Value,
+        // and its JSON writes them as rawweighting and value, with no weight.
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        data.set_weighted_string("CountryCodesPopulation", sample_countries());
+        let Ok(PropertyValue::KeyValueList(records)) = data.get("CountryCodesPopulation") else {
+            panic!("expected a key-value list");
+        };
+        let record = |raw: i64, code: &str| {
+            BTreeMap::from([
+                ("rawweighting".to_owned(), PropertyValue::Integer(raw)),
+                ("value".to_owned(), PropertyValue::String(code.to_owned())),
+            ])
+        };
+        assert_eq!(
+            records,
+            vec![
+                record(60_000, "FR"),
+                record(40_000, "DE"),
+                record(20_000, "GB"),
+            ]
+        );
+        assert_eq!(WEIGHTED_RECORD_RAW_WEIGHTING_KEY, "rawweighting");
+        assert_eq!(WEIGHTED_RECORD_VALUE_KEY, "value");
     }
 
     #[test]

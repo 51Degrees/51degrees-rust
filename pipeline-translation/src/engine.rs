@@ -65,9 +65,9 @@ const WEIGHT_KEY: &str = "weight";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TranslationProperty {
     /// The property's name in the source data.
-    pub source: String,
+    pub source_property: String,
     /// The name the translated value is stored under.
-    pub destination: String,
+    pub destination_property: String,
 }
 
 /// Translates values another element produced into the language the request
@@ -115,13 +115,13 @@ impl TranslationEngine {
     ) -> Self {
         let mut properties: Vec<PropertyMetaData> = Vec::new();
         for (translation, value_type) in &translations {
-            let lowercase = translation.destination.to_lowercase();
+            let lowercase = translation.destination_property.to_lowercase();
             if !properties
                 .iter()
                 .any(|property| property.name.to_lowercase() == lowercase)
             {
                 properties.push(PropertyMetaData::new(
-                    translation.destination.clone(),
+                    translation.destination_property.clone(),
                     data_key,
                     *value_type,
                 ));
@@ -149,7 +149,7 @@ impl TranslationEngine {
     }
 
     /// The data key of the element whose values are translated.
-    pub fn source_data_key(&self) -> &str {
+    pub fn source_element_data_key(&self) -> &str {
         &self.source_data_key
     }
 
@@ -164,7 +164,7 @@ impl TranslationEngine {
     }
 
     /// What the engine gives for a value it has no translation for.
-    pub fn behavior(&self) -> MissingTranslationBehavior {
+    pub fn missing_translation_behavior(&self) -> MissingTranslationBehavior {
         self.behavior
     }
 
@@ -201,10 +201,10 @@ impl TranslationEngine {
         let mut failure = None;
         if let Some(source) = data.get_str(&self.source_data_key) {
             for translation in &self.translations {
-                let value = match read_source(source, &translation.source) {
+                let value = match read_source(source, &translation.source_property) {
                     Ok(SourceValue::Absent) => AspectPropertyValue::no_value(format!(
                         "The source property '{}' could not be found in the source data.",
-                        translation.source
+                        translation.source_property
                     )),
                     Ok(SourceValue::NoValue(message)) => AspectPropertyValue::no_value(message),
                     Ok(SourceValue::Value(value)) => {
@@ -215,7 +215,7 @@ impl TranslationEngine {
                         break;
                     }
                 };
-                values.push((translation.destination.clone(), value));
+                values.push((translation.destination_property.clone(), value));
             }
         }
         let output = data.get_or_add(self.typed_key(), TranslationData::new)?;
