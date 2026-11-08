@@ -2,7 +2,7 @@
 
 # 51Degrees Device Detection Shared
 
-DeviceData trait with typed accessors, the device-detection property model and the User-Agent Client Hints (UACH) high-entropy decoder element.
+DeviceData trait with typed accessors, the device-detection property model and the User-Agent Client Hints (UACH) high-entropy evidence keys.
 
 This crate is part of the [51Degrees](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fiftyone-device-detection-shared-readme.md&utm_term=introduction) Rust solution for high-performance
 device detection and IP intelligence, available both on-premise from a local

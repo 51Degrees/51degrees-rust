@@ -52,9 +52,13 @@
 //! - [`GENERATED_PROPERTY_TYPES`] (and the [`declared_property_value_type`] /
 //!   [`default_property_metadata`] helpers derived from it) which a wrapper can
 //!   use to type and publish the generated property set.
-//! - [`UachJsConversionElement`], the User-Agent Client Hints high-entropy
-//!   decoder element described in the
+//! - [`UACH_EVIDENCE_QUERY_KEY`] and [`UACH_EVIDENCE_COOKIE_KEY`], the keys
+//!   the high entropy values are supplied under.
+//! - [`UachJsConversionElement`], deprecated, the User-Agent Client Hints
+//!   high-entropy decoder element described in the
 //!   [UA-CH high-entropy decoder specification](https://github.com/51Degrees/specifications/blob/main/device-detection-specification/pipeline-elements/uach-high-entropy-decoder.md).
+//!   No engine reads its data, as the on-premise Hash engine passes the high
+//!   entropy values to the C library, which converts them itself.
 //!
 //! ## The dynamic property bag is always available
 //!
@@ -77,7 +81,8 @@ pub use data::{
     DEVICE_ELEMENT_DATA_KEY,
 };
 pub use device_data::{DeviceData, GENERATED_PROPERTY_TYPES};
+#[allow(deprecated)]
+pub use uach::UachJsConversionElement;
 pub use uach::{
-    UachJsConversionElement, UACH_EVIDENCE_COOKIE_KEY, UACH_EVIDENCE_QUERY_KEY,
-    UACH_HIGH_ENTROPY_EVIDENCE_SUFFIX,
+    UACH_EVIDENCE_COOKIE_KEY, UACH_EVIDENCE_QUERY_KEY, UACH_HIGH_ENTROPY_EVIDENCE_SUFFIX,
 };

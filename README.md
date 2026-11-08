@@ -97,7 +97,7 @@ path, so cloud-only users and most of CI build without a C compiler.
 
 | Crate | Responsibility | Deployment |
 |-------|----------------|------------|
-| [`fiftyone-device-detection-shared`](device-detection-shared) | DeviceData trait with typed accessors, the property model and the UACH high-entropy decoder element. | both |
+| [`fiftyone-device-detection-shared`](device-detection-shared) | DeviceData trait with typed accessors, the property model and the UACH high-entropy evidence keys. | both |
 | [`fiftyone-device-detection-onpremise`](device-detection-onpremise) | On-premise Hash engine over the safe fiftyone-native wrapper. | on-premise |
 | [`fiftyone-device-detection-robots-txt`](device-detection-robots-txt) | robots.txt engine, which allows or refuses each crawler the Hash data file describes by what it uses pages for. | on-premise |
 | [`fiftyone-device-detection-cloud`](device-detection-cloud) | Cloud engine that maps the cloud JSON response to DeviceData. | cloud |

@@ -30,6 +30,9 @@
 //! `uach-ghev-*` cases of the comparison with .NET. Skips when the Lite Hash
 //! data file is absent.
 
+// The decoder element is deprecated, and these tests use it on purpose.
+#![allow(deprecated)]
+
 use std::path::PathBuf;
 use std::sync::Arc;
 

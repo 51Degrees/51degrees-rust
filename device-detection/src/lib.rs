@@ -42,8 +42,8 @@
 //!   [`CloudRequestEngine`], re-exported here as [`DeviceDetectionCloudEngine`]
 //!   and [`DeviceDetectionCloudEngineBuilder`] (behind the `cloud` feature).
 //! - The shared model: [`DeviceData`], [`DeviceDataBase`], [`DEVICE_DATA_KEY`]
-//!   and [`AspectPropertyValue`], plus the UA-CH high-entropy decoder
-//!   [`UachJsConversionElement`].
+//!   and [`AspectPropertyValue`], and the deprecated UA-CH high-entropy
+//!   decoder [`UachJsConversionElement`], which no engine needs.
 //! - The core types a caller needs to drive a pipeline: [`Pipeline`],
 //!   [`FlowData`], [`Evidence`] and friends.
 //!
@@ -117,8 +117,10 @@
 // Re-exports: the shared result model, present in every configuration.
 // ---------------------------------------------------------------------------
 
+#[allow(deprecated)]
+pub use fiftyone_device_detection_shared::UachJsConversionElement;
 pub use fiftyone_device_detection_shared::{
-    DeviceData, DeviceDataBase, UachJsConversionElement, DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY,
+    DeviceData, DeviceDataBase, DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY,
 };
 
 // The typed result wrapper a `DeviceData` accessor returns. Re-exported so a
