@@ -291,7 +291,7 @@ namespace FiftyOne.Parity
             };
             Attempt(entry, "component", () =>
             {
-                var component = property.GetComponent();
+                var component = property.Component;
                 return component == null ? null : new JsonObject
                 {
                     ["id"] = component.ComponentId,
@@ -299,7 +299,7 @@ namespace FiftyOne.Parity
                 };
             });
             Attempt(entry, "defaultValue",
-                () => Value(property.GetDefaultValue()));
+                () => Value(property.DefaultValue));
             // An IP Intelligence data file property counts its values
             // without reading them, as one can hold millions. Any other
             // property's values are counted as they are read, and the last
