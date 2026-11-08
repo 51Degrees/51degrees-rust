@@ -507,9 +507,12 @@ in one request, each with the first value a profile holds that the engine
 accepts. Then come `property-keyed-tac-value-NNNNNN` for each TAC and
 `property-keyed-native-value-NNNNNN` for each NativeModel, in the data file's
 order counting from 000001. Last come `property-keyed-profile-<id>` for every
-50th distinct profile those cases find through a value the engine accepts,
-counting from the first, each with the evidence of the first case that finds
-it. Over the Lite file only the fixed cases run.
+50th distinct profile those cases find through a value the engine accepts and
+at most 1,000 profiles hold, counting from the first, each with the evidence
+of the first case that finds it. The limit keeps a profile case from reading
+every profile a placeholder value finds, such as the native model name `N/A`,
+which 34,146 profiles of the TAC file hold. Over the Lite file only the fixed
+cases run.
 
 Each line holds `warnings`, the flow data's warnings, each with its
 element's data key and its message, and `profileIds`, the id of each profile
