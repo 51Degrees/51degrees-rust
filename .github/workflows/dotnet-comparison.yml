@@ -251,6 +251,11 @@ jobs:
           target/debug/parity-rust robots-txt "${robots[@]}" --out out/robots-txt-rust.jsonl
           dotnet out/dotnet/Parity.dll robots-txt "${robots[@]}" \
             --out out/robots-txt-dotnet.jsonl
+          # Each side writes each on-premise engine's metadata for every
+          # metadata case, and the reads the restricted engines answer.
+          metadata=(--cases corpus/metadata.json --dd "$DD_FILE" --ipi "$IPI_FILE")
+          target/debug/parity-rust metadata "${metadata[@]}" --out out/metadata-rust.jsonl
+          dotnet out/dotnet/Parity.dll metadata "${metadata[@]}" --out out/metadata-dotnet.jsonl
 
       - name: Compare
         if: env.RUN == 'true'
@@ -260,13 +265,13 @@ jobs:
           target/debug/parity-compare --corpus corpus/evidence.json \
             --corpus out/fodid-rust.json --corpus out/fodid-dotnet.json \
             --corpus corpus/configuration.json --corpus out/derived-cases.json \
-            --corpus out/robots-txt-cases.json \
+            --corpus out/robots-txt-cases.json --corpus corpus/metadata.json \
             --dotnet out/dotnet.jsonl --dotnet out/fodid-dotnet.jsonl \
             --dotnet out/configuration-dotnet.jsonl --dotnet out/derived-dotnet.jsonl \
-            --dotnet out/robots-txt-dotnet.jsonl \
+            --dotnet out/robots-txt-dotnet.jsonl --dotnet out/metadata-dotnet.jsonl \
             --rust out/rust.jsonl --rust out/fodid-rust.jsonl \
             --rust out/configuration-rust.jsonl --rust out/derived-rust.jsonl \
-            --rust out/robots-txt-rust.jsonl \
+            --rust out/robots-txt-rust.jsonl --rust out/metadata-rust.jsonl \
             --allowed allowed-differences.json --data ${{ matrix.data }} \
             --report out/report.md --strict > /dev/null
           status=$?
@@ -831,6 +836,47 @@ jobs:
             exit 1
           fi
           grep -q "\`robots-txt-tdl-uri\`.* at \`plainText\`: " out/report-robots-txt-changed.md
+
+      # Each metadata line on each side must list properties, components and
+      # values, so the two cannot agree by both listing none. Then a Rust
+      # line with a changed description, one with a changed value and one
+      # with a changed reason for a property read with no value must each
+      # fail the comparison.
+      - name: Check that a changed metadata answer fails
+        if: ${{ !cancelled() && env.RUN == 'true' }}
+        working-directory: parity
+        run: |
+          cases=$(jq length corpus/metadata.json)
+          for side in rust dotnet; do
+            if ! jq -e -s --argjson cases "$cases" 'length == $cases and all(.[];
+                (.engineMetadata.propertyNames | length) > 0 and
+                (.engineMetadata.componentNames | length) > 0 and
+                ([.engineMetadata.properties[].values | length] | add) > 0)' \
+                "out/metadata-$side.jsonl" > /dev/null; then
+              echo "::error::The $side metadata lines do not each list properties, components and values"
+              exit 1
+            fi
+          done
+          jq -c 'if .id == "metadata-device" then
+              .engineMetadata.properties.IsMobile.description |= . + " Changed."
+            elif .id == "metadata-ip" then
+              .engineMetadata.properties.Asn.values[0].name |= . + " Changed."
+            elif .id == "metadata-device-ismobile" then
+              .properties.device.browsername.missing |= . + " Changed."
+            else . end' out/metadata-rust.jsonl > out/metadata-rust-changed.jsonl
+          if target/debug/parity-compare --corpus corpus/metadata.json \
+            --dotnet out/metadata-dotnet.jsonl --rust out/metadata-rust-changed.jsonl \
+            --allowed allowed-differences.json --data ${{ matrix.data }} \
+            --report out/report-metadata-changed.md > /dev/null; then
+            echo "::error::The comparison passed with a changed metadata answer"
+            exit 1
+          fi
+          grep -q '`metadata-device`.* at `engineMetadata\.properties\.IsMobile\.description`: ' \
+            out/report-metadata-changed.md
+          grep -q '`metadata-ip`.* at `engineMetadata\.properties\.Asn\.values\[0\]\.name`: ' \
+            out/report-metadata-changed.md
+          grep -q '`metadata-device-ismobile`.* at `properties\.device\.browsername`: ' \
+            out/report-metadata-changed.md
 
       - name: Upload the answers and the report
         if: always() && env.RUN == 'true'

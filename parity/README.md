@@ -12,6 +12,7 @@ change by a difference this comparison stops reporting.
 | `corpus/fodid.json` | The 51Did cases. Each is a payload to sign, a text to read as it is, or the 51Did metadata (see "The 51Did comparison"). |
 | `corpus/configuration.json` | The configuration cases. Each is a configuration file in .NET's shape to build a pipeline from (see "The configuration comparison"). |
 | `corpus/robots-txt.json` | The fixed robots.txt cases. The cases for each usage come from the data file (see "The robots.txt comparison"). |
+| `corpus/metadata.json` | The metadata cases. Each opens one on-premise engine and writes its metadata (see "The metadata comparison"). |
 | `dotnet/` | A .NET 8 console program that runs the cases through the .NET packages and writes one JSON line for each. |
 | `rust/` | The same program over the crates in this checkout. |
 | `compare/` | The comparer, which reports each difference with the case that caused it. |
@@ -148,6 +149,7 @@ Each program writes one JSON object per case.
 | `configuration` | For a configuration case, what was built or the error (see "The configuration comparison"). |
 | `derived` | For a derived property case, the script's source properties and its answer (see "The derived property comparison"). |
 | `robotsTxtEngine`, `plainText`, `annotatedText` | For a robots.txt case, the engine's evidence keys and properties, and the two texts (see "The robots.txt comparison"). |
+| `engineMetadata` | For a metadata case, the engine's metadata (see "The metadata comparison"). |
 
 Value types are `string`, `bool`, `integer`, `double`, `stringList`,
 `javascript`, `ipAddress`, `dateTime` (in .NET only, written as RFC 3339
@@ -477,6 +479,58 @@ pass with no crawler in either text, and another runs the crate's data file
 tests over that file. Over the Lite file, one step checks that a Rust text
 with one line changed fails the comparison.
 
+## The metadata comparison
+
+Each case in `corpus/metadata.json` opens one on-premise engine on its own,
+Device Detection in the HighPerformance profile and IP Intelligence in the
+LowMemory profile, as the engines' pipeline has them, and writes the
+engine's metadata. Both jobs run every case, so the lite job compares the
+Lite and ASN files and the enterprise job the Enterprise files.
+
+| Field | What it holds |
+| --- | --- |
+| `engine` | `device` or `ip`. |
+| `properties` | The properties the engine is opened with, or every one when absent. |
+| `valueLimit` | How many of each property's values the line holds, every one when 0. |
+| `read` | The properties read from the data of a request to the engine alone. No request is made when it is absent. |
+| `evidence` | The evidence of that request. |
+
+The `engineMetadata` field of the line holds the engine's `dataSourceTier`,
+the names of its properties in list order as `propertyNames`, and under
+`properties` the metadata of each property keyed by its name. That is its
+`type`, `category`, `description`, `url`, `displayOrder`, the flags
+`mandatory`, `list`, `obsolete`, `show` and `showValues`, `available`,
+`dataTiers`, its `component` as an `id` and a `name`, its `defaultValue`,
+its `valueCount` and the first `valueLimit` of its `values`, each value
+being a `name`, a `description` and a `url`. Then come the names of its
+components in list order as `componentNames`, and under `components` each
+component's `id`, `defaultProfileId` and the names of its `properties`,
+keyed by its name. Because properties and components are keyed by name, one
+that only one side lists is a single difference rather than moving every
+one after it. Types have the names the other lines use, and .NET's IP
+addresses, areas and weighted lists are `ipAddress`, `wktString` and
+`weightedList`, which the crates' value types do not have. Each side counts
+an IP Intelligence data file property's values without reading them,
+because one can hold millions, and the .NET program counts any other
+property's values as it reads them. Where reading a part of .NET's metadata
+fails, the line holds the exception's type under that part's name with
+`Error` added, so the failure shows as a difference.
+
+The `properties` field holds what `read` gives, keyed by the engine's data
+key and the lowercase property name, in the form the other lines use. A
+property the data does not hold is written as `missing` on both sides,
+because .NET's data fails such a read. So a case that opens an engine with
+some properties records the reason each side gives for a property the
+engine was opened without, for one the data file lacks and for a name no
+data file has, which
+[#223](https://github.com/51Degrees/51degrees-rust/issues/223) asks to be
+.NET's.
+
+The step "Check that a changed metadata answer fails" checks that each
+side's lines list properties, components and values, so the two cannot
+agree by both listing none, and that a Rust line with a changed description
+and one with a changed value each fail the comparison.
+
 ## The C code
 
 Both sides build the same C code. The crates build their native code from
@@ -546,15 +600,18 @@ DD="--dd ../cxx/data/device-detection/51Degrees-LiteV4.1.hash"
 target/debug/parity-rust robots-txt-cases --corpus corpus/robots-txt.json $DD --out out/robots-txt-cases.json
 target/debug/parity-rust robots-txt --corpus out/robots-txt-cases.json $DD --out out/robots-txt-rust.jsonl
 dotnet out/dotnet/Parity.dll robots-txt --corpus out/robots-txt-cases.json $DD --out out/robots-txt-dotnet.jsonl
+METADATA="--cases corpus/metadata.json --dd ../cxx/data/device-detection/51Degrees-LiteV4.1.hash --ipi ../cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi"
+target/debug/parity-rust metadata $METADATA --out out/metadata-rust.jsonl
+dotnet out/dotnet/Parity.dll metadata $METADATA --out out/metadata-dotnet.jsonl
 target/debug/parity-compare --corpus corpus/evidence.json $SIGNED \
   --corpus corpus/configuration.json --corpus out/derived-cases.json \
-  --corpus out/robots-txt-cases.json \
+  --corpus out/robots-txt-cases.json --corpus corpus/metadata.json \
   --dotnet out/dotnet.jsonl --dotnet out/fodid-dotnet.jsonl \
   --dotnet out/configuration-dotnet.jsonl --dotnet out/derived-dotnet.jsonl \
-  --dotnet out/robots-txt-dotnet.jsonl \
+  --dotnet out/robots-txt-dotnet.jsonl --dotnet out/metadata-dotnet.jsonl \
   --rust out/rust.jsonl --rust out/fodid-rust.jsonl \
   --rust out/configuration-rust.jsonl --rust out/derived-rust.jsonl \
-  --rust out/robots-txt-rust.jsonl \
+  --rust out/robots-txt-rust.jsonl --rust out/metadata-rust.jsonl \
   --allowed allowed-differences.json --data lite --strict --report out/report.md
 ```
 
@@ -585,6 +642,11 @@ same pull request.
 A fixed robots.txt case goes in `corpus/robots-txt.json` in the same way.
 The cases for each usage are written from the data file, so a usage the data
 adds gives its cases with no change here.
+
+A metadata case goes in `corpus/metadata.json` in the same way. The step
+"Check that a changed metadata answer fails" changes the cases
+`metadata-device` and `metadata-ip`, so a change to either changes that
+step too.
 
 A derived property case is added to the case file in derived-properties,
 and reaches this comparison when the crate's `vendor` folder is next copied

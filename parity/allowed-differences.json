@@ -110,8 +110,18 @@
     "issue": 226
   },
   {
+    "path": "properties.device.hardware*",
+    "kind": "noValueMessage",
+    "cases": ["metadata-device-ismobile"],
+    "data": "lite",
+    "dotnet": {"pattern": ["Property 'Hardware*' not found in data for element 'device'. The reason for this is unknown. Please check that the aspect and property name are correct."]},
+    "rust": {"pattern": ["Property 'Hardware*' not found in data for element 'device'. This is because your license or data file does not include this property. To see which licenses include it, see *"]},
+    "reason": "The Lite file has no HardwareVendor, HardwareModel or HardwareName. For a property the data file does not hold, both sides give the upgrade reason when the engine's data type has a typed accessor for the name. .NET's MissingPropertyService looks for the accessor among the properties IDeviceDataHash declares, which are none, as Type.GetProperties on an interface leaves out those of the interfaces it extends, so it never sees IDeviceData's HardwareVendor and gives the unknown reason. The crates find the accessor and give the upgrade reason the service's own documentation describes."
+  },
+  {
     "path": "properties.device.*",
     "kind": "noValueMessage",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "reason": "Every Device Detection property with no value gives the same sentence, where .NET gives the reason for each.",
     "issue": 223
   },
@@ -396,5 +406,74 @@
     "dotnet": {"pattern": ["line *: # Terms file:///terms/1.txt"]},
     "rust": {"pattern": ["line *: Allow: /"]},
     "reason": "An entry starting with a slash, here /terms/1.txt, is an absolute-path reference by RFC 3986 section 4.2, not a URI, so the crate leaves it out, as .NET's engine documentation asks when it says each entry must be a valid absolute URI. .NET's Uri.TryCreate with UriKind.Absolute reads such a string as a file path on Linux and macOS but not on Windows, so .NET writes file:///terms/1.txt on the comparison's Linux runner and leaves the entry out on Windows. Over the Enterprise file this case first differs at a crawler the two entries for crawlers with no usable product token allow, so this entry is for the Lite file until those entries come out."
+  },
+  {
+    "path": "engineMetadata.dataSourceTier",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "dotnet": {"value": ["IPIV41"]},
+    "reason": "The crates' IP Intelligence engine gives the tier the data file's header names, where .NET gives IPIV41.",
+    "issue": 226
+  },
+  {
+    "path": "engineMetadata.properties.Ip*.type",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "dotnet": {"value": ["ipAddress"]},
+    "rust": {"value": ["string"]},
+    "reason": "The crates' value types have no IP address, so Ip, IpV6, IpRangeStart and IpRangeEnd are strings, where .NET gives IP addresses.",
+    "issue": 226
+  },
+  {
+    "path": "engineMetadata.properties.Areas.type",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "data": "enterprise",
+    "dotnet": {"value": ["wktString"]},
+    "rust": {"value": ["string"]},
+    "reason": "The crates' value types have no WKT value, so Areas is a string, where .NET gives a WKT value.",
+    "issue": 226
+  },
+  {
+    "path": "engineMetadata.properties.*.type",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "data": "enterprise",
+    "dotnet": {"value": ["weightedList"]},
+    "rust": {"value": ["keyValueList"]},
+    "reason": "The crates' value types have no weighted list, so each weighted property, being CountryCodesGeographical, CountryCodesPopulation, Mcc and StateGeoNameIdsGeographical, has the type of a list of records, each a value and a weight, which is how the crates give its values. .NET gives a list of weighted values."
+  },
+  {
+    "path": "engineMetadata.properties.*.defaultValue",
+    "kind": "presence",
+    "cases": ["metadata-device*"],
+    "data": "enterprise",
+    "dotnet": {
+      "value": [
+        {"name": "", "description": "", "url": ""},
+        {"name": "", "description": "Indicates that the crawler has unknown use.", "url": ""}
+      ]
+    },
+    "rust": {"value": [null]},
+    "reason": "For CrawlerProductTokens, CrawlerUsage and HardwareName in the Enterprise file, each of which has a value with an empty name, .NET gives that value as the default and the crates give none. The C++ code .NET calls takes the name of the value at the property's default value index, or an empty name when the index is none, and looks that name up among the property's own values. The crates give a default only when the index falls among the property's own values. Every other property's default is the same on both sides.",
+    "issue": 223
+  },
+  {
+    "path": "properties.ip.*",
+    "kind": "noValueMessage",
+    "cases": ["metadata-ip-asn"],
+    "dotnet": {"pattern": ["Property '*' not found in data for element 'ip'. This is because your license or data file does not include this property. It is available with the * license/data for the IpiOnPremiseEngine. To upgrade, see *"]},
+    "rust": {"pattern": ["Property '*' not found in data for element 'ip'. This is because the property has been excluded when configuring the engine."]},
+    "reason": "For a property the data file holds and the engine was opened without, both sides first check that the engine's tier is among the property's data tiers. .NET's IP Intelligence tier, IPIV41, is in none, so .NET gives the upgrade reason. The crates' tier is the name the data file's header gives, which is among them, so they go on to the excluded reason. This follows from the engineMetadata.dataSourceTier entry.",
+    "issue": 226
+  },
+  {
+    "path": "properties.ip.country",
+    "kind": "noValueMessage",
+    "cases": ["metadata-ip-asn"],
+    "data": "lite",
+    "dotnet": {"pattern": ["Property 'Country' not found in data for element 'ip'. The reason for this is unknown. Please check that the aspect and property name are correct."]},
+    "rust": {"pattern": ["Property 'Country' not found in data for element 'ip'. This is because your license or data file does not include this property. To see which licenses include it, see *"]},
+    "reason": "The ASN file has no Country. For a property the data file does not hold, both sides give the upgrade reason when the engine's data type has a typed accessor for the name. .NET's MissingPropertyService looks for the accessor among the properties IIpDataOnPremise declares, which are none, as Type.GetProperties on an interface leaves out those of the interfaces it extends, so it never sees IIpIntelligenceData's Country and gives the unknown reason. The crates find the accessor and give the upgrade reason the service's own documentation describes."
   }
 ]
