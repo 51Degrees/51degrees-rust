@@ -70,12 +70,29 @@ let result = data.get(AgentSignatureElement::KEY).unwrap();
 println!("{:?}", result.agent_signature());
 ```
 
-The element asks for every `header.` evidence key, because a signature may
-cover any header. A signature that covers the method, the path or the query
-also needs `server.request-method`, `server.request-path` and
-`server.request-query`, exactly as the request line carried them. The web
-integration in `fiftyone-pipeline-web` fills them where its adapter supplies
-the request line.
+The element accepts eight evidence keys, being the three signature headers,
+`header.host`, `header.protocol`, `server.request-method`,
+`server.request-path` and `server.request-query`. A signature that covers the
+method, the path or the query needs the last three, exactly as the request
+line carried them. The web integration in `fiftyone-pipeline-web` fills them
+where its adapter supplies the request line.
+
+With `set_trust_forwarded_evidence` on, the element also accepts the same
+eight names under `query.`, such as `query.signature` and
+`query.request-path`, for a service that receives evidence forwarded by a
+caller's own pipeline. It accepts no other key. With the option off, which is
+the default, it accepts no `query.` key at all. A request holding
+`query.signature` or `query.signature-input` is then read wholly from the
+`query.` keys, and never from a mix of those and the `header.` and `server.`
+keys.
+
+A signature may cover any other header. Such a header is read from the
+evidence where the flow data holds it, and otherwise from the web request the
+web integration gives as `server.http-request`, in both places under the
+prefix the signature arrived under, which is `query.` for a forwarded
+signature. The element does not accept such a header, so it never adds one to
+a cache key, the ETag or the `Vary` header. Where neither holds a covered
+header, the signature reports Unverified with the reason ComponentUnavailable.
 
 ## Fetching keys
 
