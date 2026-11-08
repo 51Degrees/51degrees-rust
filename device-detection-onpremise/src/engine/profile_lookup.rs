@@ -115,9 +115,15 @@ impl DeviceDetectionOnPremiseEngine {
     /// The ids and the reader use the data set loaded when this is called,
     /// so a refresh cannot leave an id without its profile. Give both to
     /// [`MultiDeviceData::push_profile_ids`](fiftyone_device_detection_shared::MultiDeviceData::push_profile_ids)
-    /// to read the profiles only when they are first asked for. A profile the
-    /// reader cannot read gives device data holding its id, whose other
-    /// properties give why as the reason they have no value.
+    /// to read the profiles only when they are first asked for.
+    ///
+    /// A profile the reader cannot read gives device data holding its id,
+    /// whose other properties give the error as the reason they have no
+    /// value, and a warning naming the id and the error is logged. .NET
+    /// throws the error when the profiles are read. This engine gives it as
+    /// the reason instead, because
+    /// [`MultiDeviceData::profiles`](fiftyone_device_detection_shared::MultiDeviceData::profiles)
+    /// gives a slice and cannot fail.
     pub fn profile_ids_and_reader_for_property_value(
         &self,
         property_name: &str,
@@ -164,13 +170,19 @@ impl ProfileReader for LoadedProfiles {
 /// The device data of the profile with id `id`, which could not be read
 /// because of `error`. [`PROFILE_ID_PROPERTY_NAME`] holds the id as text,
 /// each of `readable` gives `error` as the reason it has no value, and
-/// `missing` gives the reason for any other property.
+/// `missing` gives the reason for any other property. Logs a warning naming
+/// the id and the error, which a caller reading only the id would not see.
 fn unread_profile(
     id: u32,
     error: &Error,
     readable: &Arc<ReadableProperties>,
     missing: &Arc<MissingPropertySource>,
 ) -> DeviceDataBase {
+    log::warn!(
+        "Failed to read profile {id}. Its properties other than \
+         {PROFILE_ID_PROPERTY_NAME} have no value and give this error as the \
+         reason. {error}"
+    );
     let mut device = DeviceDataBase::new();
     device
         .base_mut()
