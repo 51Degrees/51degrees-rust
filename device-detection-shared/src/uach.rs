@@ -49,7 +49,8 @@ pub const UACH_HIGH_ENTROPY_EVIDENCE_SUFFIX: &str = "51d_gethighentropyvalues";
 
 /// The query-prefixed evidence key, `query.51d_gethighentropyvalues`. The
 /// specification gives it precedence over the cookie key when both are
-/// present.
+/// present. The on-premise engine uses whichever of the two comes first in
+/// the evidence.
 pub const UACH_EVIDENCE_QUERY_KEY: &str = "query.51d_gethighentropyvalues";
 
 /// The cookie-prefixed evidence key, `cookie.51d_gethighentropyvalues`.

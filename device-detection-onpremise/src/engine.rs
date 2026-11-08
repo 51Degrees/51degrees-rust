@@ -703,7 +703,9 @@ impl DeviceDetectionOnPremiseEngine {
     ///
     /// The high entropy values (`51D_GetHighEntropyValues`) pass through as
     /// they came. The C library turns them into the `sec-ch-ua*` headers it
-    /// matches on, so no decoded copy is added here.
+    /// matches on, so no decoded copy is added here. The C library uses the
+    /// first query or cookie `51d_gethighentropyvalues` value it meets in
+    /// this order.
     fn collect_evidence(&self, data: &FlowData) -> Evidence {
         let mut builder = Evidence::builder();
         for (key, value) in data.evidence().iter() {
