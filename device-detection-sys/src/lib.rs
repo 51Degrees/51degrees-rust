@@ -914,8 +914,9 @@ extern "C" {
 
     /// Reads the fields of the data file property at `property_index` that
     /// are not strings and returns 1, or returns 0 when the index is out of
-    /// range or the property or its name cannot be read, the name being read
-    /// to find whether the data set was created with the property.
+    /// range or the property, its name or its default value cannot be read,
+    /// the name being read to find whether the data set was created with the
+    /// property.
     /// `value_type` is the C library's property value type, `available` is 1
     /// when the data set was created with the property, `required_index` is
     /// the index the results getters take for it or -1 for none,
