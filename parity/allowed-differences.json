@@ -338,7 +338,7 @@
     "data": "enterprise",
     "dotnet": {"value": ["weightedList"]},
     "rust": {"value": ["keyValueList"]},
-    "reason": "The crates' value types have no weighted list, so each weighted property, being CountryCodesGeographical, CountryCodesPopulation, Mcc and StateGeoNameIdsGeographical, has the type of a list of records, each a value and a weight, which is how the crates give its values. .NET gives a list of weighted values."
+    "reason": "The crates' value types have no weighted list, so each weighted property, being CountryCodesGeographical, CountryCodesPopulation, Mcc and StateGeoNameIdsGeographical, has the type of a list of records, each a raw weighting and a value, which is how the crates give its values. .NET gives a list of weighted values."
   },
   {
     "path": "properties.ip.*",

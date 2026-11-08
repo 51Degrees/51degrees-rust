@@ -360,8 +360,8 @@ fn a_weighted_list_keeps_its_weightings() {
     );
 }
 
-/// The IP Intelligence data gives each weighting as a weight from 0 to 1,
-/// which is turned back into the exact raw weighting.
+/// Element data written by other code may give each weighting as a weight
+/// from 0 to 1, which is turned back into the exact raw weighting.
 #[test]
 fn a_weight_from_zero_to_one_gives_the_raw_weighting() {
     let engine = french_animals(MissingTranslationBehavior::Original, "");

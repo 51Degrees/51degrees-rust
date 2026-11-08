@@ -243,7 +243,7 @@ mod tests {
  * IP Intelligence properties are weighted, so each property can carry several
  * candidate values, each with a weighting that says how strongly the data
  * supports it. In the dynamic bag each weighted property appears as a list of
- * rawweighting/value records; this example renders each candidate as
+ * rawweighting/value records, and this example renders each candidate as
  * `value (weighting w)` so the distribution is visible. Long results are
  * truncated for readability.
  *
