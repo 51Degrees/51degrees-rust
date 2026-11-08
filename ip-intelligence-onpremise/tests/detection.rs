@@ -102,6 +102,11 @@ const ENTERPRISE_FILE_NAME: &str = "51Degrees-IPIV4EnterpriseIpiV41.ipi";
 /// out as `<root>/YYYY/MM/DD/<file>`. Unset off the 51Degrees network.
 const ENTERPRISE_SHARE_ENV_VAR: &str = "51DEGREES_IPI_ENTERPRISE_SHARE";
 
+/// Set where `51DEGREES_IPI_PATH` names the Enterprise file, as in the
+/// comparison with .NET, so a check that needs that file fails rather than
+/// skips.
+const REQUIRE_ENTERPRISE: &str = "51DEGREES_REQUIRE_ENTERPRISE";
+
 /// Resolve the latest Enterprise data file on the configured share, or `None`
 /// when the variable is unset or the share is not mounted (the common off-network
 /// case). The newest dated folder that actually contains the file is chosen;
@@ -330,9 +335,14 @@ fn asn_refresh_round_trips() {
 /// The engine is asked for the whole generated property set so an Enterprise data
 /// file populates a wide cross-section. Skips cleanly when no data file is
 /// present; point `51DEGREES_IPI_PATH` at an Enterprise file for full coverage.
+/// With [`REQUIRE_ENTERPRISE`] set it fails rather than skips, and fails unless
+/// `StateGeoNameIdsGeographical`, which only the Enterprise file holds, is
+/// present for one of the addresses.
 #[test]
 fn every_present_property_unpacks_as_its_declared_type() {
+    let require_enterprise = std::env::var_os(REQUIRE_ENTERPRISE).is_some();
     let Some(file) = asn_data_file() else {
+        assert!(!require_enterprise, "no IP Intelligence data file found");
         eprintln!("no IP-intelligence data file found; skipping type-unpack check");
         return;
     };
@@ -342,6 +352,7 @@ fn every_present_property_unpacks_as_its_declared_type() {
         .collect();
     let property_refs: Vec<&str> = properties.iter().map(String::as_str).collect();
     let Some(engine) = build_engine(&file, PerformanceProfile::LowMemory, &property_refs) else {
+        assert!(!require_enterprise, "{} did not load", file.display());
         return;
     };
 
@@ -357,6 +368,7 @@ fn every_present_property_unpacks_as_its_declared_type() {
 
     let mut offenders: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut present_count = 0usize;
+    let mut present_names: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
 
     for ip in ips {
         let ip_data = lookup(engine.clone(), ip);
@@ -365,6 +377,7 @@ fn every_present_property_unpacks_as_its_declared_type() {
                 continue;
             }
             present_count += 1;
+            present_names.insert(*name);
             let unpacks = match declared {
                 PropertyValueType::Bool => ip_data.boolean(name).value().is_ok(),
                 PropertyValueType::Integer => ip_data.integer(name).value().is_ok(),
@@ -391,6 +404,13 @@ fn every_present_property_unpacks_as_its_declared_type() {
         present_count > 0,
         "expected at least some properties to resolve for the sample IPs"
     );
+    if require_enterprise {
+        assert!(
+            present_names.contains("StateGeoNameIdsGeographical"),
+            "{} is not an Enterprise file",
+            file.display()
+        );
+    }
 }
 
 /// The Enterprise tier carries the full property set, including location. This
