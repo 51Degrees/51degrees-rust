@@ -1,7 +1,7 @@
 [package]
 name = "fiftyone-device-detection-shared"
 version = "4.5.2"
-description = "DeviceData trait with typed accessors, the device-detection property model and the UACH high-entropy decoder element."
+description = "DeviceData trait with typed accessors, the device-detection property model and the UACH high-entropy evidence keys."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

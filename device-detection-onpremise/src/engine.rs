@@ -41,8 +41,8 @@ use arc_swap::ArcSwap;
 use chrono::{TimeZone, Utc};
 
 use fiftyone_device_detection_shared::{
-    declared_property_value_type, DeviceDataBase, DevicePropertyReader, UachJsConversionElement,
-    DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY, UACH_EVIDENCE_COOKIE_KEY, UACH_EVIDENCE_QUERY_KEY,
+    declared_property_value_type, DeviceDataBase, DevicePropertyReader, DEVICE_DATA_KEY,
+    DEVICE_ELEMENT_DATA_KEY, UACH_EVIDENCE_COOKIE_KEY, UACH_EVIDENCE_QUERY_KEY,
 };
 use fiftyone_native::dd::{
     DataFileComponent, DataFileProperty, DataFileValue, HashOptions, Manager, MatchMetrics, Results,
@@ -673,13 +673,12 @@ impl DeviceDetectionOnPremiseEngine {
 
     /// Run a detection for `data` into new device data.
     ///
-    /// Builds a native evidence set from the flow data (preferring the decoded
-    /// UACH element-data `sec-ch-ua*` values over the raw headers) and processes
-    /// it. Each property, the match metrics among them, is read from the
-    /// results the first time it is requested, as .NET's `DeviceDataHash`
-    /// reads them. With no properties named, the C library walks a
-    /// component's graph on the first read of one of its properties, so a
-    /// caller reading only some properties walks only the graphs they need.
+    /// Builds a native evidence set from the flow data and processes it. Each
+    /// property, the match metrics among them, is read from the results the
+    /// first time it is requested, as .NET's `DeviceDataHash` reads them. With
+    /// no properties named, the C library walks a component's graph on the
+    /// first read of one of its properties, so a caller reading only some
+    /// properties walks only the graphs they need.
     fn detect(&self, data: &FlowData) -> Result<DeviceDataBase> {
         Ok(device_data(self.detection_reader(data)?))
     }
@@ -693,8 +692,8 @@ impl DeviceDetectionOnPremiseEngine {
         let loaded = self.loaded.load_full();
         let mut results = loaded.manager.create_results()?;
 
-        // Marshal the evidence the engine understands, preferring decoded UACH
-        // values, into one merged evidence set, then process it.
+        // Marshal the evidence the engine understands into one evidence set,
+        // then process it.
         let evidence = self.collect_evidence(data);
         results.process_evidence(&evidence)?;
 
@@ -704,42 +703,21 @@ impl DeviceDetectionOnPremiseEngine {
         })
     }
 
-    /// Collect the evidence the engine reads into a single [`Evidence`] set.
+    /// Collect the evidence the engine's filter accepts into a single
+    /// [`Evidence`] set, in the order the flow data holds it.
     ///
-    /// The decoded UACH `sec-ch-ua*` values produced by
-    /// [`UachJsConversionElement`] take precedence over the raw request headers,
-    /// matching the high-entropy decoder specification: a client that supplied
-    /// the high-entropy blob gets the richer decoded hints. Raw evidence the
-    /// engine understands (the User-Agent and any header the data set reads) is
-    /// added first, then the decoded UACH values overwrite the matching headers.
+    /// The high entropy values (`51D_GetHighEntropyValues`) pass through as
+    /// they came. The C library turns them into the `sec-ch-ua*` headers it
+    /// matches on, so no decoded copy is added here. The C library uses the
+    /// first query or cookie `51d_gethighentropyvalues` value it meets in
+    /// this order.
     fn collect_evidence(&self, data: &FlowData) -> Evidence {
         let mut builder = Evidence::builder();
-
-        // Raw request evidence the engine's filter accepts.
         for (key, value) in data.evidence().iter() {
             if self.evidence_key_filter.include(key) {
                 builder = builder.add(key, value);
             }
         }
-
-        // Decoded UACH values, written as header evidence so they override the
-        // matching raw headers. The element stores them under its own data key.
-        if let Some(uach) = data.get_str(UachJsConversionElement::DATA_KEY.name()) {
-            for header in uach.keys() {
-                if let Ok(value) = uach.get(&header) {
-                    if let Some(text) = value.as_str() {
-                        let key = format!(
-                            "{}{}{}",
-                            constants::EVIDENCE_HTTP_HEADER_PREFIX,
-                            constants::EVIDENCE_SEPARATOR,
-                            header
-                        );
-                        builder = builder.add(key, text.to_owned());
-                    }
-                }
-            }
-        }
-
         builder.build()
     }
 
@@ -1397,8 +1375,8 @@ impl EvidenceKeyFilter for HashEvidenceKeyFilter {
 
 /// The evidence keys the engine accepts by name for `manager`'s data set, being
 /// each header the data set reads as a `header.` and a `query.` key (see
-/// [`Manager::evidence_keys`]), and the high-entropy values keys the
-/// [`UachJsConversionElement`] consumes.
+/// [`Manager::evidence_keys`]), and the high entropy values keys, whose
+/// values the C library turns into `sec-ch-ua*` headers.
 fn named_evidence_keys(manager: &Manager) -> Vec<String> {
     let mut keys = manager.evidence_keys();
     keys.push(UACH_EVIDENCE_QUERY_KEY.to_owned());
