@@ -1045,6 +1045,27 @@ fn an_element_in_a_parallel_group_is_not_counted() {
     assert_eq!(config.share_percentage(), 0.25);
 }
 
+/// The Sequence element adds evidence, so a pipeline made from a
+/// configuration refuses a parallel group holding it, wherever it is in the
+/// group.
+#[test]
+fn a_parallel_group_holding_the_sequence_element_is_refused() {
+    let _serial = start();
+    let refused = "An element of a parallel group with the data key 'sequence' adds evidence, \
+                   which the other elements of the group read at the same time. Add it on its \
+                   own, before the elements that read what it adds.";
+    for (first, second) in [
+        ("SequenceElementBuilder", "SetHeadersElementBuilder"),
+        ("SetHeadersElementBuilder", "SequenceElementBuilder"),
+    ] {
+        let options = PipelineOptions::new().element(ElementOptions::group([
+            ElementOptions::new(first),
+            ElementOptions::new(second),
+        ]));
+        assert_eq!(message(build(&options)), refused, "{first}, {second}");
+    }
+}
+
 #[test]
 fn with_no_elements_the_fiftyone_pipeline_adds_its_own() {
     let _serial = start();

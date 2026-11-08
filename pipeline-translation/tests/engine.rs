@@ -34,8 +34,8 @@ use fiftyone_pipeline_core::{
 };
 use fiftyone_pipeline_engines::{AspectDataBase, AspectPropertyValue};
 use fiftyone_pipeline_translation::{
-    Languages, MissingTranslationBehavior, TranslationEngine, TranslationValue, BASE_LANGUAGE,
-    LANGUAGE_EVIDENCE_KEYS, TRANSLATION_KEY,
+    Languages, MissingTranslationBehavior, TranslationEngine, TranslationProperty,
+    TranslationValue, BASE_LANGUAGE, LANGUAGE_EVIDENCE_KEYS, TRANSLATION_KEY,
 };
 
 const SOURCE_KEY: &str = "evidencecopy";
@@ -360,8 +360,8 @@ fn a_weighted_list_keeps_its_weightings() {
     );
 }
 
-/// The IP Intelligence data gives each weighting as a weight from 0 to 1,
-/// which is turned back into the exact raw weighting.
+/// Element data written by other code may give each weighting as a weight
+/// from 0 to 1, which is turned back into the exact raw weighting.
 #[test]
 fn a_weight_from_zero_to_one_gives_the_raw_weighting() {
     let engine = french_animals(MissingTranslationBehavior::Original, "");
@@ -605,6 +605,40 @@ fn the_translator_found_gives_its_locale() {
     assert_eq!(
         german.translate("cat", &mut Vec::new()).as_deref(),
         Some("Katze")
+    );
+}
+
+#[test]
+fn the_engine_gives_each_option_under_the_specifications_name() {
+    let engine = TranslationEngine::builder()
+        .set_source_element_data_key(SOURCE_KEY)
+        .set_fixed_language("fr_FR")
+        .set_missing_translation_behavior(MissingTranslationBehavior::EmptyString)
+        .add_source_text("animals.fr_FR.yml", FRENCH_ANIMALS)
+        .add_translation("Animal", "AnimalTranslated")
+        .build()
+        .unwrap();
+    assert_eq!(engine.source_element_data_key(), SOURCE_KEY);
+    assert_eq!(engine.fixed_language(), Some("fr_FR"));
+    assert_eq!(
+        engine.missing_translation_behavior(),
+        MissingTranslationBehavior::EmptyString
+    );
+    assert_eq!(
+        engine.translations(),
+        [TranslationProperty {
+            source_property: "Animal".to_owned(),
+            destination_property: "AnimalTranslated".to_owned(),
+        }]
+    );
+    let (_, french) = engine
+        .languages()
+        .try_get_translator("fr")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        french.missing_translation_behavior(),
+        MissingTranslationBehavior::EmptyString
     );
 }
 

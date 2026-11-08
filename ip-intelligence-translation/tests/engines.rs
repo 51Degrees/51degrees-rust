@@ -81,18 +81,18 @@ impl<T: ElementData + Clone> FlowElement for Source<T> {
 }
 
 /// A weighted list as the IP Intelligence data gives it in its property
-/// bag, each item a `value` and a `weight` from 0 to 1, in the order given.
+/// bag, each item a `rawweighting` and a `value`, in the order given.
 fn weighted(items: &[(u16, &str)]) -> PropertyValue {
     PropertyValue::KeyValueList(
         items
             .iter()
             .map(|(raw, code)| {
                 BTreeMap::from([
-                    ("value".to_owned(), PropertyValue::from(*code)),
                     (
-                        "weight".to_owned(),
-                        PropertyValue::Double(f64::from(WeightedValue::new(*raw, ()).weighting())),
+                        "rawweighting".to_owned(),
+                        PropertyValue::Integer(i64::from(*raw)),
                     ),
+                    ("value".to_owned(), PropertyValue::from(*code)),
                 ])
             })
             .collect(),

@@ -60,10 +60,10 @@ pub const RUN: &str = "derived";
 /// The end of a case file's name.
 const CASE_FILE_SUFFIX: &str = ".cases.yaml";
 
-/// The names of a weighted value's two parts, as the derived property element
-/// reads them.
+/// The names of a weighted value's two parts, as the IP Intelligence data
+/// gives them and the derived property element reads them.
 const WEIGHTED_VALUE: &str = "value";
-const WEIGHTED_WEIGHT: &str = "weight";
+const WEIGHTED_RAW_WEIGHTING: &str = "rawweighting";
 
 /// One case, with its id and the script its file names.
 struct Case {
@@ -389,7 +389,7 @@ fn entry_of(name: &str, value: &Yaml) -> Result<Option<Entry>> {
                         PropertyValue::String(text_of(value)),
                     ),
                     (
-                        WEIGHTED_WEIGHT.to_owned(),
+                        WEIGHTED_RAW_WEIGHTING.to_owned(),
                         PropertyValue::Integer(i64::from(weight)),
                     ),
                 ]));
