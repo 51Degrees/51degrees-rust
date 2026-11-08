@@ -58,6 +58,7 @@
 
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
+use std::net::IpAddr;
 use std::ops::Range;
 use std::os::raw::{c_char, c_int, c_void};
 use std::path::Path;
@@ -1051,25 +1052,43 @@ impl Results {
     /// The accepted forms are those of [`crate::evidence::parse_client_ip`]. An
     /// IPv4-mapped IPv6 address gives the answers of its IPv4 address.
     ///
-    /// Returns an [`Error::Native`] with status `InvalidInput` when the evidence
-    /// holds no client IP address that can be read.
+    /// Evidence holding no client IP address that can be read is looked up
+    /// with none, as the .NET engine looks it up, so the results are empty.
+    /// [`Self::has_values_by_index`] then answers false for every property,
+    /// with the reason [`Self::no_value_message_by_index`] gives.
     pub fn process_evidence(&mut self, evidence: &Evidence) -> Result<()> {
+        self.process_client_ip_evidence(evidence).map(|_| ())
+    }
+
+    /// [`Self::process_evidence`], giving the client IP evidence it read.
+    pub fn process_client_ip_evidence(&mut self, evidence: &Evidence) -> Result<ClientIpEvidence> {
+        let mut client_ip = ClientIpEvidence {
+            address: None,
+            supplied: false,
+        };
         let mut pairs = Vec::new();
         for key in &self.manager.evidence_keys {
-            let Some(address) = evidence.get(&key.key).and_then(parse_client_ip) else {
+            let Some(text) = evidence.get(&key.key) else {
                 continue;
             };
+            client_ip.supplied |= !text.trim().is_empty();
+            let Some(address) = parse_client_ip(text) else {
+                continue;
+            };
+            if client_ip.address.is_none() {
+                client_ip.address = Some(address.to_canonical());
+            }
             // A formatted address never holds a nul byte.
             let value = CString::new(address.to_string()).expect("an IP address has no nul");
             pairs.push((key, value));
         }
-        if pairs.is_empty() {
-            return Err(Error::Native {
-                status: String::from("InvalidInput"),
-                message: String::from("evidence contains no client IP address to look up"),
-            });
-        }
+        self.process_pairs(&pairs)?;
+        Ok(client_ip)
+    }
 
+    /// Look up the evidence `pairs` hold, each an evidence key and its value.
+    /// With no pairs the lookup clears any earlier one and finds nothing.
+    fn process_pairs(&self, pairs: &[(&EvidenceKey, CString)]) -> Result<()> {
         let _file_read = self.manager.file_read();
         // Safety: the array is created, filled and freed here. The keys belong
         // to the manager, and the values to `pairs`, so both outlive the call.
@@ -1081,7 +1100,7 @@ impl Results {
                     message: String::from("failed to allocate IP Intelligence evidence"),
                 });
             }
-            for (key, value) in &pairs {
+            for (key, value) in pairs {
                 sys::common::fiftyoneDegreesEvidenceAddString(
                     array,
                     key.prefix,
@@ -1303,6 +1322,70 @@ impl Results {
         self.manager.check_property_index(index)?;
         Ok(property_read_from(self.read_collection_by_index(index)?))
     }
+
+    /// Why the property at `index`, as [`Manager::required_property_index`]
+    /// gives it, has no value in these results, in the C library's words,
+    /// which .NET gives as the reason too. Empty results, from evidence with
+    /// no address, give "The results are empty. This is probably because we
+    /// don't have this data in our database.". Returns an error for an index
+    /// outside this data set's required properties.
+    pub fn no_value_message_by_index(&self, index: c_int) -> Result<String> {
+        self.manager.check_property_index(index)?;
+        let mut exception = sys::Exception::cleared();
+        let _file_read = self.manager.file_read();
+        // Safety: `results` is valid and the index is one of its data set's
+        // required properties.
+        let reason = unsafe {
+            sys::fiftyoneDegreesResultsIpiGetNoValueReason(self.as_ptr(), index, &mut exception)
+        };
+        exception.check()?;
+        // Safety: the C library gives a static string for every reason.
+        let message = unsafe { sys::fiftyoneDegreesResultsIpiGetNoValueReasonMessage(reason) };
+        if message.is_null() {
+            return Ok(String::new());
+        }
+        // Safety: the string is static and null terminated.
+        Ok(unsafe { CStr::from_ptr(message) }
+            .to_string_lossy()
+            .into_owned())
+    }
+
+    /// Whether the property at `index`, as [`Manager::required_property_index`]
+    /// gives it, has a value in these results, as the C library decides it and
+    /// as .NET asks before it reads one. Empty results have no value for any
+    /// property, although reading a mandatory property's values gives its
+    /// default. Returns an error for an index outside this data set's required
+    /// properties.
+    pub fn has_values_by_index(&self, index: c_int) -> Result<bool> {
+        self.manager.check_property_index(index)?;
+        let mut exception = sys::Exception::cleared();
+        let _file_read = self.manager.file_read();
+        // Safety: `results` is valid and the index is one of its data set's
+        // required properties.
+        let has_values = unsafe {
+            sys::fiftyoneDegreesResultsIpiGetHasValues(self.as_ptr(), index, &mut exception)
+        };
+        exception.check()?;
+        Ok(has_values)
+    }
+}
+
+/// The client IP evidence a lookup read, as
+/// [`Results::process_client_ip_evidence`] gives it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ClientIpEvidence {
+    /// The address looked up, being the first value under
+    /// [`Manager::evidence_keys`] that reads as an IP address, in their order,
+    /// or [`None`] when none does. An IPv4-mapped IPv6 address, such as
+    /// `::ffff:1.1.1.1`, is given as the IPv4 address it holds, which is what
+    /// [RFC 4291 section 2.5.5.2](https://www.rfc-editor.org/rfc/rfc4291#section-2.5.5.2)
+    /// says the form is and the address the C library looks up.
+    pub address: Option<IpAddr>,
+    /// Whether any of those keys held a value that is not blank. With no
+    /// address, this tells evidence that held none apart from evidence whose
+    /// values do not read as an address.
+    pub supplied: bool,
 }
 
 /// Type a value collection as a [`PropertyRead`], deciding plain against
@@ -2040,7 +2123,7 @@ mod tests {
     }
 
     /// Drive the same lookup from pipeline evidence carrying the client IP, then
-    /// confirm evidence without an IP is a clean error.
+    /// confirm evidence without an IP is looked up and finds nothing.
     #[test]
     fn lite_lookup_from_evidence() {
         let Some(data_file) = ipi_data_file() else {
@@ -2058,10 +2141,13 @@ mod tests {
             .expect("processing evidence with a client IP should not error");
 
         let without_ip = Evidence::builder().add("header.user-agent", "x").build();
-        assert!(
-            results.process_evidence(&without_ip).is_err(),
-            "evidence with no client IP should be an error"
-        );
+        results
+            .process_evidence(&without_ip)
+            .expect("evidence with no client IP should be looked up");
+        let index = manager
+            .required_property_index("Asn")
+            .expect("the data file has Asn");
+        assert!(!results.has_values_by_index(index).expect("asked"));
     }
 
     /// Every header the data file names is a key under both prefixes, with
@@ -2179,16 +2265,152 @@ mod tests {
         }
     }
 
+    /// The reason the C library gives every property of empty results.
+    const NO_RESULTS_MESSAGE: &str =
+        "The results are empty. This is probably because we don't have this data in our database.";
+
+    fn evidence_of(pairs: &[(&str, &str)]) -> Evidence {
+        let mut builder = Evidence::builder();
+        for (key, value) in pairs {
+            builder = builder.add(*key, *value);
+        }
+        builder.build()
+    }
+
+    /// Evidence with no address that reads as one is looked up with none, as
+    /// .NET looks it up, so no property has a value and each gives the C
+    /// library's reason. A blank value counts as no value supplied.
     #[test]
-    fn evidence_with_no_readable_address_is_an_error() {
+    fn evidence_with_no_readable_address_finds_nothing() {
         let Some(data_file) = ipi_data_file() else {
             eprintln!("no IP Intelligence data file found; skipping unreadable evidence");
             return;
         };
         let manager = open_found(&data_file, PerformanceProfile::HighPerformance);
-        let err = asn_from(&manager, &[("server.client-ip", "unknown")])
-            .expect_err("evidence with no readable address should be an error");
-        assert!(matches!(err, Error::Native { ref status, .. } if status == "InvalidInput"));
+        for (pairs, supplied) in [
+            (&[][..], false),
+            (&[("header.user-agent", "x")][..], false),
+            (&[("server.client-ip", "")][..], false),
+            (&[("server.client-ip", " ")][..], false),
+            (&[("server.client-ip", "unknown")][..], true),
+            (
+                &[("query.client-ip-51d", "unknown"), ("server.client-ip", "")][..],
+                true,
+            ),
+        ] {
+            let mut results = manager.create_results().expect("results allocate");
+            let client_ip = results
+                .process_client_ip_evidence(&evidence_of(pairs))
+                .unwrap_or_else(|err| panic!("{pairs:?} should be looked up: {err}"));
+            assert_eq!(
+                client_ip,
+                ClientIpEvidence {
+                    address: None,
+                    supplied
+                },
+                "{pairs:?}"
+            );
+            for name in manager.available_property_names() {
+                let index = manager
+                    .required_property_index(&name)
+                    .expect("an available property has an index");
+                assert!(
+                    !results.has_values_by_index(index).expect("asked"),
+                    "{name} for {pairs:?}"
+                );
+                assert_eq!(
+                    results.no_value_message_by_index(index).expect("reason"),
+                    NO_RESULTS_MESSAGE,
+                    "{name} for {pairs:?}"
+                );
+            }
+        }
+    }
+
+    /// A lookup with no address clears the lookup before it on the same
+    /// results. Reading a mandatory property's values with nothing found
+    /// gives its default, which is why .NET asks whether there are values
+    /// first.
+    #[test]
+    fn a_lookup_with_no_address_clears_the_one_before() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping a cleared lookup");
+            return;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::HighPerformance);
+        let index = manager
+            .required_property_index("Asn")
+            .expect("the data file has Asn");
+        let mut results = manager.create_results().expect("results allocate");
+        results
+            .process_evidence(&evidence_of(&[("server.client-ip", CLOUDFLARE)]))
+            .expect("the lookup should succeed");
+        assert!(results.has_values_by_index(index).expect("asked"));
+        let found = results.value_as_string("Asn", ",").expect("read");
+        assert!(
+            found.as_deref().unwrap_or_default().contains("AS13335"),
+            "got {found:?}"
+        );
+        results
+            .process_evidence(&evidence_of(&[]))
+            .expect("the lookup should succeed");
+        assert!(!results.has_values_by_index(index).expect("asked"));
+        assert_eq!(
+            results.no_value_message_by_index(index).expect("reason"),
+            NO_RESULTS_MESSAGE
+        );
+        assert_ne!(results.value_as_string("Asn", ",").expect("read"), found);
+    }
+
+    /// The address given back is the one the lookup used, the first that
+    /// reads as an address in the order of the evidence keys, with an
+    /// IPv4-mapped address given as its IPv4 address.
+    #[test]
+    fn the_address_given_back_is_the_one_looked_up() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping the address looked up");
+            return;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::HighPerformance);
+        for (pairs, address, asn) in [
+            (
+                &[
+                    ("query.client-ip-51d", "unknown"),
+                    ("server.client-ip", CLOUDFLARE),
+                    ("query.client-ip", QUAD9),
+                ][..],
+                QUAD9,
+                "AS19281",
+            ),
+            (
+                &[("server.client-ip", "[2606:4700:4700::1111]:443")][..],
+                "2606:4700:4700::1111",
+                "AS13335",
+            ),
+            (
+                &[("server.client-ip", "::ffff:1.1.1.1")][..],
+                CLOUDFLARE,
+                "AS13335",
+            ),
+        ] {
+            let mut results = manager.create_results().expect("results allocate");
+            let client_ip = results
+                .process_client_ip_evidence(&evidence_of(pairs))
+                .unwrap_or_else(|err| panic!("{pairs:?} should be looked up: {err}"));
+            assert_eq!(
+                client_ip,
+                ClientIpEvidence {
+                    address: Some(address.parse().expect("an address")),
+                    supplied: true
+                },
+                "{pairs:?}"
+            );
+            let found = results.value_as_string("Asn", ",").expect("read");
+            assert!(
+                found.as_deref().unwrap_or_default().contains(asn),
+                "{pairs:?} gave {found:?}"
+            );
+        }
     }
 
     /// The profiles the metadata tests open the data file with, being one
