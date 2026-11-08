@@ -727,6 +727,10 @@ impl Manager {
     /// value given can be written otherwise, as `0.063` is given for
     /// `0.0625`, and a number's own text, written to three places, can find
     /// nothing, as it finds nothing in the C++ code.
+    ///
+    /// As in the C++ code, `name` is searched up to its first null, so
+    /// `AS13335\0x` finds `AS13335` and the text after the null is not
+    /// searched.
     pub fn data_file_property_value(
         &self,
         property_index: u32,
@@ -736,11 +740,10 @@ impl Manager {
         if property_index >= self.data_file_property_count() {
             return Ok(None);
         }
-        // A data file's strings end at their first null, so no value has a
-        // name holding one.
-        let Ok(c_name) = CString::new(name) else {
-            return Ok(None);
-        };
+        // The C++ code searches with the text before the first null, where a
+        // C string ends.
+        let searched = name.split('\0').next().unwrap_or(name);
+        let c_name = CString::new(searched).expect("the text before a null holds none");
         let mut values: Vec<DataFileValue> = Vec::new();
         // Safety: `c_name` is null terminated, and `take_value_string` treats
         // the context as the `Vec<DataFileValue>` it points to, which outlives
@@ -2461,6 +2464,31 @@ mod tests {
                 "{missing}"
             );
         }
+    }
+
+    #[test]
+    fn a_name_is_searched_up_to_its_first_null() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping value search");
+            return;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::LowMemory);
+        let properties = manager
+            .data_file_properties()
+            .expect("the data file's properties should be read");
+        let asn = file_property(&properties, "Asn");
+        let search = |name: &str| {
+            manager
+                .data_file_property_value(asn.index, name)
+                .expect("the value should be searched for")
+                .map(|value| value.name)
+        };
+        // .NET's GetValue gives AS13335 for each, because the C++ search
+        // ends at the null.
+        for name in ["AS13335\0", "AS13335\0x", "AS13335\0AS15169"] {
+            assert_eq!(search(name).as_deref(), Some("AS13335"), "{name:?}");
+        }
+        assert_eq!(search("NotAValue\0AS13335"), None);
     }
 
     #[test]
