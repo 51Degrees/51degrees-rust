@@ -131,10 +131,11 @@ fn parse_boolean(text: &str) -> Option<bool> {
 /// - **callback URL**: built only when protocol, host and endpoint are all
 ///   present, normalizing the single slash between host and endpoint. A URL
 ///   that is not valid is left out and logged at error level the first time,
-///   and characters in the user information, after the host and in the
-///   endpoint that could end the string the script holds the URL in are
-///   percent-encoded. The protocol must be `http` or `https`, ignoring case.
-///   When a URL is built the background-update mechanism is enabled.
+///   and characters after the host and in the endpoint that could end the
+///   string the script holds the URL in are percent-encoded. The protocol
+///   must be `http` or `https`, ignoring case, and a host holding user
+///   information, a zone identifier, `?` or `#` is not valid. When a URL is
+///   built the background-update mechanism is enabled.
 /// - **parameters**: every `query.*` evidence entry except the session id and
 ///   sequence, with the prefix stripped and the key and value encoded as
 ///   .NET's `WebUtility.UrlEncode` encodes them, in name order, serialized as

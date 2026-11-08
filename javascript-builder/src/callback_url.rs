@@ -25,8 +25,8 @@
 //! The protocol and host usually come from the request, so the URL is checked
 //! before it is written into the script, where it sits inside a single-quoted
 //! JavaScript string. A URL that is not valid is refused, and the characters
-//! in the user information, after the host and in the endpoint that could
-//! end the string or the script are percent-encoded.
+//! after the host and in the endpoint that could end the string or the
+//! script are percent-encoded.
 
 use std::net::Ipv6Addr;
 
@@ -60,12 +60,14 @@ pub(crate) fn callback_url(protocol: &str, host: &str, endpoint: &str) -> Callba
         _ => endpoint.to_owned(),
     };
     let built = format!("{protocol}://{host}{endpoint}");
-    if !is_scheme(protocol) {
+    let end = host.find('/').unwrap_or(host.len());
+    let (authority, rest) = host.split_at(end);
+    // A `?` or `#` in the host would start the query or the fragment before
+    // the endpoint, and `fetch` refuses a URL with user information.
+    if !is_scheme(protocol) || host.contains(['?', '#']) || authority.contains('@') {
         return CallbackUrl::Invalid(built);
     }
-    let end = host.find(['/', '?', '#']).unwrap_or(host.len());
-    let (authority, rest) = host.split_at(end);
-    match checked_authority(authority) {
+    match checked_host_port(authority) {
         Some(authority) => CallbackUrl::Valid(format!(
             "{}://{authority}{}{}",
             protocol.to_ascii_lowercase(),
@@ -82,34 +84,15 @@ fn is_scheme(protocol: &str) -> bool {
     protocol.eq_ignore_ascii_case("http") || protocol.eq_ignore_ascii_case("https")
 }
 
-/// The user information, host and port, or `None` when the host or the port is
-/// not valid.
-fn checked_authority(authority: &str) -> Option<String> {
-    let (user, host_port) = match authority.split_once('@') {
-        Some((user, host_port)) => (Some(user), host_port),
-        None => (None, authority),
-    };
-    let host_port = checked_host_port(host_port)?;
-    Some(match user {
-        Some(user) => format!("{}@{host_port}", encoded(user)),
-        None => host_port,
-    })
-}
-
 /// A host and an optional port. The host is a bracketed IPv6 address, or a
 /// name of non-empty labels separated by dots, with a dot allowed at the end,
-/// and the port is up to 65535 or empty.
+/// and the port is up to 65535 or empty. `Ipv6Addr` takes no zone
+/// identifier, so a `%` inside the brackets is refused, as a browser's URL
+/// parser refuses it.
 fn checked_host_port(host_port: &str) -> Option<String> {
     let (host, port) = if let Some(inner) = host_port.strip_prefix('[') {
         let (address, after) = inner.split_once(']')?;
-        let (address, zone) = match address.split_once("%25") {
-            Some((address, zone)) => (address, Some(zone)),
-            None => (address, None),
-        };
         address.parse::<Ipv6Addr>().ok()?;
-        if zone.is_some_and(|zone| zone.is_empty() || !zone.bytes().all(is_unreserved)) {
-            return None;
-        }
         (&host_port[..host_port.len() - after.len()], after)
     } else {
         let end = host_port.find(':').unwrap_or(host_port.len());
@@ -140,11 +123,6 @@ fn is_label(label: &str) -> bool {
         && label
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
-/// The unreserved characters of RFC 3986 section 2.3.
-fn is_unreserved(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~')
 }
 
 /// Percent-encode the characters a URL cannot hold as they are and those that
