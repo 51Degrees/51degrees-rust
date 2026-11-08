@@ -1597,6 +1597,29 @@ mod tests {
         );
     }
 
+    /// The ignore filter reads a key of the web request only when the key is
+    /// shared, so a pair on a cookie that is not shared, found only in the
+    /// web request, does not stop the request being shared.
+    #[test]
+    fn the_ignore_filter_reads_the_web_request_only_for_shared_keys() {
+        let capture = Capture::default();
+        let config = ShareUsageConfig::builder()
+            .ignore_flow_data_evidence_filter([("cookie.internal", "1")])
+            .build();
+        let requests = vec![Evidence::builder()
+            .add("header.user-agent", "one")
+            .http_request(
+                Evidence::builder()
+                    .add("header.User-Agent", "one")
+                    .add("cookie.internal", "1")
+                    .build(),
+            )
+            .build()];
+        share(config, capture.clone(), Vec::new(), requests);
+        let xml = capture.messages().concat();
+        assert!(xml.contains("[CDATA[one]]"), "{xml}");
+    }
+
     #[test]
     fn the_share_percentage_is_the_proportion_shared() {
         const SAMPLES: usize = 100_000;

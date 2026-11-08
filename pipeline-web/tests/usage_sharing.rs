@@ -22,8 +22,9 @@
 
 //! Usage sharing in a web pipeline. The usage sharing element accepts no
 //! evidence, so a revalidation's `If-None-Match` header does not change the
-//! ETag, and it still shares the headers of the web request that no other
-//! element accepts.
+//! ETag or the `Vary` header, and it still shares the headers of the web
+//! request that no other element accepts. Its ignore filter reads the web
+//! request only for the keys it shares.
 
 use std::any::Any;
 use std::sync::{Arc, Mutex};
@@ -120,6 +121,8 @@ struct TestRequest {
     headers: Vec<(String, String)>,
     cookies: Vec<(String, String)>,
     query: Vec<(String, String)>,
+    /// The method and target of the request line, if given.
+    line: Option<(&'static str, &'static str)>,
 }
 
 impl RequestData for TestRequest {
@@ -137,6 +140,12 @@ impl RequestData for TestRequest {
     }
     fn is_https(&self) -> bool {
         true
+    }
+    fn method(&self) -> Option<String> {
+        self.line.map(|(method, _)| method.to_owned())
+    }
+    fn request_target(&self) -> Option<String> {
+        self.line.map(|(_, target)| target.to_owned())
     }
 }
 
@@ -190,6 +199,9 @@ fn a_revalidation_gets_a_304_with_usage_sharing_in_the_pipeline() {
 
     let first = serve(None);
     assert_eq!(first.status, WebResponse::STATUS_OK);
+    // Usage sharing adds no header to Vary, so only the engine's and the
+    // JavaScript builder's headers are named.
+    assert_eq!(first.header("Vary"), Some("host,protocol,user-agent"));
     let etag = first
         .header("ETag")
         .expect("the 200 has an ETag")
@@ -224,8 +236,13 @@ fn usage_sharing_shares_the_web_requests_headers_no_element_accepts() {
         ]),
         cookies: pairs(&[("51D_Test", "kept"), ("other", "dropped")]),
         query: pairs(&[("session-id", SESSION_ID)]),
+        line: None,
     };
-    drop(processed(&web, &request));
+    let data = processed(&web, &request);
+    // No element accepts X-Test, so it is not in the evidence, and the
+    // element can only find it in the web request.
+    assert_eq!(data.evidence().get("header.x-test"), None);
+    drop(data);
 
     // The element delivers what it holds when it is dropped.
     drop(web);
@@ -245,6 +262,60 @@ fn usage_sharing_shares_the_web_requests_headers_no_element_accepts() {
     for left_out in ["Name=\"X-Blocked\"", "Name=\"Cookie\"", "Name=\"other\""] {
         assert!(!document.contains(left_out), "{left_out} in {document}");
     }
+}
+
+/// The ignore filter reads a key of the web request only when usage sharing
+/// shares that key, so a pair on a key that is not shared and that no element
+/// accepts does not stop the request being shared. A pair on a shared key
+/// still does.
+#[test]
+fn the_ignore_filter_reads_only_the_shared_keys_of_the_web_request() {
+    let request = TestRequest {
+        headers: pairs(&[
+            ("User-Agent", "Mozilla/5.0"),
+            ("X-Test", "skip"),
+            ("X-Blocked", "1"),
+            ("Cookie", "internal=1"),
+        ]),
+        cookies: pairs(&[("internal", "1")]),
+        query: pairs(&[("other", "1")]),
+        line: Some(("GET", "/page?other=1")),
+    };
+    let documents = |key: &str, value: &str| {
+        let sink = Arc::new(Keep::default());
+        let share = Arc::new(ShareUsageElement::with_sink(
+            ShareUsageConfig::builder()
+                .blocked_http_headers(["x-blocked"])
+                .ignore_flow_data_evidence_filter([(key, value)])
+                .build(),
+            Arc::clone(&sink),
+        ));
+        let web = web_pipeline(&share);
+        drop(processed(&web, &request));
+        // The element delivers what it holds when it is dropped.
+        drop(web);
+        drop(share);
+        let delivered = sink.0.lock().unwrap();
+        delivered.len()
+    };
+
+    let ignored: Vec<&str> = [
+        ("cookie.internal", "1"),
+        ("header.cookie", "internal=1"),
+        ("header.x-blocked", "1"),
+        ("query.other", "1"),
+        ("server.request-path", "/page"),
+    ]
+    .into_iter()
+    .filter(|&(key, value)| documents(key, value) != 1)
+    .map(|(key, _)| key)
+    .collect();
+    assert!(
+        ignored.is_empty(),
+        "ignored on keys not shared: {ignored:?}"
+    );
+
+    assert_eq!(documents("header.x-test", "skip"), 0);
 }
 
 /// The Sequence element the web pipeline adds accepts the session id and the
