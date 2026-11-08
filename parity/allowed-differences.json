@@ -96,20 +96,6 @@
     "issue": 226
   },
   {
-    "path": "json.ip.*].rawweighting",
-    "kind": "onlyInDotnet",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*", "translation-*"],
-    "reason": "The crates write a weighted value as value and weight, where the published .NET packages write rawweighting and value. The translation cases write their codes as each side's IP Intelligence data, whichever data file the job uses.",
-    "issue": 226
-  },
-  {
-    "path": "json.ip.*].weight",
-    "kind": "onlyInRust",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*", "translation-*"],
-    "reason": "The crates write a weighted value as value and weight, where the published .NET packages write rawweighting and value. The translation cases write their codes as each side's IP Intelligence data, whichever data file the job uses.",
-    "issue": 226
-  },
-  {
     "path": "properties.device.hardware*",
     "kind": "noValueMessage",
     "cases": ["metadata-device-ismobile"],
