@@ -180,8 +180,10 @@ impl HardwareProfileCloudEngine {
         );
     }
 
-    /// Read the cloud JSON, slice the `hardware.profiles` array, and store the
-    /// resulting [`MultiDeviceData`] under [`HARDWARE_DATA_KEY`].
+    /// Read the cloud JSON, slice the `hardware.profiles` array, and add the
+    /// profiles to the [`MultiDeviceData`] under [`HARDWARE_DATA_KEY`],
+    /// after any that an on-premise TAC or Native engine added before this
+    /// one.
     ///
     /// Returns an [`Error::PipelineConfiguration`] if no cloud request engine ran
     /// before this engine. An empty or absent JSON response, which means the
@@ -205,7 +207,10 @@ impl HardwareProfileCloudEngine {
         };
 
         let result = slice_hardware_profiles(&json, self.metadata.get())?;
-        data.get_or_add(HARDWARE_DATA_KEY, || result)?;
+        let hardware = data.get_or_add(HARDWARE_DATA_KEY, MultiDeviceData::new)?;
+        for profile in result.into_profiles() {
+            hardware.push_profile(profile);
+        }
         Ok(())
     }
 }

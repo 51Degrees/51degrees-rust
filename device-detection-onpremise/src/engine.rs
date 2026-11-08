@@ -632,17 +632,19 @@ impl DeviceDetectionOnPremiseEngine {
     }
 
     /// The value named `value_name` among those [`Self::property_values`]
-    /// gives for the property named `property_name`, both matched exactly, as
-    /// .NET's `GetValue(valueName)` matches them, or [`None`] when the engine
-    /// lists no such property or the property has no such value. Fails when
-    /// the data file's values cannot be read.
+    /// gives for the property named `property_name`, matched as .NET's
+    /// `GetValue(valueName)` matches them, or [`None`] when the engine lists
+    /// no such property or the property has no such value. Fails when the
+    /// data file's values cannot be read.
     ///
     /// [`FiftyOneAspectPropertyMetaData::value`] finds nothing for a data file
     /// property, because its metadata lists no values. This finds the value in
     /// the loaded data file without reading the property's other values, by
     /// the C library's binary search over values in order of their names, as
     /// .NET finds it. So a value the data file holds out of that order can be
-    /// missed.
+    /// missed. The property's name is matched exactly, and a data file
+    /// property's value by the text of `value_name` before any null, so
+    /// `True\0x` finds `True`.
     pub fn property_value(
         &self,
         property_name: &str,

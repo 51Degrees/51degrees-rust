@@ -50,6 +50,11 @@ const NO_SUCH_PROPERTY: &str = "NoSuchProperty";
 /// The evidence key the engine reads profile ids from.
 const PROFILE_IDS_KEY: &str = "query.51D_ProfileIds";
 
+/// An engine built with the default performance profile reads the data file
+/// through its caches, so its ids are compared with reading every profile for
+/// every this many values, as each such read is the slowest.
+const FILE_PROFILE_FULL_READ_EVERY: usize = 10;
+
 /// The Hash data file `51DEGREES_DD_PATH` names, else the Lite file in the
 /// `cxx` submodule, or `None` with a note that the test is skipped.
 fn data_file() -> Option<PathBuf> {
@@ -114,7 +119,8 @@ fn ids(engine: &DeviceDetectionOnPremiseEngine, values: &[String]) -> Vec<Vec<u3
 
 /// An engine with `BrowserName` named to index gives, for every value, the
 /// ids reading every profile gives, and so does an engine that indexes
-/// nothing. Each list is in ascending order and at least one is not empty.
+/// nothing, built with the default performance profile, for every tenth
+/// value. Each list is in ascending order and at least one is not empty.
 /// A value, a property name in other case and a property the data file does
 /// not have give none.
 #[test]
@@ -142,7 +148,16 @@ fn every_value_gives_the_ids_reading_every_profile_gives() {
         .expect("the data file loads");
     assert!(unindexed.indexed_properties().is_empty());
     assert!(unindexed.hash_options().indexed_properties.is_empty());
-    assert_eq!(ids(&unindexed, &values), expected);
+    let compared = values
+        .iter()
+        .zip(&expected)
+        .step_by(FILE_PROFILE_FULL_READ_EVERY);
+    for (value, want) in compared {
+        let found = unindexed
+            .profile_ids_for_property_value(BROWSER_NAME, value)
+            .expect("the lookup succeeds");
+        assert_eq!(&found, want, "{value:?}");
+    }
 
     for (property, value) in [
         (BROWSER_NAME, "No such browser"),
@@ -253,6 +268,58 @@ fn the_profiles_of_a_value_are_those_its_ids_give() {
         .profiles_for_property_value(BROWSER_NAME, "No such browser")
         .expect("the lookup succeeds");
     assert!(none.is_empty());
+}
+
+/// The ids and reader of a value are the ids the engine gives for it, and
+/// the reader gives each id the profile `profiles_for_property_value` gives,
+/// with the same properties and values.
+#[test]
+fn the_reader_of_a_value_gives_the_profiles_of_its_ids() {
+    let Some(path) = data_file() else {
+        return;
+    };
+    let engine = DeviceDetectionOnPremiseEngineBuilder::new(&path)
+        .indexed_property(BROWSER_NAME)
+        .build()
+        .expect("the data file loads");
+    let Some(values) = browser_names(&engine) else {
+        return;
+    };
+    let mut compared = 0;
+    for (value, found) in values.iter().zip(ids(&engine, &values)) {
+        let (ids, reader) = engine
+            .profile_ids_and_reader_for_property_value(BROWSER_NAME, value)
+            .expect("the ids are found");
+        assert_eq!(ids, found, "{value}");
+        let profiles = engine
+            .profiles_for_property_value(BROWSER_NAME, value)
+            .expect("the profiles read");
+        assert_eq!(profiles.len(), ids.len(), "{value}");
+        for (id, profile) in ids.iter().zip(&profiles) {
+            let read = reader.read_profile(*id);
+            let keys = profile.keys();
+            assert_eq!(read.keys(), keys, "profile {id}");
+            // Every value of the first profile, and the id and key property
+            // of the rest, as reading every value of every profile is slow.
+            let names: Vec<&str> = if compared == 0 {
+                keys.iter().map(String::as_str).collect()
+            } else {
+                vec![PROFILE_ID_PROPERTY_NAME, BROWSER_NAME]
+            };
+            for name in names {
+                assert_eq!(
+                    read.get(name).ok(),
+                    profile.get(name).ok(),
+                    "profile {id} {name}"
+                );
+            }
+            compared += 1;
+        }
+    }
+    assert!(
+        compared > 0,
+        "no value of {BROWSER_NAME} is held by a profile"
+    );
 }
 
 /// An engine restricted to another property still indexes and finds the

@@ -82,7 +82,8 @@ pub use data::{
 };
 pub use device_data::{DeviceData, GENERATED_PROPERTY_TYPES};
 pub use multi_device::{
-    MultiDeviceData, HARDWARE_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY, PROFILES_PROPERTY_NAME,
+    MultiDeviceData, ProfileReader, HARDWARE_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY,
+    PROFILES_PROPERTY_NAME,
 };
 pub use uach::{
     UachJsConversionElement, UACH_EVIDENCE_COOKIE_KEY, UACH_EVIDENCE_QUERY_KEY,

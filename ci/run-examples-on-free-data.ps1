@@ -216,7 +216,13 @@ function Invoke-Console($Example) {
     Write-Host "Running $bin"
     $process = Start-Example $bin
     $finished = $process.WaitForExit($TimeoutSeconds * 1000)
-    if (-not $finished) { Stop-Tree $process }
+    if ($finished) {
+        # Only a wait with no time limit also waits for the output to reach
+        # its file, which on Linux PowerShell copies there line by line.
+        $process.WaitForExit()
+    } else {
+        Stop-Tree $process
+    }
     # What the example printed is shown even when it ran out of time, so the
     # log says what it was doing.
     $text = Get-Content -Raw (Join-Path $Logs "$bin.out.txt")

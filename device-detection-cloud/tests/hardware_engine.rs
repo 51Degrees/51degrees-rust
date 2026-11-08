@@ -33,14 +33,21 @@
 use std::sync::Arc;
 
 use fiftyone_json_builder::{JsonBuilderElement, JSON_BUILDER_DATA_KEY};
-use fiftyone_pipeline_core::{Evidence, FlowElement, Pipeline, PropertyValueType};
+use fiftyone_pipeline_core::{
+    ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    Pipeline, PropertyMetaData, PropertyValue, PropertyValueType, Result as PipelineResult,
+};
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 use serde_json::{json, Value};
 
 use fiftyone_cloud_request_engine::{
     CloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine, HttpMethod,
 };
-use fiftyone_device_detection_cloud::{DeviceData, HardwareProfileCloudEngine, HARDWARE_DATA_KEY};
+use fiftyone_device_detection_cloud::{
+    DeviceData, DeviceDataBase, HardwareProfileCloudEngine, MultiDeviceData, HARDWARE_DATA_KEY,
+    HARDWARE_ELEMENT_DATA_KEY,
+};
+use fiftyone_device_detection_shared::ProfileReader;
 
 /// A fake transport that answers the cloud endpoints from in-memory fixtures.
 struct FakeCloud {
@@ -155,17 +162,64 @@ fn fake_request_engine(data: &str) -> Arc<CloudRequestEngine> {
 /// Build a pipeline of `CloudRequestEngine` -> `HardwareProfileCloudEngine` over
 /// a fake transport returning the supplied data body.
 fn fake_pipeline(data: &str) -> Arc<Pipeline> {
+    fake_pipeline_after(Vec::new(), data)
+}
+
+/// Build a pipeline of `earlier`, then `CloudRequestEngine` ->
+/// `HardwareProfileCloudEngine` over a fake transport returning the supplied
+/// data body.
+fn fake_pipeline_after(earlier: Vec<Arc<dyn FlowElement>>, data: &str) -> Arc<Pipeline> {
     let request_engine = fake_request_engine(data);
 
     let hardware_engine = HardwareProfileCloudEngine::builder()
         .cloud_request_engine(request_engine.clone())
         .build();
 
-    Pipeline::builder()
+    earlier
+        .into_iter()
+        .fold(Pipeline::builder(), |builder, element| {
+            builder.add_element(element)
+        })
         .add_element(request_engine)
         .add_element(Arc::new(hardware_engine))
         .build()
         .expect("pipeline builds")
+}
+
+/// Gives each profile the hardware vendor `Earlier`, as an on-premise data
+/// set gives the profile of an id.
+struct EarlierReader;
+
+impl ProfileReader for EarlierReader {
+    fn read_profile(&self, _id: u32) -> DeviceDataBase {
+        DeviceDataBase::new().set("HardwareVendor", "Earlier")
+    }
+}
+
+/// Adds one profile by id under `hardware` before the cloud engines run, as
+/// an on-premise TAC or Native engine earlier in the pipeline does.
+struct EarlierProfile {
+    filter: EvidenceKeyFilterWhitelist,
+}
+
+impl FlowElement for EarlierProfile {
+    fn process(&self, data: &mut FlowData) -> PipelineResult<()> {
+        data.get_or_add(HARDWARE_DATA_KEY, MultiDeviceData::new)?
+            .push_profile_ids(Arc::new(EarlierReader), vec![12280]);
+        Ok(())
+    }
+
+    fn data_key(&self) -> &str {
+        HARDWARE_ELEMENT_DATA_KEY
+    }
+
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        &self.filter
+    }
+
+    fn properties(&self) -> &[PropertyMetaData] {
+        &[]
+    }
 }
 
 #[test]
@@ -220,7 +274,6 @@ fn null_profile_property_becomes_no_value_with_reason() {
     );
 
     // The nullreason entry is not a property, so it is not in the profile.
-    use fiftyone_pipeline_core::ElementData;
     assert!(second.get("hardwarevendornullreason").is_err());
 }
 
@@ -240,6 +293,58 @@ fn device_only_response_yields_no_profiles() {
     assert!(
         hardware.is_empty(),
         "a device-only response should yield no profiles"
+    );
+}
+
+/// The cloud's profiles follow those an earlier engine added under
+/// `hardware`, rather than being dropped, and only the cloud's, which it
+/// adds with their values, are written under `profiles`.
+#[test]
+fn profiles_follow_those_already_under_hardware() {
+    let earlier = EarlierProfile {
+        filter: EvidenceKeyFilterWhitelist::new(["query.tac"]),
+    };
+    let pipeline = fake_pipeline_after(
+        vec![Arc::new(earlier) as Arc<dyn FlowElement>],
+        HARDWARE_RESPONSE,
+    );
+    let mut data =
+        pipeline.create_flow_data_with(Evidence::builder().add("query.tac", "35925406").build());
+    data.process().expect("processing succeeds");
+    assert!(data.errors().is_empty(), "{:?}", data.errors());
+
+    let hardware = data.get(HARDWARE_DATA_KEY).expect("hardware data present");
+    let models: Vec<Option<String>> = hardware
+        .profiles()
+        .iter()
+        .map(|profile| profile.hardware_model().value().ok().cloned())
+        .collect();
+    assert_eq!(
+        models,
+        [
+            None,
+            Some("iPhone11,8".to_owned()),
+            Some("iPhone12,3".to_owned())
+        ]
+    );
+    assert_eq!(
+        hardware.profiles()[0].hardware_vendor().value().unwrap(),
+        "Earlier"
+    );
+
+    let Ok(PropertyValue::ElementDataList(written)) = hardware.get("profiles") else {
+        panic!("profiles is not a list of element data");
+    };
+    let written_models: Vec<Option<PropertyValue>> = written
+        .iter()
+        .map(|profile| profile.get("hardwaremodel").ok())
+        .collect();
+    assert_eq!(
+        written_models,
+        [
+            Some(PropertyValue::from("iPhone11,8")),
+            Some(PropertyValue::from("iPhone12,3"))
+        ]
     );
 }
 

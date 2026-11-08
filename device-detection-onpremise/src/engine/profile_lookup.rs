@@ -25,10 +25,12 @@
 
 use std::sync::{Arc, Mutex};
 
-use fiftyone_device_detection_shared::DeviceDataBase;
+use fiftyone_device_detection_shared::{DeviceDataBase, DevicePropertyReader, ProfileReader};
 use fiftyone_pipeline_core::{Evidence, Result};
 
-use super::{device_data, DetectionReader, DeviceDetectionOnPremiseEngine};
+use super::{
+    device_data, DetectionReader, DeviceDetectionOnPremiseEngine, LoadedDataSet, ReadOutcome,
+};
 
 /// The property each device data
 /// [`profiles_for_property_value`](DeviceDetectionOnPremiseEngine::profiles_for_property_value)
@@ -55,8 +57,9 @@ impl DeviceDetectionOnPremiseEngine {
     /// The ids are those of the data set loaded when this is called, and a
     /// refresh can load a data file whose profiles differ. An id given to the
     /// engine as `query.51D_ProfileIds` evidence gives that profile's values,
-    /// and [`Self::profiles_for_property_value`] gives the ids and the values
-    /// from one data set.
+    /// and [`Self::profiles_for_property_value`] and
+    /// [`Self::profile_ids_and_reader_for_property_value`] give the ids and
+    /// the values from one data set.
     pub fn profile_ids_for_property_value(
         &self,
         property_name: &str,
@@ -98,20 +101,90 @@ impl DeviceDetectionOnPremiseEngine {
         let ids = loaded
             .manager
             .profile_ids_for_property_value(property_name, value)?;
-        ids.into_iter()
-            .map(|id| -> Result<DeviceDataBase> {
-                let mut results = loaded.manager.create_results()?;
-                let evidence = Evidence::builder()
-                    .add(PROFILE_IDS_EVIDENCE_KEY, id.to_string())
-                    .build();
-                results.process_evidence(&evidence)?;
-                let mut device = device_data(DetectionReader {
-                    results: Mutex::new(results),
-                    loaded: Arc::clone(&loaded),
-                });
-                device.insert(PROFILE_ID_PROPERTY_NAME, id.to_string());
-                Ok(device)
-            })
-            .collect()
+        ids.into_iter().map(|id| profile(&loaded, id)).collect()
+    }
+
+    /// The ids [`Self::profile_ids_for_property_value`] finds for `value` of
+    /// the property named `property_name`, with a reader giving the device
+    /// data of each id as [`Self::profiles_for_property_value`] gives it,
+    /// which reads nothing until asked. Fails when the data file cannot be
+    /// read.
+    ///
+    /// The ids and the reader use the data set loaded when this is called,
+    /// so a refresh cannot leave an id without its profile. Give both to
+    /// [`MultiDeviceData::push_profile_ids`](fiftyone_device_detection_shared::MultiDeviceData::push_profile_ids)
+    /// to read the profiles only when they are first asked for. A profile the
+    /// reader cannot read gives device data holding its id, whose other
+    /// properties give why as the reason they have no value.
+    pub fn profile_ids_and_reader_for_property_value(
+        &self,
+        property_name: &str,
+        value: &str,
+    ) -> Result<(Vec<u32>, Arc<dyn ProfileReader>)> {
+        let loaded = self.loaded.load_full();
+        let ids = loaded
+            .manager
+            .profile_ids_for_property_value(property_name, value)?;
+        Ok((ids, Arc::new(LoadedProfiles { loaded })))
+    }
+}
+
+/// The device data of the profile with id `id` in `loaded`, being what a
+/// detection given the id as `query.51D_ProfileIds` evidence gives, with
+/// [`PROFILE_ID_PROPERTY_NAME`] holding the id as text.
+fn profile(loaded: &Arc<LoadedDataSet>, id: u32) -> Result<DeviceDataBase> {
+    let mut results = loaded.manager.create_results()?;
+    let evidence = Evidence::builder()
+        .add(PROFILE_IDS_EVIDENCE_KEY, id.to_string())
+        .build();
+    results.process_evidence(&evidence)?;
+    let mut device = device_data(DetectionReader {
+        results: Mutex::new(results),
+        loaded: Arc::clone(loaded),
+    });
+    device.insert(PROFILE_ID_PROPERTY_NAME, id.to_string());
+    Ok(device)
+}
+
+/// Reads profiles by id from the data set their ids were found in.
+struct LoadedProfiles {
+    loaded: Arc<LoadedDataSet>,
+}
+
+impl ProfileReader for LoadedProfiles {
+    fn read_profile(&self, id: u32) -> DeviceDataBase {
+        profile(&self.loaded, id).unwrap_or_else(|error| {
+            let mut device = DeviceDataBase::new();
+            device
+                .base_mut()
+                .add_missing_property_source(Arc::clone(&self.loaded.missing));
+            let mut device = device.with_reader(UnreadProfile {
+                loaded: Arc::clone(&self.loaded),
+                reason: error.to_string(),
+            });
+            device.insert(PROFILE_ID_PROPERTY_NAME, id.to_string());
+            device
+        })
+    }
+}
+
+/// Gives the reason a profile could not be read as the outcome of reading
+/// any of its properties.
+struct UnreadProfile {
+    loaded: Arc<LoadedDataSet>,
+    reason: String,
+}
+
+impl DevicePropertyReader for UnreadProfile {
+    fn property_names(&self) -> &[String] {
+        &self.loaded.readable.lowercase_names
+    }
+
+    fn position(&self, name: &str) -> Option<usize> {
+        self.loaded.readable.by_name.get(name).copied()
+    }
+
+    fn read_property(&self, _position: usize) -> ReadOutcome {
+        Err(self.reason.clone())
     }
 }

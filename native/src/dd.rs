@@ -936,6 +936,9 @@ impl Manager {
     /// by the C library's binary search, as the C++ code the other SDKs call
     /// finds it, without reading the others. A value the data file holds out
     /// of that order can be missed, as the C++ misses it.
+    ///
+    /// As in the C++ code, `name` is matched up to its first null, so
+    /// `True\0x` finds `True`.
     pub fn data_file_property_value(
         &self,
         property_index: u32,
@@ -947,11 +950,10 @@ impl Manager {
         if property_index >= count {
             return Ok(None);
         }
-        // A data file's strings end at their first null, so no value has a
-        // name holding one.
-        let Ok(c_name) = CString::new(name) else {
-            return Ok(None);
-        };
+        // The C++ code searches with the text before the first null, where a
+        // C string ends.
+        let searched = name.split('\0').next().unwrap_or(name);
+        let c_name = CString::new(searched).expect("the text before a null holds none");
         let mut values: Vec<DataFileValue> = Vec::new();
         // Safety: `c_name` is null terminated, and `take_value_string` treats
         // the context as the `Vec<DataFileValue>` it points to, which outlives
@@ -969,7 +971,7 @@ impl Manager {
         // gives nothing and sets no exception, so a value of another name is a
         // failure.
         match (found, values.pop()) {
-            (sys::SHIM_FIND_FOUND, Some(value)) if values.is_empty() && value.name == name => {
+            (sys::SHIM_FIND_FOUND, Some(value)) if values.is_empty() && value.name == searched => {
                 Ok(Some(value))
             }
             (sys::SHIM_FIND_NOT_FOUND, None) => Ok(None),
@@ -2553,8 +2555,9 @@ mod tests {
             assert!(in_order > 0, "{}", profile.as_str());
             assert!(checked > 0, "{}", profile.as_str());
 
-            // The name must match exactly, so another case, part of the name,
-            // more than the name, or another property's value finds nothing.
+            // The name must match exactly up to any null, so another case,
+            // part of the name, more than the name, or another property's
+            // value finds nothing.
             let index_of = |name: &str| {
                 properties
                     .iter()
@@ -2564,11 +2567,20 @@ mod tests {
             };
             let is_mobile = index_of("IsMobile");
             assert!(find(index_of("BrowserName"), "Safari").is_some());
-            for name in [
-                "true", "TRUE", "Tru", "True ", "TrueX", "", "True\0", "Safari",
-            ] {
+            for name in ["true", "TRUE", "Tru", "True ", "TrueX", "", "Safari"] {
                 assert_eq!(find(is_mobile, name), None, "{name:?} {}", profile.as_str());
             }
+            // .NET's GetValue gives True for each, because the C++ search
+            // ends at the null.
+            for name in ["True\0", "True\0x", "True\0False"] {
+                assert_eq!(
+                    find(is_mobile, name).map(|value| value.name).as_deref(),
+                    Some("True"),
+                    "{name:?} {}",
+                    profile.as_str()
+                );
+            }
+            assert_eq!(find(is_mobile, "Tru\0e"), None, "{}", profile.as_str());
             let outside = u32::try_from(properties.len()).expect("few properties");
             assert_eq!(find(outside, "True"), None, "{}", profile.as_str());
         }

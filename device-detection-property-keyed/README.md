@@ -24,13 +24,17 @@ as .NET's `FiftyOne.DeviceDetection.PropertyKeyed` does.
 | `NativeEngineBuilder` | `NativeModel` | `query.nativemodel` | `hardware` |
 | `PropertyKeyedDeviceEngineBuilder` | Any, set with `set_key_property` | `query.` and the property in lower case | `profiles-` and the property in lower case, unless set |
 
-Each engine writes a `MultiDeviceData` with one property, `Profiles`, which
-lists each profile's `ProfileId` and the values of the properties of the
-key property's component, the hardware for `TAC` and `NativeModel`. Each
-profile reads with the same `DeviceData` accessors as a detection. The TAC
-and Native engines both write under `HARDWARE_DATA_KEY`, as the cloud's
-hardware lookup does, so when both are in one pipeline the profiles of the
-engine added first come first.
+Each engine writes a `MultiDeviceData` and lists one property, `Profiles`,
+whose items are each profile's `ProfileId` and the properties of the key
+property's component that are not JavaScript, the hardware for `TAC` and
+`NativeModel`. Each profile reads with the same `DeviceData` accessors as a
+detection. The engine keeps the ids of the profiles it finds and reads the
+profiles on the first call to `profiles()`, so a value held by many profiles
+costs only the lookup until they are read. As .NET's engines do, it writes
+none of them to the JSON, so the JSON builder writes `hardware.profiles`
+empty. The TAC and Native engines both write under `HARDWARE_DATA_KEY`, as
+the cloud's hardware lookup does, so when both are in one pipeline the
+profiles of the engine added first come first.
 
 ## Use
 

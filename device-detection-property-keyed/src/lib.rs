@@ -40,7 +40,10 @@
 //! [`DeviceData`](fiftyone_device_detection_shared::DeviceData) accessors as
 //! a detection. The TAC and Native engines both write it under
 //! [`HARDWARE_DATA_KEY`](fiftyone_device_detection_shared::HARDWARE_DATA_KEY),
-//! as the cloud's hardware lookup does, so the same code reads either.
+//! as the cloud's hardware lookup does, so the same code reads either. The
+//! engines keep the ids of the profiles they find and read the profiles on
+//! the first call to `profiles()`. As .NET's engines do, they write none of
+//! them to the JSON, so the JSON builder writes `hardware.profiles` empty.
 //!
 //! ## Use
 //!
@@ -48,9 +51,9 @@
 //! file holds `TAC` and `NativeModel`, and ask that engine to index them so
 //! each lookup is fast, with `indexed_property` in code or its
 //! `IndexedProperties` setting in a configuration. `NativeModel` is in the
-//! Enterprise and TAC data files, and `TAC` only in the TAC file. With the free Lite file, which
-//! holds neither, the engines accept no evidence and write nothing. Then give
-//! the evidence `query.tac` or `query.nativemodel`.
+//! Enterprise and TAC data files, and `TAC` only in the TAC file. With the
+//! free Lite file, which holds neither, the engines accept no evidence and
+//! write nothing. Then give the evidence `query.tac` or `query.nativemodel`.
 //!
 //! ```no_run
 //! use std::sync::Arc;

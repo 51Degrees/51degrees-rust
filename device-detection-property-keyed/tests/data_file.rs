@@ -47,7 +47,9 @@ use fiftyone_device_detection_shared::{
     PROFILES_PROPERTY_NAME,
 };
 use fiftyone_native::PerformanceProfile;
-use fiftyone_pipeline_core::{Evidence, FlowData, FlowElement, Pipeline};
+use fiftyone_pipeline_core::{
+    ElementData, Evidence, FlowData, FlowElement, Pipeline, PropertyValue,
+};
 
 const TAC_KEY: &str = "query.tac";
 const NATIVE_MODEL_KEY: &str = "query.nativemodel";
@@ -334,6 +336,80 @@ fn a_value_gives_the_profiles_holding_it() {
         assert!(
             items.iter().any(|item| item.name == property),
             "{property} is not among the listed properties of a profile"
+        );
+    }
+}
+
+/// The engines keep the ids of the profiles they find and write none of the
+/// profiles to the JSON, as .NET's do, so the JSON builder writes
+/// `hardware.profiles` empty however many profiles hold the value, whilst
+/// `profiles()` still gives every one of them.
+#[test]
+fn the_json_writes_no_on_premise_profiles() {
+    use fiftyone_json_builder::{JsonBuilderElement, JSON_BUILDER_DATA_KEY};
+    use fiftyone_pipeline_engines_fiftyone::SequenceElement;
+
+    let Some(device) = device_with_key_properties() else {
+        return;
+    };
+    let engines = [
+        (
+            tac(),
+            TAC_KEY,
+            TAC_PROPERTY_NAME,
+            is_tac as fn(&str) -> bool,
+        ),
+        (
+            native(),
+            NATIVE_MODEL_KEY,
+            NATIVE_MODEL_PROPERTY_NAME,
+            is_native_model as fn(&str) -> bool,
+        ),
+    ];
+    for (engine, key, property, accept) in engines {
+        let (value, ids) = held_value(&device, property, accept);
+        let json_builder = JsonBuilderElement::builder()
+            .exclude_element(SequenceElement::DEFAULT_ELEMENT_DATA_KEY)
+            .build();
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(SequenceElement::new()))
+            .add_element(Arc::clone(&device) as Arc<dyn FlowElement>)
+            .add_element(Arc::clone(&engine) as Arc<dyn FlowElement>)
+            .add_element(Arc::new(json_builder))
+            .build()
+            .expect("the pipeline builds");
+        let data = process(
+            &pipeline,
+            &[(key, value.as_str()), (USER_AGENT_KEY, USER_AGENT)],
+        );
+        let hardware = data
+            .get(HARDWARE_DATA_KEY)
+            .unwrap_or_else(|| panic!("no data for {property} {value:?}"));
+        assert_eq!(profile_ids(hardware), ids, "{property} {value:?}");
+        let Ok(PropertyValue::ElementDataList(written)) = hardware.get(PROFILES_PROPERTY_NAME)
+        else {
+            panic!("{PROFILES_PROPERTY_NAME} is not a list of element data");
+        };
+        assert!(
+            written.is_empty(),
+            "{property} {value:?} writes {} profiles",
+            written.len()
+        );
+
+        let text = data
+            .get(JSON_BUILDER_DATA_KEY)
+            .expect("the JSON builder's data")
+            .json()
+            .to_owned();
+        let json: serde_json::Value = serde_json::from_str(&text).expect("the output is JSON");
+        assert_eq!(
+            json["hardware"],
+            serde_json::json!({ "profiles": [] }),
+            "{property} {value:?}"
+        );
+        println!(
+            "{property} {value:?} gives {} profiles and writes none",
+            ids.len()
         );
     }
 }

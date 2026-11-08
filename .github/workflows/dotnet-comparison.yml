@@ -262,6 +262,11 @@ jobs:
             --out out/property-keyed-rust.jsonl
           dotnet out/dotnet/Parity.dll property-keyed "${keyed[@]}" \
             --out out/property-keyed-dotnet.jsonl
+          # Each side writes each on-premise engine's metadata for every
+          # metadata case, and the reads the restricted engines answer.
+          metadata=(--cases corpus/metadata.json --dd "$DD_FILE" --ipi "$IPI_FILE")
+          target/debug/parity-rust metadata "${metadata[@]}" --out out/metadata-rust.jsonl
+          dotnet out/dotnet/Parity.dll metadata "${metadata[@]}" --out out/metadata-dotnet.jsonl
 
       - name: Compare
         if: env.RUN == 'true'
@@ -272,12 +277,15 @@ jobs:
             --corpus out/fodid-rust.json --corpus out/fodid-dotnet.json \
             --corpus corpus/configuration.json --corpus out/derived-cases.json \
             --corpus out/robots-txt-cases.json --corpus out/property-keyed-cases.json \
+            --corpus corpus/metadata.json \
             --dotnet out/dotnet.jsonl --dotnet out/fodid-dotnet.jsonl \
             --dotnet out/configuration-dotnet.jsonl --dotnet out/derived-dotnet.jsonl \
             --dotnet out/robots-txt-dotnet.jsonl --dotnet out/property-keyed-dotnet.jsonl \
+            --dotnet out/metadata-dotnet.jsonl \
             --rust out/rust.jsonl --rust out/fodid-rust.jsonl \
             --rust out/configuration-rust.jsonl --rust out/derived-rust.jsonl \
             --rust out/robots-txt-rust.jsonl --rust out/property-keyed-rust.jsonl \
+            --rust out/metadata-rust.jsonl \
             --allowed allowed-differences.json --data ${{ matrix.data }} \
             --report out/report.md --strict > /dev/null
           status=$?
@@ -289,30 +297,47 @@ jobs:
       # lookup of profiles by their values is checked here over every value
       # of each, and 51DEGREES_REQUIRE_TAC makes the test fail rather than
       # skip if the file stops carrying them or does not reach the test.
+      # cargo test passes when no test matches its name, so the step names
+      # the test exactly and fails unless the output says one test passed.
       - name: Check the profile lookup on the TAC file
         if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
         run: |
+          test=tac_and_native_model_values_find_their_profiles
           env 51DEGREES_DD_PATH="$DD_FILE" 51DEGREES_REQUIRE_TAC=1 \
             cargo test -p fiftyone-native --test value_profiles \
-            tac_and_native_model_values_find_their_profiles -- --nocapture
+            -- --exact "$test" --nocapture | tee "$RUNNER_TEMP/tac-lookup.txt"
+          if ! grep -qF 'test result: ok. 1 passed;' "$RUNNER_TEMP/tac-lookup.txt"; then
+            echo "::error::$test did not run and pass"
+            exit 1
+          fi
 
       # Latitude, Longitude and the points of Areas are given to 3 decimal
       # places. Only the Enterprise file carries them, so the test runs here,
       # and 51DEGREES_REQUIRE_LOCATION makes it fail rather than skip if the
-      # file stops carrying them or does not reach the test.
+      # file stops carrying them or does not reach the test. As above, the
+      # step names the test exactly and fails unless one test passed.
       - name: Check locations have 3 decimal places
         if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
         run: |
+          test=locations_are_given_to_three_decimal_places
           env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_LOCATION=1 \
             cargo test -p fiftyone-ip-intelligence-onpremise \
-            --test decimal_places -- --nocapture
+            --test decimal_places -- --exact "$test" --nocapture \
+            | tee "$RUNNER_TEMP/decimal-places.txt"
+          if ! grep -qF 'test result: ok. 1 passed;' "$RUNNER_TEMP/decimal-places.txt"; then
+            echo "::error::$test did not run and pass"
+            exit 1
+          fi
 
       # The build jobs read the data file metadata of the ASN file. Only the
       # Enterprise file has float, bool and weighted properties, addresses
       # and areas, so the metadata tests run here too, opening the file in
       # LowMemory, and 51DEGREES_REQUIRE_ENTERPRISE makes a test that needs
       # the Enterprise file fail rather than skip. The failed refresh test
-      # always uses the ASN file.
+      # always uses the ASN file. The leak test runs under LowMemory alone, so
+      # it never holds the whole file in memory, and checks that an area's
+      # text, too long for the shim's first buffer, is written into a block
+      # from the library's allocator and freed.
       - name: Check the IP Intelligence metadata of the Enterprise file
         if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
         run: |
@@ -328,6 +353,10 @@ jobs:
             ipi::tests::an_enterprise_file_names_each_type \
             ipi::tests::an_enterprise_file_gives_each_value_as_text \
             ipi::tests::a_value_is_found_by_its_text_to_more_places
+          env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_ENTERPRISE=1 \
+            51DEGREES_IPI_MEMORY_PROFILES=LowMemory \
+            cargo test -p fiftyone-native --no-default-features --features ipi \
+            --test ipi_memory -- --nocapture
 
       # The robots.txt cases for each usage come from the data file, and the
       # Lite file holds no crawlers. Over the Enterprise file each side must
@@ -877,6 +906,47 @@ jobs:
             exit 1
           fi
           grep -q "\`robots-txt-tdl-uri\`.* at \`plainText\`: " out/report-robots-txt-changed.md
+
+      # Each metadata line on each side must list properties, components and
+      # values, so the two cannot agree by both listing none. Then a Rust
+      # line with a changed description, one with a changed value and one
+      # with a changed reason for a property read with no value must each
+      # fail the comparison.
+      - name: Check that a changed metadata answer fails
+        if: ${{ !cancelled() && env.RUN == 'true' }}
+        working-directory: parity
+        run: |
+          cases=$(jq length corpus/metadata.json)
+          for side in rust dotnet; do
+            if ! jq -e -s --argjson cases "$cases" 'length == $cases and all(.[];
+                (.engineMetadata.propertyNames | length) > 0 and
+                (.engineMetadata.componentNames | length) > 0 and
+                ([.engineMetadata.properties[].values | length] | add) > 0)' \
+                "out/metadata-$side.jsonl" > /dev/null; then
+              echo "::error::The $side metadata lines do not each list properties, components and values"
+              exit 1
+            fi
+          done
+          jq -c 'if .id == "metadata-device" then
+              .engineMetadata.properties.IsMobile.description |= . + " Changed."
+            elif .id == "metadata-ip" then
+              .engineMetadata.properties.Asn.values[0].name |= . + " Changed."
+            elif .id == "metadata-device-ismobile" then
+              .properties.device.browsername.missing |= . + " Changed."
+            else . end' out/metadata-rust.jsonl > out/metadata-rust-changed.jsonl
+          if target/debug/parity-compare --corpus corpus/metadata.json \
+            --dotnet out/metadata-dotnet.jsonl --rust out/metadata-rust-changed.jsonl \
+            --allowed allowed-differences.json --data ${{ matrix.data }} \
+            --report out/report-metadata-changed.md > /dev/null; then
+            echo "::error::The comparison passed with a changed metadata answer"
+            exit 1
+          fi
+          grep -q '`metadata-device`.* at `engineMetadata\.properties\.IsMobile\.description`: ' \
+            out/report-metadata-changed.md
+          grep -q '`metadata-ip`.* at `engineMetadata\.properties\.Asn\.values\[0\]\.name`: ' \
+            out/report-metadata-changed.md
+          grep -q '`metadata-device-ismobile`.* at `properties\.device\.browsername`: ' \
+            out/report-metadata-changed.md
 
       - name: Upload the answers and the report
         if: always() && env.RUN == 'true'
