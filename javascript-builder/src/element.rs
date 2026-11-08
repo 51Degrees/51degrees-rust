@@ -134,8 +134,10 @@ fn parse_boolean(text: &str) -> Option<bool> {
 ///   and characters after the host and in the endpoint that could end the
 ///   string the script holds the URL in are percent-encoded. The protocol
 ///   must be `http` or `https`, ignoring case, and a host holding user
-///   information, a zone identifier, `?` or `#` is not valid. When a URL is
-///   built the background-update mechanism is enabled.
+///   information, a zone identifier, `?` or `#` is not valid. The log shows
+///   `***` in place of a refused host's user information, so a user name or
+///   password is never logged. When a URL is built the background-update
+///   mechanism is enabled.
 /// - **parameters**: every `query.*` evidence entry except the session id and
 ///   sequence, with the prefix stripped and the key and value encoded as
 ///   .NET's `WebUtility.UrlEncode` encodes them, in name order, serialized as
@@ -403,7 +405,7 @@ impl JavaScriptBuilderElement {
 
     /// The callback URL, or `None` when a part is missing or the URL is not
     /// valid. A URL that is not valid is logged at error level the first time
-    /// only.
+    /// only, with any user information replaced by `***`.
     fn build_url(&self, protocol: &str, host: &str) -> Option<String> {
         match callback_url(protocol, host, &self.endpoint) {
             CallbackUrl::Valid(url) => Some(url),

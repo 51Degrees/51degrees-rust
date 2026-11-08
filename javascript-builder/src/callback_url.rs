@@ -36,7 +36,7 @@ pub(crate) enum CallbackUrl {
     /// The protocol, host or endpoint is empty, so the script has no URL.
     Missing,
     /// The URL is not valid, so the script has no URL. Carries the URL as it
-    /// was built, for the log.
+    /// was built, with any user information replaced by `***`, for the log.
     Invalid(String),
     /// The URL to write into the script.
     Valid(String),
@@ -44,6 +44,9 @@ pub(crate) enum CallbackUrl {
 
 /// The largest port number.
 const MAX_PORT: u32 = 65_535;
+
+/// What the log shows in place of the user information of a refused host.
+const USER_INFO_MARKER: &str = "***";
 
 /// Build the callback URL from its parts and check it.
 ///
@@ -59,13 +62,16 @@ pub(crate) fn callback_url(protocol: &str, host: &str, endpoint: &str) -> Callba
         (true, true) => endpoint[1..].to_owned(),
         _ => endpoint.to_owned(),
     };
-    let built = format!("{protocol}://{host}{endpoint}");
     let end = host.find('/').unwrap_or(host.len());
     let (authority, rest) = host.split_at(end);
+    let invalid = || {
+        let shown = logged_authority(authority);
+        CallbackUrl::Invalid(format!("{protocol}://{shown}{rest}{endpoint}"))
+    };
     // A `?` or `#` in the host would start the query or the fragment before
     // the endpoint, and `fetch` refuses a URL with user information.
     if !is_scheme(protocol) || host.contains(['?', '#']) || authority.contains('@') {
-        return CallbackUrl::Invalid(built);
+        return invalid();
     }
     match checked_host_port(authority) {
         Some(authority) => CallbackUrl::Valid(format!(
@@ -74,7 +80,16 @@ pub(crate) fn callback_url(protocol: &str, host: &str, endpoint: &str) -> Callba
             encoded(rest),
             encoded(&endpoint)
         )),
-        None => CallbackUrl::Invalid(built),
+        None => invalid(),
+    }
+}
+
+/// The authority as the log shows it, with everything before its last `@`
+/// replaced by `***`, so a user name or password is never logged.
+fn logged_authority(authority: &str) -> String {
+    match authority.rfind('@') {
+        Some(at) => format!("{USER_INFO_MARKER}{}", &authority[at..]),
+        None => authority.to_owned(),
     }
 }
 
