@@ -17,6 +17,7 @@ change by a difference this comparison stops reporting.
 | `rust/` | The same program over the crates in this checkout. |
 | `compare/` | The comparer, which reports each difference with the case that caused it. |
 | `allowed-differences.json` | The differences that are known, each with its reason and, where there is one, the issue that removes it. |
+| `check-native-model-case.ps1` | Checks that every NativeModel difference in the TAC and Native comparison comes from case alone (see "The TAC and Native comparison"). |
 
 The workflow
 [dotnet-comparison.yml](../.github/workflows/dotnet-comparison.yml) runs all
@@ -488,26 +489,27 @@ engines come from the FiftyOne.DeviceDetection.PropertyKeyed package at the
 Device Detection version. Each program builds the on-premise Device Detection
 engine with the LowMemory profile, then two pipelines, each holding that
 engine and then a TAC engine and a Native engine of its own, the second with
-the JSON builder last. A case runs through the second when its `json` is
-true. Both collect process errors rather than throwing them. The crates'
-Device Detection engine indexes `TAC` and `NativeModel`, and .NET's engines
-build their own index of each when they join a pipeline. The Lite file holds
+the Sequence element first, whose sequence the JSON builder reads, and the
+JSON builder last. A case runs through the second when its `json` is true.
+Both collect process errors rather than throwing them. The crates' Device
+Detection engine indexes `TAC` and `NativeModel`, and .NET's engines build
+their own index of each when they join a pipeline. The Lite file holds
 neither property, so over it neither engine accepts evidence or writes data.
 
 `parity-rust property-keyed-cases` writes the cases as a corpus for the
 comparer and for both programs. First come the fixed cases of
 `corpus/property-keyed.json`, which give no evidence, a User-Agent alone,
 TACs and native model names each engine accepts or refuses, both refused in
-one request, and query values neither engine reads. Then, from the values
-the crates' Device Detection engine lists for each key property, come each
-key in capitals, a native model name in lower case and in upper case, and
-both keys in one request, each with the first value a profile holds that the
-engine accepts. Then come `property-keyed-tac-value-NNNNNN` for each TAC and
-`property-keyed-native-value-NNNNNN` for each NativeModel, in the data
-file's order counting from 000001. Last come `property-keyed-profile-<id>`
-for every 50th distinct profile those cases find, counting from the first,
-each with the evidence of the first case that finds it. Over the Lite file
-only the fixed cases run.
+one request, and query values neither engine reads. Then, from the values the
+crates' Device Detection engine lists for each key property, come each key in
+capitals, a native model name in lower case and in upper case, and both keys
+in one request, each with the first value a profile holds that the engine
+accepts. Then come `property-keyed-tac-value-NNNNNN` for each TAC and
+`property-keyed-native-value-NNNNNN` for each NativeModel, in the data file's
+order counting from 000001. Last come `property-keyed-profile-<id>` for every
+50th distinct profile those cases find through a value the engine accepts,
+counting from the first, each with the evidence of the first case that finds
+it. Over the Lite file only the fixed cases run.
 
 Each line holds `warnings`, the flow data's warnings, each with its
 element's data key and its message, and `profileIds`, the id of each profile
@@ -531,10 +533,26 @@ so a value one side holds and the other does not shows there, including a
 value .NET finds in another case. The comparer compares each of these fields
 key by key and list item by item.
 
+Three entries in `allowed-differences.json` allow TAC and Native differences.
+One allows the type of `Profiles`, which .NET gives as its .NET type and the
+crates as `keyValueList`. Over the Enterprise file, two allow .NET finding a
+native model name in any case, as its own index compares values ignoring
+case, where the crates match the name exactly through the C library's index,
+as the draft specification of the lookup asks
+([specifications#62](https://github.com/51Degrees/specifications/pull/62)).
+One allows the difference in `indexedValues`, where .NET counts the values
+that differ only in case together under the spelling it met first, and the
+other the difference in `profileIds` in the NativeModel cases, where .NET
+gives the profiles of every such value, and a profile holding two of them
+twice. They come out when .NET's engines use the C library's index
+([51degrees-dotnet#30](https://github.com/51Degrees/51degrees-dotnet/issues/30)).
+
 Over the Enterprise file, one step of that job checks that each side found
-profiles for at least one case and wrote the values of at least one
-profile, so the comparison cannot pass with no profile on either side, and
-another runs the crate's data file tests over that file.
+profiles for at least one case and wrote the values of at least one profile,
+so the comparison cannot pass with no profile on either side, another runs
+`check-native-model-case.ps1`, which fails on any NativeModel difference that
+case alone does not explain, so the two entries for case hide nothing else,
+and another runs the crate's data file tests over that file.
 
 ## The C code
 

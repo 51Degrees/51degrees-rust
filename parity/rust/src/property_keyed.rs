@@ -61,6 +61,7 @@ use fiftyone_json_builder::{JsonBuilderElementBuilder, JSON_BUILDER_DATA_KEY};
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{Evidence, FlowElement, Pipeline};
 use fiftyone_pipeline_engines::AspectEngine;
+use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 
 use crate::fodid_cases::value_type_name;
 
@@ -108,7 +109,8 @@ struct Engines {
 }
 
 impl Engines {
-    /// The engines over `dd`, with the JSON builder last when `json` is set.
+    /// The engines after `device`, with the Sequence element first and the
+    /// JSON builder last when `json` is set.
     fn build(device: &Arc<DeviceDetectionOnPremiseEngine>, json: bool) -> Result<Self> {
         let tac = TacEngineBuilder::new()
             .build()
@@ -116,7 +118,12 @@ impl Engines {
         let native = NativeEngineBuilder::new()
             .build()
             .context("building the Native engine")?;
-        let mut builder = Pipeline::builder()
+        let mut builder = Pipeline::builder();
+        if json {
+            // The JSON builder reads the sequence this element writes.
+            builder = builder.add_element(Arc::new(SequenceElement::new()) as Arc<dyn FlowElement>);
+        }
+        builder = builder
             .add_element(Arc::clone(device) as Arc<dyn FlowElement>)
             .add_element(Arc::clone(&tac) as Arc<dyn FlowElement>)
             .add_element(Arc::clone(&native) as Arc<dyn FlowElement>);
@@ -200,8 +207,9 @@ pub fn run(args: &[String]) -> Result<()> {
 /// accepts. Then `property-keyed-tac-value-NNNNNN` for each TAC and
 /// `property-keyed-native-value-NNNNNN` for each NativeModel, in the data
 /// file's order counting from 1. Last, `property-keyed-profile-<id>` for
-/// every [`PROFILE_EVERY`]th distinct profile those cases find, with the
-/// evidence of the first case that finds it.
+/// every [`PROFILE_EVERY`]th distinct profile those cases find through a
+/// value the engine accepts, with the evidence of the first case that finds
+/// it.
 fn value_cases(engines: &Engines) -> Result<Vec<Value>> {
     let device = &engines.device;
     let mut values = Vec::new();
@@ -225,6 +233,8 @@ fn value_cases(engines: &Engines) -> Result<Vec<Value>> {
             let ids = device
                 .profile_ids_for_property_value(property, &value)
                 .with_context(|| format!("looking up {property} {value:?}"))?;
+            // A value the engine refuses finds no profiles, so the cases
+            // below take only values it accepts.
             if !ids.is_empty() && accepted(kind, &value) {
                 if held.is_none() {
                     held = Some(value.clone());
@@ -237,15 +247,15 @@ fn value_cases(engines: &Engines) -> Result<Vec<Value>> {
                         upper = Some(value.to_uppercase());
                     }
                 }
-            }
-            for id in ids {
-                if seen.insert(id) && (seen.len() - 1).is_multiple_of(PROFILE_EVERY) {
-                    profiles.push(json!({
-                        "id": format!("property-keyed-profile-{id}"),
-                        "about": format!("The values of profile {id}, which {property} {value:?} finds."),
-                        "evidence": {key: value.clone()},
-                        "profileId": id,
-                    }));
+                for id in ids {
+                    if seen.insert(id) && (seen.len() - 1).is_multiple_of(PROFILE_EVERY) {
+                        profiles.push(json!({
+                            "id": format!("property-keyed-profile-{id}"),
+                            "about": format!("The values of profile {id}, which {property} {value:?} finds."),
+                            "evidence": {key: value.clone()},
+                            "profileId": id,
+                        }));
+                    }
                 }
             }
             values.push(case(

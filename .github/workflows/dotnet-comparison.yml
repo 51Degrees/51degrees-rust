@@ -393,6 +393,17 @@ jobs:
             fi
           done
 
+      # .NET finds a native model name in any case, where the crates match it
+      # exactly, which two entries in allowed-differences.json allow. This
+      # step fails on any NativeModel difference that case alone does not
+      # explain, so those entries hide nothing else.
+      - name: Check the NativeModel differences are of case alone
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        working-directory: parity
+        run: |
+          pwsh check-native-model-case.ps1 -Cases out/property-keyed-cases.json \
+            -Rust out/property-keyed-rust.jsonl -DotNet out/property-keyed-dotnet.jsonl
+
       # A changed Rust answer must fail the comparison and be named in the
       # report, or the comparison proves nothing.
       - name: Check that a changed answer fails

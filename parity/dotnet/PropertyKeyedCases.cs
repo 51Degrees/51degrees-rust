@@ -45,6 +45,7 @@ using FiftyOne.Pipeline.Core.Data;
 using FiftyOne.Pipeline.Core.FlowElements;
 using FiftyOne.Pipeline.Engines;
 using FiftyOne.Pipeline.Engines.Data;
+using FiftyOne.Pipeline.Engines.FiftyOne.FlowElements;
 using FiftyOne.Pipeline.JsonBuilder.Data;
 using FiftyOne.Pipeline.JsonBuilder.FlowElement;
 using Microsoft.Extensions.Logging;
@@ -354,8 +355,9 @@ namespace FiftyOne.Parity
             }
         }
 
-        // The Device Detection engine, then the TAC and Native engines, and
-        // the JSON builder last when json is set. .NET's engines read the
+        // The Device Detection engine, then the TAC and Native engines, with
+        // the Sequence element first and the JSON builder last when json is
+        // set. .NET's engines read the
         // data set of the first pipeline they join, so each pipeline has
         // engines of its own. Only the pipeline without the JSON builder
         // disposes the Device Detection engine they share.
@@ -369,7 +371,15 @@ namespace FiftyOne.Parity
             {
                 Tac = new TacEngineBuilder(Loggers).Build();
                 Native = new NativeEngineBuilder(Loggers).Build();
-                var builder = new PipelineBuilder(Loggers)
+                var builder = new PipelineBuilder(Loggers);
+                if (json)
+                {
+                    // The JSON builder reads the sequence this element
+                    // writes.
+                    builder = builder.AddFlowElement(
+                        new SequenceElementBuilder(Loggers).Build());
+                }
+                builder = builder
                     .AddFlowElement(device)
                     .AddFlowElement(Tac)
                     .AddFlowElement(Native);
