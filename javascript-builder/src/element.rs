@@ -121,7 +121,7 @@ fn parse_boolean(text: &str) -> Option<bool> {
 /// - **host**: the configured host if set, else the `header.host` evidence.
 /// - **object name**: the `query.fod-js-object-name` evidence if present and a
 ///   valid JavaScript identifier that the
-///   [object name rule](https://github.com/51Degrees/specifications/blob/a77a17a92bad6ea7b10d327dddf8a2cb7277b006/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L168)
+///   [object name rule](https://github.com/51Degrees/specifications/blob/88dda87fbd5a5842c664991cdeaed970193a90f6/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L182)
 ///   does not refuse, being a reserved word, `Infinity`, `NaN`, `undefined`,
 ///   `fiftyoneDegreesManager`, or a global name a page cannot use for the
 ///   object, such as `eval`, `window`, `location` or `localStorage`, else the
@@ -717,7 +717,7 @@ mod tests {
 
     /// Global names a top level `var` cannot safely use as the object are
     /// refused in code and ignored from the evidence.
-    // https://github.com/51Degrees/specifications/blob/a77a17a92bad6ea7b10d327dddf8a2cb7277b006/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L168
+    // https://github.com/51Degrees/specifications/blob/88dda87fbd5a5842c664991cdeaed970193a90f6/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L182
     #[test]
     fn unsafe_global_names_are_refused() {
         let element = JavaScriptBuilderElement::builder()

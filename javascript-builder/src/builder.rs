@@ -287,7 +287,7 @@ impl JavaScriptBuilderElementBuilder {
     ///
     /// The name must be a valid JavaScript identifier (it must match
     /// `[a-zA-Z_$][0-9a-zA-Z_$]*` in full) and must not be a name the
-    /// [object name rule](https://github.com/51Degrees/specifications/blob/a77a17a92bad6ea7b10d327dddf8a2cb7277b006/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L168)
+    /// [object name rule](https://github.com/51Degrees/specifications/blob/88dda87fbd5a5842c664991cdeaed970193a90f6/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L182)
     /// refuses. Those are the reserved words, `Infinity`, `NaN`, `undefined`,
     /// `fiftyoneDegreesManager`, and global names a page cannot use for the
     /// object, such as `eval`, `window`, `location` and `localStorage`. An
@@ -376,7 +376,7 @@ const RESERVED_WORDS: &[&str] = &[
 /// `location.href` to the object's text, which navigates the page away. The
 /// rest are properties of the browser's window that a top level `var` cannot
 /// replace, so the object would never be created. These are the names the
-/// [object name rule](https://github.com/51Degrees/specifications/blob/a77a17a92bad6ea7b10d327dddf8a2cb7277b006/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L168)
+/// [object name rule](https://github.com/51Degrees/specifications/blob/88dda87fbd5a5842c664991cdeaed970193a90f6/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L182)
 /// adds to the reserved words.
 #[rustfmt::skip]
 const UNSAFE_GLOBAL_NAMES: &[&str] = &[
