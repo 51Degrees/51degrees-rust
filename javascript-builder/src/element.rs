@@ -735,6 +735,18 @@ mod tests {
             "navigator",
             "closed",
             "location",
+            "frameElement",
+            "isSecureContext",
+            "crossOriginIsolated",
+            "trustedTypes",
+            "crypto",
+            "indexedDB",
+            "localStorage",
+            "sessionStorage",
+            "caches",
+            "cookieStore",
+            "speechSynthesis",
+            "styleMedia",
         ] {
             assert!(
                 JavaScriptBuilderElement::builder()
@@ -770,6 +782,11 @@ mod tests {
             "history2",
             "Navigator",
             "closedAt",
+            "cryptoKey",
+            "Crypto",
+            "localStorageKey",
+            "cachesList",
+            "styleMediaQuery",
         ] {
             assert!(is_valid_object_name(name), "'{name}' was refused");
         }
