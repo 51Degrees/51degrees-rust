@@ -60,10 +60,11 @@
 //! - **Data set access** ([`fiftyoneDegreesDataSetHashGet`],
 //!   [`fiftyoneDegreesDataSetHashRelease`] and
 //!   [`fiftyoneDegreesResourceManagerFree`], re-exported from the common crate).
-//! - **Metadata enumeration** through the small property and evidence key
-//!   helpers ([`fiftyoneDegreesShimHashGetRequiredPropertyCount`] and friends)
+//! - **Metadata enumeration** through the small property helpers
+//!   ([`fiftyoneDegreesShimHashGetRequiredPropertyCount`] and friends)
 //!   compiled from the crate's C shim. These read fields buried in the nested
 //!   data set structures so the Rust side need not mirror those private layouts.
+//!   The evidence keys come from [`fiftyoneDegreesHashGetEvidenceKeys`].
 //!
 //! The deeply nested data set and results structures are exposed as opaque
 //! pointer types. Only [`ConfigHash`] and its base structures, which a caller
@@ -287,8 +288,9 @@ pub struct ConfigHash {
 /// Mirrors the deeply nested `fiftyoneDegreesDataSetHash` from `hash.h`. The
 /// internal layout is intentionally hidden. The only operation defined on the
 /// pointer here is to release it with [`fiftyoneDegreesDataSetHashRelease`].
-/// Property and evidence key enumeration is provided through the shim helpers
-/// rather than by reaching into this structure from Rust.
+/// Properties are enumerated through the shim helpers, and the evidence keys
+/// through [`fiftyoneDegreesHashGetEvidenceKeys`], rather than by reaching
+/// into this structure from Rust.
 #[repr(C)]
 pub struct DataSetHash {
     _private: [u8; 0],
@@ -736,7 +738,7 @@ extern "C" {
 }
 
 // ---------------------------------------------------------------------------
-// Property and evidence key enumeration shim (src/shim.c)
+// Property enumeration shim (src/shim.c)
 // ---------------------------------------------------------------------------
 
 extern "C" {
