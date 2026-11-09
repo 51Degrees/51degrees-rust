@@ -45,6 +45,26 @@
 		(offsetof(rust, field) == offsetof(c, field) && \
 		sizeof(((rust *)0)->field) == sizeof(((c *)0)->field)) ? 1 : -1]
 
+bool fiftyoneDegreesIpiGetPublished(
+	fiftyoneDegreesResourceManager *manager,
+	fiftyoneDegreesDate *date);
+
+bool fiftyoneDegreesIpiGetNextUpdate(
+	fiftyoneDegreesResourceManager *manager,
+	fiftyoneDegreesDate *date);
+
+#pragma pack(push, 1)
+typedef struct {
+	int16_t year;
+	uint8_t month;
+	uint8_t day;
+} RustDate;
+#pragma pack(pop)
+CHECK_SIZE(RustDate, fiftyoneDegreesDate);
+CHECK_FIELD(RustDate, fiftyoneDegreesDate, year);
+CHECK_FIELD(RustDate, fiftyoneDegreesDate, month);
+CHECK_FIELD(RustDate, fiftyoneDegreesDate, day);
+
 typedef struct {
 	const char *file;
 	const char *func;

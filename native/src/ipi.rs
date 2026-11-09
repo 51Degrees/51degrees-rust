@@ -407,35 +407,27 @@ impl Manager {
     /// The date the data file was published, from its header, as `(year,
     /// month, day)`, or [`None`] when the header holds no valid date.
     pub fn data_set_published(&self) -> Option<(i32, u32, u32)> {
-        self.header_date(sys::fiftyoneDegreesShimIpiGetDataSetPublished)
+        self.header_date(sys::fiftyoneDegreesIpiGetPublished)
     }
 
     /// The date the next data file is expected, from the data file header,
     /// as `(year, month, day)`, or [`None`] when the header holds no valid
     /// date.
     pub fn data_set_next_update(&self) -> Option<(i32, u32, u32)> {
-        self.header_date(sys::fiftyoneDegreesShimIpiGetDataSetNextUpdate)
+        self.header_date(sys::fiftyoneDegreesIpiGetNextUpdate)
     }
 
-    /// The date `read` gives, or [`None`] when its year is not positive, its
-    /// month is not 1 to 12 or its day is not 1 to 31.
+    /// The date `read` gives, or [`None`] when the C library finds it is not
+    /// a valid date.
     fn header_date(
         &self,
-        read: unsafe extern "C" fn(
-            *mut sys::ResourceManager,
-            *mut c_int,
-            *mut c_int,
-            *mut c_int,
-        ) -> c_int,
+        read: unsafe extern "C" fn(*mut sys::ResourceManager, *mut sys::Date) -> bool,
     ) -> Option<(i32, u32, u32)> {
-        let (mut year, mut month, mut day): (c_int, c_int, c_int) = (0, 0, 0);
-        // Safety: the manager is initialized and each output pointer is
-        // writable.
-        let found = unsafe { read(self.as_ptr(), &mut year, &mut month, &mut day) };
-        if found == 0 || year <= 0 || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-            return None;
-        }
-        Some((year, u32::try_from(month).ok()?, u32::try_from(day).ok()?))
+        let mut date = sys::Date::default();
+        // Safety: the manager is initialized and `date` is writable.
+        let valid = unsafe { read(self.as_ptr(), &mut date) };
+        let sys::Date { year, month, day } = date;
+        valid.then(|| (i32::from(year), u32::from(month), u32::from(day)))
     }
 
     /// The names of every property the data set was initialized with, in

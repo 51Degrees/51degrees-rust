@@ -80,6 +80,14 @@ uint32_t fiftyoneDegreesHashGetProfileIdsForPropertyAndValue(
 	uint32_t length,
 	fiftyoneDegreesException *exception);
 
+bool fiftyoneDegreesHashGetPublished(
+	fiftyoneDegreesResourceManager *manager,
+	fiftyoneDegreesDate *date);
+
+bool fiftyoneDegreesHashGetNextUpdate(
+	fiftyoneDegreesResourceManager *manager,
+	fiftyoneDegreesDate *date);
+
 /* fiftyone-common-sys */
 
 typedef struct {
@@ -173,6 +181,18 @@ CHECK_SIZE(RustCollectionConfig, fiftyoneDegreesCollectionConfig);
 CHECK_FIELD(RustCollectionConfig, fiftyoneDegreesCollectionConfig, loaded);
 CHECK_FIELD(RustCollectionConfig, fiftyoneDegreesCollectionConfig, capacity);
 CHECK_FIELD(RustCollectionConfig, fiftyoneDegreesCollectionConfig, concurrency);
+
+#pragma pack(push, 1)
+typedef struct {
+	int16_t year;
+	uint8_t month;
+	uint8_t day;
+} RustDate;
+#pragma pack(pop)
+CHECK_SIZE(RustDate, fiftyoneDegreesDate);
+CHECK_FIELD(RustDate, fiftyoneDegreesDate, year);
+CHECK_FIELD(RustDate, fiftyoneDegreesDate, month);
+CHECK_FIELD(RustDate, fiftyoneDegreesDate, day);
 
 typedef struct {
 	bool allInMemory;

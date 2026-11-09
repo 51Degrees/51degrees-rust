@@ -503,33 +503,27 @@ impl Manager {
     /// The date the data file was published, from its header, as `(year,
     /// month, day)`, or [`None`] when the header holds no valid date.
     pub fn data_set_published(&self) -> Option<(i32, u32, u32)> {
-        self.header_date(sys::fiftyoneDegreesShimHashGetDataSetPublished)
+        self.header_date(sys::fiftyoneDegreesHashGetPublished)
     }
 
     /// The date the next data file is expected, from the data file header,
     /// as `(year, month, day)`, or [`None`] when the header holds no valid
     /// date.
     pub fn data_set_next_update(&self) -> Option<(i32, u32, u32)> {
-        self.header_date(sys::fiftyoneDegreesShimHashGetDataSetNextUpdate)
+        self.header_date(sys::fiftyoneDegreesHashGetNextUpdate)
     }
 
+    /// The date `read` gives, or [`None`] when the C library finds it is not
+    /// a valid date.
     fn header_date(
         &self,
-        read: unsafe extern "C" fn(
-            *mut sys::ResourceManager,
-            *mut i32,
-            *mut i32,
-            *mut i32,
-        ) -> c_int,
+        read: unsafe extern "C" fn(*mut sys::ResourceManager, *mut sys::Date) -> bool,
     ) -> Option<(i32, u32, u32)> {
-        let (mut year, mut month, mut day) = (0, 0, 0);
-        // Safety: the manager is initialized and each output pointer is
-        // writable.
-        let found = unsafe { read(self.as_ptr(), &mut year, &mut month, &mut day) };
-        if found == 0 || year <= 0 || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-            return None;
-        }
-        Some((year, u32::try_from(month).ok()?, u32::try_from(day).ok()?))
+        let mut date = sys::Date::default();
+        // Safety: the manager is initialized and `date` is writable.
+        let valid = unsafe { read(self.as_ptr(), &mut date) };
+        let sys::Date { year, month, day } = date;
+        valid.then(|| (i32::from(year), u32::from(month), u32::from(day)))
     }
 
     /// The raw native manager pointer. For the engine wrappers in this crate.

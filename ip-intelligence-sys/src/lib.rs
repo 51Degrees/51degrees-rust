@@ -97,7 +97,7 @@
 use std::os::raw::{c_char, c_int, c_void};
 
 pub use common::{
-    EvidenceKeyValuePair, EvidenceKeyValuePairArray, EvidencePrefix, Exception,
+    Date, EvidenceKeyValuePair, EvidenceKeyValuePairArray, EvidencePrefix, Exception,
     PropertiesAvailable, PropertiesRequired, ResourceHandle, ResourceManager, StatusCode,
 };
 
@@ -353,6 +353,21 @@ pub mod common {
                 existing: std::ptr::null_mut(),
             }
         }
+    }
+
+    /// A date as a data file header holds it, being the year, the month from 1
+    /// to 12 and the day of the month.
+    ///
+    /// Mirrors `fiftyoneDegreesDate` from `date.h`, which is packed.
+    #[repr(C, packed)]
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    pub struct Date {
+        /// The year.
+        pub year: i16,
+        /// The month, from 1 to 12.
+        pub month: u8,
+        /// The day of the month, from 1.
+        pub day: u8,
     }
 
     extern "C" {
@@ -1238,35 +1253,31 @@ extern "C" {
         length: usize,
     ) -> usize;
 
-    /// Writes the date the data file was published, from its header, into
-    /// `*year`, `*month` and `*day` and returns `1`, or `0` when no data set
-    /// is available. Any output pointer may be null. Defined by this crate's
-    /// `src/shim.c`.
+    /// Sets `*date` to the date the data file was published, from its
+    /// header, and returns true when that date is valid, as
+    /// `fiftyoneDegreesDateIsValid` in `date.h` decides. Otherwise sets
+    /// `*date` to zeros and returns false.
     ///
     /// # Safety
-    /// `manager` must be initialized. Each non-null output pointer must be
-    /// writable.
-    pub fn fiftyoneDegreesShimIpiGetDataSetPublished(
+    /// `manager` must be initialized and `date` must point to
+    /// a writable [`Date`].
+    pub fn fiftyoneDegreesIpiGetPublished(
         manager: *mut ResourceManager,
-        year: *mut c_int,
-        month: *mut c_int,
-        day: *mut c_int,
-    ) -> c_int;
+        date: *mut Date,
+    ) -> bool;
 
-    /// Writes the date the next data file is expected, from the data file
-    /// header, into `*year`, `*month` and `*day` and returns `1`, or `0` when
-    /// no data set is available. Any output pointer may be null. Defined by
-    /// this crate's `src/shim.c`.
+    /// Sets `*date` to the date the next data file is expected, from the
+    /// data file header, and returns true when that date is valid, as
+    /// `fiftyoneDegreesDateIsValid` in `date.h` decides. Otherwise sets
+    /// `*date` to zeros and returns false.
     ///
     /// # Safety
-    /// `manager` must be initialized. Each non-null output pointer must be
-    /// writable.
-    pub fn fiftyoneDegreesShimIpiGetDataSetNextUpdate(
+    /// `manager` must be initialized and `date` must point to
+    /// a writable [`Date`].
+    pub fn fiftyoneDegreesIpiGetNextUpdate(
         manager: *mut ResourceManager,
-        year: *mut c_int,
-        month: *mut c_int,
-        day: *mut c_int,
-    ) -> c_int;
+        date: *mut Date,
+    ) -> bool;
 
     /// Returns the size of an IP Intelligence data file's header in bytes,
     /// being how much of a data file the C library compares to find a copy of
