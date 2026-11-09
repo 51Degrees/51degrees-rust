@@ -158,6 +158,12 @@ impl IpIntelligenceOnPremiseEngineBuilder {
     /// the data file made there, so an update can replace the data file itself,
     /// and with [`Self::create_temp_data_copy`] every profile does. Defaults to
     /// the system's temporary folder, [`std::env::temp_dir`].
+    ///
+    /// The engine removes each copy it reads once it no longer reads it, and
+    /// leaves any other copy of the data file in the folder, such as one a
+    /// process that stopped left behind. .NET, through the C library, removes
+    /// those after each load from a copy other than on Apple systems, and on
+    /// Linux skips any that a process has open.
     pub fn temp_dir_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.temp_dir = Some(path.into());
         self
