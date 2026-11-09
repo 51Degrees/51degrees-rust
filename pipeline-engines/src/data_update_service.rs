@@ -668,12 +668,7 @@ impl ServiceHandle {
             }
         }
 
-        let longest = Duration::from_secs(LONGEST_SLEEP_SECONDS);
-        earliest
-            .map_or(longest, |e| {
-                e.saturating_duration_since(Instant::now()).min(longest)
-            })
-            .max(Duration::from_millis(SHORTEST_SLEEP_MILLISECONDS))
+        sleep_until(earliest, Instant::now())
     }
 
     /// Handle a file-system-watcher event by refreshing the engine from disk if
@@ -962,6 +957,17 @@ const LONGEST_SLEEP_SECONDS: u64 = 60 * 60;
 /// The shortest the scheduler sleeps between rounds, so a poll that is
 /// already due does not spin the loop.
 const SHORTEST_SLEEP_MILLISECONDS: u64 = 50;
+
+/// How long the scheduler sleeps at `now` when the earliest next poll is
+/// `earliest`. That is until the poll, but no longer than the longest sleep,
+/// which is also the sleep when no poll is scheduled, and no shorter than
+/// the shortest sleep.
+fn sleep_until(earliest: Option<Instant>, now: Instant) -> Duration {
+    let longest = Duration::from_secs(LONGEST_SLEEP_SECONDS);
+    earliest
+        .map_or(longest, |e| e.saturating_duration_since(now).min(longest))
+        .max(Duration::from_millis(SHORTEST_SLEEP_MILLISECONDS))
+}
 
 /// Reads through to another reader, taking the MD5 of every byte read.
 struct Md5Reader<R> {
@@ -1662,6 +1668,44 @@ mod tests {
             sleep <= until_due + SHORT_INTERVAL / 2 && sleep + SHORT_INTERVAL / 2 >= until_due,
             "the scheduler sleeps {sleep:?} when the next poll is due in {until_due:?}"
         );
+    }
+
+    /// The longest sleep, written apart from [`LONGEST_SLEEP_SECONDS`] so that
+    /// a change to that constant fails the tests below.
+    const ONE_HOUR: Duration = Duration::from_secs(60 * 60);
+
+    /// The shortest sleep, written apart from [`SHORTEST_SLEEP_MILLISECONDS`]
+    /// so that a change to that constant fails the test below.
+    const FIFTY_MILLISECONDS: Duration = Duration::from_millis(50);
+
+    /// With no poll scheduled the scheduler sleeps for the longest sleep.
+    #[test]
+    fn with_no_poll_scheduled_the_sleep_is_one_hour() {
+        assert_eq!(sleep_until(None, Instant::now()), ONE_HOUR);
+    }
+
+    /// A poll further away than the longest sleep is slept towards for the
+    /// longest sleep, and the scheduler then looks again.
+    #[test]
+    fn a_poll_two_hours_away_gives_a_sleep_of_one_hour() {
+        let now = Instant::now();
+        assert_eq!(sleep_until(Some(now + 2 * ONE_HOUR), now), ONE_HOUR);
+    }
+
+    /// A poll that is already due gives the shortest sleep.
+    #[test]
+    fn a_poll_already_due_gives_a_sleep_of_fifty_milliseconds() {
+        let due = Instant::now();
+        let now = due + Duration::from_secs(1);
+        assert_eq!(sleep_until(Some(due), now), FIFTY_MILLISECONDS);
+    }
+
+    /// A poll due within the longest sleep is slept towards exactly.
+    #[test]
+    fn a_poll_three_seconds_away_gives_a_sleep_of_three_seconds() {
+        let now = Instant::now();
+        let ahead = Duration::from_secs(3);
+        assert_eq!(sleep_until(Some(now + ahead), now), ahead);
     }
 
     /// A polling interval longer than [`SLOW_ANSWER`], so a file registered
