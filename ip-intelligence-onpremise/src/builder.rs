@@ -139,14 +139,16 @@ impl IpIntelligenceOnPremiseEngineBuilder {
     /// Under [`PerformanceProfile::LowMemory`] and
     /// [`PerformanceProfile::Balanced`] it sizes the pool of file handles the
     /// collections left on file read through, so it is how many calls can read
-    /// the data file at once, to at most 64, and a call beyond that waits for
-    /// a handle. Under [`PerformanceProfile::Balanced`] it is also the number
-    /// of separately locked parts of each cache, or fewer for a cache with
-    /// fewer entries, so any value opens. The in-memory profiles read nothing
-    /// from the data file once it is loaded, but for the values of properties
-    /// not named when `HighPerformance` names some, so it does not change how
-    /// their lookups run. Unset, the profile's own is kept, one for each
-    /// processor. A refresh opens the new data file with the same value.
+    /// the data file at once, to at most 64, and a call beyond that waits for a
+    /// handle. Under [`PerformanceProfile::Balanced`] it is also the number of
+    /// separately locked parts of each cache, or fewer for a cache with fewer
+    /// entries than the concurrency squared, and a cache with fewer entries
+    /// than the concurrency is grown to it, so any value opens. The in-memory
+    /// profiles read nothing from the data file once it is loaded, but for the
+    /// values of properties not named when `HighPerformance` names some, so it
+    /// does not change how their lookups run. Unset, the profile's own is kept,
+    /// one for each processor. A refresh opens the new data file with the same
+    /// value.
     pub fn concurrency(mut self, concurrency: u16) -> Self {
         self.concurrency = Some(concurrency);
         self

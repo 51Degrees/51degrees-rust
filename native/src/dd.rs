@@ -1652,8 +1652,8 @@ mod tests {
 
     use fiftyone_pipeline_core::Evidence;
 
-    /// The text the C++ results wrapped each `JavascriptHardwareProfile`
-    /// value in before the C library wrote it.
+    /// The text the C++ results give for a `JavascriptHardwareProfile`
+    /// value, `body` wrapped in the script that sets the profile ids cookie.
     fn cpp_hardware_profile_script(body: &str) -> String {
         format!(
             "var profileIds = []\n{body}\n\
