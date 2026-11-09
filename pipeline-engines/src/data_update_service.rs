@@ -1601,6 +1601,32 @@ mod tests {
         );
     }
 
+    /// A file that is not yet due and comes before a slow poll in the round
+    /// still has its poll at its due time, because the sleep is counted from
+    /// the end of the round rather than from when that file was seen.
+    #[test]
+    fn the_sleep_ends_when_a_file_seen_before_a_slow_poll_is_due() {
+        let (_engine, shared) = dated_engine("http://127.0.0.1:9/unused", true);
+        let (slow_url, slow_server) =
+            answer_once_after(SLOW_ANSWER, "HTTP/1.1 304 Not Modified", b"");
+        let (_slow_engine, slow) = dated_engine(&slow_url, true);
+        let handle = empty_handle();
+        let registration = add_due(&handle, &shared);
+        add_due(&handle, &slow);
+        let due = Instant::now() + SLOW_ANSWER + SHORT_INTERVAL;
+        *registration.next_poll.lock().unwrap() = Some(due);
+
+        let sleep = handle.run_due_polls();
+        let ended = Instant::now();
+        slow_server.join().unwrap();
+
+        let until_due = due.saturating_duration_since(ended);
+        assert!(
+            sleep <= until_due + SHORT_INTERVAL / 2 && sleep + SHORT_INTERVAL / 2 >= until_due,
+            "the scheduler sleeps {sleep:?} when the next poll is due in {until_due:?}"
+        );
+    }
+
     /// A programmatic check that applies new data to a registered file moves
     /// its next scheduled poll to the next update date the new data gives.
     #[test]
