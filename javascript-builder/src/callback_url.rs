@@ -581,6 +581,32 @@ mod tests {
         );
     }
 
+    // Rule 6 keeps everything in the host value before its last `@` out of
+    // the log, after the first `/` too, so a password holding `/` is hidden.
+    #[test]
+    fn the_invalid_url_hides_the_host_value_before_its_last_at() {
+        let cases = [
+            (
+                "user:pa/ss@example.com",
+                "https://***@example.com/51dpipeline/json",
+            ),
+            ("exa mple.com/a@b", "https://***@b/51dpipeline/json"),
+            ("u@exa mple.com/a@b/c", "https://***@b/c/51dpipeline/json"),
+            (
+                "a@b@example.com",
+                "https://***@example.com/51dpipeline/json",
+            ),
+            ("exa mple.com/a", "https://exa mple.com/a/51dpipeline/json"),
+        ];
+        for (host, logged) in cases {
+            assert_eq!(
+                url("https", host),
+                CallbackUrl::Invalid(logged.to_owned()),
+                "host {host:?}"
+            );
+        }
+    }
+
     // Only `http` and `https`, ignoring case, as rule 1 of the callback URL
     // rule in the JavaScript builder specification asks.
     #[test]

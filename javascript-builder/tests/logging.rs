@@ -232,8 +232,9 @@ fn a_refused_host_does_not_log_its_user_information() {
     assert!(!js.contains("processRequest"));
 }
 
-/// Everything before the last `@` ahead of the host's first `/` is replaced
-/// by `***` in the record, and an `@` after that `/` is kept.
+/// Everything in the host value before its last `@` is replaced by `***` in
+/// the record, after the host's first `/` too, so a password holding `/` is
+/// not logged and the part of a refused host before that `@` is lost.
 #[test]
 fn a_refused_host_logs_only_what_follows_its_user_information() {
     let cases = [
@@ -243,13 +244,11 @@ fn a_refused_host_logs_only_what_follows_its_user_information() {
         ),
         ("u@[::1]:80x", "\"https://***@[::1]:80x/51dpipeline/json\""),
         (
-            "u@exa mple.com/a@b",
-            "\"https://***@exa mple.com/a@b/51dpipeline/json\"",
+            "user:pa/ss@example.com",
+            "\"https://***@example.com/51dpipeline/json\"",
         ),
-        (
-            "exa mple.com/a@b",
-            "\"https://exa mple.com/a@b/51dpipeline/json\"",
-        ),
+        ("u@exa mple.com/a@b", "\"https://***@b/51dpipeline/json\""),
+        ("exa mple.com/a@b", "\"https://***@b/51dpipeline/json\""),
     ];
     for (host, expected) in cases {
         let pipeline = pipeline(
