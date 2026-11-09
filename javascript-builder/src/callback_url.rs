@@ -25,8 +25,8 @@
 //! The protocol and host usually come from the request, so the URL is checked
 //! before it is written into the script, where it sits inside a single-quoted
 //! JavaScript string. A URL that is not valid is refused, and the characters
-//! in the user information, after the host and in the endpoint that could
-//! end the string or the script are percent-encoded.
+//! after the host and in the endpoint that could end the string or the
+//! script are percent-encoded.
 
 use std::net::Ipv6Addr;
 
@@ -36,7 +36,7 @@ pub(crate) enum CallbackUrl {
     /// The protocol, host or endpoint is empty, so the script has no URL.
     Missing,
     /// The URL is not valid, so the script has no URL. Carries the URL as it
-    /// was built, for the log.
+    /// was built, with any user information replaced by `***`, for the log.
     Invalid(String),
     /// The URL to write into the script.
     Valid(String),
@@ -44,6 +44,9 @@ pub(crate) enum CallbackUrl {
 
 /// The largest port number.
 const MAX_PORT: u32 = 65_535;
+
+/// What the log shows in place of the user information of a refused host.
+const USER_INFO_MARKER: &str = "***";
 
 /// Build the callback URL from its parts and check it.
 ///
@@ -59,20 +62,34 @@ pub(crate) fn callback_url(protocol: &str, host: &str, endpoint: &str) -> Callba
         (true, true) => endpoint[1..].to_owned(),
         _ => endpoint.to_owned(),
     };
-    let built = format!("{protocol}://{host}{endpoint}");
-    if !is_scheme(protocol) {
-        return CallbackUrl::Invalid(built);
-    }
-    let end = host.find(['/', '?', '#']).unwrap_or(host.len());
+    let end = host.find('/').unwrap_or(host.len());
     let (authority, rest) = host.split_at(end);
-    match checked_authority(authority) {
+    let invalid = || {
+        let shown = logged_authority(authority);
+        CallbackUrl::Invalid(format!("{protocol}://{shown}{rest}{endpoint}"))
+    };
+    // A `?` or `#` in the host would start the query or the fragment before
+    // the endpoint, and `fetch` refuses a URL with user information.
+    if !is_scheme(protocol) || host.contains(['?', '#']) || authority.contains('@') {
+        return invalid();
+    }
+    match checked_host_port(authority) {
         Some(authority) => CallbackUrl::Valid(format!(
             "{}://{authority}{}{}",
             protocol.to_ascii_lowercase(),
             encoded(rest),
             encoded(&endpoint)
         )),
-        None => CallbackUrl::Invalid(built),
+        None => invalid(),
+    }
+}
+
+/// The authority as the log shows it, with everything before its last `@`
+/// replaced by `***`, so a user name or password is never logged.
+fn logged_authority(authority: &str) -> String {
+    match authority.rfind('@') {
+        Some(at) => format!("{USER_INFO_MARKER}{}", &authority[at..]),
+        None => authority.to_owned(),
     }
 }
 
@@ -82,40 +99,23 @@ fn is_scheme(protocol: &str) -> bool {
     protocol.eq_ignore_ascii_case("http") || protocol.eq_ignore_ascii_case("https")
 }
 
-/// The user information, host and port, or `None` when the host or the port is
-/// not valid.
-fn checked_authority(authority: &str) -> Option<String> {
-    let (user, host_port) = match authority.split_once('@') {
-        Some((user, host_port)) => (Some(user), host_port),
-        None => (None, authority),
-    };
-    let host_port = checked_host_port(host_port)?;
-    Some(match user {
-        Some(user) => format!("{}@{host_port}", encoded(user)),
-        None => host_port,
-    })
-}
-
 /// A host and an optional port. The host is a bracketed IPv6 address, or a
 /// name of non-empty labels separated by dots, with a dot allowed at the end,
-/// and the port is up to 65535 or empty.
+/// and the port is up to 65535 or empty. `Ipv6Addr` takes no zone
+/// identifier, so a `%` inside the brackets is refused, as a browser's URL
+/// parser refuses it. A name that ends in a number, ignoring one `.` at its
+/// end, must be an IPv4 address with no `.` at its end, because a browser's
+/// URL parser reads it as one, and so that it has one written form.
 fn checked_host_port(host_port: &str) -> Option<String> {
     let (host, port) = if let Some(inner) = host_port.strip_prefix('[') {
         let (address, after) = inner.split_once(']')?;
-        let (address, zone) = match address.split_once("%25") {
-            Some((address, zone)) => (address, Some(zone)),
-            None => (address, None),
-        };
         address.parse::<Ipv6Addr>().ok()?;
-        if zone.is_some_and(|zone| zone.is_empty() || !zone.bytes().all(is_unreserved)) {
-            return None;
-        }
         (&host_port[..host_port.len() - after.len()], after)
     } else {
         let end = host_port.find(':').unwrap_or(host_port.len());
         let (host, port) = host_port.split_at(end);
         let name = host.strip_suffix('.').unwrap_or(host);
-        if !name.split('.').all(is_label) {
+        if !name.split('.').all(is_label) || (ends_in_a_number(name) && !is_ipv4(host)) {
             return None;
         }
         (host, port)
@@ -142,9 +142,25 @@ fn is_label(label: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// The unreserved characters of RFC 3986 section 2.3.
-fn is_unreserved(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~')
+/// Whether the last label of a name is a number as the URL Standard's ends in
+/// a number checker reads one, being all ASCII digits, or `0x` or `0X`
+/// followed by hex digits. The name has had one `.` at its end removed.
+fn ends_in_a_number(name: &str) -> bool {
+    let last = name.rsplit_once('.').map_or(name, |(_, last)| last);
+    match last.strip_prefix("0x").or_else(|| last.strip_prefix("0X")) {
+        Some(hex) => hex.bytes().all(|b| b.is_ascii_hexdigit()),
+        None => !last.is_empty() && last.bytes().all(|b| b.is_ascii_digit()),
+    }
+}
+
+/// Four decimal parts of 0 to 255 separated by dots, with no leading zero.
+fn is_ipv4(name: &str) -> bool {
+    let is_part = |part: &str| {
+        part.bytes().all(|b| b.is_ascii_digit())
+            && (part == "0" || !part.starts_with('0'))
+            && part.parse::<u8>().is_ok()
+    };
+    name.split('.').count() == 4 && name.split('.').all(is_part)
 }
 
 /// Percent-encode the characters a URL cannot hold as they are and those that
@@ -223,7 +239,9 @@ mod tests {
     }
 
     // The hosts .NET 4.5.128's JavaScript builder accepts, with the URL the
-    // crate writes.
+    // crate writes. The hosts .NET accepts that hold a zone identifier, user
+    // information, a `?` or a `#`, or that end in a number without being an
+    // IPv4 address, are refused, in the tests further down.
     #[test]
     fn accepts_the_hosts_dotnet_accepts() {
         let cases = [
@@ -242,28 +260,11 @@ mod tests {
             ("127.0.0.1:80", "https://127.0.0.1:80/51dpipeline/json"),
             ("[::1]", "https://[::1]/51dpipeline/json"),
             ("[::1]:8080", "https://[::1]:8080/51dpipeline/json"),
-            (
-                "[fe80::1%25eth0]",
-                "https://[fe80::1%25eth0]/51dpipeline/json",
-            ),
-            (
-                "user:pw@example.com",
-                "https://user:pw@example.com/51dpipeline/json",
-            ),
-            (
-                "u x@example.com",
-                "https://u%20x@example.com/51dpipeline/json",
-            ),
-            (
-                "u\tx@example.com",
-                "https://u%09x@example.com/51dpipeline/json",
-            ),
             ("example.com.", "https://example.com./51dpipeline/json"),
             (
                 "example.com/path",
                 "https://example.com/path/51dpipeline/json",
             ),
-            ("example.com?x", "https://example.com?x/51dpipeline/json"),
             (
                 "example.com/a b",
                 "https://example.com/a%20b/51dpipeline/json",
@@ -291,36 +292,12 @@ mod tests {
             ("a-b.com", "https://a-b.com/51dpipeline/json"),
             ("ab-.com", "https://ab-.com/51dpipeline/json"),
             ("127.0.0.1", "https://127.0.0.1/51dpipeline/json"),
-            ("300.1.1.1", "https://300.1.1.1/51dpipeline/json"),
             ("localhost", "https://localhost/51dpipeline/json"),
-            ("1", "https://1/51dpipeline/json"),
-            ("0x7f.1", "https://0x7f.1/51dpipeline/json"),
             ("a.b.c.d.e.f", "https://a.b.c.d.e.f/51dpipeline/json"),
             (
                 "xn--bcher-kva.de",
                 "https://xn--bcher-kva.de/51dpipeline/json",
             ),
-            (
-                "user@example.com",
-                "https://user@example.com/51dpipeline/json",
-            ),
-            (
-                "u%41@example.com",
-                "https://u%41@example.com/51dpipeline/json",
-            ),
-            (
-                "u\"x@example.com",
-                "https://u%22x@example.com/51dpipeline/json",
-            ),
-            (
-                "u\nx@example.com",
-                "https://u%0Ax@example.com/51dpipeline/json",
-            ),
-            (
-                "u\u{1}x@example.com",
-                "https://u%01x@example.com/51dpipeline/json",
-            ),
-            ("example.com#x", "https://example.com#x/51dpipeline/json"),
             (
                 "example.com:8080/x",
                 "https://example.com:8080/x/51dpipeline/json",
@@ -392,8 +369,7 @@ mod tests {
         }
     }
 
-    // Inside the brackets only an IPv6 address, optionally followed by `%25`
-    // and a zone of unreserved characters, and after them only a port.
+    // Inside the brackets only an IPv6 address, and after them only a port.
     #[test]
     fn refuses_a_zone_or_text_after_the_bracket_that_is_not_valid() {
         let hosts = [
@@ -412,10 +388,133 @@ mod tests {
                 "host {host:?}"
             );
         }
+    }
+
+    // A `%` inside the brackets is refused, zone identifier or not, because
+    // the URL Standard's IPv6 parser fails on it, so a browser could not
+    // parse the URL.
+    #[test]
+    fn refuses_a_zone_identifier() {
+        let hosts = [
+            "[fe80::1%25eth0]",
+            "[fe80::1%25eth0]:8080",
+            "[FE80::1%25ETH0]",
+            "[fe80::1%251]",
+            "[::1%25lo]",
+            "[fe80::1%]",
+            "[fe80::1%25eth0]/path",
+        ];
+        for host in hosts {
+            assert!(
+                matches!(url("https", host), CallbackUrl::Invalid(_)),
+                "host {host:?}"
+            );
+        }
+    }
+
+    // Any `@` in the authority is refused, because `fetch` throws a
+    // TypeError for a URL with a user name or a password. An `@` after the
+    // authority is part of the path.
+    #[test]
+    fn refuses_user_information() {
+        let hosts = [
+            "user@example.com",
+            "user:pw@example.com",
+            "@example.com",
+            ":@example.com",
+            "user@example.com:8080",
+            "user@[::1]",
+            "user@example.com/path",
+            "u%41@example.com",
+            "u x@example.com",
+            "u\tx@example.com",
+            "u\"x@example.com",
+            "u'x@example.com",
+            "u\\x@example.com",
+            "u\nx@example.com",
+            "u\u{1}x@example.com",
+        ];
+        for host in hosts {
+            assert!(
+                matches!(url("https", host), CallbackUrl::Invalid(_)),
+                "host {host:?}"
+            );
+        }
         assert_eq!(
-            url("https", "[fe80::1%25eth0]:8080"),
-            valid("https://[fe80::1%25eth0]:8080/51dpipeline/json")
+            url("https", "example.com/a@b"),
+            valid("https://example.com/a@b/51dpipeline/json")
         );
+    }
+
+    // A `?` or `#` anywhere in the host is refused, because it would start
+    // the query or the fragment before the endpoint, so the script would
+    // call back to the wrong path.
+    #[test]
+    fn refuses_a_query_or_fragment_in_the_host() {
+        let hosts = [
+            "example.com?x",
+            "example.com#x",
+            "example.com?",
+            "example.com#",
+            "example.com:8080?x",
+            "[::1]#x",
+            "example.com/path?x",
+            "example.com/path#x",
+            "example.com?');alert(1);//",
+            "example.com#');alert(1);//",
+        ];
+        for host in hosts {
+            assert!(
+                matches!(url("https", host), CallbackUrl::Invalid(_)),
+                "host {host:?}"
+            );
+        }
+    }
+
+    // A host whose last label is all digits, or `0x` or `0X` and hex digits,
+    // is read by a browser's URL parser as an IPv4 address, so it must be
+    // four decimal parts of 0 to 255 with no leading zero and no `.` at the
+    // end. One `.` at the end is dropped before the last label is read, so
+    // `example.123.` ends in a number too.
+    #[test]
+    fn a_host_ending_in_a_number_must_be_ipv4() {
+        let hosts = [
+            "example.123",
+            "example.0x1f",
+            "example.0X",
+            "1.2.3.999",
+            "1.2.3",
+            "127.1",
+            "0x7f.0.0.1",
+            "01.2.3.4",
+            "example.123.",
+            "1.2.3.4.",
+            "1.2.3.4.5",
+            "1",
+            "300.1.1.1",
+            "0x7f.1",
+        ];
+        for host in hosts {
+            assert!(
+                matches!(url("https", host), CallbackUrl::Invalid(_)),
+                "host {host:?}"
+            );
+        }
+        let cases = [
+            ("1.2.3.4", "https://1.2.3.4/51dpipeline/json"),
+            ("1.2.3.4:8080", "https://1.2.3.4:8080/51dpipeline/json"),
+            ("1.2.3.4/path", "https://1.2.3.4/path/51dpipeline/json"),
+            ("example.com", "https://example.com/51dpipeline/json"),
+            ("example.co1", "https://example.co1/51dpipeline/json"),
+            (
+                "123.example.com",
+                "https://123.example.com/51dpipeline/json",
+            ),
+            ("0.0.0.0", "https://0.0.0.0/51dpipeline/json"),
+        ];
+        for (host, expected) in cases {
+            assert_eq!(url("https", host), valid(expected), "host {host:?}");
+        }
     }
 
     // A port goes by its value, so leading zeros are allowed, and a port too
@@ -443,17 +542,13 @@ mod tests {
         }
     }
 
-    // Each character rule 8 lists, in the user information, after the host
-    // and in the endpoint, and a `%` without two hexadecimal digits after it,
-    // even at the end.
+    // Each character rule 8 lists, after the host and in the endpoint, and a
+    // `%` without two hexadecimal digits after it, even at the end.
     #[test]
     fn encodes_the_characters_rule_8_lists() {
         assert_eq!(
-            callback_url("https", "u\"^`{|}@example.com/\"^`{|}", "/j\"^`{|}"),
-            valid(
-                "https://u%22%5E%60%7B%7C%7D@example.com/%22%5E%60%7B%7C%7D\
-                 /j%22%5E%60%7B%7C%7D"
-            )
+            callback_url("https", "example.com/\"^`{|}", "/j\"^`{|}"),
+            valid("https://example.com/%22%5E%60%7B%7C%7D/j%22%5E%60%7B%7C%7D")
         );
         let cases = [
             (
@@ -525,11 +620,8 @@ mod tests {
     fn nothing_given_can_end_the_string() {
         let hosts = [
             "example.com/');alert(1);//",
-            "example.com?');alert(1);//",
-            "example.com#');alert(1);//",
-            "u'x@example.com",
-            "u\\x@example.com",
             "example.com/a\\b",
+            "example.com/a\"b",
             "example.com/</script>",
         ];
         for host in hosts {
