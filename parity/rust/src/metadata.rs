@@ -73,7 +73,8 @@ struct Case {
     /// The properties the engine is opened with, or every one when empty.
     #[serde(default)]
     properties: Vec<String>,
-    /// How many of each property's values to write, every one when 0.
+    /// How many of each property's first values to write, every one when 0.
+    /// A Device Detection case writes up to as many of its last values too.
     value_limit: usize,
     /// The evidence of the request made before reading [`Case::read`].
     #[serde(default)]

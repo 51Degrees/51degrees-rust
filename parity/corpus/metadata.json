@@ -1,7 +1,7 @@
 [
   {
     "id": "metadata-device",
-    "about": "The Device Detection engine opened with every property. Its properties, components, and up to 1,000 values of each property.",
+    "about": "The Device Detection engine opened with every property. Its properties, components, and up to 1,000 of the first and 1,000 of the last values of each property.",
     "engine": "device",
     "valueLimit": 1000
   },
