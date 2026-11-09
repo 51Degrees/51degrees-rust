@@ -112,7 +112,7 @@ fn is_scheme(protocol: &str) -> bool {
 /// name of non-empty labels separated by dots, with a dot allowed at the end.
 /// The port, where a `:` is given, is one or more digits whose value is up to
 /// 65535, as
-/// [rule 5 of the callback URL](https://github.com/51Degrees/specifications/blob/c8734d4c5df202fe19c7881de8453337dbb59377/pipeline-specification/pipeline-elements/javascript-builder.md#L248-L259)
+/// [rule 5 of the callback URL](https://github.com/51Degrees/specifications/blob/2d548bea89592580a0aa63eb64cd528122c5294c/pipeline-specification/pipeline-elements/javascript-builder.md#L248-L259)
 /// asks, so a host given with its scheme, such as `https://example.com`, is
 /// not read as the host `https` with an empty port. `Ipv6Addr` takes no zone
 /// identifier, so a `%` inside the brackets is refused, as a browser's URL
@@ -544,7 +544,7 @@ mod tests {
     // A `:` with no port after it is refused, so a host given with its
     // scheme, such as `https://example.com`, is not read as the host `https`
     // with an empty port, as rule 5 of the callback URL says.
-    // https://github.com/51Degrees/specifications/blob/c8734d4c5df202fe19c7881de8453337dbb59377/pipeline-specification/pipeline-elements/javascript-builder.md#L248-L259
+    // https://github.com/51Degrees/specifications/blob/2d548bea89592580a0aa63eb64cd528122c5294c/pipeline-specification/pipeline-elements/javascript-builder.md#L248-L259
     #[test]
     fn refuses_an_empty_port() {
         let hosts = [
