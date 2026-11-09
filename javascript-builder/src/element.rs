@@ -712,6 +712,65 @@ mod tests {
         }
     }
 
+    /// Global names a top level `var` cannot safely use as the object are
+    /// refused in code and ignored from the evidence.
+    #[test]
+    fn unsafe_global_names_are_refused() {
+        let element = JavaScriptBuilderElement::builder()
+            .set_object_name("configured")
+            .unwrap()
+            .build();
+        for name in [
+            "eval",
+            "arguments",
+            "window",
+            "document",
+            "top",
+            "name",
+            "status",
+            "history",
+            "navigator",
+            "closed",
+        ] {
+            assert!(
+                JavaScriptBuilderElement::builder()
+                    .set_object_name(name)
+                    .is_err(),
+                "'{name}' was accepted in code"
+            );
+            let data = flow_data_with(&[("query.fod-js-object-name", name)]);
+            assert_eq!(
+                element.resolve_object_name(&data),
+                "configured",
+                "'{name}' was taken from the evidence"
+            );
+        }
+    }
+
+    /// Names close to the unsafe global names, or differing only in case,
+    /// are still accepted.
+    #[test]
+    fn names_near_the_unsafe_global_names_are_accepted() {
+        for name in [
+            "windowed",
+            "names",
+            "Window",
+            "Eval",
+            "evals",
+            "argumentsList",
+            "documents",
+            "topmost",
+            "myStatus",
+            "_name",
+            "$window",
+            "history2",
+            "Navigator",
+            "closedAt",
+        ] {
+            assert!(is_valid_object_name(name), "'{name}' was refused");
+        }
+    }
+
     #[test]
     fn enable_cookies_overridden_by_evidence() {
         let element = JavaScriptBuilderElement::new();
