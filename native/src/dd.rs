@@ -2149,6 +2149,45 @@ mod tests {
         }
     }
 
+    /// A day the month does not have is not a date, so neither date is read,
+    /// whilst 29 February is read in a leap year. A year divisible by 100 is
+    /// a leap year only when it is also divisible by 400.
+    #[test]
+    fn a_day_the_month_lacks_is_not_a_date() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the days months lack");
+            return;
+        };
+        let bytes = std::fs::read(&path).expect("data file reads");
+        let cases: [(i16, u8, u8, bool); 7] = [
+            (2001, 2, 30, false),
+            (2001, 2, 29, false),
+            (1900, 2, 29, false),
+            (2001, 4, 31, false),
+            (2004, 2, 29, true),
+            (2000, 2, 29, true),
+            (2001, 4, 30, true),
+        ];
+        for (year, month, day, read) in cases {
+            let [low, high] = year.to_le_bytes();
+            let mut data = bytes.clone();
+            for at in [PUBLISHED_AT, PUBLISHED_AT + 4] {
+                data[at..at + 4].copy_from_slice(&[low, high, month, day]);
+            }
+            let manager = Manager::open_from_memory(
+                data,
+                PerformanceProfile::LowMemory,
+                None,
+                &HashOptions::default(),
+            )
+            .expect("data loads");
+            let date = (i32::from(year), u32::from(month), u32::from(day));
+            let expected = read.then_some(date);
+            assert_eq!(manager.data_set_published(), expected, "{date:?}");
+            assert_eq!(manager.data_set_next_update(), expected, "{date:?}");
+        }
+    }
+
     /// A data set loaded from memory under any profile opens no file handle
     /// and gives the answers and properties the file gives, after the caller
     /// has dropped its own reference to the manager.
