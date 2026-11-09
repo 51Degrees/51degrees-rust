@@ -123,15 +123,13 @@ fn cases() -> Vec<Case> {
             "15.1.1",
             vec![(QUERY_KEY, MAC_VALUES), (COOKIE_KEY, ANDROID_VALUES)],
         ),
-        // The C library uses the first high entropy value it meets, here the
-        // cookie's, where evidence.md and the decoder specification give the
-        // query string's value precedence. This case gives macOS 15.1.1 once
-        // the C library looks at the query string first, which is also when
-        // the comparison's allowance for `uach-ghev-query-then-cookie` goes.
+        // The query string's value is used before the cookie's whatever
+        // order they were added in, as evidence.md and the decoder
+        // specification give it precedence.
         case(
             "cookie then query",
-            "Android",
-            "13.0",
+            "macOS",
+            "15.1.1",
             vec![(COOKIE_KEY, ANDROID_VALUES), (QUERY_KEY, MAC_VALUES)],
         ),
         case(
