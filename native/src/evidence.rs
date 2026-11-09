@@ -316,41 +316,36 @@ pub fn client_ip_from_evidence(evidence: &Evidence) -> Option<String> {
         .map(|(_, v)| v.to_owned())
 }
 
-/// Read a client IP address from one evidence value, accepting the same forms
-/// as the .NET IP Intelligence engine.
+/// Read a client IP address from one evidence value, only when the whole
+/// value is an address.
 ///
-/// The value may be a bare IPv4 or IPv6 address, an IPv4 address with a port,
-/// or a bracketed IPv6 address with or without a port. An IPv6 zone index
-/// (`fe80::1%1`) is dropped, and a comma separated list, as a proxy forwards
-/// it, gives its first entry. Anything else gives [`None`], including the
-/// shortened, octal and bare number IPv4 forms some parsers accept, because
-/// those would let numeric junk count as an address.
+/// The value may be an IPv4 address in dotted-decimal form, an IPv6 address in
+/// any RFC 4291 text form, an IPv4 address with a port, or a bracketed IPv6
+/// address with or without a port. Anything else gives [`None`] and no part of
+/// it is read, so a comma separated list, white space around the address, an
+/// IPv6 zone index (`fe80::1%eth0`), a prefix length or trailing text is not
+/// read, nor are the shortened, octal and bare number IPv4 forms some parsers
+/// accept. Reading part of a value could give a different address from the
+/// one the sender meant.
 pub fn parse_client_ip(value: &str) -> Option<IpAddr> {
-    let candidate = value.split(',').next().unwrap_or_default().trim();
-    if let Some(bracketed) = candidate.strip_prefix('[') {
+    if let Some(bracketed) = value.strip_prefix('[') {
         // "[2001:db8::1]" or "[2001:db8::1]:443".
         let (address, rest) = bracketed.split_once(']')?;
         if !rest.is_empty() && !rest.strip_prefix(':').is_some_and(is_port) {
             return None;
         }
-        return parse_ipv6_without_zone(address);
+        return address.parse::<Ipv6Addr>().ok().map(IpAddr::V6);
     }
-    if let Ok(address) = candidate.parse::<IpAddr>() {
+    if let Ok(address) = value.parse::<IpAddr>() {
         return Some(address);
     }
     // "192.0.2.1:443". Without brackets an IPv6 address keeps all its colons,
-    // because a port cannot be told apart from its last group.
-    if let Ok(SocketAddr::V4(socket)) = candidate.parse::<SocketAddr>() {
-        return Some(IpAddr::V4(*socket.ip()));
+    // because a port cannot be told apart from its last group, and a
+    // `SocketAddrV6` would take a zone index.
+    match value.parse::<SocketAddr>() {
+        Ok(SocketAddr::V4(socket)) => Some(IpAddr::V4(*socket.ip())),
+        _ => None,
     }
-    // "fe80::1%1".
-    parse_ipv6_without_zone(candidate)
-}
-
-/// Parse an IPv6 address, dropping any zone index after a `%`.
-fn parse_ipv6_without_zone(text: &str) -> Option<IpAddr> {
-    let address = text.split_once('%').map_or(text, |(address, _)| address);
-    address.parse::<Ipv6Addr>().ok().map(IpAddr::V6)
 }
 
 /// True when `text` is a port number, being digits only and at most 65535.
