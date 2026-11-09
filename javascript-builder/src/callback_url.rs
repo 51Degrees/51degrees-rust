@@ -71,8 +71,10 @@ pub(crate) fn callback_url(protocol: &str, host: &str, endpoint: &str) -> Callba
         CallbackUrl::Invalid(format!("{protocol}://{shown}{endpoint}"))
     };
     // A `?` or `#` in the host would start the query or the fragment before
-    // the endpoint, and `fetch` refuses a URL with user information.
-    if !is_scheme(protocol) || host.contains(['?', '#']) || authority.contains('@') {
+    // the endpoint. An `@` is refused anywhere in the host, because `fetch`
+    // refuses a URL with user information, and a password holding `/` puts
+    // the `@` that ends it after the host's first `/`.
+    if !is_scheme(protocol) || host.contains(['?', '#', '@']) {
         return invalid();
     }
     match checked_host_port(authority) {
@@ -248,9 +250,9 @@ mod tests {
     }
 
     // The hosts .NET 4.5.128's JavaScript builder accepts, with the URL the
-    // crate writes. The hosts .NET accepts that hold a zone identifier, user
-    // information, a `?` or a `#`, or that end in a number without being an
-    // IPv4 address, are refused, in the tests further down.
+    // crate writes. The hosts .NET accepts that hold a zone identifier, an
+    // `@`, a `?` or a `#`, or that end in a number without being an IPv4
+    // address, are refused, in the tests further down.
     #[test]
     fn accepts_the_hosts_dotnet_accepts() {
         let cases = [

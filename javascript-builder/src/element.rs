@@ -133,12 +133,12 @@ fn parse_boolean(text: &str) -> Option<bool> {
 ///   that is not valid is left out and logged at error level the first time,
 ///   and characters after the host and in the endpoint that could end the
 ///   string the script holds the URL in are percent-encoded. The protocol
-///   must be `http` or `https`, ignoring case. A host holding user
-///   information, a zone identifier, `?` or `#` is not valid, and nor is one
-///   whose last label is a number unless it is an IPv4 address. The log shows
-///   `***` in place of anything in a refused host value before its last `@`,
-///   even after the host's first `/`, so a user name or password is never
-///   logged. When a URL is built the background-update mechanism is enabled.
+///   must be `http` or `https`, ignoring case. A host holding `@` anywhere,
+///   a zone identifier, `?` or `#` is not valid, and nor is one whose last
+///   label is a number unless it is an IPv4 address. The log shows `***` in
+///   place of anything in a refused host value before its last `@`, even
+///   after the host's first `/`, so a user name or password is never logged.
+///   When a URL is built the background-update mechanism is enabled.
 /// - **parameters**: every `query.*` evidence entry except the session id and
 ///   sequence, with the prefix stripped and the key and value encoded as
 ///   .NET's `WebUtility.UrlEncode` encodes them, in name order, serialized as
