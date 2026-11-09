@@ -215,8 +215,11 @@ impl Manager {
     /// under the `LowMemory` and `Balanced` profiles, which is how many calls
     /// can read the data file at once. A call beyond that waits for a handle,
     /// so it should be the number of threads that will look up through the
-    /// data set at once. [`None`] keeps the profile's default. It has no effect
-    /// on the in-memory profiles, where every collection is already resident.
+    /// data set at once. [`None`] keeps the profile's default, one for each
+    /// processor. Any value loads, and the pool holds at most 64 handles. It
+    /// has no effect on `InMemory`, and none on `HighPerformance` but for the
+    /// values of properties not named when some are, which it reads from the
+    /// file.
     pub fn open_with_options(
         path: impl AsRef<Path>,
         profile: PerformanceProfile,
@@ -376,6 +379,15 @@ impl Manager {
     /// value, so the query keys come first.
     pub fn evidence_keys(&self) -> impl ExactSizeIterator<Item = &str> + '_ {
         self.evidence_keys.iter().map(|key| key.key.as_str())
+    }
+
+    /// The number of handles to the data file that the data set opened when
+    /// it loaded, which stay open until it is freed. Every profile but
+    /// `InMemory` opens one for each concurrent operation it expects, to at
+    /// most 64. `InMemory` opens none.
+    pub fn file_pool_size(&self) -> u16 {
+        // Safety: the manager is initialized for the lifetime of `self`.
+        unsafe { sys::fiftyoneDegreesShimIpiGetFilePoolSize(self.as_ptr()) }
     }
 
     /// The data set's name, which is the data file's tier (for example `Lite`,
@@ -1938,7 +1950,11 @@ mod tests {
         };
         assert_eq!(found, 1, "the data set is available");
         // Safety: both names are constants of the C library.
-        let name = |text| unsafe { CStr::from_ptr(text) }.to_string_lossy().into_owned();
+        let name = |text| {
+            unsafe { CStr::from_ptr(text) }
+                .to_string_lossy()
+                .into_owned()
+        };
         (name(strings), name(values))
     }
 
@@ -1990,9 +2006,13 @@ mod tests {
             eprintln!("no IP Intelligence data file found; skipping file handles");
             return;
         };
+        // Safety: the function reads no state.
+        let processors =
+            unsafe { sys::common::fiftyoneDegreesThreadingGetProcessorCount() }.min(64);
         for (profile, concurrency, handles) in [
             (PerformanceProfile::LowMemory, Some(3), 3),
-            (PerformanceProfile::Balanced, None, 10),
+            (PerformanceProfile::Balanced, None, processors),
+            (PerformanceProfile::Balanced, Some(500), 64),
             (PerformanceProfile::HighPerformance, Some(3), 0),
             (PerformanceProfile::InMemory, None, 0),
         ] {

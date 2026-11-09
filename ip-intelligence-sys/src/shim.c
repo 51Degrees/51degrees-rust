@@ -412,6 +412,24 @@ uint16_t fiftyoneDegreesShimIpiGetFileHandleCount(
 }
 
 /*
+ * Returns the number of handles to the data file that the data set managed
+ * by `manager` opened when it loaded, which stay open until the data set is
+ * freed. Every configuration that does not load the whole file into memory
+ * opens one for each concurrent operation it expects, to at most 64.
+ */
+uint16_t fiftyoneDegreesShimIpiGetFilePoolSize(
+    fiftyoneDegreesResourceManager *manager) {
+    fiftyoneDegreesDataSetIpi *dataSet =
+        fiftyoneDegreesDataSetIpiGet(manager);
+    if (dataSet == NULL) {
+        return 0;
+    }
+    const uint16_t count = dataSet->b.b.filePool.pool.count;
+    fiftyoneDegreesDataSetIpiRelease(dataSet);
+    return count;
+}
+
+/*
  * Sets `strings` and `values` to the type names of the strings and values
  * collections of the data set managed by `manager`, and returns 1, or returns
  * 0 when there is no data set. "CollectionMemory" holds the whole collection

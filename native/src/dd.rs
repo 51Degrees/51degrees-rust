@@ -148,8 +148,9 @@ fn config_for(profile: PerformanceProfile) -> *mut sys::ConfigHash {
 /// profile but `InMemory` opens the pool, `HighPerformance` included (see
 /// [`Manager::file_pool_size`]). This mirrors the
 /// `setConcurrency` helper in the other 51Degrees ports, which applies the value
-/// to every collection's config. A value of zero is treated by the native
-/// library as a single concurrent operation.
+/// to every collection's config. The C library takes zero as one concurrent
+/// operation for each processor, and opens at most 64 file handles whatever
+/// the value.
 fn set_pool_concurrency(config: &mut sys::ConfigHash, concurrency: u16) {
     for collection in [
         &mut config.strings,
@@ -234,48 +235,14 @@ impl HashOptions {
     }
 }
 
-/// The most expected concurrency `profile` loads with, or [`None`] when any
-/// concurrency loads. A collection read from the file through a cache splits
-/// the cache into one part for each concurrent operation, and the C library
-/// refuses a part smaller than the number of parts, so the smallest such
-/// cache sets the limit (its capacity's whole square root).
-fn most_concurrency(profile: PerformanceProfile) -> Option<u16> {
-    // Safety: `config_for` returns a valid pointer to an initialized config
-    // global, and copying out of it is a plain read of a `repr(C)` value.
-    let config = unsafe { *config_for(profile) };
-    [
-        config.strings,
-        config.components,
-        config.maps,
-        config.properties,
-        config.values,
-        config.profiles,
-        config.root_nodes,
-        config.nodes,
-        config.profile_offsets,
-    ]
-    .into_iter()
-    .filter(|collection| !collection.loaded && collection.capacity > 0)
-    .map(|collection| u16::try_from(collection.capacity.isqrt()).unwrap_or(u16::MAX))
-    .min()
-}
-
-/// The expected concurrency a Hash engine opens `profile` with when none is
-/// named, which the specification gives as the number of processors. It is
-/// held at the most the profile's caches take, so the profile still loads on
-/// a machine with more processors (22 under `Balanced` and `Default`, whose
-/// values cache holds 500 entries). `LowMemory` and `HighPerformance` have no
-/// limit, so their file handle pool has one handle for each processor (see
-/// [`Manager::file_pool_size`]).
-pub fn default_concurrency(profile: PerformanceProfile) -> u16 {
-    let processors = std::thread::available_parallelism()
-        .map_or(1, |count| u16::try_from(count.get()).unwrap_or(u16::MAX));
-    concurrency_within(processors, profile)
-}
-
-/// `concurrency`, or the most `profile` loads with when that is less.
-fn concurrency_within(concurrency: u16, profile: PerformanceProfile) -> u16 {
-    most_concurrency(profile).map_or(concurrency, |most| concurrency.min(most))
+/// The expected concurrency a Hash engine opens with when none is named,
+/// which the specification gives as the number of processors, whatever the
+/// profile. Any concurrency loads, because a cache with fewer entries than
+/// the concurrency is split into fewer parts, and the file handle pool holds
+/// at most 64 handles (see [`Manager::file_pool_size`]).
+pub fn default_concurrency(_profile: PerformanceProfile) -> u16 {
+    std::thread::available_parallelism()
+        .map_or(1, |count| u16::try_from(count.get()).unwrap_or(u16::MAX))
 }
 
 /// A copy of `profile`'s predefined configuration changed by `options`, so a
@@ -363,11 +330,12 @@ impl Manager {
     /// under the `LowMemory`, `Balanced` and `Default` profiles, which is how
     /// many calls can read the data file at once. A call beyond that waits for
     /// a handle, so it should be the number of threads that will process
-    /// through the data set at once. [`None`] keeps the profile's default.
-    /// `HighPerformance` holds every collection in memory, so detection never
-    /// waits on the pool, but it still opens one handle for each concurrent
-    /// operation and keeps them open until the data set is freed (see
-    /// [`Manager::file_pool_size`]). `InMemory` opens no pool.
+    /// through the data set at once. [`None`] keeps the profile's default,
+    /// one for each processor. `HighPerformance` holds in memory everything
+    /// detection reads, so detection never waits on the pool, but it still
+    /// opens one handle for each concurrent operation and keeps them open
+    /// until the data set is freed (see [`Manager::file_pool_size`]).
+    /// `InMemory` opens no pool.
     pub fn open_with_options(
         path: impl AsRef<Path>,
         profile: PerformanceProfile,
@@ -586,9 +554,10 @@ impl Manager {
     /// The number of handles to the data file that the data set opened when
     /// it loaded, which stay open until it is freed. Every profile but
     /// `InMemory` opens one for each concurrent operation it expects, the
-    /// largest concurrency of its collections, `HighPerformance` included,
-    /// although that profile holds every collection in memory and never
-    /// reads through them. `InMemory` opens none.
+    /// largest concurrency of its collections, to at most 64, and
+    /// `HighPerformance` too, which reads through them only for the values
+    /// and strings of properties not named when some are. `InMemory` opens
+    /// none.
     pub fn file_pool_size(&self) -> u16 {
         // Safety: the manager is initialized for the lifetime of `self`.
         unsafe { sys::fiftyoneDegreesShimHashGetFilePoolSize(self.as_ptr()) }
@@ -1990,21 +1959,31 @@ mod tests {
         );
     }
 
+    /// The handles the C library opens when no concurrency is named, one
+    /// for each processor as it counts them, to at most 64.
+    fn handles_for_the_processors() -> u16 {
+        // Safety: the function reads no state.
+        unsafe { fiftyone_common_sys::fiftyoneDegreesThreadingGetProcessorCount() }.min(64)
+    }
+
     /// Every profile but `InMemory` opens a handle to the data file for each
-    /// concurrent operation it expects and keeps it open, `HighPerformance`
-    /// included, although its reads never use the handles.
+    /// concurrent operation it expects, to at most 64, and keeps it open,
+    /// `HighPerformance` included. With no concurrency named, it expects one
+    /// for each processor.
     #[test]
     fn the_file_pool_has_a_handle_for_each_expected_operation() {
         let Some(path) = data_file() else {
             eprintln!("no Hash data file found; skipping the file pool");
             return;
         };
+        let processors = handles_for_the_processors();
         for (profile, concurrency, handles) in [
             (PerformanceProfile::LowMemory, Some(3), 3),
-            (PerformanceProfile::Balanced, None, 10),
+            (PerformanceProfile::Balanced, None, processors),
+            (PerformanceProfile::Balanced, Some(500), 64),
             (PerformanceProfile::HighPerformance, Some(3), 3),
             (PerformanceProfile::HighPerformance, Some(40), 40),
-            (PerformanceProfile::HighPerformance, None, 10),
+            (PerformanceProfile::HighPerformance, None, processors),
             (PerformanceProfile::InMemory, Some(3), 0),
             (PerformanceProfile::InMemory, None, 0),
         ] {
@@ -2030,7 +2009,11 @@ mod tests {
         };
         for (profile, concurrency, handles) in [
             (PerformanceProfile::LowMemory, Some(3), 3),
-            (PerformanceProfile::Balanced, None, 10),
+            (
+                PerformanceProfile::Balanced,
+                None,
+                handles_for_the_processors(),
+            ),
             (PerformanceProfile::HighPerformance, Some(3), 0),
             (PerformanceProfile::InMemory, None, 0),
         ] {
@@ -2070,7 +2053,11 @@ mod tests {
         };
         assert_eq!(found, 1, "the data set is available");
         // Safety: both names are constants of the C library.
-        let name = |text| unsafe { CStr::from_ptr(text) }.to_string_lossy().into_owned();
+        let name = |text| {
+            unsafe { CStr::from_ptr(text) }
+                .to_string_lossy()
+                .into_owned()
+        };
         (name(strings), name(values))
     }
 
@@ -2321,33 +2308,42 @@ mod tests {
         }
     }
 
-    /// A profile whose collections read through caches takes at most the
-    /// concurrency its smallest cache can be split into, and the others take
-    /// any.
+    /// Every profile expects one concurrent operation for each processor
+    /// when none is named, and loads with any concurrency named, the
+    /// `Balanced` values cache of 500 entries taking more than its square
+    /// root.
     #[test]
-    fn the_smallest_cache_sets_the_most_concurrency() {
-        assert_eq!(most_concurrency(PerformanceProfile::Balanced), Some(22));
-        assert_eq!(most_concurrency(PerformanceProfile::Default), Some(22));
+    fn every_profile_takes_any_concurrency() {
+        let processors = std::thread::available_parallelism()
+            .map_or(1, |count| u16::try_from(count.get()).unwrap_or(u16::MAX));
         for profile in [
             PerformanceProfile::LowMemory,
+            PerformanceProfile::Balanced,
+            PerformanceProfile::Default,
             PerformanceProfile::HighPerformance,
             PerformanceProfile::InMemory,
         ] {
-            assert_eq!(most_concurrency(profile), None, "{}", profile.as_str());
-        }
-        let balanced = default_concurrency(PerformanceProfile::Balanced);
-        assert!((1..=22).contains(&balanced), "{balanced}");
-        for (processors, profile, expected) in [
-            (64, PerformanceProfile::Balanced, 22),
-            (64, PerformanceProfile::Default, 22),
-            (8, PerformanceProfile::Balanced, 8),
-            (64, PerformanceProfile::LowMemory, 64),
-            (64, PerformanceProfile::HighPerformance, 64),
-        ] {
             assert_eq!(
-                concurrency_within(processors, profile),
-                expected,
-                "{processors} {}",
+                default_concurrency(profile),
+                processors,
+                "{}",
+                profile.as_str()
+            );
+        }
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping concurrency");
+            return;
+        };
+        for profile in [PerformanceProfile::Balanced, PerformanceProfile::Default] {
+            let manager = Manager::open_with_options(&path, profile, None, Some(500))
+                .expect("any concurrency loads");
+            let results = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
+            assert_eq!(
+                results
+                    .value_as_string("IsMobile", ",")
+                    .expect("IsMobile reads"),
+                Some(String::from("False")),
+                "{}",
                 profile.as_str()
             );
         }
@@ -2399,7 +2395,7 @@ mod tests {
         assert_eq!(fields(&unchanged), fields(&profile));
         assert_eq!(
             fields(&profile),
-            (0, 0, false, true, false, true, 10, 500, false)
+            (0, 0, false, true, false, true, 0, 500, false)
         );
 
         let mut changed = profile;

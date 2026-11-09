@@ -567,6 +567,10 @@ extern "C" {
 
     /// Returns `true` if the library was compiled thread safe.
     pub fn fiftyoneDegreesThreadingGetIsThreadSafe() -> bool;
+
+    /// Returns the number of processors, at least 1, which is the expected
+    /// concurrency a collection configured with 0 opens with.
+    pub fn fiftyoneDegreesThreadingGetProcessorCount() -> u16;
 }
 
 #[cfg(test)]

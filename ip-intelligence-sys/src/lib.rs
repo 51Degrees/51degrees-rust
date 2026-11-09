@@ -447,6 +447,14 @@ pub mod common {
         /// null.
         #[link_name = "ipi_fiftyoneDegreesEvidenceFree"]
         pub fn fiftyoneDegreesEvidenceFree(evidence: *mut EvidenceKeyValuePairArray);
+
+        /// Returns the number of processors, at least 1, which is the
+        /// expected concurrency a collection configured with 0 opens with.
+        ///
+        /// The native symbol is `ipi_`-prefixed for the same reason as
+        /// [`fiftyoneDegreesExceptionGetMessage`] above.
+        #[link_name = "ipi_fiftyoneDegreesThreadingGetProcessorCount"]
+        pub fn fiftyoneDegreesThreadingGetProcessorCount() -> u16;
     }
 }
 
@@ -1339,6 +1347,16 @@ extern "C" {
     /// # Safety
     /// `manager` must be initialized.
     pub fn fiftyoneDegreesShimIpiGetFileHandleCount(manager: *mut ResourceManager) -> u16;
+
+    /// Returns the number of handles to the data file that the data set
+    /// managed by `manager` opened when it loaded, which stay open until the
+    /// data set is freed. Every configuration that does not load the whole
+    /// file into memory opens one for each concurrent operation it expects,
+    /// to at most 64. Defined by this crate's `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be initialized.
+    pub fn fiftyoneDegreesShimIpiGetFilePoolSize(manager: *mut ResourceManager) -> u16;
 
     /// Sets `strings` and `values` to the C library's type names of the
     /// strings and values collections of the data set managed by `manager`,
