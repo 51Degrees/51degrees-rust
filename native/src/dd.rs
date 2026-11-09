@@ -235,12 +235,15 @@ impl HashOptions {
 
 /// The expected concurrency a Hash engine opens with when none is named,
 /// which the specification gives as the number of processors, whatever the
-/// profile. Any concurrency loads, because a cache with fewer entries than
-/// the concurrency is split into fewer parts, and the file handle pool holds
-/// at most 64 handles (see [`Manager::file_pool_size`]).
+/// profile. The C library counts them, as it does for an IP Intelligence
+/// data set opened with none named, so the two engines open with the same.
+/// Any concurrency loads, because a cache with fewer entries than the
+/// concurrency squared is split into fewer parts, one with fewer entries
+/// than the concurrency is grown to it, and the file handle pool holds at
+/// most 64 handles (see [`Manager::file_pool_size`]).
 pub fn default_concurrency(_profile: PerformanceProfile) -> u16 {
-    std::thread::available_parallelism()
-        .map_or(1, |count| u16::try_from(count.get()).unwrap_or(u16::MAX))
+    // Safety: the function reads no state, and gives at least 1.
+    unsafe { fiftyone_common_sys::fiftyoneDegreesThreadingGetProcessorCount() }
 }
 
 /// A copy of `profile`'s predefined configuration changed by `options`, so a
@@ -2362,8 +2365,9 @@ mod tests {
     /// root.
     #[test]
     fn every_profile_takes_any_concurrency() {
-        let processors = std::thread::available_parallelism()
-            .map_or(1, |count| u16::try_from(count.get()).unwrap_or(u16::MAX));
+        // Safety: the function reads no state.
+        let processors =
+            unsafe { fiftyone_common_sys::fiftyoneDegreesThreadingGetProcessorCount() };
         for profile in [
             PerformanceProfile::LowMemory,
             PerformanceProfile::Balanced,

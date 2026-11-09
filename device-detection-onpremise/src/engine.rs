@@ -1604,11 +1604,14 @@ mod tests {
             .find(|path| path.is_file())
     }
 
-    /// With no concurrency named, the data set opens with the default, not
-    /// only the engine's record of it, under the two profiles with no limit,
-    /// and a refresh opens the new data set with it too. On a machine with 10
-    /// processors the default equals the C library's own, so the check there
-    /// cannot tell the two apart.
+    /// `FIFTYONE_DEGREES_FILE_POOL_MAX_HANDLES` in the C library's `file.h`,
+    /// the most handles a data set's file pool holds.
+    const FILE_POOL_MAX_HANDLES: u16 = 64;
+
+    /// With no concurrency named, the data set opens a handle to the file
+    /// for each processor, to at most [`FILE_POOL_MAX_HANDLES`], under
+    /// `LowMemory` and `HighPerformance`, and a refresh opens the new data
+    /// set with as many.
     #[test]
     fn the_default_concurrency_reaches_the_data_set() {
         let Some(path) = data_file() else {
@@ -1623,7 +1626,8 @@ mod tests {
                 .performance_profile(profile)
                 .build()
                 .expect("the data file loads");
-            let expected = fiftyone_native::dd::default_concurrency(profile);
+            let expected =
+                fiftyone_native::dd::default_concurrency(profile).min(FILE_POOL_MAX_HANDLES);
             let pool = || engine.loaded.load().manager.file_pool_size();
             assert_eq!(pool(), expected, "{}", profile.as_str());
             engine.refresh(None).expect("the data file loads again");
