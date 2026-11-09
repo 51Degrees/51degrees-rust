@@ -147,7 +147,8 @@ fn is_label(label: &str) -> bool {
 
 /// Whether the last label of a name is a number as the URL Standard's ends in
 /// a number checker reads one, being all ASCII digits, or `0x` or `0X`
-/// followed by hex digits. The name has had one `.` at its end removed.
+/// followed by zero or more hex digits. The name has had one `.` at its end
+/// removed.
 fn ends_in_a_number(name: &str) -> bool {
     let last = name.rsplit_once('.').map_or(name, |(_, last)| last);
     match last.strip_prefix("0x").or_else(|| last.strip_prefix("0X")) {
@@ -474,11 +475,11 @@ mod tests {
         }
     }
 
-    // A host whose last label is all digits, or `0x` or `0X` and hex digits,
-    // is read by a browser's URL parser as an IPv4 address, so it must be
-    // four decimal parts of 0 to 255 with no leading zero and no `.` at the
-    // end. One `.` at the end is dropped before the last label is read, so
-    // `example.123.` ends in a number too.
+    // A host whose last label is all digits, or `0x` or `0X` followed by zero
+    // or more hex digits, is read by a browser's URL parser as an IPv4
+    // address, so it must be four decimal parts of 0 to 255 with no leading
+    // zero and no `.` at the end. One `.` at the end is dropped before the
+    // last label is read, so `example.123.` ends in a number too.
     #[test]
     fn a_host_ending_in_a_number_must_be_ipv4() {
         let hosts = [
