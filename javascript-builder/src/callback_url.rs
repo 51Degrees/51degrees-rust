@@ -109,11 +109,12 @@ fn is_scheme(protocol: &str) -> bool {
 }
 
 /// A host and an optional port. The host is a bracketed IPv6 address, or a
-/// name of non-empty labels separated by dots, with a dot allowed at the end,
-/// and the port, where a `:` is given, is one or more digits whose value is
-/// up to 65535, so a host given with its scheme, such as
-/// `https://example.com`, is not read as the host `https` with an empty
-/// port. `Ipv6Addr` takes no zone
+/// name of non-empty labels separated by dots, with a dot allowed at the end.
+/// The port, where a `:` is given, is one or more digits whose value is up to
+/// 65535, as
+/// [rule 5 of the callback URL](https://github.com/51Degrees/specifications/blob/c8734d4c5df202fe19c7881de8453337dbb59377/pipeline-specification/pipeline-elements/javascript-builder.md#L248-L259)
+/// asks, so a host given with its scheme, such as `https://example.com`, is
+/// not read as the host `https` with an empty port. `Ipv6Addr` takes no zone
 /// identifier, so a `%` inside the brackets is refused, as a browser's URL
 /// parser refuses it. A name that ends in a number, ignoring one `.` at its
 /// end, must be an IPv4 address with no `.` at its end, because a browser's
@@ -542,7 +543,8 @@ mod tests {
 
     // A `:` with no port after it is refused, so a host given with its
     // scheme, such as `https://example.com`, is not read as the host `https`
-    // with an empty port.
+    // with an empty port, as rule 5 of the callback URL says.
+    // https://github.com/51Degrees/specifications/blob/c8734d4c5df202fe19c7881de8453337dbb59377/pipeline-specification/pipeline-elements/javascript-builder.md#L248-L259
     #[test]
     fn refuses_an_empty_port() {
         let hosts = [
