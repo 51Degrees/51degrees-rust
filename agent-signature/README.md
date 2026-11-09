@@ -86,13 +86,17 @@ the default, it accepts no `query.` key at all. A request holding
 `query.` keys, and never from a mix of those and the `header.` and `server.`
 keys.
 
-A signature may cover any other header. Such a header is read from the
-evidence where the flow data holds it, and otherwise from the web request the
-web integration gives as `server.http-request`, in both places under the
-prefix the signature arrived under, which is `query.` for a forwarded
-signature. The element does not accept such a header, so it never adds one to
-a cache key, the ETag or the `Vary` header. Where neither holds a covered
-header, the signature reports Unverified with the reason ComponentUnavailable.
+A signature may cover any request header, but the element reads a covered
+header only from the keys above, under the prefix the signature arrived under.
+A signature covering any other header, such as `content-type`, reports
+Unverified with the reason ComponentUnavailable, with forwarded evidence
+trusted or not. The element does not read such a header from other evidence or
+from the web request the web integration gives as `server.http-request`,
+because a header outside the accepted evidence is outside the cache keys, the
+ETag and the `Vary` header, so a cached Verified answer could otherwise be
+given to a request that differs only in that header. A signature covering
+`@authority` and `signature-agent`, as the protocol draft's own example does,
+needs only the accepted headers.
 
 ## Fetching keys
 
