@@ -2048,6 +2048,112 @@ mod tests {
         }
     }
 
+    /// The C library's name for a collection held whole in memory.
+    const IN_MEMORY: &str = "CollectionMemory";
+
+    /// The C library's name for a collection holding in memory only what the
+    /// required properties read, and reading the rest from the file.
+    const HELD: &str = "CollectionHeld";
+
+    /// The C library's type names of the collections `manager`'s data set
+    /// holds its strings and its values in.
+    fn strings_and_values_types(manager: &Manager) -> (String, String) {
+        let mut strings: *const c_char = std::ptr::null();
+        let mut values: *const c_char = std::ptr::null();
+        // Safety: the manager is initialized and both outputs are writable.
+        let found = unsafe {
+            sys::fiftyoneDegreesShimHashGetCollectionTypeNames(
+                manager.as_ptr(),
+                &mut strings,
+                &mut values,
+            )
+        };
+        assert_eq!(found, 1, "the data set is available");
+        // Safety: both names are constants of the C library.
+        let name = |text| unsafe { CStr::from_ptr(text) }.to_string_lossy().into_owned();
+        (name(strings), name(values))
+    }
+
+    /// `HighPerformance` with some properties named holds in memory only the
+    /// values those properties read and the strings those values use, and
+    /// reads the others from the data file when asked. The named property
+    /// gives the value it gives with none named, and so do the values of a
+    /// property not named.
+    #[test]
+    fn high_performance_naming_some_holds_only_what_they_read() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping held collections");
+            return;
+        };
+        let profile = PerformanceProfile::HighPerformance;
+        let some = Manager::open_with_properties(&path, profile, Some(&["IsMobile"]))
+            .expect("data file loads");
+        let every = Manager::open(&path, profile).expect("data file loads");
+        assert_eq!(
+            strings_and_values_types(&some),
+            (String::from(HELD), String::from(HELD))
+        );
+
+        let is_mobile = |manager: &Arc<Manager>| {
+            detect(manager, "header.user-agent", CHROME_ON_WINDOWS)
+                .value_as_string("IsMobile", ",")
+                .expect("IsMobile reads")
+        };
+        assert_eq!(is_mobile(&some), Some(String::from("False")));
+        assert_eq!(is_mobile(&some), is_mobile(&every));
+
+        // Which properties are available differs by design. What the data
+        // file says of each, read through the values and strings, does not.
+        let metadata = |manager: &Manager| -> Vec<_> {
+            manager
+                .data_file_properties()
+                .expect("properties read")
+                .into_iter()
+                .map(|property| {
+                    (
+                        property.name,
+                        property.description,
+                        property.default_value,
+                        property.value_count,
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(metadata(&some), metadata(&every));
+        let properties = every.data_file_properties().expect("properties read");
+        let browser_name = properties
+            .iter()
+            .position(|property| property.name == "BrowserName")
+            .and_then(|index| u32::try_from(index).ok())
+            .expect("the data file has BrowserName");
+        let values = some
+            .data_file_property_values(browser_name)
+            .expect("values read from the file");
+        assert!(!values.is_empty(), "BrowserName has values");
+        assert_eq!(
+            values,
+            every
+                .data_file_property_values(browser_name)
+                .expect("values read")
+        );
+    }
+
+    /// `HighPerformance` with no property named holds every string and value
+    /// in memory.
+    #[test]
+    fn high_performance_naming_none_holds_everything() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping held collections");
+            return;
+        };
+        let every =
+            Manager::open(&path, PerformanceProfile::HighPerformance).expect("data file loads");
+        assert_eq!(
+            strings_and_values_types(&every),
+            (String::from(IN_MEMORY), String::from(IN_MEMORY))
+        );
+    }
+
     /// Where the published date starts in a Hash data file header, after the
     /// four version numbers, two 16 byte tags, the copyright offset, the age,
     /// the minimum User-Agent count and the name and format offsets. The next

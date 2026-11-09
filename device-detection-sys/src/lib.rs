@@ -830,6 +830,26 @@ extern "C" {
     /// # Safety
     /// `manager` must be an initialized Hash manager.
     pub fn fiftyoneDegreesShimHashGetFilePoolSize(manager: *mut ResourceManager) -> u16;
+
+    /// Returns the size of the C `fiftyoneDegreesConfigHash`, which
+    /// [`ConfigHash`] must equal.
+    pub fn fiftyoneDegreesShimHashGetConfigSize() -> usize;
+
+    /// Sets `strings` and `values` to the C library's type names of the
+    /// strings and values collections of the data set managed by `manager`,
+    /// and returns 1, or returns 0 when there is no data set.
+    /// `CollectionMemory` holds the whole collection in memory and
+    /// `CollectionHeld` only what the required properties read. The names
+    /// are constants of the C library. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager, and `strings` and
+    /// `values` writable.
+    pub fn fiftyoneDegreesShimHashGetCollectionTypeNames(
+        manager: *mut ResourceManager,
+        strings: *mut *const c_char,
+        values: *mut *const c_char,
+    ) -> c_int;
 }
 
 // ---------------------------------------------------------------------------
@@ -1195,6 +1215,17 @@ mod tests {
                 "high performance config loads the strings collection in memory"
             );
         }
+    }
+
+    /// [`ConfigHash`] is the size of the C structure it is passed as. A C
+    /// field added in padding leaves the size as it was, which
+    /// `fiftyone-native`'s tests of the HighPerformance profile catch for
+    /// `load_required_properties_only`.
+    #[test]
+    fn config_hash_has_the_size_of_the_c_structure() {
+        // Safety: the shim reads no state and takes no arguments.
+        let size = unsafe { fiftyoneDegreesShimHashGetConfigSize() };
+        assert_eq!(std::mem::size_of::<ConfigHash>(), size);
     }
 
     /// Full smoke test: initialize a manager from the Lite data file, run one

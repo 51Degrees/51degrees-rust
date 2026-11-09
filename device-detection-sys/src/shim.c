@@ -513,6 +513,37 @@ uint16_t fiftyoneDegreesShimHashGetFilePoolSize(
 }
 
 /*
+ * Returns the size of fiftyoneDegreesConfigHash, for a test that the Rust
+ * declaration of the structure has the same size.
+ */
+size_t fiftyoneDegreesShimHashGetConfigSize(void) {
+    return sizeof(fiftyoneDegreesConfigHash);
+}
+
+/*
+ * Sets `strings` and `values` to the type names of the strings and values
+ * collections of the data set managed by `manager`, and returns 1, or returns
+ * 0 when there is no data set. "CollectionMemory" holds the whole collection
+ * in memory, and "CollectionHeld" holds only what the required properties
+ * read. The names are constants of the C library, so they outlive the data
+ * set.
+ */
+int fiftyoneDegreesShimHashGetCollectionTypeNames(
+    fiftyoneDegreesResourceManager *manager,
+    const char **strings,
+    const char **values) {
+    fiftyoneDegreesDataSetHash *dataSet =
+        fiftyoneDegreesDataSetHashGet(manager);
+    if (dataSet == NULL) {
+        return 0;
+    }
+    *strings = dataSet->strings->typeName;
+    *values = dataSet->values->typeName;
+    fiftyoneDegreesDataSetHashRelease(dataSet);
+    return 1;
+}
+
+/*
  * The metadata readers below follow the C++ builders in 51degrees-cxx
  * (src/dd/hash/PropertyMetaDataBuilderHash.cpp,
  * ComponentMetaDataBuilderHash.cpp and ValueMetaDataBuilderHash.cpp), so the

@@ -1340,6 +1340,21 @@ extern "C" {
     /// `manager` must be initialized.
     pub fn fiftyoneDegreesShimIpiGetFileHandleCount(manager: *mut ResourceManager) -> u16;
 
+    /// Sets `strings` and `values` to the C library's type names of the
+    /// strings and values collections of the data set managed by `manager`,
+    /// and returns 1, or returns 0 when there is no data set.
+    /// `CollectionMemory` holds the whole collection in memory and
+    /// `CollectionHeld` only what the required properties read. The names
+    /// are constants of the C library. Defined by this crate's `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be initialized, and `strings` and `values` writable.
+    pub fn fiftyoneDegreesShimIpiGetCollectionTypeNames(
+        manager: *mut ResourceManager,
+        strings: *mut *const c_char,
+        values: *mut *const c_char,
+    ) -> c_int;
+
     /// Returns the [`PropertyValueType`] discriminant the data file stores the
     /// values of the required property at `required_property_index` as, read
     /// from the data set `results` was created from. A latitude, for example,

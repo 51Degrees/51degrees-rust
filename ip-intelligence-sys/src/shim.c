@@ -412,6 +412,29 @@ uint16_t fiftyoneDegreesShimIpiGetFileHandleCount(
 }
 
 /*
+ * Sets `strings` and `values` to the type names of the strings and values
+ * collections of the data set managed by `manager`, and returns 1, or returns
+ * 0 when there is no data set. "CollectionMemory" holds the whole collection
+ * in memory, and "CollectionHeld" holds only what the required properties
+ * read. The names are constants of the C library, so they outlive the data
+ * set.
+ */
+int fiftyoneDegreesShimIpiGetCollectionTypeNames(
+    fiftyoneDegreesResourceManager *manager,
+    const char **strings,
+    const char **values) {
+    fiftyoneDegreesDataSetIpi *dataSet =
+        fiftyoneDegreesDataSetIpiGet(manager);
+    if (dataSet == NULL) {
+        return 0;
+    }
+    *strings = dataSet->strings->typeName;
+    *values = dataSet->values->typeName;
+    fiftyoneDegreesDataSetIpiRelease(dataSet);
+    return 1;
+}
+
+/*
  * Returns the type the data file stores the values of the required property
  * at `requiredPropertyIndex` as, read from the data set `results` was created
  * from. A latitude, for example, is stored as a Declination. Returns -1 when

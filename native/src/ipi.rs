@@ -1923,6 +1923,64 @@ mod tests {
         assert!(manager.required_property_index("NoSuchProperty").is_none());
     }
 
+    /// The C library's type names of the collections `manager`'s data set
+    /// holds its strings and its values in.
+    fn strings_and_values_types(manager: &Manager) -> (String, String) {
+        let mut strings: *const c_char = std::ptr::null();
+        let mut values: *const c_char = std::ptr::null();
+        // Safety: the manager is initialized and both outputs are writable.
+        let found = unsafe {
+            sys::fiftyoneDegreesShimIpiGetCollectionTypeNames(
+                manager.as_ptr(),
+                &mut strings,
+                &mut values,
+            )
+        };
+        assert_eq!(found, 1, "the data set is available");
+        // Safety: both names are constants of the C library.
+        let name = |text| unsafe { CStr::from_ptr(text) }.to_string_lossy().into_owned();
+        (name(strings), name(values))
+    }
+
+    /// `HighPerformance` with some properties named holds in memory only the
+    /// values those properties read, and the named property gives the
+    /// answer it gives with none named.
+    #[test]
+    fn high_performance_naming_some_holds_only_what_they_read() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping held values");
+            return;
+        };
+        let profile = PerformanceProfile::HighPerformance;
+        let some = Manager::open_with_properties(&data_file, profile, Some(&["Asn"]))
+            .expect("data file loads");
+        let every = Manager::open(&data_file, profile).expect("data file loads");
+        assert_eq!(strings_and_values_types(&some).1, "CollectionHeld");
+        let evidence = [("query.client-ip-51d", CLOUDFLARE)];
+        let asn = asn_from(&some, &evidence).expect("Asn reads");
+        assert!(asn.is_some(), "{CLOUDFLARE} has an autonomous system");
+        assert_eq!(asn, asn_from(&every, &evidence).expect("Asn reads"));
+    }
+
+    /// `HighPerformance` with no property named holds every string and value
+    /// in memory.
+    #[test]
+    fn high_performance_naming_none_holds_everything() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping held values");
+            return;
+        };
+        let every = Manager::open(&data_file, PerformanceProfile::HighPerformance)
+            .expect("data file loads");
+        assert_eq!(
+            strings_and_values_types(&every),
+            (
+                String::from("CollectionMemory"),
+                String::from("CollectionMemory")
+            )
+        );
+    }
+
     /// A data set that reads from its file has a file handle for each
     /// concurrent operation it was opened to expect, and one held in memory
     /// has none, so its calls take no permits.
