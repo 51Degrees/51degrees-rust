@@ -105,18 +105,45 @@ impl Registration {
     }
 }
 
+/// What the scheduler waits on, under the lock its condition variable uses.
+#[derive(Default)]
+struct SchedulerState {
+    /// True once shutdown has been requested.
+    shutting_down: bool,
+    /// True when a registration was added or a scheduled poll moved since
+    /// the scheduler's round began. A wake sent while a round runs finds no
+    /// thread waiting, so this keeps it for the wait that follows the round.
+    woken: bool,
+}
+
 /// The shared inner state of the service, behind one lock plus a condition
 /// variable the scheduler waits on.
 struct Inner {
     registrations: Mutex<Vec<Arc<Registration>>>,
-    /// Signalled to wake the scheduler when a registration is added or the
-    /// service is shutting down.
+    /// Signalled to wake the scheduler when a registration is added, a
+    /// scheduled poll moves, or the service is shutting down.
     wake: Condvar,
-    /// True once shutdown has been requested.
-    shutting_down: Mutex<bool>,
+    /// Whether the scheduler has been woken or asked to shut down.
+    state: Mutex<SchedulerState>,
 }
 
 impl Inner {
+    /// No registrations, and a scheduler neither woken nor shutting down.
+    fn new() -> Inner {
+        Inner {
+            registrations: Mutex::new(Vec::new()),
+            wake: Condvar::new(),
+            state: Mutex::new(SchedulerState::default()),
+        }
+    }
+
+    /// Wake the scheduler, at once if it is waiting, or as soon as its round
+    /// ends if it is running one.
+    fn wake_scheduler(&self) {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).woken = true;
+        self.wake.notify_all();
+    }
+
     /// The registrations whose engines are still alive, after removing the
     /// others. A removed registration is dropped after the lock is released,
     /// which stops its watcher.
@@ -176,11 +203,7 @@ impl DataUpdateService {
     /// example one configured with a proxy or custom timeout.
     pub fn with_client(client: reqwest::blocking::Client) -> Self {
         DataUpdateService {
-            inner: Arc::new(Inner {
-                registrations: Mutex::new(Vec::new()),
-                wake: Condvar::new(),
-                shutting_down: Mutex::new(false),
-            }),
+            inner: Arc::new(Inner::new()),
             client,
             scheduler: Mutex::new(None),
         }
@@ -280,7 +303,7 @@ impl DataUpdateService {
             regs.push(registration);
         }
         self.ensure_scheduler();
-        self.inner.wake.notify_all();
+        self.inner.wake_scheduler();
 
         startup
     }
@@ -416,7 +439,7 @@ impl DataUpdateService {
             }
             *next_poll = Some(Self::poll_due(&registration.data_file));
         }
-        self.inner.wake.notify_all();
+        self.inner.wake_scheduler();
     }
 
     /// Find the registration for an engine's data file, by identity and
@@ -537,11 +560,11 @@ impl Default for DataUpdateService {
 
 impl Drop for DataUpdateService {
     fn drop(&mut self) {
-        *self
-            .inner
-            .shutting_down
+        self.inner
+            .state
             .lock()
-            .unwrap_or_else(|e| e.into_inner()) = true;
+            .unwrap_or_else(|e| e.into_inner())
+            .shutting_down = true;
         self.inner.wake.notify_all();
         if let Some(handle) = self
             .scheduler
@@ -564,35 +587,29 @@ struct ServiceHandle {
 }
 
 impl ServiceHandle {
-    /// The scheduler loop: sleep until the next poll is due, run due polls, and
-    /// reschedule them. Exits when the service is dropped.
+    /// The scheduler loop: run the polls that are due, then sleep until the
+    /// next one is due or a registration or a moved poll wakes it. A wake
+    /// that comes during a round starts the next round at once. Exits when
+    /// the service is dropped.
     fn run_scheduler(self) {
         loop {
-            if *self
-                .inner
-                .shutting_down
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
             {
-                return;
+                let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+                if state.shutting_down {
+                    return;
+                }
+                // The round reads every registration and poll afresh, so it
+                // answers any wake sent before it begins.
+                state.woken = false;
             }
 
             let wait = self.run_due_polls();
 
-            // Wait until the next due time or until woken by a new
-            // registration / shutdown.
-            let guard = self
-                .inner
-                .shutting_down
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            if *guard {
-                return;
-            }
+            let state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
             let _unused = self
                 .inner
                 .wake
-                .wait_timeout(guard, wait)
+                .wait_timeout_while(state, wait, |state| !state.woken && !state.shutting_down)
                 .unwrap_or_else(|e| e.into_inner());
         }
     }
@@ -695,11 +712,11 @@ impl ServiceHandle {
 
     /// True once the service has been dropped.
     fn shutting_down(&self) -> bool {
-        *self
-            .inner
-            .shutting_down
+        self.inner
+            .state
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+            .shutting_down
     }
 
     /// Poll the remote update URL, verify, decompress, write and refresh.
@@ -1247,11 +1264,7 @@ mod tests {
         const INTERVAL_SECONDS: u64 = 1000;
         let handle = ServiceHandle {
             client: reqwest::blocking::Client::new(),
-            inner: Arc::new(Inner {
-                registrations: Mutex::new(Vec::new()),
-                wake: Condvar::new(),
-                shutting_down: Mutex::new(false),
-            }),
+            inner: Arc::new(Inner::new()),
         };
         let due = Instant::now();
         let mut engines = Vec::new();
@@ -1450,11 +1463,7 @@ mod tests {
     fn empty_handle() -> ServiceHandle {
         ServiceHandle {
             client: reqwest::blocking::Client::new(),
-            inner: Arc::new(Inner {
-                registrations: Mutex::new(Vec::new()),
-                wake: Condvar::new(),
-                shutting_down: Mutex::new(false),
-            }),
+            inner: Arc::new(Inner::new()),
         }
     }
 
