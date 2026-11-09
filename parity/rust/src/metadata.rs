@@ -95,6 +95,10 @@ trait EngineMetadata {
         name: &str,
         range: Range<usize>,
     ) -> fiftyone_pipeline_core::Result<Option<Vec<ValueMetaData>>>;
+    /// Whether the line holds each property's last values as well as its
+    /// first. .NET reaches an IP Intelligence property's last values only by
+    /// reading every value before them, millions for some properties.
+    fn writes_last_values(&self) -> bool;
 }
 
 impl EngineMetadata for DeviceDetectionOnPremiseEngine {
@@ -117,6 +121,9 @@ impl EngineMetadata for DeviceDetectionOnPremiseEngine {
     ) -> fiftyone_pipeline_core::Result<Option<Vec<ValueMetaData>>> {
         DeviceDetectionOnPremiseEngine::property_value_range(self, name, range)
     }
+    fn writes_last_values(&self) -> bool {
+        true
+    }
 }
 
 impl EngineMetadata for IpIntelligenceOnPremiseEngine {
@@ -138,6 +145,9 @@ impl EngineMetadata for IpIntelligenceOnPremiseEngine {
         range: Range<usize>,
     ) -> fiftyone_pipeline_core::Result<Option<Vec<ValueMetaData>>> {
         IpIntelligenceOnPremiseEngine::property_value_range(self, name, range)
+    }
+    fn writes_last_values(&self) -> bool {
+        false
     }
 }
 
@@ -265,7 +275,10 @@ fn line(case: &Case, engine: Arc<dyn FlowElement>, metadata: Value) -> Result<Va
 
 /// The engine's tier, its properties keyed by name and its components keyed
 /// by name, each list's order kept beside it, with up to `value_limit`
-/// values of each property, every one when it is 0.
+/// values of each property, every one when it is 0. Where the engine
+/// [writes last values](EngineMetadata::writes_last_values), up to
+/// `value_limit` of the values after those follow, taken from the end of
+/// the list.
 fn engine_metadata(engine: &dyn EngineMetadata, value_limit: usize) -> Result<Value> {
     let properties = engine.property_list();
     let mut by_name = Map::new();
@@ -283,7 +296,21 @@ fn engine_metadata(engine: &dyn EngineMetadata, value_limit: usize) -> Result<Va
             .value_range(name, 0..end)
             .with_context(|| format!("reading the values of {name}"))?
             .with_context(|| format!("{name} is listed with no values"))?;
-        by_name.insert(name.to_owned(), property_metadata(property, count, &values));
+        let last = if engine.writes_last_values() {
+            let start = end.max(count.saturating_sub(value_limit));
+            Some(
+                engine
+                    .value_range(name, start..count)
+                    .with_context(|| format!("reading the last values of {name}"))?
+                    .with_context(|| format!("{name} is listed with no values"))?,
+            )
+        } else {
+            None
+        };
+        by_name.insert(
+            name.to_owned(),
+            property_metadata(property, count, &values, last.as_deref()),
+        );
     }
     let components = engine.component_list();
     let mut components_by_name = Map::new();
@@ -313,11 +340,12 @@ fn property_metadata(
     property: &FiftyOneAspectPropertyMetaData,
     count: usize,
     values: &[ValueMetaData],
+    last: Option<&[ValueMetaData]>,
 ) -> Value {
     let aspect = property.aspect();
     let core = property.core();
     let values: Vec<Value> = values.iter().map(value).collect();
-    json!({
+    let mut entry = json!({
         "type": value_type_name(core.value_type),
         "category": core.category,
         "description": aspect.description(),
@@ -336,7 +364,11 @@ fn property_metadata(
         "defaultValue": property.default_value().map(value),
         "valueCount": count,
         "values": values,
-    })
+    });
+    if let Some(last) = last {
+        entry["lastValues"] = Value::Array(last.iter().map(value).collect());
+    }
+    entry
 }
 
 fn value(value: &ValueMetaData) -> Value {

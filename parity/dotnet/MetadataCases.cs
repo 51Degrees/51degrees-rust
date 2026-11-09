@@ -106,8 +106,9 @@ namespace FiftyOne.Parity
         {
             var id = item["id"].GetValue<string>();
             var names = Names(item["properties"]);
+            var kind = item["engine"]?.GetValue<string>();
             IFiftyOneAspectEngine engine =
-                item["engine"]?.GetValue<string>() switch
+                kind switch
                 {
                     Device => BuildDevice(dd, names),
                     Ip => BuildIp(ipi, names),
@@ -118,7 +119,8 @@ namespace FiftyOne.Parity
             {
                 var metadata = Metadata(
                     engine,
-                    item["valueLimit"].GetValue<int>());
+                    item["valueLimit"].GetValue<int>(),
+                    kind == Device);
                 var (processError, properties) = Read(engine, item);
                 return new JsonObject
                 {
@@ -220,10 +222,15 @@ namespace FiftyOne.Parity
 
         // The engine's tier, its properties keyed by name and its components
         // keyed by name, each list's order kept beside it, with up to limit
-        // values of each property, every one when it is 0.
+        // values of each property, every one when it is 0. When lastValues
+        // is true, up to limit of the values after those follow, taken from
+        // the end of the list. An IP Intelligence property's last values are
+        // left out, as .NET reaches them only by reading every value before
+        // them, millions for some properties.
         private static JsonObject Metadata(
             IFiftyOneAspectEngine engine,
-            int limit)
+            int limit,
+            bool lastValues)
         {
             var properties = ((IAspectEngine)engine).Properties
                 .Cast<IFiftyOneAspectPropertyMetaData>()
@@ -231,7 +238,8 @@ namespace FiftyOne.Parity
             var byName = new JsonObject();
             foreach (var property in properties)
             {
-                byName[property.Name] = PropertyMetadata(property, limit);
+                byName[property.Name] =
+                    PropertyMetadata(property, limit, lastValues);
             }
             var components = engine.Components.ToList();
             var componentsByName = new JsonObject();
@@ -263,7 +271,8 @@ namespace FiftyOne.Parity
 
         private static JsonObject PropertyMetadata(
             IFiftyOneAspectPropertyMetaData property,
-            int limit)
+            int limit,
+            bool lastValues)
         {
             var entry = new JsonObject
             {
@@ -282,7 +291,7 @@ namespace FiftyOne.Parity
             };
             Attempt(entry, "component", () =>
             {
-                var component = property.GetComponent();
+                var component = property.Component;
                 return component == null ? null : new JsonObject
                 {
                     ["id"] = component.ComponentId,
@@ -290,12 +299,14 @@ namespace FiftyOne.Parity
                 };
             });
             Attempt(entry, "defaultValue",
-                () => Value(property.GetDefaultValue()));
+                () => Value(property.DefaultValue));
             // An IP Intelligence data file property counts its values
             // without reading them, as one can hold millions. Any other
-            // property's values are counted as they are read.
+            // property's values are counted as they are read, and the last
+            // ones past the first limit are kept as they go by.
             long count = 0;
             var shown = new JsonArray();
+            JsonArray last = null;
             Attempt(entry, "valueCount", () =>
             {
                 if (property is PropertyMetaDataIpi ipi)
@@ -311,18 +322,35 @@ namespace FiftyOne.Parity
                 }
                 else
                 {
+                    var tail = new Queue<JsonNode>();
                     foreach (var value in property.GetValues())
                     {
                         if (limit == 0 || count < limit)
                         {
                             shown.Add(Value(value));
                         }
+                        else if (lastValues)
+                        {
+                            tail.Enqueue(Value(value));
+                            if (tail.Count > limit)
+                            {
+                                tail.Dequeue();
+                            }
+                        }
                         count++;
+                    }
+                    if (lastValues)
+                    {
+                        last = new JsonArray(tail.ToArray());
                     }
                 }
                 return JsonValue.Create(count);
             });
             entry["values"] = shown;
+            if (last != null)
+            {
+                entry["lastValues"] = last;
+            }
             return entry;
         }
 

@@ -585,7 +585,7 @@ Lite and ASN files and the enterprise job the Enterprise files.
 | --- | --- |
 | `engine` | `device` or `ip`. |
 | `properties` | The properties the engine is opened with, or every one when absent. |
-| `valueLimit` | How many of each property's values the line holds, every one when 0. |
+| `valueLimit` | How many of each property's first values the line holds, every one when 0. A Device Detection line holds up to as many of its last values too. |
 | `read` | The properties read from the data of a request to the engine alone. No request is made when it is absent. |
 | `evidence` | The evidence of that request. |
 
@@ -595,8 +595,10 @@ the names of its properties in list order as `propertyNames`, and under
 `type`, `category`, `description`, `url`, `displayOrder`, the flags
 `mandatory`, `list`, `obsolete`, `show` and `showValues`, `available`,
 `dataTiers`, its `component` as an `id` and a `name`, its `defaultValue`,
-its `valueCount` and the first `valueLimit` of its `values`, each value
-being a `name`, a `description` and a `url`. Then come the names of its
+its `valueCount`, the first `valueLimit` of its `values` and, for Device
+Detection, up to `valueLimit` of the values after those, taken from the end
+of the list, as `lastValues`, each value being a `name`, a `description`
+and a `url`. Then come the names of its
 components in list order as `componentNames`, and under `components` each
 component's `id`, `defaultProfileId` and the names of its `properties`,
 keyed by its name. Because properties and components are keyed by name, one
@@ -606,7 +608,10 @@ both sides, and .NET's IP addresses and weighted lists are `ipAddress` and
 `weightedList`, which the crates' value types do not have. Each side counts
 an IP Intelligence data file property's values without reading them,
 because one can hold millions, and the .NET program counts any other
-property's values as it reads them. Where reading a part of .NET's metadata
+property's values as it reads them. The IP Intelligence lines hold no
+`lastValues`, because .NET reaches a property's last values only by reading
+every value before them, millions for some properties. Where reading a part
+of .NET's metadata
 fails, the line holds the exception's type under that part's name with
 `Error` added, so the failure shows as a difference.
 
@@ -621,9 +626,11 @@ data file has, which
 .NET's.
 
 The step "Check that a changed metadata answer fails" checks that each
-side's lines list properties, components and values, so the two cannot
-agree by both listing none, and that a Rust line with a changed description
-and one with a changed value each fail the comparison.
+side's lines list properties, components and values, and that each side's
+`metadata-device` line holds last values, so the two cannot agree by both
+listing none. It then changes a description, a first value, a last value
+and the reason for a property read with no value in the Rust lines, and
+checks that each change fails the comparison.
 
 ## The C code
 

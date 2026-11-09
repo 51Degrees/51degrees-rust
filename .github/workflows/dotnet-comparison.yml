@@ -923,10 +923,11 @@ jobs:
           grep -q "\`robots-txt-tdl-uri\`.* at \`plainText\`: " out/report-robots-txt-changed.md
 
       # Each metadata line on each side must list properties, components and
-      # values, so the two cannot agree by both listing none. Then a Rust
-      # line with a changed description, one with a changed value and one
-      # with a changed reason for a property read with no value must each
-      # fail the comparison.
+      # values, and each side's metadata-device line must hold last values,
+      # so the two cannot agree by both listing none. Then a changed
+      # description, a changed first value, a changed last value and a
+      # changed reason for a property read with no value, each in a Rust
+      # line, must each fail the comparison.
       - name: Check that a changed metadata answer fails
         if: ${{ !cancelled() && env.RUN == 'true' }}
         working-directory: parity
@@ -936,14 +937,17 @@ jobs:
             if ! jq -e -s --argjson cases "$cases" 'length == $cases and all(.[];
                 (.engineMetadata.propertyNames | length) > 0 and
                 (.engineMetadata.componentNames | length) > 0 and
-                ([.engineMetadata.properties[].values | length] | add) > 0)' \
+                ([.engineMetadata.properties[].values | length] | add) > 0 and
+                (.id != "metadata-device" or
+                  ([.engineMetadata.properties[] | .lastValues // [] | length] | add) > 0))' \
                 "out/metadata-$side.jsonl" > /dev/null; then
               echo "::error::The $side metadata lines do not each list properties, components and values"
               exit 1
             fi
           done
           jq -c 'if .id == "metadata-device" then
-              .engineMetadata.properties.IsMobile.description |= . + " Changed."
+              (.engineMetadata.properties.IsMobile.description |= . + " Changed.") |
+              (.engineMetadata.properties.BrowserVersion.lastValues[0].name |= . + " Changed.")
             elif .id == "metadata-ip" then
               .engineMetadata.properties.Asn.values[0].name |= . + " Changed."
             elif .id == "metadata-device-ismobile" then
@@ -957,6 +961,8 @@ jobs:
             exit 1
           fi
           grep -q '`metadata-device`.* at `engineMetadata\.properties\.IsMobile\.description`: ' \
+            out/report-metadata-changed.md
+          grep -q '`metadata-device`.* at `engineMetadata\.properties\.BrowserVersion\.lastValues\[0\]\.name`: ' \
             out/report-metadata-changed.md
           grep -q '`metadata-ip`.* at `engineMetadata\.properties\.Asn\.values\[0\]\.name`: ' \
             out/report-metadata-changed.md
