@@ -80,8 +80,9 @@ const SET_HEADER_RESPONSE: &str = r#"{"ip":{"registeredname":"Example Networks",
     "setheaderlocationaccept-ch":null,
     "setheaderlocationaccept-chnullreason":"No location for this range."}}"#;
 
-const NOT_GRANTED_IP: &str =
-    "ERROR Aspect properties could not be loaded for IpIntelligenceCloudEngine - 'ip'";
+const NOT_GRANTED_IP: &str = "WARN Aspect properties could not be loaded for \
+     IpIntelligenceCloudEngine - 'ip'. The resource key does not include access to any \
+     properties under 'ip'.";
 
 /// The record of each read of a property the data does not hold.
 fn missing_read(property: &str, reason: &str) -> String {
@@ -342,18 +343,17 @@ fn a_property_the_response_gave_as_null_keeps_its_reason() {
     assert_eq!(take_logged(), Vec::<String>::new());
 }
 
+/// A key without the IP Intelligence product is logged once, when the engine
+/// is built. Each read of an IP Intelligence property then gives the product
+/// reason and logs nothing, however many requests follow, as the cloud
+/// aspect engine specification says.
 #[test]
-fn a_key_without_the_ip_product_gives_the_product_reason() {
+fn a_key_without_the_ip_product_is_logged_once_and_not_on_each_read() {
     let _serial = start();
     let request = request_engine(&[DEVICE_PRODUCT], r#"{"device":{"ismobile":true}}"#);
     let engine = ip_engine(&request);
     assert_eq!(take_logged(), vec![NOT_GRANTED_IP]);
     let pipeline = pipeline(request, engine.clone());
-    let data = process(&pipeline);
-    let ip = data.get(IP_DATA_KEY).expect("the IP data is there");
-    assert!(ip.keys().is_empty());
-    assert!(!ip.has_property("RegisteredName"));
-    assert_eq!(take_logged(), Vec::<String>::new());
 
     let expected = engine.missing_property_reason("RegisteredName");
     assert_eq!(
@@ -369,21 +369,26 @@ fn a_key_without_the_ip_product_gives_the_product_reason() {
         "{}",
         expected.description
     );
-    assert_eq!(
-        ip.base().missing_property_reason("RegisteredName"),
-        Some(expected.clone())
-    );
-    assert_eq!(
-        ip.registered_name().no_value_message(),
-        Some(expected.description.as_str())
-    );
-    assert_eq!(
-        take_logged(),
-        vec![missing_read(
-            "RegisteredName",
-            "ProductNotAccessibleWithResourceKey"
-        )]
-    );
+
+    for request in 1..=3 {
+        let data = process(&pipeline);
+        let ip = data.get(IP_DATA_KEY).expect("the IP data is there");
+        assert!(ip.keys().is_empty());
+        assert!(!ip.has_property("RegisteredName"));
+        assert_eq!(
+            ip.base().missing_property_reason("RegisteredName"),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            ip.registered_name().no_value_message(),
+            Some(expected.description.as_str())
+        );
+        assert_eq!(
+            ip.get("RegisteredName").unwrap_err().message,
+            expected.description
+        );
+        assert_eq!(take_logged(), Vec::<String>::new(), "request {request}");
+    }
 }
 
 #[test]
