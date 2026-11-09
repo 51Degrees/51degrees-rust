@@ -287,8 +287,10 @@ impl JavaScriptBuilderElementBuilder {
     ///
     /// The name must be a valid JavaScript identifier (it must match
     /// `[a-zA-Z_$][0-9a-zA-Z_$]*` in full) and must not be a reserved word,
-    /// `Infinity`, `NaN`, `undefined` or `fiftyoneDegreesManager`. An invalid
-    /// name is a configuration error. The same rule applies to a name
+    /// `Infinity`, `NaN`, `undefined`, `fiftyoneDegreesManager`, or one of the
+    /// global names `eval`, `arguments`, `window`, `document`, `top`, `name`,
+    /// `status`, `history`, `navigator` and `closed`. An invalid name is a
+    /// configuration error. The same rule applies to a name
     /// requested through the `query.fod-js-object-name` evidence, where an
     /// invalid name is ignored with a warning logged.
     pub fn set_object_name(mut self, object_name: impl Into<String>) -> Result<Self> {
@@ -367,8 +369,20 @@ const RESERVED_WORDS: &[&str] = &[
     "Infinity", "NaN", "undefined", "fiftyoneDegreesManager",
 ];
 
+/// Global names the object cannot have, beyond [`RESERVED_WORDS`]. A top
+/// level `var eval` replaces the page's own `eval`, and strict code cannot
+/// declare `eval` or `arguments`. The other eight are properties of the
+/// browser's `Window` that a top level `var` cannot replace, being read only
+/// or turning the value into a string, so the object would never be created.
+#[rustfmt::skip]
+const UNSAFE_GLOBAL_NAMES: &[&str] = &[
+    "eval", "arguments", "window", "document", "top", "name", "status",
+    "history", "navigator", "closed",
+];
+
 /// True if the string is a valid JavaScript identifier per the
-/// `[a-zA-Z_$][0-9a-zA-Z_$]*` rule and is not one of [`RESERVED_WORDS`].
+/// `[a-zA-Z_$][0-9a-zA-Z_$]*` rule and is not one of [`RESERVED_WORDS`] or
+/// [`UNSAFE_GLOBAL_NAMES`].
 ///
 /// The first character must be a letter, underscore or dollar sign, and the
 /// rest may also be digits. An empty string is invalid. The name is written
@@ -381,7 +395,9 @@ pub(crate) fn is_valid_object_name(name: &str) -> bool {
         Some(first) if is_identifier_start(first) => {}
         _ => return false,
     }
-    chars.all(is_identifier_part) && !RESERVED_WORDS.contains(&name)
+    chars.all(is_identifier_part)
+        && !RESERVED_WORDS.contains(&name)
+        && !UNSAFE_GLOBAL_NAMES.contains(&name)
 }
 
 /// True if the character may start a JavaScript identifier (letter, `_` or `$`).

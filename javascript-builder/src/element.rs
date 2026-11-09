@@ -121,7 +121,9 @@ fn parse_boolean(text: &str) -> Option<bool> {
 /// - **host**: the configured host if set, else the `header.host` evidence.
 /// - **object name**: the `query.fod-js-object-name` evidence if present and a
 ///   valid JavaScript identifier that is not a reserved word, `Infinity`,
-///   `NaN`, `undefined` or `fiftyoneDegreesManager`, else the configured
+///   `NaN`, `undefined`, `fiftyoneDegreesManager`, or one of the global names
+///   `eval`, `arguments`, `window`, `document`, `top`, `name`, `status`,
+///   `history`, `navigator` and `closed`, else the configured
 ///   object name (default `fod`). An invalid requested name, the empty string
 ///   included, is ignored with a warning logged through the `log` crate.
 /// - **enable cookies**: the `query.fod-js-enable-cookies` evidence when it
