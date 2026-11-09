@@ -498,22 +498,37 @@ mod tests {
         parse_client_ip(value).map(|address| address.to_string())
     }
 
+    // The forms the client IP rule of the IP Intelligence specification
+    // reads, each with the address read from it.
     #[test]
     fn a_client_ip_is_read_in_the_forms_proxies_send() {
-        assert_eq!(parsed("192.0.2.1").as_deref(), Some("192.0.2.1"));
-        assert_eq!(parsed(" 192.0.2.1 ").as_deref(), Some("192.0.2.1"));
-        assert_eq!(parsed("192.0.2.1:443").as_deref(), Some("192.0.2.1"));
-        assert_eq!(parsed("2001:DB8:0::1").as_deref(), Some("2001:db8::1"));
-        assert_eq!(parsed("[2001:db8::1]").as_deref(), Some("2001:db8::1"));
-        assert_eq!(parsed("[2001:db8::1]:443").as_deref(), Some("2001:db8::1"));
-        assert_eq!(parsed("fe80::1%1").as_deref(), Some("fe80::1"));
-        assert_eq!(parsed("[fe80::1%eth0]:443").as_deref(), Some("fe80::1"));
-        assert_eq!(
-            parsed("192.0.2.1, 198.51.100.7").as_deref(),
-            Some("192.0.2.1")
-        );
+        for (value, address) in [
+            ("192.0.2.1", "192.0.2.1"),
+            ("203.0.113.1", "203.0.113.1"),
+            ("0.0.0.0", "0.0.0.0"),
+            ("192.0.2.1:443", "192.0.2.1"),
+            ("203.0.113.1:8080", "203.0.113.1"),
+            ("203.0.113.1:0443", "203.0.113.1"),
+            ("203.0.113.1:0", "203.0.113.1"),
+            ("203.0.113.1:65535", "203.0.113.1"),
+            ("2001:DB8:0::1", "2001:db8::1"),
+            ("2001:0DB8:0:0:0:0:0:1", "2001:db8::1"),
+            ("::ffff:203.0.113.1", "::ffff:203.0.113.1"),
+            ("2001:db8::1:80", "2001:db8::1:80"),
+            ("1:2:3:4:5:6:7::", "1:2:3:4:5:6:7:0"),
+            ("::", "::"),
+            ("[2001:db8::1]", "2001:db8::1"),
+            ("[2001:db8::1]:443", "2001:db8::1"),
+            ("[2001:db8::1]:8080", "2001:db8::1"),
+            ("[2001:db8::1]:0443", "2001:db8::1"),
+        ] {
+            assert_eq!(parsed(value).as_deref(), Some(address), "{value:?}");
+        }
     }
 
+    // A value that is not wholly one of those forms is not read, and no part
+    // of it is used. These are the values the specification's table lists,
+    // and the zone index and leading zero of its other examples.
     #[test]
     fn a_value_that_is_not_a_whole_address_is_not_read() {
         for value in [
@@ -522,15 +537,46 @@ mod tests {
             "unknown",
             ", 192.0.2.1",
             "192.0.2",
+            "203.0.113",
             "3221225985",
             "012.0.2.1",
+            "01.2.3.4",
+            "1.2.3.04",
+            "256.0.113.1",
             "192.0.2.1/24",
+            "203.0.113.0/24",
+            "2001:db8::/32",
             "192.0.2.1 x",
+            "203.0.113.1 x",
+            "192.0.2.1, 198.51.100.7",
+            "203.0.113.1, 198.51.100.7",
+            "203.0.113.1,198.51.100.7",
+            " 192.0.2.1 ",
+            "203.0.113.1 ",
+            " 203.0.113.1",
+            "203.0.113.1\t",
+            "\t203.0.113.1",
+            "203.0.113.1\r\n",
+            "203.0.113.1\n",
+            "fe80::1%1",
+            "fe80::1%eth0",
+            "[fe80::1%eth0]",
+            "[fe80::1%eth0]:443",
+            "[fe80::1%25eth0]",
             "192.0.2.1:65536",
+            "203.0.113.1:65536",
             "192.0.2.1:+443",
+            "203.0.113.1:",
             "[192.0.2.1]",
+            "[203.0.113.1]",
+            "[2001:db8::1",
+            "2001:db8::1]:80",
             "[2001:db8::1]443",
             "[2001:db8::1]:",
+            "[2001:db8::1]:65536",
+            "2001:db8::1::2",
+            "2001:db8:1:2:3:4:5:6:7",
+            "2001:db8::12345",
         ] {
             assert_eq!(parsed(value), None, "{value:?} should not be read");
         }
