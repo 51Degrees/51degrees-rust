@@ -287,7 +287,7 @@ impl JavaScriptBuilderElementBuilder {
     ///
     /// The name must be a valid JavaScript identifier (it must match
     /// `[a-zA-Z_$][0-9a-zA-Z_$]*` in full) and must not be a name the
-    /// [object name rule](https://github.com/51Degrees/specifications/blob/88dda87fbd5a5842c664991cdeaed970193a90f6/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L182)
+    /// [object name rule](https://github.com/51Degrees/specifications/blob/e637d3660a5e781f4494a9b42c8e8349bb117669/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L192)
     /// refuses. Those are the reserved words, `Infinity`, `NaN`, `undefined`,
     /// `fiftyoneDegreesManager`, and global names a page cannot use for the
     /// object, such as `eval`, `window`, `location` and `localStorage`. An
@@ -376,7 +376,7 @@ const RESERVED_WORDS: &[&str] = &[
 /// `location.href` to the object's text, which navigates the page away. The
 /// rest are properties of the browser's window that a top level `var` cannot
 /// replace, so the object would never be created. These are the names the
-/// [object name rule](https://github.com/51Degrees/specifications/blob/88dda87fbd5a5842c664991cdeaed970193a90f6/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L182)
+/// [object name rule](https://github.com/51Degrees/specifications/blob/e637d3660a5e781f4494a9b42c8e8349bb117669/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L192)
 /// adds to the reserved words.
 #[rustfmt::skip]
 const UNSAFE_GLOBAL_NAMES: &[&str] = &[
@@ -384,7 +384,9 @@ const UNSAFE_GLOBAL_NAMES: &[&str] = &[
     "window", "document", "top", "name", "status", "history", "navigator",
     "closed", "frameElement", "isSecureContext", "crossOriginIsolated",
     "trustedTypes", "crypto", "indexedDB", "localStorage", "sessionStorage",
-    "caches", "cookieStore", "speechSynthesis", "styleMedia",
+    "caches", "cookieStore", "speechSynthesis", "styleMedia", "crashReport",
+    "credentialless", "customElements", "documentPictureInPicture", "fence",
+    "launchQueue", "originAgentCluster",
 ];
 
 /// True if the string is a valid JavaScript identifier per the
