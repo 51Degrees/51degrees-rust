@@ -50,7 +50,6 @@ impl Manager {
     /// A profile that cannot be read is an error rather than left out, as the
     /// C++ code the other SDKs call raises one.
     pub fn data_file_profiles(&self) -> Result<Vec<DataFileProfile>> {
-        let _file_read = self.file_read();
         // Safety: the manager is initialized for the lifetime of `self`.
         let count = unsafe { sys::fiftyoneDegreesShimHashGetProfileCount(self.as_ptr()) };
         let mut profiles = Vec::with_capacity(count as usize);
@@ -64,8 +63,7 @@ impl Manager {
     }
 
     /// The profile at `index` among the data file's profiles, or [`None`]
-    /// when the index is out of range or the profile cannot be read. The
-    /// caller holds the file read permit.
+    /// when the index is out of range or the profile cannot be read.
     fn read_profile(&self, index: u32) -> Option<DataFileProfile> {
         let mut profile_id = 0u32;
         let mut component_id = 0u8;
@@ -167,7 +165,6 @@ mod tests {
         for performance in METADATA_PROFILES {
             let name = performance.as_str();
             let manager = Manager::open(&path, performance).expect("data file loads");
-            let _file_read = manager.file_read();
             // Safety: the manager is initialized for the lifetime of `manager`.
             let count = unsafe { sys::fiftyoneDegreesShimHashGetProfileCount(manager.as_ptr()) };
             assert!(manager.read_profile(count - 1).is_some(), "{name}");

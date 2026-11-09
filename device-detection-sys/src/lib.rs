@@ -815,17 +815,6 @@ extern "C" {
         length: usize,
     ) -> usize;
 
-    /// Returns the number of handles in the file pool of the data set
-    /// managed by `manager` when any of its collections reads from the data
-    /// file after it is loaded, or zero when the whole data set is held in
-    /// memory. A read that finds every handle in use fails rather than
-    /// waiting for one, so this is how many calls can read the data file at
-    /// once. See `src/shim.c`.
-    ///
-    /// # Safety
-    /// `manager` must be an initialized Hash manager.
-    pub fn fiftyoneDegreesShimHashGetFileHandleCount(manager: *mut ResourceManager) -> u16;
-
     /// Returns the number of handles to the data file that the data set
     /// managed by `manager` opened when it loaded, which stay open until the
     /// data set is freed. Every configuration that does not load the whole

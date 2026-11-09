@@ -464,36 +464,6 @@ size_t fiftyoneDegreesShimHashGetMatchedUserAgent(
 }
 
 /*
- * Returns the number of handles in the file pool of the data set managed by
- * `manager` when any of its collections reads from the data file after it is
- * loaded, or zero when the whole data set is held in memory. A read that
- * finds every handle in use fails rather than waiting for one, so this is
- * how many calls can read the data file at once.
- */
-uint16_t fiftyoneDegreesShimHashGetFileHandleCount(
-    fiftyoneDegreesResourceManager *manager) {
-    fiftyoneDegreesDataSetHash *dataSet =
-        fiftyoneDegreesDataSetHashGet(manager);
-    if (dataSet == NULL) {
-        return 0;
-    }
-    const fiftyoneDegreesConfigHash *config = &dataSet->config;
-    const bool readsFile = dataSet->b.b.isInMemory == false && (
-        config->strings.loaded == false ||
-        config->components.loaded == false ||
-        config->maps.loaded == false ||
-        config->properties.loaded == false ||
-        config->values.loaded == false ||
-        config->profiles.loaded == false ||
-        config->rootNodes.loaded == false ||
-        config->nodes.loaded == false ||
-        config->profileOffsets.loaded == false);
-    const uint16_t count = readsFile ? dataSet->b.b.filePool.pool.count : 0;
-    fiftyoneDegreesDataSetHashRelease(dataSet);
-    return count;
-}
-
-/*
  * Returns the number of handles to the data file that the data set managed
  * by `manager` opened when it loaded, which stay open until the data set is
  * freed. Every configuration that does not load the whole file into memory

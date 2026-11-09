@@ -35,9 +35,8 @@
 //! protected (see `src/common/resource.h`), so a [`Manager`] is both [`Send`]
 //! and [`Sync`] and a single one may be shared across threads behind an
 //! [`Arc`]. A data set that reads from its file after it is loaded holds one
-//! file handle for each concurrent operation it was opened to expect, and a
-//! read that finds none free fails. So no more calls that can read the file
-//! run at once than there are handles, and a call beyond them waits for one.
+//! file handle for each concurrent operation it was opened to expect, and the
+//! native library makes a read that finds none free wait for one.
 //! A native results structure is per-thread scratch, so [`Results`] is
 //! [`Send`] (it may be moved to another thread) but not [`Sync`] (it must not be
 //! used from two threads at once). This matches the pipeline rule that one flow
@@ -61,7 +60,6 @@ use fiftyone_pipeline_core::{constants, Error, PropertyValueType, Result};
 
 use crate::buffer::with_value_string;
 use crate::evidence::with_native_evidence;
-use crate::file_reads::{FileReadPermit, FileReads};
 use crate::held_memory::HeldMemory;
 use crate::metadata::{metadata_read_failed, read_metadata_string, take_value_string};
 use crate::profile::PerformanceProfile;
@@ -282,9 +280,6 @@ pub struct Manager {
     /// lookup. Every later lookup reads it with no lock, so concurrent readers
     /// never contend.
     property_index: OnceLock<HashMap<String, c_int>>,
-    /// Permits for the calls that can read the data file, one for each of its
-    /// file handles, or [`None`] when the data set is held in memory.
-    file_reads: Option<FileReads>,
     /// The data a load from memory reads in place. Fields drop after
     /// [`Drop::drop`] has freed the data set, so the data outlives it.
     _memory: Option<HeldMemory>,
@@ -293,8 +288,8 @@ pub struct Manager {
 // Safety: the native resource manager is internally reference counted and
 // lock protected per `src/common/resource.h`, so concurrent access from several
 // threads through a shared `&Manager` is sound. The cached property index is
-// set once through a `OnceLock` and only read after that, and the file read
-// permits are lock protected. Therefore the manager is both `Send` and `Sync`.
+// set once through a `OnceLock` and only read after that. Therefore the
+// manager is both `Send` and `Sync`.
 unsafe impl Send for Manager {}
 unsafe impl Sync for Manager {}
 
@@ -498,12 +493,9 @@ impl Manager {
 
         // Safety: a successful init leaves a non-null, initialized manager.
         let manager = NonNull::new(manager_ptr).expect("init produced a non-null manager");
-        // Safety: the manager was initialized above.
-        let handles = unsafe { sys::fiftyoneDegreesShimHashGetFileHandleCount(manager.as_ptr()) };
         Ok(Arc::new(Manager {
             manager,
             property_index: OnceLock::new(),
-            file_reads: FileReads::for_handles(handles),
             _memory: memory,
         }))
     }
@@ -543,12 +535,6 @@ impl Manager {
     /// The raw native manager pointer. For the engine wrappers in this crate.
     fn as_ptr(&self) -> *mut sys::ResourceManager {
         self.manager.as_ptr()
-    }
-
-    /// A permit for a call that can read the data file, waiting while every
-    /// file handle is in use. [`None`] when the data set is held in memory.
-    fn file_read(&self) -> Option<FileReadPermit<'_>> {
-        self.file_reads.as_ref().map(FileReads::permit)
     }
 
     /// The number of handles to the data file that the data set opened when
@@ -640,7 +626,6 @@ impl Manager {
     /// caller can fall back to its own default rather than assert a tier.
     pub fn data_set_name(&self) -> Option<String> {
         let mut buffer = vec![0u8; 128];
-        let _file_read = self.file_read();
         // Safety: the buffer is writable for its full length and the manager is
         // initialized for the lifetime of `self`.
         let written = unsafe {
@@ -817,7 +802,6 @@ impl Manager {
     /// A property that cannot be read is an error rather than left out, as
     /// the C++ code the other SDKs call raises one.
     pub fn data_file_properties(&self) -> Result<Vec<DataFileProperty>> {
-        let _file_read = self.file_read();
         // Safety: the manager is initialized for the lifetime of `self`.
         let count = unsafe { sys::fiftyoneDegreesShimHashGetDataFilePropertyCount(self.as_ptr()) };
         (0..count)
@@ -832,7 +816,6 @@ impl Manager {
     /// default profile or a name that cannot be read is an error, as the C++
     /// builder throws for a default profile it cannot read.
     pub fn data_file_components(&self) -> Result<Vec<DataFileComponent>> {
-        let _file_read = self.file_read();
         // Safety: the manager is initialized for the lifetime of `self`.
         let count = unsafe { sys::fiftyoneDegreesShimHashGetComponentCount(self.as_ptr()) };
         let mut components = Vec::with_capacity(count as usize);
@@ -889,7 +872,6 @@ impl Manager {
         property_index: u32,
         range: Range<u32>,
     ) -> Result<Vec<DataFileValue>> {
-        let _file_read = self.file_read();
         // Safety: the manager is initialized for the lifetime of `self`.
         let count = unsafe { sys::fiftyoneDegreesShimHashGetDataFilePropertyCount(self.as_ptr()) };
         if property_index >= count {
@@ -917,7 +899,6 @@ impl Manager {
         property_index: u32,
         name: &str,
     ) -> Result<Option<DataFileValue>> {
-        let _file_read = self.file_read();
         // Safety: the manager is initialized for the lifetime of `self`.
         let count = unsafe { sys::fiftyoneDegreesShimHashGetDataFilePropertyCount(self.as_ptr()) };
         if property_index >= count {
@@ -956,8 +937,7 @@ impl Manager {
 
     /// The values at the places `range` covers among those the data file
     /// holds for the property at `property_index`, read in one shim call, or
-    /// [`None`] when the property or any of them cannot be read. The caller
-    /// holds the file read permit.
+    /// [`None`] when the property or any of them cannot be read.
     fn read_values(&self, property_index: u32, range: Range<u32>) -> Option<Vec<DataFileValue>> {
         let mut values: Vec<DataFileValue> = Vec::new();
         // Safety: `take_value_string` treats the context as the
@@ -978,8 +958,7 @@ impl Manager {
 
     /// The fields of the data file property at `index` that are not strings,
     /// or [`None`] when the index is out of range or the property, its name
-    /// or its default value cannot be read. The caller holds the file read
-    /// permit.
+    /// or its default value cannot be read.
     fn read_property_fields(&self, index: u32) -> Option<PropertyFields> {
         let mut fields = PropertyFields {
             value_type: 0,
@@ -1020,8 +999,7 @@ impl Manager {
     }
 
     /// The data file property at `index`, or [`None`] when the index is out
-    /// of range or any part of it cannot be read. The caller holds the file
-    /// read permit.
+    /// of range or any part of it cannot be read.
     fn read_data_file_property(&self, index: u32) -> Option<DataFileProperty> {
         let fields = self.read_property_fields(index)?;
         let string = |field| {
@@ -1155,7 +1133,6 @@ impl Results {
     pub fn process_evidence(&mut self, evidence: &fiftyone_pipeline_core::Evidence) -> Result<()> {
         let mut exception = sys::Exception::cleared();
         let results = self.as_ptr();
-        let _file_read = self.manager.file_read();
         // Safety: the array the closure receives is valid only for the call,
         // which is exactly the window the native processor reads it in.
         unsafe {
@@ -1172,7 +1149,6 @@ impl Results {
     /// the same results as no evidence.
     pub fn process_user_agent(&mut self, user_agent: &str) -> Result<()> {
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: the user agent bytes are valid for the duration of the call.
         unsafe {
             sys::fiftyoneDegreesResultsHashFromUserAgent(
@@ -1197,7 +1173,6 @@ impl Results {
             message: String::from("device id contains an interior nul byte"),
         })?;
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: `device_id_c` is null terminated and valid for the call.
         let profiles = unsafe {
             sys::fiftyoneDegreesResultsHashFromDeviceId(
@@ -1225,7 +1200,6 @@ impl Results {
         // avoids a growable allocation on this metric path.
         let mut buffer = [0u8; 256];
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: the results are valid, the buffer is writable for its full
         // length, and the exception is valid. The getter null terminates within
         // the buffer and returns the buffer pointer, or null when it did not fit.
@@ -1258,7 +1232,6 @@ impl Results {
             return Ok(false);
         };
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: the results are valid and the index is a real required index.
         let has = unsafe {
             sys::fiftyoneDegreesResultsHashGetHasValues(self.as_ptr(), index, &mut exception)
@@ -1295,7 +1268,6 @@ impl Results {
 
         let results = self.as_ptr();
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: the writer only touches the buffer it is given and returns the
         // native available-character count. The property and separator strings
         // outlive every invocation.
@@ -1343,7 +1315,6 @@ impl Results {
         }
         let results = self.as_ptr();
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: the writer only touches the buffer it is given and returns the
         // native available-character count. The separator outlives every
         // invocation and the index is in range for this data set.
@@ -1390,7 +1361,6 @@ impl Results {
         }
         let mut values: Vec<String> = Vec::new();
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: the index is in range for this data set, and
         // `take_result_value` treats the context as the `Vec<String>` it
         // points to, which nothing else uses during the call.
@@ -1440,7 +1410,6 @@ impl Results {
         let mut drift = 0;
         let mut iterations = 0;
         let mut matched_nodes = 0;
-        let _file_read = self.manager.file_read();
         // Safety: the results came from `ResultsHashCreate` and remain valid for
         // the lifetime of `self`; every output pointer is writable.
         let ok = unsafe {
@@ -1474,7 +1443,6 @@ impl Results {
     /// [`try_matched_user_agents`](Self::try_matched_user_agents) tells a
     /// failed walk apart.
     pub fn matched_user_agents(&self) -> Vec<String> {
-        let _file_read = self.manager.file_read();
         self.read_matched_user_agents()
     }
 
@@ -1485,7 +1453,6 @@ impl Results {
     /// walk a later call walks only the graphs still to walk and gives the
     /// User-Agents the results then hold.
     pub fn try_matched_user_agents(&self) -> Option<Vec<String>> {
-        let _file_read = self.manager.file_read();
         if !self.walk_pending_graphs() {
             return None;
         }
@@ -1493,7 +1460,7 @@ impl Results {
     }
 
     /// Walk the graph of each component not yet walked, and return false
-    /// when a walk fails. The caller holds the file read permit.
+    /// when a walk fails.
     fn walk_pending_graphs(&self) -> bool {
         // Safety: the results came from `ResultsHashCreate` and remain valid
         // for the lifetime of `self`. A null output pointer skips its metric,
@@ -1512,8 +1479,7 @@ impl Results {
     }
 
     /// The matched User-Agent of each result, without repeats, in result
-    /// order, walking any graph not yet walked. The caller holds the file
-    /// read permit.
+    /// order, walking any graph not yet walked.
     fn read_matched_user_agents(&self) -> Vec<String> {
         // Safety: the results came from `ResultsHashCreate` and remain valid
         // for the lifetime of `self`.
@@ -1998,39 +1964,6 @@ mod tests {
         }
     }
 
-    /// A data set that reads from its file has a file handle for each
-    /// concurrent operation it was opened to expect, and one held in memory
-    /// has none, so its calls take no permits.
-    #[test]
-    fn file_handles_follow_the_expected_concurrency() {
-        let Some(path) = data_file() else {
-            eprintln!("no Hash data file found; skipping file handles");
-            return;
-        };
-        for (profile, concurrency, handles) in [
-            (PerformanceProfile::LowMemory, Some(3), 3),
-            (
-                PerformanceProfile::Balanced,
-                None,
-                handles_for_the_processors(),
-            ),
-            (PerformanceProfile::HighPerformance, Some(3), 0),
-            (PerformanceProfile::InMemory, None, 0),
-        ] {
-            let manager = Manager::open_with_options(&path, profile, None, concurrency)
-                .expect("data file loads");
-            // Safety: the manager is initialized.
-            let count = unsafe { sys::fiftyoneDegreesShimHashGetFileHandleCount(manager.as_ptr()) };
-            assert_eq!(count, handles, "{}", profile.as_str());
-            assert_eq!(
-                manager.file_reads.is_some(),
-                handles > 0,
-                "{}",
-                profile.as_str()
-            );
-        }
-    }
-
     /// The C library's name for a collection held whole in memory.
     const IN_MEMORY: &str = "CollectionMemory";
 
@@ -2243,7 +2176,6 @@ mod tests {
                 Manager::open_from_memory(bytes.clone(), profile, Some(&named[..]), &options)
                     .expect("data loads");
             assert_eq!(from_memory.file_pool_size(), 0, "{}", profile.as_str());
-            assert!(from_memory.file_reads.is_none(), "{}", profile.as_str());
             assert_eq!(
                 from_memory.property_names(),
                 from_file.property_names(),
@@ -3239,13 +3171,10 @@ mod tests {
         let copy = dir.join("51Degrees.hash");
         std::fs::write(&copy, &bytes).expect("the copy is written");
         let manager = Manager::open(&copy, PerformanceProfile::LowMemory).expect("the copy loads");
-        {
-            let _file_read = manager.file_read();
-            let fields = manager
-                .read_property_fields(last)
-                .expect("the last property is read");
-            assert_eq!(fields.available, 1);
-        }
+        let fields = manager
+            .read_property_fields(last)
+            .expect("the last property is read");
+        assert_eq!(fields.available, 1);
 
         let mut file = std::fs::OpenOptions::new()
             .write(true)
@@ -3257,11 +3186,8 @@ mod tests {
         file.write_all(&(i32::MAX as u32).to_le_bytes())
             .expect("the name offset is written");
         drop(file);
-        {
-            let _file_read = manager.file_read();
-            assert!(manager.read_property_fields(0).is_some());
-            assert!(manager.read_property_fields(last).is_none());
-        }
+        assert!(manager.read_property_fields(0).is_some());
+        assert!(manager.read_property_fields(last).is_none());
         let error = manager
             .data_file_properties()
             .expect_err("the last property cannot be read");
@@ -3400,7 +3326,6 @@ mod tests {
         ];
         for profile in METADATA_PROFILES {
             let manager = Manager::open(&path, profile).expect("data file loads");
-            let _file_read = manager.file_read();
             let ptr = manager.as_ptr();
             // Safety (every call below): the manager is initialized for the
             // lifetime of `manager`, and each buffer is writable for the
