@@ -85,13 +85,9 @@ fn device_detection_serves_more_threads_than_file_handles() {
         eprintln!("51DEGREES_DD_PATH names no Hash data file; skipping");
         return;
     };
-    let manager = dd::Manager::open_with_options(
-        &path,
-        PerformanceProfile::LowMemory,
-        None,
-        Some(HANDLES),
-    )
-    .expect("the data file loads");
+    let manager =
+        dd::Manager::open_with_options(&path, PerformanceProfile::LowMemory, None, Some(HANDLES))
+            .expect("the data file loads");
     assert_eq!(manager.file_pool_size(), HANDLES);
     let names = manager.property_names();
     let user_agents = [
@@ -142,13 +138,9 @@ fn ip_intelligence_serves_more_threads_than_file_handles() {
         eprintln!("51DEGREES_IPI_PATH names no IP Intelligence data file; skipping");
         return;
     };
-    let manager = ipi::Manager::open_with_options(
-        &path,
-        PerformanceProfile::LowMemory,
-        None,
-        Some(HANDLES),
-    )
-    .expect("the data file loads");
+    let manager =
+        ipi::Manager::open_with_options(&path, PerformanceProfile::LowMemory, None, Some(HANDLES))
+            .expect("the data file loads");
     assert_eq!(manager.file_pool_size(), HANDLES);
     let names = manager.available_property_names();
     let addresses = ["1.1.1.1", "9.9.9.9", "2606:4700:4700::1111", "8.8.8.8"];

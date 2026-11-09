@@ -1279,10 +1279,7 @@ extern "C" {
     /// # Safety
     /// `manager` must be initialized and `date` must point to
     /// a writable [`Date`].
-    pub fn fiftyoneDegreesIpiGetPublished(
-        manager: *mut ResourceManager,
-        date: *mut Date,
-    ) -> bool;
+    pub fn fiftyoneDegreesIpiGetPublished(manager: *mut ResourceManager, date: *mut Date) -> bool;
 
     /// Sets `*date` to the date the next data file is expected, from the
     /// data file header, and returns true when that date is valid, as
@@ -1292,10 +1289,7 @@ extern "C" {
     /// # Safety
     /// `manager` must be initialized and `date` must point to
     /// a writable [`Date`].
-    pub fn fiftyoneDegreesIpiGetNextUpdate(
-        manager: *mut ResourceManager,
-        date: *mut Date,
-    ) -> bool;
+    pub fn fiftyoneDegreesIpiGetNextUpdate(manager: *mut ResourceManager, date: *mut Date) -> bool;
 
     /// Returns the size of an IP Intelligence data file's header in bytes,
     /// being how much of a data file the C library compares to find a copy of

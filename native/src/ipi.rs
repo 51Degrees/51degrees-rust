@@ -2146,9 +2146,8 @@ mod tests {
             for at in [PUBLISHED_AT, PUBLISHED_AT + 4] {
                 data[at..at + 4].copy_from_slice(&[low, high, month, day]);
             }
-            let manager =
-                Manager::open_from_memory(data, PerformanceProfile::LowMemory, None)
-                    .expect("data loads");
+            let manager = Manager::open_from_memory(data, PerformanceProfile::LowMemory, None)
+                .expect("data loads");
             let date = (i32::from(year), u32::from(month), u32::from(day));
             let expected = read.then_some(date);
             assert_eq!(manager.data_set_published(), expected, "{date:?}");

@@ -446,9 +446,7 @@ fn an_iphone_gets_the_hardware_profile_as_the_script_the_client_runs() {
     let body = script
         .strip_prefix("var profileIds = []\n")
         .and_then(|rest| {
-            rest.strip_suffix(
-                "\ndocument.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")",
-            )
+            rest.strip_suffix("\ndocument.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")")
         })
         .unwrap_or_else(|| panic!("not the script the client runs: {script}"));
     assert!(!body.is_empty(), "the script holds the stored body");

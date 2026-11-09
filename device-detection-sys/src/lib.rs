@@ -97,9 +97,9 @@ use std::os::raw::{c_char, c_int, c_void};
 // import surface. These are the exact types the Hash entry points consume.
 pub use fiftyone_common_sys::{
     fiftyoneDegreesExceptionGetMessage, fiftyoneDegreesFree, fiftyoneDegreesMemoryStandardFree,
-    fiftyoneDegreesResourceManagerFree, fiftyoneDegreesStatusGetMessage, Date, EvidenceKeyValuePair,
-    EvidenceKeyValuePairArray, EvidencePrefix, Exception, PropertiesAvailable, PropertiesRequired,
-    ResourceHandle, ResourceManager, StatusCode,
+    fiftyoneDegreesResourceManagerFree, fiftyoneDegreesStatusGetMessage, Date,
+    EvidenceKeyValuePair, EvidenceKeyValuePairArray, EvidencePrefix, Exception,
+    PropertiesAvailable, PropertiesRequired, ResourceHandle, ResourceManager, StatusCode,
 };
 
 // ---------------------------------------------------------------------------
@@ -797,10 +797,7 @@ extern "C" {
     /// # Safety
     /// `manager` must be an initialized Hash manager and `date` must point to
     /// a writable [`Date`].
-    pub fn fiftyoneDegreesHashGetPublished(
-        manager: *mut ResourceManager,
-        date: *mut Date,
-    ) -> bool;
+    pub fn fiftyoneDegreesHashGetPublished(manager: *mut ResourceManager, date: *mut Date) -> bool;
 
     /// Sets `*date` to the date the next data file is expected, from the
     /// data file header, and returns true when that date is valid, as
@@ -810,10 +807,8 @@ extern "C" {
     /// # Safety
     /// `manager` must be an initialized Hash manager and `date` must point to
     /// a writable [`Date`].
-    pub fn fiftyoneDegreesHashGetNextUpdate(
-        manager: *mut ResourceManager,
-        date: *mut Date,
-    ) -> bool;
+    pub fn fiftyoneDegreesHashGetNextUpdate(manager: *mut ResourceManager, date: *mut Date)
+        -> bool;
 
     /// Returns the size of a Hash data file's header in bytes, being how much
     /// of a data file the C library compares to find a copy of it to reuse.
