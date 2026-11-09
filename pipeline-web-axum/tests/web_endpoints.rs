@@ -170,6 +170,48 @@ async fn javascript_endpoint_returns_304_for_matching_if_none_match() {
     assert!(body.is_empty(), "304 has an empty body");
 }
 
+/// The Sequence element gives each request with no session id a new one, but
+/// the ETag is worked out from the evidence the request supplied, so the same
+/// request sent again with the tag gets a `304` from the JavaScript endpoint
+/// and a `412` from the JSON endpoint's `POST`.
+#[tokio::test]
+async fn requests_without_a_session_id_get_the_same_etag() {
+    let get = |etag: Option<&str>| {
+        let mut builder = Request::builder()
+            .method("GET")
+            .uri("/51Degrees.core.js")
+            .header("host", "localhost");
+        if let Some(etag) = etag {
+            builder = builder.header("if-none-match", etag);
+        }
+        builder.body(Body::empty()).unwrap()
+    };
+    let post = |etag: Option<&str>| {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri("/51dpipeline/json")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .header("host", "localhost");
+        if let Some(etag) = etag {
+            builder = builder.header("if-none-match", etag);
+        }
+        builder.body(Body::empty()).unwrap()
+    };
+
+    let first = app().oneshot(get(None)).await.unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let etag = header(&first, "etag").expect("ETag present on first response");
+    let second = app().oneshot(get(Some(&etag))).await.unwrap();
+    assert_eq!(second.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(header(&second, "etag"), Some(etag));
+
+    let first = app().oneshot(post(None)).await.unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let etag = header(&first, "etag").expect("ETag present on first response");
+    let second = app().oneshot(post(Some(&etag))).await.unwrap();
+    assert_eq!(second.status(), StatusCode::PRECONDITION_FAILED);
+}
+
 #[tokio::test]
 async fn json_endpoint_serves_200_with_json_body() {
     let app = app();
