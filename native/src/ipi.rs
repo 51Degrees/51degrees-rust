@@ -71,6 +71,7 @@ use fiftyone_pipeline_core::{constants, round_angle, Error, Evidence, PropertyVa
 use crate::buffer::with_value_string;
 use crate::evidence::parse_client_ip;
 use crate::file_reads::{FileReadPermit, FileReads};
+use crate::held_memory::HeldMemory;
 use crate::metadata::{metadata_read_failed, read_metadata_string, take_value_string};
 use crate::profile::PerformanceProfile;
 use crate::status::{status_name, status_to_result, take_message, NativeException, NativeStatus};
@@ -169,7 +170,7 @@ pub struct Manager {
     file_reads: Option<FileReads>,
     /// The data a load from memory reads in place. Fields drop after
     /// [`Drop::drop`] has freed the data set, so the data outlives it.
-    _memory: Option<Box<[u8]>>,
+    _memory: Option<HeldMemory>,
 }
 
 /// One evidence key the data file defines, split into the parts the native
@@ -260,15 +261,15 @@ impl Manager {
         profile: PerformanceProfile,
         properties: Option<&[&str]>,
     ) -> Result<Arc<Manager>> {
-        let mut memory = data.into_boxed_slice();
-        let size = sys::FileOffset::try_from(memory.len()).map_err(|_| Error::Native {
+        let memory = HeldMemory::new(data);
+        let size = sys::FileOffset::try_from(memory.length()).map_err(|_| Error::Native {
             status: String::from("InvalidInput"),
             message: format!(
                 "the data is {} bytes, more than the C library reads from memory",
-                memory.len()
+                memory.length()
             ),
         })?;
-        let start = memory.as_mut_ptr().cast::<c_void>();
+        let start = memory.start();
         Self::init(
             properties,
             Some(memory),
@@ -299,7 +300,7 @@ impl Manager {
     /// gives the message for a failed status.
     fn init(
         properties: Option<&[&str]>,
-        memory: Option<Box<[u8]>>,
+        memory: Option<HeldMemory>,
         init: impl FnOnce(
             *mut sys::ResourceManager,
             *mut sys::PropertiesRequired,
@@ -1760,9 +1761,9 @@ mod tests {
         asn_file()
     }
 
-    /// The ASN file from the data repository, for a test that copies the
-    /// data file and so needs a small one whatever `51DEGREES_IPI_PATH`
-    /// names.
+    /// The ASN file from the data repository, for a test that holds several
+    /// copies of the data file and so needs a small one whatever
+    /// `51DEGREES_IPI_PATH` names.
     fn asn_file() -> Option<PathBuf> {
         let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()?
@@ -2004,8 +2005,8 @@ mod tests {
     /// set reads the file or holds it in memory.
     #[test]
     fn the_dates_are_the_ones_the_data_file_header_holds() {
-        let Some(data_file) = ipi_data_file() else {
-            eprintln!("no IP Intelligence data file found; skipping the header dates");
+        let Some(data_file) = asn_file() else {
+            eprintln!("no ASN data file found; skipping the header dates");
             return;
         };
         let bytes = std::fs::read(&data_file).expect("data file reads");
@@ -2026,8 +2027,8 @@ mod tests {
     /// -1 would otherwise be read as a date before year 1.
     #[test]
     fn a_header_holding_no_valid_date_gives_no_dates() {
-        let Some(data_file) = ipi_data_file() else {
-            eprintln!("no IP Intelligence data file found; skipping dates not valid");
+        let Some(data_file) = asn_file() else {
+            eprintln!("no ASN data file found; skipping dates not valid");
             return;
         };
         let bytes = std::fs::read(&data_file).expect("data file reads");
@@ -2067,8 +2068,8 @@ mod tests {
     /// reference to the manager.
     #[test]
     fn a_data_set_loads_from_memory_as_it_does_from_the_file() {
-        let Some(data_file) = ipi_data_file() else {
-            eprintln!("no IP Intelligence data file found; skipping loading from memory");
+        let Some(data_file) = asn_file() else {
+            eprintln!("no ASN data file found; skipping loading from memory");
             return;
         };
         let bytes = std::fs::read(&data_file).expect("data file reads");
@@ -2130,8 +2131,8 @@ mod tests {
     /// out of bounds.
     #[test]
     fn data_that_is_not_a_whole_data_file_is_refused() {
-        let Some(data_file) = ipi_data_file() else {
-            eprintln!("no IP Intelligence data file found; skipping refused data");
+        let Some(data_file) = asn_file() else {
+            eprintln!("no ASN data file found; skipping refused data");
             return;
         };
         let bytes = std::fs::read(&data_file).expect("data file reads");

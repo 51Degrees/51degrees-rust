@@ -31,11 +31,13 @@
 //! update service touches them from background threads while the owning engine
 //! reads them on the request path.
 
+use std::collections::hash_map::RandomState;
 use std::fmt::Debug;
+use std::hash::BuildHasher;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use fiftyone_pipeline_core::{Error, Result};
 
 /// The default polling interval, 30 minutes.
@@ -343,8 +345,9 @@ struct DataFileState {
     /// service can tell whether an engine recorded one during a refresh.
     #[cfg(feature = "data-update")]
     published_changes: u64,
-    /// When an updated data file is expected to be available. Polling does not
-    /// start before this time.
+    /// When an updated data file is expected to be available. The scheduled
+    /// poll after registration, and after a scheduled poll or
+    /// `check_for_update` applies an update, waits for it.
     update_available: Option<DateTime<Utc>>,
     /// The last-modified time of the file the service most recently applied,
     /// used to debounce duplicate file-system-watcher events. Only the
@@ -448,6 +451,36 @@ impl AspectEngineDataFile {
         self.lock().update_available = None;
     }
 
+    /// Record the dates a data file's header holds, each as a year, month
+    /// and day, once an engine has loaded the file, as .NET's engines do
+    /// after each load. The publish date, at midnight UTC, goes in the
+    /// update service's `If-Modified-Since` header. The next update date, at
+    /// noon UTC and a random minute as .NET gives it, is when the update
+    /// service next polls. A date the header does not hold, or that is not a
+    /// day of the calendar, is cleared, so no date of data no longer loaded
+    /// is kept.
+    pub fn record_header_dates(
+        &self,
+        published: Option<(i32, u32, u32)>,
+        next_update: Option<(i32, u32, u32)>,
+    ) {
+        let published = published.and_then(|(year, month, day)| {
+            Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).single()
+        });
+        match published {
+            Some(published) => self.set_data_published(published),
+            None => self.clear_data_published(),
+        }
+        let next = next_update.and_then(|(year, month, day)| {
+            Utc.with_ymd_and_hms(year, month, day, NEXT_UPDATE_HOUR, random_minute(), 0)
+                .single()
+        });
+        match next {
+            Some(next) => self.set_update_available_time(next),
+            None => self.clear_update_available_time(),
+        }
+    }
+
     /// True once this file has been registered with a data update service.
     pub fn is_registered(&self) -> bool {
         self.lock().registered
@@ -480,9 +513,64 @@ impl AspectEngineDataFile {
     }
 }
 
+/// The hour, UTC, of the day the data file header gives for the next data
+/// file, at which the update service is told to expect it.
+const NEXT_UPDATE_HOUR: u32 = 12;
+
+/// The number of minutes in an hour, the range the minute of
+/// [`NEXT_UPDATE_HOUR`] is chosen from.
+const MINUTES_PER_HOUR: u64 = 60;
+
+/// A minute of the hour chosen at random, so that servers loading the same
+/// data file do not all start to poll at once.
+fn random_minute() -> u32 {
+    let random = RandomState::new().hash_one(std::time::SystemTime::now());
+    u32::try_from(random % MINUTES_PER_HOUR).unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The publish date is recorded at midnight UTC and the next update date
+    /// at noon UTC and a whole minute, as .NET's engines record them, and a
+    /// date the header lacks, or one that is not a day of the calendar,
+    /// clears the date recorded before.
+    #[test]
+    fn header_dates_are_recorded_as_dotnet_records_them() {
+        use chrono::Timelike;
+
+        let file = AspectEngineDataFile::new(DataFileConfiguration::builder("d.dat").build());
+        file.record_header_dates(Some((2001, 2, 3)), Some((2001, 2, 4)));
+        assert_eq!(
+            file.data_published(),
+            Utc.with_ymd_and_hms(2001, 2, 3, 0, 0, 0).single()
+        );
+        let next = file.update_available_time().expect("no next update date");
+        assert_eq!(
+            next.date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2001, 2, 4).unwrap()
+        );
+        assert_eq!((next.hour(), next.second(), next.nanosecond()), (12, 0, 0));
+
+        file.record_header_dates(None, Some((2001, 2, 30)));
+        assert!(file.data_published().is_none());
+        assert!(file.update_available_time().is_none());
+    }
+
+    /// The minute of the next update date is drawn at random, so servers
+    /// loading the same data file poll at different times. 200 draws from 60
+    /// minutes give about 58 different minutes.
+    #[test]
+    fn the_next_update_minute_is_drawn_at_random() {
+        let minutes: std::collections::BTreeSet<u32> = (0..200).map(|_| random_minute()).collect();
+        assert!(
+            minutes.len() > 20,
+            "{} different minutes in 200: {minutes:?}",
+            minutes.len()
+        );
+        assert!(minutes.iter().all(|minute| *minute < 60));
+    }
 
     #[test]
     fn builder_uses_documented_defaults() {

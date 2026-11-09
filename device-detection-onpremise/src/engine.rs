@@ -29,16 +29,13 @@
 //! [`DEVICE_DATA_KEY`](fiftyone_device_detection_shared::DEVICE_DATA_KEY).
 
 use std::any::Any;
-use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
-use std::hash::BuildHasher;
 use std::ops::Range;
 use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use arc_swap::ArcSwap;
-use chrono::{TimeZone, Utc};
 
 use fiftyone_device_detection_shared::{
     declared_property_value_type, DeviceDataBase, DevicePropertyReader, DEVICE_DATA_KEY,
@@ -1386,44 +1383,10 @@ fn named_evidence_keys(manager: &Manager) -> Vec<String> {
 }
 
 /// Record on `data_file` the dates in `manager`'s data file header, as .NET
-/// does after each load. The date the file was published goes in the update
-/// service's `If-Modified-Since` header. The date the next is expected, at noon
-/// UTC and a random minute as .NET gives it, is when the service starts to
-/// poll. A date the header does not hold is cleared, so that no date of data
-/// no longer loaded is kept.
+/// does after each load, with
+/// [`AspectEngineDataFile::record_header_dates`].
 fn record_dates(manager: &Manager, data_file: &AspectEngineDataFile) {
-    let published = manager
-        .data_set_published()
-        .and_then(|(year, month, day)| Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).single());
-    match published {
-        Some(published) => data_file.set_data_published(published),
-        None => data_file.clear_data_published(),
-    }
-    let next = manager
-        .data_set_next_update()
-        .and_then(|(year, month, day)| {
-            Utc.with_ymd_and_hms(year, month, day, NEXT_UPDATE_HOUR, random_minute(), 0)
-                .single()
-        });
-    match next {
-        Some(next) => data_file.set_update_available_time(next),
-        None => data_file.clear_update_available_time(),
-    }
-}
-
-/// The hour, UTC, of the day the data file header gives for the next data
-/// file, at which the update service is told to expect it.
-const NEXT_UPDATE_HOUR: u32 = 12;
-
-/// The number of minutes in an hour, the range the minute of
-/// [`NEXT_UPDATE_HOUR`] is chosen from.
-const MINUTES_PER_HOUR: u64 = 60;
-
-/// A minute of the hour chosen at random, so that servers loading the same
-/// data file do not all start to poll at once.
-fn random_minute() -> u32 {
-    let random = RandomState::new().hash_one(std::time::SystemTime::now());
-    u32::try_from(random % MINUTES_PER_HOUR).unwrap_or(0)
+    data_file.record_header_dates(manager.data_set_published(), manager.data_set_next_update());
 }
 
 #[cfg(test)]

@@ -111,6 +111,8 @@ mod buffer;
 #[cfg(any(feature = "dd", feature = "ipi"))]
 mod file_reads;
 #[cfg(any(feature = "dd", feature = "ipi"))]
+mod held_memory;
+#[cfg(any(feature = "dd", feature = "ipi"))]
 mod metadata;
 mod status;
 
