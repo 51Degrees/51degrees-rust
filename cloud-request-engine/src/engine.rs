@@ -22,13 +22,14 @@
 
 //! The cloud request engine and its builder.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use fiftyone_caching::PutCache;
-use fiftyone_pipeline_core::redact::redact_with;
+use fiftyone_pipeline_core::redact::{mask, redact_with};
 use fiftyone_pipeline_core::{
     compare_keys, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, EvidencePrefix, FlowData,
     FlowElement, FlowError, PropertyMetaData, PropertyValueType, Result, TypedKey,
@@ -574,6 +575,16 @@ impl CloudRequestEngine {
     }
 }
 
+/// The cloud service's warnings with the engine's own credentials masked. The
+/// shape rules that cleaned them cannot find a licence key, which has no
+/// shape of its own, so the values the engine holds are masked here.
+fn mask_warnings(warnings: Vec<String>, secrets: &[String]) -> Vec<String> {
+    warnings
+        .into_iter()
+        .map(|warning| redact_with(&warning, secrets).into_owned())
+        .collect()
+}
+
 /// Log each warning the cloud service returned, on every response, as .NET
 /// does. Called before the engine adds its own missing property warning,
 /// which goes to standard error instead.
@@ -706,16 +717,33 @@ fn has_prefix(key: &str, prefix: EvidencePrefix) -> bool {
 
 /// Log a warning that `key` replaces evidence sent under the same `field`,
 /// naming every other entry whose key ends with that field, as .NET does.
+/// A credential can be among them, as `query.resource` ends with `source`, so
+/// each value is written as [`shown_value`] gives it.
 fn log_conflict(key: &str, value: &str, field: &str, entries: &[(&str, &str)]) {
     let conflicts: Vec<String> = entries
         .iter()
         .filter(|(other, _)| *other != key && other.ends_with(field))
-        .map(|(other, other_value)| format!("{other}={other_value}"))
+        .map(|(other, other_value)| format!("{other}={}", shown_value(other, other_value)))
         .collect();
     log::warn!(
-        "'{key}={value}' evidence conflicts with '{}'",
+        "'{key}={}' evidence conflicts with '{}'",
+        shown_value(key, value),
         conflicts.join("', '")
     );
+}
+
+/// An evidence value as a log record shows it. The value of a resource key
+/// or licence key field is masked to its last 4 characters.
+fn shown_value<'a>(key: &str, value: &'a str) -> Cow<'a, str> {
+    let field = strip_prefix(key);
+    let is_credential = [constants::RESOURCE_PARAMETER, constants::LICENSE_PARAMETER]
+        .iter()
+        .any(|name| field.eq_ignore_ascii_case(name));
+    if is_credential {
+        Cow::Owned(mask(value))
+    } else {
+        Cow::Borrowed(value)
+    }
 }
 
 impl FlowElement for CloudRequestEngine {
@@ -757,6 +785,7 @@ impl FlowElement for CloudRequestEngine {
                     // first response after a cold start may well be this one.
                     // A live response logs its warnings as it is validated, so
                     // a cached one is logged here to match.
+                    parsed.warnings = mask_warnings(parsed.warnings, &self.secrets);
                     log_cloud_warnings(&parsed.warnings);
                     self.add_missing_values_warning(&mut parsed);
                     if let Some(cloud) = data.get_mut_cloud() {
@@ -1434,15 +1463,22 @@ fn send_and_validate(
     // Every failing exit of the inner function goes through one place here, so
     // no error can leave this crate carrying the engine's own credentials
     // however the request failed.
-    send_and_validate_inner(http, recovery, gate, request, check_for_error_messages)
-        .map_err(|error| redact_secrets(error, secrets))
+    send_and_validate_inner(
+        http,
+        recovery,
+        gate,
+        request,
+        check_for_error_messages,
+        secrets,
+    )
+    .map_err(|error| redact_secrets(error, secrets))
 }
 
-/// Take the engine's own credentials out of an error by value, on top of the
-/// shape-based cleaning the error types do whenever they are printed.
+/// Mask the engine's own credentials in an error by value, on top of the
+/// shape-based masking the error types do whenever they are printed.
 ///
 /// A resource key that does not start `AQ`, or a licence key of any shape, is
-/// invisible to the shape rules, so the exact values are removed here where
+/// invisible to the shape rules, so the exact values are masked here where
 /// they are known. Only the two variants that carry free text need it, and the
 /// enum is marked `non_exhaustive`, so the remaining arm returns the error as
 /// it stands.
@@ -1486,6 +1522,7 @@ fn send_and_validate_inner(
     gate: Gate,
     request: &CloudHttpRequest,
     check_for_error_messages: bool,
+    secrets: &[String],
 ) -> Result<crate::response::ParsedResponse> {
     if gate == Gate::Check {
         recovery
@@ -1508,6 +1545,7 @@ fn send_and_validate_inner(
     let endpoint = url_without_query(&request.url);
     let (outcome, warnings) =
         validate_keeping_warnings(&response, endpoint, check_for_error_messages);
+    let warnings = mask_warnings(warnings, secrets);
     // Every live response's warnings are logged here, discovery included, and
     // before any errors it carries are raised, as .NET does.
     log_cloud_warnings(&warnings);
