@@ -76,12 +76,36 @@ const X_TEST: (&str, &str) = ("header.x-test", "covered");
 /// The `x-test` header as a caller's pipeline forwards it.
 const FORWARDED_X_TEST: (&str, &str) = ("query.x-test", "covered");
 
+/// The `content-type` header, which none of the accepted keys names, with
+/// the value it is signed with.
+const CONTENT_TYPE: (&str, &str) = ("header.content-type", "text/html");
+
+/// The `content-type` header as a caller's pipeline forwards it.
+const FORWARDED_CONTENT_TYPE: (&str, &str) = ("query.content-type", "text/html");
+
 /// A signer that also covers the `x-test` header.
 fn x_test_signer() -> Signer {
     Signer {
         extra: vec![("\"x-test\"".to_owned(), X_TEST.1.to_owned())],
         ..Signer::default()
     }
+}
+
+/// A signer that also covers the `content-type` header.
+fn content_type_signer() -> Signer {
+    Signer {
+        extra: vec![("\"content-type\"".to_owned(), CONTENT_TYPE.1.to_owned())],
+        ..Signer::default()
+    }
+}
+
+/// The outcome of a signature covering a component the element cannot
+/// rebuild from the evidence it accepts.
+fn component_unavailable() -> (String, String) {
+    (
+        STATUS_UNVERIFIED.to_owned(),
+        REASON_COMPONENT_UNAVAILABLE.to_owned(),
+    )
 }
 
 /// A signer that also covers the `protocol` header, which is one of the
@@ -808,24 +832,54 @@ fn the_pipeline_does_not_accept_a_header_only_a_signature_covers() {
 }
 
 #[test]
-fn a_covered_header_in_the_evidence_verifies() {
+fn a_signature_covering_content_type_is_refused() {
     let harness = Harness::with_test_key();
-    let data = harness.process_signed(&x_test_signer().sign(), &[X_TEST]);
-    assert_eq!(
-        outcome(&data),
-        (STATUS_VERIFIED.to_owned(), REASON_VERIFIED.to_owned())
+    assert!(!harness
+        .pipeline
+        .evidence_key_filter()
+        .include(CONTENT_TYPE.0));
+    // The header is in the evidence and in the web request a web
+    // integration gives as `server.http-request`.
+    let data = process_signed_with_request(
+        &harness.pipeline,
+        &content_type_signer().sign(),
+        &[CONTENT_TYPE],
+        &[CONTENT_TYPE],
     );
+    assert_eq!(outcome(&data), component_unavailable());
+    // The signature base is rebuilt before the key directory is looked up.
+    assert_eq!(harness.client.total(), 0);
 }
 
 #[test]
-fn a_covered_header_only_in_the_web_request_verifies() {
+fn a_forwarded_signature_covering_content_type_is_refused() {
+    let harness = trusting_harness();
+    assert!(!harness
+        .pipeline
+        .evidence_key_filter()
+        .include(FORWARDED_CONTENT_TYPE.0));
+    let signed = content_type_signer().sign();
+    let mut evidence = forwarded_evidence(&signed);
+    evidence.push(FORWARDED_CONTENT_TYPE);
+    let data = process_with_request(&harness.pipeline, &evidence, &evidence);
+    assert_eq!(outcome(&data), component_unavailable());
+    assert_eq!(harness.client.total(), 0);
+}
+
+#[test]
+fn a_covered_header_in_the_evidence_is_refused() {
+    let harness = Harness::with_test_key();
+    let data = harness.process_signed(&x_test_signer().sign(), &[X_TEST]);
+    assert_eq!(outcome(&data), component_unavailable());
+    assert_eq!(harness.client.total(), 0);
+}
+
+#[test]
+fn a_covered_header_only_in_the_web_request_is_refused() {
     let harness = Harness::with_test_key();
     let data =
         process_signed_with_request(&harness.pipeline, &x_test_signer().sign(), &[], &[X_TEST]);
-    assert_eq!(
-        outcome(&data),
-        (STATUS_VERIFIED.to_owned(), REASON_VERIFIED.to_owned())
-    );
+    assert_eq!(outcome(&data), component_unavailable());
 }
 
 #[test]
@@ -851,20 +905,14 @@ fn a_covered_header_in_neither_place_is_unavailable() {
 }
 
 #[test]
-fn a_covered_header_takes_the_evidence_value_before_the_web_request() {
+fn a_covered_header_is_refused_whichever_value_each_place_holds() {
     let harness = Harness::with_test_key();
     let signed = x_test_signer().sign();
     let other = (X_TEST.0, "other");
-    let data = process_signed_with_request(&harness.pipeline, &signed, &[X_TEST], &[other]);
-    assert_eq!(outcome(&data).1, REASON_VERIFIED);
-    let data = process_signed_with_request(&harness.pipeline, &signed, &[other], &[X_TEST]);
-    assert_eq!(
-        outcome(&data),
-        (
-            STATUS_INVALID.to_owned(),
-            REASON_SIGNATURE_MISMATCH.to_owned()
-        )
-    );
+    for (evidence, request) in [(X_TEST, other), (other, X_TEST)] {
+        let data = process_signed_with_request(&harness.pipeline, &signed, &[evidence], &[request]);
+        assert_eq!(outcome(&data), component_unavailable());
+    }
 }
 
 #[test]
@@ -932,7 +980,7 @@ fn a_covered_accepted_key_is_not_read_from_the_web_request() {
 }
 
 #[test]
-fn a_forwarded_covered_header_comes_from_the_evidence_then_the_web_request() {
+fn a_forwarded_covered_header_is_refused_from_the_evidence_and_the_web_request() {
     let harness = trusting_harness();
     assert!(!harness
         .pipeline
@@ -940,34 +988,25 @@ fn a_forwarded_covered_header_comes_from_the_evidence_then_the_web_request() {
         .include(FORWARDED_X_TEST.0));
     let signed = x_test_signer().sign();
     let forwarded = forwarded_evidence(&signed);
-    let verified = (STATUS_VERIFIED.to_owned(), REASON_VERIFIED.to_owned());
-
     let mut with_header = forwarded.clone();
     with_header.push(FORWARDED_X_TEST);
-    assert_eq!(outcome(&harness.process(&with_header)), verified);
-
-    let data = process_with_request(&harness.pipeline, &forwarded, &with_header);
-    assert_eq!(outcome(&data), verified);
-
     let mut other = forwarded.clone();
     other.push((FORWARDED_X_TEST.0, "other"));
-    let data = process_with_request(&harness.pipeline, &other, &with_header);
-    assert_eq!(
-        outcome(&data),
-        (
-            STATUS_INVALID.to_owned(),
-            REASON_SIGNATURE_MISMATCH.to_owned()
-        )
-    );
 
-    let data = process_with_request(&harness.pipeline, &forwarded, &forwarded);
     assert_eq!(
-        outcome(&data),
-        (
-            STATUS_UNVERIFIED.to_owned(),
-            REASON_COMPONENT_UNAVAILABLE.to_owned()
-        )
+        outcome(&harness.process(&with_header)),
+        component_unavailable()
     );
+    for (evidence, request) in [
+        (&with_header, &with_header),
+        (&forwarded, &with_header),
+        (&other, &with_header),
+        (&forwarded, &forwarded),
+    ] {
+        let data = process_with_request(&harness.pipeline, evidence, request);
+        assert_eq!(outcome(&data), component_unavailable());
+    }
+    assert_eq!(harness.client.total(), 0);
 }
 
 #[test]
