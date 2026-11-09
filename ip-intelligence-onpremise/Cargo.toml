@@ -22,7 +22,6 @@ fiftyone-ip-intelligence-shared = { version = "=4.5.2", path = "../ip-intelligen
 # never collide in an IP Intelligence binary.
 fiftyone-native = { version = "=4.5.2", path = "../native", default-features = false, features = ["ipi"] }
 arc-swap.workspace = true
-chrono.workspace = true
 # Logs a configuration setting that has no effect through the log facade,
 # which does nothing until the application installs a logger.
 log = "0.4"
@@ -31,6 +30,8 @@ log = "0.4"
 # Compresses a data file the way the Distributor serves it, for the update
 # tests.
 flate2.workspace = true
+# The data file date tests build and compare header dates.
+chrono.workspace = true
 
 [package.metadata.docs.rs]
 # Build the documentation on docs.rs with every feature enabled, so the
