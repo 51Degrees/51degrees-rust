@@ -1,7 +1,8 @@
 [package]
 name = "fiftyone-native"
 version = "4.5.2"
-description = "Safe RAII wrapper over the native manager, results, evidence and exception types shared by Device Detection and IP Intelligence."
+description = "Safe RAII wrapper for Rust over the 51Degrees C library that on-premise Device Detection and IP Intelligence share, covering the native manager, results, evidence and exception types. Device Detection is a User-Agent parser for the device type and model, browser, operating system, and crawlers, and IP Intelligence gives an IP address's likely location. Built on the 51Degrees Pipeline API. An alternative to UAParser.js, DeviceAtlas, WURFL, MaxMind, and IPinfo."
+keywords = ["device-detection", "user-agent-parser", "ip-geolocation", "uaparser", "maxmind"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

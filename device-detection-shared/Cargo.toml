@@ -1,7 +1,8 @@
 [package]
 name = "fiftyone-device-detection-shared"
 version = "4.5.2"
-description = "DeviceData trait with typed accessors, the device-detection property model and the UACH high-entropy evidence keys."
+description = "Device Detection and User-Agent parser types for Rust, shared by the cloud and on-premise engines. The DeviceData trait with typed accessors for the device type and model, browser, operating system, and crawlers, the property model, and the User-Agent Client Hints high-entropy evidence keys. Built on the 51Degrees Pipeline API. An alternative to UAParser.js, DeviceAtlas, and WURFL."
+keywords = ["user-agent", "user-agent-parser", "device-detection", "client-hints", "uaparser"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
