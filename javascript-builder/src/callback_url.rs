@@ -88,7 +88,9 @@ pub(crate) fn callback_url(protocol: &str, host: &str, endpoint: &str) -> Callba
 
 /// The host value as the log shows it, with anything before its last `@`
 /// replaced by `***`, so a user name or password is never logged, even one
-/// holding `/`.
+/// holding `/`, `?` or `#`, as
+/// [rule 6 of the callback URL](https://github.com/51Degrees/specifications/blob/99189c7aa040eaa7755e395e2c9f7110bc969ab0/pipeline-specification/pipeline-elements/javascript-builder.md#L243-L258)
+/// asks.
 fn logged_host(host: &str) -> String {
     match host.rfind('@') {
         Some(at) => format!("{USER_INFO_MARKER}{}", &host[at..]),
@@ -148,7 +150,9 @@ fn is_label(label: &str) -> bool {
 /// Whether the last label of a name is a number as the URL Standard's ends in
 /// a number checker reads one, being all ASCII digits, or `0x` or `0X`
 /// followed by zero or more hex digits. The name has had one `.` at its end
-/// removed.
+/// removed. Such a name must be an IPv4 address, as
+/// [rule 4 of the callback URL](https://github.com/51Degrees/specifications/blob/99189c7aa040eaa7755e395e2c9f7110bc969ab0/pipeline-specification/pipeline-elements/javascript-builder.md#L223-L240)
+/// asks.
 fn ends_in_a_number(name: &str) -> bool {
     let last = name.rsplit_once('.').map_or(name, |(_, last)| last);
     match last.strip_prefix("0x").or_else(|| last.strip_prefix("0X")) {
@@ -157,7 +161,8 @@ fn ends_in_a_number(name: &str) -> bool {
     }
 }
 
-/// Four decimal parts of 0 to 255 separated by dots, with no leading zero.
+/// Four decimal parts of 0 to 255 separated by dots, each with no zero before
+/// another digit, so `0` and `101` pass and `00` and `01` fail.
 fn is_ipv4(name: &str) -> bool {
     let is_part = |part: &str| {
         part.bytes().all(|b| b.is_ascii_digit())
@@ -477,9 +482,10 @@ mod tests {
 
     // A host whose last label is all digits, or `0x` or `0X` followed by zero
     // or more hex digits, is read by a browser's URL parser as an IPv4
-    // address, so it must be four decimal parts of 0 to 255 with no leading
-    // zero and no `.` at the end. One `.` at the end is dropped before the
-    // last label is read, so `example.123.` ends in a number too.
+    // address, so it must be four decimal parts of 0 to 255, each with no zero
+    // before another digit, and no `.` at the end. One `.` at the end is
+    // dropped before the last label is read, so `example.123.` ends in a
+    // number too.
     #[test]
     fn a_host_ending_in_a_number_must_be_ipv4() {
         let hosts = [
@@ -491,6 +497,7 @@ mod tests {
             "127.1",
             "0x7f.0.0.1",
             "01.2.3.4",
+            "00.1.2.3",
             "example.123.",
             "1.2.3.4.",
             "1.2.3.4.5",
@@ -515,6 +522,7 @@ mod tests {
                 "https://123.example.com/51dpipeline/json",
             ),
             ("0.0.0.0", "https://0.0.0.0/51dpipeline/json"),
+            ("101.1.1.1", "https://101.1.1.1/51dpipeline/json"),
         ];
         for (host, expected) in cases {
             assert_eq!(url("https", host), valid(expected), "host {host:?}");
@@ -585,13 +593,19 @@ mod tests {
         );
     }
 
-    // Rule 6 keeps everything in the host value before its last `@` out of
-    // the log, after the first `/` too, so a password holding `/` is hidden.
+    // Rule 6 of the callback URL keeps everything in the host value before
+    // its last `@` out of the log, after the first `/` too, so a password
+    // holding `/`, `?` or `#` is hidden.
+    // https://github.com/51Degrees/specifications/blob/99189c7aa040eaa7755e395e2c9f7110bc969ab0/pipeline-specification/pipeline-elements/javascript-builder.md#L243-L258
     #[test]
     fn the_invalid_url_hides_the_host_value_before_its_last_at() {
         let cases = [
             (
                 "user:pa/ss@example.com",
+                "https://***@example.com/51dpipeline/json",
+            ),
+            (
+                "user:pa?ss@example.com",
                 "https://***@example.com/51dpipeline/json",
             ),
             ("exa mple.com/a@b", "https://***@b/51dpipeline/json"),

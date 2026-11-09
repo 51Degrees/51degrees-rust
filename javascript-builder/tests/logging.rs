@@ -247,6 +247,10 @@ fn a_refused_host_logs_only_what_follows_its_user_information() {
             "user:pa/ss@example.com",
             "\"https://***@example.com/51dpipeline/json\"",
         ),
+        (
+            "user:pa?ss@example.com",
+            "\"https://***@example.com/51dpipeline/json\"",
+        ),
         ("u@exa mple.com/a@b", "\"https://***@b/51dpipeline/json\""),
         ("exa mple.com/a@b", "\"https://***@b/51dpipeline/json\""),
     ];
