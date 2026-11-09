@@ -370,6 +370,29 @@ jobs:
             cargo test -p fiftyone-native --no-default-features --features ipi \
             --test ipi_memory -- --nocapture
 
+      # With 51DEGREES_REQUIRE_ENTERPRISE set, the leak test must fail when
+      # 51DEGREES_IPI_PATH names no file, rather than pass having checked
+      # nothing, so the step above relies on the test alone and not on the
+      # order of its commands.
+      - name: Check that the leak test fails with no data file
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        run: |
+          out="$RUNNER_TEMP/leak-test-no-file.txt"
+          if env 51DEGREES_IPI_PATH="$RUNNER_TEMP/no-such-file.ipi" \
+            51DEGREES_REQUIRE_ENTERPRISE=1 \
+            51DEGREES_IPI_MEMORY_PROFILES=LowMemory \
+            cargo test -p fiftyone-native --no-default-features --features ipi \
+            --test ipi_memory > "$out" 2>&1; then
+            cat "$out"
+            echo "::error::the leak test passed with no data file and 51DEGREES_REQUIRE_ENTERPRISE set"
+            exit 1
+          fi
+          cat "$out"
+          if ! grep -qF '51DEGREES_REQUIRE_ENTERPRISE is set, but 51DEGREES_IPI_PATH names no IP Intelligence data file' "$out"; then
+            echo "::error::the leak test failed, but not because 51DEGREES_IPI_PATH names no file"
+            exit 1
+          fi
+
       # The robots.txt cases for each usage come from the data file, and the
       # Lite file holds no crawlers. Over the Enterprise file each side must
       # read the usages and write a group for each crawler the text refuses,

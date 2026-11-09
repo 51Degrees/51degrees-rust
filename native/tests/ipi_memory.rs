@@ -69,7 +69,8 @@ extern "C" {
 const PROFILES: &str = "51DEGREES_IPI_MEMORY_PROFILES";
 
 /// Set where the Enterprise file must be given, as in the comparison with
-/// .NET, so the check of long values must find one.
+/// .NET, so the test fails rather than skips without a data file, and the
+/// check of long values must find one.
 const REQUIRE_ENTERPRISE: &str = "51DEGREES_REQUIRE_ENTERPRISE";
 
 /// `SHIM_TEXT_BUFFER_LENGTH` in the shim, the length of the buffer a value's
@@ -372,6 +373,10 @@ fn native_reload(path: &Path) {
 #[test]
 fn every_entry_point_leaves_no_native_memory_allocated() {
     let Some(path) = data_file() else {
+        assert!(
+            std::env::var_os(REQUIRE_ENTERPRISE).is_none(),
+            "{REQUIRE_ENTERPRISE} is set, but 51DEGREES_IPI_PATH names no IP Intelligence data file"
+        );
         eprintln!("51DEGREES_IPI_PATH names no IP Intelligence data file; skipping");
         return;
     };
