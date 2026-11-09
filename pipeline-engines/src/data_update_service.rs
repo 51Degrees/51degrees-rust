@@ -597,14 +597,15 @@ impl ServiceHandle {
     }
 
     /// Run every poll that is currently due and return how long to sleep before
-    /// the next one.
+    /// the next one. Polls run one after another, so the time is read again
+    /// for each file and after each poll.
     fn run_due_polls(&self) -> Duration {
         let registrations = self.inner.live_registrations();
 
-        let now = Instant::now();
         let mut next_wait = Duration::from_secs(60 * 60);
 
         for registration in registrations {
+            let now = Instant::now();
             if !registration.data_file.automatic_updates_enabled() {
                 continue;
             }
@@ -630,11 +631,12 @@ impl ServiceHandle {
                 log_poll(engine.data_key(), &registration, result);
                 // Once new data is in use, the next poll waits for the next
                 // update date that data gives, as at registration. A poll
-                // that applied nothing tries again after one interval.
+                // that applied nothing tries again one interval after it
+                // ended.
                 let next = if applied {
                     DataUpdateService::poll_due(&registration.data_file)
                 } else {
-                    now + DataUpdateService::poll_interval(&registration.data_file)
+                    Instant::now() + DataUpdateService::poll_interval(&registration.data_file)
                 };
                 *registration
                     .next_poll
