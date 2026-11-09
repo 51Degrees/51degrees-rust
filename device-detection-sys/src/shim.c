@@ -531,8 +531,8 @@ static int find_value(
     const char *name,
     long *index) {
     *index = -1;
-    // The search reads every place between the two value indexes, so it runs
-    // only when value_count finds them all in the values collection.
+    // The search can read any place between the two value indexes, so it
+    // runs only when value_count finds them all in the values collection.
     if (value_count(dataSet, property) == 0) {
         return 1;
     }
@@ -559,30 +559,34 @@ static int find_value(
  * Sets `number` to the place of `property`'s default value among its values,
  * or to -1 when it has none, and returns 1, or returns 0 when a value or a
  * string cannot be read. As the C++ MetaDataHash::getDefaultValueForProperty
- * finds it, the default is the property's own value with the name of the
- * value at the default value index, or with an empty name when there is no
- * index. So a property with no index can have a default, and one whose index
- * names none of its values has none.
+ * finds it, the default is the property's own value with the name
+ * fiftyoneDegreesValueGetDefaultText gives, being the name of the value at
+ * the default value index, or an empty name when there is no index. So a
+ * property with no index can have a default, and one whose index names none
+ * of its values has none.
  */
 static int default_value_number(
     fiftyoneDegreesDataSetHash *dataSet,
     const fiftyoneDegreesProperty *property,
     int32_t *number) {
     *number = -1;
-    char *copy = NULL;
-    const char *name = "";
-    if (property->defaultValueIndex != UINT32_MAX) {
-        copy = copy_value_name(dataSet, property->defaultValueIndex);
-        if (copy == NULL) {
-            return 0;
-        }
-        name = copy;
+    FIFTYONE_DEGREES_EXCEPTION_CREATE;
+    // No property types, as a Hash data set stores every value as a string,
+    // and no buffer, so the name is always in memory freed below.
+    char *name = fiftyoneDegreesValueGetDefaultText(
+        dataSet->values,
+        dataSet->strings,
+        NULL,
+        property,
+        NULL,
+        0,
+        exception);
+    if (name == NULL) {
+        return 0;
     }
     long index = -1;
     const int found = find_value(dataSet, property, name, &index);
-    if (copy != NULL) {
-        fiftyoneDegreesFree(copy);
-    }
+    fiftyoneDegreesFree(name);
     if (found == 0) {
         return 0;
     }
@@ -664,8 +668,8 @@ int fiftyoneDegreesShimHashGetDataFileProperty(
         *showValues = property->showValues;
         *valueCount = value_count(dataSet, property);
         *mapCount = property->mapCount;
-        // A copy, so only one item is held at a time while the default value
-        // is found.
+        // A copy, so the property is released before its default value is
+        // found.
         const fiftyoneDegreesProperty copy = *property;
         FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->properties, &item);
         result = result == 1 &&
@@ -943,7 +947,7 @@ int fiftyoneDegreesShimHashFindDataFilePropertyValue(
     const fiftyoneDegreesProperty *held =
         get_property(dataSet, propertyIndex, &item);
     if (held != NULL) {
-        // A copy, so only one item is held at a time during the search.
+        // A copy, so the property is released before the search starts.
         const fiftyoneDegreesProperty property = *held;
         FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->properties, &item);
         long index = -1;
