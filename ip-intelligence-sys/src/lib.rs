@@ -362,8 +362,8 @@ pub mod common {
         ///
         /// The native symbol is `ipi_`-prefixed because this crate's private
         /// copy of the common C library is compiled into its own symbol
-        /// namespace (see `src/symbol_prefix.h` and `build.rs`), so the Rust
-        /// name is bound to the prefixed definition with `link_name`.
+        /// namespace (see `build.rs`), so the Rust name is bound to the
+        /// prefixed definition with `link_name`.
         ///
         /// # Safety
         /// `exception` must point to a valid, set [`Exception`].
@@ -858,8 +858,8 @@ extern "C" {
     ///
     /// The native symbol is `ipi_`-prefixed because this crate's private copy of
     /// the common C library is compiled into its own symbol namespace (see
-    /// `src/symbol_prefix.h` and `build.rs`), so the Rust name is bound to the
-    /// prefixed definition with `link_name`. This is what keeps the resource
+    /// `build.rs`), so the Rust name is bound to the prefixed definition with
+    /// `link_name`. This is what keeps the resource
     /// manager freed through the matching wide-offset build rather than the
     /// Device Detection one.
     ///
