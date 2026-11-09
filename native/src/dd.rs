@@ -1618,6 +1618,38 @@ mod tests {
 
     use fiftyone_pipeline_core::Evidence;
 
+    /// The text the C++ results wrapped each `JavascriptHardwareProfile`
+    /// value in before the C library wrote it.
+    fn cpp_hardware_profile_script(body: &str) -> String {
+        format!(
+            "var profileIds = []\n{body}\n\
+             document.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")"
+        )
+    }
+
+    #[test]
+    fn hardware_profile_script_is_the_text_the_cpp_results_wrote() {
+        for body in ["profileIds.push(1)", ""] {
+            assert_eq!(
+                hardware_profile_script(body),
+                cpp_hardware_profile_script(body),
+                "the script for {body:?}"
+            );
+        }
+        // Longer than any first guess at the length, so the length the C
+        // library asks for is what sizes the buffer.
+        let long = "profileIds.push(1);".repeat(1000);
+        assert_eq!(
+            hardware_profile_script(&long),
+            cpp_hardware_profile_script(&long)
+        );
+        // C reads a body up to its first null.
+        assert_eq!(
+            hardware_profile_script("profileIds.push(1)\0x"),
+            cpp_hardware_profile_script("profileIds.push(1)")
+        );
+    }
+
     /// The Hash data file `51DEGREES_DD_PATH` names, or the Lite file in the
     /// `cxx` submodule.
     pub(super) fn data_file() -> Option<PathBuf> {

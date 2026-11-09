@@ -429,6 +429,31 @@ fn method_and_user_agents_are_written() {
     assert!(!user_agents.is_empty());
 }
 
+/// An iPhone gets its `JavascriptHardwareProfile` value as the script the
+/// client runs, which declares the array the stored body fills, runs the body,
+/// then writes the ids to the `51D_ProfileIds` cookie.
+#[test]
+fn an_iphone_gets_the_hardware_profile_as_the_script_the_client_runs() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the hardware profile test");
+        return;
+    };
+    let device = detect(engine, MOBILE_USER_AGENT);
+    let profile = device.javascript_hardware_profile();
+    let script = profile
+        .value()
+        .expect("an iPhone has a hardware profile script");
+    let body = script
+        .strip_prefix("var profileIds = []\n")
+        .and_then(|rest| {
+            rest.strip_suffix(
+                "\ndocument.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")",
+            )
+        })
+        .unwrap_or_else(|| panic!("not the script the client runs: {script}"));
+    assert!(!body.is_empty(), "the script holds the stored body");
+}
+
 /// A screen size the data file holds as `Unknown` is 0, and a JavaScript
 /// property the matched profile holds no value for has none, as .NET gives
 /// them for `curl/8.5.0` over the Lite file in the comparison with .NET.
