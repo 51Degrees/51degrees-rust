@@ -36,7 +36,8 @@ pub(crate) enum CallbackUrl {
     /// The protocol, host or endpoint is empty, so the script has no URL.
     Missing,
     /// The URL is not valid, so the script has no URL. Carries the URL as it
-    /// was built, with any user information replaced by `***`, for the log.
+    /// was built, with anything in the host value before its last `@`
+    /// replaced by `***`, for the log.
     Invalid(String),
     /// The URL to write into the script.
     Valid(String),
@@ -45,7 +46,8 @@ pub(crate) enum CallbackUrl {
 /// The largest port number.
 const MAX_PORT: u32 = 65_535;
 
-/// What the log shows in place of the user information of a refused host.
+/// What the log shows in place of anything in a refused host value before
+/// its last `@`.
 const USER_INFO_MARKER: &str = "***";
 
 /// Build the callback URL from its parts and check it.
@@ -65,8 +67,8 @@ pub(crate) fn callback_url(protocol: &str, host: &str, endpoint: &str) -> Callba
     let end = host.find('/').unwrap_or(host.len());
     let (authority, rest) = host.split_at(end);
     let invalid = || {
-        let shown = logged_authority(authority);
-        CallbackUrl::Invalid(format!("{protocol}://{shown}{rest}{endpoint}"))
+        let shown = logged_host(host);
+        CallbackUrl::Invalid(format!("{protocol}://{shown}{endpoint}"))
     };
     // A `?` or `#` in the host would start the query or the fragment before
     // the endpoint, and `fetch` refuses a URL with user information.
@@ -84,12 +86,13 @@ pub(crate) fn callback_url(protocol: &str, host: &str, endpoint: &str) -> Callba
     }
 }
 
-/// The authority as the log shows it, with everything before its last `@`
-/// replaced by `***`, so a user name or password is never logged.
-fn logged_authority(authority: &str) -> String {
-    match authority.rfind('@') {
-        Some(at) => format!("{USER_INFO_MARKER}{}", &authority[at..]),
-        None => authority.to_owned(),
+/// The host value as the log shows it, with anything before its last `@`
+/// replaced by `***`, so a user name or password is never logged, even one
+/// holding `/`.
+fn logged_host(host: &str) -> String {
+    match host.rfind('@') {
+        Some(at) => format!("{USER_INFO_MARKER}{}", &host[at..]),
+        None => host.to_owned(),
     }
 }
 
