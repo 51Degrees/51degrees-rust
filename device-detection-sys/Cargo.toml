@@ -1,7 +1,8 @@
 [package]
 name = "fiftyone-device-detection-sys"
 version = "4.5.2"
-description = "Raw FFI bindings to the Hash device-detection ABI in the 51Degrees C library, built on fiftyone-common-sys."
+description = "Raw FFI bindings for Rust to the Device Detection and User-Agent parser in the 51Degrees C library. The Hash engine they bind reads a data file on your server to detect the device type and model, browser, operating system, and crawlers from the User-Agent and User-Agent Client Hints. Built on fiftyone-common-sys. For the safe API, use fiftyone-device-detection. An alternative to UAParser.js, DeviceAtlas, and WURFL."
+keywords = ["user-agent", "user-agent-parser", "device-detection", "client-hints", "uaparser"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

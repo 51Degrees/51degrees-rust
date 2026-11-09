@@ -1,7 +1,8 @@
 [package]
 name = "fiftyone-device-detection-robots-txt"
 version = "4.5.2"
-description = "RobotsTxtEngine: writes a robots.txt that allows or refuses each known crawler by what it uses pages for, from the crawlers in a 51Degrees Device Detection data file, for the 51Degrees pipeline."
+description = "robots.txt generator for Rust, from 51Degrees Device Detection. RobotsTxtEngine writes a robots.txt that allows or refuses each known crawler by what it uses pages for, from the crawlers in a Device Detection data file on your server. Built on the 51Degrees Pipeline API. An alternative to UAParser.js, DeviceAtlas, and WURFL."
+keywords = ["robots-txt", "crawler", "user-agent", "device-detection", "uaparser"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
