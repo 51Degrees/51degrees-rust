@@ -224,6 +224,7 @@ typedef struct {
 	bool usePerformanceGraph;
 	bool usePredictiveGraph;
 	bool traceRoute;
+	bool loadRequiredPropertiesOnly;
 } RustConfigHash;
 CHECK_SIZE(RustConfigHash, fiftyoneDegreesConfigHash);
 CHECK_FIELD(RustConfigHash, fiftyoneDegreesConfigHash, b);
@@ -241,3 +242,7 @@ CHECK_FIELD(RustConfigHash, fiftyoneDegreesConfigHash, drift);
 CHECK_FIELD(RustConfigHash, fiftyoneDegreesConfigHash, usePerformanceGraph);
 CHECK_FIELD(RustConfigHash, fiftyoneDegreesConfigHash, usePredictiveGraph);
 CHECK_FIELD(RustConfigHash, fiftyoneDegreesConfigHash, traceRoute);
+CHECK_FIELD(
+	RustConfigHash,
+	fiftyoneDegreesConfigHash,
+	loadRequiredPropertiesOnly);

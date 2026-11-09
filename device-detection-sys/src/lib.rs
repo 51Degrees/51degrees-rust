@@ -270,6 +270,12 @@ pub struct ConfigHash {
     pub use_predictive_graph: bool,
     /// True if the route through each graph should be traced (debug only).
     pub trace_route: bool,
+    /// True to hold in memory, when some but not every property is
+    /// required, only the values of the required properties and the strings
+    /// those values use, and to read the other values and strings from the
+    /// data file with no cache. True in
+    /// [`fiftyoneDegreesHashHighPerformanceConfig`] only.
+    pub load_required_properties_only: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -1215,6 +1221,25 @@ mod tests {
                 "high performance config loads the strings collection in memory"
             );
         }
+    }
+
+    /// Only the HighPerformance configuration holds only what the required
+    /// properties read.
+    #[test]
+    fn only_high_performance_loads_the_required_properties_only() {
+        // Safety: each global is an initialized `ConfigHash` the C library
+        // defines, and reading a field of it is a plain read.
+        let flags = unsafe {
+            [
+                fiftyoneDegreesHashInMemoryConfig.load_required_properties_only,
+                fiftyoneDegreesHashHighPerformanceConfig.load_required_properties_only,
+                fiftyoneDegreesHashLowMemoryConfig.load_required_properties_only,
+                fiftyoneDegreesHashBalancedConfig.load_required_properties_only,
+                fiftyoneDegreesHashBalancedTempConfig.load_required_properties_only,
+                fiftyoneDegreesHashDefaultConfig.load_required_properties_only,
+            ]
+        };
+        assert_eq!(flags, [false, true, false, false, false, false]);
     }
 
     /// [`ConfigHash`] is the size of the C structure it is passed as. A C

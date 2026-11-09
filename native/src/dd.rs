@@ -2353,6 +2353,28 @@ mod tests {
         }
     }
 
+    /// The copy of a profile's configuration a data set opens with keeps
+    /// the profile's `load_required_properties_only`, which only
+    /// `HighPerformance` sets.
+    #[test]
+    fn the_copied_configuration_keeps_load_required_properties_only() {
+        for profile in [
+            PerformanceProfile::LowMemory,
+            PerformanceProfile::Balanced,
+            PerformanceProfile::Default,
+            PerformanceProfile::HighPerformance,
+            PerformanceProfile::InMemory,
+        ] {
+            let config = profile_config(profile, &HashOptions::default());
+            assert_eq!(
+                config.load_required_properties_only,
+                profile == PerformanceProfile::HighPerformance,
+                "{}",
+                profile.as_str()
+            );
+        }
+    }
+
     /// Unset options leave the profile's configuration as it is, and set
     /// ones change only their own fields.
     #[test]
