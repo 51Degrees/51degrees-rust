@@ -308,6 +308,39 @@ fn a_host_with_an_at_after_its_first_slash_is_refused() {
     }
 }
 
+/// A host value with a `:` and no port after it is refused and logged,
+/// whether it is configured or comes from the evidence, so a configured host
+/// given with its scheme, such as `https://example.com`, is not served as the
+/// host `https` with an empty port.
+#[test]
+fn a_host_with_an_empty_port_is_refused_and_logged() {
+    let cases = [
+        (
+            "https://example.com",
+            "\"https://https://example.com/51dpipeline/json\"",
+        ),
+        ("example.com:", "\"https://example.com:/51dpipeline/json\""),
+        ("[::1]:", "\"https://[::1]:/51dpipeline/json\""),
+    ];
+    for (host, logged) in cases {
+        for configured in [false, true] {
+            let builder = JavaScriptBuilderElement::builder().set_minify(false);
+            let (builder, evidence) = if configured {
+                (builder.set_host(host), Vec::new())
+            } else {
+                (builder, vec![("header.host", host)])
+            };
+            let pipeline = pipeline(builder.build());
+            let (js, records) = request(&pipeline, &evidence);
+            let case = format!("host {host:?}, configured {configured}");
+            assert!(!js.contains("processRequest"), "{case}");
+            assert_eq!(records.len(), 1, "{case}, {records:?}");
+            assert_eq!(records[0].0, log::Level::Error, "{case}");
+            assert!(records[0].1.contains(logged), "{case}, {records:?}");
+        }
+    }
+}
+
 /// A scheme other than `http` or `https` in the evidence is refused and
 /// logged like any other URL that is not valid.
 #[test]

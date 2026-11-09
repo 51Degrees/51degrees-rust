@@ -253,8 +253,9 @@ mod tests {
 
     // The hosts .NET 4.5.128's JavaScript builder accepts, with the URL the
     // crate writes. The hosts .NET accepts that hold a zone identifier, an
-    // `@`, a `?` or a `#`, or that end in a number without being an IPv4
-    // address, are refused, in the tests further down.
+    // `@`, a `?` or a `#`, that have a `:` with no port after it, or that end
+    // in a number without being an IPv4 address, are refused, in the tests
+    // further down.
     #[test]
     fn accepts_the_hosts_dotnet_accepts() {
         let cases = [
@@ -263,7 +264,6 @@ mod tests {
                 "example.com:8080",
                 "https://example.com:8080/51dpipeline/json",
             ),
-            ("example.com:", "https://example.com:/51dpipeline/json"),
             (
                 "example.com:65535",
                 "https://example.com:65535/51dpipeline/json",
@@ -535,6 +535,33 @@ mod tests {
         for (host, expected) in cases {
             assert_eq!(url("https", host), valid(expected), "host {host:?}");
         }
+    }
+
+    // A `:` with no port after it is refused, so a host given with its
+    // scheme, such as `https://example.com`, is not read as the host `https`
+    // with an empty port.
+    #[test]
+    fn refuses_an_empty_port() {
+        let hosts = [
+            "example.com:",
+            "https://example.com",
+            "http://example.com",
+            "https://example.com/path",
+            "example.com:/path",
+            "[::1]:",
+            "1.2.3.4:",
+            "localhost:",
+        ];
+        for host in hosts {
+            assert!(
+                matches!(url("https", host), CallbackUrl::Invalid(_)),
+                "host {host:?}"
+            );
+        }
+        assert_eq!(
+            url("https", "https://example.com"),
+            CallbackUrl::Invalid("https://https://example.com/51dpipeline/json".to_owned())
+        );
     }
 
     // A port goes by its value, so leading zeros are allowed, and a port too
