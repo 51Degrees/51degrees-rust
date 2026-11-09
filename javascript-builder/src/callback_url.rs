@@ -73,7 +73,9 @@ pub(crate) fn callback_url(protocol: &str, host: &str, endpoint: &str) -> Callba
     // A `?` or `#` in the host would start the query or the fragment before
     // the endpoint. An `@` is refused anywhere in the host, because `fetch`
     // refuses a URL with user information, and a password holding `/` puts
-    // the `@` that ends it after the host's first `/`.
+    // the `@` that ends it after the host's first `/`, as rule 3 of the
+    // callback URL says.
+    // https://github.com/51Degrees/specifications/blob/329243f3f626af69e909195c0fec726e2953128c/pipeline-specification/pipeline-elements/javascript-builder.md#L185-L204
     if !is_scheme(protocol) || host.contains(['?', '#', '@']) {
         return invalid();
     }
@@ -91,7 +93,7 @@ pub(crate) fn callback_url(protocol: &str, host: &str, endpoint: &str) -> Callba
 /// The host value as the log shows it, with anything before its last `@`
 /// replaced by `***`, so a user name or password is never logged, even one
 /// holding `/`, `?` or `#`, as
-/// [rule 6 of the callback URL](https://github.com/51Degrees/specifications/blob/99189c7aa040eaa7755e395e2c9f7110bc969ab0/pipeline-specification/pipeline-elements/javascript-builder.md#L243-L258)
+/// [rule 6 of the callback URL](https://github.com/51Degrees/specifications/blob/329243f3f626af69e909195c0fec726e2953128c/pipeline-specification/pipeline-elements/javascript-builder.md#L250-L266)
 /// asks.
 fn logged_host(host: &str) -> String {
     match host.rfind('@') {
@@ -153,7 +155,7 @@ fn is_label(label: &str) -> bool {
 /// a number checker reads one, being all ASCII digits, or `0x` or `0X`
 /// followed by zero or more hex digits. The name has had one `.` at its end
 /// removed. Such a name must be an IPv4 address, as
-/// [rule 4 of the callback URL](https://github.com/51Degrees/specifications/blob/99189c7aa040eaa7755e395e2c9f7110bc969ab0/pipeline-specification/pipeline-elements/javascript-builder.md#L223-L240)
+/// [rule 4 of the callback URL](https://github.com/51Degrees/specifications/blob/329243f3f626af69e909195c0fec726e2953128c/pipeline-specification/pipeline-elements/javascript-builder.md#L229-L247)
 /// asks.
 fn ends_in_a_number(name: &str) -> bool {
     let last = name.rsplit_once('.').map_or(name, |(_, last)| last);
@@ -163,8 +165,8 @@ fn ends_in_a_number(name: &str) -> bool {
     }
 }
 
-/// Four decimal parts of 0 to 255 separated by dots, each starting with 0
-/// only when it is 0 alone, so `0` and `101` pass and `00` and `01` fail.
+/// Four decimal parts of 0 to 255 separated by dots, each starting with `0`
+/// only when it is `0` alone, so `0` and `101` pass and `00` and `01` fail.
 fn is_ipv4(name: &str) -> bool {
     let is_part = |part: &str| {
         part.bytes().all(|b| b.is_ascii_digit())
@@ -427,7 +429,8 @@ mod tests {
     // TypeError for a URL with a user name or a password, and a password may
     // hold a `/`, so an `@` after the first `/` may still end the user
     // information. `user:12/ss@example.com` would otherwise be read as the
-    // host `user` with the port `12`.
+    // host `user` with the port `12`, as rule 3 of the callback URL says.
+    // https://github.com/51Degrees/specifications/blob/329243f3f626af69e909195c0fec726e2953128c/pipeline-specification/pipeline-elements/javascript-builder.md#L185-L204
     #[test]
     fn refuses_an_at_anywhere_in_the_host() {
         let hosts = [
@@ -488,9 +491,9 @@ mod tests {
     // A host whose last label is all digits, or `0x` or `0X` followed by zero
     // or more hex digits, is read by a browser's URL parser as an IPv4
     // address, so it must be four decimal parts of 0 to 255, each starting
-    // with 0 only when it is 0 alone, and no `.` at the end. One `.` at the
-    // end is dropped before the last label is read, so `example.123.` ends in
-    // a number too.
+    // with `0` only when it is `0` alone, and no `.` at the end. One `.` at
+    // the end is dropped before the last label is read, so `example.123.`
+    // ends in a number too.
     #[test]
     fn a_host_ending_in_a_number_must_be_ipv4() {
         let hosts = [
@@ -601,7 +604,7 @@ mod tests {
     // Rule 6 of the callback URL keeps everything in the host value before
     // its last `@` out of the log, after the first `/` too, so a password
     // holding `/`, `?` or `#` is hidden.
-    // https://github.com/51Degrees/specifications/blob/99189c7aa040eaa7755e395e2c9f7110bc969ab0/pipeline-specification/pipeline-elements/javascript-builder.md#L243-L258
+    // https://github.com/51Degrees/specifications/blob/329243f3f626af69e909195c0fec726e2953128c/pipeline-specification/pipeline-elements/javascript-builder.md#L250-L266
     #[test]
     fn the_invalid_url_hides_the_host_value_before_its_last_at() {
         let cases = [
