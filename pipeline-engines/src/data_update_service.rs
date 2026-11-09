@@ -1359,11 +1359,20 @@ mod tests {
         url: &str,
         automatic: bool,
     ) -> (Arc<DatedEngine>, Arc<dyn OnPremiseAspectEngine>) {
+        dated_engine_every(url, automatic, POLL_SECONDS)
+    }
+
+    /// A [`dated_engine`] polled every `poll_seconds`.
+    fn dated_engine_every(
+        url: &str,
+        automatic: bool,
+        poll_seconds: u64,
+    ) -> (Arc<DatedEngine>, Arc<dyn OnPremiseAspectEngine>) {
         let data_file = Arc::new(AspectEngineDataFile::new(
             crate::DataFileConfiguration::memory_builder()
                 .data_update_url(url)
                 .automatic_updates_enabled(automatic)
-                .polling_interval_seconds(POLL_SECONDS)
+                .polling_interval_seconds(poll_seconds)
                 .max_randomisation_seconds(0)
                 .decompress_content(false)
                 .build(),
@@ -1380,12 +1389,22 @@ mod tests {
     /// Answer one request to a URL on this machine with the status line
     /// `status` and `body`.
     fn answer_once(status: &'static str, body: &'static [u8]) -> (String, JoinHandle<()>) {
+        answer_once_after(Duration::ZERO, status, body)
+    }
+
+    /// Answer one request as [`answer_once`] does, `delay` after reading it.
+    fn answer_once_after(
+        delay: Duration,
+        status: &'static str,
+        body: &'static [u8],
+    ) -> (String, JoinHandle<()>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/datafile", listener.local_addr().unwrap());
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let mut request = [0u8; 4096];
             let _ = Read::read(&mut stream, &mut request);
+            std::thread::sleep(delay);
             let head = format!(
                 "{status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 body.len()
@@ -1485,8 +1504,97 @@ mod tests {
         );
         let wait = next_poll_after(&registration, polled);
         assert!(
-            wait < Duration::from_secs(POLL_SECONDS) + SLOW_TEST,
+            wait > Duration::from_secs(POLL_SECONDS) - SLOW_TEST
+                && wait < Duration::from_secs(POLL_SECONDS) + SLOW_TEST,
             "the next poll is due after {wait:?}, not one interval"
+        );
+    }
+
+    /// How long the slow server in the tests below takes to answer, longer
+    /// than [`SHORT_INTERVAL`].
+    const SLOW_ANSWER: Duration = Duration::from_secs(2);
+
+    /// A polling interval shorter than [`SLOW_ANSWER`].
+    const SHORT_INTERVAL: Duration = Duration::from_secs(1);
+
+    /// A scheduled poll that applies nothing and ends after its interval has
+    /// passed waits one interval from when it ended, rather than polling
+    /// again at once.
+    #[test]
+    fn a_slow_poll_that_applies_nothing_waits_one_interval_after_it_ends() {
+        let (url, server) = answer_once_after(SLOW_ANSWER, "HTTP/1.1 304 Not Modified", b"");
+        let (engine, shared) = dated_engine_every(&url, true, SHORT_INTERVAL.as_secs());
+        let handle = empty_handle();
+        let registration = add_due(&handle, &shared);
+
+        let sleep = handle.run_due_polls();
+        let ended = Instant::now();
+        server.join().unwrap();
+
+        assert_eq!(
+            engine.refreshes.load(Ordering::SeqCst),
+            0,
+            "an update was applied"
+        );
+        let wait = next_poll_after(&registration, ended);
+        assert!(
+            wait > SHORT_INTERVAL / 2 && wait <= SHORT_INTERVAL,
+            "the next poll is due {wait:?} after the poll ended, not one interval"
+        );
+        assert!(
+            sleep > SHORT_INTERVAL / 2 && sleep <= SHORT_INTERVAL,
+            "the scheduler sleeps {sleep:?} after the poll, not one interval"
+        );
+    }
+
+    /// A poll that comes due while another file's poll runs is run in the
+    /// same round, rather than left until a sleep counted from before the
+    /// round began has passed.
+    #[test]
+    fn a_poll_that_comes_due_during_a_slow_poll_runs_in_the_same_round() {
+        let (slow_url, slow_server) =
+            answer_once_after(SLOW_ANSWER, "HTTP/1.1 304 Not Modified", b"");
+        let (_slow_engine, slow) = dated_engine(&slow_url, true);
+        let (url, server) = answer_once("HTTP/1.1 304 Not Modified", b"");
+        let (_engine, shared) = dated_engine(&url, true);
+        let handle = empty_handle();
+        add_due(&handle, &slow);
+        let registration = add_due(&handle, &shared);
+        *registration.next_poll.lock().unwrap() = Some(Instant::now() + SLOW_ANSWER / 2);
+
+        handle.run_due_polls();
+        slow_server.join().unwrap();
+
+        let wait = next_poll_after(&registration, Instant::now());
+        assert!(
+            wait > Duration::from_secs(POLL_SECONDS) - SLOW_TEST,
+            "the poll that came due was not run, the next is due after {wait:?}"
+        );
+        server.join().unwrap();
+    }
+
+    /// After a slow poll the scheduler sleeps until the next poll is due,
+    /// counted from when the slow poll ended.
+    #[test]
+    fn the_sleep_after_a_slow_poll_ends_when_the_next_poll_is_due() {
+        let (slow_url, slow_server) =
+            answer_once_after(SLOW_ANSWER, "HTTP/1.1 304 Not Modified", b"");
+        let (_slow_engine, slow) = dated_engine(&slow_url, true);
+        let (_engine, shared) = dated_engine("http://127.0.0.1:9/unused", true);
+        let handle = empty_handle();
+        add_due(&handle, &slow);
+        let registration = add_due(&handle, &shared);
+        let due = Instant::now() + SLOW_ANSWER + SHORT_INTERVAL;
+        *registration.next_poll.lock().unwrap() = Some(due);
+
+        let sleep = handle.run_due_polls();
+        let ended = Instant::now();
+        slow_server.join().unwrap();
+
+        let until_due = due.saturating_duration_since(ended);
+        assert!(
+            sleep <= until_due + SHORT_INTERVAL / 2,
+            "the scheduler sleeps {sleep:?} when the next poll is due in {until_due:?}"
         );
     }
 
