@@ -1,7 +1,8 @@
 [package]
 name = "fiftyone-device-detection-property-keyed"
 version = "4.5.2"
-description = "TacEngine and NativeEngine: the hardware profiles in a 51Degrees Device Detection data file that hold a TAC or a native model name, for the 51Degrees pipeline."
+description = "Device Detection by TAC (Type Allocation Code) and native model name for Rust. TacEngine and NativeEngine find the hardware profiles that hold a TAC or a native model name, reading a 51Degrees Device Detection data file on your server. Built on the 51Degrees Pipeline API. An alternative to UAParser.js, DeviceAtlas, and WURFL."
+keywords = ["device-detection", "tac", "user-agent", "user-agent-parser", "uaparser"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
