@@ -123,7 +123,7 @@ fn parse_boolean(text: &str) -> Option<bool> {
 ///   valid JavaScript identifier that is not a reserved word, `Infinity`,
 ///   `NaN`, `undefined`, `fiftyoneDegreesManager`, or one of the global names
 ///   `eval`, `arguments`, `window`, `document`, `top`, `name`, `status`,
-///   `history`, `navigator` and `closed`, else the configured
+///   `history`, `navigator`, `closed` and `location`, else the configured
 ///   object name (default `fod`). An invalid requested name, the empty string
 ///   included, is ignored with a warning logged through the `log` crate.
 /// - **enable cookies**: the `query.fod-js-enable-cookies` evidence when it

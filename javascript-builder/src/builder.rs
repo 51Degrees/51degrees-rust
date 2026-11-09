@@ -289,8 +289,8 @@ impl JavaScriptBuilderElementBuilder {
     /// `[a-zA-Z_$][0-9a-zA-Z_$]*` in full) and must not be a reserved word,
     /// `Infinity`, `NaN`, `undefined`, `fiftyoneDegreesManager`, or one of the
     /// global names `eval`, `arguments`, `window`, `document`, `top`, `name`,
-    /// `status`, `history`, `navigator` and `closed`. An invalid name is a
-    /// configuration error. The same rule applies to a name
+    /// `status`, `history`, `navigator`, `closed` and `location`. An invalid
+    /// name is a configuration error. The same rule applies to a name
     /// requested through the `query.fod-js-object-name` evidence, where an
     /// invalid name is ignored with a warning logged.
     pub fn set_object_name(mut self, object_name: impl Into<String>) -> Result<Self> {
@@ -369,15 +369,17 @@ const RESERVED_WORDS: &[&str] = &[
     "Infinity", "NaN", "undefined", "fiftyoneDegreesManager",
 ];
 
-/// Global names the object cannot have, beyond [`RESERVED_WORDS`]. A top
-/// level `var eval` replaces the page's own `eval`, and strict code cannot
-/// declare `eval` or `arguments`. The other eight are properties of the
-/// browser's `Window` that a top level `var` cannot replace, being read only
-/// or turning the value into a string, so the object would never be created.
+/// Global names the object cannot have, beyond [`RESERVED_WORDS`]. Strict
+/// mode code cannot declare `eval` or `arguments`, and the script's top level
+/// `var eval` would replace the page's own `eval`. In a browser a top level
+/// `var` cannot replace `window`, `document`, `top`, `name`, `status`,
+/// `history`, `navigator` or `closed`, so the object would never be created,
+/// and `var location` sets `location.href` to the object's text, which
+/// navigates the page away.
 #[rustfmt::skip]
 const UNSAFE_GLOBAL_NAMES: &[&str] = &[
     "eval", "arguments", "window", "document", "top", "name", "status",
-    "history", "navigator", "closed",
+    "history", "navigator", "closed", "location",
 ];
 
 /// True if the string is a valid JavaScript identifier per the
