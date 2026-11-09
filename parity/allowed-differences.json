@@ -322,9 +322,20 @@
     "path": "engineMetadata.dataSourceTier",
     "kind": "value",
     "cases": ["metadata-ip*"],
+    "data": "lite",
     "dotnet": {"value": ["IPIV41"]},
-    "rust": {"value": ["IPIV4Asn", "IPIV4Enterprise"]},
-    "reason": "The crates' IP Intelligence engine gives the tier the data file's header names, IPIV4Asn for the ASN file and IPIV4Enterprise for the Enterprise file, where .NET gives IPIV41.",
+    "rust": {"value": ["IPIV4Asn"]},
+    "reason": "The crates' IP Intelligence engine gives the tier the data file's header names, IPIV4Asn for the ASN file the lite job opens, where .NET gives IPIV41.",
+    "issue": 226
+  },
+  {
+    "path": "engineMetadata.dataSourceTier",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "data": "enterprise",
+    "dotnet": {"value": ["IPIV41"]},
+    "rust": {"value": ["IPIV4Enterprise"]},
+    "reason": "The crates' IP Intelligence engine gives the tier the data file's header names, IPIV4Enterprise for the Enterprise file the enterprise job opens, where .NET gives IPIV41.",
     "issue": 226
   },
   {
@@ -351,7 +362,7 @@
     "cases": ["metadata-ip-asn"],
     "dotnet": {"pattern": ["Property '*' not found in data for element 'ip'. This is because your license or data file does not include this property. It is available with the * license/data for the IpiOnPremiseEngine. To upgrade, see *"]},
     "rust": {"pattern": ["Property '*' not found in data for element 'ip'. This is because the property has been excluded when configuring the engine."]},
-    "reason": "For a property the data file holds and the engine was opened without, both sides first check that the engine's tier is among the property's data tiers. .NET's IP Intelligence tier, IPIV41, is in none, so .NET gives the upgrade reason. The crates' tier is the name the data file's header gives, which is among them, so they go on to the excluded reason. This follows from the engineMetadata.dataSourceTier entry.",
+    "reason": "For a property the data file holds and the engine was opened without, both sides first check that the engine's tier is among the property's data tiers. .NET's IP Intelligence tier, IPIV41, is in none, so .NET gives the upgrade reason. The crates' tier is the name the data file's header gives, which is among them, so they go on to the excluded reason. This follows from the engineMetadata.dataSourceTier entries.",
     "issue": 226
   },
   {
