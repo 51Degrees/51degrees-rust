@@ -733,6 +733,7 @@ mod tests {
             "history",
             "navigator",
             "closed",
+            "location",
         ] {
             assert!(
                 JavaScriptBuilderElement::builder()
@@ -769,6 +770,16 @@ mod tests {
             "Navigator",
             "closedAt",
         ] {
+            assert!(is_valid_object_name(name), "'{name}' was refused");
+        }
+    }
+
+    /// The browser's `Window` properties that a top level `var` can replace,
+    /// being `[Replaceable]` or writable, are accepted, as the object is
+    /// then created.
+    #[test]
+    fn window_properties_a_var_can_replace_are_accepted() {
+        for name in ["self", "frames", "parent", "opener", "length"] {
             assert!(is_valid_object_name(name), "'{name}' was refused");
         }
     }
