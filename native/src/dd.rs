@@ -2327,6 +2327,66 @@ mod tests {
         }
     }
 
+    /// The evidence keys are the C library's list for the data set,
+    /// lowercased: each header's `header.` and `query.` keys, a `cookie.`
+    /// and a `query.` key for each property the evidence can override, then
+    /// the seven keys every data set reads, with no `HTTP_` before a header
+    /// name.
+    #[test]
+    fn the_evidence_keys_are_the_data_sets_list_lowercased() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the evidence keys");
+            return;
+        };
+        let manager = Manager::open(&path, PerformanceProfile::Default).expect("data file loads");
+        let keys = manager.evidence_keys();
+        let fixed = [
+            "query.51d_deviceid",
+            "query.51d_gethighentropyvalues",
+            "query.51d_structureduseragent",
+            "cookie.51d_gethighentropyvalues",
+            "cookie.51d_structureduseragent",
+            "query.51d_profileids",
+            "cookie.51d_profileids",
+        ];
+        assert!(keys.len() > fixed.len(), "{keys:?}");
+        assert_eq!(&keys[keys.len() - fixed.len()..], fixed, "{keys:?}");
+        for key in &keys {
+            assert_eq!(*key, key.to_lowercase(), "{keys:?}");
+            assert!(!key.contains(".http_"), "{keys:?}");
+        }
+        for pair in [
+            ["header.user-agent", "query.user-agent"],
+            [
+                "cookie.51d_javascripthardwareprofile",
+                "query.51d_javascripthardwareprofile",
+            ],
+        ] {
+            assert!(keys.windows(2).any(|w| w == pair), "{pair:?} {keys:?}");
+        }
+    }
+
+    /// No profile reads a header name with `HTTP_` before it, as .NET sets
+    /// in its Hash engine builder, so the header keys are the names the data
+    /// set holds.
+    #[test]
+    fn no_profile_reads_http_prefixed_header_names() {
+        for profile in [
+            PerformanceProfile::LowMemory,
+            PerformanceProfile::Balanced,
+            PerformanceProfile::Default,
+            PerformanceProfile::HighPerformance,
+            PerformanceProfile::InMemory,
+        ] {
+            let config = profile_config(profile, &HashOptions::default());
+            assert!(
+                !config.b.b.uses_upper_prefixed_headers,
+                "{}",
+                profile.as_str()
+            );
+        }
+    }
+
     /// The copy of a profile's configuration a data set opens with keeps
     /// the profile's `load_required_properties_only`, which only
     /// `HighPerformance` sets.

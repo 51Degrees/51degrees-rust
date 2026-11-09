@@ -338,7 +338,7 @@ fn metadata_is_published() {
 }
 
 /// The engine accepts every header the data file reads, as a header and as a
-/// query value, alongside the client-side `51d_` values.
+/// query value, and the `51d_` values the data set reads, and no others.
 #[test]
 fn evidence_keys_come_from_the_data_file() {
     let Some(engine) = build_engine() else {
@@ -359,7 +359,18 @@ fn evidence_keys_come_from_the_data_file() {
         );
         assert!(filter.include(key), "{key} should be accepted");
     }
-    assert!(filter.include("query.51d_screenpixelswidth"));
+    for key in [
+        "cookie.51d_javascripthardwareprofile",
+        "query.51d_profileids",
+        "cookie.51d_profileids",
+    ] {
+        assert!(
+            keys.iter().any(|k| k == key),
+            "{key} should be listed: {keys:?}"
+        );
+        assert!(filter.include(key), "{key} should be accepted");
+    }
+    assert!(!filter.include("query.51d_notaproperty"));
     assert!(!filter.include("header.referer"));
 
     engine.refresh(None).expect("refresh succeeds");

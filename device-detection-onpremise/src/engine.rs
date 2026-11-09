@@ -1627,21 +1627,19 @@ mod tests {
         );
     }
 
+    /// A `51d_` value is accepted only when the data set reads it, as an
+    /// element accepts only the evidence that can change its results.
     #[test]
-    fn evidence_filter_passes_client_side_values() {
-        // The values the client-side JavaScript sends back reach the engine,
-        // whether posted as query values or kept in cookies.
-        let filter = HashEvidenceKeyFilter::new(Vec::new());
-        assert!(filter.include("query.51d_screenpixelswidth"));
+    fn evidence_filter_accepts_only_the_51d_values_it_is_given() {
+        let filter = HashEvidenceKeyFilter::new(vec![
+            String::from("query.51d_profileids"),
+            String::from("cookie.51d_javascripthardwareprofile"),
+        ]);
         assert!(filter.include("query.51D_ProfileIds"));
-        assert!(filter.include("cookie.51d_screenpixelsheight"));
-        assert_eq!(filter.order("query.51d_screenpixelswidth"), Some(0));
-        // Only query and cookie values, and only with the 51d_ prefix.
-        assert!(!filter.include("header.51d_screenpixelswidth"));
-        assert!(!filter.include("query.screenpixelswidth"));
-        assert!(!filter.include("cookie.session"));
-        assert!(!filter.include("query.51d"));
-        assert_eq!(filter.order("cookie.session"), None);
+        assert!(filter.include("cookie.51d_javascripthardwareprofile"));
+        assert!(!filter.include("query.51d_screenpixelswidth"));
+        assert!(!filter.include("cookie.51d_profileids"));
+        assert_eq!(filter.order("query.51d_screenpixelswidth"), None);
     }
 
     /// The Hash data file `51DEGREES_DD_PATH` names, or the Lite file in the
