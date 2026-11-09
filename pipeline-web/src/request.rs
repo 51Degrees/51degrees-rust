@@ -132,17 +132,23 @@ pub trait RequestData {
             .map(|(_, value)| value)
     }
 
-    /// The value of the request `If-None-Match` header, if present.
+    /// The request's `If-None-Match` field, if present.
     ///
     /// Used by the client-side endpoints to decide whether to return `304 Not
     /// Modified` (or `412 Precondition Failed`, see [`RequestData::method`]).
-    /// The default implementation finds it among [`RequestData::headers`]
-    /// case-insensitively.
+    /// The field is a list, so a request may carry it over several lines. The
+    /// default implementation finds every line among [`RequestData::headers`]
+    /// case-insensitively and joins them in order with a comma and a space,
+    /// as [RFC 9110 section 5.3](https://www.rfc-editor.org/rfc/rfc9110#section-5.3)
+    /// allows.
     fn if_none_match(&self) -> Option<String> {
-        self.headers()
+        let lines: Vec<String> = self
+            .headers()
             .into_iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case("if-none-match"))
+            .filter(|(name, _)| name.eq_ignore_ascii_case("if-none-match"))
             .map(|(_, value)| value)
+            .collect();
+        (!lines.is_empty()).then(|| lines.join(", "))
     }
 
     /// The request method, for example `GET` or `POST`, exactly as the
