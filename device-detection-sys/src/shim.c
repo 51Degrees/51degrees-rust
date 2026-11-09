@@ -141,59 +141,6 @@ int fiftyoneDegreesShimHashGetRequiredPropertyIndexFromName(
 }
 
 /*
- * Writes the count of HTTP header evidence keys in the data set to *count and
- * returns a pointer that is non-null on success. The header names themselves
- * are read one at a time with fiftyoneDegreesShimHashGetEvidenceKey to avoid
- * exposing the headers collection layout.
- */
-uint32_t fiftyoneDegreesShimHashGetEvidenceKeyCount(
-    fiftyoneDegreesResourceManager *manager) {
-    fiftyoneDegreesDataSetHash *dataSet =
-        fiftyoneDegreesDataSetHashGet(manager);
-    if (dataSet == NULL) {
-        return 0;
-    }
-    uint32_t count = 0;
-    if (dataSet->b.b.uniqueHeaders != NULL) {
-        count = dataSet->b.b.uniqueHeaders->count;
-    }
-    fiftyoneDegreesDataSetHashRelease(dataSet);
-    return count;
-}
-
-/*
- * Writes the name of the HTTP header evidence key at `headerIndex` into
- * `buffer` as a null terminated string and returns the number of characters
- * written, excluding the terminator. Returns zero when the index is out of
- * range, the buffer is too small or no data set is available.
- */
-size_t fiftyoneDegreesShimHashGetEvidenceKey(
-    fiftyoneDegreesResourceManager *manager,
-    uint32_t headerIndex,
-    char *buffer,
-    size_t length) {
-    if (buffer != NULL && length > 0) {
-        buffer[0] = '\0';
-    }
-
-    fiftyoneDegreesDataSetHash *dataSet =
-        fiftyoneDegreesDataSetHashGet(manager);
-    if (dataSet == NULL) {
-        return 0;
-    }
-
-    size_t written = 0;
-    fiftyoneDegreesHeaders *headers = dataSet->b.b.uniqueHeaders;
-    if (headers != NULL && headerIndex < headers->count) {
-        const char *value = headers->items[headerIndex].name;
-        written = copy_bounded(buffer, length, value);
-    }
-
-    fiftyoneDegreesDataSetHashRelease(dataSet);
-    return written;
-}
-
-/*
  * Writes the data set's name into `buffer` as a null terminated string and
  * returns the number of characters written, excluding the terminator. The name
  * is the data file's tier (for example "Lite", "Enterprise" or "TAC"), read

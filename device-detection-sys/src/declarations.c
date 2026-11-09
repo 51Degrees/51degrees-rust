@@ -112,6 +112,12 @@ const char* fiftyoneDegreesResultsHashGetMatchedUserAgent(
 	uint32_t resultIndex,
 	fiftyoneDegreesException *exception);
 
+size_t fiftyoneDegreesHashGetEvidenceKeys(
+	fiftyoneDegreesDataSetHash *dataSet,
+	char *buffer,
+	size_t length,
+	const char *separator);
+
 /* fiftyone-common-sys */
 
 typedef struct {

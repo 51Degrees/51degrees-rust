@@ -56,7 +56,7 @@ use std::ptr::NonNull;
 use std::sync::{Arc, OnceLock};
 
 use fiftyone_device_detection_sys as sys;
-use fiftyone_pipeline_core::{constants, Error, PropertyValueType, Result};
+use fiftyone_pipeline_core::{Error, PropertyValueType, Result};
 
 use crate::buffer::with_value_string;
 use crate::evidence::with_native_evidence;
@@ -67,9 +67,9 @@ use crate::status::{status_name, status_to_result, take_message, NativeException
 
 mod value_profiles;
 
-/// The character a data set puts between the header names it joins into one
-/// pseudo header, for example the User-Agent Client Hints it reads together.
-const PSEUDO_HEADER_SEPARATOR: char = '\x1F';
+/// The separator the C library writes between evidence keys. No header or
+/// property name holds a comma.
+const EVIDENCE_KEY_SEPARATOR: &CStr = c",";
 
 // ---------------------------------------------------------------------------
 // Status and exception trait wiring for the Device Detection common C library
@@ -249,6 +249,10 @@ fn profile_config(profile: PerformanceProfile, options: &HashOptions) -> sys::Co
     // Safety: `config_for` returns a valid pointer to an initialized config
     // global, and copying out of it is a plain read of a `repr(C)` value.
     let mut config = unsafe { *config_for(profile) };
+    // Header names are read as the data set holds them, never with `HTTP_`
+    // before them, as .NET's Hash engine builder sets, so the evidence keys
+    // carry the plain names.
+    config.b.b.uses_upper_prefixed_headers = false;
     options.apply(&mut config);
     config
 }
@@ -576,41 +580,44 @@ impl Manager {
         names
     }
 
-    /// The header evidence keys the data set reads, lowercased, being each
-    /// header it names as a `header.` key and as a `query.` key, in the data
-    /// set's order.
-    ///
-    /// These are the keys the C++ engine's `getKeys` lists for the headers. A
-    /// pseudo header, which the data set builds by joining several headers, is
-    /// left out, because a request never carries one.
+    /// The evidence keys the data set reads, lowercased, in the C library's
+    /// order, which is the list the C++ engine's `getKeys` gives: a
+    /// `header.` and a `query.` key for each header the data set names,
+    /// other than a pseudo header, then a `cookie.` and a `query.` key for
+    /// each property the evidence can override, then the keys of the device
+    /// id, the high entropy values, the structured User-Agent and the profile
+    /// ids.
     pub fn evidence_keys(&self) -> Vec<String> {
         // Safety: the manager is initialized for the lifetime of `self`.
-        let count = unsafe { sys::fiftyoneDegreesShimHashGetEvidenceKeyCount(self.as_ptr()) };
-        let mut keys = Vec::with_capacity(count as usize * 2);
-        let mut buffer = vec![0u8; 256];
-        for index in 0..count {
-            // Safety: the buffer is writable for its full length.
-            let written = unsafe {
-                sys::fiftyoneDegreesShimHashGetEvidenceKey(
-                    self.as_ptr(),
-                    index,
-                    buffer.as_mut_ptr() as *mut c_char,
-                    buffer.len(),
-                )
-            };
-            let end = written.min(buffer.len());
-            let name = String::from_utf8_lossy(&buffer[..end]).to_lowercase();
-            if name.is_empty() || name.contains(PSEUDO_HEADER_SEPARATOR) {
-                continue;
-            }
-            for prefix in [
-                constants::EVIDENCE_HTTP_HEADER_PREFIX,
-                constants::EVIDENCE_QUERY_PREFIX,
-            ] {
-                keys.push(format!("{prefix}{}{name}", constants::EVIDENCE_SEPARATOR));
-            }
+        let data_set = unsafe { sys::fiftyoneDegreesDataSetHashGet(self.as_ptr()) };
+        if data_set.is_null() {
+            return Vec::new();
         }
-        keys
+        // Safety: the data set is held until the release below, so both calls
+        // read the same one. A null buffer only finds the length, and the
+        // buffer is then writable for the keys and the null terminator.
+        let text = unsafe {
+            let length = sys::fiftyoneDegreesHashGetEvidenceKeys(
+                data_set,
+                std::ptr::null_mut(),
+                0,
+                EVIDENCE_KEY_SEPARATOR.as_ptr(),
+            );
+            let mut buffer = vec![0u8; length + 1];
+            sys::fiftyoneDegreesHashGetEvidenceKeys(
+                data_set,
+                buffer.as_mut_ptr() as *mut c_char,
+                buffer.len(),
+                EVIDENCE_KEY_SEPARATOR.as_ptr(),
+            );
+            sys::fiftyoneDegreesDataSetHashRelease(data_set);
+            buffer.truncate(length);
+            String::from_utf8_lossy(&buffer).to_lowercase()
+        };
+        text.split(',')
+            .filter(|key| !key.is_empty())
+            .map(str::to_owned)
+            .collect()
     }
 
     /// The data set's name, which is the data file's tier (for example `Lite`,

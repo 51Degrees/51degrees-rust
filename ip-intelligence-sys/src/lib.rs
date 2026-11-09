@@ -60,14 +60,13 @@
 //!   [`fiftyoneDegreesDataSetIpiRelease`] and
 //!   [`fiftyoneDegreesResourceManagerFree`], which is declared against this
 //!   crate's own common C library build).
-//! - **Property and header enumeration shim**
+//! - **Evidence keys** ([`fiftyoneDegreesIpiGetEvidenceKeys`]).
+//! - **Property enumeration shim**
 //!   ([`fiftyoneDegreesShimIpiGetRequiredPropertyCount`],
-//!   [`fiftyoneDegreesShimIpiGetRequiredPropertyName`],
-//!   [`fiftyoneDegreesShimIpiGetRequiredPropertyIndexFromName`],
-//!   [`fiftyoneDegreesShimIpiGetUniqueHeaderCount`] and
-//!   [`fiftyoneDegreesShimIpiGetUniqueHeaderName`]). These flat helpers are
-//!   compiled from this crate's own `src/shim.c` (not the upstream library) and
-//!   read the `available` property set and the `uniqueHeaders` buried deep
+//!   [`fiftyoneDegreesShimIpiGetRequiredPropertyName`] and
+//!   [`fiftyoneDegreesShimIpiGetRequiredPropertyIndexFromName`]). These flat
+//!   helpers are compiled from this crate's own `src/shim.c` (not the
+//!   upstream library) and read the `available` property set buried deep
 //!   inside the data set structures, so the Rust side does not mirror those
 //!   private C layouts. They mirror the equivalent shim in
 //!   `fiftyone-device-detection-sys`.
@@ -875,6 +874,25 @@ extern "C" {
     /// `dataset` must come from [`fiftyoneDegreesDataSetIpiGet`].
     pub fn fiftyoneDegreesDataSetIpiRelease(dataset: *mut DataSetIpi);
 
+    /// Writes the evidence keys `dataset` reads into `buffer`, with
+    /// `separator` between them, and returns the number of characters the
+    /// keys and separators need, not counting the null terminator. A null
+    /// buffer only finds that length, and a buffer one longer holds them all.
+    /// The keys are a `query.` and then a `server.` key for each header the
+    /// data set reads the client IP from, in the data set's order. A comma
+    /// suits as the separator, as no header name holds one.
+    ///
+    /// # Safety
+    /// `dataset` must come from [`fiftyoneDegreesDataSetIpiGet`] and not yet
+    /// be released. `buffer` must be null or point to `length` writable
+    /// bytes, and `separator` must be a null terminated string.
+    pub fn fiftyoneDegreesIpiGetEvidenceKeys(
+        dataset: *mut DataSetIpi,
+        buffer: *mut c_char,
+        length: usize,
+        separator: *const c_char,
+    ) -> usize;
+
     /// Frees a resource manager and, once no references remain, its data set.
     /// Declared here so it links against this crate's own common C library
     /// resource layer rather than any other build of it.
@@ -1283,31 +1301,6 @@ extern "C" {
     /// being how much of a data file the C library compares to find a copy of
     /// it to reuse. Defined by this crate's `src/shim.c`.
     pub fn fiftyoneDegreesShimIpiGetHeaderSize() -> usize;
-
-    /// Returns the number of headers the data set reads the client IP from, or
-    /// zero when no data set is available. Defined by this crate's
-    /// `src/shim.c`, reading the data set's `uniqueHeaders`.
-    ///
-    /// # Safety
-    /// `manager` must be initialized.
-    pub fn fiftyoneDegreesShimIpiGetUniqueHeaderCount(manager: *mut ResourceManager) -> u32;
-
-    /// Writes the name of the header at `header_index`, in the data set's
-    /// priority order, into `buffer` as a null terminated string and returns
-    /// the number of characters written, excluding the terminator. Returns zero
-    /// when the index is out of range or no data set is available, and cuts the
-    /// name short when the buffer is too small. Defined by this crate's
-    /// `src/shim.c`.
-    ///
-    /// # Safety
-    /// `manager` must be initialized. `buffer` must point to `length` writable
-    /// bytes.
-    pub fn fiftyoneDegreesShimIpiGetUniqueHeaderName(
-        manager: *mut ResourceManager,
-        header_index: u32,
-        buffer: *mut c_char,
-        length: usize,
-    ) -> usize;
 
     /// Initializes `manager` from the data file `file_name` with a copy of
     /// `config`, setting the expected concurrency of every collection in the

@@ -934,28 +934,38 @@ impl Drop for Manager {
     }
 }
 
-/// Read the evidence keys the data set behind `manager` defines, being every
-/// header it names under the query prefix and then under the server prefix,
-/// in the data set's order. That is the order the native lookup tries them.
+/// Read the evidence keys the data set behind `manager` defines from the C
+/// library, lowercased, with every query key and then every server key, each
+/// in the data set's order. That is the order the native lookup tries them,
+/// and the order the specification gives the list in. The C library lists a
+/// header's query and server keys together.
 ///
 /// # Safety
 /// `manager` must be initialized.
 unsafe fn read_evidence_keys(manager: *mut sys::ResourceManager) -> Vec<EvidenceKey> {
-    let count = sys::fiftyoneDegreesShimIpiGetUniqueHeaderCount(manager);
-    let mut headers = Vec::with_capacity(count as usize);
-    for index in 0..count {
-        let mut buffer = [0u8; 256];
-        let written = sys::fiftyoneDegreesShimIpiGetUniqueHeaderName(
-            manager,
-            index,
-            buffer.as_mut_ptr() as *mut c_char,
-            buffer.len(),
-        );
-        let name = String::from_utf8_lossy(&buffer[..written.min(buffer.len())]).to_lowercase();
-        if !name.is_empty() {
-            headers.push(name);
-        }
+    let data_set = sys::fiftyoneDegreesDataSetIpiGet(manager);
+    if data_set.is_null() {
+        return Vec::new();
     }
+    // The data set is held until the release below, so both calls read the
+    // same one. A null buffer only finds the length, and the buffer is then
+    // writable for the keys and the null terminator.
+    let length = sys::fiftyoneDegreesIpiGetEvidenceKeys(
+        data_set,
+        std::ptr::null_mut(),
+        0,
+        EVIDENCE_KEY_SEPARATOR.as_ptr(),
+    );
+    let mut buffer = vec![0u8; length + 1];
+    sys::fiftyoneDegreesIpiGetEvidenceKeys(
+        data_set,
+        buffer.as_mut_ptr() as *mut c_char,
+        buffer.len(),
+        EVIDENCE_KEY_SEPARATOR.as_ptr(),
+    );
+    sys::fiftyoneDegreesDataSetIpiRelease(data_set);
+    buffer.truncate(length);
+    let text = String::from_utf8_lossy(&buffer).to_lowercase();
 
     let prefixes = [
         (constants::EVIDENCE_QUERY_PREFIX, sys::EvidencePrefix::Query),
@@ -964,19 +974,29 @@ unsafe fn read_evidence_keys(manager: *mut sys::ResourceManager) -> Vec<Evidence
             sys::EvidencePrefix::Server,
         ),
     ];
-    let mut keys = Vec::with_capacity(headers.len() * prefixes.len());
+    let mut keys = Vec::new();
     for (prefix, native_prefix) in prefixes {
-        for header in &headers {
+        for key in text.split(',') {
+            let Some((key_prefix, field)) = key.split_once(constants::EVIDENCE_SEPARATOR) else {
+                continue;
+            };
+            if key_prefix != prefix || field.is_empty() {
+                continue;
+            }
             keys.push(EvidenceKey {
-                key: format!("{prefix}{}{header}", constants::EVIDENCE_SEPARATOR),
+                key: key.to_owned(),
                 prefix: native_prefix,
-                // The name came from a C string, so it holds no nul byte.
-                field: CString::new(header.as_str()).expect("a header name has no nul"),
+                // The text came from a C string, so it holds no nul byte.
+                field: CString::new(field).expect("a header name has no nul"),
             });
         }
     }
     keys
 }
+
+/// The separator the C library writes between evidence keys. No header name
+/// holds a comma.
+const EVIDENCE_KEY_SEPARATOR: &CStr = c",";
 
 // ---------------------------------------------------------------------------
 // Results

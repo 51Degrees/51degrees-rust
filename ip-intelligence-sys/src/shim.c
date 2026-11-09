@@ -198,67 +198,6 @@ size_t fiftyoneDegreesShimIpiGetHeaderSize(void) {
 }
 
 /*
- * Returns the number of headers the data set reads the client IP from, or zero
- * when no data set is available. Their names are read one at a time with
- * fiftyoneDegreesShimIpiGetUniqueHeaderName, in the data set's priority order.
- */
-uint32_t fiftyoneDegreesShimIpiGetUniqueHeaderCount(
-    fiftyoneDegreesResourceManager *manager) {
-    fiftyoneDegreesDataSetIpi *dataSet =
-        fiftyoneDegreesDataSetIpiGet(manager);
-    if (dataSet == NULL) {
-        return 0;
-    }
-    uint32_t count = 0;
-    if (dataSet->b.b.uniqueHeaders != NULL) {
-        count = dataSet->b.b.uniqueHeaders->count;
-    }
-    fiftyoneDegreesDataSetIpiRelease(dataSet);
-    return count;
-}
-
-/*
- * Writes the name of the header at `headerIndex` into `buffer` as a null
- * terminated string and returns the number of characters written, excluding
- * the terminator. Returns zero when the index is out of range or no data set is
- * available, and cuts the name short when the buffer is too small. The buffer
- * is always null terminated when `length` is at least one.
- */
-size_t fiftyoneDegreesShimIpiGetUniqueHeaderName(
-    fiftyoneDegreesResourceManager *manager,
-    uint32_t headerIndex,
-    char *buffer,
-    size_t length) {
-    if (buffer != NULL && length > 0) {
-        buffer[0] = '\0';
-    }
-
-    fiftyoneDegreesDataSetIpi *dataSet =
-        fiftyoneDegreesDataSetIpiGet(manager);
-    if (dataSet == NULL) {
-        return 0;
-    }
-
-    size_t written = 0;
-    fiftyoneDegreesHeaders *headers = dataSet->b.b.uniqueHeaders;
-    if (headers != NULL && headerIndex < headers->count) {
-        const char *value = headers->items[headerIndex].name;
-        if (value != NULL && buffer != NULL && length > 0) {
-            size_t i = 0;
-            while (value[i] != '\0' && i < length - 1) {
-                buffer[i] = value[i];
-                i++;
-            }
-            buffer[i] = '\0';
-            written = i;
-        }
-    }
-
-    fiftyoneDegreesDataSetIpiRelease(dataSet);
-    return written;
-}
-
-/*
  * Initialises `manager` from the data file `fileName` with a copy of
  * `config`, setting the expected concurrency of every collection in the copy
  * to `concurrency` when that is zero or more. The expected concurrency sizes

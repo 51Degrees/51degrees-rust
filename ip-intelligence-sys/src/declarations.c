@@ -53,6 +53,12 @@ bool fiftyoneDegreesIpiGetNextUpdate(
 	fiftyoneDegreesResourceManager *manager,
 	fiftyoneDegreesDate *date);
 
+size_t fiftyoneDegreesIpiGetEvidenceKeys(
+	fiftyoneDegreesDataSetIpi *dataSet,
+	char *buffer,
+	size_t length,
+	const char *separator);
+
 #pragma pack(push, 1)
 typedef struct {
 	int16_t year;

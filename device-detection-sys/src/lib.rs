@@ -691,6 +691,31 @@ extern "C" {
     /// # Safety
     /// `data_set` must come from [`fiftyoneDegreesDataSetHashGet`].
     pub fn fiftyoneDegreesDataSetHashRelease(data_set: *mut DataSetHash);
+
+    /// Writes the evidence keys `data_set` reads into `buffer`, with
+    /// `separator` between them, and returns the number of characters the
+    /// keys and separators need, not counting the null terminator. A null
+    /// buffer only finds that length, and a buffer one longer holds them all.
+    /// The keys are each header's `header.` and `query.` keys, with `HTTP_`
+    /// before the name when the configuration's
+    /// [`uses_upper_prefixed_headers`](ConfigBase::uses_upper_prefixed_headers)
+    /// is true, then, when its
+    /// [`process_special_evidence`](ConfigDeviceDetection::process_special_evidence)
+    /// is true, a `cookie.` and a `query.` key for each property the evidence
+    /// can override and the keys of the device id, the high entropy values,
+    /// the structured User-Agent and the profile ids. A comma suits as the
+    /// separator, as no header or property name holds one.
+    ///
+    /// # Safety
+    /// `data_set` must come from [`fiftyoneDegreesDataSetHashGet`] and not yet
+    /// be released. `buffer` must be null or point to `length` writable bytes,
+    /// and `separator` must be a null terminated string.
+    pub fn fiftyoneDegreesHashGetEvidenceKeys(
+        data_set: *mut DataSetHash,
+        buffer: *mut c_char,
+        length: usize,
+        separator: *const c_char,
+    ) -> usize;
 }
 
 // ---------------------------------------------------------------------------
@@ -732,27 +757,6 @@ extern "C" {
         manager: *mut ResourceManager,
         property_name: *const c_char,
     ) -> c_int;
-
-    /// Returns the number of HTTP header evidence keys in the data set managed
-    /// by `manager`, or zero if no data set is available.
-    ///
-    /// # Safety
-    /// `manager` must be an initialized Hash manager.
-    pub fn fiftyoneDegreesShimHashGetEvidenceKeyCount(manager: *mut ResourceManager) -> u32;
-
-    /// Writes the name of the HTTP header evidence key at `header_index` into
-    /// `buffer` as a null terminated string and returns the number of
-    /// characters written, excluding the terminator.
-    ///
-    /// # Safety
-    /// `manager` must be an initialized Hash manager. `buffer` must point to
-    /// `length` writable bytes.
-    pub fn fiftyoneDegreesShimHashGetEvidenceKey(
-        manager: *mut ResourceManager,
-        header_index: u32,
-        buffer: *mut c_char,
-        length: usize,
-    ) -> usize;
 
     /// Writes the data set's name (its tier, for example `Lite`, `Enterprise`
     /// or `TAC`) into `buffer` as a null terminated string and returns the
@@ -1306,9 +1310,17 @@ mod tests {
                 property_count > 0,
                 "the Lite data set should expose properties"
             );
-            let evidence_count = fiftyoneDegreesShimHashGetEvidenceKeyCount(&mut manager);
+            let data_set = fiftyoneDegreesDataSetHashGet(&mut manager);
+            assert!(!data_set.is_null(), "the data set should be available");
+            let keys_length = fiftyoneDegreesHashGetEvidenceKeys(
+                data_set,
+                std::ptr::null_mut(),
+                0,
+                c",".as_ptr(),
+            );
+            fiftyoneDegreesDataSetHashRelease(data_set);
             assert!(
-                evidence_count > 0,
+                keys_length > 0,
                 "the Lite data set should expose evidence keys"
             );
 
