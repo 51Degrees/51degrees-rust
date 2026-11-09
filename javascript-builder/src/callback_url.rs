@@ -163,8 +163,8 @@ fn ends_in_a_number(name: &str) -> bool {
     }
 }
 
-/// Four decimal parts of 0 to 255 separated by dots, each with no zero before
-/// another digit, so `0` and `101` pass and `00` and `01` fail.
+/// Four decimal parts of 0 to 255 separated by dots, each starting with 0
+/// only when it is 0 alone, so `0` and `101` pass and `00` and `01` fail.
 fn is_ipv4(name: &str) -> bool {
     let is_part = |part: &str| {
         part.bytes().all(|b| b.is_ascii_digit())
@@ -487,10 +487,10 @@ mod tests {
 
     // A host whose last label is all digits, or `0x` or `0X` followed by zero
     // or more hex digits, is read by a browser's URL parser as an IPv4
-    // address, so it must be four decimal parts of 0 to 255, each with no zero
-    // before another digit, and no `.` at the end. One `.` at the end is
-    // dropped before the last label is read, so `example.123.` ends in a
-    // number too.
+    // address, so it must be four decimal parts of 0 to 255, each starting
+    // with 0 only when it is 0 alone, and no `.` at the end. One `.` at the
+    // end is dropped before the last label is read, so `example.123.` ends in
+    // a number too.
     #[test]
     fn a_host_ending_in_a_number_must_be_ipv4() {
         let hosts = [
