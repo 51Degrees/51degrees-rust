@@ -3031,8 +3031,8 @@ mod tests {
     /// .NET, so a test that needs it fails rather than skips.
     const REQUIRE_ENTERPRISE: &str = "51DEGREES_REQUIRE_ENTERPRISE";
 
-    /// The length of the buffer the shim first writes a value's text into,
-    /// `SHIM_TEXT_BUFFER_LENGTH` in `shim.c`.
+    /// The length of the buffer the shim gives the C library for a value's
+    /// text, `SHIM_TEXT_BUFFER_LENGTH` in `shim.c`.
     const SHIM_TEXT_BUFFER_LENGTH: usize = 256;
 
     /// Skip `what` for `reason`, or fail when [`REQUIRE_ENTERPRISE`] is set.
@@ -3093,8 +3093,7 @@ mod tests {
     /// An Enterprise file's values are given as text as .NET gives them. An
     /// IP range starts at an address, a coordinate has at most 3 decimal
     /// places, and an area is WKT text. The first area is longer than the
-    /// shim's first buffer, so the shim writes it again into a buffer it
-    /// allocates.
+    /// shim's buffer, so the C library writes it into a block it allocates.
     #[test]
     fn an_enterprise_file_gives_each_value_as_text() {
         let Some((manager, properties)) = enterprise_file("value text") else {
