@@ -701,8 +701,6 @@ mod tests {
 
     /// RFC 9110 section 13.1.2 gives the field as `"*" / #entity-tag`, and
     /// the condition is true, so nothing matches, when the field is neither.
-    /// The first six cases are those of the 51degrees-go change that does the
-    /// same.
     #[test]
     fn an_if_none_match_that_is_not_star_or_a_list_of_tags_does_not_match() {
         let etag = "W/\"x\"";
