@@ -82,7 +82,7 @@ struct DerivedMetadata {
 /// needed after it has, and until then the engine reports the shared default
 /// metadata so a consumer always sees the documented property set. A resource
 /// key that grants no `ip` product, or lists it with no properties, leaves the
-/// metadata empty and logs an error once. The metadata `Type` field of each
+/// metadata empty and logs a warning once. The metadata `Type` field of each
 /// cloud property also drives how its weighted values are parsed (string,
 /// integer or floating-point).
 ///
@@ -91,8 +91,10 @@ struct DerivedMetadata {
 /// With a resource key, the data from a successful response is given the
 /// properties the key grants, so a read of a property the response did not
 /// return gives the reason it is missing and logs a warning, as .NET's
-/// `MissingPropertyServiceCloud` does. With a license key alone the granted
-/// properties are not listed, so the data cannot say why one is missing.
+/// `MissingPropertyServiceCloud` does. When the key lacks the `ip` product
+/// the read logs nothing, as the engine has logged the missing product once.
+/// With a license key alone the granted properties are not listed, so the
+/// data cannot say why one is missing.
 ///
 /// # Example
 ///
@@ -223,15 +225,15 @@ impl IpIntelligenceCloudEngine {
     /// While the request engine's discovery has not completed the caches stay
     /// empty and the engine reports the shared defaults. When the accessible
     /// properties hold no `ip` product, or list it with no properties, the
-    /// engine gets empty metadata, as the missing product rule of draft
-    /// specifications#75 says, where .NET refuses such a key and fails the
-    /// pipeline build. An engine with only a license key gets empty metadata
-    /// too, because it has no accessible properties to read, as the cloud
-    /// request engine specification says. With a resource key the call that
-    /// sets the empty metadata logs an error, so it is logged once. The
-    /// reason for a missing property is derived with the metadata, naming no
-    /// properties when the key has no `ip` product. The properties are set
-    /// last because a request that finds them set reads the rest.
+    /// engine gets empty metadata, as the cloud aspect engine specification
+    /// says. An engine with only a license key gets empty metadata too,
+    /// because it has no accessible properties to read, as the cloud request
+    /// engine specification says. With a resource key the call that sets the
+    /// empty metadata logs a warning naming the data key, so the missing
+    /// product is logged once. The reason for a missing property is derived
+    /// with the metadata, naming no properties when the key has no `ip`
+    /// product. The properties are set last because a request that finds
+    /// them set reads the rest.
     fn ensure_metadata(&self) {
         if self.properties.get().is_some() {
             return;
@@ -255,9 +257,10 @@ impl IpIntelligenceCloudEngine {
                 if self.properties.set(Vec::new()).is_ok()
                     && self.request_engine.resource_key().is_some()
                 {
-                    log::error!(
+                    log::warn!(
                         "Aspect properties could not be loaded for {ENGINE_NAME} - \
-                         '{IP_DATA_KEY_NAME}'"
+                         '{IP_DATA_KEY_NAME}'. The resource key does not include access \
+                         to any properties under '{IP_DATA_KEY_NAME}'."
                     );
                 }
             }

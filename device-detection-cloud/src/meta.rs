@@ -57,7 +57,8 @@ impl DiscoveredMetadata {
     /// Give `device`, mapped from a successful response, the reason for each
     /// property the response did not return, so reading one gives that
     /// reason. The read also logs a warning, as .NET's cloud data does,
-    /// unless logging is stopped, as it is for a hardware profile.
+    /// unless logging is stopped, as it is for a hardware profile, or the
+    /// resource key lacks the product, which the engine has logged once.
     pub(crate) fn add_missing_property_source(&self, device: &mut DeviceDataBase) {
         if let Some(missing) = &self.missing {
             device
@@ -125,8 +126,10 @@ pub(crate) fn property_list_request_failed(
 /// has not completed, leaving the slot empty so a later call can fill it. A
 /// resource key that grants no such product, or lists it with no properties,
 /// fills the slot with empty metadata rather than failing, and the call that
-/// fills it logs an error naming `engine_name`, as .NET does, so it is logged
-/// once for the life of the engine. With only a license key there are no
+/// fills it logs a warning naming `engine_name` and `element_data_key`, so
+/// the missing product is logged once for the life of the engine, as the
+/// cloud aspect engine specification says. A read of one of the product's
+/// properties then logs nothing. With only a license key there are no
 /// accessible properties to read, so nothing is logged and the metadata
 /// holds no missing property source.
 pub(crate) fn fill_metadata(
@@ -162,8 +165,10 @@ pub(crate) fn fill_metadata(
         )));
     }
     if slot.set(metadata).is_ok() && product.is_none() && request_engine.resource_key().is_some() {
-        log::error!(
-            "Aspect properties could not be loaded for {engine_name} - '{element_data_key}'"
+        log::warn!(
+            "Aspect properties could not be loaded for {engine_name} - \
+             '{element_data_key}'. The resource key does not include access to any \
+             properties under '{element_data_key}'."
         );
     }
     Ok(())
