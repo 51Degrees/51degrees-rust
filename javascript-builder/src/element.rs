@@ -120,11 +120,12 @@ fn parse_boolean(text: &str) -> Option<bool> {
 ///   evidence, else `https`.
 /// - **host**: the configured host if set, else the `header.host` evidence.
 /// - **object name**: the `query.fod-js-object-name` evidence if present and a
-///   valid JavaScript identifier that is not a reserved word, `Infinity`,
-///   `NaN`, `undefined`, `fiftyoneDegreesManager`, or one of the global names
-///   `eval`, `arguments`, `window`, `document`, `top`, `name`, `status`,
-///   `history`, `navigator`, `closed` and `location`, else the configured
-///   object name (default `fod`). An invalid requested name, the empty string
+///   valid JavaScript identifier that the
+///   [object name rule](https://github.com/51Degrees/specifications/blob/a77a17a92bad6ea7b10d327dddf8a2cb7277b006/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L168)
+///   does not refuse, being a reserved word, `Infinity`, `NaN`, `undefined`,
+///   `fiftyoneDegreesManager`, or a global name a page cannot use for the
+///   object, such as `eval`, `window`, `location` or `localStorage`, else the
+///   configured object name (default `fod`). An invalid requested name, the empty string
 ///   included, is ignored with a warning logged through the `log` crate.
 /// - **enable cookies**: the `query.fod-js-enable-cookies` evidence when it
 ///   is `true` or `false` in any case, with white space and NUL characters

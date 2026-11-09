@@ -286,11 +286,12 @@ impl JavaScriptBuilderElementBuilder {
     /// JavaScript.
     ///
     /// The name must be a valid JavaScript identifier (it must match
-    /// `[a-zA-Z_$][0-9a-zA-Z_$]*` in full) and must not be a reserved word,
-    /// `Infinity`, `NaN`, `undefined`, `fiftyoneDegreesManager`, or one of the
-    /// global names `eval`, `arguments`, `window`, `document`, `top`, `name`,
-    /// `status`, `history`, `navigator`, `closed` and `location`. An invalid
-    /// name is a configuration error. The same rule applies to a name
+    /// `[a-zA-Z_$][0-9a-zA-Z_$]*` in full) and must not be a name the
+    /// [object name rule](https://github.com/51Degrees/specifications/blob/a77a17a92bad6ea7b10d327dddf8a2cb7277b006/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L168)
+    /// refuses. Those are the reserved words, `Infinity`, `NaN`, `undefined`,
+    /// `fiftyoneDegreesManager`, and global names a page cannot use for the
+    /// object, such as `eval`, `window`, `location` and `localStorage`. An
+    /// invalid name is a configuration error. The same rule applies to a name
     /// requested through the `query.fod-js-object-name` evidence, where an
     /// invalid name is ignored with a warning logged.
     pub fn set_object_name(mut self, object_name: impl Into<String>) -> Result<Self> {
@@ -371,17 +372,19 @@ const RESERVED_WORDS: &[&str] = &[
 
 /// Global names the object cannot have, beyond [`RESERVED_WORDS`]. Strict
 /// mode code cannot declare `eval` or `arguments`, and the script's top level
-/// `var eval` would replace the page's own `eval`. In a browser a top level
-/// `var` cannot replace `window`, `document`, `top`, `name`, `status`,
-/// `history`, `navigator` or `closed`, so the object would never be created,
-/// and `var location` sets `location.href` to the object's text, which
-/// navigates the page away. These are the names the
+/// `var eval` would replace the page's own `eval`. `var location` sets
+/// `location.href` to the object's text, which navigates the page away. The
+/// rest are properties of the browser's window that a top level `var` cannot
+/// replace, so the object would never be created. These are the names the
 /// [object name rule](https://github.com/51Degrees/specifications/blob/a77a17a92bad6ea7b10d327dddf8a2cb7277b006/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L168)
 /// adds to the reserved words.
 #[rustfmt::skip]
 const UNSAFE_GLOBAL_NAMES: &[&str] = &[
-    "eval", "arguments", "window", "document", "top", "name", "status",
-    "history", "navigator", "closed", "location",
+    "eval", "arguments", "location",
+    "window", "document", "top", "name", "status", "history", "navigator",
+    "closed", "frameElement", "isSecureContext", "crossOriginIsolated",
+    "trustedTypes", "crypto", "indexedDB", "localStorage", "sessionStorage",
+    "caches", "cookieStore", "speechSynthesis", "styleMedia",
 ];
 
 /// True if the string is a valid JavaScript identifier per the
