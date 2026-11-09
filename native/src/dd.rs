@@ -930,7 +930,7 @@ impl Manager {
             .ok_or_else(|| metadata_read_failed(&format!("values of property {property_index}")))
     }
 
-    /// The value named `name`, matched exactly, among those
+    /// The value named `name`, matched exactly up to any null, among those
     /// [`Self::data_file_property_values`] gives for the property at
     /// `property_index`, or [`None`] when the index is out of range or the
     /// property has no such value. A property or value that cannot be read is

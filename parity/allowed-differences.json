@@ -86,7 +86,7 @@
     "data": "lite",
     "dotnet": {"pattern": ["Property 'Hardware*' not found in data for element 'device'. The reason for this is unknown. Please check that the aspect and property name are correct."]},
     "rust": {"pattern": ["Property 'Hardware*' not found in data for element 'device'. This is because your license or data file does not include this property. To see which licenses include it, see *"]},
-    "reason": "The Lite file has no HardwareVendor, HardwareModel or HardwareName. For a property the data file does not hold, both sides give the upgrade reason when the engine's data type has a typed accessor for the name. .NET's MissingPropertyService looks for the accessor among the properties IDeviceDataHash declares, which are none, as Type.GetProperties on an interface leaves out those of the interfaces it extends, so it never sees IDeviceData's HardwareVendor and gives the unknown reason. The crates find the accessor and give the upgrade reason the service's own documentation describes."
+    "reason": "The Lite file has no HardwareVendor, HardwareModel or HardwareName, which the Device Detection engine defines, as its data type has an accessor for each. The Missing Properties section of the pipeline specification's properties.md gives the reason \"Not available in the current data file\" for a property defined for an engine that the data file does not hold, and the missing property service's tests in automated-testing.md check that \"upgrade needed\" is returned for a property available in a different tier. The crates give that reason. .NET gives the unknown reason, because its MissingPropertyService looks for the accessor among the properties IDeviceDataHash declares, which are none, as Type.GetProperties on an interface leaves out those of the interfaces it extends, so it never sees IDeviceData's HardwareVendor. This entry goes when .NET's service also looks in the interfaces its data type extends."
   },
   {
     "path": "properties.device.*",
@@ -323,7 +323,8 @@
     "kind": "value",
     "cases": ["metadata-ip*"],
     "dotnet": {"value": ["IPIV41"]},
-    "reason": "The crates' IP Intelligence engine gives the tier the data file's header names, where .NET gives IPIV41.",
+    "rust": {"value": ["IPIV4Asn", "IPIV4Enterprise"]},
+    "reason": "The crates' IP Intelligence engine gives the tier the data file's header names, IPIV4Asn for the ASN file and IPIV4Enterprise for the Enterprise file, where .NET gives IPIV41.",
     "issue": 226
   },
   {
@@ -360,7 +361,7 @@
     "data": "lite",
     "dotnet": {"pattern": ["Property 'Country' not found in data for element 'ip'. The reason for this is unknown. Please check that the aspect and property name are correct."]},
     "rust": {"pattern": ["Property 'Country' not found in data for element 'ip'. This is because your license or data file does not include this property. To see which licenses include it, see *"]},
-    "reason": "The ASN file has no Country. For a property the data file does not hold, both sides give the upgrade reason when the engine's data type has a typed accessor for the name. .NET's MissingPropertyService looks for the accessor among the properties IIpDataOnPremise declares, which are none, as Type.GetProperties on an interface leaves out those of the interfaces it extends, so it never sees IIpIntelligenceData's Country and gives the unknown reason. The crates find the accessor and give the upgrade reason the service's own documentation describes."
+    "reason": "The ASN file has no Country, which the IP Intelligence engine defines, as its data type has an accessor for it. The Missing Properties section of the pipeline specification's properties.md gives the reason \"Not available in the current data file\" for a property defined for an engine that the data file does not hold, and the missing property service's tests in automated-testing.md check that \"upgrade needed\" is returned for a property available in a different tier. The crates give that reason. .NET gives the unknown reason, because its MissingPropertyService looks for the accessor among the properties IIpDataOnPremise declares, which are none, as Type.GetProperties on an interface leaves out those of the interfaces it extends, so it never sees IIpIntelligenceData's Country. This entry goes when .NET's service also looks in the interfaces its data type extends."
   },
   {
     "path": "*device.*",

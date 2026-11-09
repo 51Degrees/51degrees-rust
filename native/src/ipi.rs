@@ -734,10 +734,10 @@ impl Manager {
     /// A property's values are in order, so the value is found by the C
     /// library's binary search, as the C++ code the other SDKs call finds it,
     /// without reading the others. The search compares a number written to as
-    /// many places as `name` has characters plus three, at most 15, so the
-    /// value given can be written otherwise, as `0.063` is given for
-    /// `0.0625`, and a number's own text, written to three places, can find
-    /// nothing, as it finds nothing in the C++ code.
+    /// many places as the text of `name` before any null has characters plus
+    /// three, at most 15, so the value given can be written otherwise, as
+    /// `0.063` is given for `0.0625`, and a number's own text, written to
+    /// three places, can find nothing, as it finds nothing in the C++ code.
     ///
     /// As in the C++ code, `name` is searched up to its first null, so
     /// `AS13335\0x` finds `AS13335` and the text after the null is not

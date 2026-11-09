@@ -130,7 +130,7 @@ impl TranslationEngineBuilder {
             .unwrap_or_default();
         if !name.contains('*') {
             return match std::fs::read_to_string(path) {
-                Ok(text) => self.add_source_text(name, text),
+                Ok(content) => self.add_source_content(name, content),
                 Err(error) => self.fail(format!(
                     "The source file '{}' could not be read: {error}",
                     path.display()
@@ -161,7 +161,7 @@ impl TranslationEngineBuilder {
         matches.sort();
         for (file, path) in matches {
             self = match std::fs::read_to_string(&path) {
-                Ok(text) => self.add_source_text(file, text),
+                Ok(content) => self.add_source_content(file, content),
                 Err(error) => self.fail(format!(
                     "The source file '{}' could not be read: {error}",
                     path.display()
@@ -171,14 +171,19 @@ impl TranslationEngineBuilder {
         self
     }
 
-    /// Add a source from its text, under the file name that gives its
-    /// locale. This is how a source compiled into a program is added.
-    pub fn add_source_text(mut self, name: impl Into<String>, text: impl Into<String>) -> Self {
+    /// Add a source from its contents, under the file name that gives its
+    /// locale. This is how a source compiled into a program is added. It
+    /// is the specification's `AddSource` that takes a name and contents.
+    pub fn add_source_content(
+        mut self,
+        name: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
         let name = name.into();
         if self.sources.iter().any(|(held, _)| *held == name) {
             return self.fail(format!("A source named '{name}' was added twice."));
         }
-        self.sources.push((name, text.into()));
+        self.sources.push((name, content.into()));
         self
     }
 

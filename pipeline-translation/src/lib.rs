@@ -41,8 +41,8 @@
 //!
 //! let engine = TranslationEngine::builder()
 //!     .set_source_element_data_key("animals")
-//!     .add_source_text("animals.fr_FR.yml", "cat: chat\ndog: chien\n")
-//!     .add_source_text("animals.de_DE.yml", "cat: Katze\ndog: Hund\n")
+//!     .add_source_content("animals.fr_FR.yml", "cat: chat\ndog: chien\n")
+//!     .add_source_content("animals.de_DE.yml", "cat: Katze\ndog: Hund\n")
 //!     .add_translation("Animal", "AnimalTranslated")
 //!     .build()?;
 //!
