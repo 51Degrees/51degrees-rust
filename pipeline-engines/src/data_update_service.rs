@@ -1416,12 +1416,25 @@ mod tests {
         status: &'static str,
         body: &'static [u8],
     ) -> (String, JoinHandle<()>) {
+        let (url, server, _read) = answer_once_after_telling(delay, status, body);
+        (url, server)
+    }
+
+    /// Answer one request as [`answer_once_after`] does, and send the time
+    /// the request was read to the receiver returned.
+    fn answer_once_after_telling(
+        delay: Duration,
+        status: &'static str,
+        body: &'static [u8],
+    ) -> (String, JoinHandle<()>, std::sync::mpsc::Receiver<Instant>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/datafile", listener.local_addr().unwrap());
+        let (read, told) = std::sync::mpsc::channel();
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let mut request = [0u8; 4096];
             let _ = Read::read(&mut stream, &mut request);
+            let _ = read.send(Instant::now());
             std::thread::sleep(delay);
             let head = format!(
                 "{status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -1430,7 +1443,7 @@ mod tests {
             Write::write_all(&mut stream, head.as_bytes()).unwrap();
             Write::write_all(&mut stream, body).unwrap();
         });
-        (url, server)
+        (url, server, told)
     }
 
     /// A scheduler handle with no registrations, for a test to add its own.
@@ -1640,6 +1653,52 @@ mod tests {
             sleep <= until_due + SHORT_INTERVAL / 2 && sleep + SHORT_INTERVAL / 2 >= until_due,
             "the scheduler sleeps {sleep:?} when the next poll is due in {until_due:?}"
         );
+    }
+
+    /// A polling interval longer than [`SLOW_ANSWER`], so a file registered
+    /// as a slow poll starts comes due after that poll has ended.
+    const LONG_INTERVAL: Duration = Duration::from_secs(3);
+
+    /// How long a test waits for a poll it expects.
+    const POLL_WAIT: Duration = Duration::from_secs(10);
+
+    /// A file registered while another file's slow poll runs has its first
+    /// poll when it is due. The slow poll applies new data, so the round
+    /// that runs it plans to sleep for the longest sleep, and the wake the
+    /// registration sends during that round must not be lost.
+    #[test]
+    fn a_file_registered_during_a_slow_round_is_polled_when_due() {
+        let (slow_url, slow_server, slow_read) =
+            answer_once_after_telling(SLOW_ANSWER, "HTTP/1.1 200 OK", b"new data");
+        let (_slow_engine, slow) = dated_engine_every(&slow_url, true, SHORT_INTERVAL.as_secs());
+        let (url, server, read) =
+            answer_once_after_telling(Duration::ZERO, "HTTP/1.1 304 Not Modified", b"");
+        let (_engine, shared) = dated_engine_every(&url, true, LONG_INTERVAL.as_secs());
+        let service = DataUpdateService::new();
+        service
+            .register(Arc::clone(&slow), Arc::clone(&slow.data_files()[0]))
+            .unwrap();
+
+        slow_read
+            .recv_timeout(POLL_WAIT)
+            .expect("the slow poll did not start");
+        let due = Instant::now() + LONG_INTERVAL;
+        service
+            .register(Arc::clone(&shared), Arc::clone(&shared.data_files()[0]))
+            .unwrap();
+        let polled = read.recv_timeout(POLL_WAIT);
+        drop(service);
+        slow_server.join().unwrap();
+
+        let polled = polled.unwrap_or_else(|_| {
+            panic!("the file registered during the round was not polled within {POLL_WAIT:?}")
+        });
+        assert!(
+            polled + SHORT_INTERVAL / 2 >= due && polled <= due + SHORT_INTERVAL,
+            "the first poll ran {:?} from when it was due",
+            polled.max(due) - polled.min(due)
+        );
+        server.join().unwrap();
     }
 
     /// A programmatic check that applies new data to a registered file moves
