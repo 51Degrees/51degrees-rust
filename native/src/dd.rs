@@ -1399,28 +1399,31 @@ impl Results {
     /// still to walk and gives the metrics the results then hold, as the C++
     /// results do.
     pub fn match_metrics(&self) -> Option<MatchMetrics> {
-        let mut method = 0;
+        let mut method = sys::HashMatchMethod::None;
         let mut difference = 0;
         let mut drift = 0;
         let mut iterations = 0;
         let mut matched_nodes = 0;
-        // Safety: the results came from `ResultsHashCreate` and remain valid for
-        // the lifetime of `self`; every output pointer is writable.
-        let ok = unsafe {
-            sys::fiftyoneDegreesShimHashGetResultMetrics(
+        let mut exception = sys::Exception::cleared();
+        // Safety: the results came from `ResultsHashCreate` and remain valid
+        // for the lifetime of `self`, and every output pointer and the
+        // exception are writable.
+        unsafe {
+            sys::fiftyoneDegreesResultsHashGetMatchMetrics(
                 self.as_ptr(),
                 &mut method,
                 &mut difference,
                 &mut drift,
                 &mut iterations,
                 &mut matched_nodes,
+                &mut exception,
             )
         };
-        if ok == 0 {
+        if !exception.is_okay() {
             return None;
         }
         Some(MatchMetrics {
-            method,
+            method: method as i32,
             difference,
             drift,
             iterations,
@@ -1456,20 +1459,22 @@ impl Results {
     /// Walk the graph of each component not yet walked, and return false
     /// when a walk fails.
     fn walk_pending_graphs(&self) -> bool {
+        let mut exception = sys::Exception::cleared();
         // Safety: the results came from `ResultsHashCreate` and remain valid
-        // for the lifetime of `self`. A null output pointer skips its metric,
-        // so the call only walks the graphs.
-        let ok = unsafe {
-            sys::fiftyoneDegreesShimHashGetResultMetrics(
+        // for the lifetime of `self`, and the exception is writable. A null
+        // output pointer skips its metric, so the call only walks the graphs.
+        unsafe {
+            sys::fiftyoneDegreesResultsHashGetMatchMetrics(
                 self.as_ptr(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
+                &mut exception,
             )
         };
-        ok != 0
+        exception.is_okay()
     }
 
     /// The matched User-Agent of each result, without repeats, in result
@@ -1479,21 +1484,27 @@ impl Results {
         // for the lifetime of `self`.
         let count = unsafe { sys::fiftyoneDegreesShimHashGetResultCount(self.as_ptr()) };
         let mut user_agents: Vec<String> = Vec::new();
-        let mut buffer = vec![0u8; MATCHED_USER_AGENT_BUFFER_LENGTH];
         for index in 0..count {
-            // Safety: as above, and the buffer is writable for its full length.
-            let written = unsafe {
-                sys::fiftyoneDegreesShimHashGetMatchedUserAgent(
+            let mut exception = sys::Exception::cleared();
+            // Safety: as above, and the exception is writable. A failed walk
+            // gives null, which is skipped like a result with none recorded.
+            let matched = unsafe {
+                sys::fiftyoneDegreesResultsHashGetMatchedUserAgent(
                     self.as_ptr(),
                     index,
-                    buffer.as_mut_ptr() as *mut c_char,
-                    buffer.len(),
+                    &mut exception,
                 )
             };
-            if written == 0 {
+            if matched.is_null() {
                 continue;
             }
-            let user_agent = String::from_utf8_lossy(&buffer[..written.min(buffer.len())]);
+            // Safety: the C library null terminates the string, which stays
+            // valid until the results are populated again or freed, and
+            // neither can happen while `self` is borrowed.
+            let user_agent = unsafe { CStr::from_ptr(matched) }.to_string_lossy();
+            if user_agent.is_empty() {
+                continue;
+            }
             if !user_agents.iter().any(|known| *known == user_agent) {
                 user_agents.push(user_agent.into_owned());
             }
@@ -1514,10 +1525,6 @@ impl Results {
         unsafe { sys::fiftyoneDegreesShimHashGetPendingGraphCount(self.as_ptr()) }
     }
 }
-
-/// The buffer a matched User-Agent is read into. The native default records at
-/// most 500 characters of each.
-const MATCHED_USER_AGENT_BUFFER_LENGTH: usize = 4096;
 
 /// The Hash match metrics for a single detection, read from the native results.
 ///
@@ -1645,6 +1652,7 @@ mod tests {
         let count = unsafe { sys::fiftyoneDegreesShimHashGetResultCount(results.as_ptr()) };
         (0..count)
             .map(|index| {
+                let mut method = sys::HashMatchMethod::Length;
                 let mut metrics = MatchMetrics {
                     method: -1,
                     difference: -1,
@@ -1652,19 +1660,24 @@ mod tests {
                     iterations: -1,
                     matched_nodes: -1,
                 };
-                // Safety: as above, and every output pointer is writable.
+                let mut exception = sys::Exception::cleared();
+                // Safety: as above, and every output pointer and the
+                // exception are writable.
                 let read = unsafe {
-                    sys::fiftyoneDegreesShimHashGetResultMetricsAt(
+                    sys::fiftyoneDegreesResultsHashGetMatchMetricsForResult(
                         results.as_ptr(),
                         index,
-                        &mut metrics.method,
+                        &mut method,
                         &mut metrics.difference,
                         &mut metrics.drift,
                         &mut metrics.iterations,
                         &mut metrics.matched_nodes,
+                        &mut exception,
                     )
                 };
-                assert_eq!(read, 1, "result {index} should be readable");
+                assert!(read, "result {index} should be readable");
+                assert!(exception.is_okay(), "result {index} walks");
+                metrics.method = method as i32;
                 metrics
             })
             .collect()

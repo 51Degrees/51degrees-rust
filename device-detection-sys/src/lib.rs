@@ -617,6 +617,67 @@ extern "C" {
         exception: *mut Exception,
     ) -> *mut c_char;
 
+    /// Reads the match metrics of the results, taken across every result,
+    /// into the output pointers. The results hold one result for each
+    /// component, and the walk of a component's graph sets its result's
+    /// metrics, so any graph not yet walked is walked first, which can read
+    /// the data file. `method` receives the highest method any result used,
+    /// and the difference, drift, iterations and matched-node count are each
+    /// the sum of every result's. Each is zero, and the method
+    /// [`HashMatchMethod::None`], when `results` is null, holds no result or
+    /// a walk fails, which sets `exception`. Any output pointer may be null
+    /// to skip that metric.
+    ///
+    /// # Safety
+    /// `results` must be an initialized Hash results structure or null. Each
+    /// non-null output pointer and `exception` must be writable.
+    pub fn fiftyoneDegreesResultsHashGetMatchMetrics(
+        results: *mut ResultsHash,
+        method: *mut HashMatchMethod,
+        difference: *mut i32,
+        drift: *mut i32,
+        iterations: *mut i32,
+        matched_nodes: *mut i32,
+        exception: *mut Exception,
+    );
+
+    /// Reads the match metrics of the single result at `result_index` into
+    /// the output pointers, as [`fiftyoneDegreesResultsHashGetMatchMetrics`]
+    /// does for every result, and returns true. Returns false, giving zeros
+    /// and the method [`HashMatchMethod::None`], when `results` is null, the
+    /// index is not that of a result or a walk fails, which sets `exception`.
+    ///
+    /// # Safety
+    /// As for [`fiftyoneDegreesResultsHashGetMatchMetrics`].
+    pub fn fiftyoneDegreesResultsHashGetMatchMetricsForResult(
+        results: *mut ResultsHash,
+        result_index: u32,
+        method: *mut HashMatchMethod,
+        difference: *mut i32,
+        drift: *mut i32,
+        iterations: *mut i32,
+        matched_nodes: *mut i32,
+        exception: *mut Exception,
+    ) -> bool;
+
+    /// Returns the matched User-Agent of the result at `result_index`, being
+    /// the evidence value its component was matched from with each character
+    /// the match did not use replaced by `_`. Any graph not yet walked is
+    /// walked first, which can read the data file. Null when `results` is
+    /// null, the index is not that of a result, a walk fails, which sets
+    /// `exception`, or the result records none, which it does only when the
+    /// update matched User-Agent option is on.
+    ///
+    /// # Safety
+    /// `results` must be an initialized Hash results structure or null, and
+    /// `exception` must be writable. The string stays valid until the results
+    /// are populated again or freed.
+    pub fn fiftyoneDegreesResultsHashGetMatchedUserAgent(
+        results: *mut ResultsHash,
+        result_index: u32,
+        exception: *mut Exception,
+    ) -> *const c_char;
+
     /// Returns a safe reference to the Hash data set managed by `manager`. The
     /// reference must be released with [`fiftyoneDegreesDataSetHashRelease`].
     ///
@@ -737,29 +798,6 @@ extern "C" {
     /// of a data file the C library compares to find a copy of it to reuse.
     pub fn fiftyoneDegreesShimHashGetHeaderSize() -> usize;
 
-    /// Reads the match metrics of the results into the output pointers and
-    /// returns 1, or returns 0 when `results` is null or a graph cannot be
-    /// walked. Any graph not yet walked is walked first, as the walks set the
-    /// metrics, so this can read the data file. The results hold one result
-    /// for each component, each from the header that matched it. As in the C++
-    /// results, `method` receives the highest match-method enum value of any
-    /// result (0 None, 1 Performance, 2 Combined, 3 Predictive), and the
-    /// difference, drift, iterations and matched-node count are summed across
-    /// the results. With no results every metric is zero. Any output pointer
-    /// may be null to skip that metric. See `src/shim.c`.
-    ///
-    /// # Safety
-    /// `results` must be an initialized Hash results structure. Each non-null
-    /// output pointer must be writable.
-    pub fn fiftyoneDegreesShimHashGetResultMetrics(
-        results: *mut ResultsHash,
-        method: *mut i32,
-        difference: *mut i32,
-        drift: *mut i32,
-        iterations: *mut i32,
-        matched_nodes: *mut i32,
-    ) -> c_int;
-
     /// Returns the number of results, one for each component, or zero when
     /// `results` is null. See `src/shim.c`.
     ///
@@ -775,43 +813,6 @@ extern "C" {
     /// # Safety
     /// `results` must be an initialized Hash results structure or null.
     pub fn fiftyoneDegreesShimHashGetPendingGraphCount(results: *mut ResultsHash) -> u32;
-
-    /// Reads the match metrics of the single result at `result_index` into the
-    /// output pointers and returns 1, or returns 0 when the index is out of
-    /// range or a graph cannot be walked. Any graph not yet walked is walked
-    /// first, so this can read the data file. Any output pointer may be null
-    /// to skip that metric. See `src/shim.c`.
-    ///
-    /// # Safety
-    /// `results` must be an initialized Hash results structure or null. Each
-    /// non-null output pointer must be writable.
-    pub fn fiftyoneDegreesShimHashGetResultMetricsAt(
-        results: *mut ResultsHash,
-        result_index: u32,
-        method: *mut i32,
-        difference: *mut i32,
-        drift: *mut i32,
-        iterations: *mut i32,
-        matched_nodes: *mut i32,
-    ) -> c_int;
-
-    /// Writes the matched User-Agent of the result at `result_index` into
-    /// `buffer` as a null terminated string and returns the number of
-    /// characters written, excluding the terminator. Returns zero when the
-    /// index is out of range, a graph cannot be walked or the result records
-    /// no matched User-Agent, and cuts the value short when the buffer is too
-    /// small. Any graph not yet walked is walked first, so this can read the
-    /// data file. See `src/shim.c`.
-    ///
-    /// # Safety
-    /// `results` must be an initialized Hash results structure. `buffer` must
-    /// point to `length` writable bytes.
-    pub fn fiftyoneDegreesShimHashGetMatchedUserAgent(
-        results: *mut ResultsHash,
-        result_index: u32,
-        buffer: *mut c_char,
-        length: usize,
-    ) -> usize;
 
     /// Returns the number of handles to the data file that the data set
     /// managed by `manager` opened when it loaded, which stay open until the
