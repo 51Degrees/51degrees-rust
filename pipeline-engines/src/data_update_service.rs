@@ -105,18 +105,45 @@ impl Registration {
     }
 }
 
+/// What the scheduler waits on, under the lock its condition variable uses.
+#[derive(Default)]
+struct SchedulerState {
+    /// True once shutdown has been requested.
+    shutting_down: bool,
+    /// True when a registration was added or a scheduled poll moved since
+    /// the scheduler's round began. A wake sent while a round runs finds no
+    /// thread waiting, so this keeps it for the wait that follows the round.
+    woken: bool,
+}
+
 /// The shared inner state of the service, behind one lock plus a condition
 /// variable the scheduler waits on.
 struct Inner {
     registrations: Mutex<Vec<Arc<Registration>>>,
-    /// Signalled to wake the scheduler when a registration is added or the
-    /// service is shutting down.
+    /// Signalled to wake the scheduler when a registration is added, a
+    /// scheduled poll moves, or the service is shutting down.
     wake: Condvar,
-    /// True once shutdown has been requested.
-    shutting_down: Mutex<bool>,
+    /// Whether the scheduler has been woken or asked to shut down.
+    state: Mutex<SchedulerState>,
 }
 
 impl Inner {
+    /// No registrations, and a scheduler neither woken nor shutting down.
+    fn new() -> Inner {
+        Inner {
+            registrations: Mutex::new(Vec::new()),
+            wake: Condvar::new(),
+            state: Mutex::new(SchedulerState::default()),
+        }
+    }
+
+    /// Wake the scheduler, at once if it is waiting, or as soon as its round
+    /// ends if it is running one.
+    fn wake_scheduler(&self) {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).woken = true;
+        self.wake.notify_all();
+    }
+
     /// The registrations whose engines are still alive, after removing the
     /// others. A removed registration is dropped after the lock is released,
     /// which stops its watcher.
@@ -176,11 +203,7 @@ impl DataUpdateService {
     /// example one configured with a proxy or custom timeout.
     pub fn with_client(client: reqwest::blocking::Client) -> Self {
         DataUpdateService {
-            inner: Arc::new(Inner {
-                registrations: Mutex::new(Vec::new()),
-                wake: Condvar::new(),
-                shutting_down: Mutex::new(false),
-            }),
+            inner: Arc::new(Inner::new()),
             client,
             scheduler: Mutex::new(None),
         }
@@ -280,7 +303,7 @@ impl DataUpdateService {
             regs.push(registration);
         }
         self.ensure_scheduler();
-        self.inner.wake.notify_all();
+        self.inner.wake_scheduler();
 
         startup
     }
@@ -416,7 +439,7 @@ impl DataUpdateService {
             }
             *next_poll = Some(Self::poll_due(&registration.data_file));
         }
-        self.inner.wake.notify_all();
+        self.inner.wake_scheduler();
     }
 
     /// Find the registration for an engine's data file, by identity and
@@ -537,11 +560,11 @@ impl Default for DataUpdateService {
 
 impl Drop for DataUpdateService {
     fn drop(&mut self) {
-        *self
-            .inner
-            .shutting_down
+        self.inner
+            .state
             .lock()
-            .unwrap_or_else(|e| e.into_inner()) = true;
+            .unwrap_or_else(|e| e.into_inner())
+            .shutting_down = true;
         self.inner.wake.notify_all();
         if let Some(handle) = self
             .scheduler
@@ -564,46 +587,42 @@ struct ServiceHandle {
 }
 
 impl ServiceHandle {
-    /// The scheduler loop: sleep until the next poll is due, run due polls, and
-    /// reschedule them. Exits when the service is dropped.
+    /// The scheduler loop, which runs the polls that are due, then sleeps
+    /// until the next one is due or a registration or a moved poll wakes
+    /// it. A wake that comes during a round starts the next round at once.
+    /// Exits when the service is dropped.
     fn run_scheduler(self) {
         loop {
-            if *self
-                .inner
-                .shutting_down
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
             {
-                return;
+                let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+                if state.shutting_down {
+                    return;
+                }
+                // The round reads every registration and poll afresh, so it
+                // answers any wake sent before it begins.
+                state.woken = false;
             }
 
             let wait = self.run_due_polls();
 
-            // Wait until the next due time or until woken by a new
-            // registration / shutdown.
-            let guard = self
-                .inner
-                .shutting_down
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            if *guard {
-                return;
-            }
+            let state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
             let _unused = self
                 .inner
                 .wake
-                .wait_timeout(guard, wait)
+                .wait_timeout_while(state, wait, |state| !state.woken && !state.shutting_down)
                 .unwrap_or_else(|e| e.into_inner());
         }
     }
 
     /// Run every poll that is currently due and return how long to sleep before
     /// the next one. Polls run one after another, so the time is read again
-    /// for each file and after each poll.
+    /// for each file and after each poll. The earliest next poll is kept
+    /// through the round and the sleep counted from the end of the round, so
+    /// a slow poll does not delay a file seen before it.
     fn run_due_polls(&self) -> Duration {
         let registrations = self.inner.live_registrations();
 
-        let mut next_wait = Duration::from_secs(60 * 60);
+        let mut earliest: Option<Instant> = None;
 
         for registration in registrations {
             let now = Instant::now();
@@ -643,13 +662,13 @@ impl ServiceHandle {
                     .next_poll
                     .lock()
                     .unwrap_or_else(|e| e.into_inner()) = Some(next);
-                next_wait = next_wait.min(next.saturating_duration_since(Instant::now()));
+                earliest = Some(earliest.map_or(next, |e| e.min(next)));
             } else {
-                next_wait = next_wait.min(due - now);
+                earliest = Some(earliest.map_or(due, |e| e.min(due)));
             }
         }
 
-        next_wait.max(Duration::from_millis(50))
+        sleep_until(earliest, Instant::now())
     }
 
     /// Handle a file-system-watcher event by refreshing the engine from disk if
@@ -688,11 +707,11 @@ impl ServiceHandle {
 
     /// True once the service has been dropped.
     fn shutting_down(&self) -> bool {
-        *self
-            .inner
-            .shutting_down
+        self.inner
+            .state
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+            .shutting_down
     }
 
     /// Poll the remote update URL, verify, decompress, write and refresh.
@@ -930,6 +949,25 @@ fn gzip_decompress(data: &[u8]) -> std::io::Result<Vec<u8>> {
 
 /// The size of each read when a download is written to disk.
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
+
+/// The longest the scheduler sleeps between rounds when no poll is due
+/// sooner.
+const LONGEST_SLEEP_SECONDS: u64 = 60 * 60;
+
+/// The shortest the scheduler sleeps between rounds, so a poll that is
+/// already due does not spin the loop.
+const SHORTEST_SLEEP_MILLISECONDS: u64 = 50;
+
+/// How long the scheduler sleeps at `now` when the earliest next poll is
+/// `earliest`. That is until the poll, but no longer than the longest sleep,
+/// which is also the sleep when no poll is scheduled, and no shorter than
+/// the shortest sleep.
+fn sleep_until(earliest: Option<Instant>, now: Instant) -> Duration {
+    let longest = Duration::from_secs(LONGEST_SLEEP_SECONDS);
+    earliest
+        .map_or(longest, |e| e.saturating_duration_since(now).min(longest))
+        .max(Duration::from_millis(SHORTEST_SLEEP_MILLISECONDS))
+}
 
 /// Reads through to another reader, taking the MD5 of every byte read.
 struct Md5Reader<R> {
@@ -1232,11 +1270,7 @@ mod tests {
         const INTERVAL_SECONDS: u64 = 1000;
         let handle = ServiceHandle {
             client: reqwest::blocking::Client::new(),
-            inner: Arc::new(Inner {
-                registrations: Mutex::new(Vec::new()),
-                wake: Condvar::new(),
-                shutting_down: Mutex::new(false),
-            }),
+            inner: Arc::new(Inner::new()),
         };
         let due = Instant::now();
         let mut engines = Vec::new();
@@ -1401,12 +1435,25 @@ mod tests {
         status: &'static str,
         body: &'static [u8],
     ) -> (String, JoinHandle<()>) {
+        let (url, server, _read) = answer_once_after_telling(delay, status, body);
+        (url, server)
+    }
+
+    /// Answer one request as [`answer_once_after`] does, and send the time
+    /// the request was read to the receiver returned.
+    fn answer_once_after_telling(
+        delay: Duration,
+        status: &'static str,
+        body: &'static [u8],
+    ) -> (String, JoinHandle<()>, std::sync::mpsc::Receiver<Instant>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/datafile", listener.local_addr().unwrap());
+        let (read, told) = std::sync::mpsc::channel();
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let mut request = [0u8; 4096];
             let _ = Read::read(&mut stream, &mut request);
+            let _ = read.send(Instant::now());
             std::thread::sleep(delay);
             let head = format!(
                 "{status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -1415,18 +1462,14 @@ mod tests {
             Write::write_all(&mut stream, head.as_bytes()).unwrap();
             Write::write_all(&mut stream, body).unwrap();
         });
-        (url, server)
+        (url, server, told)
     }
 
     /// A scheduler handle with no registrations, for a test to add its own.
     fn empty_handle() -> ServiceHandle {
         ServiceHandle {
             client: reqwest::blocking::Client::new(),
-            inner: Arc::new(Inner {
-                registrations: Mutex::new(Vec::new()),
-                wake: Condvar::new(),
-                shutting_down: Mutex::new(false),
-            }),
+            inner: Arc::new(Inner::new()),
         }
     }
 
@@ -1599,6 +1642,116 @@ mod tests {
             sleep <= until_due + SHORT_INTERVAL / 2,
             "the scheduler sleeps {sleep:?} when the next poll is due in {until_due:?}"
         );
+    }
+
+    /// A file that is not yet due and comes before a slow poll in the round
+    /// still has its poll at its due time, because the sleep is counted from
+    /// the end of the round rather than from when that file was seen.
+    #[test]
+    fn the_sleep_ends_when_a_file_seen_before_a_slow_poll_is_due() {
+        let (_engine, shared) = dated_engine("http://127.0.0.1:9/unused", true);
+        let (slow_url, slow_server) =
+            answer_once_after(SLOW_ANSWER, "HTTP/1.1 304 Not Modified", b"");
+        let (_slow_engine, slow) = dated_engine(&slow_url, true);
+        let handle = empty_handle();
+        let registration = add_due(&handle, &shared);
+        add_due(&handle, &slow);
+        let due = Instant::now() + SLOW_ANSWER + SHORT_INTERVAL;
+        *registration.next_poll.lock().unwrap() = Some(due);
+
+        let sleep = handle.run_due_polls();
+        let ended = Instant::now();
+        slow_server.join().unwrap();
+
+        let until_due = due.saturating_duration_since(ended);
+        assert!(
+            sleep <= until_due + SHORT_INTERVAL / 2 && sleep + SHORT_INTERVAL / 2 >= until_due,
+            "the scheduler sleeps {sleep:?} when the next poll is due in {until_due:?}"
+        );
+    }
+
+    /// The longest sleep, written apart from [`LONGEST_SLEEP_SECONDS`] so that
+    /// a change to that constant fails the tests below.
+    const ONE_HOUR: Duration = Duration::from_secs(60 * 60);
+
+    /// The shortest sleep, written apart from [`SHORTEST_SLEEP_MILLISECONDS`]
+    /// so that a change to that constant fails the test below.
+    const FIFTY_MILLISECONDS: Duration = Duration::from_millis(50);
+
+    /// With no poll scheduled the scheduler sleeps for the longest sleep.
+    #[test]
+    fn with_no_poll_scheduled_the_sleep_is_one_hour() {
+        assert_eq!(sleep_until(None, Instant::now()), ONE_HOUR);
+    }
+
+    /// A poll further away than the longest sleep is slept towards for the
+    /// longest sleep, and the scheduler then looks again.
+    #[test]
+    fn a_poll_two_hours_away_gives_a_sleep_of_one_hour() {
+        let now = Instant::now();
+        assert_eq!(sleep_until(Some(now + 2 * ONE_HOUR), now), ONE_HOUR);
+    }
+
+    /// A poll that is already due gives the shortest sleep.
+    #[test]
+    fn a_poll_already_due_gives_a_sleep_of_fifty_milliseconds() {
+        let due = Instant::now();
+        let now = due + Duration::from_secs(1);
+        assert_eq!(sleep_until(Some(due), now), FIFTY_MILLISECONDS);
+    }
+
+    /// A poll due within the longest sleep is slept towards exactly.
+    #[test]
+    fn a_poll_three_seconds_away_gives_a_sleep_of_three_seconds() {
+        let now = Instant::now();
+        let ahead = Duration::from_secs(3);
+        assert_eq!(sleep_until(Some(now + ahead), now), ahead);
+    }
+
+    /// A polling interval longer than [`SLOW_ANSWER`], so a file registered
+    /// as a slow poll starts comes due after that poll has ended.
+    const LONG_INTERVAL: Duration = Duration::from_secs(3);
+
+    /// How long a test waits for a poll it expects.
+    const POLL_WAIT: Duration = Duration::from_secs(10);
+
+    /// A file registered while another file's slow poll runs has its first
+    /// poll when it is due. The slow poll applies new data, so the round
+    /// that runs it plans to sleep for the longest sleep, and the wake the
+    /// registration sends during that round must not be lost.
+    #[test]
+    fn a_file_registered_during_a_slow_round_is_polled_when_due() {
+        let (slow_url, slow_server, slow_read) =
+            answer_once_after_telling(SLOW_ANSWER, "HTTP/1.1 200 OK", b"new data");
+        let (_slow_engine, slow) = dated_engine_every(&slow_url, true, SHORT_INTERVAL.as_secs());
+        let (url, server, read) =
+            answer_once_after_telling(Duration::ZERO, "HTTP/1.1 304 Not Modified", b"");
+        let (_engine, shared) = dated_engine_every(&url, true, LONG_INTERVAL.as_secs());
+        let service = DataUpdateService::new();
+        service
+            .register(Arc::clone(&slow), Arc::clone(&slow.data_files()[0]))
+            .unwrap();
+
+        slow_read
+            .recv_timeout(POLL_WAIT)
+            .expect("the slow poll did not start");
+        let due = Instant::now() + LONG_INTERVAL;
+        service
+            .register(Arc::clone(&shared), Arc::clone(&shared.data_files()[0]))
+            .unwrap();
+        let polled = read.recv_timeout(POLL_WAIT);
+        drop(service);
+        slow_server.join().unwrap();
+
+        let polled = polled.unwrap_or_else(|_| {
+            panic!("the file registered during the round was not polled within {POLL_WAIT:?}")
+        });
+        assert!(
+            polled + SHORT_INTERVAL / 2 >= due && polled <= due + SHORT_INTERVAL,
+            "the first poll ran {:?} from when it was due",
+            polled.max(due) - polled.min(due)
+        );
+        server.join().unwrap();
     }
 
     /// A programmatic check that applies new data to a registered file moves
