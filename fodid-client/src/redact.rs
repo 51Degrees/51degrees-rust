@@ -294,6 +294,9 @@ mod tests {
     /// a real resource key and the service refuses it.
     const NOT_A_KEY: &str = "AQ-NOT-A-REAL-KEY-000000";
 
+    /// [`NOT_A_KEY`] as a message shows it, with its last 4 characters.
+    const NOT_A_KEY_MASKED: &str = "********************0000";
+
     #[test]
     fn text_with_nothing_to_remove_is_borrowed() {
         let out = redact("cloud request failed with status 503");
@@ -302,18 +305,18 @@ mod tests {
     }
 
     #[test]
-    fn a_resource_parameter_value_is_removed() {
+    fn a_resource_parameter_value_shows_only_its_last_four_characters() {
         let out = redact(
             "https://cloud.51degrees.com/api/v4/accessibleproperties?resource=secretvalue1234",
         );
         assert_eq!(
             out,
-            "https://cloud.51degrees.com/api/v4/accessibleproperties?resource=[redacted]"
+            "https://cloud.51degrees.com/api/v4/accessibleproperties?resource=***********1234"
         );
     }
 
     #[test]
-    fn a_licence_parameter_value_is_removed_whatever_the_spelling() {
+    fn a_licence_parameter_value_is_masked_whatever_the_spelling() {
         for name in ["license", "licence", "License"] {
             let text =
                 format!("https://cloud/json?resource=abcdefghijkl&{name}=licencevalue1234&x=1");
@@ -323,10 +326,37 @@ mod tests {
                 "{name} was left in {out}"
             );
             assert!(
-                out.contains("&x=1"),
-                "the rest of the query was lost: {out}"
+                out.contains(&format!("{name}=************1234&x=1")),
+                "the masked key or the rest of the query was lost: {out}"
             );
         }
+    }
+
+    #[test]
+    fn each_key_in_a_licence_keys_parameter_shows_its_own_last_four_characters() {
+        for name in ["LicenseKeys", "LicenseKey", "licensekeys"] {
+            let text = format!(
+                "https://distributor.example.test/api/v2/download?{name}=\
+                 ABCDEFGHIJKL|MNOPQRSTUVWX&Download=True&Type=HashV41"
+            );
+            let out = redact(&text);
+            assert_eq!(
+                out,
+                format!(
+                    "https://distributor.example.test/api/v2/download?{name}=\
+                     ********IJKL|********UVWX&Download=True&Type=HashV41"
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn keys_separated_by_an_encoded_bar_are_masked_one_by_one() {
+        let out = redact("https://d.example.test/f?LicenseKeys=ABCDEFGHIJKL%7CMNOPQRSTUVWX");
+        assert_eq!(
+            out,
+            "https://d.example.test/f?LicenseKeys=********IJKL%7C********UVWX"
+        );
     }
 
     #[test]
@@ -336,22 +366,22 @@ mod tests {
     }
 
     #[test]
-    fn a_key_in_a_route_is_removed() {
+    fn a_key_in_a_route_shows_only_its_last_four_characters() {
         let out = redact(
             "failed to send request to 'https://cloud.51degrees.com/api/v4/id/key/somekeyvalue'",
         );
         assert_eq!(
             out,
-            "failed to send request to 'https://cloud.51degrees.com/api/v4/id/key/[redacted]'"
+            "failed to send request to 'https://cloud.51degrees.com/api/v4/id/key/********alue'"
         );
     }
 
     #[test]
-    fn a_key_in_a_verify_route_is_removed_and_the_query_survives() {
+    fn a_key_in_a_verify_route_is_masked_and_the_query_survives() {
         let out = redact("https://cloud/api/v4/id/verify/somekeyvalue?51did=abc&owid=abc");
         assert_eq!(
             out,
-            "https://cloud/api/v4/id/verify/[redacted]?51did=abc&owid=abc"
+            "https://cloud/api/v4/id/verify/********alue?51did=abc&owid=abc"
         );
     }
 
@@ -362,12 +392,12 @@ mod tests {
     }
 
     #[test]
-    fn a_key_shaped_run_is_removed_wherever_it_sits() {
+    fn a_key_shaped_run_is_masked_wherever_it_sits() {
         let text = format!("'{NOT_A_KEY}' could not be read as a valid resource key.");
         let out = redact(&text);
         assert_eq!(
             out,
-            "'[redacted]' could not be read as a valid resource key."
+            format!("'{NOT_A_KEY_MASKED}' could not be read as a valid resource key.")
         );
     }
 
@@ -378,30 +408,24 @@ mod tests {
     }
 
     #[test]
-    fn an_exact_secret_is_removed_even_when_it_looks_like_nothing() {
+    fn a_known_key_shows_only_its_last_four_characters() {
         let out = redact_with(
             "the service refused 'plain-old-credential'",
             &["plain-old-credential"],
         );
-        assert_eq!(out, "the service refused '[redacted]'");
+        assert_eq!(out, "the service refused '****************tial'");
     }
 
     #[test]
-    fn an_exact_secret_is_removed_in_its_percent_encoded_form() {
-        let out = redact_with(
-            "https://cloud/api/v4/id/verify/a%2Fb%2Bc%2Dvalue?x=1",
-            &["a/b+c-value"],
-        );
-        assert!(
-            !out.contains("a%2Fb%2Bc"),
-            "the encoded form survived: {out}"
-        );
+    fn a_known_key_is_masked_in_its_percent_encoded_form() {
+        let out = redact_with("the service refused 'a%2Fb%2Bc-value'", &["a/b+c-value"]);
+        assert_eq!(out, "the service refused '***********alue'");
     }
 
     #[test]
-    fn a_secret_shorter_than_the_minimum_is_ignored() {
-        let out = redact_with("the answer was no", &["no"]);
-        assert_eq!(out, "the answer was no");
+    fn a_known_key_of_four_characters_or_fewer_is_replaced_entirely() {
+        let out = redact_with("the licence key 'KEY1' was refused", &["KEY1"]);
+        assert_eq!(out, "the licence key '****' was refused");
     }
 
     #[test]
@@ -411,14 +435,24 @@ mod tests {
     }
 
     #[test]
-    fn two_rules_covering_the_same_run_write_one_marker() {
-        let text = format!("https://cloud/json?resource={NOT_A_KEY}");
-        let out = redact(&text);
-        assert_eq!(out, "https://cloud/json?resource=[redacted]");
+    fn a_masked_key_is_left_as_it_is() {
+        let text = "the licence '************MNOP' and ?resource=***********1234";
+        let out = redact_with(text, &["ABCDEFGHIJKLMNOP"]);
+        assert_eq!(out, text);
     }
 
     #[test]
-    fn the_reason_survives_redaction() {
+    fn two_rules_covering_the_same_run_mask_it_once() {
+        let text = format!("https://cloud/json?resource={NOT_A_KEY}");
+        let out = redact(&text);
+        assert_eq!(
+            out,
+            format!("https://cloud/json?resource={NOT_A_KEY_MASKED}")
+        );
+    }
+
+    #[test]
+    fn the_reason_survives_masking() {
         let text = format!(
             "Cloud service at 'https://cloud/json?resource={NOT_A_KEY}' returned status \
              code '400' with content {{\"errors\":[\"'{NOT_A_KEY}' could not be read as a \
@@ -434,6 +468,9 @@ mod tests {
     fn multi_byte_text_is_not_split() {
         let text = format!("réponse refusée pour '{NOT_A_KEY}' à Paris");
         let out = redact(&text);
-        assert_eq!(out, "réponse refusée pour '[redacted]' à Paris");
+        assert_eq!(
+            out,
+            format!("réponse refusée pour '{NOT_A_KEY_MASKED}' à Paris")
+        );
     }
 }

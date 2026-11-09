@@ -714,6 +714,41 @@ mod tests {
         assert!(none.formatted_update_url().is_none());
     }
 
+    /// The `Debug` form, which a log line or a panic message can carry, shows
+    /// each licence key by its last 4 characters only, in the list of keys and
+    /// in the update URL. The builder and the data file show the
+    /// configuration the same way.
+    #[test]
+    fn the_debug_form_shows_only_the_last_four_characters_of_each_key() {
+        let builder = DataFileConfiguration::builder("d.dat")
+            .data_update_url("https://example.invalid/d?LicenseKeys=QRSTUVWXYZ012345")
+            .data_update_license_keys(["ABCDEFGHIJKLMNOP"]);
+        let configuration = builder.clone().build();
+        let file = AspectEngineDataFile::new(configuration.clone());
+        for shown in [
+            format!("{builder:?}"),
+            format!("{configuration:?}"),
+            format!("{file:?}"),
+        ] {
+            assert!(
+                !shown.contains("ABCDEFGHIJKLMNOP"),
+                "a key was shown: {shown}"
+            );
+            assert!(
+                !shown.contains("QRSTUVWXYZ012345"),
+                "the key in the URL was shown: {shown}"
+            );
+            assert!(
+                shown.contains("\"************MNOP\""),
+                "the masked key was lost: {shown}"
+            );
+            assert!(
+                shown.contains("LicenseKeys=************2345"),
+                "the masked URL was lost: {shown}"
+            );
+        }
+    }
+
     #[test]
     fn state_round_trips() {
         let file = AspectEngineDataFile::new(DataFileConfiguration::builder("d.dat").build());

@@ -494,6 +494,33 @@ mod tests {
         );
     }
 
+    /// The `Debug` form of the settings shows each licence key by its last 4
+    /// characters only, in the list of keys and in the update URL.
+    #[test]
+    fn the_debug_form_shows_only_the_last_four_characters_of_each_key() {
+        let mut settings = DataFileSettings::new();
+        settings.license_keys.push("ABCDEFGHIJKLMNOP".to_owned());
+        settings.data_update_url =
+            Some("https://example.invalid/d?LicenseKeys=QRSTUVWXYZ012345".to_owned());
+        let shown = format!("{settings:?}");
+        assert!(
+            !shown.contains("ABCDEFGHIJKLMNOP"),
+            "a key was shown: {shown}"
+        );
+        assert!(
+            !shown.contains("QRSTUVWXYZ012345"),
+            "the key in the URL was shown: {shown}"
+        );
+        assert!(
+            shown.contains("\"************MNOP\""),
+            "the masked key was lost: {shown}"
+        );
+        assert!(
+            shown.contains("LicenseKeys=************2345"),
+            "the masked URL was lost: {shown}"
+        );
+    }
+
     /// Automatic updates and update on startup need a key unless the
     /// settings say the update source needs none, and the data file made
     /// from the settings then needs none either. An update service is
