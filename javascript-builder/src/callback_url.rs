@@ -110,7 +110,10 @@ fn is_scheme(protocol: &str) -> bool {
 
 /// A host and an optional port. The host is a bracketed IPv6 address, or a
 /// name of non-empty labels separated by dots, with a dot allowed at the end,
-/// and the port is up to 65535 or empty. `Ipv6Addr` takes no zone
+/// and the port, where a `:` is given, is one or more digits whose value is
+/// up to 65535, so a host given with its scheme, such as
+/// `https://example.com`, is not read as the host `https` with an empty
+/// port. `Ipv6Addr` takes no zone
 /// identifier, so a `%` inside the brackets is refused, as a browser's URL
 /// parser refuses it. A name that ends in a number, ignoring one `.` at its
 /// end, must be an IPv4 address with no `.` at its end, because a browser's
@@ -131,7 +134,7 @@ fn checked_host_port(host_port: &str) -> Option<String> {
     };
     if !port.is_empty() {
         let digits = port.strip_prefix(':')?;
-        if !digits.bytes().all(|b| b.is_ascii_digit()) {
+        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
             return None;
         }
         let significant = digits.trim_start_matches('0');

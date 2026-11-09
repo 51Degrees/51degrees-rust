@@ -252,7 +252,8 @@ impl JavaScriptBuilderElementBuilder {
         self
     }
 
-    /// Set the host the client JavaScript should query for updates. By default
+    /// Set the host the client JavaScript should query for updates, without
+    /// the scheme, for example `example.com` or `example.com:8080`. By default
     /// the host from the request evidence is used.
     pub fn set_host(mut self, host: impl Into<String>) -> Self {
         self.host = host.into();
