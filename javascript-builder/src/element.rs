@@ -716,6 +716,7 @@ mod tests {
 
     /// Global names a top level `var` cannot safely use as the object are
     /// refused in code and ignored from the evidence.
+    // https://github.com/51Degrees/specifications/blob/a77a17a92bad6ea7b10d327dddf8a2cb7277b006/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L168
     #[test]
     fn unsafe_global_names_are_refused() {
         let element = JavaScriptBuilderElement::builder()

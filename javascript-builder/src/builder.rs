@@ -375,7 +375,9 @@ const RESERVED_WORDS: &[&str] = &[
 /// `var` cannot replace `window`, `document`, `top`, `name`, `status`,
 /// `history`, `navigator` or `closed`, so the object would never be created,
 /// and `var location` sets `location.href` to the object's text, which
-/// navigates the page away.
+/// navigates the page away. These are the names the
+/// [object name rule](https://github.com/51Degrees/specifications/blob/a77a17a92bad6ea7b10d327dddf8a2cb7277b006/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L168)
+/// adds to the reserved words.
 #[rustfmt::skip]
 const UNSAFE_GLOBAL_NAMES: &[&str] = &[
     "eval", "arguments", "window", "document", "top", "name", "status",
