@@ -587,10 +587,10 @@ struct ServiceHandle {
 }
 
 impl ServiceHandle {
-    /// The scheduler loop: run the polls that are due, then sleep until the
-    /// next one is due or a registration or a moved poll wakes it. A wake
-    /// that comes during a round starts the next round at once. Exits when
-    /// the service is dropped.
+    /// The scheduler loop, which runs the polls that are due, then sleeps
+    /// until the next one is due or a registration or a moved poll wakes
+    /// it. A wake that comes during a round starts the next round at once.
+    /// Exits when the service is dropped.
     fn run_scheduler(self) {
         loop {
             {
