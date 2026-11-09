@@ -33,8 +33,9 @@
 //!   file's update URL on its configured interval (offset by a random amount to
 //!   stagger many instances), sending an `If-Modified-Since` header so the
 //!   server can answer `304 Not Modified` cheaply. The first poll, and the
-//!   first after an update is applied, waits instead for the next update date
-//!   the data gives while that date is ahead.
+//!   first after a scheduled poll or [`DataUpdateService::check_for_update`]
+//!   applies an update, waits instead for the next update date the data gives
+//!   while that date is ahead.
 //! - **Automatic update from file.** A [`notify`] file-system watcher refreshes
 //!   the engine when the data file changes on disk. Like polling, it runs only
 //!   while automatic updates are on, which the specification makes the master
