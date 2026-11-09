@@ -748,6 +748,13 @@ mod tests {
             "cookieStore",
             "speechSynthesis",
             "styleMedia",
+            "crashReport",
+            "credentialless",
+            "customElements",
+            "documentPictureInPicture",
+            "fence",
+            "launchQueue",
+            "originAgentCluster",
         ] {
             assert!(
                 JavaScriptBuilderElement::builder()
@@ -788,6 +795,11 @@ mod tests {
             "localStorageKey",
             "cachesList",
             "styleMediaQuery",
+            "fences",
+            "customElement",
+            "launchQueueItem",
+            "crashReports",
+            "originAgent",
         ] {
             assert!(is_valid_object_name(name), "'{name}' was refused");
         }
