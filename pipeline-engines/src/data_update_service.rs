@@ -599,11 +599,13 @@ impl ServiceHandle {
 
     /// Run every poll that is currently due and return how long to sleep before
     /// the next one. Polls run one after another, so the time is read again
-    /// for each file and after each poll.
+    /// for each file and after each poll. The earliest next poll is kept
+    /// through the round and the sleep counted from the end of the round, so
+    /// a slow poll does not delay a file seen before it.
     fn run_due_polls(&self) -> Duration {
         let registrations = self.inner.live_registrations();
 
-        let mut next_wait = Duration::from_secs(60 * 60);
+        let mut earliest: Option<Instant> = None;
 
         for registration in registrations {
             let now = Instant::now();
@@ -643,13 +645,18 @@ impl ServiceHandle {
                     .next_poll
                     .lock()
                     .unwrap_or_else(|e| e.into_inner()) = Some(next);
-                next_wait = next_wait.min(next.saturating_duration_since(Instant::now()));
+                earliest = Some(earliest.map_or(next, |e| e.min(next)));
             } else {
-                next_wait = next_wait.min(due - now);
+                earliest = Some(earliest.map_or(due, |e| e.min(due)));
             }
         }
 
-        next_wait.max(Duration::from_millis(50))
+        let longest = Duration::from_secs(LONGEST_SLEEP_SECONDS);
+        earliest
+            .map_or(longest, |e| {
+                e.saturating_duration_since(Instant::now()).min(longest)
+            })
+            .max(Duration::from_millis(SHORTEST_SLEEP_MILLISECONDS))
     }
 
     /// Handle a file-system-watcher event by refreshing the engine from disk if
@@ -930,6 +937,14 @@ fn gzip_decompress(data: &[u8]) -> std::io::Result<Vec<u8>> {
 
 /// The size of each read when a download is written to disk.
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
+
+/// The longest the scheduler sleeps between rounds when no poll is due
+/// sooner.
+const LONGEST_SLEEP_SECONDS: u64 = 60 * 60;
+
+/// The shortest the scheduler sleeps between rounds, so a poll that is
+/// already due does not spin the loop.
+const SHORTEST_SLEEP_MILLISECONDS: u64 = 50;
 
 /// Reads through to another reader, taking the MD5 of every byte read.
 struct Md5Reader<R> {
