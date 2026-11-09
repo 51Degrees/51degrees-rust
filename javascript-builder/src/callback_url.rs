@@ -421,11 +421,13 @@ mod tests {
         }
     }
 
-    // Any `@` in the authority is refused, because `fetch` throws a
-    // TypeError for a URL with a user name or a password. An `@` after the
-    // authority is part of the path.
+    // An `@` anywhere in the host value is refused. `fetch` throws a
+    // TypeError for a URL with a user name or a password, and a password may
+    // hold a `/`, so an `@` after the first `/` may still end the user
+    // information. `user:12/ss@example.com` would otherwise be read as the
+    // host `user` with the port `12`.
     #[test]
-    fn refuses_user_information() {
+    fn refuses_an_at_anywhere_in_the_host() {
         let hosts = [
             "user@example.com",
             "user:pw@example.com",
@@ -442,6 +444,11 @@ mod tests {
             "u\\x@example.com",
             "u\nx@example.com",
             "u\u{1}x@example.com",
+            "user:12/ss@example.com",
+            "example.com/a@b",
+            "example.com:8080/a@b",
+            "[::1]/a@b",
+            "1.2.3.4/a/b@c",
         ];
         for host in hosts {
             assert!(
@@ -449,10 +456,6 @@ mod tests {
                 "host {host:?}"
             );
         }
-        assert_eq!(
-            url("https", "example.com/a@b"),
-            valid("https://example.com/a@b/51dpipeline/json")
-        );
     }
 
     // A `?` or `#` anywhere in the host is refused, because it would start
@@ -610,6 +613,11 @@ mod tests {
             ),
             ("exa mple.com/a@b", "https://***@b/51dpipeline/json"),
             ("u@exa mple.com/a@b/c", "https://***@b/c/51dpipeline/json"),
+            (
+                "user:12/ss@example.com",
+                "https://***@example.com/51dpipeline/json",
+            ),
+            ("example.com/a@b", "https://***@b/51dpipeline/json"),
             (
                 "a@b@example.com",
                 "https://***@example.com/51dpipeline/json",

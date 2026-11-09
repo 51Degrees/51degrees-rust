@@ -269,6 +269,45 @@ fn a_refused_host_logs_only_what_follows_its_user_information() {
     }
 }
 
+/// A host value holding `@` after its first `/` is refused, whether it is
+/// configured or comes from the evidence, so a password holding `/` reaches
+/// neither the script nor the log. Read up to its first `/` alone,
+/// `user:12/ss@example.com` is the host `user` with the port `12`, and the
+/// script would carry `ss@example.com` in its path.
+#[test]
+fn a_host_with_an_at_after_its_first_slash_is_refused() {
+    let cases = [
+        (
+            "user:12/ss@example.com",
+            "12/ss",
+            "\"https://***@example.com/51dpipeline/json\"",
+        ),
+        (
+            "example.com/a@b",
+            "a@b",
+            "\"https://***@b/51dpipeline/json\"",
+        ),
+    ];
+    for (host, hidden, logged) in cases {
+        for configured in [false, true] {
+            let builder = JavaScriptBuilderElement::builder().set_minify(false);
+            let (builder, evidence) = if configured {
+                (builder.set_host(host), Vec::new())
+            } else {
+                (builder, vec![("header.host", host)])
+            };
+            let pipeline = pipeline(builder.build());
+            let (js, records) = request(&pipeline, &evidence);
+            let case = format!("host {host:?}, configured {configured}");
+            assert!(!js.contains("processRequest"), "{case}");
+            assert!(!js.contains(hidden), "{case}");
+            assert_eq!(records.len(), 1, "{case}, {records:?}");
+            assert!(records[0].1.contains(logged), "{case}, {records:?}");
+            assert!(!records[0].1.contains(hidden), "{case}, {records:?}");
+        }
+    }
+}
+
 /// A scheme other than `http` or `https` in the evidence is refused and
 /// logged like any other URL that is not valid.
 #[test]
