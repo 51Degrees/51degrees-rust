@@ -169,9 +169,7 @@ fn web_pipeline(fail: bool) -> WebPipeline {
     .expect("web pipeline builds")
 }
 
-/// The session id the requests in these tests carry. Without one, the
-/// Sequence element the web pipeline adds creates a new id for each request,
-/// and the ETag is worked out from the evidence that id is added to.
+/// The session id the requests in these tests carry.
 const SESSION_ID: &str = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
 /// Evidence for a request from `user_agent` in the session [`SESSION_ID`].

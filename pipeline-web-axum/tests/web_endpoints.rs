@@ -123,9 +123,8 @@ async fn javascript_endpoint_serves_200_with_object_name_and_etag() {
 
 #[tokio::test]
 async fn javascript_endpoint_returns_304_for_matching_if_none_match() {
-    // Both requests carry the same session id. Without one the Sequence
-    // element creates a new id for each request, and the ETag is worked out
-    // from the evidence that id is added to.
+    // Both requests carry the same session id.
+    // `requests_without_a_session_id_get_the_same_etag` sends none.
     //
     // First request: capture the ETag.
     let first = app()

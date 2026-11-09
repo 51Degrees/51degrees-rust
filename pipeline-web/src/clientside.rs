@@ -53,9 +53,10 @@
 //!   with the `header.` prefix stripped and the names de-duplicated
 //!   case-insensitively. Omitted when the list is empty or there is none.
 //! - `ETag`: a weak entity tag, `W/"<16 hex digits>"`, holding a digest of
-//!   the cache key the flow data's evidence produces under the pipeline
-//!   filter, the same in every process running the same build. The digest is
-//!   opaque and non-portable (see [`compute_etag`]). The tag is weak because
+//!   the cache key the evidence the request supplied produces under the
+//!   pipeline filter, before any element adds a value, the same in every
+//!   process running the same build. The digest is opaque and non-portable
+//!   (see [`compute_etag`]). The tag is weak because
 //!   it stands for the evidence, and the content for the same evidence changes
 //!   when a data file is refreshed
 //!   ([RFC 9110 section 8.8.3](https://www.rfc-editor.org/rfc/rfc9110#section-8.8.3)).
@@ -542,10 +543,13 @@ pub fn vary_header(whitelist: &EvidenceKeyFilterWhitelist) -> String {
 /// Compute the `ETag` for a flow data.
 ///
 /// The tag is a hex digest of the deterministic [`fiftyone_pipeline_core::DataKey`]
-/// the flow data's evidence produces under the pipeline filter, written as a
-/// weak entity tag, `W/"<16 hex digits>"`. It is weak because the content for
-/// the same evidence changes when a data file is refreshed, so it is not a
-/// strong validator
+/// the evidence the request supplied produces under the pipeline filter,
+/// written as a weak entity tag, `W/"<16 hex digits>"`. The evidence is
+/// [`FlowData::supplied_evidence`], without the values elements added while
+/// processing, because the Sequence element adds a new session id and
+/// sequence on every request, and a tag holding them would never match a
+/// revalidation. It is weak because the content for the same evidence changes
+/// when a data file is refreshed, so it is not a strong validator
 /// ([RFC 9110 sections 8.8.1 and 8.8.3](https://www.rfc-editor.org/rfc/rfc9110#section-8.8.3)).
 ///
 /// The digest is produced by an [`ahash::RandomState`] hasher built from the
@@ -558,7 +562,7 @@ pub fn vary_header(whitelist: &EvidenceKeyFilterWhitelist) -> String {
 /// implementation to reproduce it. Only equality against a value this same code
 /// produced is meaningful, which is exactly what conditional requests need.
 pub fn compute_etag(flow_data: &FlowData, filter: &dyn EvidenceKeyFilter) -> String {
-    let key = flow_data.generate_key(filter);
+    let key = flow_data.supplied_evidence().generate_key(filter);
 
     // The seeds are given explicitly because ahash draws the seeds of its
     // default hasher at run time on native targets, once per process.
