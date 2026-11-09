@@ -1596,6 +1596,37 @@ unsafe extern "C" fn take_result_value(context: *mut c_void, _field: c_int, valu
     values.push(text);
 }
 
+/// The script the client runs for `body`, a value of the
+/// `JavascriptHardwareProfile` property, as the C library writes it.
+///
+/// The body pushes the ids of the profiles it finds onto a `profileIds` array
+/// it does not declare. The script declares the array, runs the body, then
+/// writes the ids to the `51D_ProfileIds` cookie, which the engine reads back
+/// as evidence. An empty body gives the script too. As in C, `body` is read up
+/// to its first null.
+pub fn hardware_profile_script(body: &str) -> String {
+    let body = body.split('\0').next().unwrap_or(body);
+    let body = CString::new(body).expect("the text before a null holds none");
+    // Safety: `body` is null terminated. A null buffer only finds the length,
+    // and the buffer is then writable for the script and the null terminator.
+    let script = unsafe {
+        let length = sys::fiftyoneDegreesHashGetHardwareProfileScript(
+            body.as_ptr(),
+            std::ptr::null_mut(),
+            0,
+        );
+        let mut buffer = vec![0u8; length + 1];
+        sys::fiftyoneDegreesHashGetHardwareProfileScript(
+            body.as_ptr(),
+            buffer.as_mut_ptr() as *mut c_char,
+            buffer.len(),
+        );
+        buffer.truncate(length);
+        buffer
+    };
+    String::from_utf8_lossy(&script).into_owned()
+}
+
 /// The message for a failed init, naming the data file at `path`, or `null`
 /// when `path` is null, as for data loaded from memory. An exception holds no
 /// file name, so its message would say `null` instead.

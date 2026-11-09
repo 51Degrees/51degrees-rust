@@ -118,6 +118,11 @@ size_t fiftyoneDegreesHashGetEvidenceKeys(
 	size_t length,
 	const char *separator);
 
+size_t fiftyoneDegreesHashGetHardwareProfileScript(
+	const char *body,
+	char *buffer,
+	size_t length);
+
 /* fiftyone-common-sys */
 
 typedef struct {

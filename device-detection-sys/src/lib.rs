@@ -587,6 +587,23 @@ extern "C" {
         exception: *mut Exception,
     ) -> usize;
 
+    /// Writes the script the client runs for `body`, a value of the
+    /// `JavascriptHardwareProfile` property, into `buffer` and returns the
+    /// number of characters the script needs, not counting the null
+    /// terminator. The script declares the `profileIds` array the body fills,
+    /// runs the body, then writes the ids to the `51D_ProfileIds` cookie. A
+    /// null buffer only finds that length, and a buffer one longer holds the
+    /// whole script. A null body is an empty one.
+    ///
+    /// # Safety
+    /// `body` must be null or a null terminated string, and `buffer` must be
+    /// null or point to `length` writable bytes.
+    pub fn fiftyoneDegreesHashGetHardwareProfileScript(
+        body: *const c_char,
+        buffer: *mut c_char,
+        length: usize,
+    ) -> usize;
+
     /// Writes a JSON document of all available property values into `buffer` and
     /// returns the number of characters available.
     ///

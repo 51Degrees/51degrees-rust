@@ -42,7 +42,8 @@ use fiftyone_device_detection_shared::{
     DEVICE_ELEMENT_DATA_KEY,
 };
 use fiftyone_native::dd::{
-    DataFileComponent, DataFileProperty, DataFileValue, HashOptions, Manager, MatchMetrics, Results,
+    hardware_profile_script, DataFileComponent, DataFileProperty, DataFileValue, HashOptions,
+    Manager, MatchMetrics, Results,
 };
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{
@@ -1041,7 +1042,12 @@ impl DevicePropertyReader for DetectionReader {
             .values_by_index(index)
             .map_err(|error| error.to_string())?;
         let values = if name.eq_ignore_ascii_case(JAVASCRIPT_HARDWARE_PROFILE) {
-            values.map(|values| values.into_iter().map(wrap_hardware_profile).collect())
+            values.map(|values| {
+                values
+                    .iter()
+                    .map(|body| hardware_profile_script(body))
+                    .collect()
+            })
         } else {
             values
         };
@@ -1290,25 +1296,11 @@ fn c_strtod(text: &str) -> f64 {
 }
 
 /// The property whose data file value is the body of a script that finds the
-/// Apple device model on the client.
+/// Apple device model on the client. Each value is given as the script
+/// [`hardware_profile_script`] writes around it, an empty one included, as
+/// the C++ results give it. Without the script the body fails on the array it
+/// does not declare, and the include that carries it stops running.
 const JAVASCRIPT_HARDWARE_PROFILE: &str = "JavascriptHardwareProfile";
-
-/// Turn the stored `JavascriptHardwareProfile` body into the script the client
-/// runs, as the C++ results wrapper in 51degrees-cxx does.
-///
-/// The stored body pushes the profile ids it finds onto a `profileIds` array
-/// that it does not declare, and does not send them anywhere. The wrapper
-/// declares the array first and afterwards writes the ids to the
-/// `51D_ProfileIds` cookie, which the engine reads back as evidence. Without
-/// the wrapper the script fails on the undeclared array, and the include that
-/// carries it stops running. Each value is wrapped, an empty one included, as
-/// the C++ wraps them.
-fn wrap_hardware_profile(body: String) -> String {
-    format!(
-        "var profileIds = []\n{body}\n\
-         document.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")"
-    )
-}
 
 /// The evidence key filter for the Hash engine.
 ///
@@ -1577,21 +1569,6 @@ mod tests {
         filter.replace(vec![String::from("header.x-operamini-phone-ua")]);
         assert!(filter.include("header.x-operamini-phone-ua"));
         assert!(!filter.include("header.user-agent"));
-    }
-
-    #[test]
-    fn hardware_profile_is_wrapped_as_the_cpp_wrapper_does() {
-        assert_eq!(
-            wrap_hardware_profile("profileIds.push(1)".to_owned()),
-            "var profileIds = []\nprofileIds.push(1)\n\
-             document.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")"
-        );
-        // An empty value is wrapped too, as the C++ wraps it.
-        assert_eq!(
-            wrap_hardware_profile(String::new()),
-            "var profileIds = []\n\n\
-             document.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")"
-        );
     }
 
     /// A `51d_` value is accepted only when the data set reads it, as an
