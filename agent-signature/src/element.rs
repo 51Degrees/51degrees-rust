@@ -909,20 +909,18 @@ impl EvidenceResolver<'_> {
         self.evidence.get(self.source.host)
     }
 
-    /// A header the signature covers, read under the signature's own
-    /// prefix. One the element accepts is read from the evidence alone. Any
-    /// other is read from the evidence, and where the evidence does not hold
-    /// it, from the web request, whose query string values carry the query
-    /// prefix. The element does not accept such a header, so it never adds
-    /// one to a cache key, the ETag or the Vary header.
+    /// A header the signature covers, read from the evidence under the
+    /// signature's own prefix. Only a header the element accepts is read,
+    /// because any other is outside the cache keys, the ETag and the Vary
+    /// header, and a cached answer could then be given to a request that
+    /// differs only in that header. Any other gives no value, so the
+    /// signature reports ComponentUnavailable.
     fn covered_header(&self, name: &str) -> Option<&str> {
         let key = format!("{}.{}", self.source.prefix, name);
-        self.evidence.get(&key).or_else(|| {
-            if self.filter.include(&key) {
-                return None;
-            }
-            self.evidence.http_request()?.get(&key)
-        })
+        if !self.filter.include(&key) {
+            return None;
+        }
+        self.evidence.get(&key)
     }
 
     fn scheme(&self) -> Option<String> {
@@ -1016,9 +1014,8 @@ impl ComponentResolver for EvidenceResolver<'_> {
 /// host, the protocol and the request line, and where forwarded evidence is
 /// trusted, the same eight names under the query prefix. No other query
 /// string parameter is accepted, so an ordinary one never reaches a cache
-/// key or the ETag. Any other header a signature covers is read from the
-/// evidence or the web request without being accepted, so the element never
-/// adds it to a cache key, the ETag or the Vary header.
+/// key or the ETag. A signature covering any other header reports
+/// ComponentUnavailable.
 fn accepted_evidence(trust_forwarded: bool) -> EvidenceKeyFilterWhitelist {
     let mut keys = HEADER_SOURCE.keys().to_vec();
     if trust_forwarded {
