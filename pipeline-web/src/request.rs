@@ -283,3 +283,52 @@ fn add_prefixed(entries: &mut Vec<(String, String)>, prefix: &str, pairs: Vec<(S
             .map(|(field, value)| (prefixed(prefix, &field), value)),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A request carrying the given header lines.
+    struct Headers(Vec<(&'static str, &'static str)>);
+
+    impl RequestData for Headers {
+        fn headers(&self) -> Vec<(String, String)> {
+            self.0
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                .collect()
+        }
+        fn cookies(&self) -> Vec<(String, String)> {
+            Vec::new()
+        }
+        fn query_params(&self) -> Vec<(String, String)> {
+            Vec::new()
+        }
+        fn client_ip(&self) -> Option<String> {
+            None
+        }
+        fn is_https(&self) -> bool {
+            true
+        }
+    }
+
+    /// `If-None-Match` is a list, so a request may carry it over several
+    /// lines, and the field is every line in order joined with a comma
+    /// (RFC 9110 section 5.3).
+    #[test]
+    fn if_none_match_joins_every_line_in_order() {
+        let request = Headers(vec![
+            ("If-None-Match", "\"a\""),
+            ("User-Agent", "agent"),
+            ("if-none-match", "W/\"b\", \"c\""),
+        ]);
+        assert_eq!(
+            request.if_none_match().as_deref(),
+            Some("\"a\", W/\"b\", \"c\"")
+        );
+        let one = Headers(vec![("If-None-Match", "W/\"b\"")]);
+        assert_eq!(one.if_none_match().as_deref(), Some("W/\"b\""));
+        let none = Headers(vec![("User-Agent", "agent")]);
+        assert_eq!(none.if_none_match(), None);
+    }
+}

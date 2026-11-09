@@ -804,6 +804,57 @@ fn non_matching_if_none_match_returns_200() {
     }
 }
 
+/// RFC 9110 section 13.1.2: a field that is neither `*` nor a list of entity
+/// tags makes the condition true, so both endpoints give `200` with the body,
+/// even when the field holds the tag. A field over two lines is read whole
+/// (section 5.3), so the tag on the second line matches, and a second line
+/// that is not a tag stops the first matching.
+#[test]
+fn an_if_none_match_that_is_not_a_list_of_tags_gets_the_body() {
+    let web = web_pipeline(false);
+    let options = EndpointOptions::new(web.vary_whitelist().clone());
+    let data = processed(web.pipeline(), page_evidence("abc"));
+    let etag = compute_etag(&data, data.evidence_key_filter());
+    let cases = [
+        (vec![format!("{etag}, other")], false),
+        (vec![format!("\"other\" {etag}")], false),
+        (vec![format!("other, {etag}")], false),
+        (vec![format!("\"oth er\", {etag}")], false),
+        (vec![format!("{etag}, *")], false),
+        (vec![format!("\"other\",\t{etag}")], true),
+        (vec!["\"other\"".to_owned(), etag.clone()], true),
+        (vec![etag.clone(), "other".to_owned()], false),
+    ];
+    for (lines, matches) in &cases {
+        for method in [None, Some("POST")] {
+            let request = TestRequest {
+                headers: lines
+                    .iter()
+                    .map(|line| ("If-None-Match".to_owned(), line.clone()))
+                    .collect(),
+                method: method.map(str::to_owned),
+                ..Default::default()
+            };
+            let status = match (matches, method) {
+                (false, _) => WebResponse::STATUS_OK,
+                (true, None) => WebResponse::STATUS_NOT_MODIFIED,
+                (true, Some(_)) => WebResponse::STATUS_PRECONDITION_FAILED,
+            };
+            for response in [
+                serve_json(&data, &request, &options),
+                serve_javascript(&data, &request, &options),
+            ] {
+                assert_eq!(response.status, status, "{lines:?} {method:?}");
+                assert_eq!(
+                    response.body.is_empty(),
+                    status != WebResponse::STATUS_OK,
+                    "{lines:?} {method:?}"
+                );
+            }
+        }
+    }
+}
+
 /// RFC 9110 section 13.1.2: a matching `If-None-Match` gets a `304` on `GET`
 /// or `HEAD` and a `412` on any other method. Method names are case-sensitive
 /// (section 9.1), so `get` is not `GET`. A request that gives no method is

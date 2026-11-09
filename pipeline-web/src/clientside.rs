@@ -648,6 +648,73 @@ mod tests {
         }
     }
 
+    /// RFC 9110 section 13.1.2 gives the field as `"*" / #entity-tag`, and
+    /// the condition is true, so nothing matches, when the field is neither.
+    /// The first six cases are those of the 51degrees-go change that does the
+    /// same.
+    #[test]
+    fn an_if_none_match_that_is_not_star_or_a_list_of_tags_does_not_match() {
+        let etag = "W/\"x\"";
+        for (field, expected) in [
+            // A tag, then a member that is not a tag.
+            ("W/\"x\", other", false),
+            // Two tags with no comma between them.
+            ("\"other\" W/\"x\"", false),
+            // A member that is not a tag, then the tag.
+            ("other, W/\"x\"", false),
+            // A space is not allowed inside the quotes.
+            ("\"oth er\", W/\"x\"", false),
+            // A list holding "*" and other values is not valid.
+            ("\"other\", *", false),
+            // A tab is optional white space, as a space is.
+            ("\"other\",\tW/\"x\"", true),
+        ] {
+            assert_eq!(etag_matches(field, etag), expected, "{field:?}");
+        }
+    }
+
+    /// Fields that are `*` or a list of entity tags still match, with the
+    /// optional white space and empty members a recipient accepts in a list
+    /// (RFC 9110 section 5.6.1.2). A comma is a valid character inside an
+    /// entity tag (section 8.8.3), so the list is not split on commas.
+    #[test]
+    fn star_alone_or_a_list_holding_the_tag_matches() {
+        let etag = "W/\"x\"";
+        for field in [
+            "*",
+            " * ",
+            "\"x\"",
+            "W/\"x\"",
+            "\"other\", W/\"x\"",
+            "W/\"other\",\"x\"",
+            ", \"other\" ,, W/\"x\" ,",
+            "\"\", W/\"x\"",
+        ] {
+            assert!(etag_matches(field, etag), "{field:?}");
+        }
+        assert!(etag_matches("\"a,b\"", "W/\"a,b\""));
+        assert!(etag_matches("\"c\", W/\"a,b\"", "\"a,b\""));
+        for field in ["\"a\"", "\"b\"", "\"a,b"] {
+            assert!(!etag_matches(field, "W/\"a,b\""), "{field:?}");
+        }
+    }
+
+    /// Entity tag characters are `%x21 / %x23-7E / obs-text` (RFC 9110
+    /// section 8.8.3), so a control character or DEL inside the quotes makes
+    /// the field one that matches nothing.
+    #[test]
+    fn a_tag_holding_a_character_entity_tags_exclude_does_not_match() {
+        let etag = "W/\"x\"";
+        for field in [
+            "\"o\u{7f}\", W/\"x\"",
+            "\"o\u{1}\", W/\"x\"",
+            "W/\"x\", \"o\u{7f}\"",
+        ] {
+            assert!(!etag_matches(field, etag), "{field:?}");
+        }
+        assert!(etag_matches("\"caf\u{e9}\", W/\"x\"", etag));
+    }
+
     #[test]
     fn vary_strips_prefix_and_dedupes() {
         let filter = EvidenceKeyFilterWhitelist::new([
