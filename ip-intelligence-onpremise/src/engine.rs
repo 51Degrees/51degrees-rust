@@ -1295,8 +1295,8 @@ mod tests {
 
     /// The expected concurrency reaches the native data set when the engine
     /// is built and when it is refreshed, sizing its file handle pool, and
-    /// more than the square root of the Balanced profiles cache of 10,000
-    /// entries opens.
+    /// more than the square root of the Balanced profiles cache of 20,000
+    /// entries, 141, opens.
     #[test]
     fn the_expected_concurrency_opens_the_data_set_and_its_refresh() {
         let Some(data_file) = ipi_data_file() else {
@@ -1311,7 +1311,7 @@ mod tests {
         };
 
         let many = builder()
-            .concurrency(101)
+            .concurrency(500)
             .build()
             .expect("more than the profiles cache's square root opens");
         assert_eq!(file_pool_size(&many), 64);

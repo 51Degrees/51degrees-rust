@@ -376,8 +376,8 @@ mod tests {
     }
 
     /// The pipeline opens with more expected concurrency than the square
-    /// root of the Balanced profiles cache of 10,000 entries. The engine's
-    /// own tests show the value reaching the data set.
+    /// root of the Balanced profiles cache of 20,000 entries, 141. The
+    /// engine's own tests show the value reaching the data set.
     #[test]
     fn on_premise_builder_opens_with_any_concurrency() {
         let Some(data_file) = asn_data_file() else {
@@ -386,7 +386,7 @@ mod tests {
         };
         let pipeline = IpIntelligencePipelineBuilder::on_premise(&data_file)
             .performance_profile(PerformanceProfile::Balanced)
-            .concurrency(101)
+            .concurrency(500)
             // Off so the test sends nothing to 51Degrees.
             .share_usage(false)
             // Off so the build needs no licence key.
