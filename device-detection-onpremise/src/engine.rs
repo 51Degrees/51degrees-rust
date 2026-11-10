@@ -946,19 +946,14 @@ impl ReadableProperty {
     }
 }
 
-/// The properties a detection can read. A name is found by asking the C
-/// library for its position, so no map from names is kept here.
+/// The properties a detection can read.
 struct ReadableProperties {
-    /// Each property a detection can read, the data file's then the match
-    /// metrics.
+    /// Each property a detection can read.
     properties: Vec<ReadableProperty>,
     /// Each property's name in lowercase, in the same order.
     lowercase_names: Vec<String>,
-    /// The place in `properties` of each data file property, at the
-    /// position the C library gives its name.
-    places: Vec<Option<usize>>,
-    /// The place in `properties` of the first match metric.
-    first_metric: usize,
+    /// The position of each property in `properties`, by lowercase name.
+    by_name: HashMap<String, usize>,
 }
 
 impl ReadableProperties {
@@ -989,62 +984,17 @@ impl ReadableProperties {
             .iter()
             .map(|property| property.name().to_lowercase())
             .collect();
-        let mut places = Vec::new();
-        for (place, property) in properties.iter().enumerate() {
-            if let ReadableProperty::File { index, .. } = property {
-                set_place(&mut places, *index, place);
-            }
-        }
+        let by_name = lowercase_names
+            .iter()
+            .enumerate()
+            .map(|(position, name)| (name.clone(), position))
+            .collect();
         ReadableProperties {
-            first_metric: properties.len() - Metric::READ_ORDER.len(),
             properties,
             lowercase_names,
-            places,
+            by_name,
         }
     }
-
-    /// The place of the match metric named, in any case.
-    fn metric_position(&self, name: &str) -> Option<usize> {
-        Metric::READ_ORDER
-            .iter()
-            .position(|metric| metric.name().eq_ignore_ascii_case(name))
-            .map(|offset| self.first_metric + offset)
-    }
-
-    /// The place of the data file property at `index`, the position the C
-    /// library gave its name.
-    fn file_position(&self, index: c_int) -> Option<usize> {
-        place_at(&self.places, index)
-    }
-
-    /// The place of the property named, finding a match metric by its name
-    /// and any other property at the position `required_index` gives its
-    /// name, which is the C library's.
-    fn position(
-        &self,
-        name: &str,
-        required_index: impl FnOnce(&str) -> Option<c_int>,
-    ) -> Option<usize> {
-        self.metric_position(name)
-            .or_else(|| self.file_position(required_index(name)?))
-    }
-}
-
-/// Record `place` at `index` in a table from the C library's positions.
-fn set_place(places: &mut Vec<Option<usize>>, index: c_int, place: usize) {
-    let Ok(index) = usize::try_from(index) else {
-        return;
-    };
-    if places.len() <= index {
-        places.resize(index + 1, None);
-    }
-    places[index] = Some(place);
-}
-
-/// The place recorded at `index` in a table from the C library's positions.
-fn place_at(places: &[Option<usize>], index: c_int) -> Option<usize> {
-    let index = usize::try_from(index).ok()?;
-    places.get(index).copied().flatten()
 }
 
 /// Reads the properties of one detection from its native results when they are
@@ -1074,13 +1024,8 @@ impl DevicePropertyReader for DetectionReader {
         &self.loaded.readable.lowercase_names
     }
 
-    /// A match metric is found by its name. Any other name is found by the
-    /// C library, ignoring case, and its position gives the place.
     fn position(&self, name: &str) -> Option<usize> {
-        let manager = &self.loaded.manager;
-        self.loaded
-            .readable
-            .position(name, |name| manager.required_property_index(name))
+        self.loaded.readable.by_name.get(name).copied()
     }
 
     fn read_property(&self, position: usize) -> ReadOutcome {
@@ -1700,8 +1645,8 @@ mod tests {
         let readable = ReadableProperties::new(&[]);
         let lowercase: Vec<String> = listed.iter().map(|name| name.to_lowercase()).collect();
         assert_eq!(readable.lowercase_names, lowercase);
-        for (position, name) in listed.iter().enumerate() {
-            assert_eq!(readable.metric_position(name), Some(position), "{name}");
+        for (position, name) in lowercase.iter().enumerate() {
+            assert_eq!(readable.by_name.get(name), Some(&position), "{name}");
         }
     }
 
@@ -1766,36 +1711,6 @@ mod tests {
     /// Read the property `name` from `reader`.
     fn read(reader: &DetectionReader, name: &str) -> ReadOutcome {
         reader.read_property(reader.position(name).expect(name))
-    }
-
-    /// The reader finds a data file property by its name in any case, as the
-    /// C library finds it, and a match metric in the same way, each at the
-    /// place of its lowercase name among the reader's names.
-    #[test]
-    fn the_reader_finds_a_name_in_any_case() {
-        let Some(path) = data_file() else {
-            eprintln!("no Hash data file found; skipping names in any case");
-            return;
-        };
-        let (engine, data) = engine_and_data(&path);
-        let reader = engine.detection_reader(&data).expect("detection succeeds");
-        let metric = Metric::READ_ORDER[0].name();
-        let names = [
-            "IsMobile".to_owned(),
-            "ISMOBILE".to_owned(),
-            "ismobile".to_owned(),
-            metric.to_owned(),
-            metric.to_uppercase(),
-        ];
-        for name in &names {
-            let position = reader.position(name).expect(name);
-            assert_eq!(
-                reader.property_names()[position],
-                name.to_lowercase(),
-                "{name}"
-            );
-        }
-        assert_eq!(reader.position("NotAProperty"), None);
     }
 
     /// Each match metric gives the same value as when it is read first when

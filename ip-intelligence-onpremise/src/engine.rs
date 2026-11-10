@@ -818,9 +818,7 @@ struct LoadedDataSet {
 /// spelling, so a property named in another case is read under that spelling.
 ///
 /// A lookup also reads [`ADDED_PROPERTIES`], after the data file's, which
-/// hold the address looked up rather than anything in the data file. A name
-/// is found by asking the C library for its position, so no map from names
-/// is kept here.
+/// hold the address looked up rather than anything in the data file.
 struct ReadableNames {
     /// Each property's name in the data file's spelling.
     names: Vec<String>,
@@ -832,9 +830,8 @@ struct ReadableNames {
     /// Each property's type, as the engine's metadata gives it from the data
     /// file.
     value_types: Vec<PropertyValueType>,
-    /// The place in `names` of each data file property, at the position the
-    /// C library gives its name.
-    places: Vec<Option<usize>>,
+    /// The position of each property in `lowercase_names`, by lowercase name.
+    by_name: HashMap<String, usize>,
 }
 
 impl ReadableNames {
@@ -855,38 +852,17 @@ impl ReadableNames {
             .chain(ADDED_PROPERTIES.iter().map(|(name, _)| *name))
             .map(str::to_lowercase)
             .collect();
-        let mut places = Vec::new();
-        for (place, index) in indexes.iter().enumerate() {
-            let Ok(index) = usize::try_from(*index) else {
-                continue;
-            };
-            if places.len() <= index {
-                places.resize(index + 1, None);
-            }
-            places[index] = Some(place);
-        }
         ReadableNames {
+            by_name: lowercase_names
+                .iter()
+                .enumerate()
+                .map(|(position, name)| (name.clone(), position))
+                .collect(),
             names,
             lowercase_names,
             indexes,
             value_types,
-            places,
         }
-    }
-
-    /// The place of the added property named, in any case.
-    fn added_position(&self, name: &str) -> Option<usize> {
-        ADDED_PROPERTIES
-            .iter()
-            .position(|(added, _)| added.eq_ignore_ascii_case(name))
-            .map(|offset| self.names.len() + offset)
-    }
-
-    /// The place of the data file property at `index`, the position the C
-    /// library gave its name.
-    fn file_position(&self, index: c_int) -> Option<usize> {
-        let index = usize::try_from(index).ok()?;
-        self.places.get(index).copied().flatten()
     }
 }
 
@@ -908,14 +884,8 @@ impl IpIntelligencePropertyReader for LookupReader {
         &self.loaded.readable.lowercase_names
     }
 
-    /// `Ip` and `IpV6` are found by their names. Any other name is found by
-    /// the C library, ignoring case, and its position gives the place.
     fn position(&self, name: &str) -> Option<usize> {
-        let readable = &self.loaded.readable;
-        readable.added_position(name).or_else(|| {
-            let index = self.loaded.manager.required_property_index(name)?;
-            readable.file_position(index)
-        })
+        self.loaded.readable.by_name.get(name).copied()
     }
 
     fn read_property(
@@ -1316,36 +1286,6 @@ mod tests {
             .map(|property| property.name)
             .collect();
         assert_eq!(engine.populated_property_names(), file_names);
-    }
-
-    /// The reader finds a data file property by its name in any case, as the
-    /// C library finds it, and `Ip` and `IpV6` in the same way, each at the
-    /// place of its lowercase name among the reader's names.
-    #[test]
-    fn the_reader_finds_a_name_in_any_case() {
-        let Some(engine) = asn_engine() else {
-            eprintln!("no usable IP-intelligence data file; skipping names in any case");
-            return;
-        };
-        let loaded = engine.loaded.load_full();
-        let mut results = loaded.manager.create_results().expect("results");
-        let client_ip = results
-            .process_client_ip_evidence(&Evidence::builder().build())
-            .expect("evidence with no address is processed");
-        let reader = LookupReader {
-            results: Mutex::new(results),
-            client_ip,
-            loaded,
-        };
-        for name in ["AsnName", "ASNNAME", "asnname", "Ip", "IP", "IPV6"] {
-            let position = reader.position(name).expect(name);
-            assert_eq!(
-                reader.property_names()[position],
-                name.to_lowercase(),
-                "{name}"
-            );
-        }
-        assert_eq!(reader.position("NotAProperty"), None);
     }
 
     /// The handles to the data file the engine's current data set holds.
