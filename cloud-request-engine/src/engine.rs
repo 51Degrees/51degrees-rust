@@ -489,10 +489,10 @@ impl CloudRequestEngine {
     /// the covered one and nothing at all about the one it dropped. Silence is
     /// then the only symptom, so the engine looks for it rather than leaving a
     /// caller to work out why a property it asked for never appears. With a
-    /// resource key, a listed property the credential does not cover comes back
-    /// with no value and the reason that it is a paid feature, which counts as
-    /// carried, so the warning then names only properties the service does not
-    /// know.
+    /// resource key and no license key, a listed property the credential does
+    /// not cover comes back with no value and the reason that it is a paid
+    /// feature, which counts as carried, so the warning then names only
+    /// properties the service does not know.
     ///
     /// The comparison runs once per engine. Its outcome is decided by the
     /// credential and the asked-for list, both fixed when the engine was built,
@@ -984,9 +984,10 @@ impl CloudRequestEngineBuilder {
     /// A property that does not come back at all is left out of the answer
     /// without comment, so the engine compares what it asked for against what
     /// arrived and reports the difference once, as a warning on its element data
-    /// and one line on stderr. With a resource key that is only a name the
-    /// service does not know, because a listed property no license grants comes
-    /// back with no value and counts as carried.
+    /// and one line on stderr. With a resource key and no license key the
+    /// difference is only a name the service does not know, because a listed
+    /// property no license grants comes back with no value and counts as
+    /// carried.
     pub fn values<I, S>(mut self, values: I) -> Self
     where
         I: IntoIterator<Item = S>,

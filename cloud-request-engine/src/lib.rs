@@ -88,9 +88,8 @@
 //! A resource key is public by design, because it travels to the browser inside a
 //! script URL, so it is scoped to what a page is meant to read and it answers
 //! with everything it carries, plus any properties the call lists. A license
-//! key stays on
-//! the server and names what it wants per request, which is usually what a
-//! server-side caller needs.
+//! key stays on the server and names what it wants per request, which is
+//! usually what a server-side caller needs.
 //!
 //! Because the combination is settled when the engine is built, a request cannot
 //! fail for this reason afterwards, so a downstream element always receives an
