@@ -537,7 +537,7 @@
   },
   {
     "id": "ip-forwarded-list",
-    "about": "A forwarded list, whose first address is the client.",
+    "about": "A forwarded list, which is not one address, so no part of it is read.",
     "evidence": {
       "server.client-ip": "1.1.1.1, 10.0.0.1",
       "query.session-id": "parity-ip-forwarded-list"
@@ -553,7 +553,7 @@
   },
   {
     "id": "ip-v6-zone",
-    "about": "An IPv6 address with a zone index, which is dropped.",
+    "about": "An IPv6 address with a zone index, which is not read.",
     "evidence": {
       "server.client-ip": "fe80::1%1",
       "query.session-id": "parity-ip-v6-zone"

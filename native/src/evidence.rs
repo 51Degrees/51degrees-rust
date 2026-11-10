@@ -316,41 +316,42 @@ pub fn client_ip_from_evidence(evidence: &Evidence) -> Option<String> {
         .map(|(_, v)| v.to_owned())
 }
 
-/// Read a client IP address from one evidence value, accepting the same forms
-/// as the .NET IP Intelligence engine.
+/// Read a client IP address from one evidence value, only when the whole
+/// value is an address.
 ///
-/// The value may be a bare IPv4 or IPv6 address, an IPv4 address with a port,
-/// or a bracketed IPv6 address with or without a port. An IPv6 zone index
-/// (`fe80::1%1`) is dropped, and a comma separated list, as a proxy forwards
-/// it, gives its first entry. Anything else gives [`None`], including the
-/// shortened, octal and bare number IPv4 forms some parsers accept, because
-/// those would let numeric junk count as an address.
+/// The value may be an IPv4 address in dotted-decimal form, an IPv6 address in
+/// any RFC 4291 text form, an IPv4 address with a port, or a bracketed IPv6
+/// address with or without a port. Anything else gives [`None`] and no part of
+/// it is read, so a comma separated list, white space around the address, an
+/// IPv6 zone index (`fe80::1%eth0`), a prefix length or trailing text is not
+/// read, nor is an IPv4 address with a leading zero in any part (`01.2.3.4`),
+/// nor are the shortened and bare number IPv4 forms some parsers accept.
+/// Reading part of a value could give a different address from the one the
+/// sender meant.
+///
+/// This is the rule in [Reading the client IP value] of the IP Intelligence
+/// specification.
+///
+/// [Reading the client IP value]: https://github.com/51Degrees/specifications/blob/5a250650766c025c42aa9d7943bd6781f4447646/ip-intelligence-specification/pipeline-elements/ip-intelligence-on-premise.md#L165-L264
 pub fn parse_client_ip(value: &str) -> Option<IpAddr> {
-    let candidate = value.split(',').next().unwrap_or_default().trim();
-    if let Some(bracketed) = candidate.strip_prefix('[') {
+    if let Some(bracketed) = value.strip_prefix('[') {
         // "[2001:db8::1]" or "[2001:db8::1]:443".
         let (address, rest) = bracketed.split_once(']')?;
         if !rest.is_empty() && !rest.strip_prefix(':').is_some_and(is_port) {
             return None;
         }
-        return parse_ipv6_without_zone(address);
+        return address.parse::<Ipv6Addr>().ok().map(IpAddr::V6);
     }
-    if let Ok(address) = candidate.parse::<IpAddr>() {
+    if let Ok(address) = value.parse::<IpAddr>() {
         return Some(address);
     }
     // "192.0.2.1:443". Without brackets an IPv6 address keeps all its colons,
-    // because a port cannot be told apart from its last group.
-    if let Ok(SocketAddr::V4(socket)) = candidate.parse::<SocketAddr>() {
-        return Some(IpAddr::V4(*socket.ip()));
+    // because a port cannot be told apart from its last group, and a
+    // `SocketAddrV6` would take a zone index.
+    match value.parse::<SocketAddr>() {
+        Ok(SocketAddr::V4(socket)) => Some(IpAddr::V4(*socket.ip())),
+        _ => None,
     }
-    // "fe80::1%1".
-    parse_ipv6_without_zone(candidate)
-}
-
-/// Parse an IPv6 address, dropping any zone index after a `%`.
-fn parse_ipv6_without_zone(text: &str) -> Option<IpAddr> {
-    let address = text.split_once('%').map_or(text, |(address, _)| address);
-    address.parse::<Ipv6Addr>().ok().map(IpAddr::V6)
 }
 
 /// True when `text` is a port number, being digits only and at most 65535.
@@ -498,22 +499,40 @@ mod tests {
         parse_client_ip(value).map(|address| address.to_string())
     }
 
+    // The forms the client IP rule of the IP Intelligence specification
+    // reads, each with the address read from it. The rule is "Reading the
+    // client IP value", https://github.com/51Degrees/specifications/blob/5a250650766c025c42aa9d7943bd6781f4447646/ip-intelligence-specification/pipeline-elements/ip-intelligence-on-premise.md#L165-L264
     #[test]
     fn a_client_ip_is_read_in_the_forms_proxies_send() {
-        assert_eq!(parsed("192.0.2.1").as_deref(), Some("192.0.2.1"));
-        assert_eq!(parsed(" 192.0.2.1 ").as_deref(), Some("192.0.2.1"));
-        assert_eq!(parsed("192.0.2.1:443").as_deref(), Some("192.0.2.1"));
-        assert_eq!(parsed("2001:DB8:0::1").as_deref(), Some("2001:db8::1"));
-        assert_eq!(parsed("[2001:db8::1]").as_deref(), Some("2001:db8::1"));
-        assert_eq!(parsed("[2001:db8::1]:443").as_deref(), Some("2001:db8::1"));
-        assert_eq!(parsed("fe80::1%1").as_deref(), Some("fe80::1"));
-        assert_eq!(parsed("[fe80::1%eth0]:443").as_deref(), Some("fe80::1"));
-        assert_eq!(
-            parsed("192.0.2.1, 198.51.100.7").as_deref(),
-            Some("192.0.2.1")
-        );
+        for (value, address) in [
+            ("192.0.2.1", "192.0.2.1"),
+            ("203.0.113.1", "203.0.113.1"),
+            ("0.0.0.0", "0.0.0.0"),
+            ("192.0.2.1:443", "192.0.2.1"),
+            ("203.0.113.1:8080", "203.0.113.1"),
+            ("203.0.113.1:0443", "203.0.113.1"),
+            ("203.0.113.1:0", "203.0.113.1"),
+            ("203.0.113.1:65535", "203.0.113.1"),
+            ("2001:DB8:0::1", "2001:db8::1"),
+            ("2001:0DB8:0:0:0:0:0:1", "2001:db8::1"),
+            ("::ffff:203.0.113.1", "::ffff:203.0.113.1"),
+            ("2001:db8::1:80", "2001:db8::1:80"),
+            ("1:2:3:4:5:6:7::", "1:2:3:4:5:6:7:0"),
+            ("::", "::"),
+            ("[2001:db8::1]", "2001:db8::1"),
+            ("[2001:db8::1]:443", "2001:db8::1"),
+            ("[2001:db8::1]:8080", "2001:db8::1"),
+            ("[2001:db8::1]:0443", "2001:db8::1"),
+        ] {
+            assert_eq!(parsed(value).as_deref(), Some(address), "{value:?}");
+        }
     }
 
+    // A value that is not wholly one of those forms is not read, and no part
+    // of it is used. These are the values the rule's table lists, with the
+    // other zone index and leading zero examples the rule gives, and a
+    // leading zero in the IPv4 part of an IPv6 address, which RFC 3986's
+    // `IPv6address` builds from the same `dec-octet` rule.
     #[test]
     fn a_value_that_is_not_a_whole_address_is_not_read() {
         for value in [
@@ -522,15 +541,50 @@ mod tests {
             "unknown",
             ", 192.0.2.1",
             "192.0.2",
+            "203.0.113",
             "3221225985",
             "012.0.2.1",
+            "01.2.3.4",
+            "1.02.3.4",
+            "1.2.3.04",
+            "00.0.0.0",
+            "::ffff:01.2.3.4",
+            "256.0.113.1",
             "192.0.2.1/24",
+            "203.0.113.0/24",
+            "2001:db8::/32",
             "192.0.2.1 x",
+            "203.0.113.1 x",
+            "192.0.2.1, 198.51.100.7",
+            "203.0.113.1, 198.51.100.7",
+            "203.0.113.1,198.51.100.7",
+            " 192.0.2.1 ",
+            "203.0.113.1 ",
+            " 203.0.113.1",
+            "203.0.113.1\t",
+            "\t203.0.113.1",
+            "203.0.113.1\r\n",
+            "203.0.113.1\n",
+            "fe80::1%1",
+            "fe80::1%eth0",
+            "[fe80::1%eth0]",
+            "[fe80::1%eth0]:443",
+            "[fe80::1%eth0]:80",
+            "[fe80::1%25eth0]",
             "192.0.2.1:65536",
+            "203.0.113.1:65536",
             "192.0.2.1:+443",
+            "203.0.113.1:",
             "[192.0.2.1]",
+            "[203.0.113.1]",
+            "[2001:db8::1",
+            "2001:db8::1]:80",
             "[2001:db8::1]443",
             "[2001:db8::1]:",
+            "[2001:db8::1]:65536",
+            "2001:db8::1::2",
+            "2001:db8:1:2:3:4:5:6:7",
+            "2001:db8::12345",
         ] {
             assert_eq!(parsed(value), None, "{value:?} should not be read");
         }
