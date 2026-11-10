@@ -169,9 +169,7 @@ fn web_pipeline(fail: bool) -> WebPipeline {
     .expect("web pipeline builds")
 }
 
-/// The session id the requests in these tests carry. Without one, the
-/// Sequence element the web pipeline adds creates a new id for each request,
-/// and the ETag is worked out from the evidence that id is added to.
+/// The session id the requests in these tests carry.
 const SESSION_ID: &str = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
 /// Evidence for a request from `user_agent` in the session [`SESSION_ID`].
@@ -680,22 +678,52 @@ fn the_weak_etag_matches_in_every_form() {
     }
 }
 
+/// The Sequence element adds a new session id to the evidence of each request
+/// that has none, but the ETag is worked out from the evidence the request
+/// supplied. So two requests with the same evidence and no session id get the
+/// same tag, and the second, sending it back, gets a `304` from both
+/// endpoints.
 #[test]
-fn a_request_without_a_session_id_gets_an_etag_of_its_own() {
-    // The Sequence element adds the session id it creates to the evidence,
-    // and the specification works the ETag out from all of the evidence the
-    // pipeline accepts, as .NET does.
+fn requests_without_a_session_id_get_the_same_etag_and_a_304() {
+    type Serve = fn(&FlowData, &dyn RequestData, &EndpointOptions) -> WebResponse;
     let web = web_pipeline(false);
     let options = EndpointOptions::new(web.vary_whitelist().clone());
-    let etag = || {
-        let evidence = Evidence::builder().add("header.user-agent", "abc").build();
-        let data = processed(web.pipeline(), evidence);
-        serve_json(&data, &TestRequest::default(), &options)
-            .header("ETag")
-            .expect("an ETag")
-            .to_owned()
+    let request = |if_none_match: Option<&str>| TestRequest {
+        headers: if_none_match
+            .map(|value| ("If-None-Match".to_owned(), value.to_owned()))
+            .into_iter()
+            .collect(),
+        ..Default::default()
     };
-    assert_ne!(etag(), etag());
+    let evidence = || Evidence::builder().add("header.user-agent", "abc").build();
+    let endpoints: [(&str, Serve); 2] = [("javascript", serve_javascript), ("json", serve_json)];
+
+    for (name, serve) in endpoints {
+        let first_data = processed(web.pipeline(), evidence());
+        let second_data = processed(web.pipeline(), evidence());
+        let session_id = |data: &FlowData| {
+            data.evidence()
+                .get("query.session-id")
+                .map(str::to_owned)
+                .expect("the Sequence element added a session id")
+        };
+        assert_ne!(session_id(&first_data), session_id(&second_data), "{name}");
+
+        let first = serve(&first_data, &request(None), &options);
+        assert_eq!(first.status, WebResponse::STATUS_OK, "{name}");
+        let etag = first
+            .header("ETag")
+            .expect("the 200 has an ETag")
+            .to_owned();
+        let second = serve(&second_data, &request(Some(&etag)), &options);
+
+        assert_eq!(
+            second.status,
+            WebResponse::STATUS_NOT_MODIFIED,
+            "{name} {etag}"
+        );
+        assert_eq!(second.header("ETag"), Some(etag.as_str()), "{name}");
+    }
 }
 
 #[test]

@@ -66,6 +66,10 @@ use crate::warning::FlowWarning;
 pub struct FlowData {
     source: Source,
     evidence: Evidence,
+    /// The evidence as it was when processing started, copied the first
+    /// time a value is added after that. `None` while nothing has been, when
+    /// `evidence` is still the evidence supplied.
+    supplied: Option<Evidence>,
     data: DataMap,
     /// The keys of `data` in the order their element data was added.
     order: Vec<String>,
@@ -94,6 +98,7 @@ enum Source {
 pub(crate) struct BeforeGroup {
     pipeline: Arc<Pipeline>,
     evidence: Evidence,
+    supplied: Option<Evidence>,
     data: DataMap,
     order: Vec<String>,
     errors: Vec<FlowError>,
@@ -123,6 +128,7 @@ impl FlowData {
         FlowData {
             source: Source::Pipeline(pipeline),
             evidence,
+            supplied: None,
             data: HashMap::default(),
             order: Vec::new(),
             errors: Vec::new(),
@@ -152,6 +158,21 @@ impl FlowData {
         }
     }
 
+    /// The evidence as it was when processing started, without the values
+    /// elements added or replaced while processing, or the caller added
+    /// after it. Before processing it is [`FlowData::evidence`].
+    ///
+    /// Read this for anything that must depend on the request alone, such
+    /// as the ETag a web integration works out, because an element such as
+    /// the Sequence element adds a new value on every request.
+    pub fn supplied_evidence(&self) -> &Evidence {
+        let (supplied, evidence) = match self.before_group() {
+            Some(before) => (&before.supplied, &before.evidence),
+            None => (&self.supplied, &self.evidence),
+        };
+        supplied.as_ref().unwrap_or(evidence)
+    }
+
     /// Add an evidence value, so the elements that run after this one and the
     /// caller read it from [`FlowData::evidence`], as .NET's `AddEvidence`
     /// does. A key already present, ignoring case, keeps its first spelling
@@ -168,8 +189,11 @@ impl FlowData {
     /// It can also be called after processing, as .NET's and Java's
     /// `AddEvidence` can. Evidence added then changes no element's results,
     /// but it does change what a later reader sees, being
-    /// [`FlowData::evidence`], [`FlowData::generate_key`] and so the ETag a
-    /// web integration works out from that key.
+    /// [`FlowData::evidence`] and [`FlowData::generate_key`].
+    ///
+    /// Evidence added once processing has started is left out of
+    /// [`FlowData::supplied_evidence`], so the first such value copies the
+    /// evidence held before it.
     ///
     /// The key is logged at debug level. The value is not, because evidence
     /// can carry credentials.
@@ -180,6 +204,9 @@ impl FlowData {
             return;
         }
         log::debug!("Evidence '{key}' was added to a flow data.");
+        if self.processed && self.supplied.is_none() {
+            self.supplied = Some(self.evidence.clone());
+        }
         self.evidence.insert(key, value.into());
     }
 
@@ -295,6 +322,7 @@ impl FlowData {
         Arc::new(BeforeGroup {
             pipeline: Arc::clone(self.pipeline()),
             evidence: std::mem::replace(&mut self.evidence, evidence),
+            supplied: self.supplied.take(),
             data: std::mem::replace(&mut self.data, data),
             order: std::mem::take(&mut self.order),
             errors: std::mem::take(&mut self.errors),
@@ -311,6 +339,7 @@ impl FlowData {
         FlowData {
             source: Source::Group(Arc::clone(before)),
             evidence: before.evidence.empty_with_same_hasher(),
+            supplied: None,
             data: DataMap::with_hasher(before.data.hasher().clone()),
             order: Vec::new(),
             errors: Vec::new(),
@@ -345,6 +374,7 @@ impl FlowData {
              after processing",
         );
         self.evidence = before.evidence;
+        self.supplied = before.supplied;
         self.data = before.data;
         self.order = before.order;
         self.errors = before.errors;

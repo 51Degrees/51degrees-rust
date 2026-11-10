@@ -21,8 +21,8 @@
  * ********************************************************************* */
 
 //! Evidence an element adds with `FlowData::add_evidence`, read by the
-//! elements after it and by the caller, and refused from an element of a
-//! parallel group.
+//! elements after it and by the caller, refused from an element of a parallel
+//! group, and left out of `FlowData::supplied_evidence`.
 
 use std::any::Any;
 use std::sync::Arc;
@@ -355,4 +355,110 @@ fn a_group_holding_an_element_that_adds_evidence_is_refused() {
         let data = process(builder.add_element(reader("after", &["query.added"])));
         assert_eq!(seen(&data, "after", "query.added"), "1");
     }
+}
+
+/// Record under `key` what the supplied evidence holds for each of `names`,
+/// or "absent".
+fn record_supplied(data: &mut FlowData, key: &'static str, names: &[&str]) {
+    let mut seen = MapElementData::new();
+    for name in names {
+        let value = data
+            .supplied_evidence()
+            .get(name)
+            .unwrap_or("absent")
+            .to_owned();
+        seen = seen.set(*name, value);
+    }
+    data.get_or_add(TypedKey::<SeenData>::new(key), || SeenData(seen))
+        .unwrap();
+}
+
+/// The supplied evidence leaves out a key an element added and keeps the
+/// value a key had before an element replaced it.
+#[test]
+fn the_supplied_evidence_leaves_out_what_elements_added_and_replaced() {
+    let data = process(Pipeline::builder().add_element(adder(
+        "adder",
+        &[("query.session-id", "new session"), ("query.sequence", "6")],
+    )));
+
+    assert_eq!(
+        entries(data.supplied_evidence()),
+        pairs(&[("header.User-Agent", "test"), ("query.Sequence", "5")])
+    );
+    assert_eq!(
+        entries(data.evidence()),
+        pairs(&[
+            ("header.User-Agent", "test"),
+            ("query.Sequence", "6"),
+            ("query.session-id", "new session"),
+        ])
+    );
+}
+
+#[test]
+fn the_supplied_evidence_is_the_evidence_when_nothing_is_added() {
+    let data = process(Pipeline::builder().add_element(reader("reader", &[])));
+
+    assert_eq!(entries(data.supplied_evidence()), entries(&supplied()));
+    assert_eq!(entries(data.evidence()), entries(&supplied()));
+}
+
+/// Evidence the caller adds before processing is supplied, and evidence it
+/// adds after processing is not.
+#[test]
+fn the_supplied_evidence_holds_what_the_caller_added_before_processing() {
+    let pipeline = Pipeline::builder()
+        .add_element(reader("reader", &[]))
+        .build()
+        .unwrap();
+    let mut data = pipeline.create_flow_data_with(supplied());
+    data.add_evidence("query.before", "1");
+    assert_eq!(data.supplied_evidence().get("query.before"), Some("1"));
+
+    data.process().unwrap();
+    data.add_evidence("query.after", "2");
+    data.add_evidence("query.sequence", "7");
+
+    assert_eq!(
+        entries(data.supplied_evidence()),
+        pairs(&[
+            ("header.User-Agent", "test"),
+            ("query.Sequence", "5"),
+            ("query.before", "1"),
+        ])
+    );
+    assert_eq!(data.evidence().get("query.after"), Some("2"));
+    assert_eq!(data.evidence().get("query.sequence"), Some("7"));
+}
+
+/// An element after the one that added evidence reads the supplied evidence
+/// without the added values, on its own and in a parallel group, and the
+/// flow data still holds it once the group has finished.
+#[test]
+fn every_later_element_reads_the_supplied_evidence() {
+    const NAMES: &[&str] = &["query.session-id", "query.sequence"];
+    let data = process(
+        Pipeline::builder()
+            .add_element(adder(
+                "adder",
+                &[("query.session-id", "new session"), ("query.sequence", "6")],
+            ))
+            .add_element(element("alone", |data| {
+                record_supplied(data, "alone", NAMES)
+            }))
+            .add_parallel_elements([
+                element("first", |data| record_supplied(data, "first", NAMES)),
+                element("second", |data| record_supplied(data, "second", NAMES)),
+            ]),
+    );
+
+    for key in ["alone", "first", "second"] {
+        assert_eq!(seen(&data, key, "query.session-id"), "absent", "{key}");
+        assert_eq!(seen(&data, key, "query.sequence"), "5", "{key}");
+    }
+    assert_eq!(
+        entries(data.supplied_evidence()),
+        pairs(&[("header.User-Agent", "test"), ("query.Sequence", "5")])
+    );
 }
