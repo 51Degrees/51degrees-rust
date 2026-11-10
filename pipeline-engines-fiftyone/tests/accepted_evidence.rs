@@ -164,9 +164,9 @@ fn evidence_given_by_hand_is_shared_as_before() {
     assert_eq!(documents.len(), 1, "{documents:?}");
     let document = &documents[0];
     for shared in [
-        "<header Name=\"User-Agent\"><![CDATA[Mozilla/5.0]]></header>",
-        "<header Name=\"X-Test\"><![CDATA[test]]></header>",
-        "<cookie Name=\"51D_Test\"><![CDATA[kept]]></cookie>",
+        "<header Name=\"User-Agent\">Mozilla/5.0</header>",
+        "<header Name=\"X-Test\">test</header>",
+        "<cookie Name=\"51D_Test\">kept</cookie>",
     ] {
         assert!(document.contains(shared), "{shared} in {document}");
     }

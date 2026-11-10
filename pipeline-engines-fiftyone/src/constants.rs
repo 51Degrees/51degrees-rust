@@ -101,9 +101,9 @@ pub const FIFTYONE_PREFIX: &str = FIFTYONE_COOKIE_PREFIX;
 /// raw cookie blobs are never shared.
 pub const EVIDENCE_HTTPHEADER_COOKIE_SUFFIX: &str = "cookie";
 
-/// The most UTF-16 code units of an evidence value that usage sharing writes.
-/// A longer value is cut to this length after the text
-/// `[TRUNCATED BY USAGE SHARING]` and a space.
+/// The most characters of an evidence value that usage sharing writes,
+/// counted as Unicode code points before any character is replaced. A longer
+/// value is cut to this length and its entry marked `truncated="true"`.
 pub const SHARE_USAGE_MAX_EVIDENCE_LENGTH: usize = 10_000;
 
 /// The default maximum size of the usage-sharing queue.
