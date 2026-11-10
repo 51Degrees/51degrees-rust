@@ -1347,6 +1347,25 @@ mod tests {
         }
     }
 
+    /// A sink that keeps every batch it is given in a [`Capture`] and fails
+    /// the first, as the built-in transport does for an answer other than
+    /// 200.
+    struct FailsOnce {
+        capture: Capture,
+        failed: AtomicBool,
+    }
+
+    impl UsageSink for FailsOnce {
+        fn receive(&self, batch: UsageBatch) -> std::result::Result<(), SinkError> {
+            self.capture.receive(batch)?;
+            if self.failed.swap(true, Ordering::SeqCst) {
+                Ok(())
+            } else {
+                Err("the endpoint answered 503".into())
+            }
+        }
+    }
+
     /// A sink that reports when a batch arrives, then holds it until it is
     /// released, so a test can keep the queue full.
     struct Gate {
@@ -1836,6 +1855,59 @@ mod tests {
         wait_for(|| element.fail_count() > 0);
         assert_eq!(element.fail_count(), 1);
         assert_eq!(element.success_count(), 0);
+    }
+
+    /// The values of each record in `batch`.
+    fn values(batch: &UsageBatch) -> Vec<String> {
+        batch
+            .records()
+            .iter()
+            .flat_map(|record| record.evidence().map(|(_, _, value)| value.to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn a_batch_whose_send_failed_is_dropped() {
+        let capture = Capture::default();
+        let element = Arc::new(ShareUsageElement::with_sink(
+            ShareUsageConfig::builder()
+                .minimum_entries_per_message(1)
+                .build(),
+            FailsOnce {
+                capture: capture.clone(),
+                failed: AtomicBool::new(false),
+            },
+        ));
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        let process = |agent: &str| {
+            pipeline
+                .create_flow_data_with(user_agent(agent))
+                .process()
+                .unwrap()
+        };
+
+        // The second request is only queued once the first batch has
+        // failed, so the two are never one batch.
+        process("one");
+        wait_for(|| element.fail_count() > 0);
+        process("two");
+        wait_for(|| element.success_count() > 0);
+        assert_eq!(element.fail_count(), 1);
+        assert_eq!(element.success_count(), 1);
+        drop(pipeline);
+        drop(element);
+
+        let batches = capture.batches();
+        assert_eq!(batches.len(), 2, "nothing is sent after the second batch");
+        assert_eq!(values(&batches[0]), ["one"]);
+        assert_eq!(
+            values(&batches[1]),
+            ["two"],
+            "the failed batch is not queued again"
+        );
     }
 
     #[test]
