@@ -65,6 +65,15 @@ const REFUSED: &str = "the new data cannot be used";
 /// What a callback that panics says.
 const PANIC: &str = "a callback that panics";
 
+/// What a refresh of [`FailingEngine`] that panics says.
+const REFRESH_PANIC: &str = "a refresh that panics";
+
+/// The start of the record logged for a refresh that failed.
+const APPLYING: &str = "ERROR An error occurred while applying a data file update to failing.";
+
+/// How much older than the file last applied a file put in place is.
+const OLDER: Duration = Duration::from_secs(60);
+
 /// The start of the record logged for a callback that panicked.
 const PANIC_RECORD: &str = "ERROR An update callback for failing panicked.";
 
@@ -98,19 +107,30 @@ fn take() -> Vec<String> {
     std::mem::take(&mut *LOGGED.lock().unwrap())
 }
 
-/// An engine with one data file whose first refreshes fail and whose later
-/// ones work, counting them all.
+/// An engine with one data file whose first refreshes panic or fail and
+/// whose later ones work, counting them all.
 struct FailingEngine {
     filter: EvidenceKeyFilterWhitelist,
     data_files: Vec<Arc<AspectEngineDataFile>>,
+    panics: AtomicUsize,
     failures: Mutex<usize>,
     refreshes: AtomicUsize,
 }
 
 impl FailingEngine {
-    /// One refresh, which fails while failures are left.
+    /// One refresh, which panics while panics are left, then fails while
+    /// failures are left.
     fn attempt(&self) -> Result<()> {
         self.refreshes.fetch_add(1, Ordering::SeqCst);
+        let panics = self
+            .panics
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok();
+        if panics {
+            panic!("{REFRESH_PANIC}");
+        }
         let fails = {
             let mut left = self.failures.lock().unwrap();
             let fails = *left > 0;
@@ -170,9 +190,20 @@ fn engine(
     configuration: DataFileConfiguration,
     failures: usize,
 ) -> (Arc<FailingEngine>, Arc<dyn OnPremiseAspectEngine>) {
+    panicking(configuration, 0, failures)
+}
+
+/// A [`FailingEngine`] for `configuration` whose first `panics` refreshes
+/// panic and whose next `failures` fail, returned as [`engine`] returns it.
+fn panicking(
+    configuration: DataFileConfiguration,
+    panics: usize,
+    failures: usize,
+) -> (Arc<FailingEngine>, Arc<dyn OnPremiseAspectEngine>) {
     let engine = Arc::new(FailingEngine {
         filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
         data_files: vec![Arc::new(AspectEngineDataFile::new(configuration))],
+        panics: AtomicUsize::new(panics),
         failures: Mutex::new(failures),
         refreshes: AtomicUsize::new(0),
     });
@@ -420,7 +451,12 @@ fn a_watched_file(dir: &Path, refused: &str) {
     });
     drop(service);
 
-    let statuses = statuses(&reports);
+    // One write can raise several events, and each after the first finds
+    // the file no newer, so it is reported as needing no update.
+    let statuses: Vec<AutoUpdateStatus> = statuses(&reports)
+        .into_iter()
+        .filter(|status| *status != AutoUpdateStatus::NotNeeded)
+        .collect();
     assert_eq!(statuses[0], AutoUpdateStatus::RefreshFailed, "{statuses:?}");
     assert!(statuses.len() >= 2, "{statuses:?}");
     assert!(
@@ -431,6 +467,139 @@ fn a_watched_file(dir: &Path, refused: &str) {
     );
     assert_eq!(take(), [refused], "a watched file");
     assert_eq!(engine.refreshes.load(Ordering::SeqCst), statuses.len());
+}
+
+/// A change to a watched file that leaves it no newer than the file last
+/// applied, as when an older copy is put in place, is reported as needing no
+/// update, as .NET reports every event, and the engine is not refreshed.
+fn a_watched_file_that_is_not_newer(dir: &Path) {
+    let path = dir.join("not-newer.dat");
+    std::fs::write(&path, b"version 1").unwrap();
+    let (engine, shared) = engine(DataFileConfiguration::builder(&path).build(), 0);
+    let service = DataUpdateService::new();
+    let reports = reports(&service, &data_file(&shared));
+    service
+        .register(Arc::clone(&shared), data_file(&shared))
+        .unwrap();
+    std::thread::sleep(WATCHER_START);
+
+    std::fs::write(&path, b"version 2").unwrap();
+    wait_for(&reports, |statuses| {
+        statuses.contains(&AutoUpdateStatus::Success)
+    });
+    let applied = std::fs::metadata(&path).unwrap().modified().unwrap();
+    std::thread::sleep(WATCHER_START);
+    let before = statuses(&reports).len();
+
+    // The older copy is written beside the file and renamed over it, so no
+    // event can see a newer modified time.
+    let older = dir.join("not-newer.tmp");
+    std::fs::write(&older, b"version 0").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&older)
+        .unwrap()
+        .set_modified(applied - OLDER)
+        .unwrap();
+    std::fs::rename(&older, &path).unwrap();
+    wait_for(&reports, |statuses| statuses.len() > before);
+    drop(service);
+
+    let statuses = statuses(&reports);
+    assert!(
+        statuses.len() > before,
+        "the change to an older file was not reported: {statuses:?}"
+    );
+    assert!(
+        statuses[before..]
+            .iter()
+            .all(|status| *status == AutoUpdateStatus::NotNeeded),
+        "{statuses:?}"
+    );
+    assert_eq!(engine.refreshes.load(Ordering::SeqCst), 1, "{statuses:?}");
+    assert_eq!(
+        take(),
+        Vec::<String>::new(),
+        "a watched file that is not newer"
+    );
+}
+
+/// A refresh that panics, in a scheduled poll and after a change to a
+/// watched file, is logged and reported as a refresh that failed, and the
+/// poll and the change after it are still applied.
+fn a_refresh_that_panics(dir: &Path) {
+    let url = serve(b"new data");
+    let (engine, shared) = panicking(
+        DataFileConfiguration::memory_builder()
+            .data_update_url(url)
+            .polling_interval_seconds(1)
+            .max_randomisation_seconds(0)
+            .decompress_content(false)
+            .build(),
+        1,
+        0,
+    );
+    let service = DataUpdateService::new();
+    let reports = reports(&service, &data_file(&shared));
+    service
+        .register(Arc::clone(&shared), data_file(&shared))
+        .unwrap();
+    wait_for(&reports, |statuses| statuses.len() >= 2);
+    drop(service);
+    let statuses = statuses(&reports);
+    assert!(statuses.len() >= 2, "a scheduled poll: {statuses:?}");
+    assert_eq!(
+        statuses[..2],
+        [AutoUpdateStatus::RefreshFailed, AutoUpdateStatus::Success],
+        "a scheduled poll"
+    );
+    assert!(engine.refreshes.load(Ordering::SeqCst) >= 2);
+    assert_panic_logged("a scheduled poll");
+
+    let path = dir.join("panics.dat");
+    std::fs::write(&path, b"version 1").unwrap();
+    let (engine, shared) = panicking(DataFileConfiguration::builder(&path).build(), 1, 0);
+    let service = DataUpdateService::new();
+    let reports = reports(&service, &data_file(&shared));
+    service
+        .register(Arc::clone(&shared), data_file(&shared))
+        .unwrap();
+    std::thread::sleep(WATCHER_START);
+    std::fs::write(&path, b"version 2").unwrap();
+    wait_for(&reports, |statuses| !statuses.is_empty());
+    std::thread::sleep(NEXT_WRITE);
+    std::fs::write(&path, b"version 3").unwrap();
+    wait_for(&reports, |statuses| {
+        statuses.last() == Some(&AutoUpdateStatus::Success)
+    });
+    drop(service);
+    let statuses: Vec<AutoUpdateStatus> = statuses(&reports)
+        .into_iter()
+        .filter(|status| *status != AutoUpdateStatus::NotNeeded)
+        .collect();
+    assert_eq!(
+        statuses.first(),
+        Some(&AutoUpdateStatus::RefreshFailed),
+        "a watched file: {statuses:?}"
+    );
+    assert_eq!(
+        statuses.last(),
+        Some(&AutoUpdateStatus::Success),
+        "a watched file: {statuses:?}"
+    );
+    assert_eq!(engine.refreshes.load(Ordering::SeqCst), statuses.len());
+    assert_panic_logged("a watched file");
+}
+
+/// The records logged since the last call are one refresh that failed,
+/// naming the panic.
+fn assert_panic_logged(route: &str) {
+    let records = take();
+    assert_eq!(records.len(), 1, "{route}: {records:?}");
+    assert!(
+        records[0].starts_with(APPLYING) && records[0].contains(REFRESH_PANIC),
+        "{route}: {records:?}"
+    );
 }
 
 /// One test, so the records cannot come from another test running at the
@@ -455,6 +624,8 @@ fn a_refresh_that_fails_is_logged_and_reported_as_a_failure() {
     the_update_on_start_up(&refused);
     a_scheduled_poll(&refused);
     a_watched_file(&dir, &refused);
+    a_watched_file_that_is_not_newer(&dir);
+    a_refresh_that_panics(&dir);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
