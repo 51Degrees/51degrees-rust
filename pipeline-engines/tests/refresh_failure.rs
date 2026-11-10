@@ -591,6 +591,56 @@ fn a_refresh_that_panics(dir: &Path) {
     assert_panic_logged("a watched file");
 }
 
+/// What a callback was told, as whether a check started or ended and
+/// whether it named the data file expected.
+type Told = Arc<Mutex<Vec<(&'static str, bool)>>>;
+
+/// Each check tells the callbacks added with `on_update_started` before
+/// those added with `on_update_complete`, naming the same data file, as
+/// .NET raises `CheckForUpdateStarted` before `CheckForUpdateComplete`.
+fn a_check_is_told_when_it_starts(dir: &Path) {
+    let path = dir.join("started.dat");
+    std::fs::write(&path, b"version 1").unwrap();
+    let (_engine, shared) = engine(
+        DataFileConfiguration::builder(&path)
+            .automatic_updates_enabled(false)
+            .build(),
+        0,
+    );
+    let expected = data_file(&shared);
+    let service = DataUpdateService::new();
+    let told = Told::default();
+    let started = Arc::clone(&told);
+    let named = Arc::clone(&expected);
+    service.on_update_started(move |report| {
+        let named = Arc::ptr_eq(&report.data_file, &named);
+        started.lock().unwrap().push(("started", named));
+    });
+    let complete = Arc::clone(&told);
+    let named = Arc::clone(&expected);
+    service.on_update_complete(move |report| {
+        let named = Arc::ptr_eq(&report.data_file, &named);
+        complete.lock().unwrap().push(("complete", named));
+    });
+
+    service.check_for_update(&shared, None).unwrap();
+    service
+        .update_from_memory(&shared, None, b"new data")
+        .unwrap();
+    drop(service);
+
+    assert_eq!(
+        *told.lock().unwrap(),
+        [
+            ("started", true),
+            ("complete", true),
+            ("started", true),
+            ("complete", true)
+        ]
+    );
+    assert_eq!(take(), Vec::<String>::new(), "a check that starts");
+}
+
 /// The records logged since the last call are one refresh that failed,
 /// naming the panic.
 fn assert_panic_logged(route: &str) {
@@ -626,6 +676,7 @@ fn a_refresh_that_fails_is_logged_and_reported_as_a_failure() {
     a_watched_file(&dir, &refused);
     a_watched_file_that_is_not_newer(&dir);
     a_refresh_that_panics(&dir);
+    a_check_is_told_when_it_starts(&dir);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
