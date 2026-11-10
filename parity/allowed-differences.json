@@ -129,6 +129,14 @@
     "reason": "The .NET 4.5.129 package embeds its template with CRLF line endings, so each line of its script that comes from the template ends with CRLF. The template the specification names and the copy the crates bundle end each line with LF, and the crates write no CRLF."
   },
   {
+    "path": "usage*",
+    "kind": "text",
+    "cases": ["usage-value-replaced-and-cut"],
+    "dotnet": {"pattern": ["*<header Name=\"X-Long\">[TRUNCATED BY USAGE SHARING] é中\\x0001&lt;&amp;]]&gt;aaaa*"]},
+    "rust": {"pattern": ["*<header escaped=\"true\" truncated=\"true\" Name=\"X-Long\">é中\\x0001&lt;&amp;]]&gt;aaaa*"]},
+    "reason": "The crates write the usage record as the Processing section of usage-sharing-element.md on specifications rc asks (https://github.com/51Degrees/specifications/blob/3a677b56cc03afc2b14b8a2b254ed542a5f2b1bc/pipeline-specification/pipeline-elements/usage-sharing-element.md#processing), so a value longer than 10,000 code points is cut to 10,000 with nothing put in front of it and its entry marked truncated=\"true\", and an entry holding a character XML 1.0 does not allow is marked escaped=\"true\". https://github.com/51Degrees/specifications/pull/118 records that .NET keeps its own form, which cuts the value at 10,000 UTF-16 units after the text [TRUNCATED BY USAGE SHARING] and a space, and adds BadSchema to the end of the record. The comparison reads .NET's CDATA sections as text, so every other record is the same on both sides, and this case differs from the long value on."
+  },
+  {
     "path": "properties.agent-signature.agentsignaturecreated",
     "kind": "type",
     "reason": "The crates' property values have no type for a point in time, so the agent signature element gives the time as RFC 3339 text, the form .NET's JSON builder writes, where .NET gives a DateTimeOffset. The values are still compared, and are the same."
