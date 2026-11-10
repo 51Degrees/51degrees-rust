@@ -23,6 +23,7 @@
 //! The profiles that hold a value of a property, looked up in the data set
 //! the engine has loaded.
 
+use std::os::raw::c_int;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -178,6 +179,7 @@ impl ProfileReader for LoadedProfiles {
                 &error,
                 &self.warned,
                 &self.loaded.readable,
+                required_index(&self.loaded),
                 &self.loaded.missing,
             )
         })
@@ -195,6 +197,7 @@ fn unread_profile(
     error: &Error,
     warned: &AtomicBool,
     readable: &Arc<ReadableProperties>,
+    required_index: RequiredIndex,
     missing: &Arc<MissingPropertySource>,
 ) -> DeviceDataBase {
     let level = if warned.swap(true, Ordering::Relaxed) {
@@ -214,6 +217,7 @@ fn unread_profile(
         .add_missing_property_source(Arc::clone(missing));
     let mut device = device.with_reader(UnreadProfile {
         readable: Arc::clone(readable),
+        required_index,
         reason: error.to_string(),
     });
     device.insert(PROFILE_ID_PROPERTY_NAME, id.to_string());
@@ -224,7 +228,19 @@ fn unread_profile(
 /// any of its properties.
 struct UnreadProfile {
     readable: Arc<ReadableProperties>,
+    required_index: RequiredIndex,
     reason: String,
+}
+
+/// Gives the position of a data file property, as the C library finds its
+/// name.
+type RequiredIndex = Box<dyn Fn(&str) -> Option<c_int> + Send + Sync>;
+
+/// Finds a data file property's position in `loaded`, which the function
+/// holds, so the data set and its copy of the data file are freed together.
+fn required_index(loaded: &Arc<LoadedDataSet>) -> RequiredIndex {
+    let loaded = Arc::clone(loaded);
+    Box::new(move |name: &str| loaded.manager.required_property_index(name))
 }
 
 impl DevicePropertyReader for UnreadProfile {
@@ -233,7 +249,8 @@ impl DevicePropertyReader for UnreadProfile {
     }
 
     fn position(&self, name: &str) -> Option<usize> {
-        self.readable.by_name.get(name).copied()
+        self.readable
+            .position(name, |name| (self.required_index)(name))
     }
 
     fn read_property(&self, _position: usize) -> ReadOutcome {
@@ -315,6 +332,11 @@ mod tests {
         Arc::new(ReadableProperties::new(&[]))
     }
 
+    /// Finds no data file property, as for a data set with none.
+    fn no_lookup() -> RequiredIndex {
+        Box::new(|_: &str| None)
+    }
+
     fn missing() -> Arc<MissingPropertySource> {
         Arc::new(MissingPropertySource::new(
             DEVICE_ELEMENT_DATA_KEY,
@@ -330,6 +352,7 @@ mod tests {
         let readable = metrics_only();
         let reader = UnreadProfile {
             readable: Arc::clone(&readable),
+            required_index: no_lookup(),
             reason: "the reason".to_owned(),
         };
         assert!(!reader.property_names().is_empty());
@@ -349,7 +372,14 @@ mod tests {
     fn a_profile_that_cannot_be_read_holds_its_id_and_gives_the_error() {
         let error = allocation_failure();
         let warned = AtomicBool::new(false);
-        let device = unread_profile(42, &error, &warned, &metrics_only(), &missing());
+        let device = unread_profile(
+            42,
+            &error,
+            &warned,
+            &metrics_only(),
+            no_lookup(),
+            &missing(),
+        );
         assert_eq!(
             device.get(PROFILE_ID_PROPERTY_NAME).ok(),
             Some(PropertyValue::String("42".to_owned()))
@@ -375,8 +405,22 @@ mod tests {
 
         // One lookup, whose reader shares one flag, fails to read two ids.
         let warned = AtomicBool::new(false);
-        let _first = unread_profile(42, &error, &warned, &metrics_only(), &missing());
-        let _second = unread_profile(43, &error, &warned, &metrics_only(), &missing());
+        let _first = unread_profile(
+            42,
+            &error,
+            &warned,
+            &metrics_only(),
+            no_lookup(),
+            &missing(),
+        );
+        let _second = unread_profile(
+            43,
+            &error,
+            &warned,
+            &metrics_only(),
+            no_lookup(),
+            &missing(),
+        );
         let logged = take_logged_here();
         assert_eq!(logged.len(), 2, "{logged:?}");
         let (warning, debug) = (&logged[0], &logged[1]);
@@ -393,6 +437,7 @@ mod tests {
             &error,
             &AtomicBool::new(false),
             &metrics_only(),
+            no_lookup(),
             &missing(),
         );
         let logged = take_logged_here();

@@ -818,7 +818,9 @@ struct LoadedDataSet {
 /// spelling, so a property named in another case is read under that spelling.
 ///
 /// A lookup also reads [`ADDED_PROPERTIES`], after the data file's, which
-/// hold the address looked up rather than anything in the data file.
+/// hold the address looked up rather than anything in the data file. A name
+/// is found by asking the C library for its position, so no map from names
+/// is kept here.
 struct ReadableNames {
     /// Each property's name in the data file's spelling.
     names: Vec<String>,
@@ -830,8 +832,9 @@ struct ReadableNames {
     /// Each property's type, as the engine's metadata gives it from the data
     /// file.
     value_types: Vec<PropertyValueType>,
-    /// The position of each property in `lowercase_names`, by lowercase name.
-    by_name: HashMap<String, usize>,
+    /// The place in `names` of each data file property, at the position the
+    /// C library gives its name.
+    places: Vec<Option<usize>>,
 }
 
 impl ReadableNames {
@@ -852,17 +855,38 @@ impl ReadableNames {
             .chain(ADDED_PROPERTIES.iter().map(|(name, _)| *name))
             .map(str::to_lowercase)
             .collect();
+        let mut places = Vec::new();
+        for (place, index) in indexes.iter().enumerate() {
+            let Ok(index) = usize::try_from(*index) else {
+                continue;
+            };
+            if places.len() <= index {
+                places.resize(index + 1, None);
+            }
+            places[index] = Some(place);
+        }
         ReadableNames {
-            by_name: lowercase_names
-                .iter()
-                .enumerate()
-                .map(|(position, name)| (name.clone(), position))
-                .collect(),
             names,
             lowercase_names,
             indexes,
             value_types,
+            places,
         }
+    }
+
+    /// The place of the added property named, in any case.
+    fn added_position(&self, name: &str) -> Option<usize> {
+        ADDED_PROPERTIES
+            .iter()
+            .position(|(added, _)| added.eq_ignore_ascii_case(name))
+            .map(|offset| self.names.len() + offset)
+    }
+
+    /// The place of the data file property at `index`, the position the C
+    /// library gave its name.
+    fn file_position(&self, index: c_int) -> Option<usize> {
+        let index = usize::try_from(index).ok()?;
+        self.places.get(index).copied().flatten()
     }
 }
 
@@ -884,8 +908,14 @@ impl IpIntelligencePropertyReader for LookupReader {
         &self.loaded.readable.lowercase_names
     }
 
+    /// `Ip` and `IpV6` are found by their names. Any other name is found by
+    /// the C library, ignoring case, and its position gives the place.
     fn position(&self, name: &str) -> Option<usize> {
-        self.loaded.readable.by_name.get(name).copied()
+        let readable = &self.loaded.readable;
+        readable.added_position(name).or_else(|| {
+            let index = self.loaded.manager.required_property_index(name)?;
+            readable.file_position(index)
+        })
     }
 
     fn read_property(
