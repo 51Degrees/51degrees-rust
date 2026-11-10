@@ -223,8 +223,8 @@ pub struct ConfigDeviceDetection {
     /// and in the C library's [header length limit] documentation, which
     /// also gives the memory a larger limit costs.
     ///
-    /// [the default is defined]: https://github.com/51Degrees/51degrees-cxx/blob/e866f6d3cea936587790f87967eff7863778b30e/src/dd/config-dd.h#L100-L106
-    /// [header length limit]: https://github.com/51Degrees/51degrees-cxx/blob/e866f6d3cea936587790f87967eff7863778b30e/docs/dd/README.md#header-length-limit
+    /// [the default is defined]: https://github.com/51Degrees/51degrees-cxx/blob/cfad8978827292b97ad08f306891edea09ece304/src/dd/config-dd.h#L100-L107
+    /// [header length limit]: https://github.com/51Degrees/51degrees-cxx/blob/cfad8978827292b97ad08f306891edea09ece304/docs/dd/README.md#header-length-limit
     pub max_matched_user_agent_length: usize,
     /// True if a result with no matched node should still be considered valid.
     pub allow_unmatched: bool,
