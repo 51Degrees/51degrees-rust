@@ -158,59 +158,6 @@ int fiftyoneDegreesShimHashDataSetGetRequiredPropertyIndexFromName(
 }
 
 /*
- * Writes the count of HTTP header evidence keys in the data set to *count and
- * returns a pointer that is non-null on success. The header names themselves
- * are read one at a time with fiftyoneDegreesShimHashGetEvidenceKey to avoid
- * exposing the headers collection layout.
- */
-uint32_t fiftyoneDegreesShimHashGetEvidenceKeyCount(
-    fiftyoneDegreesResourceManager *manager) {
-    fiftyoneDegreesDataSetHash *dataSet =
-        fiftyoneDegreesDataSetHashGet(manager);
-    if (dataSet == NULL) {
-        return 0;
-    }
-    uint32_t count = 0;
-    if (dataSet->b.b.uniqueHeaders != NULL) {
-        count = dataSet->b.b.uniqueHeaders->count;
-    }
-    fiftyoneDegreesDataSetHashRelease(dataSet);
-    return count;
-}
-
-/*
- * Writes the name of the HTTP header evidence key at `headerIndex` into
- * `buffer` as a null terminated string and returns the number of characters
- * written, excluding the terminator. Returns zero when the index is out of
- * range, the buffer is too small or no data set is available.
- */
-size_t fiftyoneDegreesShimHashGetEvidenceKey(
-    fiftyoneDegreesResourceManager *manager,
-    uint32_t headerIndex,
-    char *buffer,
-    size_t length) {
-    if (buffer != NULL && length > 0) {
-        buffer[0] = '\0';
-    }
-
-    fiftyoneDegreesDataSetHash *dataSet =
-        fiftyoneDegreesDataSetHashGet(manager);
-    if (dataSet == NULL) {
-        return 0;
-    }
-
-    size_t written = 0;
-    fiftyoneDegreesHeaders *headers = dataSet->b.b.uniqueHeaders;
-    if (headers != NULL && headerIndex < headers->count) {
-        const char *value = headers->items[headerIndex].name;
-        written = copy_bounded(buffer, length, value);
-    }
-
-    fiftyoneDegreesDataSetHashRelease(dataSet);
-    return written;
-}
-
-/*
  * Writes the data set's name into `buffer` as a null terminated string and
  * returns the number of characters written, excluding the terminator. The name
  * is the data file's tier (for example "Lite", "Enterprise" or "TAC"), read
@@ -250,139 +197,11 @@ size_t fiftyoneDegreesShimHashGetDataSetName(
 }
 
 /*
- * Writes the year, month and day of the published date (`next` zero) or the
- * next update date (`next` not zero) in the data file header. Any of the
- * output pointers may be NULL.
- */
-static int get_header_date(
-    fiftyoneDegreesResourceManager *manager,
-    int next,
-    int32_t *year,
-    int32_t *month,
-    int32_t *day) {
-    fiftyoneDegreesDataSetHash *dataSet =
-        fiftyoneDegreesDataSetHashGet(manager);
-    if (dataSet == NULL) {
-        return 0;
-    }
-    const fiftyoneDegreesDate *date = next
-        ? &dataSet->header.nextUpdate
-        : &dataSet->header.published;
-    if (year != NULL) {
-        *year = (int32_t)date->year;
-    }
-    if (month != NULL) {
-        *month = (int32_t)date->month;
-    }
-    if (day != NULL) {
-        *day = (int32_t)date->day;
-    }
-    fiftyoneDegreesDataSetHashRelease(dataSet);
-    return 1;
-}
-
-/*
- * Writes the date the data file was published, from its header, into `*year`,
- * `*month` and `*day` and returns 1, or 0 when no data set is available.
- */
-int fiftyoneDegreesShimHashGetDataSetPublished(
-    fiftyoneDegreesResourceManager *manager,
-    int32_t *year,
-    int32_t *month,
-    int32_t *day) {
-    return get_header_date(manager, 0, year, month, day);
-}
-
-/*
- * Writes the date the next data file is expected, from the data file header,
- * into `*year`, `*month` and `*day` and returns 1, or 0 when no data set is
- * available.
- */
-int fiftyoneDegreesShimHashGetDataSetNextUpdate(
-    fiftyoneDegreesResourceManager *manager,
-    int32_t *year,
-    int32_t *month,
-    int32_t *day) {
-    return get_header_date(manager, 1, year, month, day);
-}
-
-/*
  * Returns the size of a Hash data file's header in bytes, being how much of a
  * data file the C library compares to find a copy of it to reuse.
  */
 size_t fiftyoneDegreesShimHashGetHeaderSize(void) {
     return sizeof(fiftyoneDegreesDataSetHashHeader);
-}
-
-/*
- * Walks the graph of each component the results have not yet walked, and
- * returns 1, or 0 when a walk fails. The walk of a component's graph sets the
- * match metrics and the matched User-Agent of its result. Unless the data set
- * was created with its properties named, a component's graph is walked only
- * when one of its properties is first read, so the readers of the results
- * below call this first. It walks nothing when no graph is left to walk.
- */
-static int evaluate_all(fiftyoneDegreesResultsHash *results) {
-    FIFTYONE_DEGREES_EXCEPTION_CREATE;
-    fiftyoneDegreesResultsEvaluateAll(&results->b.b, exception);
-    return FIFTYONE_DEGREES_EXCEPTION_OKAY ? 1 : 0;
-}
-
-/*
- * Reads the match metrics of the results into the output parameters and
- * returns 1, or returns 0 when `results` is NULL or a graph cannot be walked.
- * The results hold one result for each component, such as the hardware or the
- * browser, each from the header that matched it. As in the C++ ResultsHash,
- * `method` receives the highest fiftyoneDegreesHashMatchMethod of any result
- * (0 None, 1 Performance, 2 Combined, 3 Predictive), and the difference,
- * drift, iterations and matched-node count are summed across the results.
- * With no results every metric is zero, which is the method None. The metrics
- * are set by the walk of each component's graph and live on the results, not
- * in the data file's property values, so they are read here rather than
- * through the property value reader. Any output pointer may be null to skip
- * that metric.
- */
-int fiftyoneDegreesShimHashGetResultMetrics(
-    fiftyoneDegreesResultsHash *results,
-    int32_t *method,
-    int32_t *difference,
-    int32_t *drift,
-    int32_t *iterations,
-    int32_t *matchedNodes) {
-    if (results == NULL || evaluate_all(results) == 0) {
-        return 0;
-    }
-    int32_t highestMethod = 0;
-    int32_t totalDifference = 0;
-    int32_t totalDrift = 0;
-    int32_t totalIterations = 0;
-    int32_t totalMatchedNodes = 0;
-    for (uint32_t i = 0; i < results->count; i++) {
-        fiftyoneDegreesResultHash *result = &results->items[i];
-        if ((int32_t)result->method > highestMethod) {
-            highestMethod = (int32_t)result->method;
-        }
-        totalDifference += result->difference;
-        totalDrift += result->drift;
-        totalIterations += result->iterations;
-        totalMatchedNodes += result->matchedNodes;
-    }
-    if (method != NULL) {
-        *method = highestMethod;
-    }
-    if (difference != NULL) {
-        *difference = totalDifference;
-    }
-    if (drift != NULL) {
-        *drift = totalDrift;
-    }
-    if (iterations != NULL) {
-        *iterations = totalIterations;
-    }
-    if (matchedNodes != NULL) {
-        *matchedNodes = totalMatchedNodes;
-    }
-    return 1;
 }
 
 /*
@@ -418,99 +237,6 @@ uint32_t fiftyoneDegreesShimHashGetPendingGraphCount(
 }
 
 /*
- * Reads the match metrics of the single result at `resultIndex` into the
- * output parameters and returns 1, or returns 0 when the index is out of range
- * or a graph cannot be walked. Any output pointer may be null to skip that
- * metric.
- */
-int fiftyoneDegreesShimHashGetResultMetricsAt(
-    fiftyoneDegreesResultsHash *results,
-    uint32_t resultIndex,
-    int32_t *method,
-    int32_t *difference,
-    int32_t *drift,
-    int32_t *iterations,
-    int32_t *matchedNodes) {
-    if (results == NULL || resultIndex >= results->count ||
-        evaluate_all(results) == 0) {
-        return 0;
-    }
-    fiftyoneDegreesResultHash *result = &results->items[resultIndex];
-    if (method != NULL) {
-        *method = (int32_t)result->method;
-    }
-    if (difference != NULL) {
-        *difference = result->difference;
-    }
-    if (drift != NULL) {
-        *drift = result->drift;
-    }
-    if (iterations != NULL) {
-        *iterations = result->iterations;
-    }
-    if (matchedNodes != NULL) {
-        *matchedNodes = result->matchedNodes;
-    }
-    return 1;
-}
-
-/*
- * Writes the matched User-Agent of the result at `resultIndex` into `buffer` as
- * a null terminated string and returns the number of characters written,
- * excluding the terminator. Returns zero when the index is out of range, a
- * graph cannot be walked or the result records no matched User-Agent, which it
- * does only when the updateMatchedUserAgent option is on, and cuts the value
- * short when the buffer is too small.
- */
-size_t fiftyoneDegreesShimHashGetMatchedUserAgent(
-    fiftyoneDegreesResultsHash *results,
-    uint32_t resultIndex,
-    char *buffer,
-    size_t length) {
-    if (buffer != NULL && length > 0) {
-        buffer[0] = '\0';
-    }
-    if (results == NULL || resultIndex >= results->count ||
-        evaluate_all(results) == 0) {
-        return 0;
-    }
-    return copy_bounded(
-        buffer,
-        length,
-        results->items[resultIndex].b.matchedUserAgent);
-}
-
-/*
- * Returns the number of handles in the file pool of the data set managed by
- * `manager` when any of its collections reads from the data file after it is
- * loaded, or zero when the whole data set is held in memory. A read that
- * finds every handle in use fails rather than waiting for one, so this is
- * how many calls can read the data file at once.
- */
-uint16_t fiftyoneDegreesShimHashGetFileHandleCount(
-    fiftyoneDegreesResourceManager *manager) {
-    fiftyoneDegreesDataSetHash *dataSet =
-        fiftyoneDegreesDataSetHashGet(manager);
-    if (dataSet == NULL) {
-        return 0;
-    }
-    const fiftyoneDegreesConfigHash *config = &dataSet->config;
-    const bool readsFile = dataSet->b.b.isInMemory == false && (
-        config->strings.loaded == false ||
-        config->components.loaded == false ||
-        config->maps.loaded == false ||
-        config->properties.loaded == false ||
-        config->values.loaded == false ||
-        config->profiles.loaded == false ||
-        config->rootNodes.loaded == false ||
-        config->nodes.loaded == false ||
-        config->profileOffsets.loaded == false);
-    const uint16_t count = readsFile ? dataSet->b.b.filePool.pool.count : 0;
-    fiftyoneDegreesDataSetHashRelease(dataSet);
-    return count;
-}
-
-/*
  * Returns the number of handles to the data file that the data set managed
  * by `manager` opened when it loaded, which stay open until the data set is
  * freed. Every configuration that does not load the whole file into memory
@@ -527,6 +253,37 @@ uint16_t fiftyoneDegreesShimHashGetFilePoolSize(
     const uint16_t count = dataSet->b.b.filePool.pool.count;
     fiftyoneDegreesDataSetHashRelease(dataSet);
     return count;
+}
+
+/*
+ * Returns the size of fiftyoneDegreesConfigHash, for a test that the Rust
+ * declaration of the structure has the same size.
+ */
+size_t fiftyoneDegreesShimHashGetConfigSize(void) {
+    return sizeof(fiftyoneDegreesConfigHash);
+}
+
+/*
+ * Sets `strings` and `values` to the type names of the strings and values
+ * collections of the data set managed by `manager`, and returns 1, or returns
+ * 0 when there is no data set. "CollectionMemory" holds the whole collection
+ * in memory, and "CollectionHeld" holds only what the required properties
+ * read. The names are constants of the C library, so they outlive the data
+ * set.
+ */
+int fiftyoneDegreesShimHashGetCollectionTypeNames(
+    fiftyoneDegreesResourceManager *manager,
+    const char **strings,
+    const char **values) {
+    fiftyoneDegreesDataSetHash *dataSet =
+        fiftyoneDegreesDataSetHashGet(manager);
+    if (dataSet == NULL) {
+        return 0;
+    }
+    *strings = dataSet->strings->typeName;
+    *values = dataSet->values->typeName;
+    fiftyoneDegreesDataSetHashRelease(dataSet);
+    return 1;
 }
 
 /*
@@ -791,8 +548,8 @@ static int find_value(
     const char *name,
     long *index) {
     *index = -1;
-    // The search reads every place between the two value indexes, so it runs
-    // only when value_count finds them all in the values collection.
+    // The search can read any place between the two value indexes, so it
+    // runs only when value_count finds them all in the values collection.
     if (value_count(dataSet, property) == 0) {
         return 1;
     }
@@ -819,30 +576,34 @@ static int find_value(
  * Sets `number` to the place of `property`'s default value among its values,
  * or to -1 when it has none, and returns 1, or returns 0 when a value or a
  * string cannot be read. As the C++ MetaDataHash::getDefaultValueForProperty
- * finds it, the default is the property's own value with the name of the
- * value at the default value index, or with an empty name when there is no
- * index. So a property with no index can have a default, and one whose index
- * names none of its values has none.
+ * finds it, the default is the property's own value with the name
+ * fiftyoneDegreesValueGetDefaultText gives, being the name of the value at
+ * the default value index, or an empty name when there is no index. So a
+ * property with no index can have a default, and one whose index names none
+ * of its values has none.
  */
 static int default_value_number(
     fiftyoneDegreesDataSetHash *dataSet,
     const fiftyoneDegreesProperty *property,
     int32_t *number) {
     *number = -1;
-    char *copy = NULL;
-    const char *name = "";
-    if (property->defaultValueIndex != UINT32_MAX) {
-        copy = copy_value_name(dataSet, property->defaultValueIndex);
-        if (copy == NULL) {
-            return 0;
-        }
-        name = copy;
+    FIFTYONE_DEGREES_EXCEPTION_CREATE;
+    // No property types, as a Hash data set stores every value as a string,
+    // and no buffer, so the name is always in memory freed below.
+    char *name = fiftyoneDegreesValueGetDefaultText(
+        dataSet->values,
+        dataSet->strings,
+        NULL,
+        property,
+        NULL,
+        0,
+        exception);
+    if (name == NULL) {
+        return 0;
     }
     long index = -1;
     const int found = find_value(dataSet, property, name, &index);
-    if (copy != NULL) {
-        fiftyoneDegreesFree(copy);
-    }
+    fiftyoneDegreesFree(name);
     if (found == 0) {
         return 0;
     }
@@ -924,8 +685,8 @@ int fiftyoneDegreesShimHashGetDataFileProperty(
         *showValues = property->showValues;
         *valueCount = value_count(dataSet, property);
         *mapCount = property->mapCount;
-        // A copy, so only one item is held at a time while the default value
-        // is found.
+        // A copy, so the property is released before its default value is
+        // found.
         const fiftyoneDegreesProperty copy = *property;
         FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->properties, &item);
         result = result == 1 &&
@@ -1203,7 +964,7 @@ int fiftyoneDegreesShimHashFindDataFilePropertyValue(
     const fiftyoneDegreesProperty *held =
         get_property(dataSet, propertyIndex, &item);
     if (held != NULL) {
-        // A copy, so only one item is held at a time during the search.
+        // A copy, so the property is released before the search starts.
         const fiftyoneDegreesProperty property = *held;
         FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->properties, &item);
         long index = -1;

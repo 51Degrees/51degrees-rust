@@ -82,8 +82,12 @@
 //! not return gives the reason the
 //! [missing properties specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#missing-properties)
 //! names. A read of the device data also logs a warning, as .NET's cloud data
-//! does. A read of a hardware profile logs nothing, because .NET builds each
-//! profile with no logger.
+//! does, unless the resource key lacks the device product. The engine logs a
+//! missing product once, as a warning, when it reads the key's products, as
+//! the
+//! [cloud aspect engine specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/cloud-aspect-engine.md#start-up-activity)
+//! says, so a read logs nothing more. A read of a hardware profile logs
+//! nothing, because .NET builds each profile with no logger.
 //! [`ElementData::has_property`](fiftyone_pipeline_core::ElementData::has_property)
 //! answers `false` for such a property, so an element that asks first, such
 //! as Set Headers, can tell it from one the response gave as null. With a

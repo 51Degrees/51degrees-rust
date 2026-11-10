@@ -22,19 +22,25 @@
 
 //! What a read of a property that aspect data does not hold logs. .NET's
 //! aspect data logs one warning for each such read, naming the reason, unless
-//! it was built with no logger. Kept in its own test binary because a logger
-//! is installed once for the whole process, and in one test so the records it
-//! reads are its own.
+//! it was built with no logger. A read for a product the resource key lacks
+//! logs nothing, because the cloud engine logs the missing product once.
+//! Kept in its own test binary because a logger is installed once for the
+//! whole process, and each test holds [`SERIAL`] so the records it reads are
+//! its own.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use fiftyone_pipeline_core::{ElementData, PropertyValueType};
 use fiftyone_pipeline_engines::{
-    AspectDataBase, AspectPropertyMetaData, EngineDeployment, MissingPropertySource,
+    AspectDataBase, AspectPropertyMetaData, EngineDeployment, MissingPropertyReason,
+    MissingPropertySource,
 };
 
 /// Log records at warning level or above, as "LEVEL message".
 static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Held by each test for its whole run.
+static SERIAL: Mutex<()> = Mutex::new(());
 
 /// Keeps every record at warning level or above in [`LOGGED`].
 struct TestLogger;
@@ -58,9 +64,32 @@ impl log::Log for TestLogger {
 
 static LOGGER: TestLogger = TestLogger;
 
+/// Install the logger, wait for any other test to finish and clear the
+/// records it left.
+fn start() -> MutexGuard<'static, ()> {
+    let _ = log::set_logger(&LOGGER);
+    log::set_max_level(log::LevelFilter::Warn);
+    let guard = SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    take();
+    guard
+}
+
 /// The records logged since the last call.
 fn take() -> Vec<String> {
     std::mem::take(&mut *LOGGED.lock().unwrap())
+}
+
+/// A cloud engine's details, granting `properties` for the device product.
+fn cloud_source(properties: Vec<AspectPropertyMetaData>) -> Arc<MissingPropertySource> {
+    Arc::new(MissingPropertySource::new(
+        "device",
+        "TestCloudEngine",
+        EngineDeployment::Cloud,
+        "",
+        properties,
+    ))
 }
 
 /// An on-premise engine using the Lite tier, whose metadata lists IsMobile
@@ -80,9 +109,7 @@ fn source() -> Arc<MissingPropertySource> {
 
 #[test]
 fn each_read_of_a_missing_property_logs_one_warning() {
-    let _ = log::set_logger(&LOGGER);
-    log::set_max_level(log::LevelFilter::Warn);
-    take();
+    let _serial = start();
 
     let mut data = AspectDataBase::new("device").set("PlatformName", "iOS");
     assert!(data.get("IsMobile").is_err());
@@ -121,4 +148,51 @@ fn each_read_of_a_missing_property_logs_one_warning() {
         Some(expected)
     );
     assert_eq!(take(), Vec::<String>::new(), "with logging stopped");
+}
+
+/// A cloud engine whose resource key holds no product for its data key
+/// lists no properties and logs the missing product once itself, so a read
+/// of one of its properties gives the reason and logs nothing, as the cloud
+/// aspect engine specification says. A property missing for any other
+/// reason still logs a warning on each read.
+#[test]
+fn a_read_for_a_product_the_key_lacks_logs_nothing() {
+    let _serial = start();
+
+    let mut lacking = AspectDataBase::new("device");
+    lacking.add_missing_property_source(cloud_source(Vec::new()));
+    let expected = lacking.missing_property_reason("IsMobile").unwrap();
+    assert_eq!(
+        expected.reason,
+        MissingPropertyReason::ProductNotAccessibleWithResourceKey
+    );
+    for _ in 0..3 {
+        assert_eq!(
+            lacking.get("IsMobile").unwrap_err().message,
+            expected.description
+        );
+        assert_eq!(
+            lacking.missing_property("IsMobile", "AspectDataBase"),
+            Some(expected.clone())
+        );
+    }
+    assert_eq!(take(), Vec::<String>::new(), "a product the key lacks");
+
+    let mut granted = AspectDataBase::new("device");
+    granted.add_missing_property_source(cloud_source(vec![AspectPropertyMetaData::new(
+        "IsMobile",
+        "device",
+        PropertyValueType::Bool,
+    )]));
+    assert!(granted.get("BrowserName").is_err());
+    assert!(granted.get("BrowserName").is_err());
+    assert_eq!(
+        take(),
+        vec![
+            "WARN Property 'BrowserName' missing from aspect data 'AspectDataBase'. \
+             PropertyNotAccessibleWithResourceKey"
+                .to_owned();
+            2
+        ]
+    );
 }

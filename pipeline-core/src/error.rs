@@ -314,7 +314,7 @@ impl fmt::Debug for NoValueError {
 /// Debug is written by hand for the same reason as [`NoValueError`], being that
 /// `unwrap` and `expect` print `Debug` and a message can carry a credential.
 /// The shape matches what the derive would print, so nothing a reader relies on
-/// changes apart from the removed values.
+/// changes apart from the masked values.
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -371,7 +371,7 @@ impl Error {
 
     /// The error's message without the words naming its kind, as .NET's
     /// `Exception.Message` and Java's `getMessage` give it, with credentials
-    /// removed as they are from the display. The JSON builder writes this in
+    /// masked as they are in the display. The JSON builder writes this in
     /// `errors`.
     ///
     /// A missing property and an aggregate give their display, which is
@@ -390,7 +390,7 @@ impl Error {
 }
 
 /// Each error of an aggregate in brackets, for the aggregate's message. Every
-/// error removes credentials from its own text.
+/// error masks the credentials in its own text.
 fn describe_each(errors: &[FlowError]) -> String {
     errors.iter().map(|error| format!(" ({error})")).collect()
 }

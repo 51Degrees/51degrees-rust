@@ -100,7 +100,7 @@ use crate::usage_record::{write_default_pipeline_info, UsageRecord, UsageWriteEr
 /// drop(element);
 /// let documents = sink.0.lock().unwrap();
 /// assert!(documents[0].ends_with(
-///     "<header Name=\"User-Agent\"><![CDATA[Mozilla/5.0]]></header>\
+///     "<header Name=\"User-Agent\">Mozilla/5.0</header>\
 ///      <Host>example</Host></Device></Devices>"
 /// ));
 /// ```
@@ -141,8 +141,8 @@ pub trait UsageSink: Send + Sync {
         write_default_pipeline_info(writer, flow_elements)
     }
 
-    /// Write elements at the end of each record, after `BadSchema` when the
-    /// record has one and before `</Device>`.
+    /// Write elements at the end of each record, after the evidence and
+    /// before `</Device>`.
     ///
     /// # Errors
     ///

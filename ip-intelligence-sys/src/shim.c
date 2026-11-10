@@ -41,7 +41,6 @@
 
 #include "ipi.h"
 #include "constantsIpi.h"
-#include "../common/constants.h"
 #include "../common/collectionKeyTypes.h"
 
 /*
@@ -206,130 +205,12 @@ size_t fiftyoneDegreesShimIpiGetDataSetName(
 }
 
 /*
- * Writes the year, month and day of the published date (`next` zero) or the
- * next update date (`next` not zero) in the data file header and returns 1,
- * or 0 when no data set is available. Any of the output pointers may be NULL.
- */
-static int get_header_date(
-    fiftyoneDegreesResourceManager *manager,
-    int next,
-    int32_t *year,
-    int32_t *month,
-    int32_t *day) {
-    fiftyoneDegreesDataSetIpi *dataSet =
-        fiftyoneDegreesDataSetIpiGet(manager);
-    if (dataSet == NULL) {
-        return 0;
-    }
-    const fiftyoneDegreesDate *date = next
-        ? &dataSet->header.nextUpdate
-        : &dataSet->header.published;
-    if (year != NULL) {
-        *year = (int32_t)date->year;
-    }
-    if (month != NULL) {
-        *month = (int32_t)date->month;
-    }
-    if (day != NULL) {
-        *day = (int32_t)date->day;
-    }
-    fiftyoneDegreesDataSetIpiRelease(dataSet);
-    return 1;
-}
-
-/*
- * Writes the date the data file was published, from its header, into `*year`,
- * `*month` and `*day` and returns 1, or 0 when no data set is available.
- */
-int fiftyoneDegreesShimIpiGetDataSetPublished(
-    fiftyoneDegreesResourceManager *manager,
-    int32_t *year,
-    int32_t *month,
-    int32_t *day) {
-    return get_header_date(manager, 0, year, month, day);
-}
-
-/*
- * Writes the date the next data file is expected, from the data file header,
- * into `*year`, `*month` and `*day` and returns 1, or 0 when no data set is
- * available.
- */
-int fiftyoneDegreesShimIpiGetDataSetNextUpdate(
-    fiftyoneDegreesResourceManager *manager,
-    int32_t *year,
-    int32_t *month,
-    int32_t *day) {
-    return get_header_date(manager, 1, year, month, day);
-}
-
-/*
  * Returns the size of an IP Intelligence data file's header in bytes, being
  * how much of a data file the C library compares to find a copy of it to
  * reuse.
  */
 size_t fiftyoneDegreesShimIpiGetHeaderSize(void) {
     return sizeof(fiftyoneDegreesDataSetIpiHeader);
-}
-
-/*
- * Returns the number of headers the data set reads the client IP from, or zero
- * when no data set is available. Their names are read one at a time with
- * fiftyoneDegreesShimIpiGetUniqueHeaderName, in the data set's priority order.
- */
-uint32_t fiftyoneDegreesShimIpiGetUniqueHeaderCount(
-    fiftyoneDegreesResourceManager *manager) {
-    fiftyoneDegreesDataSetIpi *dataSet =
-        fiftyoneDegreesDataSetIpiGet(manager);
-    if (dataSet == NULL) {
-        return 0;
-    }
-    uint32_t count = 0;
-    if (dataSet->b.b.uniqueHeaders != NULL) {
-        count = dataSet->b.b.uniqueHeaders->count;
-    }
-    fiftyoneDegreesDataSetIpiRelease(dataSet);
-    return count;
-}
-
-/*
- * Writes the name of the header at `headerIndex` into `buffer` as a null
- * terminated string and returns the number of characters written, excluding
- * the terminator. Returns zero when the index is out of range or no data set is
- * available, and cuts the name short when the buffer is too small. The buffer
- * is always null terminated when `length` is at least one.
- */
-size_t fiftyoneDegreesShimIpiGetUniqueHeaderName(
-    fiftyoneDegreesResourceManager *manager,
-    uint32_t headerIndex,
-    char *buffer,
-    size_t length) {
-    if (buffer != NULL && length > 0) {
-        buffer[0] = '\0';
-    }
-
-    fiftyoneDegreesDataSetIpi *dataSet =
-        fiftyoneDegreesDataSetIpiGet(manager);
-    if (dataSet == NULL) {
-        return 0;
-    }
-
-    size_t written = 0;
-    fiftyoneDegreesHeaders *headers = dataSet->b.b.uniqueHeaders;
-    if (headers != NULL && headerIndex < headers->count) {
-        const char *value = headers->items[headerIndex].name;
-        if (value != NULL && buffer != NULL && length > 0) {
-            size_t i = 0;
-            while (value[i] != '\0' && i < length - 1) {
-                buffer[i] = value[i];
-                i++;
-            }
-            buffer[i] = '\0';
-            written = i;
-        }
-    }
-
-    fiftyoneDegreesDataSetIpiRelease(dataSet);
-    return written;
 }
 
 /*
@@ -397,35 +278,44 @@ fiftyoneDegreesStatusCode fiftyoneDegreesShimIpiInitManagerFromMemory(
 }
 
 /*
- * Returns the number of handles in the file pool of the data set managed by
- * `manager` when any of its collections reads from the data file after it is
- * loaded, or zero when the whole data set is held in memory. A read that
- * finds every handle in use fails rather than waiting for one, so this is
- * how many calls can read the data file at once.
+ * Returns the number of handles to the data file that the data set managed
+ * by `manager` opened when it loaded, which stay open until the data set is
+ * freed. Every configuration that does not load the whole file into memory
+ * opens one for each concurrent operation it expects, to at most 64.
  */
-uint16_t fiftyoneDegreesShimIpiGetFileHandleCount(
+uint16_t fiftyoneDegreesShimIpiGetFilePoolSize(
     fiftyoneDegreesResourceManager *manager) {
     fiftyoneDegreesDataSetIpi *dataSet =
         fiftyoneDegreesDataSetIpiGet(manager);
     if (dataSet == NULL) {
         return 0;
     }
-    const fiftyoneDegreesConfigIpi *config = &dataSet->config;
-    const bool readsFile = dataSet->b.b.isInMemory == false && (
-        config->strings.loaded == false ||
-        config->components.loaded == false ||
-        config->maps.loaded == false ||
-        config->properties.loaded == false ||
-        config->values.loaded == false ||
-        config->profiles.loaded == false ||
-        config->graphs.loaded == false ||
-        config->profileGroups.loaded == false ||
-        config->profileOffsets.loaded == false ||
-        config->propertyTypes.loaded == false ||
-        config->graph.loaded == false);
-    const uint16_t count = readsFile ? dataSet->b.b.filePool.pool.count : 0;
+    const uint16_t count = dataSet->b.b.filePool.pool.count;
     fiftyoneDegreesDataSetIpiRelease(dataSet);
     return count;
+}
+
+/*
+ * Sets `strings` and `values` to the type names of the strings and values
+ * collections of the data set managed by `manager`, and returns 1, or returns
+ * 0 when there is no data set. "CollectionMemory" holds the whole collection
+ * in memory, and "CollectionHeld" holds only what the required properties
+ * read. The names are constants of the C library, so they outlive the data
+ * set.
+ */
+int fiftyoneDegreesShimIpiGetCollectionTypeNames(
+    fiftyoneDegreesResourceManager *manager,
+    const char **strings,
+    const char **values) {
+    fiftyoneDegreesDataSetIpi *dataSet =
+        fiftyoneDegreesDataSetIpiGet(manager);
+    if (dataSet == NULL) {
+        return 0;
+    }
+    *strings = dataSet->strings->typeName;
+    *values = dataSet->values->typeName;
+    fiftyoneDegreesDataSetIpiRelease(dataSet);
+    return 1;
 }
 
 /*
@@ -511,8 +401,9 @@ typedef void (*fiftyoneDegreesShimValueStringCallback)(
 #define SHIM_FIND_NOT_FOUND 2
 
 /*
- * The length of the buffer a value's text is first written into. A longer
- * text, such as an area, is written again into a buffer that fits it.
+ * The length of the buffer a value's text is written into when it fits. A
+ * longer text, such as an area, is written into memory the C library
+ * allocates.
  */
 #define SHIM_TEXT_BUFFER_LENGTH 256
 
@@ -655,77 +546,6 @@ static fiftyoneDegreesComponent* get_component(
 }
 
 /*
- * Returns the text of the value stored at `offset` in the strings collection
- * as `storedType`, with a number written to `decimalPlaces` places, as the C++
- * code writes it. The text is in `stack`, which holds `stackLength` bytes,
- * when it fits, and otherwise in a buffer this allocates, which the caller
- * frees with free_text. Returns NULL when the value cannot be read or written.
- */
-static char* value_text(
-    fiftyoneDegreesDataSetIpi *dataSet,
-    uint32_t offset,
-    fiftyoneDegreesPropertyValueType storedType,
-    uint8_t decimalPlaces,
-    char *stack,
-    size_t stackLength) {
-    FIFTYONE_DEGREES_EXCEPTION_CREATE;
-    fiftyoneDegreesCollectionItem item;
-    fiftyoneDegreesDataReset(&item.data);
-    const fiftyoneDegreesStoredBinaryValue *value =
-        fiftyoneDegreesStoredBinaryValueGet(
-            dataSet->strings, offset, storedType, &item, exception);
-    if (value == NULL) {
-        return NULL;
-    }
-    char *text = NULL;
-    if (FIFTYONE_DEGREES_EXCEPTION_OKAY) {
-        char *buffer = stack;
-        size_t length = stackLength;
-        // At most three writes, as one that does not fit still counts the
-        // whole length, so the second fits.
-        for (int attempt = 0; attempt < 3 && text == NULL; attempt++) {
-            fiftyoneDegreesStringBuilder builder = { buffer, length };
-            fiftyoneDegreesStringBuilderInit(&builder);
-            FIFTYONE_DEGREES_EXCEPTION_CLEAR;
-            fiftyoneDegreesStringBuilderAddStringValue(
-                &builder,
-                value,
-                storedType,
-                decimalPlaces,
-                exception);
-            fiftyoneDegreesStringBuilderComplete(&builder);
-            if (FIFTYONE_DEGREES_EXCEPTION_FAILED) {
-                break;
-            }
-            if (builder.full == false) {
-                text = buffer;
-                break;
-            }
-            if (buffer != stack) {
-                fiftyoneDegreesFree(buffer);
-            }
-            length = builder.added + 1;
-            buffer = (char*)fiftyoneDegreesMalloc(length);
-            if (buffer == NULL) {
-                break;
-            }
-        }
-        if (text == NULL && buffer != stack && buffer != NULL) {
-            fiftyoneDegreesFree(buffer);
-        }
-    }
-    FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->strings, &item);
-    return text;
-}
-
-/* Frees text value_text allocated, being any text not in `stack`. */
-static void free_text(char *text, char *stack) {
-    if (text != NULL && text != stack) {
-        fiftyoneDegreesFree(text);
-    }
-}
-
-/*
  * Gives `callback` the string at `offset` in the strings collection as
  * `field` and returns 1, or returns 0 when the string cannot be read.
  */
@@ -754,11 +574,13 @@ static int give_string_at(
 /*
  * Gives `callback` the name, description and URL of the value at
  * `valueIndex` in the values collection and returns 1, or returns 0 when the
- * value or one of its strings cannot be read. The name is the value written
- * as the type its property is stored as, a number to
+ * value or one of its strings cannot be read. The name is the text
+ * fiftyoneDegreesValueGetText gives, with a number written to
  * FIFTYONE_DEGREES_WKT_DECIMAL_PLACES places, and the description is always
- * empty, as the C++ ValueMetaDataBuilderIpi gives them. The value is released
- * before its strings are read, so one item is held at a time.
+ * empty, as the C++ ValueMetaDataBuilderIpi gives them. So a name that is
+ * read but cannot be written, such as an IP address of a length no address
+ * has, is an empty name. The value is released before its strings are read,
+ * so one item is held at a time.
  */
 static int give_value(
     fiftyoneDegreesDataSetIpi *dataSet,
@@ -768,39 +590,35 @@ static int give_value(
     FIFTYONE_DEGREES_EXCEPTION_CREATE;
     fiftyoneDegreesCollectionItem item;
     fiftyoneDegreesDataReset(&item.data);
-    const fiftyoneDegreesValue *value = fiftyoneDegreesValueGet(
+    const fiftyoneDegreesValue *held = fiftyoneDegreesValueGet(
         dataSet->values, valueIndex, &item, exception);
-    if (value == NULL) {
+    if (held == NULL) {
         return 0;
     }
     if (FIFTYONE_DEGREES_EXCEPTION_FAILED) {
         FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->values, &item);
         return 0;
     }
-    const uint32_t nameOffset = (uint32_t)value->nameOffset;
-    const uint32_t propertyIndex = (uint32_t)value->propertyIndex;
-    const int32_t urlOffset = value->urlOffsetOrWeight;
-    const bool weighted = fiftyoneDegreesValueIsWeighted(value);
+    const fiftyoneDegreesValue value = *held;
     FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->values, &item);
-    const fiftyoneDegreesPropertyValueType storedType =
-        fiftyoneDegreesPropertyGetStoredTypeByIndex(
-            dataSet->propertyTypes, propertyIndex, exception);
-    if (FIFTYONE_DEGREES_EXCEPTION_FAILED) {
-        return 0;
-    }
-    char stack[SHIM_TEXT_BUFFER_LENGTH];
-    char *text = value_text(
-        dataSet,
-        nameOffset,
-        storedType,
+    const int32_t urlOffset = value.urlOffsetOrWeight;
+    const bool weighted = fiftyoneDegreesValueIsWeighted(&value);
+    char buffer[SHIM_TEXT_BUFFER_LENGTH];
+    char *text = fiftyoneDegreesValueGetText(
+        dataSet->strings,
+        dataSet->propertyTypes,
+        &value,
         FIFTYONE_DEGREES_WKT_DECIMAL_PLACES,
-        stack,
-        sizeof(stack));
+        buffer,
+        sizeof(buffer),
+        exception);
     if (text == NULL) {
         return 0;
     }
     callback(context, SHIM_VALUE_NAME, text);
-    free_text(text, stack);
+    if (text != buffer) {
+        fiftyoneDegreesFree(text);
+    }
     callback(context, SHIM_VALUE_DESCRIPTION, "");
     // A weighted value's URL offset holds its weight, and a value with no URL
     // points at offset 0, which holds the first string in the file.
@@ -908,8 +726,8 @@ static int find_value(
     const char *name,
     long *index) {
     *index = -1;
-    // The search reads every place between the two value indexes, so it runs
-    // only when value_count finds them all in the values collection.
+    // The search can read any place between the two value indexes, so it
+    // runs only when value_count finds them all in the values collection.
     if (value_count(dataSet, property) == 0) {
         return 1;
     }
@@ -941,9 +759,10 @@ static int find_value(
 /*
  * Sets `number` to the place of `property`'s default value among its values,
  * or -1 when it has none, and returns 1, or returns 0 when a value or a
- * string cannot be read. The C++ builder writes the value at the default
- * value index as text, a number to FIFTYONE_DEGREES_MAX_DOUBLE_DECIMAL_PLACES
- * places, and MetaDataIpi::getDefaultValueForProperty then looks that text up
+ * string cannot be read. fiftyoneDegreesValueGetDefaultText writes the value
+ * at the default value index as text, a number to
+ * FIFTYONE_DEGREES_MAX_DOUBLE_DECIMAL_PLACES places, as the C++ builder
+ * does, and MetaDataIpi::getDefaultValueForProperty then looks that text up
  * among the property's values, so a default that is not among them is none.
  * A property with no default value index looks up an empty text, as the C++
  * does.
@@ -953,45 +772,24 @@ static int default_value_number(
     const fiftyoneDegreesProperty *property,
     int32_t *number) {
     *number = -1;
-    char stack[SHIM_TEXT_BUFFER_LENGTH];
-    char *text = stack;
-    stack[0] = '\0';
-    if (property->defaultValueIndex != UINT32_MAX) {
-        FIFTYONE_DEGREES_EXCEPTION_CREATE;
-        fiftyoneDegreesCollectionItem item;
-        fiftyoneDegreesDataReset(&item.data);
-        const fiftyoneDegreesValue *value = fiftyoneDegreesValueGet(
-            dataSet->values, property->defaultValueIndex, &item, exception);
-        if (value == NULL) {
-            return 0;
-        }
-        if (FIFTYONE_DEGREES_EXCEPTION_FAILED) {
-            FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->values, &item);
-            return 0;
-        }
-        const uint32_t nameOffset = (uint32_t)value->nameOffset;
-        const uint32_t propertyIndex = (uint32_t)value->propertyIndex;
-        FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->values, &item);
-        const fiftyoneDegreesPropertyValueType storedType =
-            fiftyoneDegreesPropertyGetStoredTypeByIndex(
-                dataSet->propertyTypes, propertyIndex, exception);
-        if (FIFTYONE_DEGREES_EXCEPTION_FAILED) {
-            return 0;
-        }
-        text = value_text(
-            dataSet,
-            nameOffset,
-            storedType,
-            FIFTYONE_DEGREES_MAX_DOUBLE_DECIMAL_PLACES,
-            stack,
-            sizeof(stack));
-        if (text == NULL) {
-            return 0;
-        }
+    FIFTYONE_DEGREES_EXCEPTION_CREATE;
+    char buffer[SHIM_TEXT_BUFFER_LENGTH];
+    char *text = fiftyoneDegreesValueGetDefaultText(
+        dataSet->values,
+        dataSet->strings,
+        dataSet->propertyTypes,
+        property,
+        buffer,
+        sizeof(buffer),
+        exception);
+    if (text == NULL) {
+        return 0;
     }
     long index = -1;
     const int found = find_value(dataSet, property, text, &index);
-    free_text(text, stack);
+    if (text != buffer) {
+        fiftyoneDegreesFree(text);
+    }
     if (found == 0) {
         return 0;
     }
@@ -1059,7 +857,8 @@ int fiftyoneDegreesShimIpiGetDataFileProperty(
     const fiftyoneDegreesProperty *held =
         get_property(dataSet, propertyIndex, &item);
     if (held != NULL) {
-        // A copy, so the default value is read with no item held.
+        // A copy, so the property is released before its default value is
+        // found.
         const fiftyoneDegreesProperty property = *held;
         FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->properties, &item);
         const fiftyoneDegreesComponent *component =
@@ -1265,7 +1064,7 @@ int fiftyoneDegreesShimIpiFindDataFilePropertyValue(
     const fiftyoneDegreesProperty *held =
         get_property(dataSet, propertyIndex, &item);
     if (held != NULL) {
-        // A copy, so only one item is held at a time during the search.
+        // A copy, so the property is released before the search starts.
         const fiftyoneDegreesProperty property = *held;
         FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->properties, &item);
         long index = -1;

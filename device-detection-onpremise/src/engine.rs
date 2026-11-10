@@ -39,15 +39,16 @@ use arc_swap::ArcSwap;
 
 use fiftyone_device_detection_shared::{
     declared_property_value_type, DeviceDataBase, DevicePropertyReader, DEVICE_DATA_KEY,
-    DEVICE_ELEMENT_DATA_KEY, UACH_EVIDENCE_COOKIE_KEY, UACH_EVIDENCE_QUERY_KEY,
+    DEVICE_ELEMENT_DATA_KEY,
 };
 use fiftyone_native::dd::{
-    DataFileComponent, DataFileProperty, DataFileValue, HashOptions, Manager, MatchMetrics, Results,
+    hardware_profile_script, DataFileComponent, DataFileProperty, DataFileValue, HashOptions,
+    Manager, MatchMetrics, Results,
 };
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{
-    constants, Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData,
-    FlowElement, PropertyMetaData, PropertyValue, PropertyValueType, Result,
+    Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    PropertyMetaData, PropertyValue, PropertyValueType, Result,
 };
 use fiftyone_pipeline_engines::{
     AspectEngine, AspectEngineDataFile, AspectPropertyMetaData, DataFileConfiguration,
@@ -452,7 +453,7 @@ impl DeviceDetectionOnPremiseEngine {
         data_source_tier: Option<String>,
         options: HashOptions,
     ) -> Result<Self> {
-        let evidence_key_filter = HashEvidenceKeyFilter::new(named_evidence_keys(&manager));
+        let evidence_key_filter = HashEvidenceKeyFilter::new(manager.evidence_keys());
         let (loaded, metadata) = describe(copy, manager, &data_source_tier)?;
 
         let data_file = Arc::new(AspectEngineDataFile::new(data_file_config));
@@ -514,12 +515,11 @@ impl DeviceDetectionOnPremiseEngine {
         &self.options
     }
 
-    /// The evidence keys the engine accepts by name, lowercased, being each
-    /// header the loaded data file reads as a `header.` and a `query.` key, and
-    /// the high-entropy values keys. The engine also accepts any `query.51d_`
-    /// or `cookie.51d_` value, which the client-side JavaScript sends back.
+    /// The evidence keys the engine accepts, lowercased, being those the
+    /// loaded data set reads (see
+    /// [`Manager::evidence_keys`](fiftyone_native::dd::Manager::evidence_keys)).
     pub fn evidence_keys(&self) -> Vec<String> {
-        named_evidence_keys(&self.loaded.load().manager)
+        self.loaded.load().manager.evidence_keys()
     }
 
     /// The names of the properties the loaded data set was opened with, being
@@ -772,7 +772,7 @@ impl DeviceDetectionOnPremiseEngine {
     /// tier. In-flight detections keep using the data set they snapshotted. A
     /// failure changes nothing. The caller holds the refresh lock.
     fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
-        let evidence_keys = named_evidence_keys(&manager);
+        let evidence_keys = manager.evidence_keys();
         let (loaded, metadata) = describe(copy, manager, &self.tier_override)?;
         if let Some(file) = self.data_files.first() {
             record_dates(&loaded.manager, file);
@@ -1042,7 +1042,12 @@ impl DevicePropertyReader for DetectionReader {
             .values_by_index(index)
             .map_err(|error| error.to_string())?;
         let values = if name.eq_ignore_ascii_case(JAVASCRIPT_HARDWARE_PROFILE) {
-            values.map(|values| values.into_iter().map(wrap_hardware_profile).collect())
+            values.map(|values| {
+                values
+                    .iter()
+                    .map(|body| hardware_profile_script(body))
+                    .collect()
+            })
         } else {
             values
         };
@@ -1291,37 +1296,20 @@ fn c_strtod(text: &str) -> f64 {
 }
 
 /// The property whose data file value is the body of a script that finds the
-/// Apple device model on the client.
+/// Apple device model on the client. Each value is given as the script
+/// [`hardware_profile_script`] writes around it, an empty one included, as
+/// the C++ results give it. Without the script the body fails on the array it
+/// does not declare, and the include that carries it stops running.
 const JAVASCRIPT_HARDWARE_PROFILE: &str = "JavascriptHardwareProfile";
-
-/// Turn the stored `JavascriptHardwareProfile` body into the script the client
-/// runs, as the C++ results wrapper in 51degrees-cxx does.
-///
-/// The stored body pushes the profile ids it finds onto a `profileIds` array
-/// that it does not declare, and does not send them anywhere. The wrapper
-/// declares the array first and afterwards writes the ids to the
-/// `51D_ProfileIds` cookie, which the engine reads back as evidence. Without
-/// the wrapper the script fails on the undeclared array, and the include that
-/// carries it stops running. Each value is wrapped, an empty one included, as
-/// the C++ wraps them.
-fn wrap_hardware_profile(body: String) -> String {
-    format!(
-        "var profileIds = []\n{body}\n\
-         document.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")"
-    )
-}
 
 /// The evidence key filter for the Hash engine.
 ///
-/// It accepts the keys [`named_evidence_keys`] lists for the loaded data set,
-/// and also any query or cookie value whose name starts with `51d_`. Those are
-/// the values the client-side JavaScript sends back, being a property override
-/// such as `query.51d_screenpixelswidth` or the `query.51d_profileids` profile
-/// ids. The native engine applies them itself, and ignores a `51d_` name it
-/// does not know, so they are passed through by prefix rather than listed one
-/// by one. Without them the screen size and other values the browser reports
-/// never reach the engine. A refresh replaces the named keys, because a new
-/// data file can read different headers.
+/// It accepts the keys [`Manager::evidence_keys`] lists for the loaded data
+/// set and no others, as an element accepts only the evidence that can change
+/// its results. Those include the values the client-side JavaScript sends
+/// back, being an override of each property the data set lets the evidence
+/// override and the profile ids. A refresh replaces the keys, because a new
+/// data file can read different headers and override different properties.
 struct HashEvidenceKeyFilter {
     named: ArcSwap<EvidenceKeyFilterWhitelist>,
 }
@@ -1337,49 +1325,20 @@ impl HashEvidenceKeyFilter {
         self.named
             .store(Arc::new(EvidenceKeyFilterWhitelist::new(keys)));
     }
-
-    /// True when the key is `query.51d_*` or `cookie.51d_*`, ignoring case.
-    fn is_client_side_value(key: &str) -> bool {
-        let Some((prefix, field)) = key.split_once(constants::EVIDENCE_SEPARATOR) else {
-            return false;
-        };
-        let known_prefix = prefix.eq_ignore_ascii_case(constants::EVIDENCE_QUERY_PREFIX)
-            || prefix.eq_ignore_ascii_case(constants::EVIDENCE_COOKIE_PREFIX);
-        known_prefix
-            && field
-                .get(..constants::FIFTYONE_COOKIE_PREFIX.len())
-                .is_some_and(|start| start.eq_ignore_ascii_case(constants::FIFTYONE_COOKIE_PREFIX))
-    }
 }
 
 impl EvidenceKeyFilter for HashEvidenceKeyFilter {
     fn include(&self, key: &str) -> bool {
-        self.named.load().include(key) || Self::is_client_side_value(key)
+        self.named.load().include(key)
     }
 
     fn order(&self, key: &str) -> Option<i32> {
-        self.named
-            .load()
-            .order(key)
-            .or_else(|| Self::is_client_side_value(key).then_some(0))
+        self.named.load().order(key)
     }
 
-    /// The named keys alone. The client-side values are accepted by pattern
-    /// and are query keys, which the list is not used for.
     fn named_keys(&self) -> Option<Vec<String>> {
         self.named.load().named_keys()
     }
-}
-
-/// The evidence keys the engine accepts by name for `manager`'s data set, being
-/// each header the data set reads as a `header.` and a `query.` key (see
-/// [`Manager::evidence_keys`]), and the high entropy values keys, whose
-/// values the C library turns into `sec-ch-ua*` headers.
-fn named_evidence_keys(manager: &Manager) -> Vec<String> {
-    let mut keys = manager.evidence_keys();
-    keys.push(UACH_EVIDENCE_QUERY_KEY.to_owned());
-    keys.push(UACH_EVIDENCE_COOKIE_KEY.to_owned());
-    keys
 }
 
 /// Record on `data_file` the dates in `manager`'s data file header, as .NET
@@ -1612,36 +1571,19 @@ mod tests {
         assert!(!filter.include("header.user-agent"));
     }
 
+    /// A `51d_` value is accepted only when the data set reads it, as an
+    /// element accepts only the evidence that can change its results.
     #[test]
-    fn hardware_profile_is_wrapped_as_the_cpp_wrapper_does() {
-        assert_eq!(
-            wrap_hardware_profile("profileIds.push(1)".to_owned()),
-            "var profileIds = []\nprofileIds.push(1)\n\
-             document.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")"
-        );
-        // An empty value is wrapped too, as the C++ wraps it.
-        assert_eq!(
-            wrap_hardware_profile(String::new()),
-            "var profileIds = []\n\n\
-             document.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")"
-        );
-    }
-
-    #[test]
-    fn evidence_filter_passes_client_side_values() {
-        // The values the client-side JavaScript sends back reach the engine,
-        // whether posted as query values or kept in cookies.
-        let filter = HashEvidenceKeyFilter::new(Vec::new());
-        assert!(filter.include("query.51d_screenpixelswidth"));
+    fn evidence_filter_accepts_only_the_51d_values_it_is_given() {
+        let filter = HashEvidenceKeyFilter::new(vec![
+            String::from("query.51d_profileids"),
+            String::from("cookie.51d_javascripthardwareprofile"),
+        ]);
         assert!(filter.include("query.51D_ProfileIds"));
-        assert!(filter.include("cookie.51d_screenpixelsheight"));
-        assert_eq!(filter.order("query.51d_screenpixelswidth"), Some(0));
-        // Only query and cookie values, and only with the 51d_ prefix.
-        assert!(!filter.include("header.51d_screenpixelswidth"));
-        assert!(!filter.include("query.screenpixelswidth"));
-        assert!(!filter.include("cookie.session"));
-        assert!(!filter.include("query.51d"));
-        assert_eq!(filter.order("cookie.session"), None);
+        assert!(filter.include("cookie.51d_javascripthardwareprofile"));
+        assert!(!filter.include("query.51d_screenpixelswidth"));
+        assert!(!filter.include("cookie.51d_profileids"));
+        assert_eq!(filter.order("query.51d_screenpixelswidth"), None);
     }
 
     /// The Hash data file `51DEGREES_DD_PATH` names, or the Lite file in the
@@ -1662,11 +1604,14 @@ mod tests {
             .find(|path| path.is_file())
     }
 
-    /// With no concurrency named, the data set opens with the default, not
-    /// only the engine's record of it, under the two profiles with no limit,
-    /// and a refresh opens the new data set with it too. On a machine with 10
-    /// processors the default equals the C library's own, so the check there
-    /// cannot tell the two apart.
+    /// `FIFTYONE_DEGREES_FILE_POOL_MAX_HANDLES` in the C library's `file.h`,
+    /// the most handles a data set's file pool holds.
+    const FILE_POOL_MAX_HANDLES: u16 = 64;
+
+    /// With no concurrency named, the data set opens a handle to the file
+    /// for each processor, to at most [`FILE_POOL_MAX_HANDLES`], under
+    /// `LowMemory` and `HighPerformance`, and a refresh opens the new data
+    /// set with as many.
     #[test]
     fn the_default_concurrency_reaches_the_data_set() {
         let Some(path) = data_file() else {
@@ -1681,7 +1626,8 @@ mod tests {
                 .performance_profile(profile)
                 .build()
                 .expect("the data file loads");
-            let expected = fiftyone_native::dd::default_concurrency(profile);
+            let expected =
+                fiftyone_native::dd::default_concurrency(profile).min(FILE_POOL_MAX_HANDLES);
             let pool = || engine.loaded.load().manager.file_pool_size();
             assert_eq!(pool(), expected, "{}", profile.as_str());
             engine.refresh(None).expect("the data file loads again");

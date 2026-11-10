@@ -35,9 +35,8 @@
 //! protected (see `src/common/resource.h`), so a [`Manager`] is both [`Send`]
 //! and [`Sync`] and a single one may be shared across threads behind an
 //! [`Arc`]. A data set that reads from its file after it is loaded holds one
-//! file handle for each concurrent operation it was opened to expect, and a
-//! read that finds none free fails. So no more calls that can read the file
-//! run at once than there are handles, and a call beyond them waits for one.
+//! file handle for each concurrent operation it was opened to expect, and the
+//! native library makes a read that finds none free wait for one.
 //! A native results structure is per-thread scratch, so [`Results`] is
 //! [`Send`] (it may be moved to another thread) but not [`Sync`] (it must not be
 //! used from two threads at once). This matches the pipeline rule that one flow
@@ -56,11 +55,10 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 
 use fiftyone_device_detection_sys as sys;
-use fiftyone_pipeline_core::{constants, Error, PropertyValueType, Result};
+use fiftyone_pipeline_core::{Error, PropertyValueType, Result};
 
 use crate::buffer::{with_c_str, with_value_string};
 use crate::evidence::with_native_evidence;
-use crate::file_reads::{FileReadPermit, FileReads};
 use crate::held_memory::HeldMemory;
 use crate::metadata::{metadata_read_failed, read_metadata_string, take_value_string};
 use crate::profile::PerformanceProfile;
@@ -68,9 +66,9 @@ use crate::status::{status_name, status_to_result, take_message, NativeException
 
 mod value_profiles;
 
-/// The character a data set puts between the header names it joins into one
-/// pseudo header, for example the User-Agent Client Hints it reads together.
-const PSEUDO_HEADER_SEPARATOR: char = '\x1F';
+/// The separator the C library writes between evidence keys. No header or
+/// property name holds a comma.
+const EVIDENCE_KEY_SEPARATOR: &CStr = c",";
 
 // ---------------------------------------------------------------------------
 // Status and exception trait wiring for the Device Detection common C library
@@ -147,8 +145,9 @@ fn config_for(profile: PerformanceProfile) -> *mut sys::ConfigHash {
 /// profile but `InMemory` opens the pool, `HighPerformance` included (see
 /// [`Manager::file_pool_size`]). This mirrors the
 /// `setConcurrency` helper in the other 51Degrees ports, which applies the value
-/// to every collection's config. A value of zero is treated by the native
-/// library as a single concurrent operation.
+/// to every collection's config. The C library takes zero as one concurrent
+/// operation for each processor, and opens at most 64 file handles whatever
+/// the value.
 fn set_pool_concurrency(config: &mut sys::ConfigHash, concurrency: u16) {
     for collection in [
         &mut config.strings,
@@ -233,48 +232,17 @@ impl HashOptions {
     }
 }
 
-/// The most expected concurrency `profile` loads with, or [`None`] when any
-/// concurrency loads. A collection read from the file through a cache splits
-/// the cache into one part for each concurrent operation, and the C library
-/// refuses a part smaller than the number of parts, so the smallest such
-/// cache sets the limit (its capacity's whole square root).
-fn most_concurrency(profile: PerformanceProfile) -> Option<u16> {
-    // Safety: `config_for` returns a valid pointer to an initialized config
-    // global, and copying out of it is a plain read of a `repr(C)` value.
-    let config = unsafe { *config_for(profile) };
-    [
-        config.strings,
-        config.components,
-        config.maps,
-        config.properties,
-        config.values,
-        config.profiles,
-        config.root_nodes,
-        config.nodes,
-        config.profile_offsets,
-    ]
-    .into_iter()
-    .filter(|collection| !collection.loaded && collection.capacity > 0)
-    .map(|collection| u16::try_from(collection.capacity.isqrt()).unwrap_or(u16::MAX))
-    .min()
-}
-
-/// The expected concurrency a Hash engine opens `profile` with when none is
-/// named, which the specification gives as the number of processors. It is
-/// held at the most the profile's caches take, so the profile still loads on
-/// a machine with more processors (22 under `Balanced` and `Default`, whose
-/// values cache holds 500 entries). `LowMemory` and `HighPerformance` have no
-/// limit, so their file handle pool has one handle for each processor (see
-/// [`Manager::file_pool_size`]).
-pub fn default_concurrency(profile: PerformanceProfile) -> u16 {
-    let processors = std::thread::available_parallelism()
-        .map_or(1, |count| u16::try_from(count.get()).unwrap_or(u16::MAX));
-    concurrency_within(processors, profile)
-}
-
-/// `concurrency`, or the most `profile` loads with when that is less.
-fn concurrency_within(concurrency: u16, profile: PerformanceProfile) -> u16 {
-    most_concurrency(profile).map_or(concurrency, |most| concurrency.min(most))
+/// The expected concurrency a Hash engine opens with when none is named,
+/// which the specification gives as the number of processors, whatever the
+/// profile. The C library counts them, as it does for an IP Intelligence
+/// data set opened with none named, so the two engines open with the same.
+/// Any concurrency loads, because a cache with fewer entries than the
+/// concurrency squared is split into fewer parts, one with fewer entries
+/// than the concurrency is grown to it, and the file handle pool holds at
+/// most 64 handles (see [`Manager::file_pool_size`]).
+pub fn default_concurrency(_profile: PerformanceProfile) -> u16 {
+    // Safety: the function reads no state, and gives at least 1.
+    unsafe { fiftyone_common_sys::fiftyoneDegreesThreadingGetProcessorCount() }
 }
 
 /// A copy of `profile`'s predefined configuration changed by `options`, so a
@@ -283,6 +251,10 @@ fn profile_config(profile: PerformanceProfile, options: &HashOptions) -> sys::Co
     // Safety: `config_for` returns a valid pointer to an initialized config
     // global, and copying out of it is a plain read of a `repr(C)` value.
     let mut config = unsafe { *config_for(profile) };
+    // Header names are read as the data set holds them, never with `HTTP_`
+    // before them, as .NET's Hash engine builder sets, so the evidence keys
+    // carry the plain names.
+    config.b.b.uses_upper_prefixed_headers = false;
     options.apply(&mut config);
     config
 }
@@ -317,9 +289,6 @@ pub struct Manager {
     /// The number of required properties, which a read by index must stay
     /// below.
     required_count: u32,
-    /// Permits for the calls that can read the data file, one for each of its
-    /// file handles, or [`None`] when the data set is held in memory.
-    file_reads: Option<FileReads>,
     /// The data a load from memory reads in place. Fields drop after
     /// [`Drop::drop`] has freed the data set, so the data outlives it.
     _memory: Option<HeldMemory>,
@@ -328,8 +297,7 @@ pub struct Manager {
 // Safety: the native resource manager is internally reference counted and
 // lock protected per `src/common/resource.h`, so concurrent access from several
 // threads through a shared `&Manager` is sound. The data set held for name
-// lookups is only read, and the file read permits are lock protected.
-// Therefore the manager is both `Send` and `Sync`.
+// lookups is only read. Therefore the manager is both `Send` and `Sync`.
 unsafe impl Send for Manager {}
 unsafe impl Sync for Manager {}
 
@@ -365,11 +333,12 @@ impl Manager {
     /// under the `LowMemory`, `Balanced` and `Default` profiles, which is how
     /// many calls can read the data file at once. A call beyond that waits for
     /// a handle, so it should be the number of threads that will process
-    /// through the data set at once. [`None`] keeps the profile's default.
-    /// `HighPerformance` holds every collection in memory, so detection never
-    /// waits on the pool, but it still opens one handle for each concurrent
-    /// operation and keeps them open until the data set is freed (see
-    /// [`Manager::file_pool_size`]). `InMemory` opens no pool.
+    /// through the data set at once. [`None`] keeps the profile's default,
+    /// one for each processor. `HighPerformance` holds in memory everything
+    /// detection reads, so detection never waits on the pool, but it still
+    /// opens one handle for each concurrent operation and keeps them open
+    /// until the data set is freed (see [`Manager::file_pool_size`]).
+    /// `InMemory` opens no pool.
     pub fn open_with_options(
         path: impl AsRef<Path>,
         profile: PerformanceProfile,
@@ -532,10 +501,8 @@ impl Manager {
 
         // Safety: a successful init leaves a non-null, initialized manager.
         let manager = NonNull::new(manager_ptr).expect("init produced a non-null manager");
-        // Safety: the manager was initialized above.
-        let handles = unsafe { sys::fiftyoneDegreesShimHashGetFileHandleCount(manager.as_ptr()) };
-        // Safety: as above. The reference is released in `Drop`, before the
-        // manager is freed.
+        // Safety: the manager was initialized above. The reference is
+        // released in `Drop`, before the manager is freed.
         let data_set = unsafe { sys::fiftyoneDegreesDataSetHashGet(manager.as_ptr()) };
         let data_set = NonNull::new(data_set).expect("an initialized manager has a data set");
         // Safety: as above.
@@ -545,7 +512,6 @@ impl Manager {
             manager,
             data_set,
             required_count,
-            file_reads: FileReads::for_handles(handles),
             _memory: memory,
         }))
     }
@@ -553,33 +519,27 @@ impl Manager {
     /// The date the data file was published, from its header, as `(year,
     /// month, day)`, or [`None`] when the header holds no valid date.
     pub fn data_set_published(&self) -> Option<(i32, u32, u32)> {
-        self.header_date(sys::fiftyoneDegreesShimHashGetDataSetPublished)
+        self.header_date(sys::fiftyoneDegreesHashGetPublished)
     }
 
     /// The date the next data file is expected, from the data file header,
     /// as `(year, month, day)`, or [`None`] when the header holds no valid
     /// date.
     pub fn data_set_next_update(&self) -> Option<(i32, u32, u32)> {
-        self.header_date(sys::fiftyoneDegreesShimHashGetDataSetNextUpdate)
+        self.header_date(sys::fiftyoneDegreesHashGetNextUpdate)
     }
 
+    /// The date `read` gives, or [`None`] when the C library finds it is not
+    /// a valid date.
     fn header_date(
         &self,
-        read: unsafe extern "C" fn(
-            *mut sys::ResourceManager,
-            *mut i32,
-            *mut i32,
-            *mut i32,
-        ) -> c_int,
+        read: unsafe extern "C" fn(*mut sys::ResourceManager, *mut sys::Date) -> bool,
     ) -> Option<(i32, u32, u32)> {
-        let (mut year, mut month, mut day) = (0, 0, 0);
-        // Safety: the manager is initialized and each output pointer is
-        // writable.
-        let found = unsafe { read(self.as_ptr(), &mut year, &mut month, &mut day) };
-        if found == 0 || year <= 0 || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-            return None;
-        }
-        Some((year, u32::try_from(month).ok()?, u32::try_from(day).ok()?))
+        let mut date = sys::Date::default();
+        // Safety: the manager is initialized and `date` is writable.
+        let valid = unsafe { read(self.as_ptr(), &mut date) };
+        let sys::Date { year, month, day } = date;
+        valid.then(|| (i32::from(year), u32::from(month), u32::from(day)))
     }
 
     /// The raw native manager pointer. For the engine wrappers in this crate.
@@ -587,18 +547,13 @@ impl Manager {
         self.manager.as_ptr()
     }
 
-    /// A permit for a call that can read the data file, waiting while every
-    /// file handle is in use. [`None`] when the data set is held in memory.
-    fn file_read(&self) -> Option<FileReadPermit<'_>> {
-        self.file_reads.as_ref().map(FileReads::permit)
-    }
-
     /// The number of handles to the data file that the data set opened when
     /// it loaded, which stay open until it is freed. Every profile but
     /// `InMemory` opens one for each concurrent operation it expects, the
-    /// largest concurrency of its collections, `HighPerformance` included,
-    /// although that profile holds every collection in memory and never
-    /// reads through them. `InMemory` opens none.
+    /// largest concurrency of its collections, to at most 64, and
+    /// `HighPerformance` too, which reads through them only for the values
+    /// and strings of properties not named when some are. `InMemory` opens
+    /// none.
     pub fn file_pool_size(&self) -> u16 {
         // Safety: the manager is initialized for the lifetime of `self`.
         unsafe { sys::fiftyoneDegreesShimHashGetFilePoolSize(self.as_ptr()) }
@@ -637,41 +592,44 @@ impl Manager {
         names
     }
 
-    /// The header evidence keys the data set reads, lowercased, being each
-    /// header it names as a `header.` key and as a `query.` key, in the data
-    /// set's order.
-    ///
-    /// These are the keys the C++ engine's `getKeys` lists for the headers. A
-    /// pseudo header, which the data set builds by joining several headers, is
-    /// left out, because a request never carries one.
+    /// The evidence keys the data set reads, lowercased, in the C library's
+    /// order, which is the list the C++ engine's `getKeys` gives: a
+    /// `header.` and a `query.` key for each header the data set names,
+    /// other than a pseudo header, then a `cookie.` and a `query.` key for
+    /// each property the evidence can override, then the keys of the device
+    /// id, the high entropy values, the structured User-Agent and the profile
+    /// ids.
     pub fn evidence_keys(&self) -> Vec<String> {
         // Safety: the manager is initialized for the lifetime of `self`.
-        let count = unsafe { sys::fiftyoneDegreesShimHashGetEvidenceKeyCount(self.as_ptr()) };
-        let mut keys = Vec::with_capacity(count as usize * 2);
-        let mut buffer = vec![0u8; 256];
-        for index in 0..count {
-            // Safety: the buffer is writable for its full length.
-            let written = unsafe {
-                sys::fiftyoneDegreesShimHashGetEvidenceKey(
-                    self.as_ptr(),
-                    index,
-                    buffer.as_mut_ptr() as *mut c_char,
-                    buffer.len(),
-                )
-            };
-            let end = written.min(buffer.len());
-            let name = String::from_utf8_lossy(&buffer[..end]).to_lowercase();
-            if name.is_empty() || name.contains(PSEUDO_HEADER_SEPARATOR) {
-                continue;
-            }
-            for prefix in [
-                constants::EVIDENCE_HTTP_HEADER_PREFIX,
-                constants::EVIDENCE_QUERY_PREFIX,
-            ] {
-                keys.push(format!("{prefix}{}{name}", constants::EVIDENCE_SEPARATOR));
-            }
+        let data_set = unsafe { sys::fiftyoneDegreesDataSetHashGet(self.as_ptr()) };
+        if data_set.is_null() {
+            return Vec::new();
         }
-        keys
+        // Safety: the data set is held until the release below, so both calls
+        // read the same one. A null buffer only finds the length, and the
+        // buffer is then writable for the keys and the null terminator.
+        let text = unsafe {
+            let length = sys::fiftyoneDegreesHashGetEvidenceKeys(
+                data_set,
+                std::ptr::null_mut(),
+                0,
+                EVIDENCE_KEY_SEPARATOR.as_ptr(),
+            );
+            let mut buffer = vec![0u8; length + 1];
+            sys::fiftyoneDegreesHashGetEvidenceKeys(
+                data_set,
+                buffer.as_mut_ptr() as *mut c_char,
+                buffer.len(),
+                EVIDENCE_KEY_SEPARATOR.as_ptr(),
+            );
+            sys::fiftyoneDegreesDataSetHashRelease(data_set);
+            buffer.truncate(length);
+            String::from_utf8_lossy(&buffer).to_lowercase()
+        };
+        text.split(',')
+            .filter(|key| !key.is_empty())
+            .map(str::to_owned)
+            .collect()
     }
 
     /// The data set's name, which is the data file's tier (for example `Lite`,
@@ -681,7 +639,6 @@ impl Manager {
     /// caller can fall back to its own default rather than assert a tier.
     pub fn data_set_name(&self) -> Option<String> {
         let mut buffer = vec![0u8; 128];
-        let _file_read = self.file_read();
         // Safety: the buffer is writable for its full length and the manager is
         // initialized for the lifetime of `self`.
         let written = unsafe {
@@ -849,7 +806,6 @@ impl Manager {
     /// A property that cannot be read is an error rather than left out, as
     /// the C++ code the other SDKs call raises one.
     pub fn data_file_properties(&self) -> Result<Vec<DataFileProperty>> {
-        let _file_read = self.file_read();
         // Safety: the manager is initialized for the lifetime of `self`.
         let count = unsafe { sys::fiftyoneDegreesShimHashGetDataFilePropertyCount(self.as_ptr()) };
         (0..count)
@@ -864,7 +820,6 @@ impl Manager {
     /// default profile or a name that cannot be read is an error, as the C++
     /// builder throws for a default profile it cannot read.
     pub fn data_file_components(&self) -> Result<Vec<DataFileComponent>> {
-        let _file_read = self.file_read();
         // Safety: the manager is initialized for the lifetime of `self`.
         let count = unsafe { sys::fiftyoneDegreesShimHashGetComponentCount(self.as_ptr()) };
         let mut components = Vec::with_capacity(count as usize);
@@ -921,7 +876,6 @@ impl Manager {
         property_index: u32,
         range: Range<u32>,
     ) -> Result<Vec<DataFileValue>> {
-        let _file_read = self.file_read();
         // Safety: the manager is initialized for the lifetime of `self`.
         let count = unsafe { sys::fiftyoneDegreesShimHashGetDataFilePropertyCount(self.as_ptr()) };
         if property_index >= count {
@@ -949,7 +903,6 @@ impl Manager {
         property_index: u32,
         name: &str,
     ) -> Result<Option<DataFileValue>> {
-        let _file_read = self.file_read();
         // Safety: the manager is initialized for the lifetime of `self`.
         let count = unsafe { sys::fiftyoneDegreesShimHashGetDataFilePropertyCount(self.as_ptr()) };
         if property_index >= count {
@@ -988,8 +941,7 @@ impl Manager {
 
     /// The values at the places `range` covers among those the data file
     /// holds for the property at `property_index`, read in one shim call, or
-    /// [`None`] when the property or any of them cannot be read. The caller
-    /// holds the file read permit.
+    /// [`None`] when the property or any of them cannot be read.
     fn read_values(&self, property_index: u32, range: Range<u32>) -> Option<Vec<DataFileValue>> {
         let mut values: Vec<DataFileValue> = Vec::new();
         // Safety: `take_value_string` treats the context as the
@@ -1010,8 +962,7 @@ impl Manager {
 
     /// The fields of the data file property at `index` that are not strings,
     /// or [`None`] when the index is out of range or the property, its name
-    /// or its default value cannot be read. The caller holds the file read
-    /// permit.
+    /// or its default value cannot be read.
     fn read_property_fields(&self, index: u32) -> Option<PropertyFields> {
         let mut fields = PropertyFields {
             value_type: 0,
@@ -1052,8 +1003,7 @@ impl Manager {
     }
 
     /// The data file property at `index`, or [`None`] when the index is out
-    /// of range or any part of it cannot be read. The caller holds the file
-    /// read permit.
+    /// of range or any part of it cannot be read.
     fn read_data_file_property(&self, index: u32) -> Option<DataFileProperty> {
         let fields = self.read_property_fields(index)?;
         let string = |field| {
@@ -1189,7 +1139,6 @@ impl Results {
     pub fn process_evidence(&mut self, evidence: &fiftyone_pipeline_core::Evidence) -> Result<()> {
         let mut exception = sys::Exception::cleared();
         let results = self.as_ptr();
-        let _file_read = self.manager.file_read();
         // Safety: the array the closure receives is valid only for the call,
         // which is exactly the window the native processor reads it in.
         unsafe {
@@ -1206,7 +1155,6 @@ impl Results {
     /// the same results as no evidence.
     pub fn process_user_agent(&mut self, user_agent: &str) -> Result<()> {
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: the user agent bytes are valid for the duration of the call.
         unsafe {
             sys::fiftyoneDegreesResultsHashFromUserAgent(
@@ -1231,7 +1179,6 @@ impl Results {
             message: String::from("device id contains an interior nul byte"),
         })?;
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: `device_id_c` is null terminated and valid for the call.
         let profiles = unsafe {
             sys::fiftyoneDegreesResultsHashFromDeviceId(
@@ -1259,7 +1206,6 @@ impl Results {
         // avoids a growable allocation on this metric path.
         let mut buffer = [0u8; 256];
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: the results are valid, the buffer is writable for its full
         // length, and the exception is valid. The getter null terminates within
         // the buffer and returns the buffer pointer, or null when it did not fit.
@@ -1292,7 +1238,6 @@ impl Results {
             return Ok(false);
         };
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: the results are valid and the index is a real required index.
         let has = unsafe {
             sys::fiftyoneDegreesResultsHashGetHasValues(self.as_ptr(), index, &mut exception)
@@ -1329,7 +1274,6 @@ impl Results {
 
         let results = self.as_ptr();
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: the writer only touches the buffer it is given and returns the
         // native available-character count. The property and separator strings
         // outlive every invocation.
@@ -1377,7 +1321,6 @@ impl Results {
         }
         let results = self.as_ptr();
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: the writer only touches the buffer it is given and returns the
         // native available-character count. The separator outlives every
         // invocation and the index is in range for this data set.
@@ -1424,7 +1367,6 @@ impl Results {
         }
         let mut values: Vec<String> = Vec::new();
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: the index is in range for this data set, and
         // `take_result_value` treats the context as the `Vec<String>` it
         // points to, which nothing else uses during the call.
@@ -1469,29 +1411,31 @@ impl Results {
     /// still to walk and gives the metrics the results then hold, as the C++
     /// results do.
     pub fn match_metrics(&self) -> Option<MatchMetrics> {
-        let mut method = 0;
+        let mut method = sys::HashMatchMethod::None;
         let mut difference = 0;
         let mut drift = 0;
         let mut iterations = 0;
         let mut matched_nodes = 0;
-        let _file_read = self.manager.file_read();
-        // Safety: the results came from `ResultsHashCreate` and remain valid for
-        // the lifetime of `self`; every output pointer is writable.
-        let ok = unsafe {
-            sys::fiftyoneDegreesShimHashGetResultMetrics(
+        let mut exception = sys::Exception::cleared();
+        // Safety: the results came from `ResultsHashCreate` and remain valid
+        // for the lifetime of `self`, and every output pointer and the
+        // exception are writable.
+        unsafe {
+            sys::fiftyoneDegreesResultsHashGetMatchMetrics(
                 self.as_ptr(),
                 &mut method,
                 &mut difference,
                 &mut drift,
                 &mut iterations,
                 &mut matched_nodes,
+                &mut exception,
             )
         };
-        if ok == 0 {
+        if !exception.is_okay() {
             return None;
         }
         Some(MatchMetrics {
-            method,
+            method: method as i32,
             difference,
             drift,
             iterations,
@@ -1508,7 +1452,6 @@ impl Results {
     /// [`try_matched_user_agents`](Self::try_matched_user_agents) tells a
     /// failed walk apart.
     pub fn matched_user_agents(&self) -> Vec<String> {
-        let _file_read = self.manager.file_read();
         self.read_matched_user_agents()
     }
 
@@ -1519,7 +1462,6 @@ impl Results {
     /// walk a later call walks only the graphs still to walk and gives the
     /// User-Agents the results then hold.
     pub fn try_matched_user_agents(&self) -> Option<Vec<String>> {
-        let _file_read = self.manager.file_read();
         if !self.walk_pending_graphs() {
             return None;
         }
@@ -1527,47 +1469,54 @@ impl Results {
     }
 
     /// Walk the graph of each component not yet walked, and return false
-    /// when a walk fails. The caller holds the file read permit.
+    /// when a walk fails.
     fn walk_pending_graphs(&self) -> bool {
+        let mut exception = sys::Exception::cleared();
         // Safety: the results came from `ResultsHashCreate` and remain valid
-        // for the lifetime of `self`. A null output pointer skips its metric,
-        // so the call only walks the graphs.
-        let ok = unsafe {
-            sys::fiftyoneDegreesShimHashGetResultMetrics(
+        // for the lifetime of `self`, and the exception is writable. A null
+        // output pointer skips its metric, so the call only walks the graphs.
+        unsafe {
+            sys::fiftyoneDegreesResultsHashGetMatchMetrics(
                 self.as_ptr(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
+                &mut exception,
             )
         };
-        ok != 0
+        exception.is_okay()
     }
 
     /// The matched User-Agent of each result, without repeats, in result
-    /// order, walking any graph not yet walked. The caller holds the file
-    /// read permit.
+    /// order, walking any graph not yet walked.
     fn read_matched_user_agents(&self) -> Vec<String> {
         // Safety: the results came from `ResultsHashCreate` and remain valid
         // for the lifetime of `self`.
         let count = unsafe { sys::fiftyoneDegreesShimHashGetResultCount(self.as_ptr()) };
         let mut user_agents: Vec<String> = Vec::new();
-        let mut buffer = vec![0u8; MATCHED_USER_AGENT_BUFFER_LENGTH];
         for index in 0..count {
-            // Safety: as above, and the buffer is writable for its full length.
-            let written = unsafe {
-                sys::fiftyoneDegreesShimHashGetMatchedUserAgent(
+            let mut exception = sys::Exception::cleared();
+            // Safety: as above, and the exception is writable. A failed walk
+            // gives null, which is skipped like a result with none recorded.
+            let matched = unsafe {
+                sys::fiftyoneDegreesResultsHashGetMatchedUserAgent(
                     self.as_ptr(),
                     index,
-                    buffer.as_mut_ptr() as *mut c_char,
-                    buffer.len(),
+                    &mut exception,
                 )
             };
-            if written == 0 {
+            if matched.is_null() {
                 continue;
             }
-            let user_agent = String::from_utf8_lossy(&buffer[..written.min(buffer.len())]);
+            // Safety: the C library null terminates the string, which stays
+            // valid until the results are populated again or freed, and
+            // neither can happen while `self` is borrowed.
+            let user_agent = unsafe { CStr::from_ptr(matched) }.to_string_lossy();
+            if user_agent.is_empty() {
+                continue;
+            }
             if !user_agents.iter().any(|known| *known == user_agent) {
                 user_agents.push(user_agent.into_owned());
             }
@@ -1588,10 +1537,6 @@ impl Results {
         unsafe { sys::fiftyoneDegreesShimHashGetPendingGraphCount(self.as_ptr()) }
     }
 }
-
-/// The buffer a matched User-Agent is read into. The native default records at
-/// most 500 characters of each.
-const MATCHED_USER_AGENT_BUFFER_LENGTH: usize = 4096;
 
 /// The Hash match metrics for a single detection, read from the native results.
 ///
@@ -1656,6 +1601,37 @@ unsafe extern "C" fn take_result_value(context: *mut c_void, _field: c_int, valu
     values.push(text);
 }
 
+/// The script the client runs for `body`, a value of the
+/// `JavascriptHardwareProfile` property, as the C library writes it.
+///
+/// The body pushes the ids of the profiles it finds onto a `profileIds` array
+/// it does not declare. The script declares the array, runs the body, then
+/// writes the ids to the `51D_ProfileIds` cookie, which the engine reads back
+/// as evidence. An empty body gives the script too. As in C, `body` is read up
+/// to its first null.
+pub fn hardware_profile_script(body: &str) -> String {
+    let body = body.split('\0').next().unwrap_or(body);
+    let body = CString::new(body).expect("the text before a null holds none");
+    // Safety: `body` is null terminated. A null buffer only finds the length,
+    // and the buffer is then writable for the script and the null terminator.
+    let script = unsafe {
+        let length = sys::fiftyoneDegreesHashGetHardwareProfileScript(
+            body.as_ptr(),
+            std::ptr::null_mut(),
+            0,
+        );
+        let mut buffer = vec![0u8; length + 1];
+        sys::fiftyoneDegreesHashGetHardwareProfileScript(
+            body.as_ptr(),
+            buffer.as_mut_ptr() as *mut c_char,
+            buffer.len(),
+        );
+        buffer.truncate(length);
+        buffer
+    };
+    String::from_utf8_lossy(&script).into_owned()
+}
+
 /// The message for a failed init, naming the data file at `path`, or `null`
 /// when `path` is null, as for data loaded from memory. An exception holds no
 /// file name, so its message would say `null` instead.
@@ -1677,6 +1653,38 @@ mod tests {
     use std::path::PathBuf;
 
     use fiftyone_pipeline_core::Evidence;
+
+    /// The text the C++ results give for a `JavascriptHardwareProfile`
+    /// value, `body` wrapped in the script that sets the profile ids cookie.
+    fn cpp_hardware_profile_script(body: &str) -> String {
+        format!(
+            "var profileIds = []\n{body}\n\
+             document.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")"
+        )
+    }
+
+    #[test]
+    fn hardware_profile_script_is_the_text_the_cpp_results_wrote() {
+        for body in ["profileIds.push(1)", ""] {
+            assert_eq!(
+                hardware_profile_script(body),
+                cpp_hardware_profile_script(body),
+                "the script for {body:?}"
+            );
+        }
+        // Longer than any first guess at the length, so the length the C
+        // library asks for is what sizes the buffer.
+        let long = "profileIds.push(1);".repeat(1000);
+        assert_eq!(
+            hardware_profile_script(&long),
+            cpp_hardware_profile_script(&long)
+        );
+        // C reads a body up to its first null.
+        assert_eq!(
+            hardware_profile_script("profileIds.push(1)\0x"),
+            cpp_hardware_profile_script("profileIds.push(1)")
+        );
+    }
 
     /// The Hash data file `51DEGREES_DD_PATH` names, or the Lite file in the
     /// `cxx` submodule.
@@ -1719,6 +1727,7 @@ mod tests {
         let count = unsafe { sys::fiftyoneDegreesShimHashGetResultCount(results.as_ptr()) };
         (0..count)
             .map(|index| {
+                let mut method = sys::HashMatchMethod::Length;
                 let mut metrics = MatchMetrics {
                     method: -1,
                     difference: -1,
@@ -1726,19 +1735,24 @@ mod tests {
                     iterations: -1,
                     matched_nodes: -1,
                 };
-                // Safety: as above, and every output pointer is writable.
+                let mut exception = sys::Exception::cleared();
+                // Safety: as above, and every output pointer and the
+                // exception are writable.
                 let read = unsafe {
-                    sys::fiftyoneDegreesShimHashGetResultMetricsAt(
+                    sys::fiftyoneDegreesResultsHashGetMatchMetricsForResult(
                         results.as_ptr(),
                         index,
-                        &mut metrics.method,
+                        &mut method,
                         &mut metrics.difference,
                         &mut metrics.drift,
                         &mut metrics.iterations,
                         &mut metrics.matched_nodes,
+                        &mut exception,
                     )
                 };
-                assert_eq!(read, 1, "result {index} should be readable");
+                assert!(read, "result {index} should be readable");
+                assert!(exception.is_okay(), "result {index} walks");
+                metrics.method = method as i32;
                 metrics
             })
             .collect()
@@ -1993,21 +2007,31 @@ mod tests {
         );
     }
 
+    /// The handles the C library opens when no concurrency is named, one
+    /// for each processor as it counts them, to at most 64.
+    fn handles_for_the_processors() -> u16 {
+        // Safety: the function reads no state.
+        unsafe { fiftyone_common_sys::fiftyoneDegreesThreadingGetProcessorCount() }.min(64)
+    }
+
     /// Every profile but `InMemory` opens a handle to the data file for each
-    /// concurrent operation it expects and keeps it open, `HighPerformance`
-    /// included, although its reads never use the handles.
+    /// concurrent operation it expects, to at most 64, and keeps it open,
+    /// `HighPerformance` included. With no concurrency named, it expects one
+    /// for each processor.
     #[test]
     fn the_file_pool_has_a_handle_for_each_expected_operation() {
         let Some(path) = data_file() else {
             eprintln!("no Hash data file found; skipping the file pool");
             return;
         };
+        let processors = handles_for_the_processors();
         for (profile, concurrency, handles) in [
             (PerformanceProfile::LowMemory, Some(3), 3),
-            (PerformanceProfile::Balanced, None, 10),
+            (PerformanceProfile::Balanced, None, processors),
+            (PerformanceProfile::Balanced, Some(500), 64),
             (PerformanceProfile::HighPerformance, Some(3), 3),
             (PerformanceProfile::HighPerformance, Some(40), 40),
-            (PerformanceProfile::HighPerformance, None, 10),
+            (PerformanceProfile::HighPerformance, None, processors),
             (PerformanceProfile::InMemory, Some(3), 0),
             (PerformanceProfile::InMemory, None, 0),
         ] {
@@ -2022,33 +2046,114 @@ mod tests {
         }
     }
 
-    /// A data set that reads from its file has a file handle for each
-    /// concurrent operation it was opened to expect, and one held in memory
-    /// has none, so its calls take no permits.
+    /// The C library's name for a collection held whole in memory.
+    const IN_MEMORY: &str = "CollectionMemory";
+
+    /// The C library's name for a collection holding in memory only what the
+    /// required properties read, and reading the rest from the file.
+    const HELD: &str = "CollectionHeld";
+
+    /// The C library's type names of the collections `manager`'s data set
+    /// holds its strings and its values in.
+    fn strings_and_values_types(manager: &Manager) -> (String, String) {
+        let mut strings: *const c_char = std::ptr::null();
+        let mut values: *const c_char = std::ptr::null();
+        // Safety: the manager is initialized and both outputs are writable.
+        let found = unsafe {
+            sys::fiftyoneDegreesShimHashGetCollectionTypeNames(
+                manager.as_ptr(),
+                &mut strings,
+                &mut values,
+            )
+        };
+        assert_eq!(found, 1, "the data set is available");
+        // Safety: both names are constants of the C library.
+        let name = |text| {
+            unsafe { CStr::from_ptr(text) }
+                .to_string_lossy()
+                .into_owned()
+        };
+        (name(strings), name(values))
+    }
+
+    /// `HighPerformance` with some properties named holds in memory only the
+    /// values those properties read and the strings those values use, and
+    /// reads the others from the data file when asked. The named property
+    /// gives the value it gives with none named, and so do the values of a
+    /// property not named.
     #[test]
-    fn file_handles_follow_the_expected_concurrency() {
+    fn high_performance_naming_some_holds_only_what_they_read() {
         let Some(path) = data_file() else {
-            eprintln!("no Hash data file found; skipping file handles");
+            eprintln!("no Hash data file found; skipping held collections");
             return;
         };
-        for (profile, concurrency, handles) in [
-            (PerformanceProfile::LowMemory, Some(3), 3),
-            (PerformanceProfile::Balanced, None, 10),
-            (PerformanceProfile::HighPerformance, Some(3), 0),
-            (PerformanceProfile::InMemory, None, 0),
-        ] {
-            let manager = Manager::open_with_options(&path, profile, None, concurrency)
-                .expect("data file loads");
-            // Safety: the manager is initialized.
-            let count = unsafe { sys::fiftyoneDegreesShimHashGetFileHandleCount(manager.as_ptr()) };
-            assert_eq!(count, handles, "{}", profile.as_str());
-            assert_eq!(
-                manager.file_reads.is_some(),
-                handles > 0,
-                "{}",
-                profile.as_str()
-            );
-        }
+        let profile = PerformanceProfile::HighPerformance;
+        let some = Manager::open_with_properties(&path, profile, Some(&["IsMobile"]))
+            .expect("data file loads");
+        let every = Manager::open(&path, profile).expect("data file loads");
+        assert_eq!(
+            strings_and_values_types(&some),
+            (String::from(HELD), String::from(HELD))
+        );
+
+        let is_mobile = |manager: &Arc<Manager>| {
+            detect(manager, "header.user-agent", CHROME_ON_WINDOWS)
+                .value_as_string("IsMobile", ",")
+                .expect("IsMobile reads")
+        };
+        assert_eq!(is_mobile(&some), Some(String::from("False")));
+        assert_eq!(is_mobile(&some), is_mobile(&every));
+
+        // Which properties are available differs by design. What the data
+        // file says of each, read through the values and strings, does not.
+        let metadata = |manager: &Manager| -> Vec<_> {
+            manager
+                .data_file_properties()
+                .expect("properties read")
+                .into_iter()
+                .map(|property| {
+                    (
+                        property.name,
+                        property.description,
+                        property.default_value,
+                        property.value_count,
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(metadata(&some), metadata(&every));
+        let properties = every.data_file_properties().expect("properties read");
+        let browser_name = properties
+            .iter()
+            .position(|property| property.name == "BrowserName")
+            .and_then(|index| u32::try_from(index).ok())
+            .expect("the data file has BrowserName");
+        let values = some
+            .data_file_property_values(browser_name)
+            .expect("values read from the file");
+        assert!(!values.is_empty(), "BrowserName has values");
+        assert_eq!(
+            values,
+            every
+                .data_file_property_values(browser_name)
+                .expect("values read")
+        );
+    }
+
+    /// `HighPerformance` with no property named holds every string and value
+    /// in memory.
+    #[test]
+    fn high_performance_naming_none_holds_everything() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping held collections");
+            return;
+        };
+        let every =
+            Manager::open(&path, PerformanceProfile::HighPerformance).expect("data file loads");
+        assert_eq!(
+            strings_and_values_types(&every),
+            (String::from(IN_MEMORY), String::from(IN_MEMORY))
+        );
     }
 
     /// Where the published date starts in a Hash data file header, after the
@@ -2126,6 +2231,45 @@ mod tests {
         }
     }
 
+    /// A day the month does not have is not a date, so neither date is read,
+    /// whilst 29 February is read in a leap year. A year divisible by 100 is
+    /// a leap year only when it is also divisible by 400.
+    #[test]
+    fn a_day_the_month_lacks_is_not_a_date() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the days months lack");
+            return;
+        };
+        let bytes = std::fs::read(&path).expect("data file reads");
+        let cases: [(i16, u8, u8, bool); 7] = [
+            (2001, 2, 30, false),
+            (2001, 2, 29, false),
+            (1900, 2, 29, false),
+            (2001, 4, 31, false),
+            (2004, 2, 29, true),
+            (2000, 2, 29, true),
+            (2001, 4, 30, true),
+        ];
+        for (year, month, day, read) in cases {
+            let [low, high] = year.to_le_bytes();
+            let mut data = bytes.clone();
+            for at in [PUBLISHED_AT, PUBLISHED_AT + 4] {
+                data[at..at + 4].copy_from_slice(&[low, high, month, day]);
+            }
+            let manager = Manager::open_from_memory(
+                data,
+                PerformanceProfile::LowMemory,
+                None,
+                &HashOptions::default(),
+            )
+            .expect("data loads");
+            let date = (i32::from(year), u32::from(month), u32::from(day));
+            let expected = read.then_some(date);
+            assert_eq!(manager.data_set_published(), expected, "{date:?}");
+            assert_eq!(manager.data_set_next_update(), expected, "{date:?}");
+        }
+    }
+
     /// A data set loaded from memory under any profile opens no file handle
     /// and gives the answers and properties the file gives, after the caller
     /// has dropped its own reference to the manager.
@@ -2153,7 +2297,6 @@ mod tests {
                 Manager::open_from_memory(bytes.clone(), profile, Some(&named[..]), &options)
                     .expect("data loads");
             assert_eq!(from_memory.file_pool_size(), 0, "{}", profile.as_str());
-            assert!(from_memory.file_reads.is_none(), "{}", profile.as_str());
             assert_eq!(
                 from_memory.property_names(),
                 from_file.property_names(),
@@ -2218,33 +2361,125 @@ mod tests {
         }
     }
 
-    /// A profile whose collections read through caches takes at most the
-    /// concurrency its smallest cache can be split into, and the others take
-    /// any.
+    /// Every profile expects one concurrent operation for each processor
+    /// when none is named, and loads with any concurrency named, the
+    /// `Balanced` values cache of 500 entries taking more than its square
+    /// root.
     #[test]
-    fn the_smallest_cache_sets_the_most_concurrency() {
-        assert_eq!(most_concurrency(PerformanceProfile::Balanced), Some(22));
-        assert_eq!(most_concurrency(PerformanceProfile::Default), Some(22));
+    fn every_profile_takes_any_concurrency() {
+        // Safety: the function reads no state.
+        let processors =
+            unsafe { fiftyone_common_sys::fiftyoneDegreesThreadingGetProcessorCount() };
         for profile in [
             PerformanceProfile::LowMemory,
+            PerformanceProfile::Balanced,
+            PerformanceProfile::Default,
             PerformanceProfile::HighPerformance,
             PerformanceProfile::InMemory,
         ] {
-            assert_eq!(most_concurrency(profile), None, "{}", profile.as_str());
-        }
-        let balanced = default_concurrency(PerformanceProfile::Balanced);
-        assert!((1..=22).contains(&balanced), "{balanced}");
-        for (processors, profile, expected) in [
-            (64, PerformanceProfile::Balanced, 22),
-            (64, PerformanceProfile::Default, 22),
-            (8, PerformanceProfile::Balanced, 8),
-            (64, PerformanceProfile::LowMemory, 64),
-            (64, PerformanceProfile::HighPerformance, 64),
-        ] {
             assert_eq!(
-                concurrency_within(processors, profile),
-                expected,
-                "{processors} {}",
+                default_concurrency(profile),
+                processors,
+                "{}",
+                profile.as_str()
+            );
+        }
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping concurrency");
+            return;
+        };
+        for profile in [PerformanceProfile::Balanced, PerformanceProfile::Default] {
+            let manager = Manager::open_with_options(&path, profile, None, Some(500))
+                .expect("any concurrency loads");
+            let results = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
+            assert_eq!(
+                results
+                    .value_as_string("IsMobile", ",")
+                    .expect("IsMobile reads"),
+                Some(String::from("False")),
+                "{}",
+                profile.as_str()
+            );
+        }
+    }
+
+    /// The evidence keys are the C library's list for the data set,
+    /// lowercased: each header's `header.` and `query.` keys, a `cookie.`
+    /// and a `query.` key for each property the evidence can override, then
+    /// the seven keys every data set reads, with no `HTTP_` before a header
+    /// name.
+    #[test]
+    fn the_evidence_keys_are_the_data_sets_list_lowercased() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the evidence keys");
+            return;
+        };
+        let manager = Manager::open(&path, PerformanceProfile::Default).expect("data file loads");
+        let keys = manager.evidence_keys();
+        let fixed = [
+            "query.51d_deviceid",
+            "query.51d_gethighentropyvalues",
+            "query.51d_structureduseragent",
+            "cookie.51d_gethighentropyvalues",
+            "cookie.51d_structureduseragent",
+            "query.51d_profileids",
+            "cookie.51d_profileids",
+        ];
+        assert!(keys.len() > fixed.len(), "{keys:?}");
+        assert_eq!(&keys[keys.len() - fixed.len()..], fixed, "{keys:?}");
+        for key in &keys {
+            assert_eq!(*key, key.to_lowercase(), "{keys:?}");
+            assert!(!key.contains(".http_"), "{keys:?}");
+        }
+        for pair in [
+            ["header.user-agent", "query.user-agent"],
+            [
+                "cookie.51d_javascripthardwareprofile",
+                "query.51d_javascripthardwareprofile",
+            ],
+        ] {
+            assert!(keys.windows(2).any(|w| w == pair), "{pair:?} {keys:?}");
+        }
+    }
+
+    /// No profile reads a header name with `HTTP_` before it, as .NET sets
+    /// in its Hash engine builder, so the header keys are the names the data
+    /// set holds.
+    #[test]
+    fn no_profile_reads_http_prefixed_header_names() {
+        for profile in [
+            PerformanceProfile::LowMemory,
+            PerformanceProfile::Balanced,
+            PerformanceProfile::Default,
+            PerformanceProfile::HighPerformance,
+            PerformanceProfile::InMemory,
+        ] {
+            let config = profile_config(profile, &HashOptions::default());
+            assert!(
+                !config.b.b.uses_upper_prefixed_headers,
+                "{}",
+                profile.as_str()
+            );
+        }
+    }
+
+    /// The copy of a profile's configuration a data set opens with keeps
+    /// the profile's `load_required_properties_only`, which only
+    /// `HighPerformance` sets.
+    #[test]
+    fn the_copied_configuration_keeps_load_required_properties_only() {
+        for profile in [
+            PerformanceProfile::LowMemory,
+            PerformanceProfile::Balanced,
+            PerformanceProfile::Default,
+            PerformanceProfile::HighPerformance,
+            PerformanceProfile::InMemory,
+        ] {
+            let config = profile_config(profile, &HashOptions::default());
+            assert_eq!(
+                config.load_required_properties_only,
+                profile == PerformanceProfile::HighPerformance,
+                "{}",
                 profile.as_str()
             );
         }
@@ -2274,7 +2509,7 @@ mod tests {
         assert_eq!(fields(&unchanged), fields(&profile));
         assert_eq!(
             fields(&profile),
-            (0, 0, false, true, false, true, 10, 500, false)
+            (0, 0, false, true, false, true, 0, 500, false)
         );
 
         let mut changed = profile;
@@ -3142,13 +3377,10 @@ mod tests {
         let copy = dir.join("51Degrees.hash");
         std::fs::write(&copy, &bytes).expect("the copy is written");
         let manager = Manager::open(&copy, PerformanceProfile::LowMemory).expect("the copy loads");
-        {
-            let _file_read = manager.file_read();
-            let fields = manager
-                .read_property_fields(last)
-                .expect("the last property is read");
-            assert_eq!(fields.available, 1);
-        }
+        let fields = manager
+            .read_property_fields(last)
+            .expect("the last property is read");
+        assert_eq!(fields.available, 1);
 
         let mut file = std::fs::OpenOptions::new()
             .write(true)
@@ -3160,11 +3392,8 @@ mod tests {
         file.write_all(&(i32::MAX as u32).to_le_bytes())
             .expect("the name offset is written");
         drop(file);
-        {
-            let _file_read = manager.file_read();
-            assert!(manager.read_property_fields(0).is_some());
-            assert!(manager.read_property_fields(last).is_none());
-        }
+        assert!(manager.read_property_fields(0).is_some());
+        assert!(manager.read_property_fields(last).is_none());
         let error = manager
             .data_file_properties()
             .expect_err("the last property cannot be read");
@@ -3303,7 +3532,6 @@ mod tests {
         ];
         for profile in METADATA_PROFILES {
             let manager = Manager::open(&path, profile).expect("data file loads");
-            let _file_read = manager.file_read();
             let ptr = manager.as_ptr();
             // Safety (every call below): the manager is initialized for the
             // lifetime of `manager`, and each buffer is writable for the

@@ -51,10 +51,9 @@
 //! manager is reference counted and lock protected) and [`Results`] is [`Send`]
 //! but not [`Sync`] (per-thread scratch). A data set that reads from its file
 //! after it is loaded holds one file handle for each concurrent operation it
-//! was opened to expect, so no more calls that can read the file run at once
-//! than there are handles, and a call beyond them waits for one. The native
-//! library ends the process when a read of a property's values finds no free
-//! handle.
+//! was opened to expect, and the native library makes a read that finds none
+//! free wait for one. The native library ends the process when a read of a
+//! property's values fails.
 
 use std::ffi::{CStr, CString};
 use std::net::{IpAddr, Ipv4Addr};
@@ -69,7 +68,6 @@ use fiftyone_pipeline_core::{constants, round_angle, Error, Evidence, PropertyVa
 
 use crate::buffer::{with_c_str, with_value_string};
 use crate::evidence::parse_client_ip;
-use crate::file_reads::{FileReadPermit, FileReads};
 use crate::held_memory::HeldMemory;
 use crate::metadata::{metadata_read_failed, read_metadata_string, take_value_string};
 use crate::profile::PerformanceProfile;
@@ -168,9 +166,6 @@ pub struct Manager {
     /// The number of required properties, which a read by index must stay
     /// below.
     required_count: u32,
-    /// Permits for the calls that can read the data file, one for each of its
-    /// file handles, or [`None`] when the data set is held in memory.
-    file_reads: Option<FileReads>,
     /// The data a load from memory reads in place. Fields drop after
     /// [`Drop::drop`] has freed the data set, so the data outlives it.
     _memory: Option<HeldMemory>,
@@ -189,9 +184,8 @@ struct EvidenceKey {
 
 // Safety: the native resource manager is internally reference counted and lock
 // protected per `src/common/resource.h`, so a shared `&Manager` is sound to use
-// from several threads. The data set held for name lookups is only read, and
-// the file read permits are lock protected. Therefore the manager is both
-// `Send` and `Sync`.
+// from several threads. The data set held for name lookups is only read.
+// Therefore the manager is both `Send` and `Sync`.
 unsafe impl Send for Manager {}
 unsafe impl Sync for Manager {}
 
@@ -219,8 +213,11 @@ impl Manager {
     /// under the `LowMemory` and `Balanced` profiles, which is how many calls
     /// can read the data file at once. A call beyond that waits for a handle,
     /// so it should be the number of threads that will look up through the
-    /// data set at once. [`None`] keeps the profile's default. It has no effect
-    /// on the in-memory profiles, where every collection is already resident.
+    /// data set at once. [`None`] keeps the profile's default, one for each
+    /// processor. Any value loads, and the pool holds at most 64 handles. It
+    /// has no effect on `InMemory`, and none on `HighPerformance` but for the
+    /// values of properties not named when some are, which it reads from the
+    /// file.
     pub fn open_with_options(
         path: impl AsRef<Path>,
         profile: PerformanceProfile,
@@ -350,8 +347,6 @@ impl Manager {
         let manager = NonNull::new(manager_ptr).expect("init produced a non-null manager");
         // Safety: the manager was initialized above.
         let evidence_keys = unsafe { read_evidence_keys(manager.as_ptr()) };
-        // Safety: as above.
-        let handles = unsafe { sys::fiftyoneDegreesShimIpiGetFileHandleCount(manager.as_ptr()) };
         // Safety: as above. The reference is released in `Drop`, before the
         // manager is freed.
         let data_set = unsafe { sys::fiftyoneDegreesDataSetIpiGet(manager.as_ptr()) };
@@ -364,19 +359,12 @@ impl Manager {
             evidence_keys,
             data_set,
             required_count,
-            file_reads: FileReads::for_handles(handles),
             _memory: memory,
         }))
     }
 
     fn as_ptr(&self) -> *mut sys::ResourceManager {
         self.manager.as_ptr()
-    }
-
-    /// A permit for a call that can read the data file, waiting while every
-    /// file handle is in use. [`None`] when the data set is held in memory.
-    fn file_read(&self) -> Option<FileReadPermit<'_>> {
-        self.file_reads.as_ref().map(FileReads::permit)
     }
 
     /// The evidence keys the data file defines, in the order the native lookup
@@ -390,6 +378,15 @@ impl Manager {
         self.evidence_keys.iter().map(|key| key.key.as_str())
     }
 
+    /// The number of handles to the data file that the data set opened when
+    /// it loaded, which stay open until it is freed. Every profile but
+    /// `InMemory` opens one for each concurrent operation it expects, to at
+    /// most 64. `InMemory` opens none.
+    pub fn file_pool_size(&self) -> u16 {
+        // Safety: the manager is initialized for the lifetime of `self`.
+        unsafe { sys::fiftyoneDegreesShimIpiGetFilePoolSize(self.as_ptr()) }
+    }
+
     /// The data set's name, which is the data file's tier (for example `Lite`,
     /// `Enterprise` or `TAC`), or [`None`] when it cannot be read.
     ///
@@ -398,7 +395,6 @@ impl Manager {
     /// rather than a fixed default.
     pub fn data_set_name(&self) -> Option<String> {
         let mut buffer = vec![0u8; 128];
-        let _file_read = self.file_read();
         // Safety: the buffer is writable for its full length and the manager is
         // initialized for the lifetime of `self`.
         let written = unsafe {
@@ -423,35 +419,27 @@ impl Manager {
     /// The date the data file was published, from its header, as `(year,
     /// month, day)`, or [`None`] when the header holds no valid date.
     pub fn data_set_published(&self) -> Option<(i32, u32, u32)> {
-        self.header_date(sys::fiftyoneDegreesShimIpiGetDataSetPublished)
+        self.header_date(sys::fiftyoneDegreesIpiGetPublished)
     }
 
     /// The date the next data file is expected, from the data file header,
     /// as `(year, month, day)`, or [`None`] when the header holds no valid
     /// date.
     pub fn data_set_next_update(&self) -> Option<(i32, u32, u32)> {
-        self.header_date(sys::fiftyoneDegreesShimIpiGetDataSetNextUpdate)
+        self.header_date(sys::fiftyoneDegreesIpiGetNextUpdate)
     }
 
-    /// The date `read` gives, or [`None`] when its year is not positive, its
-    /// month is not 1 to 12 or its day is not 1 to 31.
+    /// The date `read` gives, or [`None`] when the C library finds it is not
+    /// a valid date.
     fn header_date(
         &self,
-        read: unsafe extern "C" fn(
-            *mut sys::ResourceManager,
-            *mut c_int,
-            *mut c_int,
-            *mut c_int,
-        ) -> c_int,
+        read: unsafe extern "C" fn(*mut sys::ResourceManager, *mut sys::Date) -> bool,
     ) -> Option<(i32, u32, u32)> {
-        let (mut year, mut month, mut day): (c_int, c_int, c_int) = (0, 0, 0);
-        // Safety: the manager is initialized and each output pointer is
-        // writable.
-        let found = unsafe { read(self.as_ptr(), &mut year, &mut month, &mut day) };
-        if found == 0 || year <= 0 || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-            return None;
-        }
-        Some((year, u32::try_from(month).ok()?, u32::try_from(day).ok()?))
+        let mut date = sys::Date::default();
+        // Safety: the manager is initialized and `date` is writable.
+        let valid = unsafe { read(self.as_ptr(), &mut date) };
+        let sys::Date { year, month, day } = date;
+        valid.then(|| (i32::from(year), u32::from(month), u32::from(day)))
     }
 
     /// The names of every property the data set was initialized with, in
@@ -649,7 +637,6 @@ impl Manager {
     /// A property that cannot be read is an error rather than left out, as
     /// the C++ code the other SDKs call raises one.
     pub fn data_file_properties(&self) -> Result<Vec<DataFileProperty>> {
-        let _file_read = self.file_read();
         let count = self.data_file_property_count();
         (0..count)
             .map(|index| {
@@ -663,7 +650,6 @@ impl Manager {
     /// default profile or a name that cannot be read is an error, as the C++
     /// code throws for a default profile it cannot read.
     pub fn data_file_components(&self) -> Result<Vec<DataFileComponent>> {
-        let _file_read = self.file_read();
         // Safety: the manager is initialized for the lifetime of `self`.
         let count = unsafe { sys::fiftyoneDegreesShimIpiGetComponentCount(self.as_ptr()) };
         let mut components = Vec::with_capacity(count as usize);
@@ -725,7 +711,6 @@ impl Manager {
         property_index: u32,
         range: Range<u32>,
     ) -> Result<Vec<DataFileValue>> {
-        let _file_read = self.file_read();
         if property_index >= self.data_file_property_count() {
             return Ok(Vec::new());
         }
@@ -754,7 +739,6 @@ impl Manager {
         property_index: u32,
         name: &str,
     ) -> Result<Option<DataFileValue>> {
-        let _file_read = self.file_read();
         if property_index >= self.data_file_property_count() {
             return Ok(None);
         }
@@ -792,8 +776,7 @@ impl Manager {
 
     /// The values at the places `range` covers among those the data file
     /// holds for the property at `property_index`, read in one shim call, or
-    /// [`None`] when the property or any of them cannot be read. The caller
-    /// holds the file read permit.
+    /// [`None`] when the property or any of them cannot be read.
     fn read_values(&self, property_index: u32, range: Range<u32>) -> Option<Vec<DataFileValue>> {
         let mut values: Vec<DataFileValue> = Vec::new();
         // Safety: `take_value_string` treats the context as the
@@ -814,8 +797,7 @@ impl Manager {
 
     /// The fields of the data file property at `index` that are not strings,
     /// or [`None`] when the index is out of range or the property, its name
-    /// or its default value cannot be read. The caller holds the file read
-    /// permit.
+    /// or its default value cannot be read.
     fn read_property_fields(&self, index: u32) -> Option<PropertyFields> {
         let mut fields = PropertyFields {
             value_type: 0,
@@ -856,8 +838,7 @@ impl Manager {
     }
 
     /// The data file property at `index`, or [`None`] when the index is out
-    /// of range or any part of it cannot be read. The caller holds the file
-    /// read permit.
+    /// of range or any part of it cannot be read.
     fn read_data_file_property(&self, index: u32) -> Option<DataFileProperty> {
         let fields = self.read_property_fields(index)?;
         let string = |field| {
@@ -963,28 +944,38 @@ impl Drop for Manager {
     }
 }
 
-/// Read the evidence keys the data set behind `manager` defines, being every
-/// header it names under the query prefix and then under the server prefix,
-/// in the data set's order. That is the order the native lookup tries them.
+/// Read the evidence keys the data set behind `manager` defines from the C
+/// library, lowercased, with every query key and then every server key, each
+/// in the data set's order. That is the order the native lookup tries them,
+/// and the order the specification gives the list in. The C library lists a
+/// header's query and server keys together.
 ///
 /// # Safety
 /// `manager` must be initialized.
 unsafe fn read_evidence_keys(manager: *mut sys::ResourceManager) -> Vec<EvidenceKey> {
-    let count = sys::fiftyoneDegreesShimIpiGetUniqueHeaderCount(manager);
-    let mut headers = Vec::with_capacity(count as usize);
-    for index in 0..count {
-        let mut buffer = [0u8; 256];
-        let written = sys::fiftyoneDegreesShimIpiGetUniqueHeaderName(
-            manager,
-            index,
-            buffer.as_mut_ptr() as *mut c_char,
-            buffer.len(),
-        );
-        let name = String::from_utf8_lossy(&buffer[..written.min(buffer.len())]).to_lowercase();
-        if !name.is_empty() {
-            headers.push(name);
-        }
+    let data_set = sys::fiftyoneDegreesDataSetIpiGet(manager);
+    if data_set.is_null() {
+        return Vec::new();
     }
+    // The data set is held until the release below, so both calls read the
+    // same one. A null buffer only finds the length, and the buffer is then
+    // writable for the keys and the null terminator.
+    let length = sys::fiftyoneDegreesIpiGetEvidenceKeys(
+        data_set,
+        std::ptr::null_mut(),
+        0,
+        EVIDENCE_KEY_SEPARATOR.as_ptr(),
+    );
+    let mut buffer = vec![0u8; length + 1];
+    sys::fiftyoneDegreesIpiGetEvidenceKeys(
+        data_set,
+        buffer.as_mut_ptr() as *mut c_char,
+        buffer.len(),
+        EVIDENCE_KEY_SEPARATOR.as_ptr(),
+    );
+    sys::fiftyoneDegreesDataSetIpiRelease(data_set);
+    buffer.truncate(length);
+    let text = String::from_utf8_lossy(&buffer).to_lowercase();
 
     let prefixes = [
         (constants::EVIDENCE_QUERY_PREFIX, sys::EvidencePrefix::Query),
@@ -993,19 +984,29 @@ unsafe fn read_evidence_keys(manager: *mut sys::ResourceManager) -> Vec<Evidence
             sys::EvidencePrefix::Server,
         ),
     ];
-    let mut keys = Vec::with_capacity(headers.len() * prefixes.len());
+    let mut keys = Vec::new();
     for (prefix, native_prefix) in prefixes {
-        for header in &headers {
+        for key in text.split(',') {
+            let Some((key_prefix, field)) = key.split_once(constants::EVIDENCE_SEPARATOR) else {
+                continue;
+            };
+            if key_prefix != prefix || field.is_empty() {
+                continue;
+            }
             keys.push(EvidenceKey {
-                key: format!("{prefix}{}{header}", constants::EVIDENCE_SEPARATOR),
+                key: key.to_owned(),
                 prefix: native_prefix,
-                // The name came from a C string, so it holds no nul byte.
-                field: CString::new(header.as_str()).expect("a header name has no nul"),
+                // The text came from a C string, so it holds no nul byte.
+                field: CString::new(field).expect("a header name has no nul"),
             });
         }
     }
     keys
 }
+
+/// The separator the C library writes between evidence keys. No header name
+/// holds a comma.
+const EVIDENCE_KEY_SEPARATOR: &CStr = c",";
 
 // ---------------------------------------------------------------------------
 // Results
@@ -1054,7 +1055,6 @@ impl Results {
             message: String::from("IP address contains an interior nul byte"),
         })?;
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: `ip_c` is a null terminated buffer valid for the duration of the
         // call, and the length passed excludes the terminator the parser reads.
         unsafe {
@@ -1115,7 +1115,6 @@ impl Results {
     /// Look up the evidence `pairs` hold, each an evidence key and its value.
     /// With no pairs the lookup clears any earlier one and finds nothing.
     fn process_pairs(&self, pairs: &[(&EvidenceKey, CString)]) -> Result<()> {
-        let _file_read = self.manager.file_read();
         // Safety: the array is created, filled and freed here. The keys belong
         // to the manager, and the values to `pairs`, so both outlive the call.
         unsafe {
@@ -1158,7 +1157,6 @@ impl Results {
 
         let results = self.as_ptr();
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: the writer only touches its buffer and returns the native
         // available-character count. The strings outlive every invocation.
         let value = unsafe {
@@ -1198,7 +1196,6 @@ impl Results {
         self.manager.check_property_index(index)?;
         let results = self.as_ptr();
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: the writer only touches its buffer and returns the native
         // available-character count. The separator outlives every invocation
         // and the index is in range for this data set.
@@ -1291,7 +1288,6 @@ impl Results {
     ) -> Result<Vec<(sys::PropertyValueType, String, u16)>> {
         let indexes = [index];
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: `results` is valid and the index array is readable for its
         // single element. With no scratch buffer passed, the library converts
         // values to text in one of its own and frees it before returning. The
@@ -1362,7 +1358,6 @@ impl Results {
     pub fn no_value_message_by_index(&self, index: c_int) -> Result<String> {
         self.manager.check_property_index(index)?;
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: `results` is valid and the index is one of its data set's
         // required properties.
         let reason = unsafe {
@@ -1389,7 +1384,6 @@ impl Results {
     pub fn has_values_by_index(&self, index: c_int) -> Result<bool> {
         self.manager.check_property_index(index)?;
         let mut exception = sys::Exception::cleared();
-        let _file_read = self.manager.file_read();
         // Safety: `results` is valid and the index is one of its data set's
         // required properties.
         let has_values = unsafe {
@@ -1965,30 +1959,95 @@ mod tests {
         );
     }
 
-    /// A data set that reads from its file has a file handle for each
-    /// concurrent operation it was opened to expect, and one held in memory
-    /// has none, so its calls take no permits.
+    /// The C library's type names of the collections `manager`'s data set
+    /// holds its strings and its values in.
+    fn strings_and_values_types(manager: &Manager) -> (String, String) {
+        let mut strings: *const c_char = std::ptr::null();
+        let mut values: *const c_char = std::ptr::null();
+        // Safety: the manager is initialized and both outputs are writable.
+        let found = unsafe {
+            sys::fiftyoneDegreesShimIpiGetCollectionTypeNames(
+                manager.as_ptr(),
+                &mut strings,
+                &mut values,
+            )
+        };
+        assert_eq!(found, 1, "the data set is available");
+        // Safety: both names are constants of the C library.
+        let name = |text| {
+            unsafe { CStr::from_ptr(text) }
+                .to_string_lossy()
+                .into_owned()
+        };
+        (name(strings), name(values))
+    }
+
+    /// `HighPerformance` with some properties named holds in memory only the
+    /// values those properties read, and the named property gives the
+    /// answer it gives with none named.
     #[test]
-    fn file_handles_follow_the_expected_concurrency() {
+    fn high_performance_naming_some_holds_only_what_they_read() {
         let Some(data_file) = ipi_data_file() else {
-            eprintln!("no IP Intelligence data file found; skipping file handles");
+            eprintln!("no IP Intelligence data file found; skipping held values");
             return;
         };
+        let profile = PerformanceProfile::HighPerformance;
+        let some = Manager::open_with_properties(&data_file, profile, Some(&["Asn"]))
+            .expect("data file loads");
+        let every = Manager::open(&data_file, profile).expect("data file loads");
+        assert_eq!(strings_and_values_types(&some).1, "CollectionHeld");
+        let evidence = [("query.client-ip-51d", CLOUDFLARE)];
+        let asn = asn_from(&some, &evidence).expect("Asn reads");
+        assert!(asn.is_some(), "{CLOUDFLARE} has an autonomous system");
+        assert_eq!(asn, asn_from(&every, &evidence).expect("Asn reads"));
+    }
+
+    /// `HighPerformance` with no property named holds every string and value
+    /// in memory.
+    #[test]
+    fn high_performance_naming_none_holds_everything() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping held values");
+            return;
+        };
+        let every = Manager::open(&data_file, PerformanceProfile::HighPerformance)
+            .expect("data file loads");
+        assert_eq!(
+            strings_and_values_types(&every),
+            (
+                String::from("CollectionMemory"),
+                String::from("CollectionMemory")
+            )
+        );
+    }
+
+    /// Every profile but `InMemory` opens a handle to the data file for each
+    /// concurrent operation it expects, to at most 64, and keeps it open,
+    /// `HighPerformance` included. With no concurrency named, it expects one
+    /// for each processor.
+    #[test]
+    fn the_file_pool_has_a_handle_for_each_expected_operation() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping the file pool");
+            return;
+        };
+        // Safety: the function reads no state.
+        let processors =
+            unsafe { sys::common::fiftyoneDegreesThreadingGetProcessorCount() }.min(64);
         for (profile, concurrency, handles) in [
             (PerformanceProfile::LowMemory, Some(3), 3),
-            (PerformanceProfile::Balanced, None, 10),
-            (PerformanceProfile::HighPerformance, Some(3), 0),
+            (PerformanceProfile::Balanced, None, processors),
+            (PerformanceProfile::Balanced, Some(500), 64),
+            (PerformanceProfile::HighPerformance, Some(3), 3),
+            (PerformanceProfile::InMemory, Some(3), 0),
             (PerformanceProfile::InMemory, None, 0),
         ] {
             let manager = Manager::open_with_options(&data_file, profile, None, concurrency)
                 .expect("data file loads");
-            // Safety: the manager is initialized.
-            let count = unsafe { sys::fiftyoneDegreesShimIpiGetFileHandleCount(manager.as_ptr()) };
-            assert_eq!(count, handles, "{}", profile.as_str());
             assert_eq!(
-                manager.file_reads.is_some(),
-                handles > 0,
-                "{}",
+                manager.file_pool_size(),
+                handles,
+                "{} {concurrency:?}",
                 profile.as_str()
             );
         }
@@ -2104,6 +2163,40 @@ mod tests {
         assert_eq!(manager.data_set_next_update(), Some((2001, 12, 31)));
     }
 
+    /// A day the month does not have is not a date, so neither date is read,
+    /// whilst 29 February is read in a leap year. A year divisible by 100 is
+    /// a leap year only when it is also divisible by 400.
+    #[test]
+    fn a_day_the_month_lacks_is_not_a_date() {
+        let Some(data_file) = asn_file() else {
+            eprintln!("no ASN data file found; skipping the days months lack");
+            return;
+        };
+        let bytes = std::fs::read(&data_file).expect("data file reads");
+        let cases: [(i16, u8, u8, bool); 7] = [
+            (2001, 2, 30, false),
+            (2001, 2, 29, false),
+            (1900, 2, 29, false),
+            (2001, 4, 31, false),
+            (2004, 2, 29, true),
+            (2000, 2, 29, true),
+            (2001, 4, 30, true),
+        ];
+        for (year, month, day, read) in cases {
+            let [low, high] = year.to_le_bytes();
+            let mut data = bytes.clone();
+            for at in [PUBLISHED_AT, PUBLISHED_AT + 4] {
+                data[at..at + 4].copy_from_slice(&[low, high, month, day]);
+            }
+            let manager = Manager::open_from_memory(data, PerformanceProfile::LowMemory, None)
+                .expect("data loads");
+            let date = (i32::from(year), u32::from(month), u32::from(day));
+            let expected = read.then_some(date);
+            assert_eq!(manager.data_set_published(), expected, "{date:?}");
+            assert_eq!(manager.data_set_next_update(), expected, "{date:?}");
+        }
+    }
+
     /// A data set loaded from memory under any profile opens no file handle,
     /// takes the property named, and gives the evidence keys, properties
     /// and answers the file gives, after the caller has dropped its own
@@ -2131,11 +2224,7 @@ mod tests {
                         .expect("data file loads");
                 let from_memory = Manager::open_from_memory(bytes.clone(), profile, properties)
                     .expect("data loads");
-                assert!(from_memory.file_reads.is_none(), "{case}");
-                // Safety: the manager is initialized.
-                let handles =
-                    unsafe { sys::fiftyoneDegreesShimIpiGetFileHandleCount(from_memory.as_ptr()) };
-                assert_eq!(handles, 0, "{case}");
+                assert_eq!(from_memory.file_pool_size(), 0, "{case}");
                 let names = from_memory.available_property_names();
                 assert_eq!(names, from_file.available_property_names(), "{case}");
                 assert_eq!(
@@ -3025,8 +3114,8 @@ mod tests {
     /// .NET, so a test that needs it fails rather than skips.
     const REQUIRE_ENTERPRISE: &str = "51DEGREES_REQUIRE_ENTERPRISE";
 
-    /// The length of the buffer the shim first writes a value's text into,
-    /// `SHIM_TEXT_BUFFER_LENGTH` in `shim.c`.
+    /// The length of the buffer the shim gives the C library for a value's
+    /// text, `SHIM_TEXT_BUFFER_LENGTH` in `shim.c`.
     const SHIM_TEXT_BUFFER_LENGTH: usize = 256;
 
     /// Skip `what` for `reason`, or fail when [`REQUIRE_ENTERPRISE`] is set.
@@ -3087,8 +3176,7 @@ mod tests {
     /// An Enterprise file's values are given as text as .NET gives them. An
     /// IP range starts at an address, a coordinate has at most 3 decimal
     /// places, and an area is WKT text. The first area is longer than the
-    /// shim's first buffer, so the shim writes it again into a buffer it
-    /// allocates.
+    /// shim's buffer, so the C library writes it into a block it allocates.
     #[test]
     fn an_enterprise_file_gives_each_value_as_text() {
         let Some((manager, properties)) = enterprise_file("value text") else {

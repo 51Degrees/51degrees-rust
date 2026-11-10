@@ -65,7 +65,8 @@
 //!   de-duplicated case-insensitively, sorted) the pipeline's elements accept,
 //!   or those of a whitelist supplied in their place; omitted when empty.
 //! - **`ETag`**: a weak entity tag, `W/"<16 hex digits>"`, holding an opaque,
-//!   non-portable digest of the evidence cache key, the same in every process
+//!   non-portable digest of the cache key of the evidence the request
+//!   supplied, before any element adds a value, the same in every process
 //!   running the same build (see [`compute_etag`]). It is weak because the
 //!   content for the same evidence changes when a data file is refreshed.
 //! - **`Access-Control-Allow-Origin`**: the request `Origin` echoed back, unless

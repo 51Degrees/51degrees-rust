@@ -37,7 +37,8 @@
 //! and logs a warning for each read of such a property. A cloud engine whose
 //! request failed marks its data, so each such read gives
 //! [`MissingPropertyReason::CloudRequestFailed`](crate::MissingPropertyReason::CloudRequestFailed)
-//! instead and logs at info level.
+//! instead and logs at info level. A read for a product the resource key
+//! lacks logs nothing, because the cloud engine logs that once.
 
 use std::any::Any;
 use std::sync::Arc;
@@ -232,8 +233,11 @@ impl AspectDataBase {
     /// Call this for a read of a property the data does not hold, so each
     /// such read logs once, as .NET's aspect data does. A failed cloud request
     /// logs at info level, because the cloud request engine has already
-    /// recorded the failure and one failure leads to many such reads, and
-    /// every other reason logs a warning. Nothing is logged after
+    /// recorded the failure and one failure leads to many such reads. A
+    /// product the resource key lacks logs nothing, because the cloud engine
+    /// logs the missing product once, as the cloud aspect engine
+    /// specification says. Every other reason logs a warning. Nothing is
+    /// logged after
     /// [`stop_logging_missing_properties`](Self::stop_logging_missing_properties).
     pub fn missing_property(
         &self,
@@ -241,7 +245,9 @@ impl AspectDataBase {
         data_type: &str,
     ) -> Option<MissingPropertyResult> {
         let missing = self.missing_property_reason(property_name)?;
-        if !self.log_missing_properties {
+        if !self.log_missing_properties
+            || missing.reason == MissingPropertyReason::ProductNotAccessibleWithResourceKey
+        {
             return Some(missing);
         }
         if missing.reason == MissingPropertyReason::CloudRequestFailed {
@@ -271,8 +277,8 @@ impl AspectDataBase {
 impl ElementData for AspectDataBase {
     /// The value of a property in the bag. For a property the bag does not
     /// hold, the error carries the reason it is missing when a source was
-    /// added, and a warning is logged, and otherwise the bag's own
-    /// explanation.
+    /// added, logged as [`missing_property`](Self::missing_property) says,
+    /// and otherwise the bag's own explanation.
     fn get(&self, name: &str) -> Result<PropertyValue, NoValueError> {
         self.values.get(name).map_err(|absent| {
             self.missing_property(name, "AspectDataBase")

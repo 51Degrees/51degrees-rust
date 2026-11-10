@@ -158,8 +158,9 @@ it. Nothing here reads the older `cxx/device-detection-data` and
 `cxx/ip-intelligence-data` folders. The submodule pointer
 records which C commit the crates build, and the nightly pipeline moves it
 with an update pull request when 51degrees-cxx changes. After a move, build
-and run `pwsh ./ci/check-native-symbols.ps1`, which fails when a common C
-function is missing from `ip-intelligence-sys/src/symbol_prefix.h`.
+and run `pwsh ./ci/check-native-symbols.ps1`, which fails when both C
+libraries define the same common C function, meaning 51degrees-cxx's
+`src/common/ipiSymbols.h` lacks it.
 
 ## Building and testing
 

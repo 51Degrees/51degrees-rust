@@ -442,7 +442,8 @@ impl IpIntelligenceDataBase {
 
     /// The no-value for a property this data does not hold, carrying the
     /// reason it is missing when the engine gave a source for one, and the
-    /// default no-value otherwise. A reason also logs a warning.
+    /// default no-value otherwise. A reason also logs a warning, unless the
+    /// resource key lacks the product.
     fn missing<T>(&self, name: &str) -> AspectPropertyValue<T> {
         match self.base.missing_property(name, DATA_TYPE_NAME) {
             Some(missing) => AspectPropertyValue::no_value(missing.description),
