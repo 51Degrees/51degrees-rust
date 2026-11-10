@@ -34,7 +34,9 @@
 //! into parts for the concurrency the data set expects, and gives no item
 //! when every entry of a part is in use, so each test shares a `Balanced`
 //! data set across far more threads than that concurrency, each with its
-//! own evidence, and checks every answer.
+//! own evidence, and checks every answer. A read that finds no free entry
+//! can end the process, so a failure of these tests can show as this test
+//! binary exiting too.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Barrier};
@@ -50,10 +52,10 @@ const ROUNDS: usize = 10;
 /// File handles in each data set's pool, fewer than [`THREADS`].
 const HANDLES: u16 = 2;
 
-/// The concurrency the `Balanced` data sets expect. Near the square root of
-/// the 500 entries of the Hash `Balanced` values cache, it splits that cache
-/// into its smallest parts, 22 of 38 entries.
-const BALANCED_CONCURRENCY: u16 = 22;
+/// The concurrency the `Balanced` data sets expect, which splits the 500
+/// entries of the Hash `Balanced` values cache into its smallest parts, 20
+/// parts of 25 entries.
+const BALANCED_CONCURRENCY: u16 = 20;
 
 /// Threads sharing each `Balanced` data set, far more than
 /// [`BALANCED_CONCURRENCY`].
