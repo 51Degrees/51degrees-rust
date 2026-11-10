@@ -449,13 +449,12 @@ fn an_end_point_that_is_not_an_absolute_url_is_refused() {
 /// request engine specification's accepted combinations. .NET 4.5.129
 /// refuses any configuration without a resource key, as "A resource key
 /// is required to access the 51Degrees cloud service...", and accepts
-/// properties named with a resource key, which it never sends. The
-/// specification's `RequestedProperties` with a resource key is refused
-/// as `Property` is, as the specification's table says it must not be
-/// given with one.
+/// properties named with a resource key, which it never sends. A property
+/// list with a resource key, under `Property` or `RequestedProperties`,
+/// builds, as `a_property_list_is_kept_beside_the_resource_key` shows.
 #[test]
 fn the_credentials_are_refused_as_they_are_in_code() {
-    let cases: [(Parameters, CloudRequestEngineBuilder); 6] = [
+    let cases: [(Parameters, CloudRequestEngineBuilder); 4] = [
         (&[], CloudRequestEngine::builder()),
         (
             &[("ResourceKey", "")],
@@ -469,24 +468,6 @@ fn the_credentials_are_refused_as_they_are_in_code() {
             &[("LicenseKey", LICENSE_KEY)],
             CloudRequestEngine::builder().license_key(LICENSE_KEY),
         ),
-        (
-            &[
-                ("ResourceKey", RESOURCE_KEY),
-                ("Property", "device.ismobile"),
-            ],
-            CloudRequestEngine::builder()
-                .resource_key(RESOURCE_KEY)
-                .values(["device.ismobile"]),
-        ),
-        (
-            &[
-                ("ResourceKey", RESOURCE_KEY),
-                ("RequestedProperties", "device.ismobile"),
-            ],
-            CloudRequestEngine::builder()
-                .resource_key(RESOURCE_KEY)
-                .values(["device.ismobile"]),
-        ),
     ];
     for (parameters, builder) in cases {
         assert_eq!(
@@ -494,6 +475,17 @@ fn the_credentials_are_refused_as_they_are_in_code() {
             failed(&refused_in_code(builder)),
             "{parameters:?}"
         );
+    }
+}
+
+#[test]
+fn a_property_list_is_kept_beside_the_resource_key() {
+    // The service adds the listed properties to those the resource key
+    // carries, so a configuration may name them under either parameter.
+    for name in ["Property", "RequestedProperties"] {
+        let (engine, _) = engine_with(&[(name, "device.ismobile")]);
+        assert_eq!(engine.resource_key(), Some(RESOURCE_KEY), "{name}");
+        assert_eq!(engine.values(), ["device.ismobile"], "{name}");
     }
 }
 
