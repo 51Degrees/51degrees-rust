@@ -516,6 +516,22 @@ impl CloudRequestEngine {
         if missing.is_empty() {
             return None;
         }
+        if self.resource_key.is_some() && self.license_key.is_none() {
+            // A listed property no license grants comes back null with its
+            // reason beside a resource key alone, so only an unknown name is
+            // left out, as the cloud request engine specification says.
+            return Some(format!(
+                "the cloud service did not return {} of the {} properties this \
+                 engine asked for: {}. With a resource key and no license key, a \
+                 listed property no license grants comes back with no value and \
+                 its reason, so a name left out is not a property the cloud \
+                 service knows. Check the names, or drop them from the property \
+                 list the engine was built with. Reported once per engine.",
+                missing.len(),
+                self.values.len(),
+                missing.join(", ")
+            ));
+        }
         Some(format!(
             "the cloud service did not return {} of the {} properties this \
              engine asked for: {}. This is an entitlement matter rather than a \
@@ -1923,6 +1939,33 @@ mod tests {
         assert!(
             message.contains("license key and no property list") && message.contains("values(.."),
             "the message should point at values(..), got {message}"
+        );
+    }
+
+    #[test]
+    fn a_name_left_out_beside_a_resource_key_alone_is_reported_as_unknown() {
+        // Beside a resource key alone a listed property no license grants
+        // comes back null with its reason, so a name left out of the answer is
+        // one the service does not know, and the warning says so rather than
+        // pointing at a license key that was never given.
+        let engine = CloudRequestEngine::builder()
+            .resource_key("rk")
+            .values(["device.ismobile", "device.nosuchproperty"])
+            .http_client(Arc::new(NoopClient))
+            .set_state(sample_state())
+            .build()
+            .expect("a resource key and a list build");
+        let warning = engine
+            .missing_values_warning(r#"{"device":{"ismobile":true}}"#)
+            .expect("the unknown name is reported");
+        assert!(
+            warning.contains("device.nosuchproperty") && !warning.contains("device.ismobile"),
+            "{warning}"
+        );
+        assert!(
+            warning.contains("not a property the cloud service knows")
+                && !warning.contains("entitlement matter"),
+            "{warning}"
         );
     }
 
