@@ -137,6 +137,23 @@ int fiftyoneDegreesShimIpiGetRequiredPropertyIndexFromName(
 }
 
 /*
+ * Returns the required property index of the property named `propertyName`
+ * in `dataSet`, found by the C library ignoring case, or -1 when the property
+ * is not one of the required properties. It takes no reference on the data
+ * set, so the caller holds one for as long as it calls this, and it only
+ * reads properties that do not change while that reference is held.
+ */
+int fiftyoneDegreesShimIpiDataSetGetRequiredPropertyIndexFromName(
+    fiftyoneDegreesDataSetIpi *dataSet,
+    const char *propertyName) {
+    if (dataSet == NULL || dataSet->b.b.available == NULL) {
+        return -1;
+    }
+    return fiftyoneDegreesPropertiesGetRequiredPropertyIndexFromName(
+        dataSet->b.b.available, propertyName);
+}
+
+/*
  * Writes the data set's name into `buffer` as a null terminated string and
  * returns the number of characters written, excluding the terminator. The data
  * set name is the file's tier, for example "Lite", "Enterprise" or "TAC".

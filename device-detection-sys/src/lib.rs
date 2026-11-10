@@ -666,6 +666,19 @@ extern "C" {
         property_name: *const c_char,
     ) -> c_int;
 
+    /// Returns the required property index for `property_name` in
+    /// `data_set`, found ignoring case, or -1 when the property is not one of
+    /// the required properties. It takes no reference on the data set and
+    /// writes no shared memory.
+    ///
+    /// # Safety
+    /// `data_set` must come from [`fiftyoneDegreesDataSetHashGet`] and not yet
+    /// be released. `property_name` must be a valid null terminated string.
+    pub fn fiftyoneDegreesShimHashDataSetGetRequiredPropertyIndexFromName(
+        data_set: *mut DataSetHash,
+        property_name: *const c_char,
+    ) -> c_int;
+
     /// Returns the number of HTTP header evidence keys in the data set managed
     /// by `manager`, or zero if no data set is available.
     ///

@@ -56,19 +56,18 @@
 //! library ends the process when a read of a property's values finds no free
 //! handle.
 
-use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::net::{IpAddr, Ipv4Addr};
 use std::ops::Range;
 use std::os::raw::{c_char, c_int, c_void};
 use std::path::Path;
 use std::ptr::NonNull;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use fiftyone_ip_intelligence_sys as sys;
 use fiftyone_pipeline_core::{constants, round_angle, Error, Evidence, PropertyValueType, Result};
 
-use crate::buffer::with_value_string;
+use crate::buffer::{with_c_str, with_value_string};
 use crate::evidence::parse_client_ip;
 use crate::file_reads::{FileReadPermit, FileReads};
 use crate::held_memory::HeldMemory;
@@ -162,9 +161,13 @@ pub struct Manager {
     /// The evidence keys the data file defines, in the order the native lookup
     /// tries them, read once when the file is opened.
     evidence_keys: Vec<EvidenceKey>,
-    /// The required property name to index map, built on first use so a read
-    /// by name costs one hash lookup rather than a native name search.
-    property_index: OnceLock<HashMap<String, c_int>>,
+    /// The data set the manager was opened with, held until [`Drop`], so a
+    /// name lookup reads it without taking a reference and threads sharing
+    /// the manager write no shared memory to look a name up.
+    data_set: NonNull<sys::DataSetIpi>,
+    /// The number of required properties, which a read by index must stay
+    /// below.
+    required_count: u32,
     /// Permits for the calls that can read the data file, one for each of its
     /// file handles, or [`None`] when the data set is held in memory.
     file_reads: Option<FileReads>,
@@ -186,8 +189,9 @@ struct EvidenceKey {
 
 // Safety: the native resource manager is internally reference counted and lock
 // protected per `src/common/resource.h`, so a shared `&Manager` is sound to use
-// from several threads, and the file read permits are lock protected.
-// Therefore the manager is both `Send` and `Sync`.
+// from several threads. The data set held for name lookups is only read, and
+// the file read permits are lock protected. Therefore the manager is both
+// `Send` and `Sync`.
 unsafe impl Send for Manager {}
 unsafe impl Sync for Manager {}
 
@@ -348,10 +352,18 @@ impl Manager {
         let evidence_keys = unsafe { read_evidence_keys(manager.as_ptr()) };
         // Safety: as above.
         let handles = unsafe { sys::fiftyoneDegreesShimIpiGetFileHandleCount(manager.as_ptr()) };
+        // Safety: as above. The reference is released in `Drop`, before the
+        // manager is freed.
+        let data_set = unsafe { sys::fiftyoneDegreesDataSetIpiGet(manager.as_ptr()) };
+        let data_set = NonNull::new(data_set).expect("an initialized manager has a data set");
+        // Safety: as above.
+        let required_count =
+            unsafe { sys::fiftyoneDegreesShimIpiGetRequiredPropertyCount(manager.as_ptr()) };
         Ok(Arc::new(Manager {
             manager,
             evidence_keys,
-            property_index: OnceLock::new(),
+            data_set,
+            required_count,
             file_reads: FileReads::for_handles(handles),
             _memory: memory,
         }))
@@ -480,34 +492,29 @@ impl Manager {
         names
     }
 
-    /// Resolve a property name to its required property index, building the
-    /// name to index map on first use.
+    /// The required property index of the property named, as the C library
+    /// finds it among the names the data set was opened with, ignoring case.
     ///
     /// Returns [`None`] when the property is not one of the required
-    /// properties. The lookup is case sensitive, as the native data set is, so
-    /// pass the property's spelling from the data file. An index belongs to the
-    /// data set it came from, so look it up again after a reload.
+    /// properties, or the name holds a nul byte. A lookup writes no shared
+    /// memory, so threads sharing the manager do not contend. An index belongs
+    /// to the data set it came from, so look it up again after a reload.
     pub fn required_property_index(&self, property_name: &str) -> Option<c_int> {
-        self.property_index_map().get(property_name).copied()
-    }
-
-    /// The property name to required property index map, built on first use.
-    /// The first caller builds it and racing callers wait for it. Once it is
-    /// set, a lookup takes no lock and writes no shared memory.
-    fn property_index_map(&self) -> &HashMap<String, c_int> {
-        self.property_index.get_or_init(|| {
-            self.available_property_names()
-                .into_iter()
-                .enumerate()
-                .map(|(index, name)| (name, index as c_int))
-                .collect()
-        })
+        // Safety: the data set is held until `Drop`, and the name is null
+        // terminated for the length of the call.
+        let index = with_c_str(property_name, |name| unsafe {
+            sys::fiftyoneDegreesShimIpiDataSetGetRequiredPropertyIndexFromName(
+                self.data_set.as_ptr(),
+                name,
+            )
+        })?;
+        (index >= 0).then_some(index)
     }
 
     /// Refuse an index that is not one of this data set's required property
     /// indexes.
     fn check_property_index(&self, index: c_int) -> Result<()> {
-        let count = self.property_index_map().len();
+        let count = self.required_count as usize;
         if index < 0 || index as usize >= count {
             return Err(Error::Native {
                 status: String::from("InvalidInput"),
@@ -946,7 +953,10 @@ impl Drop for Manager {
     fn drop(&mut self) {
         // Safety: the manager was initialized by a successful `open` and every
         // referencing `Results` held an `Arc`, so they have all been dropped.
+        // The data set reference held for name lookups is released first, so
+        // freeing the manager then frees the data set.
         unsafe {
+            sys::fiftyoneDegreesDataSetIpiRelease(self.data_set.as_ptr());
             sys::fiftyoneDegreesResourceManagerFree(self.manager.as_ptr());
             drop(Box::from_raw(self.manager.as_ptr()));
         }

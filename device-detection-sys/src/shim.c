@@ -141,6 +141,23 @@ int fiftyoneDegreesShimHashGetRequiredPropertyIndexFromName(
 }
 
 /*
+ * Returns the required property index of the property named `propertyName`
+ * in `dataSet`, found by the C library ignoring case, or -1 when the property
+ * is not one of the required properties. It takes no reference on the data
+ * set, so the caller holds one for as long as it calls this, and it only
+ * reads properties that do not change while that reference is held.
+ */
+int fiftyoneDegreesShimHashDataSetGetRequiredPropertyIndexFromName(
+    fiftyoneDegreesDataSetHash *dataSet,
+    const char *propertyName) {
+    if (dataSet == NULL || dataSet->b.b.available == NULL) {
+        return -1;
+    }
+    return fiftyoneDegreesPropertiesGetRequiredPropertyIndexFromName(
+        dataSet->b.b.available, propertyName);
+}
+
+/*
  * Writes the count of HTTP header evidence keys in the data set to *count and
  * returns a pointer that is non-null on success. The header names themselves
  * are read one at a time with fiftyoneDegreesShimHashGetEvidenceKey to avoid
