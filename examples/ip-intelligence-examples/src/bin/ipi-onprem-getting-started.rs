@@ -82,7 +82,7 @@ impl ExampleOptions {
     }
 
     /// Build the default options through the shared resolver. A file named by
-    /// `51DEGREES_IPI_PATH`, or the Enterprise file when its share is
+    /// `_51DEGREES_IPI_PATH`, or the Enterprise file when its share is
     /// reachable, is read alone. Otherwise both free files from the data
     /// repository are read, each downloaded when it is missing, being the ASN
     /// file for Asn and AsnName and the Lite file for the registered
@@ -497,7 +497,7 @@ mod tests {
         assert!(printed.contains("Asn:"));
         assert!(printed.contains(examples_shared::FIND_OUT_MORE_HEADING));
         // The ASN file carries none of the Enterprise properties, so the run
-        // says so. 51DEGREES_IPI_PATH can name another file.
+        // says so. _51DEGREES_IPI_PATH can name another file.
         let asn_file = examples_shared::IPI_ASN_RELATIVE_PATH.rsplit('/').next();
         if options.data_files[0].file_name().and_then(|n| n.to_str()) == asn_file {
             assert!(printed.contains("Country: needs the Enterprise data file"));
@@ -542,7 +542,7 @@ mod tests {
  * # Data file
  *
  * The data files are resolved by `examples_shared::ipi_data_path`, which
- * prefers the `51DEGREES_IPI_PATH` environment variable and otherwise locates
+ * prefers the `_51DEGREES_IPI_PATH` environment variable and otherwise locates
  * the ASN and Lite files in the data repository inside the `cxx` submodule,
  * downloading each when it is missing. An Enterprise `.ipi`
  * file (with the full property set) is available from 51Degrees: see <https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-getting-started.rs&utm_term=ipi-onprem-getting-started>.

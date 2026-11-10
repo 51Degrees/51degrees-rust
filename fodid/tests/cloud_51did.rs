@@ -24,8 +24,7 @@
 //! checks that it parses into a [`FodId`].
 //!
 //! The test uses a single resource key from the environment. Set
-//! `_51DEGREES_RESOURCE_KEY` (or the same name without the leading underscore,
-//! or one of the CI-exported tiered names
+//! `_51DEGREES_RESOURCE_KEY` (or one of the CI-exported tiered names
 //! `_51DEGREES_RESOURCE_KEY_BESPOKE` / `_51DEGREES_RESOURCE_KEY_BASIC`) to a key
 //! whose properties include `fodid.*`. Create one with the 51Degrees Configurator
 //! sharing link <https://configure.51degrees.com/N57Wygby> (the free tier now
@@ -65,12 +64,10 @@ use fodid::{FodId, IdType, Usage};
 mod layout;
 
 /// The resource-key environment variable names, in the workspace's resolution
-/// order: the name a shell can export first, then the same name without the
-/// leading underscore, then the CI-exported bespoke and basic tiered names.
-/// Mirrors `examples-shared::keys::resource_key_from_env`.
-const RESOURCE_KEY_ENVS: [&str; 4] = [
+/// order: `_51DEGREES_RESOURCE_KEY` first, then the CI-exported bespoke and
+/// basic tiered names. Mirrors `examples-shared::keys::resource_key_from_env`.
+const RESOURCE_KEY_ENVS: [&str; 3] = [
     "_51DEGREES_RESOURCE_KEY",
-    "51DEGREES_RESOURCE_KEY",
     "_51DEGREES_RESOURCE_KEY_BESPOKE",
     "_51DEGREES_RESOURCE_KEY_BASIC",
 ];

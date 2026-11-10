@@ -266,7 +266,7 @@ fn main() -> Result<()> {
 
     let (Some(data_file), Some(evidence_file)) = (data_file, evidence_file) else {
         anyhow::bail!(
-            "Missing the data file or the evidence file. Set 51DEGREES_DD_PATH, or \
+            "Missing the data file or the evidence file. Set _51DEGREES_DD_PATH, or \
              pass the data-file and evidence-file paths as the first two arguments."
         );
     };
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn runs_against_the_lite_data_file() {
         let Some(data_file) = examples_shared::dd_data_path() else {
-            eprintln!("skipping: no on-premise data file found (set 51DEGREES_DD_PATH)");
+            eprintln!("skipping: no on-premise data file found (set _51DEGREES_DD_PATH)");
             return;
         };
         let Some(evidence_file) = default_evidence_file() else {
@@ -328,7 +328,7 @@ mod tests {
         let written = std::fs::read_to_string(&output_file).expect("output file should exist");
         assert!(written.contains("device.ismobile"), "results were written");
         // The Lite file carries none of the Enterprise properties, so each
-        // record says so. 51DEGREES_DD_PATH can name another file.
+        // record says so. _51DEGREES_DD_PATH can name another file.
         if lite {
             assert!(
                 written.contains("device.hardwarevendor: needs the Enterprise data file"),
@@ -344,7 +344,7 @@ mod tests {
     #[test]
     fn every_record_in_a_batch_produces_a_result() {
         let Some(data_file) = examples_shared::dd_data_path() else {
-            eprintln!("skipping: no on-premise data file found (set 51DEGREES_DD_PATH)");
+            eprintln!("skipping: no on-premise data file found (set _51DEGREES_DD_PATH)");
             return;
         };
         let Some(evidence_file) = default_evidence_file() else {
@@ -438,7 +438,7 @@ mod tests {
  * server, leave it on, which is the builder's default.
  *
  * The data and evidence files are read from the first two command-line arguments,
- * the `51DEGREES_DD_PATH` environment variable, or the files in the data
+ * the `_51DEGREES_DD_PATH` environment variable, or the files in the data
  * repository inside the cxx submodule, which the example downloads when they
  * are missing. The output file defaults to
  * `dd-offline-processing-output.yml` next to the evidence file, or the third

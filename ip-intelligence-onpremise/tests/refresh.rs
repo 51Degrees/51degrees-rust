@@ -23,7 +23,7 @@
 //! A refresh to a data file of another tier leaves the engine reporting what
 //! an engine built on that file reports.
 //!
-//! The test needs the ASN file `51DEGREES_IPI_PATH` names and the Lite file
+//! The test needs the ASN file `_51DEGREES_IPI_PATH` names and the Lite file
 //! `51Degrees-LiteV41.ipi` beside it, and skips with a note when either is
 //! missing.
 
@@ -35,7 +35,7 @@ use fiftyone_pipeline_engines::{AspectEngine, OnPremiseAspectEngine};
 
 /// The ASN file and the Lite file beside it.
 fn data_files() -> Option<(PathBuf, PathBuf)> {
-    let asn = PathBuf::from(std::env::var("51DEGREES_IPI_PATH").ok()?);
+    let asn = PathBuf::from(std::env::var("_51DEGREES_IPI_PATH").ok()?);
     let lite = asn.parent()?.join("51Degrees-LiteV41.ipi");
     (asn.is_file() && lite.is_file()).then_some((asn, lite))
 }
@@ -54,7 +54,7 @@ fn engine(path: &PathBuf) -> IpIntelligenceOnPremiseEngine {
 fn a_refresh_reports_the_tier_and_publish_date_of_the_new_data_file() {
     let Some((asn, lite)) = data_files() else {
         eprintln!(
-            "skipping the refresh test: set 51DEGREES_IPI_PATH to the ASN file, with \
+            "skipping the refresh test: set _51DEGREES_IPI_PATH to the ASN file, with \
              51Degrees-LiteV41.ipi beside it"
         );
         return;

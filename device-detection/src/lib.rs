@@ -743,7 +743,7 @@ mod tests {
         let Some(data_file) = resolve_dd_data_file() else {
             eprintln!(
                 "skipping on_premise_pipeline_owns_a_data_update_service_by_default: no Lite \
-                 Hash data file found (set 51DEGREES_DD_PATH to enable this test)"
+                 Hash data file found (set _51DEGREES_DD_PATH to enable this test)"
             );
             return;
         };
@@ -790,7 +790,7 @@ mod tests {
         let Some(data_file) = resolve_dd_data_file() else {
             eprintln!(
                 "skipping on_premise_detects_mobile_user_agent: no Lite Hash data file found \
-                 (set 51DEGREES_DD_PATH to enable this test)"
+                 (set _51DEGREES_DD_PATH to enable this test)"
             );
             return;
         };
@@ -835,7 +835,7 @@ mod tests {
         use std::path::PathBuf;
 
         // 1. Explicit override.
-        if let Ok(path) = std::env::var("51DEGREES_DD_PATH") {
+        if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
             let path = PathBuf::from(path);
             if path.is_file() {
                 return Some(path);

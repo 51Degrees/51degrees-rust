@@ -37,11 +37,12 @@
 //! - [`find_file`] / [`find_file_from`]. Walk up the directory tree to locate a
 //!   data or resource file, so it resolves whether an example runs from an IDE,
 //!   its own crate directory, or a CI checkout.
-//! - [`resource_key_from_env`] and [`is_invalid_key`]. Read a cloud resource key
-//!   from the aligned, legacy and CI-exported environment variables, and screen
-//!   out obvious placeholders.
+//! - [`resource_key_from_env`], [`license_key_from_env`] and
+//!   [`is_invalid_key`]. Read a cloud resource key from `_51DEGREES_RESOURCE_KEY`
+//!   or the CI-exported names, read a licence key, and screen out obvious
+//!   placeholders.
 //! - [`cloud_endpoint_from_env`]. Read the optional cloud endpoint from
-//!   `51DEGREES_CLOUD_ENDPOINT`, trimmed and screened for blankness, for an on
+//!   `_51DEGREES_CLOUD_ENDPOINT`, trimmed and screened for blankness, for an on
 //!   premise web server or a privately hosted 51Degrees cloud (see
 //!   [`CLOUD_ENDPOINT_ENV_VAR`]).
 //! - [`dd_data_path`] and [`ipi_data_path`]. Resolve the on-premise Device
@@ -99,8 +100,8 @@ pub use find_out_more::{
 };
 pub use performance_results::{json_output_path, PerformanceResults, JSON_OUTPUT_FLAG};
 pub use keys::{
-    is_invalid_key, resource_key_from_env, CI_RESOURCE_KEY_BASIC_ENV_VAR,
-    CI_RESOURCE_KEY_BESPOKE_ENV_VAR, RESOURCE_KEY_ENV_VAR,
-    RESOURCE_KEY_ENV_VARS, RESOURCE_KEY_ENV_VAR_NO_UNDERSCORE,
+    is_invalid_key, license_key_from_env, resource_key_from_env, CI_RESOURCE_KEY_BASIC_ENV_VAR,
+    CI_RESOURCE_KEY_BESPOKE_ENV_VAR, LICENSE_KEY_ENV_VAR, RESOURCE_KEY_ENV_VAR,
+    RESOURCE_KEY_ENV_VARS,
 };
 pub use properties::{get_property_as_string, property_value_to_string, NO_VALUE_MARKER};

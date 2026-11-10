@@ -52,8 +52,8 @@ fn open_from_accented_folder<T, E: std::fmt::Display>(
 #[cfg(feature = "dd")]
 #[test]
 fn a_hash_data_file_opens_from_a_folder_with_accented_letters() {
-    let Some(source) = data_file("51DEGREES_DD_PATH") else {
-        eprintln!("51DEGREES_DD_PATH names no Hash data file; skipping");
+    let Some(source) = data_file("_51DEGREES_DD_PATH") else {
+        eprintln!("_51DEGREES_DD_PATH names no Hash data file; skipping");
         return;
     };
     open_from_accented_folder(&source, "dd", |path| {
@@ -64,8 +64,8 @@ fn a_hash_data_file_opens_from_a_folder_with_accented_letters() {
 #[cfg(feature = "ipi")]
 #[test]
 fn an_ip_intelligence_data_file_opens_from_a_folder_with_accented_letters() {
-    let Some(source) = data_file("51DEGREES_IPI_PATH") else {
-        eprintln!("51DEGREES_IPI_PATH names no IP Intelligence data file; skipping");
+    let Some(source) = data_file("_51DEGREES_IPI_PATH") else {
+        eprintln!("_51DEGREES_IPI_PATH names no IP Intelligence data file; skipping");
         return;
     };
     open_from_accented_folder(&source, "ipi", |path| {

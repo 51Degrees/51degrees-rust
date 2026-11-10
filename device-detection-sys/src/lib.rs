@@ -699,7 +699,7 @@ mod tests {
 
     /// Optional path to the Lite Hash data file, injected by the build script
     /// when the file has been downloaded into the checkout.
-    const LITE_DATA_FILE: Option<&str> = option_env!("51DEGREES_DD_PATH");
+    const LITE_DATA_FILE: Option<&str> = option_env!("_51DEGREES_DD_PATH");
 
     /// A representative desktop Chrome on Windows user agent.
     const DESKTOP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \

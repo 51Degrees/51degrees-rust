@@ -157,7 +157,7 @@ the suspicious example, whose purpose needs the Enterprise file.
 performance and update examples, whose properties do not matter to what they
 show. `ipi-onprem-getting-started` reads both free files, so it shows Asn and
 AsnName as well as the registration properties. The examples' tests read the
-ASN file. The `51DEGREES_IPI_PATH` environment variable, when set, overrides
+ASN file. The `_51DEGREES_IPI_PATH` environment variable, when set, overrides
 the tier selection and points every example at one explicit file. On-premise
 examples also print the more-than-28-days-old data-file warning through
 `examples_shared::check_data_file`.

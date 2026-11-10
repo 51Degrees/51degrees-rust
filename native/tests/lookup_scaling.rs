@@ -53,10 +53,10 @@ const ROUNDS: usize = 3;
 /// machines continuous integration runs on.
 const MAX_THREADS: usize = 4;
 
-/// The Lite Hash file named by `51DEGREES_DD_PATH`, else the copy in the
+/// The Lite Hash file named by `_51DEGREES_DD_PATH`, else the copy in the
 /// `cxx` submodule.
 fn lite_data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("51DEGREES_DD_PATH") {
+    if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);

@@ -20,13 +20,16 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! Resolve a cloud resource key from the environment, and the
-//! obvious-placeholder check.
+//! Resolve a cloud resource key and a licence key from the environment, and
+//! the obvious-placeholder check.
 //!
 //! Cloud examples and example tests read a 51Degrees resource key from the
 //! environment rather than hard-coding it. The resolver also consults the
 //! CI-exported tiered names so the same resolver works in a local shell and on
 //! the build agents.
+//!
+//! Every name starts with an underscore because a POSIX shell cannot set a
+//! name that starts with a digit.
 
 use base64::Engine as _;
 
@@ -38,13 +41,8 @@ use base64::Engine as _;
 /// overrides every other source.
 pub const RESOURCE_KEY_ENV_VAR: &str = "_51DEGREES_RESOURCE_KEY";
 
-/// The same name without the leading underscore, checked second.
-///
-/// A POSIX shell rejects an identifier starting with a digit, so this name
-/// cannot be set by `export` or by an inline assignment, and reaches a process
-/// only through `env 51DEGREES_RESOURCE_KEY=... command`, PowerShell or a CI
-/// definition. It is read so a setup already using it keeps working.
-pub const RESOURCE_KEY_ENV_VAR_NO_UNDERSCORE: &str = "51DEGREES_RESOURCE_KEY";
+/// The licence-key environment variable.
+pub const LICENSE_KEY_ENV_VAR: &str = "_51DEGREES_LICENSE_KEY";
 
 /// The CI-exported bespoke-tier resource-key environment variable, checked second.
 ///
@@ -58,13 +56,11 @@ pub const CI_RESOURCE_KEY_BASIC_ENV_VAR: &str = "_51DEGREES_RESOURCE_KEY_BASIC";
 
 /// The order in which the resource-key environment variables are consulted.
 ///
-/// An explicit `_51DEGREES_RESOURCE_KEY` wins, then the same name without the
-/// leading underscore, then the bespoke CI key (a superset of the basic one),
-/// then the basic CI key. The first variable set to a non-blank value supplies
-/// the key.
-pub const RESOURCE_KEY_ENV_VARS: [&str; 4] = [
+/// An explicit `_51DEGREES_RESOURCE_KEY` wins, then the bespoke CI key (a
+/// superset of the basic one), then the basic CI key. The first variable set to
+/// a non-blank value supplies the key.
+pub const RESOURCE_KEY_ENV_VARS: [&str; 3] = [
     RESOURCE_KEY_ENV_VAR,
-    RESOURCE_KEY_ENV_VAR_NO_UNDERSCORE,
     CI_RESOURCE_KEY_BESPOKE_ENV_VAR,
     CI_RESOURCE_KEY_BASIC_ENV_VAR,
 ];
@@ -82,6 +78,13 @@ pub fn resource_key_from_env() -> Option<String> {
         }
     }
     None
+}
+
+/// Read a licence key from [`LICENSE_KEY_ENV_VAR`], trimmed of surrounding
+/// whitespace. Returns `None` when the variable is unset or blank, so a value
+/// of only spaces counts as no key.
+pub fn license_key_from_env() -> Option<String> {
+    non_blank_env(LICENSE_KEY_ENV_VAR)
 }
 
 /// Read `name` from the environment, returning the trimmed value only when it is
@@ -153,15 +156,19 @@ mod tests {
     }
 
     #[test]
-    fn the_name_without_the_underscore_is_read() {
+    fn a_license_key_is_read_trimmed() {
         let _guard = ENV_LOCK.lock().unwrap();
-        clear_all();
-        std::env::set_var(RESOURCE_KEY_ENV_VAR_NO_UNDERSCORE, "no-underscore-key");
-        assert_eq!(
-            resource_key_from_env().as_deref(),
-            Some("no-underscore-key")
-        );
-        clear_all();
+        std::env::set_var(LICENSE_KEY_ENV_VAR, "  license-key  ");
+        assert_eq!(license_key_from_env().as_deref(), Some("license-key"));
+        std::env::remove_var(LICENSE_KEY_ENV_VAR);
+    }
+
+    #[test]
+    fn a_license_key_of_only_spaces_is_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var(LICENSE_KEY_ENV_VAR, "   ");
+        assert_eq!(license_key_from_env(), None);
+        std::env::remove_var(LICENSE_KEY_ENV_VAR);
     }
 
     #[test]

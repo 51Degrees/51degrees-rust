@@ -5,7 +5,7 @@ would, on the free data files with no settings, and fails when one fails.
 
 .DESCRIPTION
 Each example runs from examples/ with no arguments and with every
-51DEGREES_ variable removed, so it finds the free data files in cxx/data
+_51DEGREES_ variable removed, so it finds the free data files in cxx/data
 itself, downloading one that is missing. The console examples must exit 0,
 print the contact-us link for the Enterprise data file, and end with the
 "Find out more" section. A data file an example could not download fails the
@@ -67,7 +67,7 @@ $failures = [System.Collections.Generic.List[string]]::new()
 # Out of the box means no settings, so every variable the examples or the
 # engines read is removed for this process and the examples it starts.
 Get-ChildItem Env: |
-    Where-Object { $_.Name -like "51DEGREES_*" -or $_.Name -like "_51DEGREES_*" } |
+    Where-Object { $_.Name -like "_51DEGREES_*" } |
     ForEach-Object {
         Write-Host "Removing $($_.Name) from the environment."
         Remove-Item -Path "Env:$($_.Name)"

@@ -64,7 +64,7 @@ pub struct Options {
     /// The 51Degrees cloud resource key (from <https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=resource_key>).
     pub resource_key: String,
     /// An optional override for the cloud endpoint, read from
-    /// `51DEGREES_CLOUD_ENDPOINT`. `None` leaves the choice to the cloud request
+    /// `_51DEGREES_CLOUD_ENDPOINT`. `None` leaves the choice to the cloud request
     /// engine, which reads the same variable and defaults to the public cloud.
     pub endpoint: Option<String>,
     /// The socket address the server binds to.
@@ -100,7 +100,7 @@ pub fn build_app(
         .set_state_opt(state)
         .share_usage(share_usage);
     // The cloud endpoint. Unset, the cloud request engine reads
-    // 51DEGREES_CLOUD_ENDPOINT itself, and it is passed here as well so the
+    // _51DEGREES_CLOUD_ENDPOINT itself, and it is passed here as well so the
     // choice is visible. A host other than cloud.51degrees.com is an on premise
     // web server or a privately hosted 51Degrees cloud (see
     // examples_shared::CLOUD_ENDPOINT_ENV_VAR).
@@ -237,9 +237,9 @@ async fn home(result: FiftyOneResult) -> Html<String> {
 }
 
 fn main() -> anyhow::Result<()> {
-    // The resource key is read from the aligned/legacy/CI environment variables.
+    // The resource key is read from `_51DEGREES_RESOURCE_KEY` or the CI names.
     let resource_key = examples_shared::resource_key_from_env().context(
-        "no 51Degrees cloud resource key found. Set 51DEGREES_RESOURCE_KEY to a key from \
+        "no 51Degrees cloud resource key found. Set _51DEGREES_RESOURCE_KEY to a key from \
          https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=resource-key-required and run again.",
     )?;
 
@@ -486,5 +486,5 @@ mod tests {
  * `c-eg-message` contact-us banner.
  *
  * Build a resource key at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=dd-web-getting-started-cloud and export it as
- * `51DEGREES_RESOURCE_KEY`, then run the binary and open http://127.0.0.1:8080.
+ * `_51DEGREES_RESOURCE_KEY`, then run the binary and open http://127.0.0.1:8080.
  */

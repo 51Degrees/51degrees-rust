@@ -59,11 +59,11 @@
 //! offline signature check costs nothing per identifier, because the public
 //! keys are fetched once and cached.
 //!
-//! Environment: `_51DEGREES_RESOURCE_KEY` is required (the same name without
-//! the leading underscore and the CI names `_51DEGREES_RESOURCE_KEY_BESPOKE`
-//! and `_51DEGREES_RESOURCE_KEY_BASIC` are read after it),
-//! `_51DEGREES_LICENSE_KEY` is optional, `51DEGREES_CLOUD_ENDPOINT` overrides
-//! the cloud API base and `PORT` overrides the default port of 5100.
+//! Environment: `_51DEGREES_RESOURCE_KEY` is required (the CI names
+//! `_51DEGREES_RESOURCE_KEY_BESPOKE` and `_51DEGREES_RESOURCE_KEY_BASIC` are
+//! read after it), `_51DEGREES_LICENSE_KEY` is optional,
+//! `_51DEGREES_CLOUD_ENDPOINT` overrides the cloud API base and `PORT`
+//! overrides the default port of 5100.
 //!
 //! Run with `cargo run -p fodid-examples --bin fodid-web-creator-context` and
 //! open <http://localhost:5100/>.
@@ -99,17 +99,6 @@ const FIND_OUT_MORE: &[(&str, &str)] = &[
 
 /// The route the demo page's relative stylesheet URL resolves to.
 const PAGE_CSS_ROUTE: &str = "/examples-main.min.css";
-
-/// The environment variable holding the optional licence key, checked first.
-///
-/// The leading underscore makes the name a valid shell identifier, so
-/// `export _51DEGREES_LICENSE_KEY=...` works, and it is the name every
-/// 51Degrees language reads.
-const LICENCE_KEY_ENV_VAR: &str = "_51DEGREES_LICENSE_KEY";
-
-/// The same name without the leading underscore, checked second. A POSIX shell
-/// cannot set a name starting with a digit, so it is not the documented one.
-const LICENCE_KEY_ENV_VAR_NO_UNDERSCORE: &str = "51DEGREES_LICENSE_KEY";
 
 /// The port the demo listens on when `PORT` is not set.
 const DEFAULT_PORT: u16 = 5100;
@@ -378,8 +367,8 @@ fn json_response(status: StatusCode, body: serde_json::Value) -> Response {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // The resource key is read from the aligned/legacy/CI environment
-    // variables. Without one there is nothing to demonstrate, so say which
+    // The resource key is read from `_51DEGREES_RESOURCE_KEY` or the CI
+    // names. Without one there is nothing to demonstrate, so say which
     // variables were looked at and stop.
     let Some(resource_key) = examples_shared::resource_key_from_env() else {
         eprintln!(
@@ -392,12 +381,8 @@ async fn main() -> anyhow::Result<()> {
         std::process::exit(1);
     };
 
-    let licence_key = [LICENCE_KEY_ENV_VAR, LICENCE_KEY_ENV_VAR_NO_UNDERSCORE]
-        .into_iter()
-        .filter_map(|name| std::env::var(name).ok())
-        .map(|value| value.trim().to_owned())
-        .find(|value| !value.is_empty())
-        .unwrap_or_default();
+    // A value of only spaces counts as no licence key.
+    let licence_key = examples_shared::license_key_from_env().unwrap_or_default();
     if licence_key.is_empty() {
         // Only an account that holds licence keys needs one to redeem,
         // because the licence key is what keeps redemption to the acting
@@ -407,9 +392,10 @@ async fn main() -> anyhow::Result<()> {
         // is diagnosed at start-up rather than by an unreadable verdict
         // three steps later that looks like a cryptographic failure.
         println!(
-            "No {LICENCE_KEY_ENV_VAR} set. Redemption will work where the \
+            "No {} set. Redemption will work where the \
              account holds no licence keys, and will report the context \
-             unreadable where it holds some."
+             unreadable where it holds some.",
+            examples_shared::LICENSE_KEY_ENV_VAR
         );
     }
 

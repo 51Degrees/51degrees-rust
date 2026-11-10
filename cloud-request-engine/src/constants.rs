@@ -27,7 +27,10 @@
 //! [cloud-request-engine specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/cloud-request-engine.md#configuration-options).
 
 /// The environment variable that, when set, overrides the base cloud URL.
-pub const CLOUD_ENDPOINT_ENV_VAR: &str = "51DEGREES_CLOUD_ENDPOINT";
+///
+/// The name starts with an underscore because a POSIX shell cannot set a name
+/// that starts with a digit, so `export _51DEGREES_CLOUD_ENDPOINT=...` works.
+pub const CLOUD_ENDPOINT_ENV_VAR: &str = "_51DEGREES_CLOUD_ENDPOINT";
 
 /// The default base URL for the cloud service, including the API version path.
 /// The endpoint filenames are appended to this to form the full URLs.
