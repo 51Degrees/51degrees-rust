@@ -84,8 +84,8 @@ struct Endpoints {
 /// [`CloudRequestEngineBuilder::build`] settles the combination and refuses
 /// the ones the service cannot answer as the caller intends.
 ///
-/// A resource key states which properties it carries, so the service returns all
-/// of them and ignores any property list sent with it.
+/// A resource key states which properties it carries, and the service returns
+/// all of them, adding any named in a property list sent with it.
 ///
 /// ```no_run
 /// # use fiftyone_cloud_request_engine::CloudRequestEngine;
@@ -95,15 +95,18 @@ struct Endpoints {
 ///     .unwrap();
 /// ```
 ///
-/// A license key alongside a resource key adds the products the license grants
-/// to those the resource key carries, so the answer widens. A property list is
-/// still ignored, because a resource key is present.
+/// A property list beside a resource key adds the listed properties to those
+/// the resource key carries. A license key alongside the resource key grants
+/// the listed properties it covers, a listed property that no license grants
+/// comes back with no value and the reason that it is a paid feature, and a
+/// name the service does not know is not returned.
 ///
 /// ```no_run
 /// # use fiftyone_cloud_request_engine::CloudRequestEngine;
 /// let _engine = CloudRequestEngine::builder()
 ///     .resource_key("my-resource-key")
 ///     .license_key("my-license-key")
+///     .values(["device.hardwarevendor"])
 ///     .build()
 ///     .unwrap();
 /// ```
@@ -212,8 +215,8 @@ pub struct CloudRequestEngine {
     /// The credential the request authenticates with. At least one of this and
     /// `license_key` is set, which the builder settled.
     resource_key: Option<String>,
-    /// The other credential, which either stands alone or widens what the
-    /// resource key carries.
+    /// The other credential, which either stands alone or, beside a resource
+    /// key, grants listed properties the resource key does not carry.
     license_key: Option<String>,
     /// The resource key, and the license key where one is set, kept so that an
     /// error on the way out can have them taken out of it by value. Matching
@@ -221,7 +224,8 @@ pub struct CloudRequestEngine {
     /// [`fiftyone_pipeline_core::redact`] would not recognise.
     secrets: Vec<String>,
     /// The properties the caller asked for, sent as the `values` parameter.
-    /// Non-empty when authenticating with a license key alone, empty otherwise.
+    /// Never empty with a license key alone, and empty or not with a resource
+    /// key.
     values: Vec<String>,
     /// Whether the asked-for properties have been compared against a response
     /// yet. The comparison runs once per engine, see
@@ -284,9 +288,7 @@ impl CloudRequestEngine {
     }
 
     /// The properties this engine asks the cloud service for, as the caller
-    /// named them. Empty when it authenticates with a resource key, because a
-    /// resource key states its own properties and the service ignores a list
-    /// sent with one.
+    /// named them. Empty when none were named, which a resource key allows.
     pub fn values(&self) -> &[String] {
         &self.values
     }
@@ -487,7 +489,11 @@ impl CloudRequestEngine {
     /// alongside a property the credential does cover it answers `200` carrying
     /// the covered one and nothing at all about the one it dropped. Silence is
     /// then the only symptom, so the engine looks for it rather than leaving a
-    /// caller to work out why a property it asked for never appears.
+    /// caller to work out why a property it asked for never appears. With a
+    /// resource key and no license key, a listed property the credential does
+    /// not cover comes back with no value and the reason that it is a paid
+    /// feature, which counts as carried, so the warning then names only
+    /// properties the service does not know.
     ///
     /// The comparison runs once per engine. Its outcome is decided by the
     /// credential and the asked-for list, both fixed when the engine was built,
@@ -510,6 +516,22 @@ impl CloudRequestEngine {
             .collect();
         if missing.is_empty() {
             return None;
+        }
+        if self.resource_key.is_some() && self.license_key.is_none() {
+            // A listed property no license grants comes back null with its
+            // reason beside a resource key alone, so only an unknown name is
+            // left out, as the cloud request engine specification says.
+            return Some(format!(
+                "the cloud service did not return {} of the {} properties this \
+                 engine asked for: {}. With a resource key and no license key, a \
+                 listed property no license grants comes back with no value and \
+                 its reason, so a name left out is not a property the cloud \
+                 service knows. Check the names, or drop them from the property \
+                 list the engine was built with. Reported once per engine.",
+                missing.len(),
+                self.values.len(),
+                missing.join(", ")
+            ));
         }
         Some(format!(
             "the cloud service did not return {} of the {} properties this \
@@ -947,8 +969,9 @@ impl CloudRequestEngineBuilder {
     }
 
     /// Set the resource key, one of the two ways to authenticate. A resource key
-    /// authenticates the request and specifies which properties are returned, so
-    /// an engine built with one asks for no property list. Create one for free at
+    /// authenticates the request and specifies which properties are returned,
+    /// and a property list given with [`CloudRequestEngineBuilder::values`] adds
+    /// to them. Create one for free at
     /// <https://configure.51degrees.com?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=cloud-request-engine-src-engine.rs&utm_term=resource_key>.
     ///
     /// A resource key is public by design, since it travels to the browser inside
@@ -963,8 +986,9 @@ impl CloudRequestEngineBuilder {
     /// Set the license key, the other way to authenticate, used either
     /// alongside a resource key or instead of one.
     ///
-    /// Alongside a resource key it adds the products it grants to those the
-    /// resource key carries, so the answer widens. On its own it names no
+    /// Alongside a resource key it grants the properties of the property list
+    /// that it covers, on top of those the resource key carries, and with no
+    /// property list it adds none. On its own it names no
     /// properties, so an engine built with it and no resource key must also be
     /// given the properties it wants with
     /// [`CloudRequestEngineBuilder::values`]. The cloud service refuses a
@@ -978,18 +1002,21 @@ impl CloudRequestEngineBuilder {
     /// `product.property` names such as `device.ismobile`. Calling it again
     /// replaces the list rather than adding to it.
     ///
-    /// This goes with a license key and no resource key. The service honours
-    /// the list, returning those properties and no others, which keeps a
-    /// response to what the caller actually reads. A request carrying a
-    /// resource key ignores the list and answers with everything that key
-    /// carries, so [`CloudRequestEngineBuilder::build`] refuses that
-    /// combination rather than leaving a caller to believe the list narrowed the
-    /// answer.
+    /// With a license key alone the service returns those properties and no
+    /// others, which keeps a response to what the caller actually reads. With a
+    /// resource key it adds them to the properties the resource key carries. A
+    /// listed property that no license grants, through the resource key or a
+    /// license key given alongside it, comes back with no value and the reason
+    /// that it is a paid feature, and a name the service does not know is not
+    /// returned.
     ///
-    /// A property the credential does not cover is left out of the answer without
-    /// comment, so the engine compares what it asked for against what arrived and
-    /// reports the difference once, as a warning on its element data and one line
-    /// on stderr.
+    /// A property that does not come back at all is left out of the answer
+    /// without comment, so the engine compares what it asked for against what
+    /// arrived and reports the difference once, as a warning on its element data
+    /// and one line on stderr. With a resource key and no license key the
+    /// difference is only a name the service does not know, because a listed
+    /// property no license grants comes back with no value and counts as
+    /// carried.
     pub fn values<I, S>(mut self, values: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -1164,18 +1191,16 @@ impl CloudRequestEngineBuilder {
     ///
     /// # Credentials
     ///
-    /// A resource key on its own, a resource key with a license key, and a
-    /// license key with the properties the caller wants are all accepted.
+    /// A resource key, with or without a license key and with or without a
+    /// property list, and a license key with the properties the caller wants
+    /// are all accepted.
     /// Everything else is refused here, with a message naming the setting to
     /// change.
     ///
     /// Neither credential leaves nothing to authenticate with. A license key
     /// without a property list is refused by the cloud service itself on every
     /// request, so catching it here turns a total failure in service into one
-    /// configuration error a deployment meets before it serves anybody. A
-    /// property list alongside a resource key is refused because the service
-    /// ignores it, and a caller who supplies one is expecting the answer to
-    /// narrow when it will not.
+    /// configuration error a deployment meets before it serves anybody.
     ///
     /// Settling all of this at build time is what lets a downstream element rely
     /// on receiving an answer, since a request can no longer fail for a reason
@@ -1356,15 +1381,6 @@ impl CloudRequestEngineBuilder {
                  https://configure.51degrees.com?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=cloud-request-engine-src-engine.rs&utm_term=credential-required, \
                  or set a license key with license_key(..) and name the \
                  properties you want with values(..).",
-            )),
-            (Some(_), _) if !values.is_empty() => Err(Error::configuration(
-                "a CloudRequestEngine was given both a resource key and a \
-                 property list. A resource key already states which properties \
-                 it carries and the cloud service ignores a list sent with one, \
-                 so the answer would not narrow to the properties named. Remove \
-                 the values(..) setting to accept what the resource key carries, \
-                 or remove the resource_key(..) setting and authenticate on the \
-                 license key alone to have the property list honoured.",
             )),
             (None, Some(_)) if values.is_empty() => Err(Error::configuration(
                 "a CloudRequestEngine was given a license key and no property \
@@ -1935,9 +1951,8 @@ mod tests {
 
     #[test]
     fn both_credentials_build_an_engine() {
-        // A license key alongside a resource key adds the products it grants to
-        // those the resource key carries, so the pair is accepted and both keys
-        // are sent. Only the property list is pointless in that company.
+        // A license key alongside a resource key is accepted and both keys are
+        // sent. With no property list the license key adds no property.
         let engine = CloudRequestEngine::builder()
             .resource_key("rk")
             .license_key("lk")
@@ -1967,27 +1982,98 @@ mod tests {
     }
 
     #[test]
-    fn build_refuses_a_property_list_with_a_resource_key() {
-        // The service ignores the list whenever a resource key is present, so
-        // accepting it would leave the caller believing the answer had narrowed
-        // when it had not. A license key alongside the resource key does not
-        // change that, because the resource key still authenticates the request.
-        for with_license in [false, true] {
-            let mut builder = CloudRequestEngine::builder()
-                .resource_key("rk")
-                .values(["device.ismobile"])
-                .http_client(Arc::new(NoopClient))
-                .set_state(sample_state());
-            if with_license {
-                builder = builder.license_key("lk");
-            }
-            let message = refusal(builder.build());
-            assert!(
-                message.contains("ignores a list sent with one"),
-                "the message should say why the list would not apply, \
-                 license key {with_license}, got {message}"
-            );
-        }
+    fn a_name_left_out_beside_a_resource_key_alone_is_reported_as_unknown() {
+        // Beside a resource key alone a listed property no license grants
+        // comes back null with its reason, so a name left out of the answer is
+        // one the service does not know, and the warning says so rather than
+        // pointing at a license key that was never given.
+        let engine = CloudRequestEngine::builder()
+            .resource_key("rk")
+            .values(["device.ismobile", "device.nosuchproperty"])
+            .http_client(Arc::new(NoopClient))
+            .set_state(sample_state())
+            .build()
+            .expect("a resource key and a list build");
+        let warning = engine
+            .missing_values_warning(r#"{"device":{"ismobile":true}}"#)
+            .expect("the unknown name is reported");
+        assert!(
+            warning.contains("device.nosuchproperty") && !warning.contains("device.ismobile"),
+            "{warning}"
+        );
+        assert!(
+            warning.contains("not a property the cloud service knows")
+                && !warning.contains("entitlement matter"),
+            "{warning}"
+        );
+    }
+
+    #[test]
+    fn a_resource_key_and_a_property_list_build_without_a_license_key() {
+        // The service adds the listed properties to those the resource key
+        // carries, so the list is sent with the resource key alone too.
+        let engine = CloudRequestEngine::builder()
+            .resource_key("rk")
+            .values(["device.hardwarevendor"])
+            .http_client(Arc::new(NoopClient))
+            .set_state(sample_state())
+            .build()
+            .expect("a resource key and a list build");
+        let pipeline = fiftyone_pipeline_core::Pipeline::builder()
+            .add_element(Arc::new(engine_with_dummy_client()))
+            .suppress_process_exceptions(true)
+            .build()
+            .unwrap();
+        let data = pipeline.create_flow_data_with(
+            Evidence::builder()
+                .add("header.user-agent", "header-ua")
+                .build(),
+        );
+        let form = engine.build_content(&data);
+        assert_eq!(form[0], ("resource".to_owned(), "rk".to_owned()));
+        assert_eq!(
+            form[1],
+            ("values".to_owned(), "device.hardwarevendor".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_resource_key_a_license_key_and_a_property_list_build_and_are_all_sent() {
+        // The license key grants the listed properties it covers, on top of
+        // those the resource key carries, so all three go in the request.
+        let engine = CloudRequestEngine::builder()
+            .resource_key("rk")
+            .license_key("lk")
+            .values(["device.hardwarevendor", "device.ismobile"])
+            .http_client(Arc::new(NoopClient))
+            .set_state(sample_state())
+            .build()
+            .expect("a resource key, a license key and a list build");
+        assert_eq!(engine.resource_key(), Some("rk"));
+        assert_eq!(
+            engine.values(),
+            ["device.hardwarevendor", "device.ismobile"]
+        );
+        let pipeline = fiftyone_pipeline_core::Pipeline::builder()
+            .add_element(Arc::new(engine_with_dummy_client()))
+            .suppress_process_exceptions(true)
+            .build()
+            .unwrap();
+        let data = pipeline.create_flow_data_with(
+            Evidence::builder()
+                .add("header.user-agent", "header-ua")
+                .build(),
+        );
+        let form = engine.build_content(&data);
+        assert_eq!(form[0], ("resource".to_owned(), "rk".to_owned()));
+        assert_eq!(form[1], ("license".to_owned(), "lk".to_owned()));
+        assert_eq!(
+            form[2],
+            (
+                "values".to_owned(),
+                "device.hardwarevendor,device.ismobile".to_owned()
+            )
+        );
     }
 
     #[test]

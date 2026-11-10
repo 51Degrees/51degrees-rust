@@ -51,8 +51,8 @@ pub const ORIGIN_HEADER_NAME: &str = "Origin";
 pub const RESOURCE_PARAMETER: &str = "resource";
 
 /// The form field carrying the license key, which either stands in for a
-/// resource key or travels alongside one, adding the products it grants to
-/// those the resource key carries.
+/// resource key or travels alongside one, granting the listed properties it
+/// covers on top of those the resource key carries.
 pub const LICENSE_PARAMETER: &str = "license";
 
 /// The form field naming the properties the caller wants returned, as a
@@ -60,8 +60,8 @@ pub const LICENSE_PARAMETER: &str = "license";
 ///
 /// A license key carries no property list of its own, so the cloud service
 /// requires this field on a request that authenticates with one and answers
-/// `400` without it. A resource key already states which properties it carries,
-/// so a request presenting one ignores this field.
+/// `400` without it. With a resource key, the listed properties are added to
+/// those the resource key carries.
 pub const VALUES_PARAMETER: &str = "values";
 
 /// The default request timeout in seconds.
