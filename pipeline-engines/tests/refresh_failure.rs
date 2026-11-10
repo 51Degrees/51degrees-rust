@@ -526,10 +526,9 @@ fn a_watched_file_that_is_not_newer(dir: &Path) {
     );
 }
 
-/// A refresh that panics, in a scheduled poll and after a change to a
-/// watched file, is logged and reported as a refresh that failed, and the
-/// poll and the change after it are still applied.
-fn a_refresh_that_panics(dir: &Path) {
+/// A refresh that panics in a scheduled poll is logged and reported as a
+/// refresh that failed, and the poll after it is still applied.
+fn a_refresh_that_panics_in_a_poll() {
     let url = serve(b"new data");
     let (engine, shared) = panicking(
         DataFileConfiguration::memory_builder()
@@ -557,7 +556,12 @@ fn a_refresh_that_panics(dir: &Path) {
     );
     assert!(engine.refreshes.load(Ordering::SeqCst) >= 2);
     assert_panic_logged("a scheduled poll");
+}
 
+/// A refresh that panics after a change to a watched file is logged and
+/// reported as a refresh that failed, and a file written after it is still
+/// applied.
+fn a_refresh_that_panics_after_a_change(dir: &Path) {
     let path = dir.join("panics.dat");
     std::fs::write(&path, b"version 1").unwrap();
     let (engine, shared) = panicking(DataFileConfiguration::builder(&path).build(), 1, 0);
@@ -677,7 +681,8 @@ fn a_refresh_that_fails_is_logged_and_reported_as_a_failure() {
     a_scheduled_poll(&refused);
     a_watched_file(&dir, &refused);
     a_watched_file_that_is_not_newer(&dir);
-    a_refresh_that_panics(&dir);
+    a_refresh_that_panics_in_a_poll();
+    a_refresh_that_panics_after_a_change(&dir);
     a_check_is_told_when_it_starts(&dir);
 
     let _ = std::fs::remove_dir_all(&dir);
