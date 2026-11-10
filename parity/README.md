@@ -186,6 +186,19 @@ programs run on the same machine and work it out from the machine's own
 name. The report shows how many characters come before the first that
 differs, then the text from shortly before it.
 
+Each CDATA section is read as the same text with `&`, `<` and `>` written as
+entities before the records are compared. .NET writes each evidence value in
+a CDATA section, where the crates write it as text, as the Processing section
+of `usage-sharing-element.md` on specifications `rc` asks. .NET alone keeps
+its own form
+([specifications#118](https://github.com/51Degrees/specifications/pull/118)),
+so a value it cuts or holding a character it replaces still differs. .NET
+cuts at 10,000 UTF-16 units after the text `[TRUNCATED BY USAGE SHARING] `
+and adds `BadSchema` to the record, where the crates cut at 10,000 code
+points and mark the entry `truncated="true"` or `escaped="true"`. The case
+`usage-value-replaced-and-cut` holds such a value, and its entry in
+`allowed-differences.json` allows that difference alone.
+
 | Kind | Meaning |
 | --- | --- |
 | `missingLine` | A program wrote no line for the case. |

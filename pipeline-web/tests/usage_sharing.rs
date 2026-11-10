@@ -252,9 +252,9 @@ fn usage_sharing_shares_the_web_requests_headers_no_element_accepts() {
     let document = &documents[0];
     let session = format!("<SessionId>{SESSION_ID}</SessionId>");
     for shared in [
-        "<header Name=\"User-Agent\"><![CDATA[Mozilla/5.0]]></header>",
-        "<header Name=\"X-Test\"><![CDATA[test]]></header>",
-        "<cookie Name=\"51D_Test\"><![CDATA[kept]]></cookie>",
+        "<header Name=\"User-Agent\">Mozilla/5.0</header>",
+        "<header Name=\"X-Test\">test</header>",
+        "<cookie Name=\"51D_Test\">kept</cookie>",
         session.as_str(),
     ] {
         assert!(document.contains(shared), "{shared} in {document}");

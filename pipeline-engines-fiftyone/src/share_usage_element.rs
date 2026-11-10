@@ -1347,6 +1347,25 @@ mod tests {
         }
     }
 
+    /// A sink that keeps every batch it is given in a [`Capture`] and fails
+    /// the first, as the built-in transport does for an answer other than
+    /// 200.
+    struct FailsOnce {
+        capture: Capture,
+        failed: AtomicBool,
+    }
+
+    impl UsageSink for FailsOnce {
+        fn receive(&self, batch: UsageBatch) -> std::result::Result<(), SinkError> {
+            self.capture.receive(batch)?;
+            if self.failed.swap(true, Ordering::SeqCst) {
+                Ok(())
+            } else {
+                Err("the endpoint answered 503".into())
+            }
+        }
+    }
+
     /// A sink that reports when a batch arrives, then holds it until it is
     /// released, so a test can keep the queue full.
     struct Gate {
@@ -1419,8 +1438,7 @@ mod tests {
         let kept = "a".repeat(SHARE_USAGE_MAX_EVIDENCE_LENGTH);
         assert!(
             capture.messages()[0].contains(&format!(
-                "<header Name=\"user-agent\">\
-                 <![CDATA[[TRUNCATED BY USAGE SHARING] {kept}]]></header>"
+                "<header truncated=\"true\" Name=\"user-agent\">{kept}</header>"
             )),
             "the value is cut to the maximum length and marked"
         );
@@ -1449,9 +1467,9 @@ mod tests {
         let end = "</Platform>";
         assert_eq!(
             &xml[xml.find(end).unwrap() + end.len()..],
-            "<header Name=\"User-Agent\"><![CDATA[agent]]></header>\
-             <header Name=\"Accept-Language\"><![CDATA[en]]></header>\
-             <query Name=\"51D_Test\"><![CDATA[x]]></query></Device></Devices>"
+            "<header Name=\"User-Agent\">agent</header>\
+             <header Name=\"Accept-Language\">en</header>\
+             <query Name=\"51D_Test\">x</query></Device></Devices>"
         );
     }
 
@@ -1486,7 +1504,7 @@ mod tests {
         assert!(!xml.contains("cookie-header"), "{xml}");
         assert!(!xml.contains("session-other"), "{xml}");
         assert!(
-            xml.contains("<session Name=\"51D_Seen\"><![CDATA[session-51d]]></session>"),
+            xml.contains("<session Name=\"51D_Seen\">session-51d</session>"),
             "{xml}"
         );
     }
@@ -1503,11 +1521,11 @@ mod tests {
         let xml = &capture.messages()[0];
         assert!(!xml.contains("never-shared"), "{xml}");
         assert!(
-            xml.contains("<header Name=\"Cookie\"><![CDATA[cookie-header]]></header>"),
+            xml.contains("<header Name=\"Cookie\">cookie-header</header>"),
             "{xml}"
         );
         assert!(
-            xml.contains("<Session Name=\"Other\"><![CDATA[session-other]]></Session>"),
+            xml.contains("<Session Name=\"Other\">session-other</Session>"),
             "{xml}"
         );
     }
@@ -1552,11 +1570,11 @@ mod tests {
         share(config, capture.clone(), Vec::new(), requests);
         let xml = capture.messages().concat();
         assert!(
-            !xml.contains("[CDATA[one]]"),
+            !xml.contains(">one</"),
             "the exact match is not shared: {xml}"
         );
-        assert!(xml.contains("[CDATA[two]]"), "values match exactly: {xml}");
-        assert!(xml.contains("[CDATA[three]]"), "{xml}");
+        assert!(xml.contains(">two</"), "values match exactly: {xml}");
+        assert!(xml.contains(">three</"), "{xml}");
     }
 
     /// The web request is shared with the evidence, a key in both having the
@@ -1591,16 +1609,16 @@ mod tests {
         let xml = capture.messages().concat();
         assert!(
             xml.contains(
-                "<header Name=\"User-Agent\"><![CDATA[from the evidence]]></header>\
-                 <header Name=\"X-Skip\"><![CDATA[no]]></header>\
-                 <header Name=\"X-Test\"><![CDATA[one]]></header>\
-                 <query Name=\"extra\"><![CDATA[added]]></query>"
+                "<header Name=\"User-Agent\">from the evidence</header>\
+                 <header Name=\"X-Skip\">no</header>\
+                 <header Name=\"X-Test\">one</header>\
+                 <query Name=\"extra\">added</query>"
             ),
             "{xml}"
         );
         assert!(!xml.contains("from the request"), "{xml}");
         assert!(
-            !xml.contains("[CDATA[two]]"),
+            !xml.contains(">two</"),
             "the ignore filter reads the web request: {xml}"
         );
     }
@@ -1625,7 +1643,7 @@ mod tests {
             .build()];
         share(config, capture.clone(), Vec::new(), requests);
         let xml = capture.messages().concat();
-        assert!(xml.contains("[CDATA[one]]"), "{xml}");
+        assert!(xml.contains(">one</"), "{xml}");
     }
 
     #[test]
@@ -1839,6 +1857,59 @@ mod tests {
         assert_eq!(element.success_count(), 0);
     }
 
+    /// The values of each record in `batch`.
+    fn values(batch: &UsageBatch) -> Vec<String> {
+        batch
+            .records()
+            .iter()
+            .flat_map(|record| record.evidence().map(|(_, _, value)| value.to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn a_batch_whose_send_failed_is_dropped() {
+        let capture = Capture::default();
+        let element = Arc::new(ShareUsageElement::with_sink(
+            ShareUsageConfig::builder()
+                .minimum_entries_per_message(1)
+                .build(),
+            FailsOnce {
+                capture: capture.clone(),
+                failed: AtomicBool::new(false),
+            },
+        ));
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        let process = |agent: &str| {
+            pipeline
+                .create_flow_data_with(user_agent(agent))
+                .process()
+                .unwrap()
+        };
+
+        // The second request is only queued once the first batch has
+        // failed, so the two are never one batch.
+        process("one");
+        wait_for(|| element.fail_count() > 0);
+        process("two");
+        wait_for(|| element.success_count() > 0);
+        assert_eq!(element.fail_count(), 1);
+        assert_eq!(element.success_count(), 1);
+        drop(pipeline);
+        drop(element);
+
+        let batches = capture.batches();
+        assert_eq!(batches.len(), 2, "nothing is sent after the second batch");
+        assert_eq!(values(&batches[0]), ["one"]);
+        assert_eq!(
+            values(&batches[1]),
+            ["two"],
+            "the failed batch is not queued again"
+        );
+    }
+
     #[test]
     fn a_sink_that_panics_loses_one_batch() {
         for in_writer in [false, true] {
@@ -1874,9 +1945,9 @@ mod tests {
             assert_eq!(element.fail_count(), 1, "in_writer {in_writer}");
             assert_eq!(element.success_count(), 1, "in_writer {in_writer}");
             let xml = capture.messages().concat();
-            assert!(!xml.contains("[CDATA[one]]"), "{xml}");
+            assert!(!xml.contains(">one</"), "{xml}");
             assert!(
-                xml.contains("[CDATA[two]]"),
+                xml.contains(">two</"),
                 "the batch after the panic is delivered, in_writer {in_writer}: {xml}"
             );
             drop(pipeline);
@@ -2183,7 +2254,7 @@ mod tests {
         };
         assert!(
             xml.ends_with(&format!(
-                "<header Name=\"User-Agent\"><![CDATA[agent]]></header>\
+                "<header Name=\"User-Agent\">agent</header>\
                  {after}</Device></Devices>"
             )),
             "{xml}"
