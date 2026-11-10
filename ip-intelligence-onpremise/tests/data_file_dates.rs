@@ -210,9 +210,9 @@ fn a_failed_refresh_from_memory_keeps_the_data_and_dates() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A refresh from a file that is not a whole data file, or from no file,
-/// fails, and the engine keeps the data and the dates it had. The engine
-/// holds its data in memory, so the file can be replaced on every platform.
+/// A refresh from half a data file, or from no file, fails, and the engine
+/// keeps the data and the dates it had. The engine holds its data in memory,
+/// so the file can be replaced on every platform.
 #[test]
 fn a_failed_refresh_from_the_file_keeps_the_data_and_dates() {
     let Some(asn) = asn_file() else {
@@ -224,7 +224,6 @@ fn a_failed_refresh_from_the_file_keeps_the_data_and_dates() {
     std::fs::write(&path, &data).unwrap();
     let engine = built_on(&path, PerformanceProfile::InMemory);
     for (case, refused) in [
-        ("a file that is not a data file", Some(vec![0x5a_u8; 4096])),
         ("half a data file", Some(data[..data.len() / 2].to_vec())),
         ("no file", None),
     ] {

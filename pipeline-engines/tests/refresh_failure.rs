@@ -103,7 +103,7 @@ fn take() -> Vec<String> {
 struct FailingEngine {
     filter: EvidenceKeyFilterWhitelist,
     data_files: Vec<Arc<AspectEngineDataFile>>,
-    failures: AtomicUsize,
+    failures: Mutex<usize>,
     refreshes: AtomicUsize,
 }
 
@@ -111,12 +111,14 @@ impl FailingEngine {
     /// One refresh, which fails while failures are left.
     fn attempt(&self) -> Result<()> {
         self.refreshes.fetch_add(1, Ordering::SeqCst);
-        let fails = self
-            .failures
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
-                left.checked_sub(1)
-            })
-            .is_ok();
+        let fails = {
+            let mut left = self.failures.lock().unwrap();
+            let fails = *left > 0;
+            if fails {
+                *left -= 1;
+            }
+            fails
+        };
         if fails {
             Err(Error::configuration(REFUSED))
         } else {
@@ -171,7 +173,7 @@ fn engine(
     let engine = Arc::new(FailingEngine {
         filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
         data_files: vec![Arc::new(AspectEngineDataFile::new(configuration))],
-        failures: AtomicUsize::new(failures),
+        failures: Mutex::new(failures),
         refreshes: AtomicUsize::new(0),
     });
     let shared: Arc<dyn OnPremiseAspectEngine> = engine.clone();
