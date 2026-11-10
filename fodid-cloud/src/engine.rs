@@ -207,13 +207,13 @@ impl FodIdCloudEngine {
     /// Until then the caches stay empty and the engine reports the shared
     /// defaults. When the accessible properties hold no identifier product, or
     /// list it with no properties, the engine gets empty metadata, as the
-    /// missing product rule of draft specifications#75 says, where .NET
-    /// refuses such a key and fails the pipeline build. An engine with only a
-    /// license key gets empty metadata too, because it has no accessible
-    /// properties to read, as the cloud request engine specification says.
-    /// With a resource key the call that sets the empty metadata logs an
-    /// error, so it is logged once. The properties are set last because a
-    /// request that finds them set reads the rest.
+    /// cloud aspect engine specification says. An engine with only a license
+    /// key gets empty metadata too, because it has no accessible properties
+    /// to read, as the cloud request engine specification says. With a
+    /// resource key the call that sets the empty metadata logs a warning
+    /// naming the data key, so the missing product is logged once. The
+    /// properties are set last because a request that finds them set reads
+    /// the rest.
     fn ensure_metadata(&self) {
         if self.properties.get().is_some() {
             return;
@@ -231,9 +231,10 @@ impl FodIdCloudEngine {
                 if self.properties.set(Vec::new()).is_ok()
                     && self.request_engine.resource_key().is_some()
                 {
-                    log::error!(
+                    log::warn!(
                         "Aspect properties could not be loaded for {ENGINE_NAME} - \
-                         '{FODID_ELEMENT_DATA_KEY}'"
+                         '{FODID_ELEMENT_DATA_KEY}'. The resource key does not include \
+                         access to any properties under '{FODID_ELEMENT_DATA_KEY}'."
                     );
                 }
             }

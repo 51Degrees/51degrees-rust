@@ -156,7 +156,7 @@ pub struct DidClient {
     resource_key: String,
     licence_key: Option<String>,
     /// The resource key, and the licence key where one was given, kept so an
-    /// error on the way out can have them taken out of it by value. Matching
+    /// error on the way out can have them masked by value. Matching
     /// the value itself catches a credential the shape rules in
     /// [`crate::redact`] would not recognise.
     secrets: Vec<String>,
@@ -780,17 +780,17 @@ impl DidClient {
             .map_err(|message| Error::Transport(self.redacted(&message)))
     }
 
-    /// Takes this client's own credentials out of text on its way into an
-    /// error, on top of the shape-based cleaning [`Error`] does whenever it is
+    /// Masks this client's own credentials in text on its way into an error,
+    /// on top of the shape-based masking [`Error`] does whenever it is
     /// printed. A resource key that does not start `AQ`, or a licence key of
     /// any shape, is invisible to the shape rules, so the exact values are
-    /// removed here where they are known.
+    /// masked here where they are known.
     fn redacted(&self, text: &str) -> String {
         crate::redact::redact_with(text, &self.secrets).into_owned()
     }
 
     /// The error for a status this client did not expect from `endpoint`,
-    /// carrying the start of the body with the credentials taken out.
+    /// carrying the start of the body with the credentials masked.
     fn unexpected(&self, endpoint: &'static str, response: &DidHttpResponse) -> Error {
         Error::UnexpectedStatus {
             endpoint,

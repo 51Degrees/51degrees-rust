@@ -856,7 +856,8 @@ impl ServiceHandle {
     /// Poll the remote update URL, verify, decompress, write and refresh.
     ///
     /// Every failing exit comes through here, so no error leaves the service
-    /// carrying the data file's licence keys, however the poll failed.
+    /// carrying the data file's licence keys in full, however the poll failed.
+    /// A key the message names shows only its last 4 characters.
     fn check_for_update_from_url(&self, registration: &Arc<Registration>) -> DataUpdateResult {
         let keys = &registration
             .data_file
@@ -1034,10 +1035,16 @@ impl ServiceHandle {
 }
 
 /// Log the outcome of a scheduled poll, with the messages the specification's
-/// logging section gives. The URL logged is the configured one, which carries
-/// no licence key. A refresh that failed is logged where the check ends.
+/// logging section gives. The URL logged is the configured one, without the
+/// keys the formatter adds, and with any licence key it carries itself masked
+/// to its last 4 characters. A refresh that failed is logged where the check
+/// ends.
 fn log_poll(engine: &str, registration: &Registration, result: &DataUpdateResult) {
-    let url = registration.data_file.data_update_url().unwrap_or("");
+    let data_file = &registration.data_file;
+    let url = redact_with(
+        data_file.data_update_url().unwrap_or(""),
+        &data_file.configuration().data_update_license_keys,
+    );
     match result {
         Ok(AutoUpdateStatus::Success) => {
             log::info!("A data file update for {engine} was downloaded from '{url}' and applied.")

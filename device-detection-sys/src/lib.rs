@@ -60,10 +60,11 @@
 //! - **Data set access** ([`fiftyoneDegreesDataSetHashGet`],
 //!   [`fiftyoneDegreesDataSetHashRelease`] and
 //!   [`fiftyoneDegreesResourceManagerFree`], re-exported from the common crate).
-//! - **Metadata enumeration** through the small property and evidence key
-//!   helpers ([`fiftyoneDegreesShimHashGetRequiredPropertyCount`] and friends)
+//! - **Metadata enumeration** through the small property helpers
+//!   ([`fiftyoneDegreesShimHashGetRequiredPropertyCount`] and friends)
 //!   compiled from the crate's C shim. These read fields buried in the nested
 //!   data set structures so the Rust side need not mirror those private layouts.
+//!   The evidence keys come from [`fiftyoneDegreesHashGetEvidenceKeys`].
 //!
 //! The deeply nested data set and results structures are exposed as opaque
 //! pointer types. Only [`ConfigHash`] and its base structures, which a caller
@@ -97,9 +98,9 @@ use std::os::raw::{c_char, c_int, c_void};
 // import surface. These are the exact types the Hash entry points consume.
 pub use fiftyone_common_sys::{
     fiftyoneDegreesExceptionGetMessage, fiftyoneDegreesFree, fiftyoneDegreesMemoryStandardFree,
-    fiftyoneDegreesResourceManagerFree, fiftyoneDegreesStatusGetMessage, EvidenceKeyValuePair,
-    EvidenceKeyValuePairArray, EvidencePrefix, Exception, PropertiesAvailable, PropertiesRequired,
-    ResourceHandle, ResourceManager, StatusCode,
+    fiftyoneDegreesResourceManagerFree, fiftyoneDegreesStatusGetMessage, Date,
+    EvidenceKeyValuePair, EvidenceKeyValuePairArray, EvidencePrefix, Exception,
+    PropertiesAvailable, PropertiesRequired, ResourceHandle, ResourceManager, StatusCode,
 };
 
 // ---------------------------------------------------------------------------
@@ -222,8 +223,8 @@ pub struct ConfigDeviceDetection {
     /// and in the C library's [header length limit] documentation, which
     /// also gives the memory a larger limit costs.
     ///
-    /// [the default is defined]: https://github.com/51Degrees/51degrees-cxx/blob/e866f6d3cea936587790f87967eff7863778b30e/src/dd/config-dd.h#L100-L106
-    /// [header length limit]: https://github.com/51Degrees/51degrees-cxx/blob/e866f6d3cea936587790f87967eff7863778b30e/docs/dd/README.md#header-length-limit
+    /// [the default is defined]: https://github.com/51Degrees/51degrees-cxx/blob/cfad8978827292b97ad08f306891edea09ece304/src/dd/config-dd.h#L100-L107
+    /// [header length limit]: https://github.com/51Degrees/51degrees-cxx/blob/cfad8978827292b97ad08f306891edea09ece304/docs/dd/README.md#header-length-limit
     pub max_matched_user_agent_length: usize,
     /// True if a result with no matched node should still be considered valid.
     pub allow_unmatched: bool,
@@ -270,6 +271,12 @@ pub struct ConfigHash {
     pub use_predictive_graph: bool,
     /// True if the route through each graph should be traced (debug only).
     pub trace_route: bool,
+    /// True to hold in memory, when some but not every property is
+    /// required, only the values of the required properties and the strings
+    /// those values use, and to read the other values and strings from the
+    /// data file with no cache. True in
+    /// [`fiftyoneDegreesHashHighPerformanceConfig`] only.
+    pub load_required_properties_only: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -281,8 +288,9 @@ pub struct ConfigHash {
 /// Mirrors the deeply nested `fiftyoneDegreesDataSetHash` from `hash.h`. The
 /// internal layout is intentionally hidden. The only operation defined on the
 /// pointer here is to release it with [`fiftyoneDegreesDataSetHashRelease`].
-/// Property and evidence key enumeration is provided through the shim helpers
-/// rather than by reaching into this structure from Rust.
+/// Properties are enumerated through the shim helpers, and the evidence keys
+/// through [`fiftyoneDegreesHashGetEvidenceKeys`], rather than by reaching
+/// into this structure from Rust.
 #[repr(C)]
 pub struct DataSetHash {
     _private: [u8; 0],
@@ -581,6 +589,23 @@ extern "C" {
         exception: *mut Exception,
     ) -> usize;
 
+    /// Writes the script the client runs for `body`, a value of the
+    /// `JavascriptHardwareProfile` property, into `buffer` and returns the
+    /// number of characters the script needs, not counting the null
+    /// terminator. The script declares the `profileIds` array the body fills,
+    /// runs the body, then writes the ids to the `51D_ProfileIds` cookie. A
+    /// null buffer only finds that length, and a buffer one longer holds the
+    /// whole script. A null body is an empty one.
+    ///
+    /// # Safety
+    /// `body` must be null or a null terminated string, and `buffer` must be
+    /// null or point to `length` writable bytes.
+    pub fn fiftyoneDegreesHashGetHardwareProfileScript(
+        body: *const c_char,
+        buffer: *mut c_char,
+        length: usize,
+    ) -> usize;
+
     /// Writes a JSON document of all available property values into `buffer` and
     /// returns the number of characters available.
     ///
@@ -611,6 +636,67 @@ extern "C" {
         exception: *mut Exception,
     ) -> *mut c_char;
 
+    /// Reads the match metrics of the results, taken across every result,
+    /// into the output pointers. The results hold one result for each
+    /// component, and the walk of a component's graph sets its result's
+    /// metrics, so any graph not yet walked is walked first, which can read
+    /// the data file. `method` receives the highest method any result used,
+    /// and the difference, drift, iterations and matched-node count are each
+    /// the sum of every result's. Each is zero, and the method
+    /// [`HashMatchMethod::None`], when `results` is null, holds no result or
+    /// a walk fails, which sets `exception`. Any output pointer may be null
+    /// to skip that metric.
+    ///
+    /// # Safety
+    /// `results` must be an initialized Hash results structure or null. Each
+    /// non-null output pointer and `exception` must be writable.
+    pub fn fiftyoneDegreesResultsHashGetMatchMetrics(
+        results: *mut ResultsHash,
+        method: *mut HashMatchMethod,
+        difference: *mut i32,
+        drift: *mut i32,
+        iterations: *mut i32,
+        matched_nodes: *mut i32,
+        exception: *mut Exception,
+    );
+
+    /// Reads the match metrics of the single result at `result_index` into
+    /// the output pointers, as [`fiftyoneDegreesResultsHashGetMatchMetrics`]
+    /// does for every result, and returns true. Returns false, giving zeros
+    /// and the method [`HashMatchMethod::None`], when `results` is null, the
+    /// index is not that of a result or a walk fails, which sets `exception`.
+    ///
+    /// # Safety
+    /// As for [`fiftyoneDegreesResultsHashGetMatchMetrics`].
+    pub fn fiftyoneDegreesResultsHashGetMatchMetricsForResult(
+        results: *mut ResultsHash,
+        result_index: u32,
+        method: *mut HashMatchMethod,
+        difference: *mut i32,
+        drift: *mut i32,
+        iterations: *mut i32,
+        matched_nodes: *mut i32,
+        exception: *mut Exception,
+    ) -> bool;
+
+    /// Returns the matched User-Agent of the result at `result_index`, being
+    /// the evidence value its component was matched from with each character
+    /// the match did not use replaced by `_`. Any graph not yet walked is
+    /// walked first, which can read the data file. Null when `results` is
+    /// null, the index is not that of a result, a walk fails, which sets
+    /// `exception`, or the result records none, which it does only when the
+    /// update matched User-Agent option is on.
+    ///
+    /// # Safety
+    /// `results` must be an initialized Hash results structure or null, and
+    /// `exception` must be writable. The string stays valid until the results
+    /// are populated again or freed.
+    pub fn fiftyoneDegreesResultsHashGetMatchedUserAgent(
+        results: *mut ResultsHash,
+        result_index: u32,
+        exception: *mut Exception,
+    ) -> *const c_char;
+
     /// Returns a safe reference to the Hash data set managed by `manager`. The
     /// reference must be released with [`fiftyoneDegreesDataSetHashRelease`].
     ///
@@ -624,10 +710,35 @@ extern "C" {
     /// # Safety
     /// `data_set` must come from [`fiftyoneDegreesDataSetHashGet`].
     pub fn fiftyoneDegreesDataSetHashRelease(data_set: *mut DataSetHash);
+
+    /// Writes the evidence keys `data_set` reads into `buffer`, with
+    /// `separator` between them, and returns the number of characters the
+    /// keys and separators need, not counting the null terminator. A null
+    /// buffer only finds that length, and a buffer one longer holds them all.
+    /// The keys are each header's `header.` and `query.` keys, with `HTTP_`
+    /// before the name when the configuration's
+    /// [`uses_upper_prefixed_headers`](ConfigBase::uses_upper_prefixed_headers)
+    /// is true, then, when its
+    /// [`process_special_evidence`](ConfigDeviceDetection::process_special_evidence)
+    /// is true, a `cookie.` and a `query.` key for each property the evidence
+    /// can override and the keys of the device id, the high entropy values,
+    /// the structured User-Agent and the profile ids. A comma suits as the
+    /// separator, as no header or property name holds one.
+    ///
+    /// # Safety
+    /// `data_set` must come from [`fiftyoneDegreesDataSetHashGet`] and not yet
+    /// be released. `buffer` must be null or point to `length` writable bytes,
+    /// and `separator` must be a null terminated string.
+    pub fn fiftyoneDegreesHashGetEvidenceKeys(
+        data_set: *mut DataSetHash,
+        buffer: *mut c_char,
+        length: usize,
+        separator: *const c_char,
+    ) -> usize;
 }
 
 // ---------------------------------------------------------------------------
-// Property and evidence key enumeration shim (src/shim.c)
+// Property enumeration shim (src/shim.c)
 // ---------------------------------------------------------------------------
 
 extern "C" {
@@ -666,27 +777,6 @@ extern "C" {
         property_name: *const c_char,
     ) -> c_int;
 
-    /// Returns the number of HTTP header evidence keys in the data set managed
-    /// by `manager`, or zero if no data set is available.
-    ///
-    /// # Safety
-    /// `manager` must be an initialized Hash manager.
-    pub fn fiftyoneDegreesShimHashGetEvidenceKeyCount(manager: *mut ResourceManager) -> u32;
-
-    /// Writes the name of the HTTP header evidence key at `header_index` into
-    /// `buffer` as a null terminated string and returns the number of
-    /// characters written, excluding the terminator.
-    ///
-    /// # Safety
-    /// `manager` must be an initialized Hash manager. `buffer` must point to
-    /// `length` writable bytes.
-    pub fn fiftyoneDegreesShimHashGetEvidenceKey(
-        manager: *mut ResourceManager,
-        header_index: u32,
-        buffer: *mut c_char,
-        length: usize,
-    ) -> usize;
-
     /// Writes the data set's name (its tier, for example `Lite`, `Enterprise`
     /// or `TAC`) into `buffer` as a null terminated string and returns the
     /// number of characters written, excluding the terminator. Returns zero
@@ -701,60 +791,30 @@ extern "C" {
         length: usize,
     ) -> usize;
 
-    /// Writes the date the data file was published, from its header, into
-    /// `*year`, `*month` and `*day` and returns 1, or 0 when no data set is
-    /// available.
+    /// Sets `*date` to the date the data file was published, from its
+    /// header, and returns true when that date is valid, as
+    /// `fiftyoneDegreesDateIsValid` in `date.h` decides. Otherwise sets
+    /// `*date` to zeros and returns false.
     ///
     /// # Safety
-    /// `manager` must be an initialized Hash manager. Each output pointer must
-    /// be null or point to a writable `i32`.
-    pub fn fiftyoneDegreesShimHashGetDataSetPublished(
-        manager: *mut ResourceManager,
-        year: *mut i32,
-        month: *mut i32,
-        day: *mut i32,
-    ) -> c_int;
+    /// `manager` must be an initialized Hash manager and `date` must point to
+    /// a writable [`Date`].
+    pub fn fiftyoneDegreesHashGetPublished(manager: *mut ResourceManager, date: *mut Date) -> bool;
 
-    /// Writes the date the next data file is expected, from the data file
-    /// header, into `*year`, `*month` and `*day` and returns 1, or 0 when no
-    /// data set is available.
+    /// Sets `*date` to the date the next data file is expected, from the
+    /// data file header, and returns true when that date is valid, as
+    /// `fiftyoneDegreesDateIsValid` in `date.h` decides. Otherwise sets
+    /// `*date` to zeros and returns false.
     ///
     /// # Safety
-    /// `manager` must be an initialized Hash manager. Each output pointer must
-    /// be null or point to a writable `i32`.
-    pub fn fiftyoneDegreesShimHashGetDataSetNextUpdate(
-        manager: *mut ResourceManager,
-        year: *mut i32,
-        month: *mut i32,
-        day: *mut i32,
-    ) -> c_int;
+    /// `manager` must be an initialized Hash manager and `date` must point to
+    /// a writable [`Date`].
+    pub fn fiftyoneDegreesHashGetNextUpdate(manager: *mut ResourceManager, date: *mut Date)
+        -> bool;
 
     /// Returns the size of a Hash data file's header in bytes, being how much
     /// of a data file the C library compares to find a copy of it to reuse.
     pub fn fiftyoneDegreesShimHashGetHeaderSize() -> usize;
-
-    /// Reads the match metrics of the results into the output pointers and
-    /// returns 1, or returns 0 when `results` is null or a graph cannot be
-    /// walked. Any graph not yet walked is walked first, as the walks set the
-    /// metrics, so this can read the data file. The results hold one result
-    /// for each component, each from the header that matched it. As in the C++
-    /// results, `method` receives the highest match-method enum value of any
-    /// result (0 None, 1 Performance, 2 Combined, 3 Predictive), and the
-    /// difference, drift, iterations and matched-node count are summed across
-    /// the results. With no results every metric is zero. Any output pointer
-    /// may be null to skip that metric. See `src/shim.c`.
-    ///
-    /// # Safety
-    /// `results` must be an initialized Hash results structure. Each non-null
-    /// output pointer must be writable.
-    pub fn fiftyoneDegreesShimHashGetResultMetrics(
-        results: *mut ResultsHash,
-        method: *mut i32,
-        difference: *mut i32,
-        drift: *mut i32,
-        iterations: *mut i32,
-        matched_nodes: *mut i32,
-    ) -> c_int;
 
     /// Returns the number of results, one for each component, or zero when
     /// `results` is null. See `src/shim.c`.
@@ -772,54 +832,6 @@ extern "C" {
     /// `results` must be an initialized Hash results structure or null.
     pub fn fiftyoneDegreesShimHashGetPendingGraphCount(results: *mut ResultsHash) -> u32;
 
-    /// Reads the match metrics of the single result at `result_index` into the
-    /// output pointers and returns 1, or returns 0 when the index is out of
-    /// range or a graph cannot be walked. Any graph not yet walked is walked
-    /// first, so this can read the data file. Any output pointer may be null
-    /// to skip that metric. See `src/shim.c`.
-    ///
-    /// # Safety
-    /// `results` must be an initialized Hash results structure or null. Each
-    /// non-null output pointer must be writable.
-    pub fn fiftyoneDegreesShimHashGetResultMetricsAt(
-        results: *mut ResultsHash,
-        result_index: u32,
-        method: *mut i32,
-        difference: *mut i32,
-        drift: *mut i32,
-        iterations: *mut i32,
-        matched_nodes: *mut i32,
-    ) -> c_int;
-
-    /// Writes the matched User-Agent of the result at `result_index` into
-    /// `buffer` as a null terminated string and returns the number of
-    /// characters written, excluding the terminator. Returns zero when the
-    /// index is out of range, a graph cannot be walked or the result records
-    /// no matched User-Agent, and cuts the value short when the buffer is too
-    /// small. Any graph not yet walked is walked first, so this can read the
-    /// data file. See `src/shim.c`.
-    ///
-    /// # Safety
-    /// `results` must be an initialized Hash results structure. `buffer` must
-    /// point to `length` writable bytes.
-    pub fn fiftyoneDegreesShimHashGetMatchedUserAgent(
-        results: *mut ResultsHash,
-        result_index: u32,
-        buffer: *mut c_char,
-        length: usize,
-    ) -> usize;
-
-    /// Returns the number of handles in the file pool of the data set
-    /// managed by `manager` when any of its collections reads from the data
-    /// file after it is loaded, or zero when the whole data set is held in
-    /// memory. A read that finds every handle in use fails rather than
-    /// waiting for one, so this is how many calls can read the data file at
-    /// once. See `src/shim.c`.
-    ///
-    /// # Safety
-    /// `manager` must be an initialized Hash manager.
-    pub fn fiftyoneDegreesShimHashGetFileHandleCount(manager: *mut ResourceManager) -> u16;
-
     /// Returns the number of handles to the data file that the data set
     /// managed by `manager` opened when it loaded, which stay open until the
     /// data set is freed. Every configuration that does not load the whole
@@ -830,6 +842,26 @@ extern "C" {
     /// # Safety
     /// `manager` must be an initialized Hash manager.
     pub fn fiftyoneDegreesShimHashGetFilePoolSize(manager: *mut ResourceManager) -> u16;
+
+    /// Returns the size of the C `fiftyoneDegreesConfigHash`, which
+    /// [`ConfigHash`] must equal.
+    pub fn fiftyoneDegreesShimHashGetConfigSize() -> usize;
+
+    /// Sets `strings` and `values` to the C library's type names of the
+    /// strings and values collections of the data set managed by `manager`,
+    /// and returns 1, or returns 0 when there is no data set.
+    /// `CollectionMemory` holds the whole collection in memory and
+    /// `CollectionHeld` only what the required properties read. The names
+    /// are constants of the C library. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager, and `strings` and
+    /// `values` writable.
+    pub fn fiftyoneDegreesShimHashGetCollectionTypeNames(
+        manager: *mut ResourceManager,
+        strings: *mut *const c_char,
+        values: *mut *const c_char,
+    ) -> c_int;
 }
 
 // ---------------------------------------------------------------------------
@@ -1197,6 +1229,36 @@ mod tests {
         }
     }
 
+    /// Only the HighPerformance configuration holds only what the required
+    /// properties read.
+    #[test]
+    fn only_high_performance_loads_the_required_properties_only() {
+        // Safety: each global is an initialized `ConfigHash` the C library
+        // defines, and reading a field of it is a plain read.
+        let flags = unsafe {
+            [
+                fiftyoneDegreesHashInMemoryConfig.load_required_properties_only,
+                fiftyoneDegreesHashHighPerformanceConfig.load_required_properties_only,
+                fiftyoneDegreesHashLowMemoryConfig.load_required_properties_only,
+                fiftyoneDegreesHashBalancedConfig.load_required_properties_only,
+                fiftyoneDegreesHashBalancedTempConfig.load_required_properties_only,
+                fiftyoneDegreesHashDefaultConfig.load_required_properties_only,
+            ]
+        };
+        assert_eq!(flags, [false, true, false, false, false, false]);
+    }
+
+    /// [`ConfigHash`] is the size of the C structure it is passed as. A C
+    /// field added in padding leaves the size as it was, which
+    /// `fiftyone-native`'s tests of the HighPerformance profile catch for
+    /// `load_required_properties_only`.
+    #[test]
+    fn config_hash_has_the_size_of_the_c_structure() {
+        // Safety: the shim reads no state and takes no arguments.
+        let size = unsafe { fiftyoneDegreesShimHashGetConfigSize() };
+        assert_eq!(std::mem::size_of::<ConfigHash>(), size);
+    }
+
     /// Full smoke test: initialize a manager from the Lite data file, run one
     /// detection from a desktop user agent, read IsMobile, enumerate a couple of
     /// properties and evidence keys, then free everything in the correct order.
@@ -1262,9 +1324,17 @@ mod tests {
                 property_count > 0,
                 "the Lite data set should expose properties"
             );
-            let evidence_count = fiftyoneDegreesShimHashGetEvidenceKeyCount(&mut manager);
+            let data_set = fiftyoneDegreesDataSetHashGet(&mut manager);
+            assert!(!data_set.is_null(), "the data set should be available");
+            let keys_length = fiftyoneDegreesHashGetEvidenceKeys(
+                data_set,
+                std::ptr::null_mut(),
+                0,
+                c",".as_ptr(),
+            );
+            fiftyoneDegreesDataSetHashRelease(data_set);
             assert!(
-                evidence_count > 0,
+                keys_length > 0,
                 "the Lite data set should expose evidence keys"
             );
 

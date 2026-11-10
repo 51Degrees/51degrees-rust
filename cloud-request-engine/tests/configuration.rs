@@ -63,7 +63,7 @@ struct StandIn {
 impl CloudHttpClient for StandIn {
     fn send(&self, request: &CloudHttpRequest) -> std::result::Result<CloudHttpResponse, String> {
         self.requests.lock().unwrap().push(request.clone());
-        let (status, body) = if request.url.contains("resource=bad") {
+        let (status, body) = if request.url.contains("resource=refused-key-0001") {
             (400, r#"{"errors":["bad resource key"]}"#)
         } else if request.url.contains("evidencekeys") {
             (200, r#"["header.user-agent","query.user-agent"]"#)
@@ -618,7 +618,7 @@ fn the_specifications_name_for_the_properties_is_read() {
 #[test]
 fn a_refused_discovery_request_fails_the_build() {
     let expected = match CloudRequestEngine::builder()
-        .resource_key("bad")
+        .resource_key("refused-key-0001")
         .http_client(Arc::new(StandIn::default()))
         .build()
     {
@@ -627,7 +627,7 @@ fn a_refused_discovery_request_fails_the_build() {
     };
     assert!(expected.contains("bad resource key"), "{expected}");
     assert_eq!(
-        message(build_with(&options(&[("ResourceKey", "bad")])).0),
+        message(build_with(&options(&[("ResourceKey", "refused-key-0001")])).0),
         failed(&expected)
     );
 }

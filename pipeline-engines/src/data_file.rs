@@ -38,6 +38,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, TimeZone, Utc};
+use fiftyone_pipeline_core::redact::{mask, redact_with};
 use fiftyone_pipeline_core::{Error, Result};
 
 /// The default polling interval, 30 minutes.
@@ -95,7 +96,10 @@ pub const DEFAULT_IDENTIFIER: &str = "Default";
 /// the `If-Modified-Since` header are on, update-on-startup is off, the
 /// content is assumed gzip-compressed, and a licence key is required before
 /// automatic updates or update on startup run.
-#[derive(Debug, Clone)]
+///
+/// The `Debug` form shows each licence key, in the list and in the update
+/// URL, by its last 4 characters only.
+#[derive(Clone)]
 pub struct DataFileConfiguration {
     /// Identifier used to tell apart the data files of a multi-file engine.
     /// Ignored by single-file engines.
@@ -192,6 +196,40 @@ impl DataFileConfiguration {
              Lite file.",
             wanted.join(" and ")
         )))
+    }
+}
+
+impl Debug for DataFileConfiguration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let keys = &self.data_update_license_keys;
+        let masked_keys: Vec<String> = keys.iter().map(String::as_str).map(mask).collect();
+        let masked_url = self
+            .data_update_url
+            .as_deref()
+            .map(|url| redact_with(url, keys));
+        f.debug_struct("DataFileConfiguration")
+            .field("identifier", &self.identifier)
+            .field("data_file_path", &self.data_file_path)
+            .field("data_update_url", &masked_url)
+            .field("automatic_updates_enabled", &self.automatic_updates_enabled)
+            .field(
+                "file_system_watcher_enabled",
+                &self.file_system_watcher_enabled,
+            )
+            .field("update_on_startup", &self.update_on_startup)
+            .field("polling_interval_seconds", &self.polling_interval_seconds)
+            .field("max_randomisation_seconds", &self.max_randomisation_seconds)
+            .field("decompress_content", &self.decompress_content)
+            .field("verify_md5", &self.verify_md5)
+            .field("verify_modified_since", &self.verify_modified_since)
+            .field("data_update_license_keys", &masked_keys)
+            .field("url_formatter", &self.url_formatter)
+            .field("data_download_type", &self.data_download_type)
+            .field(
+                "license_key_required_for_updates",
+                &self.license_key_required_for_updates,
+            )
+            .finish()
     }
 }
 
@@ -712,6 +750,41 @@ mod tests {
         );
         let none = AspectEngineDataFile::new(DataFileConfiguration::builder("d.dat").build());
         assert!(none.formatted_update_url().is_none());
+    }
+
+    /// The `Debug` form, which a log line or a panic message can carry, shows
+    /// each licence key by its last 4 characters only, in the list of keys and
+    /// in the update URL. The builder and the data file show the
+    /// configuration the same way.
+    #[test]
+    fn the_debug_form_shows_only_the_last_four_characters_of_each_key() {
+        let builder = DataFileConfiguration::builder("d.dat")
+            .data_update_url("https://example.invalid/d?LicenseKeys=QRSTUVWXYZ012345")
+            .data_update_license_keys(["ABCDEFGHIJKLMNOP"]);
+        let configuration = builder.clone().build();
+        let file = AspectEngineDataFile::new(configuration.clone());
+        for shown in [
+            format!("{builder:?}"),
+            format!("{configuration:?}"),
+            format!("{file:?}"),
+        ] {
+            assert!(
+                !shown.contains("ABCDEFGHIJKLMNOP"),
+                "a key was shown: {shown}"
+            );
+            assert!(
+                !shown.contains("QRSTUVWXYZ012345"),
+                "the key in the URL was shown: {shown}"
+            );
+            assert!(
+                shown.contains("\"************MNOP\""),
+                "the masked key was lost: {shown}"
+            );
+            assert!(
+                shown.contains("LicenseKeys=************2345"),
+                "the masked URL was lost: {shown}"
+            );
+        }
     }
 
     #[test]

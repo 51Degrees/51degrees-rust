@@ -507,7 +507,8 @@ mod tests {
  * swapped in to compare:
  *
  * - InMemory        - loads the file fully into memory, fastest detections.
- * - HighPerformance - everything in memory, connection to the file dropped.
+ * - HighPerformance - what detection walks and the requested properties'
+ *                     values in memory, the file kept open for the rest.
  * - Balanced        - a balance of speed and memory.
  * - Default         - the engine's default balance.
  * - LowMemory       - streams data from disk on demand, least memory, slower.

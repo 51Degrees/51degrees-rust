@@ -39,6 +39,10 @@ const DEVICE_PRODUCT: &str = r#""device":{"DataTier":"CloudV4TAC","Properties":[
 const IP_PRODUCT: &str = r#""ip":{"DataTier":"CloudV4","Properties":[
     {"Name":"RegisteredName","Type":"String","Category":"Network"}]}"#;
 
+const NOT_GRANTED: &str = "WARN Aspect properties could not be loaded for \
+     IpIntelligenceCloudEngine - 'ip'. The resource key does not include access to any \
+     properties under 'ip'.";
+
 /// Records at warning level or above, as "LEVEL message".
 static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
@@ -167,13 +171,10 @@ fn process(pipeline: &Arc<Pipeline>) {
 }
 
 #[test]
-fn a_product_that_is_not_granted_logs_one_error_when_built() {
+fn a_product_that_is_not_granted_logs_one_warning_when_built() {
     let _serial = start();
     let pipeline = build(DEVICE_PRODUCT, r#"{"ip":{"registeredname":"Example"}}"#);
-    assert_eq!(
-        take_logged(),
-        vec!["ERROR Aspect properties could not be loaded for IpIntelligenceCloudEngine - 'ip'"]
-    );
+    assert_eq!(take_logged(), vec![NOT_GRANTED]);
     for request in 1..=2 {
         process(&pipeline);
         assert_eq!(take_logged(), Vec::<String>::new(), "request {request}");
@@ -181,16 +182,13 @@ fn a_product_that_is_not_granted_logs_one_error_when_built() {
 }
 
 #[test]
-fn a_product_listed_with_no_properties_logs_one_error_when_built() {
+fn a_product_listed_with_no_properties_logs_one_warning_when_built() {
     let _serial = start();
     let pipeline = build(
         r#""ip":{"DataTier":"CloudV4","Properties":[]}"#,
         r#"{"ip":{"registeredname":"Example"}}"#,
     );
-    assert_eq!(
-        take_logged(),
-        vec!["ERROR Aspect properties could not be loaded for IpIntelligenceCloudEngine - 'ip'"]
-    );
+    assert_eq!(take_logged(), vec![NOT_GRANTED]);
     for request in 1..=2 {
         process(&pipeline);
         assert_eq!(take_logged(), Vec::<String>::new(), "request {request}");
@@ -214,10 +212,7 @@ fn a_product_that_is_not_granted_is_logged_once_discovery_completes() {
 
     down.store(false, Ordering::Relaxed);
     process(&pipeline);
-    assert_eq!(
-        take_logged(),
-        vec!["ERROR Aspect properties could not be loaded for IpIntelligenceCloudEngine - 'ip'"]
-    );
+    assert_eq!(take_logged(), vec![NOT_GRANTED]);
     assert!(engine.properties().is_empty(), "none once it is known");
     process(&pipeline);
     assert_eq!(take_logged(), Vec::<String>::new());
