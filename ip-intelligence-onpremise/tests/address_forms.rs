@@ -33,7 +33,10 @@
 //! address whose profile holds no values, and raises no error.
 //!
 //! The tests use the free ASN data file, whose lowest key is `1.0.0.0` in the
-//! IPv4 graph and `2001:4:112::` in the IPv6 graph. They run when
+//! IPv4 graph and `2001:4:112::` in the IPv6 graph. `1.0.0.0` has an `Asn` of
+//! its own, so the `Asn` each of its forms reads shows which address was
+//! looked up. `8.8.8.8` reads `Asn` as its default in that file, so for its
+//! forms only `Ip` and `IpV6` tell the two families apart. The tests run when
 //! `51DEGREES_IPI_PATH` names that file, or when it is in the data repository
 //! inside the `cxx` submodule, and skip otherwise.
 
@@ -141,13 +144,12 @@ fn readings(
 
 /// Fail unless `address` has an `Asn` of its own, rather than the default,
 /// because agreeing only on the default would prove nothing.
-fn assert_has_an_asn(pipeline: &Arc<Pipeline>, address: &str) -> AspectPropertyValue<String> {
+fn assert_has_an_asn(pipeline: &Arc<Pipeline>, address: &str) {
     let asn = lookup(pipeline, address).string("Asn");
     assert!(
         asn.as_option().is_some_and(|asn| asn != DEFAULT_ASN),
         "{address} should have an Asn of its own, got {asn:?}. {DATA_HINT}"
     );
-    asn
 }
 
 /// Every way of writing an IPv4-mapped address gets exactly what its IPv4
@@ -158,6 +160,7 @@ fn a_mapped_address_is_its_ipv4_address_however_it_is_written() {
     let Some(pipeline) = pipeline() else {
         return;
     };
+    assert_has_an_asn(&pipeline, "1.0.0.0");
     let every = [PROPERTIES, ADDED].concat();
     for (ipv4, forms) in [
         (
@@ -176,7 +179,6 @@ fn a_mapped_address_is_its_ipv4_address_however_it_is_written() {
             &["::ffff:8.8.8.8", "::ffff:808:808", "0:0:0:0:0:ffff:808:808"][..],
         ),
     ] {
-        assert_has_an_asn(&pipeline, ipv4);
         let ip = lookup(&pipeline, ipv4);
         assert_eq!(
             ip.string("Ip").as_option().map(String::as_str),
@@ -198,41 +200,32 @@ fn a_mapped_address_is_its_ipv4_address_however_it_is_written() {
 /// An IPv4-compatible or IPv4-embedded address is an IPv6 address. It never
 /// gets the values of the IPv4 address it holds, `Ip` has no value and `IpV6`
 /// gives the address. In the ASN data file each is below the lowest key in the
-/// IPv6 graph, so `Asn` reads as its default.
+/// IPv6 graph, so `Asn` reads as its default, where `1.0.0.0` has its own.
 #[test]
 fn compatible_and_embedded_addresses_are_ipv6_addresses() {
     let Some(pipeline) = pipeline() else {
         return;
     };
-    for (ipv4, forms) in [
-        (
-            "1.0.0.0",
-            &["::1.0.0.0", "::100:0", "64:ff9b::1.0.0.0", "64:ff9b::100:0"][..],
-        ),
-        (
-            "8.8.8.8",
-            &[
-                "::8.8.8.8",
-                "::808:808",
-                "64:ff9b::8.8.8.8",
-                "64:ff9b::808:808",
-                "0064:ff9b:0000:0000:0000:0000:0808:0808",
-            ][..],
-        ),
+    assert_has_an_asn(&pipeline, "1.0.0.0");
+    for form in [
+        "::1.0.0.0",
+        "::100:0",
+        "64:ff9b::1.0.0.0",
+        "64:ff9b::100:0",
+        "::8.8.8.8",
+        "::808:808",
+        "64:ff9b::8.8.8.8",
+        "64:ff9b::808:808",
+        "0064:ff9b:0000:0000:0000:0000:0808:0808",
     ] {
-        let ipv4_asn = assert_has_an_asn(&pipeline, ipv4);
-        for form in forms {
-            let ip = lookup(&pipeline, form);
-            let asn = ip.string("Asn");
-            assert_ne!(asn, ipv4_asn, "{form} has the Asn of {ipv4}");
-            assert_eq!(
-                asn.as_option().map(String::as_str),
-                Some(DEFAULT_ASN),
-                "Asn for {form}. {DATA_HINT}"
-            );
-            assert!(!ip.string("Ip").has_value(), "Ip for {form}");
-            assert!(ip.string("IpV6").has_value(), "IpV6 for {form}");
-        }
+        let ip = lookup(&pipeline, form);
+        assert_eq!(
+            ip.string("Asn").as_option().map(String::as_str),
+            Some(DEFAULT_ASN),
+            "Asn for {form}. {DATA_HINT}"
+        );
+        assert!(!ip.string("Ip").has_value(), "Ip for {form}");
+        assert!(ip.string("IpV6").has_value(), "IpV6 for {form}");
     }
 }
 
