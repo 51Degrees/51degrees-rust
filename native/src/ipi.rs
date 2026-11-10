@@ -1923,6 +1923,38 @@ mod tests {
         assert!(manager.required_property_index("NoSuchProperty").is_none());
     }
 
+    /// The C library finds a property name ignoring case, so a name in
+    /// another case than the data file's gives the property's index, and
+    /// every read by name gives the property's answer.
+    #[test]
+    fn a_name_in_another_case_than_the_data_files_is_read() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping a name in another case");
+            return;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::Default);
+        let index = manager
+            .required_property_index("Asn")
+            .expect("the data file has Asn");
+        for name in ["asn", "ASN", "aSN"] {
+            assert_eq!(manager.required_property_index(name), Some(index), "{name}");
+        }
+        let mut results = manager.create_results().expect("results should allocate");
+        results
+            .process_ip(CLOUDFLARE)
+            .expect("looking up a public IP should not raise an exception");
+        let weighted = results.values_weighted("Asn").expect("Asn is read");
+        assert!(!weighted.is_empty(), "{CLOUDFLARE} has an Asn");
+        assert_eq!(
+            results.values_weighted("asn").expect("asn is read"),
+            weighted
+        );
+        assert_eq!(
+            results.read_property("ASN").expect("ASN is read"),
+            results.read_property("Asn").expect("Asn is read")
+        );
+    }
+
     /// A data set that reads from its file has a file handle for each
     /// concurrent operation it was opened to expect, and one held in memory
     /// has none, so its calls take no permits.

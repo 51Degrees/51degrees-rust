@@ -2398,6 +2398,30 @@ mod tests {
         assert_eq!(value.as_deref(), Some("False"));
     }
 
+    /// The C library finds a property name ignoring case, so a name in
+    /// another case than the data file's gives the property's index, and the
+    /// reads by name give the property's answers.
+    #[test]
+    fn a_name_in_another_case_than_the_data_files_is_read() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping a name in another case");
+            return;
+        };
+        let manager = Manager::open(&path, PerformanceProfile::Default).expect("data file loads");
+        let index = manager
+            .required_property_index("IsMobile")
+            .expect("IsMobile is in every Hash data file");
+        for name in ["ismobile", "ISMOBILE", "isMobile"] {
+            assert_eq!(manager.required_property_index(name), Some(index), "{name}");
+        }
+        let results = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
+        assert!(results.has_values("ismobile").expect("has values is read"));
+        let value = results
+            .value_as_string("ISMOBILE", "|")
+            .expect("IsMobile is read by name");
+        assert_eq!(value.as_deref(), Some("False"));
+    }
+
     #[test]
     fn a_data_file_property_carries_the_metadata_the_file_holds() {
         let Some(path) = data_file() else {
