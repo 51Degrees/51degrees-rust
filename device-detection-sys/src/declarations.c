@@ -80,6 +80,49 @@ uint32_t fiftyoneDegreesHashGetProfileIdsForPropertyAndValue(
 	uint32_t length,
 	fiftyoneDegreesException *exception);
 
+bool fiftyoneDegreesHashGetPublished(
+	fiftyoneDegreesResourceManager *manager,
+	fiftyoneDegreesDate *date);
+
+bool fiftyoneDegreesHashGetNextUpdate(
+	fiftyoneDegreesResourceManager *manager,
+	fiftyoneDegreesDate *date);
+
+void fiftyoneDegreesResultsHashGetMatchMetrics(
+	fiftyoneDegreesResultsHash *results,
+	fiftyoneDegreesHashMatchMethod *method,
+	int32_t *difference,
+	int32_t *drift,
+	int32_t *iterations,
+	int32_t *matchedNodes,
+	fiftyoneDegreesException *exception);
+
+bool fiftyoneDegreesResultsHashGetMatchMetricsForResult(
+	fiftyoneDegreesResultsHash *results,
+	uint32_t resultIndex,
+	fiftyoneDegreesHashMatchMethod *method,
+	int32_t *difference,
+	int32_t *drift,
+	int32_t *iterations,
+	int32_t *matchedNodes,
+	fiftyoneDegreesException *exception);
+
+const char* fiftyoneDegreesResultsHashGetMatchedUserAgent(
+	fiftyoneDegreesResultsHash *results,
+	uint32_t resultIndex,
+	fiftyoneDegreesException *exception);
+
+size_t fiftyoneDegreesHashGetEvidenceKeys(
+	fiftyoneDegreesDataSetHash *dataSet,
+	char *buffer,
+	size_t length,
+	const char *separator);
+
+size_t fiftyoneDegreesHashGetHardwareProfileScript(
+	const char *body,
+	char *buffer,
+	size_t length);
+
 /* fiftyone-common-sys */
 
 typedef struct {
@@ -174,6 +217,18 @@ CHECK_FIELD(RustCollectionConfig, fiftyoneDegreesCollectionConfig, loaded);
 CHECK_FIELD(RustCollectionConfig, fiftyoneDegreesCollectionConfig, capacity);
 CHECK_FIELD(RustCollectionConfig, fiftyoneDegreesCollectionConfig, concurrency);
 
+#pragma pack(push, 1)
+typedef struct {
+	int16_t year;
+	uint8_t month;
+	uint8_t day;
+} RustDate;
+#pragma pack(pop)
+CHECK_SIZE(RustDate, fiftyoneDegreesDate);
+CHECK_FIELD(RustDate, fiftyoneDegreesDate, year);
+CHECK_FIELD(RustDate, fiftyoneDegreesDate, month);
+CHECK_FIELD(RustDate, fiftyoneDegreesDate, day);
+
 typedef struct {
 	bool allInMemory;
 	bool usesUpperPrefixedHeaders;
@@ -224,6 +279,7 @@ typedef struct {
 	bool usePerformanceGraph;
 	bool usePredictiveGraph;
 	bool traceRoute;
+	bool loadRequiredPropertiesOnly;
 } RustConfigHash;
 CHECK_SIZE(RustConfigHash, fiftyoneDegreesConfigHash);
 CHECK_FIELD(RustConfigHash, fiftyoneDegreesConfigHash, b);
@@ -241,3 +297,7 @@ CHECK_FIELD(RustConfigHash, fiftyoneDegreesConfigHash, drift);
 CHECK_FIELD(RustConfigHash, fiftyoneDegreesConfigHash, usePerformanceGraph);
 CHECK_FIELD(RustConfigHash, fiftyoneDegreesConfigHash, usePredictiveGraph);
 CHECK_FIELD(RustConfigHash, fiftyoneDegreesConfigHash, traceRoute);
+CHECK_FIELD(
+	RustConfigHash,
+	fiftyoneDegreesConfigHash,
+	loadRequiredPropertiesOnly);

@@ -119,7 +119,6 @@ impl Manager {
             return Ok(Vec::new());
         };
         let mut ids = vec![0u32; room];
-        let _file_read = self.file_read();
         loop {
             let length = u32::try_from(ids.len()).unwrap_or(u32::MAX);
             let mut exception = sys::Exception::cleared();

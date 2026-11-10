@@ -1288,23 +1288,15 @@ mod tests {
         assert_eq!(engine.populated_property_names(), file_names);
     }
 
-    /// The most expected concurrency the Balanced profile opens with. Its
-    /// smallest cache, the profiles, holds 10,000 entries, and a cache needs at
-    /// least as many entries in each of its parts as it has parts.
-    const BALANCED_MOST_CONCURRENCY: u16 = 100;
-
-    /// True when opening the data set was refused for a cache that cannot be
-    /// split into the parts the expected concurrency asks for.
-    fn refused_for_concurrency(result: Result<()>) -> bool {
-        matches!(
-            result,
-            Err(Error::Native { status, .. }) if status == "InvalidCollectionConfig"
-        )
+    /// The handles to the data file the engine's current data set holds.
+    fn file_pool_size(engine: &IpIntelligenceOnPremiseEngine) -> u16 {
+        engine.loaded.load().manager.file_pool_size()
     }
 
     /// The expected concurrency reaches the native data set when the engine
-    /// is built and when it is refreshed, as one more than the Balanced
-    /// profile allows is refused only if it gets there.
+    /// is built and when it is refreshed, sizing its file handle pool, and
+    /// more than the square root of the Balanced profiles cache of 20,000
+    /// entries, 141, opens.
     #[test]
     fn the_expected_concurrency_opens_the_data_set_and_its_refresh() {
         let Some(data_file) = ipi_data_file() else {
@@ -1318,26 +1310,21 @@ mod tests {
                 .auto_update(false)
         };
 
-        let too_many = builder()
-            .concurrency(BALANCED_MOST_CONCURRENCY + 1)
+        let many = builder()
+            .concurrency(500)
             .build()
-            .map(drop);
-        assert!(refused_for_concurrency(too_many));
-        let most = builder()
-            .concurrency(BALANCED_MOST_CONCURRENCY)
-            .build()
-            .expect("the most concurrency Balanced allows opens");
-        drop(most);
+            .expect("more than the profiles cache's square root opens");
+        assert_eq!(file_pool_size(&many), 64);
+        drop(many);
 
         let engine = builder()
+            .concurrency(3)
             .build()
-            .expect("the profile's own concurrency opens")
-            .with_concurrency(Some(BALANCED_MOST_CONCURRENCY + 1));
-        assert!(refused_for_concurrency(engine.refresh(None)));
-        let engine = engine.with_concurrency(Some(BALANCED_MOST_CONCURRENCY));
-        engine
-            .refresh(None)
-            .expect("a refresh with the most concurrency Balanced allows opens");
+            .expect("the data set opens");
+        assert_eq!(file_pool_size(&engine), 3);
+        let engine = engine.with_concurrency(Some(5));
+        engine.refresh(None).expect("the refresh opens");
+        assert_eq!(file_pool_size(&engine), 5);
     }
 
     /// With properties requested each lookup reads only those.

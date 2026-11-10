@@ -452,7 +452,7 @@ pub trait EvidenceKeyFilter: Send + Sync {
     /// so a caller can advertise them or name the headers among them in a
     /// `Vary` header. `None` when the filter decides key by key and has no
     /// list. A filter that lists its keys may still accept further keys by
-    /// pattern, as the Device Detection engine accepts any `query.51d_` value.
+    /// pattern.
     fn named_keys(&self) -> Option<Vec<String>> {
         None
     }

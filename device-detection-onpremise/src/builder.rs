@@ -119,21 +119,20 @@ impl DeviceDetectionOnPremiseEngineBuilder {
     /// This sizes the file-handle pool and the caches the file-backed
     /// collections use under the [`PerformanceProfile::LowMemory`],
     /// [`PerformanceProfile::Balanced`] and [`PerformanceProfile::Default`]
-    /// profiles. If more threads than this share the engine, they wait for
-    /// each other on the pool. [`PerformanceProfile::HighPerformance`] holds
-    /// the data set in memory, so detection never waits on the pool, but it
-    /// still opens one handle to the data file for each concurrent operation
-    /// and keeps them open until the data set is freed, so a refresh holds
-    /// that many for the old data set and as many again for the new one.
+    /// profiles, to at most 64. If more threads than that share the engine,
+    /// they wait for each other on the pool.
+    /// [`PerformanceProfile::HighPerformance`] holds in memory everything
+    /// detection walks, so detection never waits on the pool, and with some
+    /// properties named it reads the values of the others through the pool.
+    /// It opens one handle to the data file for each concurrent operation and
+    /// keeps them open until the data set is freed, so a refresh holds that
+    /// many for the old data set and as many again for the new one.
     /// [`PerformanceProfile::InMemory`] opens none.
     ///
-    /// Unset, it is the number of processors, held at the most the profile's
-    /// caches take (22 under `Balanced` and `Default`), as
-    /// [`default_concurrency`] gives, where the C library's own is 10. So
-    /// under `LowMemory` and `HighPerformance` the engine keeps a handle open
-    /// for each processor, 64 on a machine with 64 processors. A larger value
-    /// named here is passed on, and the build fails if the profile's caches
-    /// cannot take it.
+    /// Unset, it is the number of processors, as [`default_concurrency`]
+    /// gives, under every profile. Any value loads, because a cache with
+    /// fewer entries than the concurrency squared is split into fewer parts,
+    /// and one with fewer entries than the concurrency is grown to it.
     pub fn concurrency(mut self, concurrency: u16) -> Self {
         self.options.concurrency = Some(concurrency);
         self

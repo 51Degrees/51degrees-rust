@@ -215,10 +215,6 @@ fn output_evidence_keys(keys: &[String]) {
     for key in keys {
         println!("\t{key}");
     }
-    println!(
-        "\tand any query or cookie value named 51d_..., which the client-side \
-         JavaScript sends back"
-    );
 }
 
 /// Print whether the data file carries each property only the Enterprise data
@@ -340,8 +336,8 @@ mod tests {
  * - The evidence keys device detection accepts. These are the keys that, when
  *   added to a flow data's evidence, could affect the result. Each header the
  *   data file reads is accepted as a header and as a query value, alongside the
- *   high-entropy values keys and the `51d_` values the client-side JavaScript
- *   sends back.
+ *   `51d_` values the client-side JavaScript sends back for the properties the
+ *   data file lets it override, the high-entropy values and the profile ids.
  *
  * The example then lists the properties only the Enterprise data file carries
  * (HardwareVendor, HardwareModel, DeviceType, PriceBand and

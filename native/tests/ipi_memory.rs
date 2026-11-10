@@ -73,9 +73,9 @@ const PROFILES: &str = "51DEGREES_IPI_MEMORY_PROFILES";
 /// check of long values must find one.
 const REQUIRE_ENTERPRISE: &str = "51DEGREES_REQUIRE_ENTERPRISE";
 
-/// `SHIM_TEXT_BUFFER_LENGTH` in the shim, the length of the buffer a value's
-/// text is first written into. A longer text is written again into a block
-/// from the library's allocator.
+/// `SHIM_TEXT_BUFFER_LENGTH` in the shim, the length of the buffer the shim
+/// gives the C library for a value's text. A longer text is written into a
+/// block from the library's allocator.
 const SHIM_TEXT_BUFFER_LENGTH: usize = 256;
 
 /// The size of each block the native library allocates while
@@ -160,13 +160,15 @@ fn profiles() -> Vec<PerformanceProfile> {
 }
 
 /// Check that each of the first 20 values of every property whose text is
-/// too long for the shim's first buffer is written into a block from the
-/// library's allocator, so the leak stages count it. Returns how many values
-/// were checked. Only the Enterprise file holds such values, being its areas.
+/// too long for the shim's buffer is written into a block from the library's
+/// allocator, so the leak stages count it. Returns how many values were
+/// checked. Only the Enterprise file holds such values, being its areas.
 ///
-/// The shim allocates the length its first write counted, plus one. The C
-/// library's string builder always keeps a byte free for the null, writes the
-/// null there and counts it, so the block is two bytes longer than the text.
+/// `fiftyoneDegreesStoredBinaryValueToText` sizes the block before writing,
+/// from a string's stored size, or from an area's stored bytes at
+/// `FIFTYONE_DEGREES_TEXT_PER_GEOMETRY_BYTE` characters each, plus the null.
+/// So the check is that a block holds the text and its null, as the block's
+/// size follows the stored value rather than the text.
 fn check_long_values(manager: &ipi::Manager, profile: PerformanceProfile) -> usize {
     let mut checked = 0;
     let properties = manager
@@ -186,8 +188,8 @@ fn check_long_values(manager: &ipi::Manager, profile: PerformanceProfile) -> usi
                     .expect("the value is read");
             });
             assert!(
-                sizes.contains(&(value.name.len() + 2)),
-                "{} {} value {place} of {} bytes, blocks {sizes:?}",
+                sizes.iter().any(|&size| size > value.name.len()),
+                "{} {} value {place} of {} bytes is in no block, blocks {sizes:?}",
                 profile.as_str(),
                 property.name,
                 value.name.len()
@@ -196,7 +198,7 @@ fn check_long_values(manager: &ipi::Manager, profile: PerformanceProfile) -> usi
         }
     }
     println!(
-        "{}: {checked} values longer than the shim's first buffer",
+        "{}: {checked} values longer than the shim's buffer",
         profile.as_str()
     );
     checked
@@ -392,7 +394,7 @@ fn every_entry_point_leaves_no_native_memory_allocated() {
     }
     assert!(
         long_values > 0 || std::env::var_os(REQUIRE_ENTERPRISE).is_none(),
-        "{REQUIRE_ENTERPRISE} is set, but no value read was longer than the shim's first buffer"
+        "{REQUIRE_ENTERPRISE} is set, but no value read was longer than the shim's buffer"
     );
     // These stages hold the whole data file in memory.
     if profiles.contains(&PerformanceProfile::InMemory) {
