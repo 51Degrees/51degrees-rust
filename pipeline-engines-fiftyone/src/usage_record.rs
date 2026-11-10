@@ -601,10 +601,10 @@ mod tests {
         let expected = format!(
             "<Device><SessionId /><Sequence>0</Sequence>\
              <DateSent>{DATE_SENT}</DateSent><ClientIP />{STATIC_XML}\
-             <header Name=\"User-Agent\"><![CDATA[Mozilla/5.0]]></header>\
-             <header Name=\"X-Test\"><![CDATA[a]]]]><![CDATA[>b]]></header>\
-             <query Name=\"51D_Test\"><![CDATA[x\\x0001y]]></query>\
-             <BadSchema>true</BadSchema></Device>"
+             <header Name=\"User-Agent\">Mozilla/5.0</header>\
+             <header Name=\"X-Test\">a]]&gt;b</header>\
+             <query escaped=\"true\" Name=\"51D_Test\">x\\x0001y</query>\
+             </Device>"
         );
         assert_eq!(xml, expected);
     }
@@ -639,11 +639,11 @@ mod tests {
         ]));
         assert_eq!(
             entries(&xml),
-            "<query Name=\"51D_b\"><![CDATA[1]]></query>\
-             <query Name=\"51D_a\"><![CDATA[3]]></query>\
-             <header Name=\"Accept\"><![CDATA[2]]></header>\
-             <header Name=\"User-Agent\"><![CDATA[5]]></header>\
-             <Header Name=\"Accept-Language\"><![CDATA[4]]></Header></Device>"
+            "<query Name=\"51D_b\">1</query>\
+             <query Name=\"51D_a\">3</query>\
+             <header Name=\"Accept\">2</header>\
+             <header Name=\"User-Agent\">5</header>\
+             <Header Name=\"Accept-Language\">4</Header></Device>"
         );
     }
 
@@ -665,48 +665,123 @@ mod tests {
         ]));
         assert_eq!(
             entries(&xml),
-            "<header Name=\"X-&lt;&amp;&gt;&quot;'\"><![CDATA[<&>\"']]></header>\
-             <header Name=\"X-Space\"><![CDATA[a\tb\nc\rd]]></header>\
-             <header Name=\"X-Empty\"><![CDATA[]]></header></Device>"
+            "<header Name=\"X-&lt;&amp;&gt;&quot;'\">&lt;&amp;&gt;\"'</header>\
+             <header Name=\"X-Space\">a\tb\nc\rd</header>\
+             <header Name=\"X-Empty\"></header></Device>"
         );
     }
 
     #[test]
-    fn control_characters_are_replaced_and_mark_the_record() {
-        let xml = written(&record(&[("header.X\u{1f}Name", "a\u{0}b\u{8}c\u{1b}")]));
+    fn a_replaced_character_marks_its_entry_escaped() {
+        let xml = written(&record(&[
+            ("header.X\u{1f}Name", "a\u{0}b\u{8}c\u{1b}"),
+            ("header.X-Name\u{1}", "kept"),
+            ("header.X-Clean", "clean"),
+            ("plain", "a\u{fffe}"),
+        ]));
         assert_eq!(
             entries(&xml),
-            "<header Name=\"X\\x001fName\">\
-             <![CDATA[a\\x0000b\\x0008c\\x001b]]></header>\
-             <BadSchema>true</BadSchema></Device>"
+            "<header escaped=\"true\" Name=\"X\\x001fName\">\
+             a\\x0000b\\x0008c\\x001b</header>\
+             <header escaped=\"true\" Name=\"X-Name\\x0001\">kept</header>\
+             <header Name=\"X-Clean\">clean</header>\
+             <plain escaped=\"true\">a\\xfffe</plain></Device>"
+        );
+        assert!(!xml.contains("BadSchema"), "{xml}");
+    }
+
+    #[test]
+    fn header_cookie_and_query_values_are_written_as_text() {
+        let xml = written(&record(&[
+            ("header.X-Header", "a<b"),
+            ("cookie.51D_Cookie", "c&d\u{1}"),
+            ("query.51D_Query", "]]>"),
+        ]));
+        assert_eq!(
+            entries(&xml),
+            "<header Name=\"X-Header\">a&lt;b</header>\
+             <cookie escaped=\"true\" Name=\"51D_Cookie\">c&amp;d\\x0001</cookie>\
+             <query Name=\"51D_Query\">]]&gt;</query></Device>"
+        );
+        assert!(!xml.contains("CDATA"), "{xml}");
+    }
+
+    /// The record written for a header holding `value`, from the evidence
+    /// entry on.
+    fn long_entry(value: &str) -> String {
+        entries(&written(&record(&[("header.X-Long", value)]))).to_owned()
+    }
+
+    #[test]
+    fn a_value_over_the_maximum_in_code_points_is_cut_and_marked() {
+        let max = SHARE_USAGE_MAX_EVIDENCE_LENGTH;
+        // é is two bytes in UTF-8 and one code point.
+        assert_eq!(
+            long_entry(&"é".repeat(max)),
+            format!(
+                "<header Name=\"X-Long\">{}</header></Device>",
+                "é".repeat(max)
+            )
+        );
+        assert_eq!(
+            long_entry(&"é".repeat(max + 1)),
+            format!(
+                "<header truncated=\"true\" Name=\"X-Long\">{}</header></Device>",
+                "é".repeat(max)
+            )
+        );
+        // U+1F600 is one code point, which UTF-16 holds as two units.
+        let face = "\u{1F600}";
+        assert_eq!(
+            long_entry(&face.repeat(max)),
+            format!(
+                "<header Name=\"X-Long\">{}</header></Device>",
+                face.repeat(max)
+            )
+        );
+        assert_eq!(
+            long_entry(&face.repeat(max + 1)),
+            format!(
+                "<header truncated=\"true\" Name=\"X-Long\">{}</header></Device>",
+                face.repeat(max)
+            )
+        );
+        // The last code point kept is one UTF-16 holds as two units, so a cut
+        // at the maximum in UTF-16 units would fall inside it.
+        let edge = format!("{}{face}b", "a".repeat(max - 1));
+        assert_eq!(
+            long_entry(&edge),
+            format!(
+                "<header truncated=\"true\" Name=\"X-Long\">{}{face}</header></Device>",
+                "a".repeat(max - 1)
+            )
         );
     }
 
     #[test]
-    fn a_value_over_the_maximum_in_utf16_code_units_is_cut_and_marked() {
+    fn escapes_do_not_count_towards_the_maximum() {
         let max = SHARE_USAGE_MAX_EVIDENCE_LENGTH;
-        // é is two bytes in UTF-8 and one UTF-16 code unit.
-        assert_eq!(truncate(&"é".repeat(max)), "é".repeat(max));
+        let escapes = "\\x0001".repeat(max);
         assert_eq!(
-            truncate(&"é".repeat(max + 1)),
-            format!("[TRUNCATED BY USAGE SHARING] {}", "é".repeat(max))
+            long_entry(&"\u{1}".repeat(max)),
+            format!("<header escaped=\"true\" Name=\"X-Long\">{escapes}</header></Device>")
         );
-        // U+1F600 is two UTF-16 code units.
-        let face = "\u{1F600}";
-        assert_eq!(truncate(&face.repeat(max / 2)), face.repeat(max / 2));
         assert_eq!(
-            truncate(&face.repeat(max / 2 + 1)),
-            format!("[TRUNCATED BY USAGE SHARING] {}", face.repeat(max / 2))
+            long_entry(&format!("{}a", "\u{1}".repeat(max))),
+            format!(
+                "<header escaped=\"true\" truncated=\"true\" Name=\"X-Long\">\
+                 {escapes}</header></Device>"
+            )
         );
-
-        let long = "a".repeat(max + 1);
-        let xml = written(&record(&[("header.X-Long", long.as_str())]));
-        assert!(
-            xml.contains(&format!(
-                "<![CDATA[[TRUNCATED BY USAGE SHARING] {}]]>",
-                "a".repeat(max)
-            )),
-            "{xml}"
+        // A value with both, as the comparison with .NET has it.
+        let both = format!("é中\u{1}<&]]>{}", "a".repeat(max - 6));
+        assert_eq!(
+            long_entry(&both),
+            format!(
+                "<header escaped=\"true\" truncated=\"true\" Name=\"X-Long\">\
+                 é中\\x0001&lt;&amp;]]&gt;{}</header></Device>",
+                "a".repeat(max - 8)
+            )
         );
     }
 
@@ -721,9 +796,9 @@ mod tests {
         ]));
         assert_eq!(
             entries(&xml),
-            "<café Name=\"Name\"><![CDATA[kept]]></café>\
-             <_x-1 Name=\"y\"><![CDATA[kept too]]></_x-1>\
-             <a\u{B7}b Name=\"z\"><![CDATA[kept as well]]></a\u{B7}b></Device>"
+            "<café Name=\"Name\">kept</café>\
+             <_x-1 Name=\"y\">kept too</_x-1>\
+             <a\u{B7}b Name=\"z\">kept as well</a\u{B7}b></Device>"
         );
         assert!(!'\u{B7}'.is_alphanumeric());
     }
@@ -781,9 +856,9 @@ mod tests {
              <FlowElement>Element</FlowElement><Language>rust</Language>\
              <LanguageVersion>1.94.0</LanguageVersion>\
              <ServerIP>192.0.2.10</ServerIP><Platform>linux 6.8.0</Platform>\
-             <header Name=\"User-Agent\"><![CDATA[Mozilla/5.0]]></header>\
-             <query Name=\"51D_Test\"><![CDATA[x\\x0001y]]></query>\
-             <BadSchema>true</BadSchema><Host>192.0.2.10</Host></Device>"
+             <header Name=\"User-Agent\">Mozilla/5.0</header>\
+             <query escaped=\"true\" Name=\"51D_Test\">x\\x0001y</query>\
+             <Host>192.0.2.10</Host></Device>"
         );
         assert_eq!(xml, expected);
     }
@@ -798,7 +873,7 @@ mod tests {
             xml.starts_with("<Device><Note>a&lt;b&amp;c\\x0001</Note><SessionId />"),
             "{xml}"
         );
-        assert!(!xml.contains("BadSchema"), "{xml}");
+        assert!(!xml.contains("escaped="), "{xml}");
     }
 
     #[test]
