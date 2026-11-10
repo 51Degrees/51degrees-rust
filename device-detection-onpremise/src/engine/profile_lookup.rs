@@ -233,7 +233,7 @@ impl DevicePropertyReader for UnreadProfile {
     }
 
     fn position(&self, name: &str) -> Option<usize> {
-        self.readable.by_name.get(name).copied()
+        self.readable.position(name)
     }
 
     fn read_property(&self, _position: usize) -> ReadOutcome {
@@ -312,7 +312,8 @@ mod tests {
     /// The properties a detection reads from a data set with no data file
     /// properties, being the match metrics.
     fn metrics_only() -> Arc<ReadableProperties> {
-        Arc::new(ReadableProperties::new(&[]))
+        let names = Arc::new(super::super::BuildNames::new(Vec::new()));
+        Arc::new(ReadableProperties::new(&[], &names))
     }
 
     fn missing() -> Arc<MissingPropertySource> {

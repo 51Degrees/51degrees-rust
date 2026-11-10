@@ -289,9 +289,10 @@ pub struct DeviceDetectionOnPremiseEngine {
     /// refresh reloads with the same profile.
     profile: PerformanceProfile,
 
-    /// The properties the engine was restricted to, or empty for all
-    /// properties. Used when reloading the data set on refresh.
-    requested_properties: Vec<String>,
+    /// The property names the engine was built with, or every name in the
+    /// data set at build when none were given, each with its index. Every
+    /// refresh opens the data file with these names, so each keeps its index.
+    names: Arc<BuildNames>,
 
     /// The property metadata and tier of the loaded data set, for
     /// [`FlowElement::properties`], [`AspectEngine::aspect_properties`] and
@@ -387,6 +388,7 @@ fn describe(
     copy: Option<OperationalCopy>,
     manager: Arc<Manager>,
     tier_override: &Option<String>,
+    names: &Arc<BuildNames>,
 ) -> Result<(LoadedDataSet, LentMetadata)> {
     // An explicit builder override wins, then the tier read from the native
     // data file header (Lite, Enterprise, TAC and so on), then the safe Lite
@@ -401,7 +403,7 @@ fn describe(
         fiftyone_properties,
         components,
     } = build_metadata(&file_properties, &manager.data_file_components()?, tier);
-    let readable = Arc::new(ReadableProperties::new(&file_properties));
+    let readable = Arc::new(ReadableProperties::new(&file_properties, names));
     let file_property_places = file_properties
         .iter()
         .map(|property| {
@@ -448,13 +450,15 @@ impl DeviceDetectionOnPremiseEngine {
         copy: Option<OperationalCopy>,
         manager: Arc<Manager>,
         profile: PerformanceProfile,
-        requested_properties: Vec<String>,
         data_file_config: DataFileConfiguration,
         data_source_tier: Option<String>,
         options: HashOptions,
     ) -> Result<Self> {
         let evidence_key_filter = HashEvidenceKeyFilter::new(manager.evidence_keys());
-        let (loaded, metadata) = describe(copy, manager, &data_source_tier)?;
+        // The names the manager was opened with, or every name in the data
+        // set when none were given, which every refresh opens it with.
+        let names = Arc::new(BuildNames::new(manager.property_names()));
+        let (loaded, metadata) = describe(copy, manager, &data_source_tier, &names)?;
 
         let data_file = Arc::new(AspectEngineDataFile::new(data_file_config));
         record_dates(&loaded.manager, &data_file);
@@ -462,7 +466,7 @@ impl DeviceDetectionOnPremiseEngine {
         Ok(DeviceDetectionOnPremiseEngine {
             loaded: ArcSwap::from_pointee(loaded),
             profile,
-            requested_properties,
+            names,
             metadata: Retained::new(metadata),
             tier_override: data_source_tier,
             refresh_lock: Mutex::new(()),
@@ -741,7 +745,7 @@ impl DeviceDetectionOnPremiseEngine {
         let manager = open_manager(
             copy.as_ref().map_or(path, OperationalCopy::path),
             self.profile,
-            &self.requested_properties,
+            &self.names.list,
             &self.options,
         )?;
         self.swap_in(copy, manager)
@@ -759,7 +763,7 @@ impl DeviceDetectionOnPremiseEngine {
         let manager = Manager::open_from_memory(
             data.to_vec(),
             self.profile,
-            requested(&self.requested_properties).as_deref(),
+            requested(&self.names.list).as_deref(),
             &self.options,
         )?;
         self.swap_in(None, manager)
@@ -773,7 +777,7 @@ impl DeviceDetectionOnPremiseEngine {
     /// failure changes nothing. The caller holds the refresh lock.
     fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
         let evidence_keys = manager.evidence_keys();
-        let (loaded, metadata) = describe(copy, manager, &self.tier_override)?;
+        let (loaded, metadata) = describe(copy, manager, &self.tier_override, &self.names)?;
         if let Some(file) = self.data_files.first() {
             record_dates(&loaded.manager, file);
         }
@@ -946,53 +950,119 @@ impl ReadableProperty {
     }
 }
 
-/// The properties a detection can read.
+/// The property names the engine was built with, each with its index, which
+/// is its place in the list, and the match metrics. Built once when the
+/// engine is built and never from a data set, so a name keeps its index
+/// across every refresh.
+struct BuildNames {
+    /// The names, in the order the engine was built with them.
+    list: Vec<String>,
+    /// Where each lowercase name is read.
+    by_name: HashMap<String, NameSlot>,
+}
+
+/// Where a property named in a read is read.
+#[derive(Clone, Copy)]
+enum NameSlot {
+    /// The property at this index among the names the engine was built with.
+    Index(usize),
+    /// The match metric at this place in [`Metric::READ_ORDER`].
+    Metric(usize),
+}
+
+impl BuildNames {
+    /// The table for `list`. A name given twice keeps its first index, as
+    /// the C library gives it, and a match metric's name reads the metric.
+    fn new(list: Vec<String>) -> Self {
+        let mut by_name = HashMap::new();
+        for (index, name) in list.iter().enumerate() {
+            by_name
+                .entry(name.to_lowercase())
+                .or_insert(NameSlot::Index(index));
+        }
+        for (offset, metric) in Metric::READ_ORDER.iter().enumerate() {
+            by_name.insert(metric.name().to_lowercase(), NameSlot::Metric(offset));
+        }
+        BuildNames { list, by_name }
+    }
+}
+
+/// The properties a detection can read from one data set.
 struct ReadableProperties {
-    /// Each property a detection can read.
+    /// Each property a detection can read, in the order of the names the
+    /// engine was built with, then the match metrics.
     properties: Vec<ReadableProperty>,
     /// Each property's name in lowercase, in the same order.
     lowercase_names: Vec<String>,
-    /// The position of each property in `properties`, by lowercase name.
-    by_name: HashMap<String, usize>,
+    /// The names the engine was built with.
+    names: Arc<BuildNames>,
+    /// The place in `properties` of the property at each index, or `None`
+    /// when this data set does not have it.
+    places: Vec<Option<usize>>,
+    /// The place in `properties` of the first match metric.
+    first_metric: usize,
 }
 
 impl ReadableProperties {
-    /// Every data file property the data set was opened with and results
-    /// hold a value for, except any with a match metric's name, then the
-    /// match metrics, as the .NET engine lists them.
-    fn new(file_properties: &[DataFileProperty]) -> Self {
-        let metrics = Metric::READ_ORDER.into_iter().map(ReadableProperty::Metric);
-        let files = file_properties
-            .iter()
-            .filter(|property| property.available)
-            .filter(|property| {
-                !METRIC_PROPERTIES
-                    .iter()
-                    .any(|metric| metric.name.eq_ignore_ascii_case(&property.name))
-            })
-            .filter_map(|property| {
-                property
-                    .required_property_index
-                    .map(|index| ReadableProperty::File {
-                        name: property.name.clone(),
-                        value_type: property.value_type,
-                        index,
-                    })
+    /// Every property the engine was built with a name for that the data
+    /// set has and results hold a value for, except any with a match
+    /// metric's name, in the order of the names, then the match metrics, as
+    /// the .NET engine lists them. The C library gives each property the
+    /// index of its name.
+    fn new(file_properties: &[DataFileProperty], names: &Arc<BuildNames>) -> Self {
+        let count = names.list.len();
+        let mut at_index: Vec<Option<&DataFileProperty>> = vec![None; count];
+        for property in file_properties.iter().filter(|property| property.available) {
+            let Some(index) = property
+                .required_property_index
+                .and_then(|index| usize::try_from(index).ok())
+            else {
+                continue;
+            };
+            if let Some(slot) = at_index.get_mut(index).filter(|slot| slot.is_none()) {
+                *slot = Some(property);
+            }
+        }
+        let mut properties = Vec::new();
+        let mut places = vec![None; count];
+        for (index, property) in at_index.into_iter().enumerate() {
+            let Some(property) = property else {
+                continue;
+            };
+            if METRIC_PROPERTIES
+                .iter()
+                .any(|metric| metric.name.eq_ignore_ascii_case(&property.name))
+            {
+                continue;
+            }
+            places[index] = Some(properties.len());
+            properties.push(ReadableProperty::File {
+                name: property.name.clone(),
+                value_type: property.value_type,
+                index: index as c_int,
             });
-        let properties: Vec<ReadableProperty> = files.chain(metrics).collect();
-        let lowercase_names: Vec<String> = properties
+        }
+        let first_metric = properties.len();
+        properties.extend(Metric::READ_ORDER.into_iter().map(ReadableProperty::Metric));
+        let lowercase_names = properties
             .iter()
             .map(|property| property.name().to_lowercase())
-            .collect();
-        let by_name = lowercase_names
-            .iter()
-            .enumerate()
-            .map(|(position, name)| (name.clone(), position))
             .collect();
         ReadableProperties {
             properties,
             lowercase_names,
-            by_name,
+            names: Arc::clone(names),
+            places,
+            first_metric,
+        }
+    }
+
+    /// The place of the property named, found in the table of the names the
+    /// engine was built with, or `None` when this data set does not have it.
+    fn position(&self, name: &str) -> Option<usize> {
+        match *self.names.by_name.get(name)? {
+            NameSlot::Index(index) => self.places.get(index).copied().flatten(),
+            NameSlot::Metric(offset) => Some(self.first_metric + offset),
         }
     }
 }
@@ -1025,7 +1095,7 @@ impl DevicePropertyReader for DetectionReader {
     }
 
     fn position(&self, name: &str) -> Option<usize> {
-        self.loaded.readable.by_name.get(name).copied()
+        self.loaded.readable.position(name)
     }
 
     fn read_property(&self, position: usize) -> ReadOutcome {
@@ -1642,11 +1712,11 @@ mod tests {
         let read: Vec<&str> = Metric::READ_ORDER.iter().map(|m| m.name()).collect();
         let listed: Vec<&str> = METRIC_PROPERTIES.iter().map(|m| m.name).collect();
         assert_eq!(read, listed);
-        let readable = ReadableProperties::new(&[]);
+        let readable = ReadableProperties::new(&[], &Arc::new(BuildNames::new(Vec::new())));
         let lowercase: Vec<String> = listed.iter().map(|name| name.to_lowercase()).collect();
         assert_eq!(readable.lowercase_names, lowercase);
         for (position, name) in lowercase.iter().enumerate() {
-            assert_eq!(readable.by_name.get(name), Some(&position), "{name}");
+            assert_eq!(readable.position(name), Some(position), "{name}");
         }
     }
 
