@@ -112,7 +112,7 @@ fn take() -> Vec<String> {
 struct FailingEngine {
     filter: EvidenceKeyFilterWhitelist,
     data_files: Vec<Arc<AspectEngineDataFile>>,
-    panics: AtomicUsize,
+    panics: Mutex<usize>,
     failures: Mutex<usize>,
     refreshes: AtomicUsize,
 }
@@ -122,12 +122,14 @@ impl FailingEngine {
     /// failures are left.
     fn attempt(&self) -> Result<()> {
         self.refreshes.fetch_add(1, Ordering::SeqCst);
-        let panics = self
-            .panics
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
-                left.checked_sub(1)
-            })
-            .is_ok();
+        let panics = {
+            let mut left = self.panics.lock().unwrap();
+            let panics = *left > 0;
+            if panics {
+                *left -= 1;
+            }
+            panics
+        };
         if panics {
             panic!("{REFRESH_PANIC}");
         }
@@ -203,7 +205,7 @@ fn panicking(
     let engine = Arc::new(FailingEngine {
         filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
         data_files: vec![Arc::new(AspectEngineDataFile::new(configuration))],
-        panics: AtomicUsize::new(panics),
+        panics: Mutex::new(panics),
         failures: Mutex::new(failures),
         refreshes: AtomicUsize::new(0),
     });
