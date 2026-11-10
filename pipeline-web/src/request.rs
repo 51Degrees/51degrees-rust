@@ -132,17 +132,23 @@ pub trait RequestData {
             .map(|(_, value)| value)
     }
 
-    /// The value of the request `If-None-Match` header, if present.
+    /// The request's `If-None-Match` field, if present.
     ///
     /// Used by the client-side endpoints to decide whether to return `304 Not
     /// Modified` (or `412 Precondition Failed`, see [`RequestData::method`]).
-    /// The default implementation finds it among [`RequestData::headers`]
-    /// case-insensitively.
+    /// The field is a list, so a request may carry it over several lines. The
+    /// default implementation finds every line among [`RequestData::headers`]
+    /// case-insensitively and joins them in order with a comma and a space,
+    /// as [RFC 9110 section 5.3](https://www.rfc-editor.org/rfc/rfc9110#section-5.3)
+    /// allows.
     fn if_none_match(&self) -> Option<String> {
-        self.headers()
+        let lines: Vec<String> = self
+            .headers()
             .into_iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case("if-none-match"))
+            .filter(|(name, _)| name.eq_ignore_ascii_case("if-none-match"))
             .map(|(_, value)| value)
+            .collect();
+        (!lines.is_empty()).then(|| lines.join(", "))
     }
 
     /// The request method, for example `GET` or `POST`, exactly as the
@@ -282,4 +288,53 @@ fn add_prefixed(entries: &mut Vec<(String, String)>, prefix: &str, pairs: Vec<(S
             .into_iter()
             .map(|(field, value)| (prefixed(prefix, &field), value)),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A request carrying the given header lines.
+    struct Headers(Vec<(&'static str, &'static str)>);
+
+    impl RequestData for Headers {
+        fn headers(&self) -> Vec<(String, String)> {
+            self.0
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                .collect()
+        }
+        fn cookies(&self) -> Vec<(String, String)> {
+            Vec::new()
+        }
+        fn query_params(&self) -> Vec<(String, String)> {
+            Vec::new()
+        }
+        fn client_ip(&self) -> Option<String> {
+            None
+        }
+        fn is_https(&self) -> bool {
+            true
+        }
+    }
+
+    /// `If-None-Match` is a list, so a request may carry it over several
+    /// lines, and the field is every line in order joined with a comma
+    /// (RFC 9110 section 5.3).
+    #[test]
+    fn if_none_match_joins_every_line_in_order() {
+        let request = Headers(vec![
+            ("If-None-Match", "\"a\""),
+            ("User-Agent", "agent"),
+            ("if-none-match", "W/\"b\", \"c\""),
+        ]);
+        assert_eq!(
+            request.if_none_match().as_deref(),
+            Some("\"a\", W/\"b\", \"c\"")
+        );
+        let one = Headers(vec![("If-None-Match", "W/\"b\"")]);
+        assert_eq!(one.if_none_match().as_deref(), Some("W/\"b\""));
+        let none = Headers(vec![("User-Agent", "agent")]);
+        assert_eq!(none.if_none_match(), None);
+    }
 }

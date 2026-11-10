@@ -107,6 +107,12 @@ const USAGE_LAST_STATIC_ELEMENT: &str = "Platform";
 /// usage record.
 const REPORT_RECORD_CONTEXT: usize = 60;
 
+/// The start of a CDATA section in a usage record.
+const CDATA_START: &str = "<![CDATA[";
+
+/// The end of a CDATA section in a usage record.
+const CDATA_END: &str = "]]>";
+
 /// One corpus case. A case that is not a request, such as a 51Did to read,
 /// has no evidence. Fields the comparer does not use are ignored.
 #[derive(Debug, Clone, Deserialize)]
@@ -750,8 +756,8 @@ impl Out<'_> {
             }
             return;
         };
-        let d = blank_elements(d, blanked);
-        let r = blank_elements(r, blanked);
+        let d = blank_elements(&cdata_as_text(d), blanked);
+        let r = blank_elements(&cdata_as_text(r), blanked);
         if let Some(at) = first_difference(&d, &r) {
             self.push(
                 path,
@@ -761,6 +767,33 @@ impl Out<'_> {
             );
         }
     }
+}
+
+/// `record` with each CDATA section written as the same text with `&`, `<`
+/// and `>` as entities, which is how the crates write every evidence value.
+/// A section with no end is left as it is.
+fn cdata_as_text(record: &str) -> String {
+    let mut out = String::with_capacity(record.len());
+    let mut rest = record;
+    while let Some(start) = rest.find(CDATA_START) {
+        out.push_str(&rest[..start]);
+        let inner = &rest[start + CDATA_START.len()..];
+        let Some(end) = inner.find(CDATA_END) else {
+            out.push_str(&rest[start..]);
+            return out;
+        };
+        for c in inner[..end].chars() {
+            match c {
+                '&' => out.push_str("&amp;"),
+                '<' => out.push_str("&lt;"),
+                '>' => out.push_str("&gt;"),
+                c => out.push(c),
+            }
+        }
+        rest = &inner[end + CDATA_END.len()..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// `record` with each element named in `names` written as `<Name />`, up to
@@ -1247,8 +1280,8 @@ mod tests {
         assert_eq!(differences[0].path, "session");
     }
 
-    /// A usage record in the form both producers write, with the values that
-    /// differ by design and one evidence value given.
+    /// A usage record in the form .NET writes, with the values that differ
+    /// by design and one evidence value given.
     fn usage_record(date: &str, platform: &str, flow_element: &str, value: &str) -> String {
         format!(
             "<Device><SessionId>abc</SessionId><Sequence>2</Sequence>\
@@ -1308,9 +1341,47 @@ mod tests {
         assert_eq!(differences[0].kind, Kind::Text);
         let shown = differences[0].dotnet.as_str().unwrap();
         assert!(shown.starts_with("after "), "{shown}");
-        assert!(shown.contains("<![CDATA[a<b]]>"), "{shown}");
+        assert!(shown.contains(">a&lt;b</header>"), "{shown}");
         let shown = differences[0].rust.as_str().unwrap();
-        assert!(shown.contains("<![CDATA[a<c]]>"), "{shown}");
+        assert!(shown.contains(">a&lt;c</header>"), "{shown}");
+    }
+
+    #[test]
+    fn a_value_in_a_cdata_section_is_the_same_as_the_value_as_text() {
+        // .NET writes a]]>b as two sections, split inside the ]]>.
+        let dotnet = usage_record("d", "p", "f", "x<y&z]]]]><![CDATA[>w");
+        let rust = usage_record("d", "p", "f", "v").replace("<![CDATA[v]]>", "x&lt;y&amp;z]]&gt;w");
+        let differences = compare_case(
+            &case("a", true),
+            &with_usage("usage", &dotnet),
+            &with_usage("usage", &rust),
+        );
+        assert!(differences.is_empty(), "{differences:?}");
+
+        assert_eq!(
+            cdata_as_text("<a><![CDATA[x<y]]></a><b><![CDATA[]]></b><c>&amp;</c>"),
+            "<a>x&lt;y</a><b></b><c>&amp;</c>"
+        );
+        assert_eq!(cdata_as_text("<a><![CDATA[open"), "<a><![CDATA[open");
+    }
+
+    #[test]
+    fn a_marked_value_still_differs_from_a_value_in_a_cdata_section() {
+        let dotnet = usage_record("d", "p", "f", "x\\x0001")
+            .replace("</Device>", "<BadSchema>true</BadSchema></Device>");
+        let rust = usage_record("d", "p", "f", "v").replace(
+            "<header Name=\"User-Agent\"><![CDATA[v]]>",
+            "<header escaped=\"true\" Name=\"User-Agent\">x\\x0001",
+        );
+        let differences = compare_case(
+            &case("a", true),
+            &with_usage("usage", &dotnet),
+            &with_usage("usage", &rust),
+        );
+        assert_eq!(differences.len(), 1, "{differences:?}");
+        assert_eq!(differences[0].kind, Kind::Text);
+        let shown = differences[0].rust.as_str().unwrap();
+        assert!(shown.contains("<header escaped=\"true\""), "{shown}");
     }
 
     #[test]

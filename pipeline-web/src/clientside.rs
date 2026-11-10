@@ -62,8 +62,9 @@
 //! - `Access-Control-Allow-Origin`: the request `Origin` header echoed back,
 //!   but only when an origin is present and is not the literal string `null`.
 //!
-//! When the request's `If-None-Match` is `*` or lists a tag that matches the
-//! computed `ETag` under the weak comparison
+//! When the request's `If-None-Match` field is exactly `*`, or is a list of
+//! entity tags one of which matches the computed `ETag` under the weak
+//! comparison
 //! ([RFC 9110 section 8.8.3.2](https://www.rfc-editor.org/rfc/rfc9110#section-8.8.3.2)),
 //! meaning the quoted parts are equal with or without `W/` on either, both
 //! endpoints instead return `304 Not Modified` with an empty body and the
@@ -73,7 +74,11 @@
 //! requires for the first three. So while processing is failing the `304`
 //! carries `private, no-cache` and no `ETag`. Whether a builder left no data
 //! is read without building the body, so nothing below is logged or built for
-//! a `304`.
+//! a `304`. A field that is neither, such as one with `*` among tags or a
+//! member that is not an entity tag, gets the `200`, as
+//! [RFC 9110 section 13.1.2](https://www.rfc-editor.org/rfc/rfc9110#section-13.1.2)
+//! says. The field is every `If-None-Match` line of the request, joined with
+//! commas (see [`crate::RequestData::if_none_match`]).
 //!
 //! A `304` answers `GET` or `HEAD` only. On any other method, such as the
 //! `POST` the axum adapter serves the JSON endpoint on, a matching
@@ -578,27 +583,73 @@ pub fn compute_etag(flow_data: &FlowData, filter: &dyn EvidenceKeyFilter) -> Str
     format!("{WEAK_ETAG_PREFIX}\"{digest:016x}\"")
 }
 
-/// Compare an incoming `If-None-Match` value against a computed `ETag`.
+/// Compare an incoming `If-None-Match` field value against a computed `ETag`.
 ///
-/// `If-None-Match` takes the weak comparison
-/// ([RFC 9110 sections 8.8.3.2 and 13.1.2](https://www.rfc-editor.org/rfc/rfc9110#section-13.1.2)),
-/// so `W/` is taken off both tags and the rest compared exactly. The value is
-/// a comma-separated list, and true is returned if any tag in it matches or
-/// it holds the wildcard `*`.
+/// The field is `"*" / #entity-tag`
+/// ([RFC 9110 section 13.1.2](https://www.rfc-editor.org/rfc/rfc9110#section-13.1.2)).
+/// Exactly `*` matches. Otherwise the field must be a comma-separated list of
+/// entity tags (section 8.8.3), with the optional white space and empty
+/// members section 5.6.1.2 allows, and matches when one tag matches under the
+/// weak comparison (section 8.8.3.2), meaning `W/` is taken off both tags and
+/// the rest compared exactly. A field that is neither, such as `"a", *` or
+/// `"a", b`, matches nothing, because the condition is then true.
 pub fn etag_matches(if_none_match: &str, etag: &str) -> bool {
+    let field = if_none_match.trim_matches(is_optional_white_space);
+    if field == "*" {
+        return true;
+    }
     let etag = without_weak_prefix(etag);
-    for candidate in if_none_match.split(',') {
-        let candidate = candidate.trim();
-        if candidate == "*" || without_weak_prefix(candidate) == etag {
-            return true;
+    let mut rest = field;
+    let mut matched = false;
+    // True straight after a tag, when only a comma or the end may follow.
+    let mut after_tag = false;
+    loop {
+        rest = rest.trim_start_matches(is_optional_white_space);
+        if let Some(after_comma) = rest.strip_prefix(',') {
+            rest = after_comma;
+            after_tag = false;
+        } else if rest.is_empty() {
+            return matched;
+        } else if after_tag {
+            return false;
+        } else {
+            let Some((opaque_tag, after)) = leading_entity_tag(rest) else {
+                return false;
+            };
+            matched |= opaque_tag == etag;
+            rest = after;
+            after_tag = true;
         }
     }
-    false
 }
 
 /// The entity tag with the weak prefix `W/` taken off, if it has one.
 fn without_weak_prefix(tag: &str) -> &str {
     tag.strip_prefix(WEAK_ETAG_PREFIX).unwrap_or(tag)
+}
+
+/// The entity tag `text` starts with, as its quoted part without `W/`, and
+/// the text after it, or `None` when `text` does not start with one. A comma
+/// is a valid character inside the quotes.
+fn leading_entity_tag(text: &str) -> Option<(&str, &str)> {
+    let tag = without_weak_prefix(text);
+    let inside = tag.strip_prefix('"')?;
+    let end = inside.bytes().position(|byte| !is_etagc(byte))?;
+    if inside.as_bytes()[end] != b'"' {
+        return None;
+    }
+    // The opening quote, the characters inside and the closing quote.
+    Some(tag.split_at(end + 2))
+}
+
+/// `etagc` of RFC 9110 section 8.8.3: `%x21 / %x23-7E / obs-text`.
+fn is_etagc(byte: u8) -> bool {
+    byte == 0x21 || (0x23..=0x7e).contains(&byte) || byte >= 0x80
+}
+
+/// `OWS` of RFC 9110 section 5.6.3: a space or a horizontal tab.
+fn is_optional_white_space(c: char) -> bool {
+    c == ' ' || c == '\t'
 }
 
 /// Determine the `Access-Control-Allow-Origin` value to echo, if any.
@@ -646,6 +697,71 @@ mod tests {
         for other in ["\"y\"", "W/\"y\"", "w/\"x\"", "x", "", "\"y\", W/\"z\""] {
             assert!(!etag_matches(other, etag), "{other}");
         }
+    }
+
+    /// RFC 9110 section 13.1.2 gives the field as `"*" / #entity-tag`, and
+    /// the condition is true, so nothing matches, when the field is neither.
+    #[test]
+    fn an_if_none_match_that_is_not_star_or_a_list_of_tags_does_not_match() {
+        let etag = "W/\"x\"";
+        for (field, expected) in [
+            // A tag, then a member that is not a tag.
+            ("W/\"x\", other", false),
+            // Two tags with no comma between them.
+            ("\"other\" W/\"x\"", false),
+            // A member that is not a tag, then the tag.
+            ("other, W/\"x\"", false),
+            // A space is not allowed inside the quotes.
+            ("\"oth er\", W/\"x\"", false),
+            // A list holding "*" and other values is not valid.
+            ("\"other\", *", false),
+            // A tab is optional white space, as a space is.
+            ("\"other\",\tW/\"x\"", true),
+        ] {
+            assert_eq!(etag_matches(field, etag), expected, "{field:?}");
+        }
+    }
+
+    /// Fields that are `*` or a list of entity tags still match, with the
+    /// optional white space and empty members a recipient accepts in a list
+    /// (RFC 9110 section 5.6.1.2). A comma is a valid character inside an
+    /// entity tag (section 8.8.3), so the list is not split on commas.
+    #[test]
+    fn star_alone_or_a_list_holding_the_tag_matches() {
+        let etag = "W/\"x\"";
+        for field in [
+            "*",
+            " * ",
+            "\"x\"",
+            "W/\"x\"",
+            "\"other\", W/\"x\"",
+            "W/\"other\",\"x\"",
+            ", \"other\" ,, W/\"x\" ,",
+            "\"\", W/\"x\"",
+        ] {
+            assert!(etag_matches(field, etag), "{field:?}");
+        }
+        assert!(etag_matches("\"a,b\"", "W/\"a,b\""));
+        assert!(etag_matches("\"c\", W/\"a,b\"", "\"a,b\""));
+        for field in ["\"a\"", "\"b\"", "\"a,b"] {
+            assert!(!etag_matches(field, "W/\"a,b\""), "{field:?}");
+        }
+    }
+
+    /// Entity tag characters are `%x21 / %x23-7E / obs-text` (RFC 9110
+    /// section 8.8.3), so a control character or DEL inside the quotes makes
+    /// the field one that matches nothing.
+    #[test]
+    fn a_tag_holding_a_character_entity_tags_exclude_does_not_match() {
+        let etag = "W/\"x\"";
+        for field in [
+            "\"o\u{7f}\", W/\"x\"",
+            "\"o\u{1}\", W/\"x\"",
+            "W/\"x\", \"o\u{7f}\"",
+        ] {
+            assert!(!etag_matches(field, etag), "{field:?}");
+        }
+        assert!(etag_matches("\"caf\u{e9}\", W/\"x\"", etag));
     }
 
     #[test]

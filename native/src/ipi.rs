@@ -2536,11 +2536,7 @@ mod tests {
             return;
         };
         let manager = open_found(&data_file, PerformanceProfile::HighPerformance);
-        for value in [
-            "1.1.1.1:443",
-            "[2606:4700:4700::1111]:443",
-            "1.1.1.1, 10.0.0.1",
-        ] {
+        for value in ["1.1.1.1:443", "[2606:4700:4700::1111]:443"] {
             let asn = asn_from(&manager, &[("query.client-ip-51d", value)])
                 .unwrap_or_else(|err| panic!("{value} should be looked up: {err}"));
             assert!(
@@ -2694,6 +2690,51 @@ mod tests {
             assert!(
                 found.as_deref().unwrap_or_default().contains(asn),
                 "{pairs:?} gave {found:?}"
+            );
+        }
+    }
+
+    /// A value under the first evidence key that is not wholly an address,
+    /// such as a list, a value with white space around it, a zone index or a
+    /// leading zero, is skipped and the next key's address is read, as
+    /// "Reading the client IP value" in the IP Intelligence specification
+    /// says. The rule is at <https://github.com/51Degrees/specifications/blob/5a250650766c025c42aa9d7943bd6781f4447646/ip-intelligence-specification/pipeline-elements/ip-intelligence-on-premise.md#L165-L264>.
+    #[test]
+    fn a_value_that_is_not_wholly_an_address_gives_way_to_the_next_key() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping the next key");
+            return;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::HighPerformance);
+        for value in [
+            "1.1.1.1, 10.0.0.1",
+            " 1.1.1.1",
+            "1.1.1.1 ",
+            "fe80::1%eth0",
+            "[fe80::1%eth0]:443",
+            "01.1.1.1",
+            "1.1.1.01",
+            "[fe80::1%25eth0]",
+            "1.1.1.0/24",
+            "1.1.1.1 x",
+        ] {
+            let pairs = [("query.client-ip-51d", value), ("query.client-ip", QUAD9)];
+            let mut results = manager.create_results().expect("results allocate");
+            let client_ip = results
+                .process_client_ip_evidence(&evidence_of(&pairs))
+                .unwrap_or_else(|err| panic!("{value:?} should be looked up: {err}"));
+            assert_eq!(
+                client_ip,
+                ClientIpEvidence {
+                    address: Some(QUAD9.parse().expect("an address")),
+                    supplied: true
+                },
+                "{value:?}"
+            );
+            let found = results.value_as_string("Asn", ",").expect("read");
+            assert!(
+                found.as_deref().unwrap_or_default().contains("AS19281"),
+                "{value:?} gave {found:?}"
             );
         }
     }

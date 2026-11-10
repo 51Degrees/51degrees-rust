@@ -129,6 +129,14 @@
     "reason": "The .NET 4.5.129 package embeds its template with CRLF line endings, so each line of its script that comes from the template ends with CRLF. The template the specification names and the copy the crates bundle end each line with LF, and the crates write no CRLF."
   },
   {
+    "path": "usage*",
+    "kind": "text",
+    "cases": ["usage-value-replaced-and-cut"],
+    "dotnet": {"pattern": ["*<header Name=\"X-Long\">[TRUNCATED BY USAGE SHARING] é中\\x0001&lt;&amp;]]&gt;aaaa*"]},
+    "rust": {"pattern": ["*<header escaped=\"true\" truncated=\"true\" Name=\"X-Long\">é中\\x0001&lt;&amp;]]&gt;aaaa*"]},
+    "reason": "The crates write the usage record as the Processing section of usage-sharing-element.md on specifications rc asks (https://github.com/51Degrees/specifications/blob/3a677b56cc03afc2b14b8a2b254ed542a5f2b1bc/pipeline-specification/pipeline-elements/usage-sharing-element.md#processing), so a value longer than 10,000 code points is cut to 10,000 with nothing put in front of it and its entry marked truncated=\"true\", and an entry holding a character XML 1.0 does not allow is marked escaped=\"true\". https://github.com/51Degrees/specifications/pull/118 records that .NET keeps its own form, which cuts the value at 10,000 UTF-16 units after the text [TRUNCATED BY USAGE SHARING] and a space, and adds BadSchema to the end of the record. The comparison reads .NET's CDATA sections as text, so every other record is the same on both sides, and this case differs from the long value on."
+  },
+  {
     "path": "properties.agent-signature.agentsignaturecreated",
     "kind": "type",
     "reason": "The crates' property values have no type for a point in time, so the agent signature element gives the time as RFC 3339 text, the form .NET's JSON builder writes, where .NET gives a DateTimeOffset. The values are still compared, and are the same."
@@ -378,5 +386,31 @@
     "path": "*device.*",
     "cases": ["uach-ghev-query-then-cookie"],
     "reason": "With high entropy values in both the query string and a cookie, the C library turns whichever it meets first in the evidence it is given into client hints. The crates give it the evidence in the order it was added, so here it uses the query string's macOS values. .NET gives it the evidence from a map ordered by key, so the cookie always comes first and it uses the Android values. evidence.md and uach-high-entropy-decoder.md say the query string value is used, so the crates follow the specification in this case and .NET does not. With the cookie first, both use the cookie. The entry goes when the C library looks at the query string first whatever the order. the_decoder_element_changes_no_device_answer in device-detection-onpremise/tests/high_entropy_values.rs holds the crates' PlatformName and PlatformVersion for this evidence. A web request through build_evidence adds cookies before query parameters, so there the crates use the cookie as .NET does, while the cloud engine sends the query value."
+  },
+  {
+    "path": "properties.ip.*",
+    "cases": ["ip-forwarded-list", "ip-v6-zone"],
+    "rust": {"noValue": true},
+    "reason": "The client IP rule of the IP Intelligence specification, \"Reading the client IP value\" in specifications#110, reads a value only when all of it is an address, and lists a comma separated list and a zone index among the values that are not read, so the crates read no address from `1.1.1.1, 10.0.0.1` or from `fe80::1%1`. .NET's IP Intelligence engine reads the list's first address and drops the zone index. With no other client IP evidence, every IP Intelligence property has no value in the crates, where .NET gives the values of the address it read. The entry goes when .NET reads a client IP value only when it is wholly an address."
+  },
+  {
+    "path": "properties.ip.*",
+    "kind": "noValueMessage",
+    "cases": ["ip-forwarded-list", "ip-v6-zone"],
+    "dotnet": {"value": ["IPv4 was not supplied as evidence.", "IPv6 was not supplied as evidence."]},
+    "rust": {"value": ["The IP supplied as evidence was not valid."]},
+    "reason": "The crates read no address from these values, as the properties.ip.* entry above says, so they give the reason for client IP evidence that was supplied and is not valid to the one IP property that has no value on either side, being Ip for the zone index and IpV6 for the list. .NET read an address of the other version, so it says this version was not supplied. The entry goes with that entry."
+  },
+  {
+    "path": "json.ip.*nullreason",
+    "kind": "onlyInRust",
+    "cases": ["ip-forwarded-list", "ip-v6-zone"],
+    "reason": "The client IP rule of the IP Intelligence specification, \"Reading the client IP value\" in specifications#110, reads a value only when all of it is an address, and lists a comma separated list and a zone index among the values that are not read, so the crates read no address from `1.1.1.1, 10.0.0.1` or from `fe80::1%1`. .NET's IP Intelligence engine reads the list's first address and drops the zone index. So the crates write each IP Intelligence property's null reason in the JSON, where .NET writes its value. The entry goes with the properties.ip.* entry for these cases."
+  },
+  {
+    "path": "json.ip.*",
+    "cases": ["ip-forwarded-list", "ip-v6-zone"],
+    "rust": {"value": [null]},
+    "reason": "The client IP rule of the IP Intelligence specification, \"Reading the client IP value\" in specifications#110, reads a value only when all of it is an address, and lists a comma separated list and a zone index among the values that are not read, so the crates read no address from `1.1.1.1, 10.0.0.1` or from `fe80::1%1`. .NET's IP Intelligence engine reads the list's first address and drops the zone index. So the crates write null for each IP Intelligence property in the JSON, where .NET writes its value. The entry goes with the properties.ip.* entry for these cases."
   }
 ]

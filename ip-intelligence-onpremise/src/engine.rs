@@ -1543,6 +1543,18 @@ mod tests {
                 &[("server.client-ip", "not-an-ip")][..],
                 [ADDED_NOT_VALID; 2],
             ),
+            (
+                &[("server.client-ip", "1.1.1.1, 10.0.0.1")][..],
+                [ADDED_NOT_VALID; 2],
+            ),
+            (
+                &[("server.client-ip", " 1.1.1.1")][..],
+                [ADDED_NOT_VALID; 2],
+            ),
+            (
+                &[("server.client-ip", "fe80::1%1")][..],
+                [ADDED_NOT_VALID; 2],
+            ),
         ] {
             let ip = ip_data_for(&engine, evidence);
             for name in ASN_PROPERTIES {
@@ -1647,11 +1659,6 @@ mod tests {
             ),
             (
                 &[("server.client-ip", "1.1.1.1:443")][..],
-                Some("1.1.1.1"),
-                None,
-            ),
-            (
-                &[("server.client-ip", "1.1.1.1, 10.0.0.1")][..],
                 Some("1.1.1.1"),
                 None,
             ),

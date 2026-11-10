@@ -80,6 +80,13 @@ if let Some(countries) = data.get(COUNTRY_NAMES_TRANSLATED_KEY) {
 }
 ```
 
+On premise, the IP Intelligence engine's data file must hold
+`CountryCodesGeographical` and `CountryCodesPopulation`, as the Enterprise
+file does. A data file without them, such as the free Lite file, leaves the
+country names with no value, and the lists of every country then hold every
+country in name order, with none put first. "Data files and pricing" under
+"Find out more" says how to get the Enterprise file.
+
 ## With the cloud service
 
 `CloudCountriesTranslationEngine` takes the place of both engines when the
