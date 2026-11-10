@@ -64,8 +64,8 @@ with a 404 of its own.
 
 | Variable | Meaning |
 | --- | --- |
-| `51DEGREES_RESOURCE_KEY` | Required. The page's resource key, public by nature. The CI names `_51DEGREES_RESOURCE_KEY_BESPOKE` and `_51DEGREES_RESOURCE_KEY_BASIC` are read after it, as every cloud example in this repository does. Without one the demo prints which variables it looked at and exits. |
-| `51DEGREES_LICENSE_KEY` | Optional. A licence key of the same account, used server side only. Only an account that holds licence keys needs one to redeem, so an account holding none runs without it. |
+| `_51DEGREES_RESOURCE_KEY` | Required. The page's resource key, public by nature. The same name without the leading underscore and the CI names `_51DEGREES_RESOURCE_KEY_BESPOKE` and `_51DEGREES_RESOURCE_KEY_BASIC` are read after it, as every cloud example in this repository does. Without one the demo prints which variables it looked at and exits. |
+| `_51DEGREES_LICENSE_KEY` | Optional. A licence key of the same account, used server side only. Only an account that holds licence keys needs one to redeem, so an account holding none runs without it. |
 | `51DEGREES_CLOUD_ENDPOINT` | Optional. The cloud API base including the `/api/v4/` segment, defaulting to `https://cloud.51degrees.com/api/v4/`. A host other than cloud.51degrees.com would be used to (a) use an on premise web server, or (b) use a privately hosted version of the 51Degrees cloud for performance reasons, which is the private hosting option of the 51Degrees cloud service. Both run the same service, so the demo works unchanged. This is the same variable the cloud request engine honours, so a developer who has set it once points every 51Degrees example at the same place. |
 | `PORT` | Optional. The port to listen on, defaulting to `5100`. |
 
@@ -74,7 +74,7 @@ with a 404 of its own.
 From the `examples` directory:
 
 ```sh
-export 51DEGREES_RESOURCE_KEY="<your resource key>"
+export _51DEGREES_RESOURCE_KEY="<your resource key>"
 cargo run -p fodid-examples --bin fodid-web-creator-context
 ```
 

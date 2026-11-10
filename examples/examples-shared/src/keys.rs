@@ -30,11 +30,21 @@
 
 use base64::Engine as _;
 
-/// The aligned resource-key environment variable, checked first.
+/// The resource-key environment variable, checked first.
 ///
-/// An explicit value here (set by a developer or by CI) overrides every other
-/// source.
-pub const RESOURCE_KEY_ENV_VAR: &str = "51DEGREES_RESOURCE_KEY";
+/// The leading underscore makes the name a valid shell identifier, so
+/// `export _51DEGREES_RESOURCE_KEY=...` works and every 51Degrees language
+/// reads the same name. An explicit value here (set by a developer or by CI)
+/// overrides every other source.
+pub const RESOURCE_KEY_ENV_VAR: &str = "_51DEGREES_RESOURCE_KEY";
+
+/// The same name without the leading underscore, checked second.
+///
+/// A POSIX shell rejects an identifier starting with a digit, so this name
+/// cannot be set by `export` or by an inline assignment, and reaches a process
+/// only through `env 51DEGREES_RESOURCE_KEY=... command`, PowerShell or a CI
+/// definition. It is read so a setup already using it keeps working.
+pub const RESOURCE_KEY_ENV_VAR_NO_UNDERSCORE: &str = "51DEGREES_RESOURCE_KEY";
 
 /// The CI-exported bespoke-tier resource-key environment variable, checked second.
 ///
@@ -48,11 +58,13 @@ pub const CI_RESOURCE_KEY_BASIC_ENV_VAR: &str = "_51DEGREES_RESOURCE_KEY_BASIC";
 
 /// The order in which the resource-key environment variables are consulted.
 ///
-/// An explicit `51DEGREES_RESOURCE_KEY` wins, then the bespoke CI key (a superset of
-/// the basic one), then the basic CI key. The first variable set to a non-blank
-/// value supplies the key.
-pub const RESOURCE_KEY_ENV_VARS: [&str; 3] = [
+/// An explicit `_51DEGREES_RESOURCE_KEY` wins, then the same name without the
+/// leading underscore, then the bespoke CI key (a superset of the basic one),
+/// then the basic CI key. The first variable set to a non-blank value supplies
+/// the key.
+pub const RESOURCE_KEY_ENV_VARS: [&str; 4] = [
     RESOURCE_KEY_ENV_VAR,
+    RESOURCE_KEY_ENV_VAR_NO_UNDERSCORE,
     CI_RESOURCE_KEY_BESPOKE_ENV_VAR,
     CI_RESOURCE_KEY_BASIC_ENV_VAR,
 ];
@@ -138,6 +150,31 @@ mod tests {
         std::env::set_var(RESOURCE_KEY_ENV_VAR, "aligned-key");
         assert_eq!(resource_key_from_env().as_deref(), Some("aligned-key"));
         clear_all();
+    }
+
+    #[test]
+    fn the_name_without_the_underscore_is_read() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_all();
+        std::env::set_var(RESOURCE_KEY_ENV_VAR_NO_UNDERSCORE, "no-underscore-key");
+        assert_eq!(
+            resource_key_from_env().as_deref(),
+            Some("no-underscore-key")
+        );
+        clear_all();
+    }
+
+    #[test]
+    fn the_name_checked_first_can_be_exported() {
+        // A POSIX shell rejects an identifier starting with a digit, so the
+        // name the examples tell a developer to export has to start with a
+        // letter or an underscore or it cannot be set on Linux or macOS.
+        let first = RESOURCE_KEY_ENV_VARS[0];
+        let start = first.chars().next().expect("a non-empty name");
+        assert!(
+            start == '_' || start.is_ascii_alphabetic(),
+            "{first} cannot be set with export"
+        );
     }
 
     #[test]

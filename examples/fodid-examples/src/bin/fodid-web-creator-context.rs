@@ -59,10 +59,11 @@
 //! offline signature check costs nothing per identifier, because the public
 //! keys are fetched once and cached.
 //!
-//! Environment: `51DEGREES_RESOURCE_KEY` is required (the CI names
-//! `_51DEGREES_RESOURCE_KEY_BESPOKE` and `_51DEGREES_RESOURCE_KEY_BASIC` are
-//! accepted too), `51DEGREES_LICENSE_KEY` is optional, `51DEGREES_CLOUD_ENDPOINT`
-//! overrides the cloud API base and `PORT` overrides the default port of 5100.
+//! Environment: `_51DEGREES_RESOURCE_KEY` is required (the same name without
+//! the leading underscore and the CI names `_51DEGREES_RESOURCE_KEY_BESPOKE`
+//! and `_51DEGREES_RESOURCE_KEY_BASIC` are read after it),
+//! `_51DEGREES_LICENSE_KEY` is optional, `51DEGREES_CLOUD_ENDPOINT` overrides
+//! the cloud API base and `PORT` overrides the default port of 5100.
 //!
 //! Run with `cargo run -p fodid-examples --bin fodid-web-creator-context` and
 //! open <http://localhost:5100/>.
@@ -99,8 +100,16 @@ const FIND_OUT_MORE: &[(&str, &str)] = &[
 /// The route the demo page's relative stylesheet URL resolves to.
 const PAGE_CSS_ROUTE: &str = "/examples-main.min.css";
 
-/// The environment variable holding the optional licence key.
-const LICENCE_KEY_ENV_VAR: &str = "51DEGREES_LICENSE_KEY";
+/// The environment variable holding the optional licence key, checked first.
+///
+/// The leading underscore makes the name a valid shell identifier, so
+/// `export _51DEGREES_LICENSE_KEY=...` works, and it is the name every
+/// 51Degrees language reads.
+const LICENCE_KEY_ENV_VAR: &str = "_51DEGREES_LICENSE_KEY";
+
+/// The same name without the leading underscore, checked second. A POSIX shell
+/// cannot set a name starting with a digit, so it is not the documented one.
+const LICENCE_KEY_ENV_VAR_NO_UNDERSCORE: &str = "51DEGREES_LICENSE_KEY";
 
 /// The port the demo listens on when `PORT` is not set.
 const DEFAULT_PORT: u16 = 5100;
@@ -374,7 +383,7 @@ async fn main() -> anyhow::Result<()> {
     // variables were looked at and stop.
     let Some(resource_key) = examples_shared::resource_key_from_env() else {
         eprintln!(
-            "Set 51DEGREES_RESOURCE_KEY (or _51DEGREES_RESOURCE_KEY_BESPOKE or \
+            "Set _51DEGREES_RESOURCE_KEY (or _51DEGREES_RESOURCE_KEY_BESPOKE or \
              _51DEGREES_RESOURCE_KEY_BASIC) to a resource key from \
              https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=resource-key-required \
              and run again."
@@ -383,8 +392,11 @@ async fn main() -> anyhow::Result<()> {
         std::process::exit(1);
     };
 
-    let licence_key = std::env::var(LICENCE_KEY_ENV_VAR)
+    let licence_key = [LICENCE_KEY_ENV_VAR, LICENCE_KEY_ENV_VAR_NO_UNDERSCORE]
+        .into_iter()
+        .filter_map(|name| std::env::var(name).ok())
         .map(|value| value.trim().to_owned())
+        .find(|value| !value.is_empty())
         .unwrap_or_default();
     if licence_key.is_empty() {
         // Only an account that holds licence keys needs one to redeem,
@@ -750,5 +762,5 @@ mod tests {
  * every other language's copy.
  *
  * Build a resource key at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=fodid-web-creator-context and export it as
- * `51DEGREES_RESOURCE_KEY`, then run the binary and open http://localhost:5100/.
+ * `_51DEGREES_RESOURCE_KEY`, then run the binary and open http://localhost:5100/.
  */
