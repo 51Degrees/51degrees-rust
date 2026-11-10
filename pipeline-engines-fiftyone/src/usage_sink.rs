@@ -141,8 +141,8 @@ pub trait UsageSink: Send + Sync {
         write_default_pipeline_info(writer, flow_elements)
     }
 
-    /// Write elements at the end of each record, after `BadSchema` when the
-    /// record has one and before `</Device>`.
+    /// Write elements at the end of each record, after the evidence and
+    /// before `</Device>`.
     ///
     /// # Errors
     ///

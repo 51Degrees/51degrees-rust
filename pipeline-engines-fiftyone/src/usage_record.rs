@@ -21,9 +21,11 @@
  * ********************************************************************* */
 
 //! Usage sharing records, written byte for byte as the
-//! [usage sharing element specification](https://github.com/51Degrees/specifications/blob/ae77ca40c270e04454ae5424b5131c0e105359a7/pipeline-specification/pipeline-elements/usage-sharing-element.md#processing)
+//! [Processing section of the usage sharing element specification][processing]
 //! sets them out, so the same evidence gives the same record in every
 //! language.
+//!
+//! [processing]: https://github.com/51Degrees/specifications/blob/3a677b56cc03afc2b14b8a2b254ed542a5f2b1bc/pipeline-specification/pipeline-elements/usage-sharing-element.md#processing
 
 use std::borrow::Cow;
 use std::fmt::{self, Write as _};
@@ -34,21 +36,17 @@ use crate::usage_sink::UsageSink;
 /// The byte order mark and XML declaration that start every document.
 const DOCUMENT_START: &str = "\u{FEFF}<?xml version=\"1.0\" encoding=\"utf-8\"?>";
 
-/// The text put in front of a value cut to the maximum length.
-const TRUNCATED_PREFIX: &str = "[TRUNCATED BY USAGE SHARING] ";
-
 /// The product named in every record.
 const PRODUCT: &str = "Pipeline";
 
 /// The language named in every record.
 const LANGUAGE: &str = "rust";
 
-/// The end of a CDATA section.
-const CDATA_END: &str = "]]>";
+/// The attribute that marks an evidence entry holding a replaced character.
+const ESCAPED_ATTRIBUTE: &str = " escaped=\"true\"";
 
-/// What `]]>` inside a value becomes. It closes the section after `]]` and
-/// opens another before `>`.
-const CDATA_END_REPLACEMENT: &str = "]]]]><![CDATA[>";
+/// The attribute that marks an evidence entry whose value was cut.
+const TRUNCATED_ATTRIBUTE: &str = " truncated=\"true\"";
 
 /// The values that are the same in every record an element writes.
 #[derive(Debug, Default)]
@@ -80,9 +78,18 @@ pub struct UsageRecord {
 struct EvidenceGroup {
     /// The prefix as the key spells it. Empty for keys written whole.
     prefix: String,
-    /// Each entry's field, or its whole key when there is no prefix, and its
-    /// value.
-    entries: Vec<(String, String)>,
+    entries: Vec<EvidenceEntry>,
+}
+
+/// One shared evidence entry.
+#[derive(Debug, Clone)]
+struct EvidenceEntry {
+    /// The field, or the whole key when there is no prefix.
+    name: String,
+    /// The value, cut to the maximum length.
+    value: String,
+    /// Whether the value was longer than the maximum.
+    truncated: bool,
 }
 
 impl UsageRecord {
@@ -124,15 +131,19 @@ impl UsageRecord {
     /// record writes it, which groups entries by prefix. The prefix and name
     /// are spelled as the evidence key has them, and the prefix is empty for
     /// a key with no prefix, whose name is then the whole key. A value over
-    /// the maximum length is already cut. Characters XML cannot carry are
-    /// replaced only when the record is written, and an entry whose element
-    /// name cannot be an XML name is left out of the written record.
+    /// the maximum length is already cut to its first
+    /// [`SHARE_USAGE_MAX_EVIDENCE_LENGTH`] characters. Characters XML cannot
+    /// carry are replaced only when the record is written, and an entry whose
+    /// element name cannot be an XML name is left out of the written record.
     pub fn evidence(&self) -> impl Iterator<Item = (&str, &str, &str)> + '_ {
         self.groups.iter().flat_map(|group| {
-            group
-                .entries
-                .iter()
-                .map(move |(name, value)| (group.prefix.as_str(), name.as_str(), value.as_str()))
+            group.entries.iter().map(move |entry| {
+                (
+                    group.prefix.as_str(),
+                    entry.name.as_str(),
+                    entry.value.as_str(),
+                )
+            })
         })
     }
 
@@ -144,7 +155,12 @@ impl UsageRecord {
             Some(index) if index > 0 => (&key[..index], &key[index + 1..]),
             _ => ("", key),
         };
-        let entry = (field.to_owned(), truncate(value).into_owned());
+        let (value, truncated) = truncate(value);
+        let entry = EvidenceEntry {
+            name: field.to_owned(),
+            value: value.to_owned(),
+            truncated,
+        };
         match self.groups.iter_mut().find(|group| group.prefix == prefix) {
             Some(group) => group.entries.push(entry),
             None => self.groups.push(EvidenceGroup {
@@ -183,36 +199,26 @@ fn write_record(
 ) -> Result<(), UsageWriteError> {
     out.push_str("<Device>");
     sink.write_before_record(&mut UsageWriter::new(&mut *out, &info.server_ip), record)?;
-    let mut writer = RecordWriter {
-        out,
-        replaced: false,
-    };
-    writer.element("SessionId", &record.session_id);
-    writer.element("Sequence", &record.sequence.to_string());
-    writer.element("DateSent", date_sent);
-    writer.element("ClientIP", &record.client_ip);
-    writer.element("Version", &info.core_version);
+    push_text_element(out, "SessionId", &record.session_id);
+    push_text_element(out, "Sequence", &record.sequence.to_string());
+    push_text_element(out, "DateSent", date_sent);
+    push_text_element(out, "ClientIP", &record.client_ip);
+    push_text_element(out, "Version", &info.core_version);
     sink.write_pipeline_info(
-        &mut UsageWriter::new(&mut *writer.out, &info.server_ip),
+        &mut UsageWriter::new(&mut *out, &info.server_ip),
         &record.flow_elements,
     )?;
-    writer.element("Language", LANGUAGE);
-    writer.element("LanguageVersion", &info.language_version);
-    writer.element("ServerIP", &info.server_ip);
-    writer.element("Platform", &info.platform);
+    push_text_element(out, "Language", LANGUAGE);
+    push_text_element(out, "LanguageVersion", &info.language_version);
+    push_text_element(out, "ServerIP", &info.server_ip);
+    push_text_element(out, "Platform", &info.platform);
     for group in &record.groups {
-        for (field, value) in &group.entries {
-            writer.evidence(&group.prefix, field, value);
+        for entry in &group.entries {
+            push_evidence(out, &group.prefix, entry);
         }
     }
-    if writer.replaced {
-        writer.element("BadSchema", "true");
-    }
-    sink.write_after_record(
-        &mut UsageWriter::new(&mut *writer.out, &info.server_ip),
-        record,
-    )?;
-    writer.out.push_str("</Device>");
+    sink.write_after_record(&mut UsageWriter::new(&mut *out, &info.server_ip), record)?;
+    out.push_str("</Device>");
     Ok(())
 }
 
@@ -243,8 +249,7 @@ impl<'a> UsageWriter<'a> {
 
     /// Write `<name>text</name>`, or `<name />` when the text is empty. The
     /// text is escaped, and each character XML cannot carry is replaced as in
-    /// the record's own values. These elements are the sink's own, so a
-    /// replacement in them does not add `BadSchema` to the record.
+    /// the record's own values, with no attribute to mark it.
     ///
     /// # Errors
     ///
@@ -256,7 +261,7 @@ impl<'a> UsageWriter<'a> {
                 name: name.to_owned(),
             });
         }
-        push_element(self.out, name, &replace_invalid_xml_chars(text));
+        push_text_element(self.out, name, text);
         Ok(())
     }
 
@@ -307,67 +312,60 @@ fn push_element(out: &mut String, name: &str, text: &str) {
     out.push('>');
 }
 
-/// Writes the elements of one record, noting whether any character in them
-/// was replaced.
-struct RecordWriter<'a> {
-    out: &'a mut String,
-    replaced: bool,
+/// Append `<name>text</name>`, or `<name />` when the text is empty, with
+/// each character XML cannot carry replaced and the text escaped.
+fn push_text_element(out: &mut String, name: &str, text: &str) {
+    push_element(out, name, &replace_invalid_xml_chars(text));
 }
 
-impl RecordWriter<'_> {
-    /// Write `<name>text</name>`, or `<name />` when the text is empty.
-    fn element(&mut self, name: &str, text: &str) {
-        let text = self.replace(text);
-        push_element(self.out, name, &text);
+/// Append an evidence entry, as `<prefix Name="field">value</prefix>`, or as
+/// `<key>value</key>` when the key has no prefix. The element is marked
+/// `escaped="true"` when a character in the field or value was replaced, and
+/// `truncated="true"` when the value was cut. An entry whose element name
+/// cannot be an XML name is left out, because writing it would make the whole
+/// document unreadable.
+fn push_evidence(out: &mut String, prefix: &str, entry: &EvidenceEntry) {
+    let name = if prefix.is_empty() {
+        entry.name.as_str()
+    } else {
+        prefix
+    };
+    if !is_xml_name(name) {
+        let separator = if prefix.is_empty() { "" } else { "." };
+        log::debug!(
+            "Usage sharing left out the evidence '{prefix}{separator}{}' \
+             because '{name}' cannot be an XML element name.",
+            entry.name
+        );
+        return;
     }
-
-    /// Write an evidence entry, as
-    /// `<prefix Name="field"><![CDATA[value]]></prefix>`, or as
-    /// `<key>value</key>` when the key has no prefix. An entry whose element
-    /// name cannot be an XML name is left out, because writing it would make
-    /// the whole document unreadable.
-    fn evidence(&mut self, prefix: &str, field: &str, value: &str) {
-        let name = if prefix.is_empty() { field } else { prefix };
-        if !is_xml_name(name) {
-            let separator = if prefix.is_empty() { "" } else { "." };
-            log::debug!(
-                "Usage sharing left out the evidence '{prefix}{separator}{field}' \
-                 because '{name}' cannot be an XML element name."
-            );
+    let field = (!prefix.is_empty()).then(|| replace_invalid_xml_chars(&entry.name));
+    let value = replace_invalid_xml_chars(&entry.value);
+    let escaped = matches!(value, Cow::Owned(_)) || matches!(field, Some(Cow::Owned(_)));
+    out.push('<');
+    out.push_str(name);
+    if escaped {
+        out.push_str(ESCAPED_ATTRIBUTE);
+    }
+    if entry.truncated {
+        out.push_str(TRUNCATED_ATTRIBUTE);
+    }
+    match field {
+        Some(field) => {
+            out.push_str(" Name=\"");
+            push_escaped(out, &field, true);
+            out.push_str("\">");
+        }
+        None if value.is_empty() => {
+            out.push_str(" />");
             return;
         }
-        if prefix.is_empty() {
-            self.element(field, value);
-            return;
-        }
-        let field = self.replace(field);
-        let value = self.replace(value);
-        self.out.push('<');
-        self.out.push_str(prefix);
-        self.out.push_str(" Name=\"");
-        push_escaped(self.out, &field, true);
-        self.out.push_str("\"><![CDATA[");
-        if value.contains(CDATA_END) {
-            self.out
-                .push_str(&value.replace(CDATA_END, CDATA_END_REPLACEMENT));
-        } else {
-            self.out.push_str(&value);
-        }
-        self.out.push_str(CDATA_END);
-        self.out.push_str("</");
-        self.out.push_str(prefix);
-        self.out.push('>');
+        None => out.push('>'),
     }
-
-    /// `text` with each character XML cannot carry replaced, noting the
-    /// replacement for the record's `BadSchema` element.
-    fn replace<'t>(&mut self, text: &'t str) -> Cow<'t, str> {
-        let text = replace_invalid_xml_chars(text);
-        if matches!(text, Cow::Owned(_)) {
-            self.replaced = true;
-        }
-        text
-    }
+    push_escaped(out, &value, false);
+    out.push_str("</");
+    out.push_str(name);
+    out.push('>');
 }
 
 /// Append `text`, writing `&`, `<` and `>` as entities, and `"` as well in an
@@ -385,23 +383,18 @@ fn push_escaped(out: &mut String, text: &str, attribute: bool) {
     }
 }
 
-/// Cut a value longer than the maximum, counted in UTF-16 code units, to its
-/// first code units after [`TRUNCATED_PREFIX`]. The cut falls before any
-/// character that would take it past the maximum.
-fn truncate(value: &str) -> Cow<'_, str> {
-    // A string is never shorter in UTF-8 bytes than in UTF-16 code units, so
-    // a value within the maximum in bytes is within it in code units.
+/// `value` cut to its first [`SHARE_USAGE_MAX_EVIDENCE_LENGTH`] characters,
+/// counted as Unicode code points, and whether it was cut. A `char` is one
+/// code point, so the cut never splits a character.
+fn truncate(value: &str) -> (&str, bool) {
+    // A string never has more code points than UTF-8 bytes.
     if value.len() <= SHARE_USAGE_MAX_EVIDENCE_LENGTH {
-        return Cow::Borrowed(value);
+        return (value, false);
     }
-    let mut units = 0;
-    for (index, c) in value.char_indices() {
-        units += c.len_utf16();
-        if units > SHARE_USAGE_MAX_EVIDENCE_LENGTH {
-            return Cow::Owned(format!("{TRUNCATED_PREFIX}{}", &value[..index]));
-        }
+    match value.char_indices().nth(SHARE_USAGE_MAX_EVIDENCE_LENGTH) {
+        Some((index, _)) => (&value[..index], true),
+        None => (value, false),
     }
-    Cow::Borrowed(value)
 }
 
 /// True for a character an XML 1.0 document can carry.
