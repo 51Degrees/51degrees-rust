@@ -171,10 +171,12 @@ path, so cloud-only users and most of CI build without a C compiler.
   `.file_system_watcher(false)` turns only the watcher off, and
   `pipeline.resource::<DataUpdateService>()` reaches the service for a check
   on demand. `DataUpdateService::on_update_complete` adds a callback that is
-  told how each check ended, with a refresh that fails reported as
-  `RefreshFailed` while the engine keeps the data it had. A callback added to
-  a service given to the builder with `.data_update_service(..)` also hears
-  the update on start-up.
+  told how each check ended, with a refresh that fails or panics reported as
+  `RefreshFailed` while the engine keeps the data it had, and a change to a
+  watched file that is no newer reported as `NotNeeded`.
+  `DataUpdateService::on_update_started` adds one told when each check
+  starts. A callback added to a service given to the builder with
+  `.data_update_service(..)` also hears the update on start-up.
 - JavaScript minification in `fiftyone-javascript-builder` is opt-in behind the
   `minify` feature and off by default. See ARCHITECTURE.md for why.
 

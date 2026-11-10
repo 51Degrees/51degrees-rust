@@ -45,12 +45,14 @@
 //!
 //! # Reporting
 //!
-//! Each check ends by telling the callbacks added with
-//! [`DataUpdateService::on_update_complete`] how it ended, as .NET's
-//! `CheckForUpdateComplete` event does. A refresh that fails is logged at
-//! error level with the message the specification's errors table gives and
-//! reported as [`AutoUpdateStatus::RefreshFailed`], never as success. The
-//! engine keeps the data it had, and polling and watching go on.
+//! Each check starts by telling the callbacks added with
+//! [`DataUpdateService::on_update_started`], and ends by telling those added
+//! with [`DataUpdateService::on_update_complete`] how it ended, as .NET's
+//! `CheckForUpdateStarted` and `CheckForUpdateComplete` events do. A refresh
+//! that fails or panics is logged at error level with the message the
+//! specification's errors table gives and reported as
+//! [`AutoUpdateStatus::RefreshFailed`], never as success. The engine keeps
+//! the data it had, and polling and watching go on.
 //!
 //! # Threading
 //!
@@ -128,20 +130,67 @@ pub struct DataUpdateComplete {
     pub status: AutoUpdateStatus,
 }
 
+/// The data file a check for an update is starting on, as the callbacks
+/// added with [`DataUpdateService::on_update_started`] are told.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct DataUpdateStarted {
+    /// The data file being checked.
+    pub data_file: Arc<AspectEngineDataFile>,
+}
+
 /// A callback told how each check ends.
 type UpdateCallback = Arc<dyn Fn(&DataUpdateComplete) + Send + Sync>;
+
+/// A callback told when each check starts.
+type StartCallback = Arc<dyn Fn(&DataUpdateStarted) + Send + Sync>;
 
 /// The callbacks the service reports to. The file-system watchers share
 /// them, as a watcher holds no reference to the service.
 #[derive(Default)]
-struct UpdateCallbacks(Mutex<Vec<UpdateCallback>>);
+struct UpdateCallbacks {
+    started: Mutex<Vec<StartCallback>>,
+    complete: Mutex<Vec<UpdateCallback>>,
+}
 
 impl UpdateCallbacks {
     fn add(&self, callback: UpdateCallback) {
-        self.0
+        self.complete
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push(callback);
+    }
+
+    fn add_started(&self, callback: StartCallback) {
+        self.started
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(callback);
+    }
+
+    /// Start a check for `engine` on `data_file` by telling every start
+    /// callback, in the order they were added. A callback that panics is
+    /// logged and the others are still told.
+    fn start(&self, engine: &str, data_file: Option<&Arc<AspectEngineDataFile>>) {
+        let Some(data_file) = data_file else {
+            return;
+        };
+        let callbacks = self
+            .started
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if callbacks.is_empty() {
+            return;
+        }
+        let report = DataUpdateStarted {
+            data_file: Arc::clone(data_file),
+        };
+        for callback in callbacks {
+            if let Err(panic) = catch_unwind(AssertUnwindSafe(|| callback(&report))) {
+                log_callback_panic(engine, panic.as_ref());
+            }
+        }
     }
 
     /// End a check for `engine` that gave `result`. A refresh that failed is
@@ -162,7 +211,11 @@ impl UpdateCallbacks {
         let Some(data_file) = data_file else {
             return;
         };
-        let callbacks = self.0.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let callbacks = self
+            .complete
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         if callbacks.is_empty() {
             return;
         }
@@ -175,13 +228,35 @@ impl UpdateCallbacks {
         };
         for callback in callbacks {
             if let Err(panic) = catch_unwind(AssertUnwindSafe(|| callback(&report))) {
-                log::error!(
-                    "An update callback for {engine} panicked. The data update service \
-                     carries on. Error detail: {}",
-                    panic_message(panic.as_ref())
-                );
+                log_callback_panic(engine, panic.as_ref());
             }
         }
+    }
+}
+
+/// Log an update callback for `engine` that panicked.
+fn log_callback_panic(engine: &str, panic: &(dyn Any + Send)) {
+    log::error!(
+        "An update callback for {engine} panicked. The data update service carries on. \
+         Error detail: {}",
+        panic_message(panic)
+    );
+}
+
+/// Run an engine's refresh, giving a refresh that fails or panics as
+/// [`AutoUpdateStatus::RefreshFailed`], so a panic in a refresh is reported
+/// like a failure and never ends the thread that made the check.
+fn guarded_refresh(
+    refresh: impl FnOnce() -> fiftyone_pipeline_core::Result<()>,
+) -> Result<(), DataUpdateError> {
+    match catch_unwind(AssertUnwindSafe(refresh)) {
+        Ok(result) => {
+            result.map_err(|e| DataUpdateError::new(AutoUpdateStatus::RefreshFailed, e.to_string()))
+        }
+        Err(panic) => Err(DataUpdateError::new(
+            AutoUpdateStatus::RefreshFailed,
+            format!("the refresh panicked: {}", panic_message(panic.as_ref())),
+        )),
     }
 }
 
@@ -303,12 +378,14 @@ impl DataUpdateService {
     /// Add a callback to be told how each check for an update ends.
     ///
     /// Every callback is told once for each check, being the update on
-    /// start-up, each scheduled poll, each refresh after a change to a
-    /// watched file, and each call to [`Self::check_for_update`] or
-    /// [`Self::update_from_memory`] for a data file the engine has. A
-    /// refresh that fails is reported as [`AutoUpdateStatus::RefreshFailed`]
-    /// and the engine keeps the data it had. Add callbacks before
-    /// registering, so they hear the update on start-up.
+    /// start-up, each scheduled poll, each change to a watched file, and each
+    /// call to [`Self::check_for_update`] or [`Self::update_from_memory`] for
+    /// a data file the engine has. A change that leaves the watched file no
+    /// newer than the one last applied is reported as
+    /// [`AutoUpdateStatus::NotNeeded`]. A refresh that fails or panics is
+    /// reported as [`AutoUpdateStatus::RefreshFailed`] and the engine keeps
+    /// the data it had. Add callbacks before registering, so they hear the
+    /// update on start-up.
     ///
     /// A callback runs on the thread that made the check, which is the
     /// service's own thread for a scheduled poll and the watcher's for a
@@ -319,6 +396,17 @@ impl DataUpdateService {
         callback: impl Fn(&DataUpdateComplete) + Send + Sync + 'static,
     ) {
         self.inner.callbacks.add(Arc::new(callback));
+    }
+
+    /// Add a callback to be told when each check for an update starts.
+    ///
+    /// Every callback is told once at the start of each check that
+    /// [`Self::on_update_complete`] reports, before those callbacks are told
+    /// how it ended, as .NET's `CheckForUpdateStarted` event is raised. It
+    /// runs on the thread that makes the check, as those callbacks do, and
+    /// one that panics is logged and the others are still told.
+    pub fn on_update_started(&self, callback: impl Fn(&DataUpdateStarted) + Send + Sync + 'static) {
+        self.inner.callbacks.add_started(Arc::new(callback));
     }
 
     /// Register a data file for automatic updates on behalf of its engine.
@@ -378,6 +466,9 @@ impl DataUpdateService {
         // engine on the data it loaded, so the file is still registered for
         // the updates that follow.
         if config.update_on_startup && !already_registered {
+            self.inner
+                .callbacks
+                .start(engine.data_key(), Some(&data_file));
             startup = self.check_for_update_from_url(&registration);
             if let Err(error) = &startup {
                 if error.status != AutoUpdateStatus::RefreshFailed {
@@ -459,6 +550,9 @@ impl DataUpdateService {
             }
         };
 
+        self.inner
+            .callbacks
+            .start(engine.data_key(), Some(&registration.data_file));
         let result = if registration.data_file.data_update_url().is_some() {
             self.check_for_update_from_url(&registration)
         } else if registration.data_file.data_file_path().is_some() {
@@ -487,15 +581,13 @@ impl DataUpdateService {
         data_file_identifier: Option<&str>,
         data: &[u8],
     ) -> DataUpdateResult {
-        let result = engine
-            .refresh_from_memory(data_file_identifier, data)
-            .map(|_| AutoUpdateStatus::Success)
-            .map_err(|e| DataUpdateError::new(AutoUpdateStatus::RefreshFailed, e.to_string()));
-        self.inner.callbacks.finish(
-            engine.data_key(),
-            engine.data_file_meta_data(data_file_identifier),
-            &result,
-        );
+        let data_file = engine.data_file_meta_data(data_file_identifier);
+        self.inner.callbacks.start(engine.data_key(), data_file);
+        let result = guarded_refresh(|| engine.refresh_from_memory(data_file_identifier, data))
+            .map(|()| AutoUpdateStatus::Success);
+        self.inner
+            .callbacks
+            .finish(engine.data_key(), data_file, &result);
         result
     }
 
@@ -655,10 +747,8 @@ impl DataUpdateService {
         engine: &Arc<dyn OnPremiseAspectEngine>,
         registration: &Registration,
     ) -> DataUpdateResult {
-        engine
-            .refresh(Some(registration.data_file.identifier()))
-            .map(|_| AutoUpdateStatus::Success)
-            .map_err(|e| DataUpdateError::new(AutoUpdateStatus::RefreshFailed, e.to_string()))
+        guarded_refresh(|| engine.refresh(Some(registration.data_file.identifier())))
+            .map(|()| AutoUpdateStatus::Success)
     }
 
     /// Start the background scheduler thread if it is not already running.
@@ -773,6 +863,9 @@ impl ServiceHandle {
                 let Some(engine) = registration.engine() else {
                     continue;
                 };
+                self.inner
+                    .callbacks
+                    .start(engine.data_key(), Some(&registration.data_file));
                 let result = self.check_for_update_from_url(&registration);
                 let applied = matches!(result, Ok(AutoUpdateStatus::Success));
                 log_poll(engine.data_key(), &registration, &result);
@@ -803,45 +896,54 @@ impl ServiceHandle {
         sleep_until(earliest, Instant::now())
     }
 
-    /// Handle a file-system-watcher event by refreshing the engine from disk if
-    /// the file is genuinely newer than the one already applied, then telling
-    /// the callbacks how the refresh ended. A file whose refresh fails is not
-    /// tried again, and a file written after it is.
+    /// Handle a file-system-watcher event, telling the callbacks when the
+    /// check starts and how it ended, as .NET reports every event. The
+    /// engine is refreshed from disk only when the file is newer than the one
+    /// last applied, and an event that finds it no newer, as when one write
+    /// raises several events, is reported as needing no update. A file whose
+    /// refresh fails is not tried again, and a file written after it is.
     fn on_file_changed(
         engine: &Weak<dyn OnPremiseAspectEngine>,
         data_file: &Arc<AspectEngineDataFile>,
         callbacks: &UpdateCallbacks,
     ) {
-        let path = match data_file.data_file_path() {
-            Some(p) => p.to_path_buf(),
-            None => return,
-        };
-        let modified = match file_modified_time(&path) {
-            Some(m) => m,
-            None => return,
-        };
-        // Debounce: only act if the file is newer than the last one applied.
-        if let Some(last) = data_file.last_applied_modified() {
-            if modified <= last {
-                return;
-            }
-        }
         let Some(engine) = engine.upgrade() else {
             return;
         };
-        data_file.set_last_applied_modified(modified);
         let key = engine.data_key();
-        let result = engine
-            .refresh(Some(data_file.identifier()))
-            .map(|()| AutoUpdateStatus::Success)
-            .map_err(|e| DataUpdateError::new(AutoUpdateStatus::RefreshFailed, e.to_string()));
+        callbacks.start(key, Some(data_file));
+        let result = Self::refresh_from_watched_file(&engine, data_file);
+        callbacks.finish(key, Some(data_file), &result);
+    }
+
+    /// Refresh `engine` from its watched data file when the file is newer
+    /// than the one last applied. A file that is gone, or no newer, needs no
+    /// update, as in .NET, where a missing file's write time is the earliest
+    /// there is.
+    fn refresh_from_watched_file(
+        engine: &Arc<dyn OnPremiseAspectEngine>,
+        data_file: &AspectEngineDataFile,
+    ) -> DataUpdateResult {
+        let Some(path) = data_file.data_file_path() else {
+            return Ok(AutoUpdateStatus::NotNeeded);
+        };
+        let Some(modified) = file_modified_time(path) else {
+            return Ok(AutoUpdateStatus::NotNeeded);
+        };
+        if matches!(data_file.last_applied_modified(), Some(last) if modified <= last) {
+            return Ok(AutoUpdateStatus::NotNeeded);
+        }
+        data_file.set_last_applied_modified(modified);
+        let result = guarded_refresh(|| engine.refresh(Some(data_file.identifier())))
+            .map(|()| AutoUpdateStatus::Success);
         if result.is_ok() {
             log::info!(
-                "The data file for {key} was refreshed from '{}'.",
+                "The data file for {} was refreshed from '{}'.",
+                engine.data_key(),
                 path.display()
             );
         }
-        callbacks.finish(key, Some(data_file), &result);
+        result
     }
 
     /// True once the service has been dropped.
@@ -976,11 +1078,7 @@ impl ServiceHandle {
                 compressed
             };
             let recorded = data_file.published_changes();
-            engine
-                .refresh_from_memory(Some(data_file.identifier()), &data)
-                .map_err(|e| {
-                    DataUpdateError::new(AutoUpdateStatus::RefreshFailed, e.to_string())
-                })?;
+            guarded_refresh(|| engine.refresh_from_memory(Some(data_file.identifier()), &data))?;
             Self::record_published(data_file, recorded);
             return Ok(AutoUpdateStatus::Success);
         };
@@ -1015,9 +1113,7 @@ impl ServiceHandle {
             )
         })?;
         let recorded = data_file.published_changes();
-        engine
-            .refresh(Some(data_file.identifier()))
-            .map_err(|e| DataUpdateError::new(AutoUpdateStatus::RefreshFailed, e.to_string()))?;
+        guarded_refresh(|| engine.refresh(Some(data_file.identifier())))?;
         Self::record_published(data_file, recorded);
 
         Ok(AutoUpdateStatus::Success)

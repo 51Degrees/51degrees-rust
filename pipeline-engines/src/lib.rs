@@ -99,7 +99,7 @@ pub use data_file::{
     DEFAULT_MAX_RANDOMISATION_SECONDS, DEFAULT_POLLING_INTERVAL_SECONDS, DISTRIBUTOR_URL,
 };
 #[cfg(feature = "data-update")]
-pub use data_update_service::{DataUpdateComplete, DataUpdateService};
+pub use data_update_service::{DataUpdateComplete, DataUpdateService, DataUpdateStarted};
 pub use data_update_status::{AutoUpdateStatus, DataUpdateError, DataUpdateResult};
 pub use engine_builder::{AspectEngineBuilderOptions, DEFAULT_CACHE_SIZE};
 pub use lazy_loading::{LazyLoadingConfiguration, LAZY_LOADING_DEFAULT_TIMEOUT_MS};
