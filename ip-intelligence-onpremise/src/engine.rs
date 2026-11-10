@@ -1288,6 +1288,63 @@ mod tests {
         assert_eq!(engine.populated_property_names(), file_names);
     }
 
+    /// The reader lists the data file properties in the order the engine was
+    /// built with their names, then `Ip` and `IpV6`, because each name's
+    /// index is its place among those names.
+    #[test]
+    fn the_reader_lists_the_names_in_the_order_the_engine_was_built_with() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping the order of the names");
+            return;
+        };
+        let names = ["AsnName", "Asn"];
+        let engine = IpIntelligenceOnPremiseEngine::builder(&data_file)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            .properties(names.iter().copied())
+            .auto_update(false)
+            .build()
+            .expect("the IP Intelligence data file should build an engine");
+        let expected: Vec<String> = names
+            .iter()
+            .copied()
+            .chain(ADDED_PROPERTIES.iter().map(|(name, _)| *name))
+            .map(str::to_lowercase)
+            .collect();
+        assert_eq!(engine.loaded.load().readable.lowercase_names, expected);
+    }
+
+    /// An engine built with no names reads each property at the index of its
+    /// name among the data set's names at build, before and after a refresh.
+    #[test]
+    fn an_engine_with_no_names_reads_by_the_index_of_its_names_at_build() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping the indexes of no names");
+            return;
+        };
+        let engine = IpIntelligenceOnPremiseEngine::builder(&data_file)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            .auto_update(false)
+            .build()
+            .expect("the IP Intelligence data file should build an engine");
+        let names = engine.loaded.load().manager.available_property_names();
+        assert!(names.len() > 1, "{names:?}");
+        for refreshed in [false, true] {
+            if refreshed {
+                engine.refresh(None).expect("the data file loads again");
+            }
+            let loaded = engine.loaded.load();
+            let readable = &loaded.readable;
+            assert!(!readable.names.is_empty(), "refreshed {refreshed}");
+            for (name, index) in readable.names.iter().zip(&readable.indexes) {
+                let at = names
+                    .iter()
+                    .position(|given| given.eq_ignore_ascii_case(name))
+                    .expect(name);
+                assert_eq!(*index, at as c_int, "{name}, refreshed {refreshed}");
+            }
+        }
+    }
+
     /// The handles to the data file the engine's current data set holds.
     fn file_pool_size(engine: &IpIntelligenceOnPremiseEngine) -> u16 {
         engine.loaded.load().manager.file_pool_size()

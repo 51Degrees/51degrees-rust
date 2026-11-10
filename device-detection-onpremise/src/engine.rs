@@ -1713,6 +1713,106 @@ mod tests {
         reader.read_property(reader.position(name).expect(name))
     }
 
+    /// Names in an order that is not the data file's.
+    const NAMES_OUT_OF_ORDER: [&str; 3] = ["PlatformName", "IsMobile", "BrowserName"];
+
+    /// An engine over the data file built with `names`.
+    fn named_engine(path: &Path, names: &[&str]) -> Arc<DeviceDetectionOnPremiseEngine> {
+        crate::DeviceDetectionOnPremiseEngineBuilder::new(path)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            .properties(names.iter().copied())
+            .build()
+            .expect("the data file loads")
+    }
+
+    /// The reader lists the data file properties in the order the engine was
+    /// built with their names, then the match metrics, because each name's
+    /// index is its place among those names.
+    #[test]
+    fn the_reader_lists_the_names_in_the_order_the_engine_was_built_with() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the order of the names");
+            return;
+        };
+        let (_, data) = engine_and_data(&path);
+        let engine = named_engine(&path, &NAMES_OUT_OF_ORDER);
+        let reader = engine.detection_reader(&data).expect("detection succeeds");
+        let expected: Vec<String> = NAMES_OUT_OF_ORDER
+            .iter()
+            .copied()
+            .chain(Metric::READ_ORDER.iter().map(|metric| metric.name()))
+            .map(str::to_lowercase)
+            .collect();
+        assert_eq!(reader.property_names(), expected.as_slice());
+    }
+
+    /// An engine built with names in an order that is not the data file's
+    /// reads each property as an engine with no names does, before and after
+    /// a refresh, and a read by name gives what the typed accessor gives.
+    #[test]
+    fn a_named_engine_reads_each_property_before_and_after_a_refresh() {
+        use fiftyone_device_detection_shared::DeviceData;
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the reads after a refresh");
+            return;
+        };
+        let (all, mut data) = engine_and_data(&path);
+        let expected = all.detection_reader(&data).expect("detection succeeds");
+        let engine = named_engine(&path, &NAMES_OUT_OF_ORDER);
+        for refreshed in [false, true] {
+            if refreshed {
+                engine.refresh(None).expect("the data file loads again");
+            }
+            let reader = engine.detection_reader(&data).expect("detection succeeds");
+            for name in NAMES_OUT_OF_ORDER {
+                let name = name.to_lowercase();
+                assert_eq!(
+                    read(&reader, &name),
+                    read(&expected, &name),
+                    "{name}, refreshed {refreshed}"
+                );
+            }
+        }
+        data.process().expect("processing succeeds");
+        let device = data.get(DEVICE_DATA_KEY).expect("device data was produced");
+        assert_eq!(
+            format!("{:?}", device.is_mobile()),
+            format!("{:?}", device.bool_property("IsMobile"))
+        );
+    }
+
+    /// An engine built with no names reads each property at the index of its
+    /// name among the data set's names at build, before and after a refresh.
+    #[test]
+    fn an_engine_with_no_names_reads_by_the_index_of_its_names_at_build() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the indexes of no names");
+            return;
+        };
+        let (engine, data) = engine_and_data(&path);
+        let names = engine.loaded.load().manager.property_names();
+        assert!(names.len() > 1, "{names:?}");
+        for refreshed in [false, true] {
+            if refreshed {
+                engine.refresh(None).expect("the data file loads again");
+            }
+            let reader = engine.detection_reader(&data).expect("detection succeeds");
+            let mut checked = 0;
+            for (index, name) in names.iter().enumerate() {
+                let Some(position) = reader.position(&name.to_lowercase()) else {
+                    continue;
+                };
+                if let ReadableProperty::File { index: at, .. } =
+                    &reader.loaded.readable.properties[position]
+                {
+                    assert_eq!(*at, index as c_int, "{name}, refreshed {refreshed}");
+                    checked += 1;
+                }
+            }
+            assert!(checked > 1, "refreshed {refreshed}");
+        }
+    }
+
     /// Each match metric gives the same value as when it is read first when
     /// it is read after another property, from a reader kept across a refresh
     /// of the engine's data file, and on another thread, because each walk
