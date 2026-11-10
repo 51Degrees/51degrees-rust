@@ -289,9 +289,15 @@ pub struct DeviceDetectionOnPremiseEngine {
     /// refresh reloads with the same profile.
     profile: PerformanceProfile,
 
-    /// The property names the engine was built with, or every name in the
-    /// data set at build when none were given, each with its index. Every
-    /// refresh opens the data file with these names, so each keeps its index.
+    /// The property names the engine was built with, each with its index.
+    /// Every refresh opens the data file with these names, so each keeps its
+    /// index. Empty when the engine was built with no name, which opens the
+    /// data file with every property.
+    requested: Vec<String>,
+
+    /// The names a read looks a property up in. Built once at build from
+    /// `requested`, or rebuilt from each data set when the engine was built
+    /// with no name, because then the indexes are the data set's own order.
     names: Arc<BuildNames>,
 
     /// The property metadata and tier of the loaded data set, for
@@ -450,13 +456,14 @@ impl DeviceDetectionOnPremiseEngine {
         copy: Option<OperationalCopy>,
         manager: Arc<Manager>,
         profile: PerformanceProfile,
+        requested: Vec<String>,
         data_file_config: DataFileConfiguration,
         data_source_tier: Option<String>,
         options: HashOptions,
     ) -> Result<Self> {
         let evidence_key_filter = HashEvidenceKeyFilter::new(manager.evidence_keys());
-        // The names the manager was opened with, or every name in the data
-        // set when none were given, which every refresh opens it with.
+        // The names the manager was opened with, which every refresh opens it
+        // with, so each name keeps its index.
         let names = Arc::new(BuildNames::new(manager.property_names()));
         let (loaded, metadata) = describe(copy, manager, &data_source_tier, &names)?;
 
@@ -466,6 +473,7 @@ impl DeviceDetectionOnPremiseEngine {
         Ok(DeviceDetectionOnPremiseEngine {
             loaded: ArcSwap::from_pointee(loaded),
             profile,
+            requested,
             names,
             metadata: Retained::new(metadata),
             tier_override: data_source_tier,
@@ -745,7 +753,7 @@ impl DeviceDetectionOnPremiseEngine {
         let manager = open_manager(
             copy.as_ref().map_or(path, OperationalCopy::path),
             self.profile,
-            &self.names.list,
+            &self.requested,
             &self.options,
         )?;
         self.swap_in(copy, manager)
@@ -763,10 +771,26 @@ impl DeviceDetectionOnPremiseEngine {
         let manager = Manager::open_from_memory(
             data.to_vec(),
             self.profile,
-            requested(&self.names.list).as_deref(),
+            requested(&self.requested).as_deref(),
             &self.options,
         )?;
         self.swap_in(None, manager)
+    }
+
+    /// The names a read of `manager`'s data set looks a property up in.
+    ///
+    /// An engine built with names keeps the table it was built with, because
+    /// a name's index is its place in those names whatever the new data file
+    /// holds. An engine built with no name takes the new data set's names,
+    /// because its indexes are that data set's own order, which a new data
+    /// file can change. The C library is changing to keep the first load's
+    /// names, and the table here becomes the built one for both.
+    fn names_for(&self, manager: &Arc<Manager>) -> Arc<BuildNames> {
+        if self.requested.is_empty() {
+            Arc::new(BuildNames::new(manager.property_names()))
+        } else {
+            Arc::clone(&self.names)
+        }
     }
 
     /// Replace the live data set with `manager`'s, which reads `copy` when
@@ -777,7 +801,8 @@ impl DeviceDetectionOnPremiseEngine {
     /// failure changes nothing. The caller holds the refresh lock.
     fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
         let evidence_keys = manager.evidence_keys();
-        let (loaded, metadata) = describe(copy, manager, &self.tier_override, &self.names)?;
+        let names = self.names_for(&manager);
+        let (loaded, metadata) = describe(copy, manager, &self.tier_override, &names)?;
         if let Some(file) = self.data_files.first() {
             record_dates(&loaded.manager, file);
         }

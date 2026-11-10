@@ -151,9 +151,14 @@ pub struct IpIntelligenceOnPremiseEngine {
     /// The expected concurrency used to (re)open the data file on refresh, or
     /// `None` for the profile's own.
     concurrency: Option<u16>,
-    /// The property names the engine was built with, or every name in the
-    /// data set at build when none were given, each with its index. Every
-    /// refresh opens the data file with these names, so each keeps its index.
+    /// The property names the engine was built with. Every refresh opens the
+    /// data file with these names, so each keeps its index. Empty when the
+    /// engine was built with no name, which opens the data file with every
+    /// property.
+    requested: Vec<String>,
+    /// The names a read looks a property up in. Built once at build from
+    /// `requested`, or rebuilt from each data set when the engine was built
+    /// with no name, because then the indexes are the data set's own order.
     names: Arc<BuildNames>,
     /// The evidence keys of the loaded data file, replaced on refresh.
     evidence_key_filter: DataFileEvidenceKeys,
@@ -291,12 +296,13 @@ impl IpIntelligenceOnPremiseEngine {
         copy: Option<OperationalCopy>,
         manager: Arc<Manager>,
         profile: PerformanceProfile,
+        requested: Vec<String>,
         tier_override: Option<String>,
         data_file: Arc<AspectEngineDataFile>,
     ) -> Result<Self> {
         let evidence_key_filter = DataFileEvidenceKeys::new(&manager);
-        // The names the manager was opened with, or every name in the data
-        // set when none were given, which every refresh opens it with.
+        // The names the manager was opened with, which every refresh opens it
+        // with, so each name keeps its index.
         let names = Arc::new(BuildNames::new(manager.available_property_names()));
         let (loaded, metadata) = describe(copy, manager, &tier_override, &names)?;
         Ok(IpIntelligenceOnPremiseEngine {
@@ -305,6 +311,7 @@ impl IpIntelligenceOnPremiseEngine {
             loaded: ArcSwap::from_pointee(loaded),
             profile,
             concurrency: None,
+            requested,
             names,
             metadata: Retained::new(metadata),
             tier_override,
@@ -538,10 +545,26 @@ impl IpIntelligenceOnPremiseEngine {
     /// The names the engine was built with, as the native open takes them,
     /// or [`None`] when there are none.
     fn property_refs(&self) -> Option<Vec<&str>> {
-        if self.names.list.is_empty() {
+        if self.requested.is_empty() {
             None
         } else {
-            Some(self.names.list.iter().map(String::as_str).collect())
+            Some(self.requested.iter().map(String::as_str).collect())
+        }
+    }
+
+    /// The names a read of `manager`'s data set looks a property up in.
+    ///
+    /// An engine built with names keeps the table it was built with, because
+    /// a name's index is its place in those names whatever the new data file
+    /// holds. An engine built with no name takes the new data set's names,
+    /// because its indexes are that data set's own order, which a new data
+    /// file can change. The C library is changing to keep the first load's
+    /// names, and the table here becomes the built one for both.
+    fn names_for(&self, manager: &Arc<Manager>) -> Arc<BuildNames> {
+        if self.requested.is_empty() {
+            Arc::new(BuildNames::new(manager.available_property_names()))
+        } else {
+            Arc::clone(&self.names)
         }
     }
 
@@ -596,7 +619,8 @@ impl IpIntelligenceOnPremiseEngine {
     /// read, changes nothing. The caller holds the refresh lock.
     fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
         let evidence_keys = DataFileEvidenceKeys::whitelist(&manager);
-        let (loaded, metadata) = describe(copy, manager, &self.tier_override, &self.names)?;
+        let names = self.names_for(&manager);
+        let (loaded, metadata) = describe(copy, manager, &self.tier_override, &names)?;
         let loaded = Arc::new(loaded);
         self.loaded.store(Arc::clone(&loaded));
         self.evidence_key_filter.keys.store(Arc::new(evidence_keys));
