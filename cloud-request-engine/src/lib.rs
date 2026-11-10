@@ -67,11 +67,12 @@
 //!     .build()
 //!     .unwrap();
 //!
-//! // A license key alongside a resource key adds the products it grants to
-//! // those the resource key carries, so the answer widens.
+//! // A property list beside a resource key adds the listed properties to
+//! // those it carries, and a license key alongside grants the ones it covers.
 //! let _engine = CloudRequestEngine::builder()
 //!     .resource_key("my-resource-key")
 //!     .license_key("my-license-key")
+//!     .values(["device.hardwarevendor"])
 //!     .build()
 //!     .unwrap();
 //!
@@ -86,7 +87,8 @@
 //!
 //! A resource key is public by design, because it travels to the browser inside a
 //! script URL, so it is scoped to what a page is meant to read and it answers
-//! with everything it carries whatever the call asked for. A license key stays on
+//! with everything it carries, plus any properties the call lists. A license
+//! key stays on
 //! the server and names what it wants per request, which is usually what a
 //! server-side caller needs.
 //!
