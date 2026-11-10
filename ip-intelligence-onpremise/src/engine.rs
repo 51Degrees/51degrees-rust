@@ -1288,6 +1288,36 @@ mod tests {
         assert_eq!(engine.populated_property_names(), file_names);
     }
 
+    /// The reader finds a data file property by its name in any case, as the
+    /// C library finds it, and `Ip` and `IpV6` in the same way, each at the
+    /// place of its lowercase name among the reader's names.
+    #[test]
+    fn the_reader_finds_a_name_in_any_case() {
+        let Some(engine) = asn_engine() else {
+            eprintln!("no usable IP-intelligence data file; skipping names in any case");
+            return;
+        };
+        let loaded = engine.loaded.load_full();
+        let mut results = loaded.manager.create_results().expect("results");
+        let client_ip = results
+            .process_client_ip_evidence(&Evidence::builder().build())
+            .expect("evidence with no address is processed");
+        let reader = LookupReader {
+            results: Mutex::new(results),
+            client_ip,
+            loaded,
+        };
+        for name in ["AsnName", "ASNNAME", "asnname", "Ip", "IP", "IPV6"] {
+            let position = reader.position(name).expect(name);
+            assert_eq!(
+                reader.property_names()[position],
+                name.to_lowercase(),
+                "{name}"
+            );
+        }
+        assert_eq!(reader.position("NotAProperty"), None);
+    }
+
     /// The handles to the data file the engine's current data set holds.
     fn file_pool_size(engine: &IpIntelligenceOnPremiseEngine) -> u16 {
         engine.loaded.load().manager.file_pool_size()

@@ -1713,6 +1713,36 @@ mod tests {
         reader.read_property(reader.position(name).expect(name))
     }
 
+    /// The reader finds a data file property by its name in any case, as the
+    /// C library finds it, and a match metric in the same way, each at the
+    /// place of its lowercase name among the reader's names.
+    #[test]
+    fn the_reader_finds_a_name_in_any_case() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping names in any case");
+            return;
+        };
+        let (engine, data) = engine_and_data(&path);
+        let reader = engine.detection_reader(&data).expect("detection succeeds");
+        let metric = Metric::READ_ORDER[0].name();
+        let names = [
+            "IsMobile".to_owned(),
+            "ISMOBILE".to_owned(),
+            "ismobile".to_owned(),
+            metric.to_owned(),
+            metric.to_uppercase(),
+        ];
+        for name in &names {
+            let position = reader.position(name).expect(name);
+            assert_eq!(
+                reader.property_names()[position],
+                name.to_lowercase(),
+                "{name}"
+            );
+        }
+        assert_eq!(reader.position("NotAProperty"), None);
+    }
+
     /// Each match metric gives the same value as when it is read first when
     /// it is read after another property, from a reader kept across a refresh
     /// of the engine's data file, and on another thread, because each walk
