@@ -324,9 +324,15 @@ pub fn client_ip_from_evidence(evidence: &Evidence) -> Option<String> {
 /// address with or without a port. Anything else gives [`None`] and no part of
 /// it is read, so a comma separated list, white space around the address, an
 /// IPv6 zone index (`fe80::1%eth0`), a prefix length or trailing text is not
-/// read, nor are the shortened, octal and bare number IPv4 forms some parsers
-/// accept. Reading part of a value could give a different address from the
-/// one the sender meant.
+/// read, nor is an IPv4 address with a leading zero in any part (`01.2.3.4`),
+/// nor are the shortened and bare number IPv4 forms some parsers accept.
+/// Reading part of a value could give a different address from the one the
+/// sender meant.
+///
+/// This is the rule in [Reading the client IP value] of the IP Intelligence
+/// specification.
+///
+/// [Reading the client IP value]: https://github.com/51Degrees/specifications/blob/5a250650766c025c42aa9d7943bd6781f4447646/ip-intelligence-specification/pipeline-elements/ip-intelligence-on-premise.md#L165-L264
 pub fn parse_client_ip(value: &str) -> Option<IpAddr> {
     if let Some(bracketed) = value.strip_prefix('[') {
         // "[2001:db8::1]" or "[2001:db8::1]:443".
@@ -494,7 +500,8 @@ mod tests {
     }
 
     // The forms the client IP rule of the IP Intelligence specification
-    // reads, each with the address read from it.
+    // reads, each with the address read from it. The rule is "Reading the
+    // client IP value", https://github.com/51Degrees/specifications/blob/5a250650766c025c42aa9d7943bd6781f4447646/ip-intelligence-specification/pipeline-elements/ip-intelligence-on-premise.md#L165-L264
     #[test]
     fn a_client_ip_is_read_in_the_forms_proxies_send() {
         for (value, address) in [
@@ -522,8 +529,10 @@ mod tests {
     }
 
     // A value that is not wholly one of those forms is not read, and no part
-    // of it is used. These are the values the specification's table lists,
-    // and the zone index and leading zero of its other examples.
+    // of it is used. These are the values the rule's table lists, with the
+    // other zone index and leading zero examples the rule gives, and a
+    // leading zero in the IPv4 part of an IPv6 address, which RFC 3986's
+    // `IPv6address` builds from the same `dec-octet` rule.
     #[test]
     fn a_value_that_is_not_a_whole_address_is_not_read() {
         for value in [
@@ -536,7 +545,10 @@ mod tests {
             "3221225985",
             "012.0.2.1",
             "01.2.3.4",
+            "1.02.3.4",
             "1.2.3.04",
+            "00.0.0.0",
+            "::ffff:01.2.3.4",
             "256.0.113.1",
             "192.0.2.1/24",
             "203.0.113.0/24",
@@ -557,6 +569,7 @@ mod tests {
             "fe80::1%eth0",
             "[fe80::1%eth0]",
             "[fe80::1%eth0]:443",
+            "[fe80::1%eth0]:80",
             "[fe80::1%25eth0]",
             "192.0.2.1:65536",
             "203.0.113.1:65536",

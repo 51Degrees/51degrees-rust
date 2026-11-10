@@ -2607,7 +2607,9 @@ mod tests {
 
     /// A value under the first evidence key that is not wholly an address,
     /// such as a list, a value with white space around it, a zone index or a
-    /// leading zero, is skipped and the next key's address is read.
+    /// leading zero, is skipped and the next key's address is read, as
+    /// "Reading the client IP value" in the IP Intelligence specification
+    /// says. The rule is at <https://github.com/51Degrees/specifications/blob/5a250650766c025c42aa9d7943bd6781f4447646/ip-intelligence-specification/pipeline-elements/ip-intelligence-on-premise.md#L165-L264>.
     #[test]
     fn a_value_that_is_not_wholly_an_address_gives_way_to_the_next_key() {
         let Some(data_file) = ipi_data_file() else {
@@ -2623,6 +2625,7 @@ mod tests {
             "[fe80::1%eth0]:443",
             "01.1.1.1",
             "1.1.1.01",
+            "[fe80::1%25eth0]",
             "1.1.1.0/24",
             "1.1.1.1 x",
         ] {
