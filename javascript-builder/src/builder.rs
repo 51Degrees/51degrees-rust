@@ -252,7 +252,8 @@ impl JavaScriptBuilderElementBuilder {
         self
     }
 
-    /// Set the host the client JavaScript should query for updates. By default
+    /// Set the host the client JavaScript should query for updates, without
+    /// the scheme, for example `example.com` or `example.com:8080`. By default
     /// the host from the request evidence is used.
     pub fn set_host(mut self, host: impl Into<String>) -> Self {
         self.host = host.into();
@@ -285,9 +286,12 @@ impl JavaScriptBuilderElementBuilder {
     /// JavaScript.
     ///
     /// The name must be a valid JavaScript identifier (it must match
-    /// `[a-zA-Z_$][0-9a-zA-Z_$]*` in full) and must not be a reserved word,
-    /// `Infinity`, `NaN`, `undefined` or `fiftyoneDegreesManager`. An invalid
-    /// name is a configuration error. The same rule applies to a name
+    /// `[a-zA-Z_$][0-9a-zA-Z_$]*` in full) and must not be a name the
+    /// [object name rule](https://github.com/51Degrees/specifications/blob/e637d3660a5e781f4494a9b42c8e8349bb117669/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L192)
+    /// refuses. Those are the reserved words, `Infinity`, `NaN`, `undefined`,
+    /// `fiftyoneDegreesManager`, and global names a page cannot use for the
+    /// object, such as `eval`, `window`, `location` and `localStorage`. An
+    /// invalid name is a configuration error. The same rule applies to a name
     /// requested through the `query.fod-js-object-name` evidence, where an
     /// invalid name is ignored with a warning logged.
     pub fn set_object_name(mut self, object_name: impl Into<String>) -> Result<Self> {
@@ -366,8 +370,28 @@ const RESERVED_WORDS: &[&str] = &[
     "Infinity", "NaN", "undefined", "fiftyoneDegreesManager",
 ];
 
+/// Global names the object cannot have, beyond [`RESERVED_WORDS`]. Strict
+/// mode code cannot declare `eval` or `arguments`, and the script's top level
+/// `var eval` would replace the page's own `eval`. `var location` sets
+/// `location.href` to the object's text, which navigates the page away. The
+/// rest are properties of the browser's window that a top level `var` cannot
+/// replace, so the object would never be created. These are the names the
+/// [object name rule](https://github.com/51Degrees/specifications/blob/e637d3660a5e781f4494a9b42c8e8349bb117669/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L192)
+/// adds to the reserved words.
+#[rustfmt::skip]
+const UNSAFE_GLOBAL_NAMES: &[&str] = &[
+    "eval", "arguments", "location",
+    "window", "document", "top", "name", "status", "history", "navigator",
+    "closed", "frameElement", "isSecureContext", "crossOriginIsolated",
+    "trustedTypes", "crypto", "indexedDB", "localStorage", "sessionStorage",
+    "caches", "cookieStore", "speechSynthesis", "styleMedia", "crashReport",
+    "credentialless", "customElements", "documentPictureInPicture", "fence",
+    "launchQueue", "originAgentCluster",
+];
+
 /// True if the string is a valid JavaScript identifier per the
-/// `[a-zA-Z_$][0-9a-zA-Z_$]*` rule and is not one of [`RESERVED_WORDS`].
+/// `[a-zA-Z_$][0-9a-zA-Z_$]*` rule and is not one of [`RESERVED_WORDS`] or
+/// [`UNSAFE_GLOBAL_NAMES`].
 ///
 /// The first character must be a letter, underscore or dollar sign, and the
 /// rest may also be digits. An empty string is invalid. The name is written
@@ -380,7 +404,9 @@ pub(crate) fn is_valid_object_name(name: &str) -> bool {
         Some(first) if is_identifier_start(first) => {}
         _ => return false,
     }
-    chars.all(is_identifier_part) && !RESERVED_WORDS.contains(&name)
+    chars.all(is_identifier_part)
+        && !RESERVED_WORDS.contains(&name)
+        && !UNSAFE_GLOBAL_NAMES.contains(&name)
 }
 
 /// True if the character may start a JavaScript identifier (letter, `_` or `$`).
