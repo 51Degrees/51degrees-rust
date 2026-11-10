@@ -264,6 +264,21 @@
     "reason": "The JSON builder writes the cloud request engine's error, which differs as the entry for errors in this case says."
   },
   {
+    "path": "errors",
+    "kind": "value",
+    "cases": ["cloud-translation-section-absent", "cloud-translation-section-in-capitals"],
+    "dotnet": {"value": [[{"element": "countrynamestranslated", "message": "The given key 'countrynamestranslated' was not present in the dictionary."}]]},
+    "rust": {"value": [[]]},
+    "reason": "The Processing section of the specification's cloud aspect engine says that where the response has no portion for the engine's Data Key, the engine leaves the Element Data without values and raises no error, so the crates' cloud countries translation engine records none for a response without a countrynamestranslated section. .NET reads the section with a dictionary's indexer, which throws. The properties and the reasons they are missing are the same on both sides."
+  },
+  {
+    "path": "json.errors",
+    "kind": "onlyInDotnet",
+    "cases": ["cloud-translation-section-absent", "cloud-translation-section-in-capitals"],
+    "dotnet": {"value": [["The given key 'countrynamestranslated' was not present in the dictionary."]]},
+    "reason": "The JSON builder writes the errors, and the crates' side has none, as the entry for errors in these cases says."
+  },
+  {
     "path": "properties.countrynamestranslated.*",
     "kind": "noValueMessage",
     "cases": ["cloud-translation-*"],

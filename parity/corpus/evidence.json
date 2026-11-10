@@ -1488,7 +1488,7 @@
   },
   {
     "id": "cloud-translation-section-absent",
-    "about": "A response without the countrynamestranslated section, which is an error leaving the data empty.",
+    "about": "A response without the countrynamestranslated section, which leaves the data without values.",
     "pipeline": "cloud-translation",
     "evidence": {
       "query.session-id": "parity-cloud-translation-section-absent",

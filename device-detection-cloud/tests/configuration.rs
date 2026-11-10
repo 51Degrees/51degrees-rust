@@ -667,12 +667,15 @@ fn an_unknown_setting_lists_dotnets_settings() {
     }
 }
 
-/// .NET logs the same error, then fails the build with "Failed to load
-/// properties for 'device'. This usually means your resource key does not
-/// include access to any properties under 'device'...". The engines here
-/// list no properties for such a key and build, as they do in code.
+/// .NET logs the first sentence as an error, then fails the build with
+/// "Failed to load properties for 'device'. This usually means your resource
+/// key does not include access to any properties under 'device'...". The
+/// cloud aspect engine specification says such an engine builds and logs the
+/// missing product once as a warning, naming its data key, so the engines
+/// here list no properties for such a key, build, as they do in code, and
+/// log both sentences as one warning.
 #[test]
-fn a_key_without_the_product_logs_dotnets_error() {
+fn a_key_without_the_product_builds_and_logs_one_warning() {
     for engine in [&DEVICE, &HARDWARE] {
         let request =
             ElementOptions::new(REQUEST_ENGINE).parameter("ResourceKey", KEY_WITHOUT_PRODUCTS);
@@ -682,10 +685,12 @@ fn a_key_without_the_product_logs_dotnets_error() {
         assert_eq!(
             logged,
             [(
-                log::Level::Error,
+                log::Level::Warn,
                 format!(
-                    "Aspect properties could not be loaded for {} - '{}'",
-                    engine.name, engine.data_key
+                    "Aspect properties could not be loaded for {name} - '{key}'. The \
+                     resource key does not include access to any properties under '{key}'.",
+                    name = engine.name,
+                    key = engine.data_key
                 )
             )]
         );

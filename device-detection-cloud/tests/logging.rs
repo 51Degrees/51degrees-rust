@@ -44,10 +44,12 @@ const HARDWARE_PRODUCT: &str = r#""hardware":{"DataTier":"CloudV4TAC","Propertie
 const IP_PRODUCT: &str = r#""ip":{"DataTier":"CloudV4","Properties":[
     {"Name":"RegisteredName","Type":"String","Category":"Network"}]}"#;
 
-const NOT_GRANTED_DEVICE: &str =
-    "ERROR Aspect properties could not be loaded for DeviceDetectionCloudEngine - 'device'";
-const NOT_GRANTED_HARDWARE: &str =
-    "ERROR Aspect properties could not be loaded for HardwareProfileCloudEngine - 'hardware'";
+const NOT_GRANTED_DEVICE: &str = "WARN Aspect properties could not be loaded for \
+     DeviceDetectionCloudEngine - 'device'. The resource key does not include access to \
+     any properties under 'device'.";
+const NOT_GRANTED_HARDWARE: &str = "WARN Aspect properties could not be loaded for \
+     HardwareProfileCloudEngine - 'hardware'. The resource key does not include access to \
+     any properties under 'hardware'.";
 
 /// Records at warning level or above, as "LEVEL message".
 static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -176,7 +178,7 @@ fn process(pipeline: &Arc<Pipeline>, key: &str, value: &str) {
 }
 
 #[test]
-fn a_device_product_that_is_not_granted_logs_one_error_when_built() {
+fn a_device_product_that_is_not_granted_logs_one_warning_when_built() {
     let _serial = start();
     let request = request_engine(&[IP_PRODUCT], r#"{"device":{"ismobile":true}}"#);
     let engine = DeviceDetectionCloudEngine::builder()
@@ -192,7 +194,7 @@ fn a_device_product_that_is_not_granted_logs_one_error_when_built() {
 }
 
 #[test]
-fn a_device_product_listed_with_no_properties_logs_one_error_when_built() {
+fn a_device_product_listed_with_no_properties_logs_one_warning_when_built() {
     let _serial = start();
     let request = request_engine(
         &[r#""device":{"DataTier":"CloudV4","Properties":[]}"#],
@@ -308,7 +310,7 @@ fn a_license_key_alone_has_nothing_to_check_and_logs_nothing() {
 }
 
 #[test]
-fn a_hardware_product_that_is_not_granted_logs_one_error_when_built() {
+fn a_hardware_product_that_is_not_granted_logs_one_warning_when_built() {
     let _serial = start();
     let request = request_engine(&[DEVICE_PRODUCT], r#"{"hardware":{"profiles":[]}}"#);
     let engine = HardwareProfileCloudEngine::builder()

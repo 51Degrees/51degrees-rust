@@ -79,8 +79,9 @@ const SET_HEADER_RESPONSE: &str = r#"{"device":{"ismobile":true,
     "setheaderhardwareaccept-ch":null,
     "setheaderhardwareaccept-chnullreason":"No matching profiles"}}"#;
 
-const NOT_GRANTED_DEVICE: &str =
-    "ERROR Aspect properties could not be loaded for DeviceDetectionCloudEngine - 'device'";
+const NOT_GRANTED_DEVICE: &str = "WARN Aspect properties could not be loaded for \
+     DeviceDetectionCloudEngine - 'device'. The resource key does not include access to \
+     any properties under 'device'.";
 
 /// The record of each read of a property the data does not hold.
 fn missing_read(property: &str, reason: &str) -> String {
@@ -257,18 +258,17 @@ fn a_property_the_response_did_not_return_gives_the_resource_key_reason() {
     assert_eq!(take_logged(), Vec::<String>::new());
 }
 
+/// A key without the device product is logged once, when the engine is
+/// built. Each read of a device property then gives the product reason and
+/// logs nothing, however many requests follow, as the cloud aspect engine
+/// specification says.
 #[test]
-fn a_key_without_the_device_product_gives_the_product_reason() {
+fn a_key_without_the_device_product_is_logged_once_and_not_on_each_read() {
     let _serial = start();
     let request = request_engine(&[IP_PRODUCT], r#"{"ip":{"registeredname":"A"}}"#);
     let engine = Arc::new(DeviceDetectionCloudEngine::new(Arc::clone(&request)));
     assert_eq!(take_logged(), vec![NOT_GRANTED_DEVICE]);
     let pipeline = pipeline(request, engine.clone());
-    let data = process(&pipeline, "header.user-agent", "A");
-    let device = data.get(DEVICE_DATA_KEY).expect("the device data is there");
-    assert!(device.keys().is_empty());
-    assert!(!device.has_property("IsMobile"));
-    assert_eq!(take_logged(), Vec::<String>::new());
 
     let expected = engine.missing_property_reason("IsMobile");
     assert_eq!(
@@ -283,17 +283,22 @@ fn a_key_without_the_device_product_gives_the_product_reason() {
         "{}",
         expected.description
     );
-    assert_eq!(
-        device.is_mobile().no_value_message(),
-        Some(expected.description.as_str())
-    );
-    assert_eq!(
-        take_logged(),
-        vec![missing_read(
-            "IsMobile",
-            "ProductNotAccessibleWithResourceKey"
-        )]
-    );
+
+    for request in 1..=3 {
+        let data = process(&pipeline, "header.user-agent", "A");
+        let device = data.get(DEVICE_DATA_KEY).expect("the device data is there");
+        assert!(device.keys().is_empty());
+        assert!(!device.has_property("IsMobile"));
+        assert_eq!(
+            device.is_mobile().no_value_message(),
+            Some(expected.description.as_str())
+        );
+        assert_eq!(
+            device.get("IsMobile").unwrap_err().message,
+            expected.description
+        );
+        assert_eq!(take_logged(), Vec::<String>::new(), "request {request}");
+    }
 }
 
 #[test]
