@@ -38,7 +38,7 @@ use arc_swap::ArcSwap;
 
 use fiftyone_ip_intelligence_shared::{
     declared_property_value_type, IpIntelligenceDataBase, IpIntelligencePropertyReader,
-    IP_DATA_KEY, IP_DATA_KEY_NAME, WEIGHTED_PROPERTY_VALUE_TYPE,
+    IP_DATA_KEY, IP_DATA_KEY_NAME, TYPED_PROPERTY_NAMES, WEIGHTED_PROPERTY_VALUE_TYPE,
 };
 use fiftyone_native::ipi::{
     ip_address_text, ClientIpEvidence, DataFileComponent, DataFileProperty, DataFileValue, Manager,
@@ -151,9 +151,15 @@ pub struct IpIntelligenceOnPremiseEngine {
     /// The expected concurrency used to (re)open the data file on refresh, or
     /// `None` for the profile's own.
     concurrency: Option<u16>,
-    /// The properties the engine was restricted to, lowercased. Empty means
-    /// every property the data file defines.
-    requested_properties: Vec<String>,
+    /// The property names the engine was built with. Every refresh opens the
+    /// data file with these names, so each keeps its index. Empty when the
+    /// engine was built with no name, which opens the data file with every
+    /// property.
+    requested: Vec<String>,
+    /// The names a read looks a property up in. Built once at build from
+    /// `requested`, or rebuilt from each data set when the engine was built
+    /// with no name, because then the indexes are the data set's own order.
+    names: Arc<BuildNames>,
     /// The evidence keys of the loaded data file, replaced on refresh.
     evidence_key_filter: DataFileEvidenceKeys,
     /// The property metadata and tier of the loaded data set, for
@@ -218,6 +224,7 @@ fn describe(
     copy: Option<OperationalCopy>,
     manager: Arc<Manager>,
     tier_override: &Option<String>,
+    names: &Arc<BuildNames>,
 ) -> Result<(LoadedDataSet, LentMetadata)> {
     let file_tier = manager
         .data_set_name()
@@ -229,7 +236,7 @@ fn describe(
         fiftyone_properties,
         components,
     } = build_metadata(&file_properties, &manager.data_file_components()?, tier);
-    let readable = Arc::new(ReadableNames::new(&file_properties));
+    let readable = Arc::new(ReadableNames::new(&file_properties, names));
     let file_property_places = file_properties
         .iter()
         .map(|property| {
@@ -289,19 +296,23 @@ impl IpIntelligenceOnPremiseEngine {
         copy: Option<OperationalCopy>,
         manager: Arc<Manager>,
         profile: PerformanceProfile,
-        requested_properties: Vec<String>,
+        requested: Vec<String>,
         tier_override: Option<String>,
         data_file: Arc<AspectEngineDataFile>,
     ) -> Result<Self> {
         let evidence_key_filter = DataFileEvidenceKeys::new(&manager);
-        let (loaded, metadata) = describe(copy, manager, &tier_override)?;
+        // The names the manager was opened with, which every refresh opens it
+        // with, so each name keeps its index.
+        let names = Arc::new(BuildNames::new(manager.available_property_names()));
+        let (loaded, metadata) = describe(copy, manager, &tier_override, &names)?;
         Ok(IpIntelligenceOnPremiseEngine {
             base: AspectEngineBase::new(),
             evidence_key_filter,
             loaded: ArcSwap::from_pointee(loaded),
             profile,
             concurrency: None,
-            requested_properties,
+            requested,
+            names,
             metadata: Retained::new(metadata),
             tier_override,
             refresh_lock: Mutex::new(()),
@@ -531,18 +542,29 @@ impl IpIntelligenceOnPremiseEngine {
         }))
     }
 
-    /// The properties the engine was restricted to, as the native open takes
-    /// them, or [`None`] for every property the data file defines.
+    /// The names the engine was built with, as the native open takes them,
+    /// or [`None`] when there are none.
     fn property_refs(&self) -> Option<Vec<&str>> {
-        if self.requested_properties.is_empty() {
+        if self.requested.is_empty() {
             None
         } else {
-            Some(
-                self.requested_properties
-                    .iter()
-                    .map(String::as_str)
-                    .collect(),
-            )
+            Some(self.requested.iter().map(String::as_str).collect())
+        }
+    }
+
+    /// The names a read of `manager`'s data set looks a property up in.
+    ///
+    /// An engine built with names keeps the table it was built with, because
+    /// a name's index is its place in those names whatever the new data file
+    /// holds. An engine built with no name takes the new data set's names,
+    /// because its indexes are that data set's own order, which a new data
+    /// file can change. The C library is changing to keep the first load's
+    /// names, and the table here becomes the built one for both.
+    fn names_for(&self, manager: &Arc<Manager>) -> Arc<BuildNames> {
+        if self.requested.is_empty() {
+            Arc::new(BuildNames::new(manager.available_property_names()))
+        } else {
+            Arc::clone(&self.names)
         }
     }
 
@@ -597,7 +619,8 @@ impl IpIntelligenceOnPremiseEngine {
     /// read, changes nothing. The caller holds the refresh lock.
     fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
         let evidence_keys = DataFileEvidenceKeys::whitelist(&manager);
-        let (loaded, metadata) = describe(copy, manager, &self.tier_override)?;
+        let names = self.names_for(&manager);
+        let (loaded, metadata) = describe(copy, manager, &self.tier_override, &names)?;
         let loaded = Arc::new(loaded);
         self.loaded.store(Arc::clone(&loaded));
         self.evidence_key_filter.keys.store(Arc::new(evidence_keys));
@@ -820,7 +843,8 @@ struct LoadedDataSet {
 /// A lookup also reads [`ADDED_PROPERTIES`], after the data file's, which
 /// hold the address looked up rather than anything in the data file.
 struct ReadableNames {
-    /// Each property's name in the data file's spelling.
+    /// Each property's name in the data file's spelling, in the order of
+    /// the names the engine was built with.
     names: Vec<String>,
     /// Each property's name in lowercase, in the same order, then those of
     /// [`ADDED_PROPERTIES`].
@@ -830,21 +854,84 @@ struct ReadableNames {
     /// Each property's type, as the engine's metadata gives it from the data
     /// file.
     value_types: Vec<PropertyValueType>,
-    /// The position of each property in `lowercase_names`, by lowercase name.
-    by_name: HashMap<String, usize>,
+    /// The names the engine was built with.
+    build: Arc<BuildNames>,
+    /// The place in `names` of the property at each index, or `None` when
+    /// this data set does not have it.
+    places: Vec<Option<usize>>,
+    /// The place of the property each typed accessor reads, by the
+    /// accessor's slot in [`TYPED_PROPERTY_NAMES`], resolved once when the
+    /// data set loads.
+    typed: Vec<Option<usize>>,
+}
+
+/// The property names the engine was built with, each with its index, which
+/// is its place in the list, and [`ADDED_PROPERTIES`]. Built once when the
+/// engine is built and never from a data set, so a name keeps its index
+/// across every refresh.
+struct BuildNames {
+    /// The names, in the order the engine was built with them.
+    list: Vec<String>,
+    /// Where each lowercase name is read.
+    by_name: HashMap<String, NameSlot>,
+}
+
+/// Where a property named in a read is read.
+#[derive(Clone, Copy)]
+enum NameSlot {
+    /// The property at this index among the names the engine was built with.
+    Index(usize),
+    /// The property at this place in [`ADDED_PROPERTIES`].
+    Added(usize),
+}
+
+impl BuildNames {
+    /// The table for `list`. A name given twice keeps its first index, as
+    /// the C library gives it, and the name of an added property reads it.
+    fn new(list: Vec<String>) -> Self {
+        let mut by_name = HashMap::new();
+        for (index, name) in list.iter().enumerate() {
+            by_name
+                .entry(name.to_lowercase())
+                .or_insert(NameSlot::Index(index));
+        }
+        for (offset, (name, _)) in ADDED_PROPERTIES.iter().enumerate() {
+            by_name.insert(name.to_lowercase(), NameSlot::Added(offset));
+        }
+        BuildNames { list, by_name }
+    }
 }
 
 impl ReadableNames {
-    fn new(file_properties: &[DataFileProperty]) -> Self {
+    /// Every property the engine was built with a name for that the data
+    /// set has, in the order of the names. The C library gives each
+    /// property the index of its name.
+    fn new(file_properties: &[DataFileProperty], build: &Arc<BuildNames>) -> Self {
+        let count = build.list.len();
+        let mut at_index: Vec<Option<&DataFileProperty>> = vec![None; count];
+        for property in file_properties.iter().filter(|property| property.available) {
+            let Some(index) = property
+                .required_property_index
+                .and_then(|index| usize::try_from(index).ok())
+            else {
+                continue;
+            };
+            if let Some(slot) = at_index.get_mut(index).filter(|slot| slot.is_none()) {
+                *slot = Some(property);
+            }
+        }
         let mut names = Vec::new();
         let mut indexes = Vec::new();
         let mut value_types = Vec::new();
-        for property in file_properties.iter().filter(|property| property.available) {
-            if let Some(index) = property.required_property_index {
-                names.push(property.name.clone());
-                indexes.push(index);
-                value_types.push(metadata_value_type(&property.name, property.value_type));
-            }
+        let mut places = vec![None; count];
+        for (index, property) in at_index.into_iter().enumerate() {
+            let Some(property) = property else {
+                continue;
+            };
+            places[index] = Some(names.len());
+            names.push(property.name.clone());
+            indexes.push(index as c_int);
+            value_types.push(metadata_value_type(&property.name, property.value_type));
         }
         let lowercase_names: Vec<String> = names
             .iter()
@@ -852,16 +939,28 @@ impl ReadableNames {
             .chain(ADDED_PROPERTIES.iter().map(|(name, _)| *name))
             .map(str::to_lowercase)
             .collect();
-        ReadableNames {
-            by_name: lowercase_names
-                .iter()
-                .enumerate()
-                .map(|(position, name)| (name.clone(), position))
-                .collect(),
+        let mut readable = ReadableNames {
             names,
             lowercase_names,
             indexes,
             value_types,
+            build: Arc::clone(build),
+            places,
+            typed: Vec::new(),
+        };
+        readable.typed = TYPED_PROPERTY_NAMES
+            .iter()
+            .map(|name| readable.position(&name.to_lowercase()))
+            .collect();
+        readable
+    }
+
+    /// The place of the property named, found in the table of the names the
+    /// engine was built with, or `None` when this data set does not have it.
+    fn position(&self, name: &str) -> Option<usize> {
+        match *self.build.by_name.get(name)? {
+            NameSlot::Index(index) => self.places.get(index).copied().flatten(),
+            NameSlot::Added(offset) => Some(self.names.len() + offset),
         }
     }
 }
@@ -885,7 +984,11 @@ impl IpIntelligencePropertyReader for LookupReader {
     }
 
     fn position(&self, name: &str) -> Option<usize> {
-        self.loaded.readable.by_name.get(name).copied()
+        self.loaded.readable.position(name)
+    }
+
+    fn typed_positions(&self) -> Option<&[Option<usize>]> {
+        Some(&self.loaded.readable.typed)
     }
 
     fn read_property(
@@ -1252,7 +1355,11 @@ mod tests {
     fn assert_reader_covers_carried_properties(engine: &IpIntelligenceOnPremiseEngine) {
         let loaded = engine.loaded.load();
         let readable = &loaded.readable;
-        assert_eq!(readable.names, engine.populated_property_names());
+        let mut names = readable.names.clone();
+        let mut populated = engine.populated_property_names().to_vec();
+        names.sort();
+        populated.sort();
+        assert_eq!(names, populated);
         for (name, index) in readable.names.iter().zip(&readable.indexes) {
             assert_eq!(
                 loaded.manager.required_property_index(name),
@@ -1286,6 +1393,169 @@ mod tests {
             .map(|property| property.name)
             .collect();
         assert_eq!(engine.populated_property_names(), file_names);
+    }
+
+    /// A name given twice keeps the index of its first place, as the C
+    /// library gives it.
+    #[test]
+    fn a_name_given_twice_keeps_its_first_index() {
+        let names = BuildNames::new(vec![
+            "Asn".to_owned(),
+            "AsnName".to_owned(),
+            "ASN".to_owned(),
+        ]);
+        assert!(matches!(names.by_name.get("asn"), Some(NameSlot::Index(0))));
+    }
+
+    /// The reader lists the data file properties in the order the engine was
+    /// built with their names, then `Ip` and `IpV6`, because each name's
+    /// index is its place among those names.
+    #[test]
+    fn the_reader_lists_the_names_in_the_order_the_engine_was_built_with() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping the order of the names");
+            return;
+        };
+        let names = ["AsnName", "Asn"];
+        let engine = IpIntelligenceOnPremiseEngine::builder(&data_file)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            .properties(names.iter().copied())
+            .auto_update(false)
+            .build()
+            .expect("the IP Intelligence data file should build an engine");
+        let expected: Vec<String> = names
+            .iter()
+            .copied()
+            .chain(ADDED_PROPERTIES.iter().map(|(name, _)| *name))
+            .map(str::to_lowercase)
+            .collect();
+        assert_eq!(engine.loaded.load().readable.lowercase_names, expected);
+    }
+
+    /// An engine built with no names reads each property at the index of its
+    /// name among the data set's names at build, before and after a refresh.
+    #[test]
+    fn an_engine_with_no_names_reads_by_the_index_of_its_names_at_build() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping the indexes of no names");
+            return;
+        };
+        let engine = IpIntelligenceOnPremiseEngine::builder(&data_file)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            .auto_update(false)
+            .build()
+            .expect("the IP Intelligence data file should build an engine");
+        let names = engine.loaded.load().manager.available_property_names();
+        assert!(names.len() > 1, "{names:?}");
+        for refreshed in [false, true] {
+            if refreshed {
+                engine.refresh(None).expect("the data file loads again");
+            }
+            let loaded = engine.loaded.load();
+            let readable = &loaded.readable;
+            assert!(!readable.names.is_empty(), "refreshed {refreshed}");
+            for (name, index) in readable.names.iter().zip(&readable.indexes) {
+                let at = names
+                    .iter()
+                    .position(|given| given.eq_ignore_ascii_case(name))
+                    .expect(name);
+                assert_eq!(*index, at as c_int, "{name}, refreshed {refreshed}");
+            }
+        }
+    }
+
+    /// A reader over the current data set for a lookup of `ip`, built as
+    /// [`IpIntelligenceOnPremiseEngine::lookup`] builds it.
+    fn lookup_reader(engine: &IpIntelligenceOnPremiseEngine, ip: &str) -> LookupReader {
+        let loaded = engine.loaded.load_full();
+        let mut results = loaded
+            .manager
+            .create_results()
+            .expect("results are created");
+        let evidence = Evidence::builder().add("query.client-ip", ip).build();
+        let client_ip = results
+            .process_client_ip_evidence(&evidence)
+            .expect("the address is read");
+        LookupReader {
+            results: Mutex::new(results),
+            client_ip,
+            loaded,
+        }
+    }
+
+    /// The reader resolves each typed accessor's position once, being the
+    /// position a read by that property's name finds, before and after a
+    /// refresh, and a typed read gives what a read by name gives.
+    #[test]
+    fn each_typed_slot_reads_where_its_name_does() {
+        use fiftyone_ip_intelligence_shared::IpIntelligenceData;
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping the typed slots");
+            return;
+        };
+        // Built with the names in an order that is not the data file's, so
+        // the positions follow the names rather than the data set.
+        let engine = IpIntelligenceOnPremiseEngine::builder(&data_file)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            .properties(["AsnName", "Asn"].iter().copied())
+            .auto_update(false)
+            .build()
+            .expect("the IP Intelligence data file should build an engine");
+        for refreshed in [false, true] {
+            if refreshed {
+                engine.refresh(None).expect("the data file loads again");
+            }
+            let reader = lookup_reader(&engine, "1.1.1.1");
+            let typed = reader
+                .typed_positions()
+                .expect("the reader resolved the typed slots");
+            assert_eq!(typed.len(), TYPED_PROPERTY_NAMES.len());
+            let mut resolved = 0;
+            for (slot, name) in TYPED_PROPERTY_NAMES.iter().enumerate() {
+                let by_name = reader.position(&name.to_lowercase());
+                assert_eq!(typed[slot], by_name, "{name}, refreshed {refreshed}");
+                resolved += usize::from(by_name.is_some());
+            }
+            // The two names the engine was built with, and the two the
+            // reader adds, all read somewhere.
+            for name in ["Asn", "AsnName", "Ip", "IpV6"] {
+                let slot = TYPED_PROPERTY_NAMES
+                    .iter()
+                    .position(|typed| *typed == name)
+                    .expect(name);
+                assert!(typed[slot].is_some(), "{name}, refreshed {refreshed}");
+            }
+            assert_eq!(resolved, 4, "refreshed {refreshed}");
+        }
+
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(engine))
+            .build()
+            .expect("pipeline builds");
+        let mut data = pipeline.create_flow_data_with(
+            Evidence::builder()
+                .add("query.client-ip", "1.1.1.1")
+                .build(),
+        );
+        data.process().expect("processing succeeds");
+        let ip = data.get(IP_DATA_KEY).expect("ip data is present");
+        for (typed, by_name) in [
+            (format!("{:?}", ip.asn()), format!("{:?}", ip.string("Asn"))),
+            (
+                format!("{:?}", ip.asn_name()),
+                format!("{:?}", ip.string("AsnName")),
+            ),
+            (format!("{:?}", ip.ip()), format!("{:?}", ip.string("Ip"))),
+            (
+                format!("{:?}", ip.country()),
+                format!("{:?}", ip.string("Country")),
+            ),
+        ] {
+            assert_eq!(typed, by_name);
+        }
+        let asn = ip.asn();
+        let asn = asn.value().expect("Asn has a value");
+        assert!(asn.contains("AS13335"), "{asn}");
     }
 
     /// The handles to the data file the engine's current data set holds.

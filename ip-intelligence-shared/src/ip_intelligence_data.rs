@@ -30,8 +30,10 @@
 //! This file is produced by the 51Degrees PropertyGenerator tool from the
 //! common metadata. It defines the [`IpIntelligenceData`] trait, one accessor
 //! per documented property, and implements it for the hand-written
-//! [`IpIntelligenceDataBase`] by delegating to its by-name stores. Plain
-//! properties resolve to a single typed value; the weighted properties
+//! [`IpIntelligenceDataBase`] by delegating to its getters, each given the
+//! slot of the accessor's property in [`TYPED_PROPERTY_NAMES`] so that it
+//! reads by the position its reader resolved rather than by name. Plain
+//! properties resolve to a single typed value, and the weighted properties
 //! (the country-code distributions, `Mcc` and `StateGeoNameIdsGeographical`)
 //! resolve to an ordered list of weighted candidates.
 #![allow(rustdoc::bare_urls, rustdoc::invalid_html_tags)]
@@ -352,235 +354,235 @@ fn not_provided<T>(name: &str) -> AspectPropertyValue<T> {
 
 impl IpIntelligenceData for IpIntelligenceDataBase {
     fn accuracy_radius_max(&self) -> AspectPropertyValue<i32> {
-        self.integer("AccuracyRadiusMax")
+        self.integer_at(0, "AccuracyRadiusMax")
     }
 
     fn accuracy_radius_min(&self) -> AspectPropertyValue<i32> {
-        self.integer("AccuracyRadiusMin")
+        self.integer_at(1, "AccuracyRadiusMin")
     }
 
     fn areas(&self) -> AspectPropertyValue<String> {
-        self.string("Areas")
+        self.string_at(2, "Areas")
     }
 
     fn asn(&self) -> AspectPropertyValue<String> {
-        self.string("Asn")
+        self.string_at(3, "Asn")
     }
 
     fn asn_name(&self) -> AspectPropertyValue<String> {
-        self.string("AsnName")
+        self.string_at(4, "AsnName")
     }
 
     fn browser_diversity(&self) -> AspectPropertyValue<i32> {
-        self.integer("BrowserDiversity")
+        self.integer_at(5, "BrowserDiversity")
     }
 
     fn connection_type(&self) -> AspectPropertyValue<String> {
-        self.string("ConnectionType")
+        self.string_at(6, "ConnectionType")
     }
 
     fn continent_code2(&self) -> AspectPropertyValue<String> {
-        self.string("ContinentCode2")
+        self.string_at(7, "ContinentCode2")
     }
 
     fn continent_geo_name_id(&self) -> AspectPropertyValue<String> {
-        self.string("ContinentGeoNameId")
+        self.string_at(8, "ContinentGeoNameId")
     }
 
     fn continent_name(&self) -> AspectPropertyValue<String> {
-        self.string("ContinentName")
+        self.string_at(9, "ContinentName")
     }
 
     fn country(&self) -> AspectPropertyValue<String> {
-        self.string("Country")
+        self.string_at(10, "Country")
     }
 
     fn country_code(&self) -> AspectPropertyValue<String> {
-        self.string("CountryCode")
+        self.string_at(11, "CountryCode")
     }
 
     fn country_code3(&self) -> AspectPropertyValue<String> {
-        self.string("CountryCode3")
+        self.string_at(12, "CountryCode3")
     }
 
     fn country_codes_geographical(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
-        self.weighted_string("CountryCodesGeographical")
+        self.weighted_string_at(13, "CountryCodesGeographical")
     }
 
     fn country_codes_population(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
-        self.weighted_string("CountryCodesPopulation")
+        self.weighted_string_at(14, "CountryCodesPopulation")
     }
 
     fn country_geo_name_id(&self) -> AspectPropertyValue<String> {
-        self.string("CountryGeoNameId")
+        self.string_at(15, "CountryGeoNameId")
     }
 
     fn county(&self) -> AspectPropertyValue<String> {
-        self.string("County")
+        self.string_at(16, "County")
     }
 
     fn county_geo_name_id(&self) -> AspectPropertyValue<String> {
-        self.string("CountyGeoNameId")
+        self.string_at(17, "CountyGeoNameId")
     }
 
     fn currency_code(&self) -> AspectPropertyValue<String> {
-        self.string("CurrencyCode")
+        self.string_at(18, "CurrencyCode")
     }
 
     fn dial_code(&self) -> AspectPropertyValue<String> {
-        self.string("DialCode")
+        self.string_at(19, "DialCode")
     }
 
     fn hardware_diversity(&self) -> AspectPropertyValue<i32> {
-        self.integer("HardwareDiversity")
+        self.integer_at(20, "HardwareDiversity")
     }
 
     fn human_probability(&self) -> AspectPropertyValue<i32> {
-        self.integer("HumanProbability")
+        self.integer_at(21, "HumanProbability")
     }
 
     fn ip(&self) -> AspectPropertyValue<String> {
-        self.string("Ip")
+        self.string_at(22, "Ip")
     }
 
     fn ip_range_end(&self) -> AspectPropertyValue<String> {
-        self.string("IpRangeEnd")
+        self.string_at(23, "IpRangeEnd")
     }
 
     fn ip_range_start(&self) -> AspectPropertyValue<String> {
-        self.string("IpRangeStart")
+        self.string_at(24, "IpRangeStart")
     }
 
     fn ip_v6(&self) -> AspectPropertyValue<String> {
-        self.string("IpV6")
+        self.string_at(25, "IpV6")
     }
 
     fn is_broadband(&self) -> AspectPropertyValue<bool> {
-        self.boolean("IsBroadband")
+        self.boolean_at(26, "IsBroadband")
     }
 
     fn is_cellular(&self) -> AspectPropertyValue<bool> {
-        self.boolean("IsCellular")
+        self.boolean_at(27, "IsCellular")
     }
 
     fn is_eu(&self) -> AspectPropertyValue<bool> {
-        self.boolean("IsEu")
+        self.boolean_at(28, "IsEu")
     }
 
     fn is_hosted(&self) -> AspectPropertyValue<bool> {
-        self.boolean("IsHosted")
+        self.boolean_at(29, "IsHosted")
     }
 
     fn iso31662_lvl4(&self) -> AspectPropertyValue<String> {
-        self.string("Iso31662Lvl4")
+        self.string_at(30, "Iso31662Lvl4")
     }
 
     fn iso31662_lvl4_subdivision_only(&self) -> AspectPropertyValue<String> {
-        self.string("Iso31662Lvl4SubdivisionOnly")
+        self.string_at(31, "Iso31662Lvl4SubdivisionOnly")
     }
 
     fn iso31662_lvl8(&self) -> AspectPropertyValue<String> {
-        self.string("Iso31662Lvl8")
+        self.string_at(32, "Iso31662Lvl8")
     }
 
     fn iso31662_lvl8_subdivision_only(&self) -> AspectPropertyValue<String> {
-        self.string("Iso31662Lvl8SubdivisionOnly")
+        self.string_at(33, "Iso31662Lvl8SubdivisionOnly")
     }
 
     fn is_proxy(&self) -> AspectPropertyValue<bool> {
-        self.boolean("IsProxy")
+        self.boolean_at(34, "IsProxy")
     }
 
     fn is_public_router(&self) -> AspectPropertyValue<bool> {
-        self.boolean("IsPublicRouter")
+        self.boolean_at(35, "IsPublicRouter")
     }
 
     fn is_tor(&self) -> AspectPropertyValue<bool> {
-        self.boolean("IsTor")
+        self.boolean_at(36, "IsTor")
     }
 
     fn is_vpn(&self) -> AspectPropertyValue<bool> {
-        self.boolean("IsVPN")
+        self.boolean_at(37, "IsVPN")
     }
 
     fn language_code(&self) -> AspectPropertyValue<String> {
-        self.string("LanguageCode")
+        self.string_at(38, "LanguageCode")
     }
 
     fn latitude(&self) -> AspectPropertyValue<f32> {
-        self.float("Latitude")
+        self.float_at(39, "Latitude")
     }
 
     fn location_confidence(&self) -> AspectPropertyValue<String> {
-        self.string("LocationConfidence")
+        self.string_at(40, "LocationConfidence")
     }
 
     fn longitude(&self) -> AspectPropertyValue<f32> {
-        self.float("Longitude")
+        self.float_at(41, "Longitude")
     }
 
     fn mcc(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
-        self.weighted_string("Mcc")
+        self.weighted_string_at(42, "Mcc")
     }
 
     fn platform_diversity(&self) -> AspectPropertyValue<i32> {
-        self.integer("PlatformDiversity")
+        self.integer_at(43, "PlatformDiversity")
     }
 
     fn region(&self) -> AspectPropertyValue<String> {
-        self.string("Region")
+        self.string_at(44, "Region")
     }
 
     fn registered_country(&self) -> AspectPropertyValue<String> {
-        self.string("RegisteredCountry")
+        self.string_at(45, "RegisteredCountry")
     }
 
     fn registered_country_geo_name_id(&self) -> AspectPropertyValue<String> {
-        self.string("RegisteredCountryGeoNameId")
+        self.string_at(46, "RegisteredCountryGeoNameId")
     }
 
     fn registered_name(&self) -> AspectPropertyValue<String> {
-        self.string("RegisteredName")
+        self.string_at(47, "RegisteredName")
     }
 
     fn registered_owner(&self) -> AspectPropertyValue<String> {
-        self.string("RegisteredOwner")
+        self.string_at(48, "RegisteredOwner")
     }
 
     fn state(&self) -> AspectPropertyValue<String> {
-        self.string("State")
+        self.string_at(49, "State")
     }
 
     fn state_geo_name_id(&self) -> AspectPropertyValue<String> {
-        self.string("StateGeoNameId")
+        self.string_at(50, "StateGeoNameId")
     }
 
     fn state_geo_name_ids_geographical(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
-        self.weighted_string("StateGeoNameIdsGeographical")
+        self.weighted_string_at(51, "StateGeoNameIdsGeographical")
     }
 
     fn suburb(&self) -> AspectPropertyValue<String> {
-        self.string("Suburb")
+        self.string_at(52, "Suburb")
     }
 
     fn time_zone_iana(&self) -> AspectPropertyValue<String> {
-        self.string("TimeZoneIana")
+        self.string_at(53, "TimeZoneIana")
     }
 
     fn time_zone_offset(&self) -> AspectPropertyValue<i32> {
-        self.integer("TimeZoneOffset")
+        self.integer_at(54, "TimeZoneOffset")
     }
 
     fn town(&self) -> AspectPropertyValue<String> {
-        self.string("Town")
+        self.string_at(55, "Town")
     }
 
     fn town_geo_name_id(&self) -> AspectPropertyValue<String> {
-        self.string("TownGeoNameId")
+        self.string_at(56, "TownGeoNameId")
     }
 
     fn zip_code(&self) -> AspectPropertyValue<String> {
-        self.string("ZipCode")
+        self.string_at(57, "ZipCode")
     }
 }
 
@@ -648,4 +650,69 @@ pub const GENERATED_PROPERTY_TYPES: &[(&str, PropertyValueType)] = &[
     ("Town", PropertyValueType::String),
     ("TownGeoNameId", PropertyValueType::String),
     ("ZipCode", PropertyValueType::String),
+];
+
+/// The property each [`IpIntelligenceData`] accessor reads, at the slot the
+/// accessor passes to its getter, in the order the accessors are declared. A
+/// reader resolves the position of each once when its data set loads, so a
+/// typed read looks no name up.
+pub const TYPED_PROPERTY_NAMES: &[&str] = &[
+    "AccuracyRadiusMax",
+    "AccuracyRadiusMin",
+    "Areas",
+    "Asn",
+    "AsnName",
+    "BrowserDiversity",
+    "ConnectionType",
+    "ContinentCode2",
+    "ContinentGeoNameId",
+    "ContinentName",
+    "Country",
+    "CountryCode",
+    "CountryCode3",
+    "CountryCodesGeographical",
+    "CountryCodesPopulation",
+    "CountryGeoNameId",
+    "County",
+    "CountyGeoNameId",
+    "CurrencyCode",
+    "DialCode",
+    "HardwareDiversity",
+    "HumanProbability",
+    "Ip",
+    "IpRangeEnd",
+    "IpRangeStart",
+    "IpV6",
+    "IsBroadband",
+    "IsCellular",
+    "IsEu",
+    "IsHosted",
+    "Iso31662Lvl4",
+    "Iso31662Lvl4SubdivisionOnly",
+    "Iso31662Lvl8",
+    "Iso31662Lvl8SubdivisionOnly",
+    "IsProxy",
+    "IsPublicRouter",
+    "IsTor",
+    "IsVPN",
+    "LanguageCode",
+    "Latitude",
+    "LocationConfidence",
+    "Longitude",
+    "Mcc",
+    "PlatformDiversity",
+    "Region",
+    "RegisteredCountry",
+    "RegisteredCountryGeoNameId",
+    "RegisteredName",
+    "RegisteredOwner",
+    "State",
+    "StateGeoNameId",
+    "StateGeoNameIdsGeographical",
+    "Suburb",
+    "TimeZoneIana",
+    "TimeZoneOffset",
+    "Town",
+    "TownGeoNameId",
+    "ZipCode",
 ];

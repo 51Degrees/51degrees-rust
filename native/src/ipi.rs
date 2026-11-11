@@ -55,19 +55,18 @@
 //! free wait for one. The native library ends the process when a read of a
 //! property's values fails.
 
-use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::net::{IpAddr, Ipv4Addr};
 use std::ops::Range;
 use std::os::raw::{c_char, c_int, c_void};
 use std::path::Path;
 use std::ptr::NonNull;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use fiftyone_ip_intelligence_sys as sys;
 use fiftyone_pipeline_core::{constants, round_angle, Error, Evidence, PropertyValueType, Result};
 
-use crate::buffer::with_value_string;
+use crate::buffer::{with_c_str, with_value_string};
 use crate::evidence::parse_client_ip;
 use crate::held_memory::HeldMemory;
 use crate::metadata::{metadata_read_failed, read_metadata_string, take_value_string};
@@ -160,9 +159,13 @@ pub struct Manager {
     /// The evidence keys the data file defines, in the order the native lookup
     /// tries them, read once when the file is opened.
     evidence_keys: Vec<EvidenceKey>,
-    /// The required property name to index map, built on first use so a read
-    /// by name costs one hash lookup rather than a native name search.
-    property_index: OnceLock<HashMap<String, c_int>>,
+    /// The data set the manager was opened with, held until [`Drop`], so a
+    /// name lookup reads it without taking a reference and threads sharing
+    /// the manager write no shared memory to look a name up.
+    data_set: NonNull<sys::DataSetIpi>,
+    /// The number of required properties, which a read by index must stay
+    /// below.
+    required_count: u32,
     /// The data a load from memory reads in place. Fields drop after
     /// [`Drop::drop`] has freed the data set, so the data outlives it.
     _memory: Option<HeldMemory>,
@@ -181,7 +184,8 @@ struct EvidenceKey {
 
 // Safety: the native resource manager is internally reference counted and lock
 // protected per `src/common/resource.h`, so a shared `&Manager` is sound to use
-// from several threads. Therefore the manager is both `Send` and `Sync`.
+// from several threads. The data set held for name lookups is only read.
+// Therefore the manager is both `Send` and `Sync`.
 unsafe impl Send for Manager {}
 unsafe impl Sync for Manager {}
 
@@ -343,10 +347,18 @@ impl Manager {
         let manager = NonNull::new(manager_ptr).expect("init produced a non-null manager");
         // Safety: the manager was initialized above.
         let evidence_keys = unsafe { read_evidence_keys(manager.as_ptr()) };
+        // Safety: as above. The reference is released in `Drop`, before the
+        // manager is freed.
+        let data_set = unsafe { sys::fiftyoneDegreesDataSetIpiGet(manager.as_ptr()) };
+        let data_set = NonNull::new(data_set).expect("an initialized manager has a data set");
+        // Safety: as above.
+        let required_count =
+            unsafe { sys::fiftyoneDegreesShimIpiGetRequiredPropertyCount(manager.as_ptr()) };
         Ok(Arc::new(Manager {
             manager,
             evidence_keys,
-            property_index: OnceLock::new(),
+            data_set,
+            required_count,
             _memory: memory,
         }))
     }
@@ -468,34 +480,29 @@ impl Manager {
         names
     }
 
-    /// Resolve a property name to its required property index, building the
-    /// name to index map on first use.
+    /// The required property index of the property named, as the C library
+    /// finds it among the names the data set was opened with, ignoring case.
     ///
     /// Returns [`None`] when the property is not one of the required
-    /// properties. The lookup is case sensitive, as the native data set is, so
-    /// pass the property's spelling from the data file. An index belongs to the
-    /// data set it came from, so look it up again after a reload.
+    /// properties, or the name holds a nul byte. A lookup writes no shared
+    /// memory, so threads sharing the manager do not contend. An index belongs
+    /// to the data set it came from, so look it up again after a reload.
     pub fn required_property_index(&self, property_name: &str) -> Option<c_int> {
-        self.property_index_map().get(property_name).copied()
-    }
-
-    /// The property name to required property index map, built on first use.
-    /// The first caller builds it and racing callers wait for it. Once it is
-    /// set, a lookup takes no lock and writes no shared memory.
-    fn property_index_map(&self) -> &HashMap<String, c_int> {
-        self.property_index.get_or_init(|| {
-            self.available_property_names()
-                .into_iter()
-                .enumerate()
-                .map(|(index, name)| (name, index as c_int))
-                .collect()
-        })
+        // Safety: the data set is held until `Drop`, and the name is null
+        // terminated for the length of the call.
+        let index = with_c_str(property_name, |name| unsafe {
+            sys::fiftyoneDegreesShimIpiDataSetGetRequiredPropertyIndexFromName(
+                self.data_set.as_ptr(),
+                name,
+            )
+        })?;
+        (index >= 0).then_some(index)
     }
 
     /// Refuse an index that is not one of this data set's required property
     /// indexes.
     fn check_property_index(&self, index: c_int) -> Result<()> {
-        let count = self.property_index_map().len();
+        let count = self.required_count as usize;
         if index < 0 || index as usize >= count {
             return Err(Error::Native {
                 status: String::from("InvalidInput"),
@@ -927,7 +934,10 @@ impl Drop for Manager {
     fn drop(&mut self) {
         // Safety: the manager was initialized by a successful `open` and every
         // referencing `Results` held an `Arc`, so they have all been dropped.
+        // The data set reference held for name lookups is released first, so
+        // freeing the manager then frees the data set.
         unsafe {
+            sys::fiftyoneDegreesDataSetIpiRelease(self.data_set.as_ptr());
             sys::fiftyoneDegreesResourceManagerFree(self.manager.as_ptr());
             drop(Box::from_raw(self.manager.as_ptr()));
         }
@@ -1915,6 +1925,38 @@ mod tests {
             );
         }
         assert!(manager.required_property_index("NoSuchProperty").is_none());
+    }
+
+    /// The C library finds a property name ignoring case, so a name in
+    /// another case than the data file's gives the property's index, and
+    /// every read by name gives the property's answer.
+    #[test]
+    fn a_name_in_another_case_than_the_data_files_is_read() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping a name in another case");
+            return;
+        };
+        let manager = open_found(&data_file, PerformanceProfile::Default);
+        let index = manager
+            .required_property_index("Asn")
+            .expect("the data file has Asn");
+        for name in ["asn", "ASN", "aSN"] {
+            assert_eq!(manager.required_property_index(name), Some(index), "{name}");
+        }
+        let mut results = manager.create_results().expect("results should allocate");
+        results
+            .process_ip(CLOUDFLARE)
+            .expect("looking up a public IP should not raise an exception");
+        let weighted = results.values_weighted("Asn").expect("Asn is read");
+        assert!(!weighted.is_empty(), "{CLOUDFLARE} has an Asn");
+        assert_eq!(
+            results.values_weighted("asn").expect("asn is read"),
+            weighted
+        );
+        assert_eq!(
+            results.read_property("ASN").expect("ASN is read"),
+            results.read_property("Asn").expect("Asn is read")
+        );
     }
 
     /// The C library's type names of the collections `manager`'s data set

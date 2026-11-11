@@ -84,7 +84,7 @@ pub use data::{
     generated_property_names, DeviceDataBase, DevicePropertyReader, DEVICE_DATA_KEY,
     DEVICE_ELEMENT_DATA_KEY,
 };
-pub use device_data::{DeviceData, GENERATED_PROPERTY_TYPES};
+pub use device_data::{DeviceData, GENERATED_PROPERTY_TYPES, TYPED_PROPERTY_NAMES};
 pub use multi_device::{
     MultiDeviceData, ProfileReader, HARDWARE_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY,
     PROFILES_PROPERTY_NAME,

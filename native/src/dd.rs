@@ -47,18 +47,17 @@ mod profiles;
 
 pub use profiles::DataFileProfile;
 
-use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::ops::Range;
 use std::os::raw::{c_char, c_int, c_long, c_void};
 use std::path::Path;
 use std::ptr::NonNull;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use fiftyone_device_detection_sys as sys;
 use fiftyone_pipeline_core::{Error, PropertyValueType, Result};
 
-use crate::buffer::with_value_string;
+use crate::buffer::{with_c_str, with_value_string};
 use crate::evidence::with_native_evidence;
 use crate::held_memory::HeldMemory;
 use crate::metadata::{metadata_read_failed, read_metadata_string, take_value_string};
@@ -283,10 +282,13 @@ pub struct Manager {
     /// native handle bookkeeping. Boxed and leaked into a raw pointer, freed in
     /// [`Drop`].
     manager: NonNull<sys::ResourceManager>,
-    /// Property name to required-property-index map, built on the first
-    /// lookup. Every later lookup reads it with no lock, so concurrent readers
-    /// never contend.
-    property_index: OnceLock<HashMap<String, c_int>>,
+    /// The data set the manager was opened with, held until [`Drop`], so a
+    /// name lookup reads it without taking a reference and threads sharing
+    /// the manager write no shared memory to look a name up.
+    data_set: NonNull<sys::DataSetHash>,
+    /// The number of required properties, which a read by index must stay
+    /// below.
+    required_count: u32,
     /// The data a load from memory reads in place. Fields drop after
     /// [`Drop::drop`] has freed the data set, so the data outlives it.
     _memory: Option<HeldMemory>,
@@ -294,9 +296,8 @@ pub struct Manager {
 
 // Safety: the native resource manager is internally reference counted and
 // lock protected per `src/common/resource.h`, so concurrent access from several
-// threads through a shared `&Manager` is sound. The cached property index is
-// set once through a `OnceLock` and only read after that. Therefore the
-// manager is both `Send` and `Sync`.
+// threads through a shared `&Manager` is sound. The data set held for name
+// lookups is only read. Therefore the manager is both `Send` and `Sync`.
 unsafe impl Send for Manager {}
 unsafe impl Sync for Manager {}
 
@@ -500,9 +501,17 @@ impl Manager {
 
         // Safety: a successful init leaves a non-null, initialized manager.
         let manager = NonNull::new(manager_ptr).expect("init produced a non-null manager");
+        // Safety: the manager was initialized above. The reference is
+        // released in `Drop`, before the manager is freed.
+        let data_set = unsafe { sys::fiftyoneDegreesDataSetHashGet(manager.as_ptr()) };
+        let data_set = NonNull::new(data_set).expect("an initialized manager has a data set");
+        // Safety: as above.
+        let required_count =
+            unsafe { sys::fiftyoneDegreesShimHashGetRequiredPropertyCount(manager.as_ptr()) };
         Ok(Arc::new(Manager {
             manager,
-            property_index: OnceLock::new(),
+            data_set,
+            required_count,
             _memory: memory,
         }))
     }
@@ -651,31 +660,22 @@ impl Manager {
         }
     }
 
-    /// Resolve a property name to its required-property-index, computing and
-    /// caching the full name to index map on first use.
+    /// The required property index of the property named, as the C library
+    /// finds it among the names the data set was opened with, ignoring case.
     ///
-    /// Returns [`None`] when the property is not one of the required properties.
-    /// The lookup is case sensitive, matching the native data set, so callers
-    /// should pass the canonical property spelling.
+    /// Returns [`None`] when the property is not one of the required
+    /// properties, or the name holds a nul byte. A lookup writes no shared
+    /// memory, so threads sharing the manager do not contend.
     pub fn required_property_index(&self, property_name: &str) -> Option<c_int> {
-        self.property_index_map().get(property_name).copied()
-    }
-
-    /// The property name to required-property-index map, built on first use.
-    /// The first caller builds it and racing callers wait for it. Once it is
-    /// set, a lookup takes no lock and writes no shared memory.
-    fn property_index_map(&self) -> &HashMap<String, c_int> {
-        self.property_index
-            .get_or_init(|| self.build_property_index())
-    }
-
-    /// Build the property name to index map by enumerating the data set.
-    fn build_property_index(&self) -> HashMap<String, c_int> {
-        self.property_names()
-            .into_iter()
-            .enumerate()
-            .map(|(index, name)| (name, index as c_int))
-            .collect()
+        // Safety: the data set is held until `Drop`, and the name is null
+        // terminated for the length of the call.
+        let index = with_c_str(property_name, |name| unsafe {
+            sys::fiftyoneDegreesShimHashDataSetGetRequiredPropertyIndexFromName(
+                self.data_set.as_ptr(),
+                name,
+            )
+        })?;
+        (index >= 0).then_some(index)
     }
 
     /// Create a per-thread results structure for running detections.
@@ -1085,9 +1085,11 @@ impl Drop for Manager {
         // Safety: the manager was initialized by a successful `open`, and every
         // `Results` referencing it held an `Arc` to this `Manager`, so all of
         // them have been dropped (and their data set references released) before
-        // this runs. Freeing the manager then frees the data set, and the box is
+        // this runs. The data set reference held for name lookups is released
+        // next, so freeing the manager then frees the data set, and the box is
         // reclaimed afterwards.
         unsafe {
+            sys::fiftyoneDegreesDataSetHashRelease(self.data_set.as_ptr());
             sys::fiftyoneDegreesResourceManagerFree(self.manager.as_ptr());
             drop(Box::from_raw(self.manager.as_ptr()));
         }
@@ -1251,8 +1253,8 @@ impl Results {
     /// when a value does not fit. Returns [`None`] when the property is not a
     /// required property or has no value in the results.
     pub fn value_as_string(&self, property_name: &str, separator: &str) -> Result<Option<String>> {
-        // Resolve once through the cached index. An unknown property has no
-        // value, matching the engine's own behavior.
+        // An unknown property has no value, matching the engine's own
+        // behavior.
         if self
             .manager
             .required_property_index(property_name)
@@ -1310,7 +1312,7 @@ impl Results {
         index: c_int,
         separator: &CStr,
     ) -> Result<Option<String>> {
-        let count = self.manager.property_index_map().len();
+        let count = self.manager.required_count as usize;
         if index < 0 || index as usize >= count {
             return Err(Error::Native {
                 status: String::from("InvalidInput"),
@@ -1356,7 +1358,7 @@ impl Results {
     /// a reload. Returns an error for an index outside this data set's
     /// required properties, or when the values cannot be read.
     pub fn values_by_index(&self, index: c_int) -> Result<Option<Vec<String>>> {
-        let count = self.manager.property_index_map().len();
+        let count = self.manager.required_count as usize;
         if index < 0 || index as usize >= count {
             return Err(Error::Native {
                 status: String::from("InvalidInput"),
@@ -2631,6 +2633,30 @@ mod tests {
         let value = results
             .value_as_string_by_index(index, c"|")
             .expect("IsMobile is read");
+        assert_eq!(value.as_deref(), Some("False"));
+    }
+
+    /// The C library finds a property name ignoring case, so a name in
+    /// another case than the data file's gives the property's index, and the
+    /// reads by name give the property's answers.
+    #[test]
+    fn a_name_in_another_case_than_the_data_files_is_read() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping a name in another case");
+            return;
+        };
+        let manager = Manager::open(&path, PerformanceProfile::Default).expect("data file loads");
+        let index = manager
+            .required_property_index("IsMobile")
+            .expect("IsMobile is in every Hash data file");
+        for name in ["ismobile", "ISMOBILE", "isMobile"] {
+            assert_eq!(manager.required_property_index(name), Some(index), "{name}");
+        }
+        let results = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
+        assert!(results.has_values("ismobile").expect("has values is read"));
+        let value = results
+            .value_as_string("ISMOBILE", "|")
+            .expect("IsMobile is read by name");
         assert_eq!(value.as_deref(), Some("False"));
     }
 

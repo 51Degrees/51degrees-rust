@@ -1255,6 +1255,19 @@ extern "C" {
         property_name: *const c_char,
     ) -> c_int;
 
+    /// Returns the required property index for `property_name` in
+    /// `data_set`, found ignoring case, or -1 when the property is not one of
+    /// the required properties. It takes no reference on the data set and
+    /// writes no shared memory.
+    ///
+    /// # Safety
+    /// `data_set` must come from [`fiftyoneDegreesDataSetIpiGet`] and not yet
+    /// be released. `property_name` must be a valid null terminated string.
+    pub fn fiftyoneDegreesShimIpiDataSetGetRequiredPropertyIndexFromName(
+        data_set: *mut DataSetIpi,
+        property_name: *const c_char,
+    ) -> c_int;
+
     /// Writes the data set's name (its tier, for example `Lite`, `Enterprise` or
     /// `TAC`) into `buffer` as a null terminated string and returns the number
     /// of characters written, excluding the terminator. Returns zero when no

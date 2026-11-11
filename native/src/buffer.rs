@@ -36,6 +36,28 @@
 use std::cell::RefCell;
 use std::os::raw::c_char;
 
+/// The longest name, in bytes, that [`with_c_str`] copies to the stack. A
+/// longer one is copied to the heap.
+const STACK_NAME_LENGTH: usize = 128;
+
+/// Call `f` with `text` as a null terminated string, copied to the stack when
+/// it is short, so a lookup by name allocates nothing. Returns [`None`] when
+/// `text` holds a nul byte, as no native name can.
+pub(crate) fn with_c_str<R>(text: &str, f: impl FnOnce(*const c_char) -> R) -> Option<R> {
+    let bytes = text.as_bytes();
+    if bytes.contains(&0) {
+        return None;
+    }
+    if bytes.len() < STACK_NAME_LENGTH {
+        let mut name = [0u8; STACK_NAME_LENGTH];
+        name[..bytes.len()].copy_from_slice(bytes);
+        Some(f(name.as_ptr() as *const c_char))
+    } else {
+        let name = std::ffi::CString::new(bytes).ok()?;
+        Some(f(name.as_ptr()))
+    }
+}
+
 /// The starting capacity of the value buffer. Most property values are short, so
 /// this is enough to satisfy the common case in a single native call.
 const INITIAL_CAPACITY: usize = 256;
@@ -111,4 +133,40 @@ pub(crate) unsafe fn with_value_string<R>(
             buffer.reserve(additional);
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CStr;
+
+    /// A name reaches C whole and null terminated, whether it is copied to
+    /// the stack or, when it is too long for that, to the heap.
+    #[test]
+    fn a_name_reaches_c_whole_at_every_length() {
+        let names = [
+            String::new(),
+            String::from("IsMobile"),
+            "a".repeat(STACK_NAME_LENGTH - 1),
+            "b".repeat(STACK_NAME_LENGTH),
+            "c".repeat(STACK_NAME_LENGTH * 8),
+        ];
+        for name in &names {
+            // Safety: `with_c_str` passes a null terminated string.
+            let read = with_c_str(name, |c_name| {
+                unsafe { CStr::from_ptr(c_name) }
+                    .to_str()
+                    .map(str::to_owned)
+            });
+            assert_eq!(read, Some(Ok(name.clone())), "{} bytes", name.len());
+        }
+    }
+
+    /// A name holding a nul byte is refused, as C would read only the part
+    /// before it.
+    #[test]
+    fn a_name_holding_a_nul_byte_is_refused() {
+        assert_eq!(with_c_str("Is\0Mobile", |_| ()), None);
+        assert_eq!(with_c_str(&"d\0".repeat(STACK_NAME_LENGTH), |_| ()), None);
+    }
 }

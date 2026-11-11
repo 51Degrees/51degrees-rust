@@ -39,7 +39,7 @@ use arc_swap::ArcSwap;
 
 use fiftyone_device_detection_shared::{
     declared_property_value_type, DeviceDataBase, DevicePropertyReader, DEVICE_DATA_KEY,
-    DEVICE_ELEMENT_DATA_KEY,
+    DEVICE_ELEMENT_DATA_KEY, TYPED_PROPERTY_NAMES,
 };
 use fiftyone_native::dd::{
     hardware_profile_script, DataFileComponent, DataFileProperty, DataFileValue, HashOptions,
@@ -289,9 +289,16 @@ pub struct DeviceDetectionOnPremiseEngine {
     /// refresh reloads with the same profile.
     profile: PerformanceProfile,
 
-    /// The properties the engine was restricted to, or empty for all
-    /// properties. Used when reloading the data set on refresh.
-    requested_properties: Vec<String>,
+    /// The property names the engine was built with, each with its index.
+    /// Every refresh opens the data file with these names, so each keeps its
+    /// index. Empty when the engine was built with no name, which opens the
+    /// data file with every property.
+    requested: Vec<String>,
+
+    /// The names a read looks a property up in. Built once at build from
+    /// `requested`, or rebuilt from each data set when the engine was built
+    /// with no name, because then the indexes are the data set's own order.
+    names: Arc<BuildNames>,
 
     /// The property metadata and tier of the loaded data set, for
     /// [`FlowElement::properties`], [`AspectEngine::aspect_properties`] and
@@ -387,6 +394,7 @@ fn describe(
     copy: Option<OperationalCopy>,
     manager: Arc<Manager>,
     tier_override: &Option<String>,
+    names: &Arc<BuildNames>,
 ) -> Result<(LoadedDataSet, LentMetadata)> {
     // An explicit builder override wins, then the tier read from the native
     // data file header (Lite, Enterprise, TAC and so on), then the safe Lite
@@ -401,7 +409,7 @@ fn describe(
         fiftyone_properties,
         components,
     } = build_metadata(&file_properties, &manager.data_file_components()?, tier);
-    let readable = Arc::new(ReadableProperties::new(&file_properties));
+    let readable = Arc::new(ReadableProperties::new(&file_properties, names));
     let file_property_places = file_properties
         .iter()
         .map(|property| {
@@ -448,13 +456,16 @@ impl DeviceDetectionOnPremiseEngine {
         copy: Option<OperationalCopy>,
         manager: Arc<Manager>,
         profile: PerformanceProfile,
-        requested_properties: Vec<String>,
+        requested: Vec<String>,
         data_file_config: DataFileConfiguration,
         data_source_tier: Option<String>,
         options: HashOptions,
     ) -> Result<Self> {
         let evidence_key_filter = HashEvidenceKeyFilter::new(manager.evidence_keys());
-        let (loaded, metadata) = describe(copy, manager, &data_source_tier)?;
+        // The names the manager was opened with, which every refresh opens it
+        // with, so each name keeps its index.
+        let names = Arc::new(BuildNames::new(manager.property_names()));
+        let (loaded, metadata) = describe(copy, manager, &data_source_tier, &names)?;
 
         let data_file = Arc::new(AspectEngineDataFile::new(data_file_config));
         record_dates(&loaded.manager, &data_file);
@@ -462,7 +473,8 @@ impl DeviceDetectionOnPremiseEngine {
         Ok(DeviceDetectionOnPremiseEngine {
             loaded: ArcSwap::from_pointee(loaded),
             profile,
-            requested_properties,
+            requested,
+            names,
             metadata: Retained::new(metadata),
             tier_override: data_source_tier,
             refresh_lock: Mutex::new(()),
@@ -741,7 +753,7 @@ impl DeviceDetectionOnPremiseEngine {
         let manager = open_manager(
             copy.as_ref().map_or(path, OperationalCopy::path),
             self.profile,
-            &self.requested_properties,
+            &self.requested,
             &self.options,
         )?;
         self.swap_in(copy, manager)
@@ -759,10 +771,26 @@ impl DeviceDetectionOnPremiseEngine {
         let manager = Manager::open_from_memory(
             data.to_vec(),
             self.profile,
-            requested(&self.requested_properties).as_deref(),
+            requested(&self.requested).as_deref(),
             &self.options,
         )?;
         self.swap_in(None, manager)
+    }
+
+    /// The names a read of `manager`'s data set looks a property up in.
+    ///
+    /// An engine built with names keeps the table it was built with, because
+    /// a name's index is its place in those names whatever the new data file
+    /// holds. An engine built with no name takes the new data set's names,
+    /// because its indexes are that data set's own order, which a new data
+    /// file can change. The C library is changing to keep the first load's
+    /// names, and the table here becomes the built one for both.
+    fn names_for(&self, manager: &Arc<Manager>) -> Arc<BuildNames> {
+        if self.requested.is_empty() {
+            Arc::new(BuildNames::new(manager.property_names()))
+        } else {
+            Arc::clone(&self.names)
+        }
     }
 
     /// Replace the live data set with `manager`'s, which reads `copy` when
@@ -773,7 +801,8 @@ impl DeviceDetectionOnPremiseEngine {
     /// failure changes nothing. The caller holds the refresh lock.
     fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
         let evidence_keys = manager.evidence_keys();
-        let (loaded, metadata) = describe(copy, manager, &self.tier_override)?;
+        let names = self.names_for(&manager);
+        let (loaded, metadata) = describe(copy, manager, &self.tier_override, &names)?;
         if let Some(file) = self.data_files.first() {
             record_dates(&loaded.manager, file);
         }
@@ -946,53 +975,129 @@ impl ReadableProperty {
     }
 }
 
-/// The properties a detection can read.
+/// The property names the engine was built with, each with its index, which
+/// is its place in the list, and the match metrics. Built once when the
+/// engine is built and never from a data set, so a name keeps its index
+/// across every refresh.
+struct BuildNames {
+    /// The names, in the order the engine was built with them.
+    list: Vec<String>,
+    /// Where each lowercase name is read.
+    by_name: HashMap<String, NameSlot>,
+}
+
+/// Where a property named in a read is read.
+#[derive(Clone, Copy)]
+enum NameSlot {
+    /// The property at this index among the names the engine was built with.
+    Index(usize),
+    /// The match metric at this place in [`Metric::READ_ORDER`].
+    Metric(usize),
+}
+
+impl BuildNames {
+    /// The table for `list`. A name given twice keeps its first index, as
+    /// the C library gives it, and a match metric's name reads the metric.
+    fn new(list: Vec<String>) -> Self {
+        let mut by_name = HashMap::new();
+        for (index, name) in list.iter().enumerate() {
+            by_name
+                .entry(name.to_lowercase())
+                .or_insert(NameSlot::Index(index));
+        }
+        for (offset, metric) in Metric::READ_ORDER.iter().enumerate() {
+            by_name.insert(metric.name().to_lowercase(), NameSlot::Metric(offset));
+        }
+        BuildNames { list, by_name }
+    }
+}
+
+/// The properties a detection can read from one data set.
 struct ReadableProperties {
-    /// Each property a detection can read.
+    /// Each property a detection can read, in the order of the names the
+    /// engine was built with, then the match metrics.
     properties: Vec<ReadableProperty>,
     /// Each property's name in lowercase, in the same order.
     lowercase_names: Vec<String>,
-    /// The position of each property in `properties`, by lowercase name.
-    by_name: HashMap<String, usize>,
+    /// The names the engine was built with.
+    names: Arc<BuildNames>,
+    /// The place in `properties` of the property at each index, or `None`
+    /// when this data set does not have it.
+    places: Vec<Option<usize>>,
+    /// The place in `properties` of the first match metric.
+    first_metric: usize,
+    /// The place in `properties` of the property each typed accessor reads,
+    /// by the accessor's slot in [`TYPED_PROPERTY_NAMES`], resolved once
+    /// when the data set loads.
+    typed: Vec<Option<usize>>,
 }
 
 impl ReadableProperties {
-    /// Every data file property the data set was opened with and results
-    /// hold a value for, except any with a match metric's name, then the
-    /// match metrics, as the .NET engine lists them.
-    fn new(file_properties: &[DataFileProperty]) -> Self {
-        let metrics = Metric::READ_ORDER.into_iter().map(ReadableProperty::Metric);
-        let files = file_properties
-            .iter()
-            .filter(|property| property.available)
-            .filter(|property| {
-                !METRIC_PROPERTIES
-                    .iter()
-                    .any(|metric| metric.name.eq_ignore_ascii_case(&property.name))
-            })
-            .filter_map(|property| {
-                property
-                    .required_property_index
-                    .map(|index| ReadableProperty::File {
-                        name: property.name.clone(),
-                        value_type: property.value_type,
-                        index,
-                    })
+    /// Every property the engine was built with a name for that the data
+    /// set has and results hold a value for, except any with a match
+    /// metric's name, in the order of the names, then the match metrics, as
+    /// the .NET engine lists them. The C library gives each property the
+    /// index of its name.
+    fn new(file_properties: &[DataFileProperty], names: &Arc<BuildNames>) -> Self {
+        let count = names.list.len();
+        let mut at_index: Vec<Option<&DataFileProperty>> = vec![None; count];
+        for property in file_properties.iter().filter(|property| property.available) {
+            let Some(index) = property
+                .required_property_index
+                .and_then(|index| usize::try_from(index).ok())
+            else {
+                continue;
+            };
+            if let Some(slot) = at_index.get_mut(index).filter(|slot| slot.is_none()) {
+                *slot = Some(property);
+            }
+        }
+        let mut properties = Vec::new();
+        let mut places = vec![None; count];
+        for (index, property) in at_index.into_iter().enumerate() {
+            let Some(property) = property else {
+                continue;
+            };
+            if METRIC_PROPERTIES
+                .iter()
+                .any(|metric| metric.name.eq_ignore_ascii_case(&property.name))
+            {
+                continue;
+            }
+            places[index] = Some(properties.len());
+            properties.push(ReadableProperty::File {
+                name: property.name.clone(),
+                value_type: property.value_type,
+                index: index as c_int,
             });
-        let properties: Vec<ReadableProperty> = files.chain(metrics).collect();
-        let lowercase_names: Vec<String> = properties
+        }
+        let first_metric = properties.len();
+        properties.extend(Metric::READ_ORDER.into_iter().map(ReadableProperty::Metric));
+        let lowercase_names = properties
             .iter()
             .map(|property| property.name().to_lowercase())
             .collect();
-        let by_name = lowercase_names
-            .iter()
-            .enumerate()
-            .map(|(position, name)| (name.clone(), position))
-            .collect();
-        ReadableProperties {
+        let mut readable = ReadableProperties {
             properties,
             lowercase_names,
-            by_name,
+            names: Arc::clone(names),
+            places,
+            first_metric,
+            typed: Vec::new(),
+        };
+        readable.typed = TYPED_PROPERTY_NAMES
+            .iter()
+            .map(|name| readable.position(&name.to_lowercase()))
+            .collect();
+        readable
+    }
+
+    /// The place of the property named, found in the table of the names the
+    /// engine was built with, or `None` when this data set does not have it.
+    fn position(&self, name: &str) -> Option<usize> {
+        match *self.names.by_name.get(name)? {
+            NameSlot::Index(index) => self.places.get(index).copied().flatten(),
+            NameSlot::Metric(offset) => Some(self.first_metric + offset),
         }
     }
 }
@@ -1025,7 +1130,11 @@ impl DevicePropertyReader for DetectionReader {
     }
 
     fn position(&self, name: &str) -> Option<usize> {
-        self.loaded.readable.by_name.get(name).copied()
+        self.loaded.readable.position(name)
+    }
+
+    fn typed_positions(&self) -> Option<&[Option<usize>]> {
+        Some(&self.loaded.readable.typed)
     }
 
     fn read_property(&self, position: usize) -> ReadOutcome {
@@ -1642,11 +1751,11 @@ mod tests {
         let read: Vec<&str> = Metric::READ_ORDER.iter().map(|m| m.name()).collect();
         let listed: Vec<&str> = METRIC_PROPERTIES.iter().map(|m| m.name).collect();
         assert_eq!(read, listed);
-        let readable = ReadableProperties::new(&[]);
+        let readable = ReadableProperties::new(&[], &Arc::new(BuildNames::new(Vec::new())));
         let lowercase: Vec<String> = listed.iter().map(|name| name.to_lowercase()).collect();
         assert_eq!(readable.lowercase_names, lowercase);
         for (position, name) in lowercase.iter().enumerate() {
-            assert_eq!(readable.by_name.get(name), Some(&position), "{name}");
+            assert_eq!(readable.position(name), Some(position), "{name}");
         }
     }
 
@@ -1711,6 +1820,182 @@ mod tests {
     /// Read the property `name` from `reader`.
     fn read(reader: &DetectionReader, name: &str) -> ReadOutcome {
         reader.read_property(reader.position(name).expect(name))
+    }
+
+    /// A name given twice keeps the index of its first place, as the C
+    /// library gives it.
+    #[test]
+    fn a_name_given_twice_keeps_its_first_index() {
+        let names = BuildNames::new(vec![
+            "IsMobile".to_owned(),
+            "PlatformName".to_owned(),
+            "ismobile".to_owned(),
+        ]);
+        assert!(matches!(
+            names.by_name.get("ismobile"),
+            Some(NameSlot::Index(0))
+        ));
+    }
+
+    /// The reader resolves each typed accessor's position once, being the
+    /// position a read by its property's name finds, and a typed read gives
+    /// what a read by name gives.
+    #[test]
+    fn each_typed_slot_reads_where_its_name_does() {
+        use fiftyone_device_detection_shared::DeviceData;
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the typed slots");
+            return;
+        };
+        let (engine, mut data) = engine_and_data(&path);
+        let reader = engine.detection_reader(&data).expect("detection succeeds");
+        let typed = &reader.loaded.readable.typed;
+        assert_eq!(typed.len(), TYPED_PROPERTY_NAMES.len());
+        let mut resolved = 0;
+        for (slot, name) in TYPED_PROPERTY_NAMES.iter().enumerate() {
+            let by_name = reader.position(&name.to_lowercase());
+            assert_eq!(typed[slot], by_name, "{name}");
+            resolved += usize::from(by_name.is_some());
+        }
+        // Every property the reader holds that has a typed accessor
+        // resolves, and no other slot does.
+        let expected = reader
+            .property_names()
+            .iter()
+            .filter(|name| {
+                TYPED_PROPERTY_NAMES
+                    .iter()
+                    .any(|typed| typed.to_lowercase() == **name)
+            })
+            .count();
+        assert_eq!(resolved, expected);
+        assert!(resolved > 10, "only {resolved} typed accessors resolved");
+        for name in ["IsMobile", "PlatformName"] {
+            let slot = TYPED_PROPERTY_NAMES
+                .iter()
+                .position(|typed| *typed == name)
+                .expect(name);
+            assert!(typed[slot].is_some(), "{name}");
+        }
+
+        data.process().expect("processing succeeds");
+        let device = data.get(DEVICE_DATA_KEY).expect("device data was produced");
+        assert_eq!(
+            format!("{:?}", device.is_mobile()),
+            format!("{:?}", device.bool_property("IsMobile"))
+        );
+        assert_eq!(
+            format!("{:?}", device.platform_name()),
+            format!("{:?}", device.string_property("PlatformName"))
+        );
+        assert_eq!(
+            format!("{:?}", device.screen_pixels_width()),
+            format!("{:?}", device.integer_property("ScreenPixelsWidth"))
+        );
+        assert_eq!(
+            format!("{:?}", device.hardware_vendor()),
+            format!("{:?}", device.string_property("HardwareVendor"))
+        );
+    }
+
+    /// Names in an order that is not the data file's.
+    const NAMES_OUT_OF_ORDER: [&str; 3] = ["PlatformName", "IsMobile", "BrowserName"];
+
+    /// An engine over the data file built with `names`.
+    fn named_engine(path: &Path, names: &[&str]) -> Arc<DeviceDetectionOnPremiseEngine> {
+        crate::DeviceDetectionOnPremiseEngineBuilder::new(path)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            .properties(names.iter().copied())
+            .build()
+            .expect("the data file loads")
+    }
+
+    /// The reader lists the data file properties in the order the engine was
+    /// built with their names, then the match metrics, because each name's
+    /// index is its place among those names.
+    #[test]
+    fn the_reader_lists_the_names_in_the_order_the_engine_was_built_with() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the order of the names");
+            return;
+        };
+        let (_, data) = engine_and_data(&path);
+        let engine = named_engine(&path, &NAMES_OUT_OF_ORDER);
+        let reader = engine.detection_reader(&data).expect("detection succeeds");
+        let expected: Vec<String> = NAMES_OUT_OF_ORDER
+            .iter()
+            .copied()
+            .chain(Metric::READ_ORDER.iter().map(|metric| metric.name()))
+            .map(str::to_lowercase)
+            .collect();
+        assert_eq!(reader.property_names(), expected.as_slice());
+    }
+
+    /// An engine built with names in an order that is not the data file's
+    /// reads each property as an engine with no names does, before and after
+    /// a refresh, and a read by name gives what the typed accessor gives.
+    #[test]
+    fn a_named_engine_reads_each_property_before_and_after_a_refresh() {
+        use fiftyone_device_detection_shared::DeviceData;
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the reads after a refresh");
+            return;
+        };
+        let (all, mut data) = engine_and_data(&path);
+        let expected = all.detection_reader(&data).expect("detection succeeds");
+        let engine = named_engine(&path, &NAMES_OUT_OF_ORDER);
+        for refreshed in [false, true] {
+            if refreshed {
+                engine.refresh(None).expect("the data file loads again");
+            }
+            let reader = engine.detection_reader(&data).expect("detection succeeds");
+            for name in NAMES_OUT_OF_ORDER {
+                let name = name.to_lowercase();
+                assert_eq!(
+                    read(&reader, &name),
+                    read(&expected, &name),
+                    "{name}, refreshed {refreshed}"
+                );
+            }
+        }
+        data.process().expect("processing succeeds");
+        let device = data.get(DEVICE_DATA_KEY).expect("device data was produced");
+        assert_eq!(
+            format!("{:?}", device.is_mobile()),
+            format!("{:?}", device.bool_property("IsMobile"))
+        );
+    }
+
+    /// An engine built with no names reads each property at the index of its
+    /// name among the data set's names at build, before and after a refresh.
+    #[test]
+    fn an_engine_with_no_names_reads_by_the_index_of_its_names_at_build() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the indexes of no names");
+            return;
+        };
+        let (engine, data) = engine_and_data(&path);
+        let names = engine.loaded.load().manager.property_names();
+        assert!(names.len() > 1, "{names:?}");
+        for refreshed in [false, true] {
+            if refreshed {
+                engine.refresh(None).expect("the data file loads again");
+            }
+            let reader = engine.detection_reader(&data).expect("detection succeeds");
+            let mut checked = 0;
+            for (index, name) in names.iter().enumerate() {
+                let Some(position) = reader.position(&name.to_lowercase()) else {
+                    continue;
+                };
+                if let ReadableProperty::File { index: at, .. } =
+                    &reader.loaded.readable.properties[position]
+                {
+                    assert_eq!(*at, index as c_int, "{name}, refreshed {refreshed}");
+                    checked += 1;
+                }
+            }
+            assert!(checked > 1, "refreshed {refreshed}");
+        }
     }
 
     /// Each match metric gives the same value as when it is read first when

@@ -75,4 +75,6 @@ pub use data::{
     WeightedStore, IP_DATA_KEY, IP_DATA_KEY_NAME, WEIGHTED_PROPERTY_VALUE_TYPE,
     WEIGHTED_RECORD_RAW_WEIGHTING_KEY, WEIGHTED_RECORD_VALUE_KEY,
 };
-pub use ip_intelligence_data::{IpIntelligenceData, GENERATED_PROPERTY_TYPES};
+pub use ip_intelligence_data::{
+    IpIntelligenceData, GENERATED_PROPERTY_TYPES, TYPED_PROPERTY_NAMES,
+};

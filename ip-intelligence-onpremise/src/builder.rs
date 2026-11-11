@@ -356,16 +356,7 @@ impl IpIntelligenceOnPremiseEngineBuilder {
         let configuration = self.data_file_configuration();
         configuration.check_license_keys()?;
 
-        let property_refs: Option<Vec<&str>> = if self.requested_properties.is_empty() {
-            None
-        } else {
-            Some(
-                self.requested_properties
-                    .iter()
-                    .map(String::as_str)
-                    .collect(),
-            )
-        };
+        let requested = self.requested_properties;
 
         // Open from a copy of the data file when updates can replace the file
         // while it is open.
@@ -377,13 +368,20 @@ impl IpIntelligenceOnPremiseEngineBuilder {
             self.temp_data_copy,
             self.reuse_temp_file,
         );
-        let manager = Manager::open_with_options(
-            copy.as_ref()
-                .map_or(self.data_file_path.as_path(), OperationalCopy::path),
-            self.profile,
-            property_refs.as_deref(),
-            self.concurrency,
-        )?;
+        let manager = {
+            let property_refs: Option<Vec<&str>> = if requested.is_empty() {
+                None
+            } else {
+                Some(requested.iter().map(String::as_str).collect())
+            };
+            Manager::open_with_options(
+                copy.as_ref()
+                    .map_or(self.data_file_path.as_path(), OperationalCopy::path),
+                self.profile,
+                property_refs.as_deref(),
+                self.concurrency,
+            )?
+        };
 
         let data_file = Arc::new(AspectEngineDataFile::new(configuration));
         record_dates(&manager, &data_file);
@@ -392,7 +390,7 @@ impl IpIntelligenceOnPremiseEngineBuilder {
             copy,
             manager,
             self.profile,
-            self.requested_properties,
+            requested,
             self.data_source_tier,
             data_file,
         )?
