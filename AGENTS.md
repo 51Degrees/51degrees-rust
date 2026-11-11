@@ -165,15 +165,19 @@ libraries define the same common C function, meaning 51degrees-cxx's
 Three crates compile in files from other 51Degrees repositories, as the other
 languages do. `derived-properties/vendor` is a submodule of
 [derived-properties](https://github.com/51Degrees/derived-properties), whose
-scripts the derived property element embeds and whose cases its tests run,
-and `javascript-builder/javascript-templates` is a submodule of
-[javascript-templates](https://github.com/51Degrees/javascript-templates),
-whose `JavaScriptResource.mustache` the JavaScript builder renders. Each sits
-inside its crate's folder, so cargo packages the files the crate's `include`
-names from it. The IP Intelligence translation engines compile in the files
-of `cxx/data/ip-intelligence/Translations`, the data repository inside `cxx`,
-and their `build.rs` falls back to a copy inside the crate, which only a
-packaged crate has.
+scripts the derived property element embeds and whose cases its tests run. It
+sits inside the crate's folder, so cargo packages the files the crate's
+`include` names from it. `javascript-templates` at the root is a submodule of
+[javascript-templates](https://github.com/51Degrees/javascript-templates), as
+in PHP and Go, and the JavaScript builder renders the copy of its
+`JavaScriptResource.mustache` committed in `javascript-builder/assets`, because
+cargo packages only the files inside a crate's folder.
+`ci/check-javascript-templates.ps1` fails when the copy differs from the
+submodule, so after the submodule moves, copy the template across in the same
+pull request. The IP Intelligence translation engines compile in the files of
+`cxx/data/ip-intelligence/Translations`, the data repository inside `cxx`, and
+their `build.rs` falls back to a copy inside the crate, which only a packaged
+crate has.
 
 ## Building and testing
 
@@ -370,6 +374,10 @@ submodule is checked out and from that file otherwise.
 - `publish.yml` publishes on push to `main`, then a `verify-published` job
   builds and tests `examples/` against the just-released crates.io packages.
 - `utm-link-lint.yml` checks the UTM links described below, on every PR.
+- `javascript-templates-check.yml` fails when the template committed in
+  `javascript-builder/assets` differs from the `javascript-templates`
+  submodule, on every PR that touches either and on every push to `main` and
+  `rc`.
 - `dotnet-comparison.yml` runs the crates and the published .NET packages
   over the corpus in `parity/` and fails on any difference that
   `parity/allowed-differences.json` does not list with its reason. See

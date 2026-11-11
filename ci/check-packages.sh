@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-# Checks what three crates would publish, because each compiles in files that
+# Checks what two crates would publish, because each compiles in files that
 # come from a submodule.
 #
 # - fiftyone-derived-properties packages its scripts and cases from the
 #   derived-properties submodule at derived-properties/vendor, and the commit
 #   ci/record-derived-properties-commit.ps1 writes to SOURCE.txt.
-# - fiftyone-javascript-builder packages its template from the
-#   javascript-templates submodule at javascript-builder/javascript-templates.
 # - fiftyone-ip-intelligence-translation packages the translations
 #   ci/copy-translations.ps1 copies from the data repository inside cxx.
 #
@@ -34,18 +32,12 @@ listing() {
   cargo package --list --allow-dirty -p "$1" | sort
 }
 
-# Every file under a folder of the checkout, relative to that folder, that
-# git tracks there.
-tracked() {
-  git -C "$1" ls-files | sort
-}
-
 echo "::group::fiftyone-derived-properties"
 list="$(listing fiftyone-derived-properties)"
 echo "$list"
-want="$( (tracked derived-properties/vendor \
+want="$(git -C derived-properties/vendor ls-files \
   | grep -E '^(scripts/[^/]+\.yaml|tests/[^/]+\.yaml|tests/invalid/[^/]+\.yaml)$' \
-  | sed 's|^|vendor/|') | sort)"
+  | sed 's|^|vendor/|' | sort)"
 got="$(echo "$list" | grep '^vendor/' || true)"
 if [ "$got" != "$want" ]; then
   fail "fiftyone-derived-properties does not package exactly the submodule's scripts and cases"
@@ -63,16 +55,6 @@ if [ "$recorded" != "$submodule" ]; then
 fi
 echo "::endgroup::"
 
-echo "::group::fiftyone-javascript-builder"
-list="$(listing fiftyone-javascript-builder)"
-echo "$list"
-got="$(echo "$list" | grep '^javascript-templates/' || true)"
-if [ "$got" != "javascript-templates/JavaScriptResource.mustache" ]; then
-  fail "fiftyone-javascript-builder does not package exactly the template from its submodule"
-  echo "$got"
-fi
-echo "::endgroup::"
-
 echo "::group::fiftyone-ip-intelligence-translation"
 list="$(listing fiftyone-ip-intelligence-translation)"
 echo "$list"
@@ -87,9 +69,8 @@ echo "::endgroup::"
 
 # The 51Degrees licence is the root LICENSE alone, and the manifests declare
 # EUPL-1.2, so no package carries a licence file of its own.
-for crate in fiftyone-derived-properties fiftyone-javascript-builder \
-  fiftyone-ip-intelligence-translation; do
-  if grep -qiE '(^|/)(LICEN[CS]E|COPYING)[^/]*$' <<< "$(listing "$crate")"; then
+for crate in fiftyone-derived-properties fiftyone-ip-intelligence-translation; do
+  if grep -qiE '(^|/)(LICEN[CS]E|COPYING|NOTICE)[^/]*$' <<< "$(listing "$crate")"; then
     fail "$crate packages a licence file"
   fi
 done
@@ -98,13 +79,12 @@ if [ "$failed" -ne 0 ]; then
   exit 1
 fi
 
-# Package the three, with fiftyone-pipeline-translation, which the
-# translation crate depends on and crates.io does not yet hold, so cargo
-# resolves it from this checkout.
+# Package the two, with fiftyone-pipeline-translation, which the translation
+# crate depends on and crates.io does not yet hold, so cargo resolves it from
+# this checkout.
 echo "::group::cargo package"
 cargo package --no-verify --allow-dirty \
   -p fiftyone-derived-properties \
-  -p fiftyone-javascript-builder \
   -p fiftyone-pipeline-translation \
   -p fiftyone-ip-intelligence-translation
 echo "::endgroup::"
@@ -125,10 +105,10 @@ version() {
     | jq -r ".packages[] | select(.name==\"$1\") | .version"
 }
 unpack() {
-  local crate="$1" file
-  file="target/package/$crate-$(version "$crate").crate"
-  tar -xzf "$file" -C "$unpacked"
-  echo "$unpacked/$crate-$(version "$crate")"
+  local crate="$1" name
+  name="$crate-$(version "$crate")"
+  tar -xzf "target/package/$name.crate" -C "$unpacked"
+  echo "$unpacked/$name"
 }
 
 # Nothing above the unpacked folders is a git checkout, and nothing beside
@@ -141,11 +121,6 @@ fi
 echo "::group::fiftyone-derived-properties from its package"
 dir="$(unpack fiftyone-derived-properties)"
 (cd "$dir" && cargo test "${patches[@]}")
-echo "::endgroup::"
-
-echo "::group::fiftyone-javascript-builder from its package"
-dir="$(unpack fiftyone-javascript-builder)"
-(cd "$dir" && cargo build --no-default-features "${patches[@]}")
 echo "::endgroup::"
 
 echo "::group::fiftyone-ip-intelligence-translation from its package"

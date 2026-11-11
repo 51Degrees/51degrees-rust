@@ -367,13 +367,13 @@ jobs:
       - name: Measure what the countries translation engine adds to a module
         run: bash ci/measure-wasm-size.sh
 
-  # Three crates compile in files that come from submodules, being the
-  # derived-properties scripts, the javascript-templates template and the
-  # translations in the data repository inside cxx. This writes what the
-  # publish workflow writes before publishing, lists what cargo would publish
-  # for each of the three, checks the shared files are in it and nothing else
-  # from the submodules is, and then builds each crate from its own package,
-  # which has no git and no submodule, as crates.io and docs.rs build it.
+  # Two crates compile in files that come from submodules and are not
+  # committed here, being the derived-properties scripts and the translations
+  # in the data repository inside cxx. This writes what the publish workflow
+  # writes before publishing, lists what cargo would publish for each of the
+  # two, checks the shared files are in it and nothing else from the
+  # submodules is, and then builds each crate from its own package, which has
+  # no git and no submodule, as crates.io and docs.rs build it.
   package:
     name: package (shared files)
     runs-on: ubuntu-24.04
