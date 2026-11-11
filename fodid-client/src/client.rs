@@ -1288,8 +1288,7 @@ mod tests {
         // does not depend on it, and a test that asked this crate what it
         // expects would agree with itself whatever the name became.
         assert_eq!(
-            ENDPOINT_ENVIRONMENT_VARIABLE,
-            "_51DEGREES_CLOUD_ENDPOINT",
+            ENDPOINT_ENVIRONMENT_VARIABLE, "_51DEGREES_CLOUD_ENDPOINT",
             "the endpoint variable has to be the one the cloud request engine reads"
         );
     }
