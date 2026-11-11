@@ -38,7 +38,7 @@ use arc_swap::ArcSwap;
 
 use fiftyone_ip_intelligence_shared::{
     declared_property_value_type, IpIntelligenceDataBase, IpIntelligencePropertyReader,
-    IP_DATA_KEY, IP_DATA_KEY_NAME, TYPED_PROPERTY_NAMES, WEIGHTED_PROPERTY_VALUE_TYPE,
+    IP_DATA_KEY, IP_DATA_KEY_NAME, WEIGHTED_PROPERTY_VALUE_TYPE,
 };
 use fiftyone_native::ipi::{
     ip_address_text, ClientIpEvidence, DataFileComponent, DataFileProperty, DataFileValue, Manager,
@@ -859,10 +859,6 @@ struct ReadableNames {
     /// The place in `names` of the property at each index, or `None` when
     /// this data set does not have it.
     places: Vec<Option<usize>>,
-    /// The place of the property each typed accessor reads, by the
-    /// accessor's slot in [`TYPED_PROPERTY_NAMES`], resolved once when the
-    /// data set loads.
-    typed: Vec<Option<usize>>,
 }
 
 /// The property names the engine was built with, each with its index, which
@@ -939,20 +935,14 @@ impl ReadableNames {
             .chain(ADDED_PROPERTIES.iter().map(|(name, _)| *name))
             .map(str::to_lowercase)
             .collect();
-        let mut readable = ReadableNames {
+        ReadableNames {
             names,
             lowercase_names,
             indexes,
             value_types,
             build: Arc::clone(build),
             places,
-            typed: Vec::new(),
-        };
-        readable.typed = TYPED_PROPERTY_NAMES
-            .iter()
-            .map(|name| readable.position(&name.to_lowercase()))
-            .collect();
-        readable
+        }
     }
 
     /// The place of the property named, found in the table of the names the
@@ -985,10 +975,6 @@ impl IpIntelligencePropertyReader for LookupReader {
 
     fn position(&self, name: &str) -> Option<usize> {
         self.loaded.readable.position(name)
-    }
-
-    fn typed_positions(&self) -> Option<&[Option<usize>]> {
-        Some(&self.loaded.readable.typed)
     }
 
     fn read_property(
@@ -1488,7 +1474,7 @@ mod tests {
     /// refresh, and a typed read gives what a read by name gives.
     #[test]
     fn each_typed_slot_reads_where_its_name_does() {
-        use fiftyone_ip_intelligence_shared::IpIntelligenceData;
+        use fiftyone_ip_intelligence_shared::{IpIntelligenceData, TYPED_PROPERTY_NAMES};
         let Some(data_file) = ipi_data_file() else {
             eprintln!("no usable IP-intelligence data file; skipping the typed slots");
             return;
