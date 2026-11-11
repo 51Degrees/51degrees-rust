@@ -1004,21 +1004,15 @@ fn fails_without_a_sequence_element(evidence: Evidence) {
     let errors = data.errors();
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(
-        matches!(errors[0].source, Error::Pipeline { .. }),
+        matches!(errors[0].source, Error::PipelineConfiguration { .. }),
         "{errors:?}"
     );
-    let message = errors[0].source.message();
-    assert!(
-        message.starts_with(
-            "The value for the 'sequence' parameter could not be found. \
-             A Sequence element needs to be placed before the JSON builder \
-             element in the pipeline. See "
-        ),
-        "{message}"
+    // The specification gives the whole message, with nothing added.
+    assert_eq!(
+        errors[0].source.message(),
+        "The JSON Builder needs a sequence number. \
+         Place a Sequence Element before the JSON Builder in the Pipeline."
     );
-    let link = "https://51degrees.com/documentation/4.5/_services__cloud__error_messages.html?";
-    assert!(message.contains(link), "{message}");
-    assert!(message.ends_with(" for more information."), "{message}");
 
     // The client-side endpoints serve json_for when the builder left no
     // data, and it takes the request as the first, as .NET's fallback does.
@@ -1028,9 +1022,8 @@ fn fails_without_a_sequence_element(evidence: Evidence) {
 
 #[test]
 fn no_sequence_number_fails_and_writes_no_json() {
-    // With no Sequence element and no sequence evidence, .NET's builder
-    // fails with this message and Java's with a configuration error, so
-    // neither writes JSON.
+    // With no Sequence element and no sequence evidence there is no sequence
+    // number, so the builder fails and writes no JSON.
     fails_without_a_sequence_element(Evidence::builder().build());
 }
 

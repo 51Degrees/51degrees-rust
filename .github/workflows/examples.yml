@@ -227,14 +227,14 @@ jobs:
         id: secrets
         shell: pwsh
         env:
-          RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
           DEVICE_DETECTION_KEY: ${{ secrets.DEVICE_DETECTION_KEY }}
           DEVICE_DETECTION_URL: ${{ secrets.DEVICE_DETECTION_URL }}
           FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
           MODE: ${{ matrix.mode }}
         run: |
           $missing = @()
-          if (-not $env:RESOURCE_KEY) {
+          if (-not $env:_51DEGREES_RESOURCE_KEY) {
             $missing += '_51DEGREES_RESOURCE_KEY_BESPOKE'
           }
           if ($env:MODE -eq 'onpremise' -and
@@ -267,9 +267,9 @@ jobs:
         if: steps.secrets.outputs.run == 'true'
         shell: pwsh
         env:
-          RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
         run: >-
           ./ci/run-browser-contract.ps1
           -Mode ${{ matrix.mode }}
-          -ResourceKey $env:RESOURCE_KEY
+          -ResourceKey $env:_51DEGREES_RESOURCE_KEY
           -DataFile assets/TAC-HashV41.hash

@@ -45,7 +45,7 @@ pub const DEFAULT_ENDPOINT: &str = "https://cloud.51degrees.com/api/v4/";
 /// none, the same variable the cloud request engine honours. A host other
 /// than the public cloud is used for a privately hosted copy of the same
 /// service.
-pub const ENDPOINT_ENVIRONMENT_VARIABLE: &str = "FOD_CLOUD_API_URL";
+pub const ENDPOINT_ENVIRONMENT_VARIABLE: &str = "_51DEGREES_CLOUD_ENDPOINT";
 
 /// How old the held key list may be before a lookup fetches the whole list
 /// again, with no `datetime`. Only a fetch of the whole list, which the first
@@ -1277,6 +1277,20 @@ mod tests {
             .unwrap();
         std::env::remove_var(ENDPOINT_ENVIRONMENT_VARIABLE);
         assert_eq!(from_variable.endpoint(), "https://private.test/api/v4/");
+    }
+
+    #[test]
+    fn the_endpoint_variable_carries_the_one_name() {
+        // The cloud request engine of this workspace reads
+        // _51DEGREES_CLOUD_ENDPOINT, and this client says it honours the same
+        // variable, so the two names have to be the one name. The name is
+        // written out rather than taken from the engine, because this crate
+        // does not depend on it, and a test that asked this crate what it
+        // expects would agree with itself whatever the name became.
+        assert_eq!(
+            ENDPOINT_ENVIRONMENT_VARIABLE, "_51DEGREES_CLOUD_ENDPOINT",
+            "the endpoint variable has to be the one the cloud request engine reads"
+        );
     }
 
     #[test]

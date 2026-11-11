@@ -112,7 +112,7 @@ fn parse_boolean(text: &str) -> Option<bool> {
 /// flow data under the
 /// [`crate::JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY`] element data key. It implements
 /// the
-/// [javascript-builder specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/javascript-builder.md).
+/// [javascript-builder specification](https://github.com/51Degrees/specifications/blob/e89679e9/pipeline-specification/pipeline-elements/javascript-builder.md).
 ///
 /// # Derivation rules
 ///
@@ -461,11 +461,17 @@ impl JavaScriptBuilderElement {
     }
 
     /// Read the JSON payload from the JSON builder's element data, or an empty
-    /// string if the JSON builder did not run.
+    /// object when the JSON builder did not run.
+    ///
+    /// The template writes this value into `var json = ...;` as bare code, so
+    /// an empty string would leave the script unparseable. A pipeline can
+    /// reach here with no JSON builder data, because the JSON builder needs a
+    /// sequence element before it and fails without one.
     fn json_object(data: &FlowData) -> String {
         data.get(JSON_BUILDER_DATA_KEY)
             .map(|json| json.json().to_owned())
-            .unwrap_or_default()
+            .filter(|json| !json.is_empty())
+            .unwrap_or_else(|| "{}".to_owned())
     }
 
     /// Render and (optionally) minify the JavaScript for this request around
