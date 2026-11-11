@@ -8,6 +8,16 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage = "https://51degrees.com/build-your-own?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-javascript-builder-cargo.toml&utm_term=homepage"
+# javascript-templates is the javascript-templates submodule, which cargo
+# packages because it sits inside this crate's folder. Only the template is
+# taken, so the crate leaves out that repository's tests, workflows and
+# README.
+include = [
+    "/src/**",
+    "/tests/**",
+    "/README.md",
+    "/javascript-templates/JavaScriptResource.mustache",
+]
 
 [features]
 # Minify the rendered JavaScript with the oxc toolchain (parse, minify, print).

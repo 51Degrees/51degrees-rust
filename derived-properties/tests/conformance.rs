@@ -22,12 +22,11 @@
 
 //! The shared conformance cases.
 //!
-//! Every language implementation of the element runs the case files in
-//! `vendor/tests`, which are a copy of the ones every other language runs, and
-//! must give the same answer for every one. If the Rust answer differs from the
-//! answer in .NET, Node, Java, Python or PHP then this crate has failed at its
-//! only job, so these tests are the point of the crate rather than a check on
-//! it.
+//! The .NET element and this crate both run the case files in `vendor/tests`,
+//! the derived-properties submodule, and must give the same answer for every
+//! one. If the Rust answer differs from the .NET answer then this crate has
+//! failed at its only job, so these tests are the point of the crate rather
+//! than a check on it.
 //!
 //! The cases are read from disk, so they are compiled only off WebAssembly,
 //! where a test has no file system.

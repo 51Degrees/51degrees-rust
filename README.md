@@ -81,7 +81,7 @@ below in dependency order from the pure-Rust core up to the runnable examples.
 | [`fiftyone-json-builder`](json-builder) | JSON serialization element. |
 | [`fiftyone-javascript-builder`](javascript-builder) | JavaScript snippet builder element with the bundled Mustache asset. Minification is an opt-in feature (see below). |
 | [`fiftyone-agent-signature`](agent-signature) | Agent Signature element, which checks the HTTP Message Signature an automated agent sends under the IETF Web Bot Auth protocol. |
-| [`fiftyone-derived-properties`](derived-properties) | Derived property element, which computes a property from properties earlier elements have already produced, using the shared script format every language implementation reads. |
+| [`fiftyone-derived-properties`](derived-properties) | Derived property element, which computes a property from properties earlier elements have already produced, using the script format and scripts of the derived-properties repository, which .NET uses too. |
 | [`fiftyone-pipeline-translation`](pipeline-translation) | Translation engine, which translates the values another element produced into the language the request asks for, from YAML sources of `value: translation` lines. |
 
 ### Native FFI

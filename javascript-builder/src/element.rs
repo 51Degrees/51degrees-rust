@@ -50,7 +50,7 @@ use crate::template_data::JavaScriptResource;
 use crate::JavaScriptBuilderElementBuilder;
 
 /// The Mustache template, embedded at compile time.
-const TEMPLATE_SOURCE: &str = include_str!("../assets/JavaScriptResource.mustache");
+const TEMPLATE_SOURCE: &str = include_str!("../javascript-templates/JavaScriptResource.mustache");
 
 /// How an element decides whether the script carries the user prompt
 /// section.

@@ -319,7 +319,7 @@ fn declares_default_name(script: &str) -> bool {
 
 /// The template the crate renders. Parts of the checks depend on what the
 /// template contains, so they apply once the template is refreshed.
-const TEMPLATE: &str = include_str!("../assets/JavaScriptResource.mustache");
+const TEMPLATE: &str = include_str!("../javascript-templates/JavaScriptResource.mustache");
 
 fn assert_uses_name(script: &str, name: &str) {
     assert_eq!(declared_names(script), vec![name.to_owned()]);

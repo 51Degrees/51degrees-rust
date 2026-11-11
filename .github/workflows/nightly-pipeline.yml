@@ -14,11 +14,10 @@ name: Nightly Pipeline
 #
 # pull-request.yml still runs on every push and pull request and remains the
 # primary gate, carrying the native build on all four platforms and the wasm
-# target. The examples check is examples.yml and the template drift check is
-# mustache-drift.yml, each its own workflow and each running on every pull
-# request as well. This runs the core gate again, being format, build, test,
-# lint and documentation on all four platforms, against what main will
-# actually contain once the pull request is merged.
+# target. The examples check is examples.yml, its own workflow, running on
+# every pull request as well. This runs the core gate again, being format,
+# build, test, lint and documentation on all four platforms, against what main
+# will actually contain once the pull request is merged.
 #
 # Before that, the shared submodule update moves each submodule to the latest
 # commit on its default branch and, when one has moved, raises a pull request

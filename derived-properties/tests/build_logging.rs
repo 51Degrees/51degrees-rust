@@ -69,6 +69,31 @@ fn take() -> Vec<String> {
     std::mem::take(&mut *LOGGED.lock().unwrap())
 }
 
+/// The commit the shipped scripts came from. Where `vendor` is the
+/// derived-properties submodule this asks git, so the test proves the element
+/// logs the commit the submodule is at. On WebAssembly, and in a crate from
+/// crates.io, which has no git, it is the commit the build found.
+fn scripts_commit() -> String {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let vendor = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor");
+        if vendor.join(".git").exists() {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&vendor)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .expect("git runs");
+            assert!(output.status.success(), "git rev-parse HEAD failed");
+            return String::from_utf8(output.stdout)
+                .expect("git prints UTF-8")
+                .trim()
+                .to_owned();
+        }
+    }
+    env!("FIFTYONE_DERIVED_PROPERTIES_COMMIT").to_owned()
+}
+
 /// A script named `name` producing an int, deprecated where `note` is given.
 fn script(name: &str, note: Option<&str>) -> String {
     let deprecation = note
@@ -119,9 +144,14 @@ fn each_script_logs_its_line_its_warning_and_its_canonical_json_in_order() {
 }
 
 /// A shipped script says it is built in, and one line before the scripts names
-/// the derived-properties commit the shipped scripts were copied from.
+/// the derived-properties commit the shipped scripts came from.
 #[test]
 fn a_shipped_script_logs_the_commit_its_scripts_came_from_first() {
+    let commit = scripts_commit();
+    assert!(
+        commit.len() == 40 && commit.bytes().all(|b| b.is_ascii_hexdigit()),
+        "'{commit}' is not a commit"
+    );
     let _guard = start(log::LevelFilter::Info);
     let element = DerivedPropertyElement::builder()
         .add_script("First", &script("First", None))
@@ -133,9 +163,10 @@ fn a_shipped_script_logs_the_commit_its_scripts_came_from_first() {
     assert_eq!(
         take(),
         vec![
-            "INFO Built in derived property scripts came from derived-properties commit \
-             3d7d450663c6e68adb1a29d04a231058b25dfa75."
-                .to_owned(),
+            format!(
+                "INFO Built in derived property scripts came from derived-properties \
+                 commit {commit}."
+            ),
             "INFO Derived property script 'First' version 2.1.0 (format 1) from code \
              produces 'First' as int."
                 .to_owned(),

@@ -35,12 +35,11 @@ use crate::model::Script;
 /// What the source of a shipped script starts with, followed by its name.
 pub(crate) const BUILT_IN_SOURCE: &str = "built in";
 
-/// The commit of 51Degrees/derived-properties the files under `vendor` were
-/// copied from, which the element logs at build so that anyone holding the log
-/// can find the exact scripts that ran. Copying the files again means writing
-/// the new commit to `vendor/COMMIT`.
+/// The commit of 51Degrees/derived-properties the scripts under `vendor` come
+/// from, which the element logs at build so that anyone holding the log can
+/// find the exact scripts that ran. `build.rs` says where it is found.
 pub(crate) fn built_in_scripts_commit() -> &'static str {
-    include_str!("../vendor/COMMIT").trim()
+    env!("FIFTYONE_DERIVED_PROPERTIES_COMMIT")
 }
 
 /// The names of the shipped scripts, joined by ", ", as messages list them.
@@ -88,7 +87,7 @@ impl BuiltInScript {
     /// Read the script.
     ///
     /// A shipped script is checked by the tests of this crate, so this only
-    /// returns faults if the vendored copy has been edited.
+    /// returns faults if the script in `vendor` has been edited.
     pub fn compile(self) -> Result<Script, Faults> {
         Script::compile_named(
             self.text(),

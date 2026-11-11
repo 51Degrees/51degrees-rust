@@ -3,4 +3,10 @@
 	url = https://github.com/SWAN-community/owid-rust.git
 [submodule "cxx"]
 	path = cxx
-	url = https://github.com/51Degrees/51degrees-cxx.git
+	url = ../51degrees-cxx
+[submodule "derived-properties/vendor"]
+	path = derived-properties/vendor
+	url = ../derived-properties
+[submodule "javascript-builder/javascript-templates"]
+	path = javascript-builder/javascript-templates
+	url = ../javascript-templates
