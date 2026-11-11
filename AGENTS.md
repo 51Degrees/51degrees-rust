@@ -187,7 +187,7 @@ CI builds with `RUSTFLAGS=-D warnings` and `RUSTDOCFLAGS=-D warnings`, so any
 warning fails the build. Match that locally before pushing.
 
 Each `-sys` `build.rs` resolves its C sources in this order: the
-`FIFTYONE_CXX_DIR` environment variable, pointing at a 51degrees-cxx checkout,
+`_51DEGREES_CXX_DIR` environment variable, pointing at a 51degrees-cxx checkout,
 then the `cxx` submodule, then the `cxx` folder inside the crate, which only a
 packaged crate has (see "Releasing to crates.io" below).
 

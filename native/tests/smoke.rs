@@ -49,7 +49,7 @@ use std::path::PathBuf;
 /// optional name fragment, returning the first that exists.
 ///
 /// Resolution order, all relative to the Rust workspace root:
-/// the matching `FIFTYONE_*` environment variable, then the
+/// the matching `_51DEGREES_*` environment variable, then the
 /// `cxx` submodule, then the parent
 /// `Workspace` tree where the other 51Degrees products keep their data.
 #[cfg(any(feature = "dd", feature = "ipi"))]
