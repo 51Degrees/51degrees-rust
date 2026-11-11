@@ -542,12 +542,18 @@ fn a_watched_file(dir: &Path, refused: &str) {
     assert_eq!(status, AutoUpdateStatus::NotNeeded);
     std::thread::sleep(WATCHER_START);
 
+    // An event that finds the file as it was before this write refreshes
+    // nothing, so the first check that refreshed something is the one that
+    // matters.
     std::fs::write(&path, b"version 2").unwrap();
-    wait_for(&reports, |statuses| !statuses.is_empty());
+    wait_for(&reports, |statuses| {
+        statuses.iter().any(|status| !refreshed_nothing(*status))
+    });
+    let first = statuses(&reports);
     assert_eq!(
-        statuses(&reports).first(),
+        first.iter().find(|status| !refreshed_nothing(**status)),
         Some(&AutoUpdateStatus::RefreshFailed),
-        "the watcher did not report the refresh that failed"
+        "the watcher did not report the refresh that failed: {first:?}"
     );
 
     std::thread::sleep(NEXT_WRITE);
