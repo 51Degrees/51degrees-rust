@@ -1261,12 +1261,41 @@ extern "C" {
     /// writes no shared memory.
     ///
     /// # Safety
-    /// `data_set` must come from [`fiftyoneDegreesDataSetIpiGet`] and not yet
-    /// be released. `property_name` must be a valid null terminated string.
+    /// `data_set` must be held, by a reference from
+    /// [`fiftyoneDegreesDataSetIpiGet`] not yet released or by results not yet
+    /// freed (see [`fiftyoneDegreesShimIpiResultsGetDataSet`]).
+    /// `property_name` must be a valid null terminated string.
     pub fn fiftyoneDegreesShimIpiDataSetGetRequiredPropertyIndexFromName(
         data_set: *mut DataSetIpi,
         property_name: *const c_char,
     ) -> c_int;
+
+    /// Returns the data set `results` hold a reference to, which is released
+    /// when the results are freed. It takes no reference of its own.
+    ///
+    /// # Safety
+    /// `results` must come from [`fiftyoneDegreesResultsIpiCreate`] and not
+    /// yet be freed.
+    pub fn fiftyoneDegreesShimIpiResultsGetDataSet(results: *mut ResultsIpi) -> *mut DataSetIpi;
+
+    /// Reloads the data set `manager` holds from a copy of the `length` bytes
+    /// at `data`, as [`fiftyoneDegreesIpiReloadManagerFromMemory`] does, with
+    /// the copy made by the C library's allocator and freed with the new data
+    /// set, as the C++ engine's `refreshData` makes it. The caller keeps
+    /// nothing. Any status but success leaves the data set in use. When the C
+    /// library cannot allocate the new data set itself the copy is not freed.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized IP Intelligence manager that no other
+    /// reload is using at the same time. `data` must point to `length`
+    /// readable bytes, which are read only during the call. `exception` must
+    /// point to a cleared [`Exception`].
+    pub fn fiftyoneDegreesShimIpiReloadManagerFromMemoryCopy(
+        manager: *mut ResourceManager,
+        data: *const c_void,
+        length: FileOffset,
+        exception: *mut Exception,
+    ) -> StatusCode;
 
     /// Writes the data set's name (its tier, for example `Lite`, `Enterprise` or
     /// `TAC`) into `buffer` as a null terminated string and returns the number

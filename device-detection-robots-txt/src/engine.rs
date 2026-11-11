@@ -185,7 +185,7 @@ impl RobotsTxtEngine {
 impl State {
     fn new(source: &Arc<DeviceDetectionOnPremiseEngine>, wanted: &[String]) -> Result<Self> {
         let tier = AspectEngine::data_source_tier(source.as_ref()).to_owned();
-        let model = read_model(&source.data_set())?;
+        let model = read_model_from_one_data_set(&source.data_set())?;
         let usage_keys: Vec<(String, String)> = model
             .usages()
             .iter()
@@ -244,6 +244,33 @@ struct CrawlerIndexes {
     product_tokens: Option<c_int>,
     url: Option<c_int>,
     usages: Option<c_int>,
+}
+
+/// The most times the model is read while refreshes reload the data set
+/// under it, after which the last read is kept.
+const MODEL_READS: usize = 3;
+
+/// Read the model from one data set. A refresh of the Device Detection engine
+/// reloads the data set in its manager in place, so the model is read again
+/// when results created before and after the read show that a reload
+/// replaced the data set during it (see [`Results::same_data_set`]).
+fn read_model_from_one_data_set(manager: &Arc<Manager>) -> Result<RobotsTxtModel> {
+    let mut reads = 1;
+    loop {
+        let before = manager.create_results()?;
+        let model = read_model(manager)?;
+        if manager.create_results()?.same_data_set(&before) {
+            return Ok(model);
+        }
+        if reads == MODEL_READS {
+            log::warn!(
+                "The data set was reloaded while the robots.txt model was read, \
+                 {MODEL_READS} times, so the model may mix two data files."
+            );
+            return Ok(model);
+        }
+        reads += 1;
+    }
 }
 
 /// Read every crawler and usage from the data set. A data file without the

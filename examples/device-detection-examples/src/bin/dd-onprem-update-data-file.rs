@@ -128,8 +128,8 @@ pub fn run(options: ExampleOptions) -> Result<()> {
     // here, since the Lite file has none), the service refreshes the engine from
     // the file on disk only when that file is newer than the one the engine was
     // built from, which is a safe no-network check. With the file unchanged the
-    // status is `NotNeeded`, and a `Success` status means the engine swapped in
-    // a freshly read data set.
+    // status is `NotNeeded`, and a `Success` status means the engine reloaded
+    // its data set from the file.
     println!();
     println!("Triggering a programmatic update check ...");
     let as_engine: Arc<dyn OnPremiseAspectEngine> = engine.clone();
@@ -146,8 +146,8 @@ pub fn run(options: ExampleOptions) -> Result<()> {
     //
     // An application can also reload the engine directly, bypassing the service,
     // for example after it has placed a new file on disk itself. This reloads the
-    // same Lite file, proving the hot-swap works while in-flight detections keep
-    // using the data set they snapshotted.
+    // same Lite file, proving the reload works while in-flight detections keep
+    // reading the data set they started with.
     println!();
     println!("Performing a direct engine refresh from the file on disk ...");
     engine
@@ -334,8 +334,8 @@ mod tests {
  * programmatic `check_for_update` (which, with no remote URL on the Lite file,
  * refreshes from the file on disk when it is newer than the one the engine was
  * built from) and a direct `engine.refresh(None)`, which always reloads. A reload
- * hot-swaps a freshly read data set while in-flight detections keep using the
- * data set they snapshotted.
+ * replaces the data set in place while in-flight detections keep reading the
+ * data set they started with.
  *
  * The free Lite data file cannot actually be auto-updated: automatic updates
  * require an Enterprise license and a downloadable file. So with no license key

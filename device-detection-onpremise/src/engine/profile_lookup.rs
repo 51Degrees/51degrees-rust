@@ -23,8 +23,9 @@
 //! The profiles that hold a value of a property, looked up in the data set
 //! the engine has loaded.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use fiftyone_device_detection_shared::{DeviceDataBase, DevicePropertyReader, ProfileReader};
 use fiftyone_pipeline_core::{Error, Evidence, Result};
@@ -32,7 +33,7 @@ use fiftyone_pipeline_engines::MissingPropertySource;
 
 use super::{
     device_data, DetectionReader, DeviceDetectionOnPremiseEngine, LoadedDataSet, ReadOutcome,
-    ReadableProperties,
+    ReadableProperties, Results,
 };
 
 /// The property each device data
@@ -101,10 +102,10 @@ impl DeviceDetectionOnPremiseEngine {
         value: &str,
     ) -> Result<Vec<DeviceDataBase>> {
         let loaded = self.loaded.load_full();
-        let ids = loaded
-            .manager
-            .profile_ids_for_property_value(property_name, value)?;
-        ids.into_iter().map(|id| profile(&loaded, id)).collect()
+        ids_with_results(&loaded, property_name, value)?
+            .into_iter()
+            .map(|(id, results)| profile(&loaded, Some(results), id))
+            .collect()
     }
 
     /// The ids [`Self::profile_ids_for_property_value`] finds for `value` of
@@ -114,7 +115,10 @@ impl DeviceDetectionOnPremiseEngine {
     /// read.
     ///
     /// The ids and the reader use the data set loaded when this is called,
-    /// so a refresh cannot leave an id without its profile. Give both to
+    /// so a refresh cannot leave an id without its profile. A refresh reloads
+    /// the data set in place, and results come only from the data set in use,
+    /// so the results each id's profile is read from are created with the
+    /// ids, before anything is read. Give both to
     /// [`MultiDeviceData::push_profile_ids`](fiftyone_device_detection_shared::MultiDeviceData::push_profile_ids)
     /// to read the profiles only when they are first asked for.
     ///
@@ -134,22 +138,75 @@ impl DeviceDetectionOnPremiseEngine {
         value: &str,
     ) -> Result<(Vec<u32>, Arc<dyn ProfileReader>)> {
         let loaded = self.loaded.load_full();
-        let ids = loaded
-            .manager
-            .profile_ids_for_property_value(property_name, value)?;
+        let found = ids_with_results(&loaded, property_name, value)?;
+        let ids = found.iter().map(|(id, _)| *id).collect();
         let reader = LoadedProfiles {
             loaded,
+            results: Mutex::new(found.into_iter().collect()),
             warned: AtomicBool::new(false),
         };
         Ok((ids, Arc::new(reader)))
     }
 }
 
+/// The most times the ids of a value are found while refreshes reload the
+/// data set under them, after which the last are kept.
+const LOOKUP_READS: usize = 3;
+
+/// The ids of the profiles holding the value `value` of the property named
+/// `property_name` in `loaded`'s manager, each with results created from the
+/// data set the ids were found in. The ids are found again when results
+/// created before and after show that a reload replaced the data set between
+/// (see [`Results::same_data_set`]).
+fn ids_with_results(
+    loaded: &LoadedDataSet,
+    property_name: &str,
+    value: &str,
+) -> Result<Vec<(u32, Results)>> {
+    let manager = &loaded.manager;
+    let mut reads = 1;
+    loop {
+        let mut first = Some(manager.create_results()?);
+        let ids = manager.profile_ids_for_property_value(property_name, value)?;
+        let mut found = Vec::with_capacity(ids.len());
+        for id in ids {
+            let results = match first.take() {
+                Some(results) => results,
+                None => manager.create_results()?,
+            };
+            found.push((id, results));
+        }
+        let same = match found.first() {
+            Some((_, results)) => results.same_data_set(&manager.create_results()?),
+            None => true,
+        };
+        if same {
+            return Ok(found);
+        }
+        if reads == LOOKUP_READS {
+            log::warn!(
+                "The data set was reloaded while the profiles of '{property_name}' \
+                 '{value}' were found, {LOOKUP_READS} times, so they may mix two data files."
+            );
+            return Ok(found);
+        }
+        reads += 1;
+    }
+}
+
 /// The device data of the profile with id `id` in `loaded`, being what a
 /// detection given the id as `query.51D_ProfileIds` evidence gives, with
-/// [`PROFILE_ID_PROPERTY_NAME`] holding the id as text.
-fn profile(loaded: &Arc<LoadedDataSet>, id: u32) -> Result<DeviceDataBase> {
-    let mut results = loaded.manager.create_results()?;
+/// [`PROFILE_ID_PROPERTY_NAME`] holding the id as text. Read from `results`
+/// when given, otherwise from new results of the data set in use.
+fn profile(
+    loaded: &Arc<LoadedDataSet>,
+    results: Option<Results>,
+    id: u32,
+) -> Result<DeviceDataBase> {
+    let mut results = match results {
+        Some(results) => results,
+        None => loaded.manager.create_results()?,
+    };
     let evidence = Evidence::builder()
         .add(PROFILE_IDS_EVIDENCE_KEY, id.to_string())
         .build();
@@ -166,13 +223,22 @@ fn profile(loaded: &Arc<LoadedDataSet>, id: u32) -> Result<DeviceDataBase> {
 /// ids of one lookup.
 struct LoadedProfiles {
     loaded: Arc<LoadedDataSet>,
+    /// The results to read each id's profile from, created from the data set
+    /// the ids were found in, and taken by the id's first read. An id read
+    /// again, or one not found, is read from the data set in use.
+    results: Mutex<HashMap<u32, Results>>,
     /// Set once a profile of this lookup has failed to read.
     warned: AtomicBool,
 }
 
 impl ProfileReader for LoadedProfiles {
     fn read_profile(&self, id: u32) -> DeviceDataBase {
-        profile(&self.loaded, id).unwrap_or_else(|error| {
+        let results = self
+            .results
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&id);
+        profile(&self.loaded, results, id).unwrap_or_else(|error| {
             unread_profile(
                 id,
                 &error,

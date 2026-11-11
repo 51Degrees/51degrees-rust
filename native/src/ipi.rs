@@ -24,9 +24,10 @@
 //!
 //! Mirrors the Device Detection wrappers in [`crate::dd`]. [`Manager`] owns a
 //! native IP Intelligence resource manager loaded from an `.ipi` data file and
-//! frees it on drop. [`Results`] owns a native results structure, holds an
-//! [`Arc`] to the manager so the data set stays loaded, and frees the results
-//! on drop.
+//! frees it on drop. Its reloads replace the data set in place through the C
+//! library's reload functions. [`Results`] owns a native results structure,
+//! which holds the data set it was created from until the results are freed,
+//! and an [`Arc`] to the manager, and frees the results on drop.
 //!
 //! [`Results::process_evidence`] looks up the client IP through the native
 //! evidence entry point. It reads the evidence keys the data file defines, in
@@ -61,7 +62,8 @@ use std::ops::Range;
 use std::os::raw::{c_char, c_int, c_void};
 use std::path::Path;
 use std::ptr::NonNull;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use fiftyone_ip_intelligence_sys as sys;
 use fiftyone_pipeline_core::{constants, round_angle, Error, Evidence, PropertyValueType, Result};
@@ -148,27 +150,80 @@ pub fn data_file_header_size() -> usize {
 // Manager
 // ---------------------------------------------------------------------------
 
-/// A loaded IP Intelligence data set.
+/// An IP Intelligence data set, loaded into a native resource manager.
 ///
 /// Owns a native [`sys::ResourceManager`] initialized from an `.ipi` data file.
-/// Shared across threads behind the [`Arc`] returned by [`Manager::open`]. The
-/// data set is freed once the last reference and every referencing [`Results`]
-/// have been dropped.
+/// Shared across threads behind the [`Arc`] returned by [`Manager::open`].
+/// [`Manager::reload_from_file`] and the other reloads replace the data set in
+/// place, as the C library's reload does, and each call reads the data set in
+/// use when it is made. A replaced data set is freed once the last
+/// [`Results`] created from it is dropped, and the manager when the last
+/// reference to it and every [`Results`] have been dropped.
 pub struct Manager {
     manager: NonNull<sys::ResourceManager>,
-    /// The evidence keys the data file defines, in the order the native lookup
-    /// tries them, read once when the file is opened.
-    evidence_keys: Vec<EvidenceKey>,
-    /// The data set the manager was opened with, held until [`Drop`], so a
-    /// name lookup reads it without taking a reference and threads sharing
-    /// the manager write no shared memory to look a name up.
-    data_set: NonNull<sys::DataSetIpi>,
+    /// The evidence keys of the data set in use, in the order the native
+    /// lookup tries them.
+    evidence_keys: EvidenceKeyLists,
     /// The number of required properties, which a read by index must stay
-    /// below.
+    /// below. A reload keeps the names of the data set it replaces, so it
+    /// keeps this number.
     required_count: u32,
+    /// Held while a reload replaces the data set, because the C library's
+    /// reload reads the data set in use without taking a reference to it.
+    reload_lock: Mutex<()>,
     /// The data a load from memory reads in place. Fields drop after
-    /// [`Drop::drop`] has freed the data set, so the data outlives it.
+    /// [`Drop::drop`] has freed the data set, so the data outlives it. It is
+    /// kept after a reload, until the manager is dropped, because the C
+    /// library does not say when the data set reading it is freed.
     _memory: Option<HeldMemory>,
+}
+
+/// Every list of evidence keys a manager has used, each kept until the
+/// manager is dropped, so that keys lent from one stay valid through a
+/// reload.
+struct EvidenceKeyLists {
+    /// The keys of the data set in use, being the last of `kept`.
+    current: AtomicPtr<Vec<EvidenceKey>>,
+    /// The lists used. A reload adds one only when its keys differ from the
+    /// keys in use, so a reload of a file with the same keys adds none.
+    kept: Mutex<Vec<Arc<Vec<EvidenceKey>>>>,
+}
+
+impl EvidenceKeyLists {
+    /// The lists, with `keys` in use.
+    fn new(keys: Vec<EvidenceKey>) -> Self {
+        let lists = EvidenceKeyLists {
+            current: AtomicPtr::new(std::ptr::null_mut()),
+            kept: Mutex::new(Vec::new()),
+        };
+        lists.replace(keys);
+        lists
+    }
+
+    /// The keys of the data set in use.
+    fn current(&self) -> &[EvidenceKey] {
+        // Safety: `current` points to a list that `kept` holds from before
+        // the pointer is stored until `self` is dropped, so the list outlives
+        // the borrow of `self`.
+        unsafe { &*self.current.load(Ordering::Acquire) }
+    }
+
+    /// Use `keys`, unless they are the keys already in use.
+    fn replace(&self, keys: Vec<EvidenceKey>) {
+        let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+        let same = kept.last().is_some_and(|last| {
+            last.iter()
+                .map(|key| &key.key)
+                .eq(keys.iter().map(|key| &key.key))
+        });
+        if same {
+            return;
+        }
+        let list = Arc::new(keys);
+        kept.push(Arc::clone(&list));
+        self.current
+            .store(Arc::as_ptr(&list).cast_mut(), Ordering::Release);
+    }
 }
 
 /// One evidence key the data file defines, split into the parts the native
@@ -184,8 +239,9 @@ struct EvidenceKey {
 
 // Safety: the native resource manager is internally reference counted and lock
 // protected per `src/common/resource.h`, so a shared `&Manager` is sound to use
-// from several threads. The data set held for name lookups is only read.
-// Therefore the manager is both `Send` and `Sync`.
+// from several threads, and reloads run one at a time under `reload_lock`. The
+// evidence key lists are only added to, under their own lock. Therefore the
+// manager is both `Send` and `Sync`.
 unsafe impl Send for Manager {}
 unsafe impl Sync for Manager {}
 
@@ -254,9 +310,10 @@ impl Manager {
     /// properties when `properties` is [`None`].
     ///
     /// The data set reads its collections from `data` where it lies, so the
-    /// manager keeps `data` until the data set is freed. Every profile holds
-    /// the data set in memory this way, so none opens a file pool, and the
-    /// profile's collection and concurrency settings do not apply.
+    /// manager keeps `data` until the manager is dropped, a reload
+    /// notwithstanding. Every profile holds the data set in memory this way,
+    /// so none opens a file pool, and the profile's collection and
+    /// concurrency settings do not apply.
     pub fn open_from_memory(
         data: Vec<u8>,
         profile: PerformanceProfile,
@@ -347,20 +404,115 @@ impl Manager {
         let manager = NonNull::new(manager_ptr).expect("init produced a non-null manager");
         // Safety: the manager was initialized above.
         let evidence_keys = unsafe { read_evidence_keys(manager.as_ptr()) };
-        // Safety: as above. The reference is released in `Drop`, before the
-        // manager is freed.
-        let data_set = unsafe { sys::fiftyoneDegreesDataSetIpiGet(manager.as_ptr()) };
-        let data_set = NonNull::new(data_set).expect("an initialized manager has a data set");
         // Safety: as above.
         let required_count =
             unsafe { sys::fiftyoneDegreesShimIpiGetRequiredPropertyCount(manager.as_ptr()) };
         Ok(Arc::new(Manager {
             manager,
-            evidence_keys,
-            data_set,
+            evidence_keys: EvidenceKeyLists::new(evidence_keys),
             required_count,
+            reload_lock: Mutex::new(()),
             _memory: memory,
         }))
+    }
+
+    /// Reload the data set from the data file it was loaded from, with the
+    /// settings and the property names it was opened with, as the C
+    /// library's `fiftyoneDegreesIpiReloadManagerFromOriginalFile` does.
+    ///
+    /// The new data set keeps the names of the one it replaces, in their
+    /// order, so an index names the same property after the reload, and a
+    /// manager opened naming no property keeps the names of the first data
+    /// file it loaded (see [`Manager::available_property_names`]). A property
+    /// only the new data file has is then not among them. The evidence keys
+    /// become those of the new data set. [`Results`] created before the
+    /// reload keep reading the data set they were created from, with its
+    /// evidence keys, and it is freed when the last of them is dropped. A
+    /// reload that fails leaves the data set in use. Reloads of one manager
+    /// run one at a time.
+    pub fn reload_from_original_file(&self) -> Result<()> {
+        self.reload(
+            |manager, exception| {
+                // Safety: the manager is initialized and the caller holds the
+                // reload lock.
+                unsafe { sys::fiftyoneDegreesIpiReloadManagerFromOriginalFile(manager, exception) }
+            },
+            |status| status_detail(status, None),
+        )
+    }
+
+    /// Reload the data set from the data file at `path`, as
+    /// [`Manager::reload_from_original_file`] does.
+    pub fn reload_from_file(&self, path: impl AsRef<Path>) -> Result<()> {
+        let path_c = crate::path::native_path(path.as_ref())?;
+        self.reload(
+            |manager, exception| {
+                // Safety: the manager is initialized, the caller holds the
+                // reload lock and the path is null terminated.
+                unsafe {
+                    sys::fiftyoneDegreesIpiReloadManagerFromFile(
+                        manager,
+                        path_c.as_ptr(),
+                        exception,
+                    )
+                }
+            },
+            |status| status_detail(status, Some(&path_c)),
+        )
+    }
+
+    /// Reload the data set from `data`, the whole of a data file held in
+    /// memory, as [`Manager::reload_from_original_file`] does.
+    ///
+    /// The C library copies `data` into memory that the new data set frees,
+    /// as the C++ engine's `refreshData` does, so the caller keeps nothing.
+    pub fn reload_from_memory(&self, data: &[u8]) -> Result<()> {
+        let length = sys::FileOffset::try_from(data.len()).map_err(|_| Error::Native {
+            status: String::from("InvalidInput"),
+            message: format!(
+                "the data is {} bytes, more than the C library reads from memory",
+                data.len()
+            ),
+        })?;
+        self.reload(
+            |manager, exception| {
+                // Safety: the manager is initialized, the caller holds the
+                // reload lock, and `data` is `length` bytes, which the shim
+                // copies during the call.
+                unsafe {
+                    sys::fiftyoneDegreesShimIpiReloadManagerFromMemoryCopy(
+                        manager,
+                        data.as_ptr().cast::<c_void>(),
+                        length,
+                        exception,
+                    )
+                }
+            },
+            // The C++ engine names no file for a load from memory.
+            |status| status_detail(status, None),
+        )
+    }
+
+    /// Run `reload` on the native manager while holding the reload lock,
+    /// with `detail` giving the message for a failed status, then take the
+    /// evidence keys of the new data set.
+    fn reload(
+        &self,
+        reload: impl FnOnce(*mut sys::ResourceManager, *mut sys::Exception) -> sys::StatusCode,
+        detail: impl FnOnce(sys::StatusCode) -> String,
+    ) -> Result<()> {
+        let _reloading = self
+            .reload_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let mut exception = sys::Exception::cleared();
+        let status = reload(self.as_ptr(), &mut exception);
+        status_to_result(status, || detail(status))?;
+        exception.check()?;
+        // Safety: the manager is initialized.
+        self.evidence_keys
+            .replace(unsafe { read_evidence_keys(self.as_ptr()) });
+        Ok(())
     }
 
     fn as_ptr(&self) -> *mut sys::ResourceManager {
@@ -375,7 +527,10 @@ impl Manager {
     /// tries every query value, in the data file's order, before any server
     /// value, so the query keys come first.
     pub fn evidence_keys(&self) -> impl ExactSizeIterator<Item = &str> + '_ {
-        self.evidence_keys.iter().map(|key| key.key.as_str())
+        self.evidence_keys
+            .current()
+            .iter()
+            .map(|key| key.key.as_str())
     }
 
     /// The number of handles to the data file that the data set opened when
@@ -481,20 +636,18 @@ impl Manager {
     }
 
     /// The required property index of the property named, as the C library
-    /// finds it among the names the data set was opened with, ignoring case.
+    /// finds it among the names of the data set in use, ignoring case.
     ///
     /// Returns [`None`] when the property is not one of the required
-    /// properties, or the name holds a nul byte. A lookup writes no shared
-    /// memory, so threads sharing the manager do not contend. An index belongs
-    /// to the data set it came from, so look it up again after a reload.
+    /// properties, or the name holds a nul byte. The lookup takes a reference
+    /// to the data set in use and releases it. [`Results`] look a name up in
+    /// the data set they hold, which takes no reference. A reload keeps the
+    /// names, so a name keeps its index.
     pub fn required_property_index(&self, property_name: &str) -> Option<c_int> {
-        // Safety: the data set is held until `Drop`, and the name is null
-        // terminated for the length of the call.
+        // Safety: the manager is initialized, and the name is null terminated
+        // for the length of the call.
         let index = with_c_str(property_name, |name| unsafe {
-            sys::fiftyoneDegreesShimIpiDataSetGetRequiredPropertyIndexFromName(
-                self.data_set.as_ptr(),
-                name,
-            )
+            sys::fiftyoneDegreesShimIpiGetRequiredPropertyIndexFromName(self.as_ptr(), name)
         })?;
         (index >= 0).then_some(index)
     }
@@ -520,8 +673,23 @@ impl Manager {
             status: String::from("InsufficientMemory"),
             message: String::from("failed to allocate IP Intelligence results"),
         })?;
+        // Safety: the results were created above and are not yet freed.
+        let data_set = unsafe { sys::fiftyoneDegreesShimIpiResultsGetDataSet(results.as_ptr()) };
+        let Some(data_set) = NonNull::new(data_set) else {
+            // Safety: the results were created above and nothing else has them.
+            unsafe { sys::fiftyoneDegreesResultsIpiFree(results.as_ptr()) };
+            return Err(Error::Native {
+                status: String::from("NullPointer"),
+                message: String::from("the IP Intelligence results hold no data set"),
+            });
+        };
+        // Taken after the results, so they pair with the data set except for
+        // results created while a reload replaces it.
+        let evidence_keys = NonNull::from(self.evidence_keys.current());
         Ok(Results {
             results,
+            data_set,
+            evidence_keys,
             manager: Arc::clone(self),
         })
     }
@@ -933,11 +1101,10 @@ fn data_file_value_type(value_type: u8, is_list: bool) -> PropertyValueType {
 impl Drop for Manager {
     fn drop(&mut self) {
         // Safety: the manager was initialized by a successful `open` and every
-        // referencing `Results` held an `Arc`, so they have all been dropped.
-        // The data set reference held for name lookups is released first, so
-        // freeing the manager then frees the data set.
+        // referencing `Results` held an `Arc`, so they have all been dropped,
+        // releasing their data sets, and no reload is running. Freeing the
+        // manager frees the data set in use.
         unsafe {
-            sys::fiftyoneDegreesDataSetIpiRelease(self.data_set.as_ptr());
             sys::fiftyoneDegreesResourceManagerFree(self.manager.as_ptr());
             drop(Box::from_raw(self.manager.as_ptr()));
         }
@@ -1016,10 +1183,16 @@ const EVIDENCE_KEY_SEPARATOR: &CStr = c",";
 ///
 /// Produced by [`Manager::create_results`]. Run a lookup with
 /// [`Results::process_ip`] or [`Results::process_evidence`], then read values
-/// by name with [`Results::value_as_string`]. Holds an [`Arc`] to its
-/// [`Manager`].
+/// by name with [`Results::value_as_string`]. The native results hold the data
+/// set they were created from, which a reload of the manager does not change,
+/// until they are freed. Holds an [`Arc`] to its [`Manager`] too.
 pub struct Results {
     results: NonNull<sys::ResultsIpi>,
+    /// The data set the native results hold, in which a name is looked up.
+    data_set: NonNull<sys::DataSetIpi>,
+    /// The evidence keys of that data set, which the manager keeps until it
+    /// is dropped.
+    evidence_keys: NonNull<[EvidenceKey]>,
     manager: Arc<Manager>,
 }
 
@@ -1028,13 +1201,36 @@ pub struct Results {
 unsafe impl Send for Results {}
 
 impl Results {
-    /// The manager whose data set these results read from.
+    /// The manager these results were created from. They read the data set
+    /// it held then.
     pub fn manager(&self) -> &Arc<Manager> {
         &self.manager
     }
 
     fn as_ptr(&self) -> *mut sys::ResultsIpi {
         self.results.as_ptr()
+    }
+
+    /// The required property index of the property named in the data set
+    /// these results hold, ignoring case, or [`None`] when it is not one of
+    /// its required properties or the name holds a nul byte.
+    fn required_property_index(&self, property_name: &str) -> Option<c_int> {
+        // Safety: the results hold the data set until they are freed, and the
+        // name is null terminated for the length of the call.
+        let index = with_c_str(property_name, |name| unsafe {
+            sys::fiftyoneDegreesShimIpiDataSetGetRequiredPropertyIndexFromName(
+                self.data_set.as_ptr(),
+                name,
+            )
+        })?;
+        (index >= 0).then_some(index)
+    }
+
+    /// The evidence keys of the data set these results hold.
+    fn evidence_keys(&self) -> &[EvidenceKey] {
+        // Safety: the list is one the manager keeps until it is dropped, and
+        // the results hold an `Arc` to the manager.
+        unsafe { self.evidence_keys.as_ref() }
     }
 
     /// Run a lookup from an IP address string (IPv4 or IPv6).
@@ -1070,11 +1266,13 @@ impl Results {
 
     /// Run a lookup from the client IP evidence the data file defines.
     ///
-    /// Takes the values of [`Manager::evidence_keys`] from `evidence` and passes
-    /// each one that reads as an IP address, in its canonical form, to the
-    /// native evidence lookup, which uses the first in its order. A value that
-    /// does not read as an IP address is left out, as the .NET engine does,
-    /// because the native lookup would stop at it rather than try the next key.
+    /// Takes the values of the evidence keys of the data set the results hold,
+    /// being those [`Manager::evidence_keys`] gave when they were created,
+    /// from `evidence` and passes each one that reads as an IP address, in
+    /// its canonical form, to the native evidence lookup, which uses the
+    /// first in its order. A value that does not read as an IP address is
+    /// left out, as the .NET engine does, because the native lookup would stop
+    /// at it rather than try the next key.
     /// The accepted forms are those of [`crate::evidence::parse_client_ip`]. An
     /// IPv4-mapped IPv6 address gives the answers of its IPv4 address.
     ///
@@ -1093,7 +1291,7 @@ impl Results {
             supplied: false,
         };
         let mut pairs = Vec::new();
-        for key in &self.manager.evidence_keys {
+        for key in self.evidence_keys() {
             let Some(text) = evidence.get(&key.key) else {
                 continue;
             };
@@ -1274,7 +1472,7 @@ impl Results {
     ) -> Result<Vec<(sys::PropertyValueType, String, u16)>> {
         // An unknown property has no values, so report an empty list rather
         // than an error, matching the string getter's absent-value behavior.
-        let Some(index) = self.manager.required_property_index(property_name) else {
+        let Some(index) = self.required_property_index(property_name) else {
             return Ok(Vec::new());
         };
         self.read_collection_by_index(index)
@@ -2289,6 +2487,143 @@ mod tests {
             };
             assert_eq!(status, expected, "{name}: {message}");
             assert!(!message.is_empty(), "{name}");
+        }
+    }
+
+    /// Results that have looked up 1.1.1.1 in the data set `manager` holds.
+    fn lookup_one(manager: &Arc<Manager>) -> Results {
+        let mut results = manager.create_results().expect("results allocate");
+        results.process_ip("1.1.1.1").expect("an address");
+        results
+    }
+
+    /// A reload from a file, from the original file and from memory keeps the
+    /// names, their indexes and the evidence keys, adding no list of keys
+    /// when they are the same, and results created before it read the data
+    /// set they were created from, by name, as new results read the new one,
+    /// with names and with none.
+    #[test]
+    fn a_reload_keeps_the_names_and_the_results_created_before_it() {
+        let Some(data_file) = asn_file() else {
+            eprintln!("no ASN data file found; skipping the reloads");
+            return;
+        };
+        let bytes = std::fs::read(&data_file).expect("data file reads");
+        let all = open_found(&data_file, PerformanceProfile::InMemory).available_property_names();
+        assert!(all.len() > 1, "{all:?}");
+        let named = [all[0].as_str()];
+        for properties in [None, Some(&named[..])] {
+            let manager = Manager::open_with_options(
+                &data_file,
+                PerformanceProfile::HighPerformance,
+                properties,
+                None,
+            )
+            .expect("data file loads");
+            let names = manager.available_property_names();
+            let keys: Vec<String> = manager.evidence_keys().map(str::to_owned).collect();
+            assert!(!keys.is_empty(), "{properties:?}");
+            let indexes = |manager: &Arc<Manager>| -> Vec<Option<c_int>> {
+                names
+                    .iter()
+                    .map(|name| manager.required_property_index(name))
+                    .collect()
+            };
+            let expected_indexes = indexes(&manager);
+            let expected = lookup_one(&manager);
+            for reload in ["file", "original file", "memory"] {
+                let context = format!("{reload}, named {properties:?}");
+                let mut before = lookup_one(&manager);
+                match reload {
+                    "file" => manager.reload_from_file(&data_file),
+                    "original file" => manager.reload_from_original_file(),
+                    _ => manager.reload_from_memory(&bytes),
+                }
+                .expect("the data set reloads");
+                assert_eq!(manager.available_property_names(), names, "{context}");
+                assert_eq!(indexes(&manager), expected_indexes, "{context}");
+                assert_eq!(
+                    manager.evidence_keys().collect::<Vec<_>>(),
+                    keys,
+                    "{context}"
+                );
+                let kept = manager
+                    .evidence_keys
+                    .kept
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .len();
+                assert_eq!(kept, 1, "{context}");
+                let after = lookup_one(&manager);
+                for results in [&before, &after] {
+                    for name in &names {
+                        assert_eq!(
+                            results.value_as_string(name, "|").expect("value reads"),
+                            expected.value_as_string(name, "|").expect("value reads"),
+                            "{name}, {context}"
+                        );
+                        assert_eq!(
+                            results.values_weighted(name).ok(),
+                            expected.values_weighted(name).ok(),
+                            "{name}, {context}"
+                        );
+                    }
+                }
+                let client_ip = before
+                    .process_client_ip_evidence(
+                        &Evidence::builder().add(keys[0].as_str(), "1.1.1.1").build(),
+                    )
+                    .expect("the evidence is looked up");
+                assert!(client_ip.address.is_some(), "{context}");
+            }
+        }
+    }
+
+    /// A reload that fails, from a file that is not there, from part of a data
+    /// file or from nothing, gives the C library's status and leaves the data
+    /// set in use.
+    #[test]
+    fn a_failed_reload_leaves_the_data_set_in_use() {
+        let Some(data_file) = asn_file() else {
+            eprintln!("no ASN data file found; skipping the failed reloads");
+            return;
+        };
+        let bytes = std::fs::read(&data_file).expect("data file reads");
+        let manager = open_found(&data_file, PerformanceProfile::InMemory);
+        let names = manager.available_property_names();
+        let asn = |manager: &Arc<Manager>| {
+            lookup_one(manager)
+                .value_as_string(&names[0], "|")
+                .expect("value reads")
+        };
+        let expected = asn(&manager);
+        let missing = data_file.with_file_name("no-such-data-file.ipi");
+        for (name, reloaded, status) in [
+            (
+                "a missing file",
+                manager.reload_from_file(&missing),
+                "FileNotFound",
+            ),
+            (
+                "half the file",
+                manager.reload_from_memory(&bytes[..bytes.len() / 2]),
+                "CorruptData",
+            ),
+            ("nothing", manager.reload_from_memory(&[]), "CorruptData"),
+        ] {
+            let error = reloaded
+                .err()
+                .unwrap_or_else(|| panic!("{name} should be refused"));
+            let Error::Native {
+                status: given,
+                message,
+            } = &error
+            else {
+                panic!("{name}: {error}");
+            };
+            assert_eq!(given, status, "{name}: {message}");
+            assert_eq!(manager.available_property_names(), names, "{name}");
+            assert_eq!(asn(&manager), expected, "{name}");
         }
     }
 

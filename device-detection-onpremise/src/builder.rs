@@ -399,7 +399,6 @@ impl DeviceDetectionOnPremiseEngineBuilder {
                 copy,
                 manager,
                 self.profile,
-                self.requested_properties,
                 data_file_config,
                 self.data_source_tier,
                 options,

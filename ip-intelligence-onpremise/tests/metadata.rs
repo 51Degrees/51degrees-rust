@@ -533,8 +533,8 @@ fn later_with_unreadable_metadata(file: &Path) -> Vec<u8> {
 }
 
 /// A refresh to a data file that loads but whose metadata cannot be read
-/// fails and changes nothing. The engine keeps the old file's publish date,
-/// so the update service's `If-Modified-Since` still asks for the new file.
+/// fails, and the engine keeps the old file's metadata and publish date, so
+/// the update service's `If-Modified-Since` still asks for the new file.
 /// The test needs no particular file, so it uses the small ASN file whatever
 /// `_51DEGREES_IPI_PATH` names.
 #[test]
