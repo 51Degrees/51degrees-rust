@@ -349,6 +349,9 @@ fn the_update_on_start_up(refused: &str) {
     let (engine, shared) = engine(
         DataFileConfiguration::memory_builder()
             .data_update_url(url)
+            // The test server sends no Content-MD5, and these tests are
+            // not about the hash, so the check that warns is off.
+            .verify_md5(false)
             .update_on_startup(true)
             .automatic_updates_enabled(false)
             .decompress_content(false)
@@ -383,6 +386,9 @@ fn a_scheduled_poll(refused: &str) {
     let (engine, shared) = engine(
         DataFileConfiguration::memory_builder()
             .data_update_url(url)
+            // The test server sends no Content-MD5, and these tests are
+            // not about the hash, so the check that warns is off.
+            .verify_md5(false)
             .polling_interval_seconds(1)
             .max_randomisation_seconds(0)
             .decompress_content(false)
@@ -533,6 +539,9 @@ fn a_refresh_that_panics_in_a_poll() {
     let (engine, shared) = panicking(
         DataFileConfiguration::memory_builder()
             .data_update_url(url)
+            // The test server sends no Content-MD5, and these tests are
+            // not about the hash, so the check that warns is off.
+            .verify_md5(false)
             .polling_interval_seconds(1)
             .max_randomisation_seconds(0)
             .decompress_content(false)
