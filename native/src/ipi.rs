@@ -62,7 +62,6 @@ use std::ops::Range;
 use std::os::raw::{c_char, c_int, c_void};
 use std::path::Path;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use fiftyone_ip_intelligence_sys as sys;
@@ -71,6 +70,7 @@ use fiftyone_pipeline_core::{constants, round_angle, Error, Evidence, PropertyVa
 use crate::buffer::{with_c_str, with_value_string};
 use crate::evidence::parse_client_ip;
 use crate::held_memory::HeldMemory;
+use crate::kept::{Kept, NameIndexes};
 use crate::metadata::{metadata_read_failed, read_metadata_string, take_value_string};
 use crate::profile::PerformanceProfile;
 use crate::status::{status_name, status_to_result, take_message, NativeException, NativeStatus};
@@ -162,8 +162,12 @@ pub fn data_file_header_size() -> usize {
 pub struct Manager {
     manager: NonNull<sys::ResourceManager>,
     /// The evidence keys of the data set in use, in the order the native
-    /// lookup tries them.
-    evidence_keys: EvidenceKeyLists,
+    /// lookup tries them, with each list used before kept so that keys lent
+    /// from it stay valid.
+    evidence_keys: Kept<Vec<EvidenceKey>>,
+    /// The required property index of each name in the data set in use, so
+    /// a name is looked up with no lock and no write to shared memory.
+    names: Kept<NameIndexes>,
     /// The number of required properties, which a read by index must stay
     /// below. A reload keeps the names of the data set it replaces, so it
     /// keeps this number.
@@ -178,52 +182,11 @@ pub struct Manager {
     _memory: Option<HeldMemory>,
 }
 
-/// Every list of evidence keys a manager has used, each kept until the
-/// manager is dropped, so that keys lent from one stay valid through a
-/// reload.
-struct EvidenceKeyLists {
-    /// The keys of the data set in use, being the last of `kept`.
-    current: AtomicPtr<Vec<EvidenceKey>>,
-    /// The lists used. A reload adds one only when its keys differ from the
-    /// keys in use, so a reload of a file with the same keys adds none.
-    kept: Mutex<Vec<Arc<Vec<EvidenceKey>>>>,
-}
-
-impl EvidenceKeyLists {
-    /// The lists, with `keys` in use.
-    fn new(keys: Vec<EvidenceKey>) -> Self {
-        let lists = EvidenceKeyLists {
-            current: AtomicPtr::new(std::ptr::null_mut()),
-            kept: Mutex::new(Vec::new()),
-        };
-        lists.replace(keys);
-        lists
-    }
-
-    /// The keys of the data set in use.
-    fn current(&self) -> &[EvidenceKey] {
-        // Safety: `current` points to a list that `kept` holds from before
-        // the pointer is stored until `self` is dropped, so the list outlives
-        // the borrow of `self`.
-        unsafe { &*self.current.load(Ordering::Acquire) }
-    }
-
-    /// Use `keys`, unless they are the keys already in use.
-    fn replace(&self, keys: Vec<EvidenceKey>) {
-        let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
-        let same = kept.last().is_some_and(|last| {
-            last.iter()
-                .map(|key| &key.key)
-                .eq(keys.iter().map(|key| &key.key))
-        });
-        if same {
-            return;
-        }
-        let list = Arc::new(keys);
-        kept.push(Arc::clone(&list));
-        self.current
-            .store(Arc::as_ptr(&list).cast_mut(), Ordering::Release);
-    }
+/// Whether two lists of evidence keys name the same keys in the same order.
+fn same_keys(a: &[EvidenceKey], b: &[EvidenceKey]) -> bool {
+    a.iter()
+        .map(|key| &key.key)
+        .eq(b.iter().map(|key| &key.key))
 }
 
 /// One evidence key the data file defines, split into the parts the native
@@ -239,9 +202,9 @@ struct EvidenceKey {
 
 // Safety: the native resource manager is internally reference counted and lock
 // protected per `src/common/resource.h`, so a shared `&Manager` is sound to use
-// from several threads, and reloads run one at a time under `reload_lock`. The
-// evidence key lists are only added to, under their own lock. Therefore the
-// manager is both `Send` and `Sync`.
+// from several threads, and reloads run one at a time under `reload_lock`. What
+// it keeps from each data set is only added to, under its own lock. Therefore
+// the manager is both `Send` and `Sync`.
 unsafe impl Send for Manager {}
 unsafe impl Sync for Manager {}
 
@@ -407,9 +370,12 @@ impl Manager {
         // Safety: as above.
         let required_count =
             unsafe { sys::fiftyoneDegreesShimIpiGetRequiredPropertyCount(manager.as_ptr()) };
+        // Safety: as above.
+        let names = Kept::new(unsafe { read_name_indexes(manager.as_ptr()) });
         Ok(Arc::new(Manager {
             manager,
-            evidence_keys: EvidenceKeyLists::new(evidence_keys),
+            evidence_keys: Kept::new(evidence_keys),
+            names,
             required_count,
             reload_lock: Mutex::new(()),
             _memory: memory,
@@ -509,9 +475,13 @@ impl Manager {
         let status = reload(self.as_ptr(), &mut exception);
         status_to_result(status, || detail(status))?;
         exception.check()?;
-        // Safety: the manager is initialized.
-        self.evidence_keys
-            .replace(unsafe { read_evidence_keys(self.as_ptr()) });
+        // Safety: the manager is initialized and the reload lock is held.
+        unsafe {
+            self.evidence_keys
+                .replace(read_evidence_keys(self.as_ptr()), |a, b| same_keys(a, b));
+            self.names
+                .replace(read_name_indexes(self.as_ptr()), |a, b| a == b);
+        }
         Ok(())
     }
 
@@ -609,47 +579,20 @@ impl Manager {
     /// Read from the data set's `available` properties through this crate's shim.
     pub fn available_property_names(&self) -> Vec<String> {
         // Safety: the manager is initialized for the lifetime of `self`.
-        let count = unsafe { sys::fiftyoneDegreesShimIpiGetRequiredPropertyCount(self.as_ptr()) };
-        let mut names = Vec::with_capacity(count as usize);
-        for index in 0..count {
-            let mut buffer = vec![0u8; 256];
-            // Safety: the buffer is writable for its full length and the manager
-            // is initialized.
-            let written = unsafe {
-                sys::fiftyoneDegreesShimIpiGetRequiredPropertyName(
-                    self.as_ptr(),
-                    index as c_int,
-                    buffer.as_mut_ptr() as *mut c_char,
-                    buffer.len(),
-                )
-            };
-            if written == 0 {
-                continue;
-            }
-            let end = written.min(buffer.len());
-            let name = String::from_utf8_lossy(&buffer[..end]).into_owned();
-            if !name.trim().is_empty() {
-                names.push(name);
-            }
-        }
-        names
+        unsafe { read_property_names(self.as_ptr()) }
     }
 
     /// The required property index of the property named, as the C library
     /// finds it among the names of the data set in use, ignoring case.
     ///
     /// Returns [`None`] when the property is not one of the required
-    /// properties, or the name holds a nul byte. The lookup takes a reference
-    /// to the data set in use and releases it. [`Results`] look a name up in
-    /// the data set they hold, which takes no reference. A reload keeps the
-    /// names, so a name keeps its index.
+    /// properties, or the name holds a nul byte. The name is found in a table
+    /// the manager reads from each data set it loads, so a lookup takes no
+    /// lock and writes no shared memory, and threads sharing the manager do
+    /// not contend. [`Results`] look a name up in the data set they hold. A
+    /// reload keeps the names, so a name keeps its index.
     pub fn required_property_index(&self, property_name: &str) -> Option<c_int> {
-        // Safety: the manager is initialized, and the name is null terminated
-        // for the length of the call.
-        let index = with_c_str(property_name, |name| unsafe {
-            sys::fiftyoneDegreesShimIpiGetRequiredPropertyIndexFromName(self.as_ptr(), name)
-        })?;
-        (index >= 0).then_some(index)
+        self.names.current().find(property_name)
     }
 
     /// Refuse an index that is not one of this data set's required property
@@ -685,7 +628,7 @@ impl Manager {
         };
         // Taken after the results, so they pair with the data set except for
         // results created while a reload replaces it.
-        let evidence_keys = NonNull::from(self.evidence_keys.current());
+        let evidence_keys = NonNull::from(self.evidence_keys.current().as_slice());
         Ok(Results {
             results,
             data_set,
@@ -1169,6 +1112,58 @@ unsafe fn read_evidence_keys(manager: *mut sys::ResourceManager) -> Vec<Evidence
         }
     }
     keys
+}
+
+/// The names of the required properties of the data set `manager` holds, in
+/// index order, leaving out a name that cannot be read, as
+/// [`Manager::available_property_names`] gives them.
+///
+/// # Safety
+/// `manager` must be initialized.
+unsafe fn read_property_names(manager: *mut sys::ResourceManager) -> Vec<String> {
+    let count = sys::fiftyoneDegreesShimIpiGetRequiredPropertyCount(manager);
+    let mut names = Vec::with_capacity(count as usize);
+    for index in 0..count {
+        let mut buffer = vec![0u8; 256];
+        // The buffer is writable for its full length.
+        let written = sys::fiftyoneDegreesShimIpiGetRequiredPropertyName(
+            manager,
+            index as c_int,
+            buffer.as_mut_ptr() as *mut c_char,
+            buffer.len(),
+        );
+        if written == 0 {
+            continue;
+        }
+        let end = written.min(buffer.len());
+        let name = String::from_utf8_lossy(&buffer[..end]).into_owned();
+        if !name.trim().is_empty() {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// The required property index the C library gives each required property
+/// name of the data set `manager` holds.
+///
+/// # Safety
+/// `manager` must be initialized, and no reload may replace its data set
+/// during the call.
+unsafe fn read_name_indexes(manager: *mut sys::ResourceManager) -> NameIndexes {
+    let mut found = Vec::new();
+    for name in read_property_names(manager) {
+        // A name the C library gave holds no nul byte.
+        let index = match CString::new(name.as_str()) {
+            Ok(name_c) => sys::fiftyoneDegreesShimIpiGetRequiredPropertyIndexFromName(
+                manager,
+                name_c.as_ptr(),
+            ),
+            Err(_) => -1,
+        };
+        found.push((name, index));
+    }
+    NameIndexes::new(found)
 }
 
 /// The separator the C library writes between evidence keys. No header name
@@ -2547,13 +2542,7 @@ mod tests {
                     keys,
                     "{context}"
                 );
-                let kept = manager
-                    .evidence_keys
-                    .kept
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .len();
-                assert_eq!(kept, 1, "{context}");
+                assert_eq!(manager.evidence_keys.count(), 1, "{context}");
                 let after = lookup_one(&manager);
                 for results in [&before, &after] {
                     for name in &names {

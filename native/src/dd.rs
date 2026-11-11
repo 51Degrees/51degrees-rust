@@ -60,6 +60,7 @@ use fiftyone_pipeline_core::{Error, PropertyValueType, Result};
 use crate::buffer::{with_c_str, with_value_string};
 use crate::evidence::with_native_evidence;
 use crate::held_memory::HeldMemory;
+use crate::kept::{Kept, NameIndexes};
 use crate::metadata::{metadata_read_failed, read_metadata_string, take_value_string};
 use crate::profile::PerformanceProfile;
 use crate::status::{status_name, status_to_result, take_message, NativeException, NativeStatus};
@@ -289,6 +290,9 @@ pub struct Manager {
     /// below. A reload keeps the names of the data set it replaces, so it
     /// keeps this number.
     required_count: u32,
+    /// The required property index of each name in the data set in use, so
+    /// a name is looked up with no lock and no write to shared memory.
+    names: Kept<NameIndexes>,
     /// Held while a reload replaces the data set, because the C library's
     /// reload reads the data set in use without taking a reference to it.
     reload_lock: Mutex<()>,
@@ -511,9 +515,12 @@ impl Manager {
         // Safety: the manager was initialized above.
         let required_count =
             unsafe { sys::fiftyoneDegreesShimHashGetRequiredPropertyCount(manager.as_ptr()) };
+        // Safety: as above.
+        let names = Kept::new(unsafe { read_name_indexes(manager.as_ptr()) });
         Ok(Arc::new(Manager {
             manager,
             required_count,
+            names,
             reload_lock: Mutex::new(()),
             _memory: memory,
         }))
@@ -611,7 +618,11 @@ impl Manager {
         let mut exception = sys::Exception::cleared();
         let status = reload(self.as_ptr(), &mut exception);
         status_to_result(status, || detail(status))?;
-        exception.check()
+        exception.check()?;
+        // Safety: the manager is initialized.
+        self.names
+            .replace(unsafe { read_name_indexes(self.as_ptr()) }, |a, b| a == b);
+        Ok(())
     }
 
     /// The date the data file was published, from its header, as `(year,
@@ -671,25 +682,8 @@ impl Manager {
     /// data set has no property for. With none named, these are the names of
     /// the first data file loaded, which every reload keeps.
     pub fn property_names(&self) -> Vec<String> {
-        let count = self.property_count();
-        let mut names = Vec::with_capacity(count as usize);
-        let mut buffer = vec![0u8; 256];
-        for index in 0..count as c_int {
-            // Safety: the buffer is writable for its full length.
-            let written = unsafe {
-                sys::fiftyoneDegreesShimHashGetRequiredPropertyName(
-                    self.as_ptr(),
-                    index,
-                    buffer.as_mut_ptr() as *mut c_char,
-                    buffer.len(),
-                )
-            };
-            if written > 0 {
-                let end = (written as usize).min(buffer.len());
-                names.push(String::from_utf8_lossy(&buffer[..end]).into_owned());
-            }
-        }
-        names
+        // Safety: the manager is initialized for the lifetime of `self`.
+        unsafe { read_property_names(self.as_ptr()) }
     }
 
     /// The evidence keys the data set reads, lowercased, in the C library's
@@ -764,16 +758,12 @@ impl Manager {
     /// finds it among the names of the data set in use, ignoring case.
     ///
     /// Returns [`None`] when the property is not one of the required
-    /// properties, or the name holds a nul byte. The lookup takes a reference
-    /// to the data set in use and releases it. [`Results`] look a name up in
-    /// the data set they hold, which takes no reference.
+    /// properties, or the name holds a nul byte. The name is found in a table
+    /// the manager reads from each data set it loads, so a lookup takes no
+    /// lock and writes no shared memory, and threads sharing the manager do
+    /// not contend. [`Results`] look a name up in the data set they hold.
     pub fn required_property_index(&self, property_name: &str) -> Option<c_int> {
-        // Safety: the manager is initialized, and the name is null terminated
-        // for the length of the call.
-        let index = with_c_str(property_name, |name| unsafe {
-            sys::fiftyoneDegreesShimHashGetRequiredPropertyIndexFromName(self.as_ptr(), name)
-        })?;
-        (index >= 0).then_some(index)
+        self.names.current().find(property_name)
     }
 
     /// Create a per-thread results structure for running detections.
@@ -1187,6 +1177,53 @@ fn data_file_value_type(value_type: u8, is_list: bool) -> PropertyValueType {
         STRING if is_list => PropertyValueType::StringList,
         _ => PropertyValueType::String,
     }
+}
+
+/// The names of the required properties of the data set `manager` holds, in
+/// index order, as [`Manager::property_names`] gives them.
+///
+/// # Safety
+/// `manager` must be initialized.
+unsafe fn read_property_names(manager: *mut sys::ResourceManager) -> Vec<String> {
+    let count = sys::fiftyoneDegreesShimHashGetRequiredPropertyCount(manager);
+    let mut names = Vec::with_capacity(count as usize);
+    let mut buffer = vec![0u8; 256];
+    for index in 0..count as c_int {
+        // The buffer is writable for its full length.
+        let written = sys::fiftyoneDegreesShimHashGetRequiredPropertyName(
+            manager,
+            index,
+            buffer.as_mut_ptr() as *mut c_char,
+            buffer.len(),
+        );
+        if written > 0 {
+            let end = written.min(buffer.len());
+            names.push(String::from_utf8_lossy(&buffer[..end]).into_owned());
+        }
+    }
+    names
+}
+
+/// The required property index the C library gives each required property
+/// name of the data set `manager` holds.
+///
+/// # Safety
+/// `manager` must be initialized, and no reload may replace its data set
+/// during the call.
+unsafe fn read_name_indexes(manager: *mut sys::ResourceManager) -> NameIndexes {
+    let mut found = Vec::new();
+    for name in read_property_names(manager) {
+        // A name the C library gave holds no nul byte.
+        let index = match CString::new(name.as_str()) {
+            Ok(name_c) => sys::fiftyoneDegreesShimHashGetRequiredPropertyIndexFromName(
+                manager,
+                name_c.as_ptr(),
+            ),
+            Err(_) => -1,
+        };
+        found.push((name, index));
+    }
+    NameIndexes::new(found)
 }
 
 impl Drop for Manager {
