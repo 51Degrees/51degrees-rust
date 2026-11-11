@@ -415,12 +415,19 @@ fn fodid_product_name_matches_the_51did_engine_data_key() {
 #[test]
 fn full_template_render_is_deterministic_under_repetition() {
     // Rendering the full template repeatedly must always yield identical bytes.
-    // This guards against any nondeterminism in the renderer.
+    // This guards against any nondeterminism in the renderer. The session id is
+    // supplied, because the sequence element creates a new one for a request
+    // that has none, and that difference is the element's and not the
+    // renderer's.
     let render = || {
         run(
             None,
             |b| b.set_minify(false).build(),
-            &[("header.host", "localhost"), ("query.sequence", "1")],
+            &[
+                ("header.host", "localhost"),
+                ("query.session-id", "a-test-session"),
+                ("query.sequence", "1"),
+            ],
         )
     };
     let first = render();
