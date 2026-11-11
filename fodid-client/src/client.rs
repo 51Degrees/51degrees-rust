@@ -1280,6 +1280,21 @@ mod tests {
     }
 
     #[test]
+    fn the_endpoint_variable_carries_the_one_name() {
+        // The cloud request engine of this workspace reads
+        // _51DEGREES_CLOUD_ENDPOINT, and this client says it honours the same
+        // variable, so the two names have to be the one name. The name is
+        // written out rather than taken from the engine, because this crate
+        // does not depend on it, and a test that asked this crate what it
+        // expects would agree with itself whatever the name became.
+        assert_eq!(
+            ENDPOINT_ENVIRONMENT_VARIABLE,
+            "_51DEGREES_CLOUD_ENDPOINT",
+            "the endpoint variable has to be the one the cloud request engine reads"
+        );
+    }
+
+    #[test]
     fn the_licence_key_is_held_but_never_shown() {
         let without = new_client(FakeHttp::answering(vec![]));
         assert!(!without.has_licence_key());
