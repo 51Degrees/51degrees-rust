@@ -30,7 +30,7 @@
 //! any JavaScript-typed properties the JSON carries, and (when a callback URL is
 //! configured) posts the evidence it gathers back to the server for a refreshed
 //! result. It implements the
-//! [javascript-builder specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/javascript-builder.md).
+//! [javascript-builder specification](https://github.com/51Degrees/specifications/blob/e89679e9/pipeline-specification/pipeline-elements/javascript-builder.md).
 //!
 //! ## The template
 //!
@@ -73,8 +73,12 @@
 //! use fiftyone_pipeline_core::{Evidence, Pipeline};
 //! use fiftyone_json_builder::JsonBuilderElement;
 //! use fiftyone_javascript_builder::{JavaScriptBuilderElement, JAVASCRIPT_BUILDER_DATA_KEY};
+//! use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 //!
+//! // The sequence element leads, because the JSON builder needs the sequence
+//! // number it writes.
 //! let pipeline = Pipeline::builder()
+//!     .add_element(Arc::new(SequenceElement::new()))
 //!     .add_element(Arc::new(JsonBuilderElement::new()))
 //!     .add_element(Arc::new(JavaScriptBuilderElement::new()))
 //!     .build()

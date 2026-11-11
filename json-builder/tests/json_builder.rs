@@ -194,14 +194,21 @@ impl FlowElement for FailingElement {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Build a pipeline from the given elements plus a trailing JSON builder,
-/// process a flow data with the given sequence number and return the JSON.
+/// Build a pipeline of the sequence element, the given elements and a trailing
+/// JSON builder, process a flow data carrying the given `query.sequence` and
+/// return the JSON.
+///
+/// The sequence element leads, as the web pipeline orders it and as the JSON
+/// builder requires, and it adds one to the supplied value, so a `sequence` of
+/// "9" reaches the builder as 10.
 fn run_with_sequence(
     elements: Vec<Arc<dyn FlowElement>>,
     json_builder: JsonBuilderElement,
     sequence: &str,
 ) -> String {
-    let mut builder = Pipeline::builder().suppress_process_exceptions(true);
+    let mut builder = Pipeline::builder()
+        .suppress_process_exceptions(true)
+        .add_element(Arc::new(SequenceElement::new()));
     for element in elements {
         builder = builder.add_element(element);
     }
@@ -210,8 +217,14 @@ fn run_with_sequence(
         .build()
         .expect("pipeline builds");
 
-    let mut data =
-        pipeline.create_flow_data_with(Evidence::builder().add("query.sequence", sequence).build());
+    // The session id is supplied so the sequence element does not create a new
+    // one each run, which would make the JSON differ between runs.
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("query.session-id", "a-test-session")
+            .add("query.sequence", sequence)
+            .build(),
+    );
     data.process()
         .expect("processing succeeds (exceptions suppressed)");
 
@@ -221,7 +234,8 @@ fn run_with_sequence(
         .to_owned()
 }
 
-/// Convenience wrapper that runs with sequence number 1.
+/// Convenience wrapper for a first callback, whose `query.sequence` of "1" the
+/// sequence element turns into 2.
 fn run(elements: Vec<Arc<dyn FlowElement>>, json_builder: JsonBuilderElement) -> String {
     run_with_sequence(elements, json_builder, "1")
 }
@@ -619,8 +633,9 @@ fn suppresses_javascript_properties_at_cap() {
             PropertyValue::JavaScript("x".to_owned()),
         );
 
-    // Sequence number 10 == MAX_JAVASCRIPT_ITERATIONS, so the list is dropped.
-    let json = run_with_sequence(vec![Arc::new(device)], JsonBuilderElement::new(), "10");
+    // The sequence element turns 9 into 10, which is MAX_JAVASCRIPT_ITERATIONS,
+    // so the list is dropped.
+    let json = run_with_sequence(vec![Arc::new(device)], JsonBuilderElement::new(), "9");
     let value = parse(&json);
     assert!(
         value.get("javascriptProperties").is_none(),
@@ -726,9 +741,10 @@ fn javascript_value_serialised_as_string() {
 }
 
 #[test]
-fn missing_sequence_keeps_javascript_properties() {
-    // Direct callers that never set query.sequence should still get the list
-    // (the builder treats a missing sequence as 0, below the cap).
+fn no_sequence_element_means_no_json() {
+    // A pipeline with no sequence element has no sequence number, so the
+    // element records an error and sets nothing. The tests in
+    // sequence_required.rs cover the message and the other evidence shapes.
     let device = TestElement::new("device")
         .with_property(PropertyMetaData::new(
             "hint",
@@ -745,12 +761,12 @@ fn missing_sequence_keeps_javascript_properties() {
         .expect("pipeline builds");
     // No evidence at all.
     let mut data = pipeline.create_flow_data();
-    data.process().expect("processing succeeds");
-    let json = data.get(JSON_BUILDER_DATA_KEY).unwrap().json().to_owned();
+    data.process().expect("exceptions are suppressed");
 
+    assert_eq!(data.errors().len(), 1, "the JSON builder recorded an error");
     assert!(
-        parse(&json).get("javascriptProperties").is_some(),
-        "list kept when no sequence number is supplied"
+        data.get(JSON_BUILDER_DATA_KEY).is_none(),
+        "no JSON value was set"
     );
 }
 
