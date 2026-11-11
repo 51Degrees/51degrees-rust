@@ -69,7 +69,7 @@ const PANIC: &str = "a callback that panics";
 const REFRESH_PANIC: &str = "a refresh that panics";
 
 /// The start of the record logged for a refresh that failed.
-const APPLYING: &str = "ERROR An error occurred while applying a data file update to failing.";
+const APPLYING: &str = "ERROR An error occurred when applying a data update to engine 'failing'.";
 
 /// How much older than the file last applied a file put in place is.
 const OLDER: Duration = Duration::from_secs(60);
@@ -221,8 +221,8 @@ fn data_file(engine: &Arc<dyn OnPremiseAspectEngine>) -> Arc<AspectEngineDataFil
 /// The record a refresh that failed with `error` logs.
 fn applying(error: &DataUpdateError) -> String {
     format!(
-        "ERROR An error occurred while applying a data file update to failing. Error detail: \
-         {error}"
+        "ERROR An error occurred when applying a data update to engine 'failing'. Error \
+         detail: {error}"
     )
 }
 

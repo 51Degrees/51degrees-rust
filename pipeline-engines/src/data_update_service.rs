@@ -934,6 +934,10 @@ impl ServiceHandle {
             return Ok(AutoUpdateStatus::NotNeeded);
         }
         data_file.set_last_applied_modified(modified);
+        log::info!(
+            "Attempting to refresh Engine '{}' with new data",
+            engine.data_key()
+        );
         let result = guarded_refresh(|| engine.refresh(Some(data_file.identifier())))
             .map(|()| AutoUpdateStatus::Success);
         if result.is_ok() {
@@ -1005,11 +1009,19 @@ impl ServiceHandle {
             }
         }
 
+        let name = engine.data_key();
+        // An error message is masked where the check ends, but a log entry
+        // written here is not, so the URL these entries name is masked now.
+        let logged_url = redact_with(&url, &config.data_update_license_keys);
         let response = request.send().map_err(|e| {
+            // A request that never reached the service and one that reached it
+            // and gave nothing back are the same failure here, where .NET tells
+            // them apart, so the message is the one for the first.
             DataUpdateError::new(
                 AutoUpdateStatus::HttpsError,
                 format!(
-                    "error accessing data update service at '{url}': {}",
+                    "Error accessing data update service at '{url}' for engine \
+                     '{name}'. Error detail: {}",
                     request_error_message(e)
                 ),
             )
@@ -1017,6 +1029,12 @@ impl ServiceHandle {
 
         let status = response.status();
         if status == reqwest::StatusCode::NOT_MODIFIED {
+            let since = data_file
+                .data_published()
+                .or_else(|| data_file.data_file_path().and_then(file_modified_time))
+                .map(httpdate_format)
+                .unwrap_or_else(|| "the data it has".to_owned());
+            log::info!("No data newer than {since} found at '{logged_url}' for Engine '{name}'");
             return Ok(AutoUpdateStatus::NotNeeded);
         }
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
@@ -1033,19 +1051,23 @@ impl ServiceHandle {
                 .unwrap_or_default();
             return Err(DataUpdateError::new(
                 AutoUpdateStatus::TooManyRequests,
-                format!("too many requests to '{url}'{retry_after}"),
+                format!("Too many requests to '{url}' for engine '{name}'{retry_after}"),
             ));
         }
         if status == reqwest::StatusCode::FORBIDDEN {
             return Err(DataUpdateError::new(
                 AutoUpdateStatus::Forbidden,
-                format!("access denied to data update service at '{url}'"),
+                format!("Access denied to data update service at '{url}' for engine '{name}'"),
             ));
         }
         if !status.is_success() {
             return Err(DataUpdateError::new(
                 AutoUpdateStatus::HttpsError,
-                format!("HTTP status '{status}' from data update service at '{url}'"),
+                format!(
+                    "HTTP status code '{}' from data update service at '{url}' for \
+                     engine '{name}'",
+                    status.as_u16()
+                ),
             ));
         }
 
@@ -1055,6 +1077,12 @@ impl ServiceHandle {
             .get("content-md5")
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
+        if config.verify_md5 && expected_md5.is_none() {
+            log::warn!(
+                "No MD5 hash included in data update response for '{logged_url}'. \
+                 Unable to verify data integrity"
+            );
+        }
 
         // The body is read as it arrives, so the client's timeout limits each
         // wait for more of it rather than the whole download, and its MD5 is
@@ -1071,13 +1099,20 @@ impl ServiceHandle {
             let mut compressed = Vec::new();
             body.read_to_end(&mut compressed)
                 .map_err(|e| read_error(&url, e))?;
-            verify_md5(config.verify_md5, expected_md5.as_deref(), &body.hex())?;
+            log::info!("Downloaded new data from '{logged_url}' for Engine '{name}'");
+            verify_md5(
+                config.verify_md5,
+                expected_md5.as_deref(),
+                &body.hex(),
+                name,
+            )?;
             let data = if config.decompress_content {
                 gzip_decompress(&compressed).map_err(|e| decompress_error(&url, e))?
             } else {
                 compressed
             };
             let recorded = data_file.published_changes();
+            log::info!("Attempting to refresh Engine '{name}' with new data");
             guarded_refresh(|| engine.refresh_from_memory(Some(data_file.identifier()), &data))?;
             Self::record_published(data_file, recorded);
             return Ok(AutoUpdateStatus::Success);
@@ -1089,7 +1124,13 @@ impl ServiceHandle {
         // fails part way leaves nothing behind.
         let download = TempFile::beside(path, "download");
         save_body(&mut body, download.path(), &url)?;
-        verify_md5(config.verify_md5, expected_md5.as_deref(), &body.hex())?;
+        log::info!("Downloaded new data from '{logged_url}' for Engine '{name}'");
+        verify_md5(
+            config.verify_md5,
+            expected_md5.as_deref(),
+            &body.hex(),
+            name,
+        )?;
         let new_file = if config.decompress_content {
             let decompressed = TempFile::beside(path, "new");
             gunzip_file(download.path(), decompressed.path(), &stop)
@@ -1109,10 +1150,15 @@ impl ServiceHandle {
         std::fs::rename(new_file.path(), path).map_err(|e| {
             DataUpdateError::new(
                 AutoUpdateStatus::NewFileCannotRename,
-                format!("error replacing data file '{}': {e}", path.display()),
+                format!(
+                    "An error occurred when copying a data file to replace the \
+                     existing one at '{}'. Error detail: {e}",
+                    path.display()
+                ),
             )
         })?;
         let recorded = data_file.published_changes();
+        log::info!("Attempting to refresh Engine '{name}' with new data");
         guarded_refresh(|| engine.refresh(Some(data_file.identifier())))?;
         Self::record_published(data_file, recorded);
 
@@ -1146,11 +1192,13 @@ fn log_poll(engine: &str, registration: &Registration, result: &DataUpdateResult
             log::info!("A data file update for {engine} was downloaded from '{url}' and applied.")
         }
         Ok(_) => {}
+        // A refresh that failed is logged where the check ends.
         Err(error) if error.status == AutoUpdateStatus::RefreshFailed => {}
-        Err(error) => log::warn!(
-            "An error occurred while downloading a data file update for {engine} from '{url}'. \
-             Update will be attempted again later. Error detail: {error}"
-        ),
+        // Every other error already carries the message the errors table
+        // gives, written where the failure was found and its detail was to
+        // hand. Every row of that table is at Error apart from the two
+        // warnings, which are written where they happen and never reach here.
+        Err(error) => log::error!("{}", error.message),
     }
 }
 
@@ -1159,7 +1207,8 @@ fn log_poll(engine: &str, registration: &Registration, result: &DataUpdateResult
 /// gives for an error when calling refresh on an engine.
 fn log_refresh_failed(engine: &str, error: &DataUpdateError) {
     log::error!(
-        "An error occurred while applying a data file update to {engine}. Error detail: {error}"
+        "An error occurred when applying a data update to engine '{engine}'. \
+         Error detail: {error}"
     );
 }
 
@@ -1345,14 +1394,20 @@ fn gunzip_file(from: &Path, to: &Path, stop: &dyn Fn() -> bool) -> std::io::Resu
 
 /// Check the MD5 of the download against the one the server sent, when the
 /// check is on and the server sent one.
-fn verify_md5(check: bool, expected: Option<&str>, actual: &str) -> Result<(), DataUpdateError> {
+fn verify_md5(
+    check: bool,
+    expected: Option<&str>,
+    actual: &str,
+    engine: &str,
+) -> Result<(), DataUpdateError> {
     match expected {
         Some(expected) if check && !actual.eq_ignore_ascii_case(expected) => {
             Err(DataUpdateError::new(
                 AutoUpdateStatus::Md5ValidationFailed,
                 format!(
-                    "integrity check failed: server MD5 '{expected}' does not match \
-                     downloaded '{actual}'"
+                    "Integrity check failed. MD5 hash in HTTP response '{expected}' \
+                     for '{engine}' data update does not match calculated hash for \
+                     the downloaded file '{actual}'."
                 ),
             ))
         }
