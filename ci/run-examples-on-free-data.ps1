@@ -5,7 +5,7 @@ would, on the free data files with no settings, and fails when one fails.
 
 .DESCRIPTION
 Each example runs from examples/ with no arguments and with every
-51DEGREES_ variable removed, so it finds the free data files in cxx/data
+_51DEGREES_ variable removed, so it finds the free data files in cxx/data
 itself. Before any example starts, the data repository's script is run once,
 as an example runs it, to download every free file the repository links that
 is not already there, so no two examples download the same file. A try that
@@ -81,7 +81,7 @@ $failures = [System.Collections.Generic.List[string]]::new()
 # Out of the box means no settings, so every variable the examples or the
 # engines read is removed for this process and the examples it starts.
 Get-ChildItem Env: |
-    Where-Object { $_.Name -like "51DEGREES_*" -or $_.Name -like "_51DEGREES_*" } |
+    Where-Object { $_.Name -like "_51DEGREES_*" } |
     ForEach-Object {
         Write-Host "Removing $($_.Name) from the environment."
         Remove-Item -Path "Env:$($_.Name)"

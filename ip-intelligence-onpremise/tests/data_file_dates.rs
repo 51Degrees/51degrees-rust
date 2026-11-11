@@ -27,7 +27,7 @@
 //!
 //! Each test holds several copies of the data at once, so the tests use the
 //! ASN file in the data repository inside the `cxx` submodule whatever
-//! `51DEGREES_IPI_PATH` names, and skip with a note when it is missing.
+//! `_51DEGREES_IPI_PATH` names, and skip with a note when it is missing.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;

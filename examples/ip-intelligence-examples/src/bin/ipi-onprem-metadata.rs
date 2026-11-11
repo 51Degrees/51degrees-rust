@@ -371,7 +371,7 @@ mod tests {
         assert!(!printed.contains("header.user-agent"));
         assert!(printed.contains(examples_shared::FIND_OUT_MORE_HEADING));
         // The ASN file carries none of the Enterprise properties, so the run
-        // says so. 51DEGREES_IPI_PATH can name another file.
+        // says so. _51DEGREES_IPI_PATH can name another file.
         let asn_file = examples_shared::IPI_ASN_RELATIVE_PATH.rsplit('/').next();
         if options.data_file.file_name().and_then(|n| n.to_str()) == asn_file {
             // The ASN file's properties are listed under their component, the

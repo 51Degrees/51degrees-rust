@@ -41,10 +41,10 @@ const DESKTOP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
 /// of 10 than with none.
 const NOTHING_TO_MATCH: &str = "nothing to match";
 
-/// The data file `51DEGREES_DD_PATH` names, or else the Lite file found from
+/// The data file `_51DEGREES_DD_PATH` names, or else the Lite file found from
 /// this crate's directory upwards.
 fn data_file() -> Option<PathBuf> {
-    if let Some(path) = std::env::var("51DEGREES_DD_PATH")
+    if let Some(path) = std::env::var("_51DEGREES_DD_PATH")
         .ok()
         .map(|path| PathBuf::from(path.trim()))
         .filter(|path| path.is_file())

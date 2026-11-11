@@ -42,10 +42,10 @@ const MAC_VALUES: &str = "eyJhcmNoaXRlY3R1cmUiOiJhcm0iLCJicmFuZHMiOlt7ImJyYW5kIj
 /// The data key the UA-CH high entropy decoder element writes under.
 const DECODER_DATA_KEY: &str = "uach";
 
-/// The data file `51DEGREES_DD_PATH` names, or else the Lite file found from
+/// The data file `_51DEGREES_DD_PATH` names, or else the Lite file found from
 /// this crate's directory upwards.
 fn data_file() -> Option<PathBuf> {
-    if let Some(path) = std::env::var("51DEGREES_DD_PATH")
+    if let Some(path) = std::env::var("_51DEGREES_DD_PATH")
         .ok()
         .map(|path| PathBuf::from(path.trim()))
         .filter(|path| path.is_file())

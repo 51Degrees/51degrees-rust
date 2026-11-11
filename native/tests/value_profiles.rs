@@ -25,11 +25,11 @@
 //! profiles reading every profile finds, in ascending order, and each holds
 //! the value.
 //!
-//! The tests run on the Hash data file `51DEGREES_DD_PATH` names, or the Lite
+//! The tests run on the Hash data file `_51DEGREES_DD_PATH` names, or the Lite
 //! file in the `cxx` submodule, and skip when there is neither.
 //! `tac_and_native_model_values_find_their_profiles` needs a file with the
 //! TAC and NativeModel properties, such as the TAC file. When
-//! `51DEGREES_REQUIRE_TAC` is set, as the comparison workflow sets it, that
+//! `_51DEGREES_REQUIRE_TAC` is set, as the comparison workflow sets it, that
 //! test fails rather than skips without one.
 
 #![cfg(feature = "dd")]
@@ -49,7 +49,7 @@ const NATIVE_MODEL: &str = "NativeModel";
 const NO_SUCH_PROPERTY: &str = "NoSuchProperty";
 
 /// Set where the TAC file test must run, so it fails rather than skips.
-const REQUIRE_TAC: &str = "51DEGREES_REQUIRE_TAC";
+const REQUIRE_TAC: &str = "_51DEGREES_REQUIRE_TAC";
 
 /// The separator a property's values are read with, which no value holds.
 const SEPARATOR: &str = "\u{1F}";
@@ -63,10 +63,10 @@ const FILE_PROFILE_FULL_READ_EVERY: usize = 10;
 /// about one value in 500.
 const TAC_FULL_READ_EVERY: usize = 500;
 
-/// The Hash data file `51DEGREES_DD_PATH` names, or the Lite file in the
+/// The Hash data file `_51DEGREES_DD_PATH` names, or the Lite file in the
 /// `cxx` submodule.
 fn data_file() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("51DEGREES_DD_PATH") {
+    if let Some(path) = std::env::var_os("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);

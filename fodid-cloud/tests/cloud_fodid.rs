@@ -549,7 +549,7 @@ fn requests_that_ask_for_no_51did_are_still_served_from_the_cache() {
 /// names, so the live test runs from an explicit key or the keys CI exports.
 fn live_resource_key() -> Option<String> {
     [
-        "51DEGREES_RESOURCE_KEY",
+        "_51DEGREES_RESOURCE_KEY",
         "_51DEGREES_RESOURCE_KEY_BESPOKE",
         "_51DEGREES_RESOURCE_KEY_BASIC",
     ]
@@ -561,7 +561,7 @@ fn live_resource_key() -> Option<String> {
 }
 
 #[test]
-#[ignore = "requires network and a resource key (51DEGREES_RESOURCE_KEY or the _51DEGREES_RESOURCE_KEY_BESPOKE/_BASIC tiered names)"]
+#[ignore = "requires network and a resource key (_51DEGREES_RESOURCE_KEY or the _51DEGREES_RESOURCE_KEY_BESPOKE/_BASIC tiered names)"]
 fn live_cloud_returns_a_parseable_identifier() {
     let Some(resource_key) = live_resource_key() else {
         eprintln!("no resource key in the environment; skipping live cloud test");

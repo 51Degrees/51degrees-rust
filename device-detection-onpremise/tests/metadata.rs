@@ -23,7 +23,7 @@
 //! The on-premise engine's property, component and value metadata, read from
 //! the data file as the .NET engine reads it.
 //!
-//! These run against the Lite Hash data file, or the file `51DEGREES_DD_PATH`
+//! These run against the Lite Hash data file, or the file `_51DEGREES_DD_PATH`
 //! names, and skip with a note when there is none. They check what every Hash
 //! data file holds, so they pass against any tier.
 
@@ -55,10 +55,10 @@ const METRICS: [&str; 7] = [
 const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) \
     AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 
-/// The Hash data file `51DEGREES_DD_PATH` names, or the Lite file in the `cxx`
+/// The Hash data file `_51DEGREES_DD_PATH` names, or the Lite file in the `cxx`
 /// submodule.
 fn data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("51DEGREES_DD_PATH") {
+    if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);

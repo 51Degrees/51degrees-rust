@@ -49,7 +49,7 @@ use std::path::PathBuf;
 /// optional name fragment, returning the first that exists.
 ///
 /// Resolution order, all relative to the Rust workspace root:
-/// the matching `FIFTYONE_*` environment variable, then the
+/// the matching `_51DEGREES_*` environment variable, then the
 /// `cxx` submodule, then the parent
 /// `Workspace` tree where the other 51Degrees products keep their data.
 #[cfg(any(feature = "dd", feature = "ipi"))]
@@ -98,7 +98,7 @@ fn find_data_file(
 #[cfg(feature = "dd")]
 fn dd_lite_data_file() -> Option<PathBuf> {
     find_data_file(
-        "51DEGREES_DD_PATH",
+        "_51DEGREES_DD_PATH",
         "cxx",
         "data/device-detection",
         "51Degrees-LiteV4.1.hash",
@@ -112,7 +112,7 @@ fn dd_lite_data_file() -> Option<PathBuf> {
 #[cfg(feature = "ipi")]
 fn ipi_data_file() -> Option<PathBuf> {
     find_data_file(
-        "51DEGREES_IPI_PATH",
+        "_51DEGREES_IPI_PATH",
         "cxx",
         "data/ip-intelligence",
         "51Degrees-IPIV4AsnIpiV41.ipi",

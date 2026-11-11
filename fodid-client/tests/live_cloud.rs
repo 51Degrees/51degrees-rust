@@ -48,7 +48,7 @@
 //! cargo test -p fodid-client --test live_cloud -- --include-ignored
 //! ```
 //!
-//! The key is read from `51DEGREES_RESOURCE_KEY`, then the CI-exported names
+//! The key is read from `_51DEGREES_RESOURCE_KEY`, then the CI-exported names
 //! `_51DEGREES_RESOURCE_KEY_51DID`, `_51DEGREES_RESOURCE_KEY_BESPOKE`,
 //! `_51DEGREES_RESOURCE_KEY_BESPOKE` and `_51DEGREES_RESOURCE_KEY_BASIC`. With
 //! none of them set the test says why and passes, so a fork with no secrets
@@ -56,7 +56,7 @@
 //!
 //! The license key decides how far step 6 goes. It is read from
 //! `_51DEGREES_LICENSE_KEY_51DID`, then `_51DEGREES_LICENSE_KEY_BESPOKE`, then
-//! `51DEGREES_LICENSE_KEY`, in that order, because the first two are named for
+//! `_51DEGREES_LICENSE_KEY`, in that order, because the first two are named for
 //! the product they carry whilst the last is the general runtime name and may
 //! hold a data file license that carries no 51Did product at all.
 //!
@@ -110,7 +110,7 @@ const FACTORS: [&str; 9] = [
 /// tiered names, in the order that puts the most capable key first.
 fn resource_key() -> Option<String> {
     [
-        "51DEGREES_RESOURCE_KEY",
+        "_51DEGREES_RESOURCE_KEY",
         "_51DEGREES_RESOURCE_KEY_51DID",
         "_51DEGREES_RESOURCE_KEY_BESPOKE",
         "_51DEGREES_RESOURCE_KEY_BESPOKE",
@@ -126,7 +126,7 @@ fn license_key() -> Option<String> {
     [
         "_51DEGREES_LICENSE_KEY_51DID",
         "_51DEGREES_LICENSE_KEY_BESPOKE",
-        "51DEGREES_LICENSE_KEY",
+        "_51DEGREES_LICENSE_KEY",
     ]
     .into_iter()
     .find_map(non_blank_variable)
@@ -462,7 +462,7 @@ async fn creates_verifies_and_redeems_a_51did_against_the_live_cloud() {
     let Some(resource_key) = resource_key() else {
         eprintln!(
             "no resource key in the environment, so the live 51Did client test \
-             is skipped. Set 51DEGREES_RESOURCE_KEY to a key that carries the \
+             is skipped. Set _51DEGREES_RESOURCE_KEY to a key that carries the \
              51Did product."
         );
         return;

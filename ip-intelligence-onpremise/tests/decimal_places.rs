@@ -24,8 +24,8 @@
 //! places, as a number, as text and as a point in a WKT shape.
 //!
 //! Only the Enterprise data file carries these properties, so the test runs
-//! when `51DEGREES_IPI_PATH` names a file that carries Latitude and skips
-//! otherwise. When `51DEGREES_REQUIRE_LOCATION` is set, as the comparison
+//! when `_51DEGREES_IPI_PATH` names a file that carries Latitude and skips
+//! otherwise. When `_51DEGREES_REQUIRE_LOCATION` is set, as the comparison
 //! with .NET sets it for the Enterprise file, the test fails where it would
 //! skip.
 
@@ -58,7 +58,7 @@ const SEPARATOR: &str = "|";
 const PLACES: usize = 3;
 
 /// Set where the test must run, so it fails rather than skips.
-const REQUIRE: &str = "51DEGREES_REQUIRE_LOCATION";
+const REQUIRE: &str = "_51DEGREES_REQUIRE_LOCATION";
 
 /// Skip the test for `reason`, or fail when [`REQUIRE`] is set.
 fn skip(reason: &str) {
@@ -69,9 +69,9 @@ fn skip(reason: &str) {
     eprintln!("{reason}; skipping");
 }
 
-/// The data file `51DEGREES_IPI_PATH` names, if it exists.
+/// The data file `_51DEGREES_IPI_PATH` names, if it exists.
 fn data_file() -> Option<PathBuf> {
-    let path = PathBuf::from(std::env::var("51DEGREES_IPI_PATH").ok()?.trim());
+    let path = PathBuf::from(std::env::var("_51DEGREES_IPI_PATH").ok()?.trim());
     path.is_file().then_some(path)
 }
 
@@ -100,7 +100,7 @@ fn quoted_values(text: &str) -> Vec<&str> {
 #[test]
 fn locations_are_given_to_three_decimal_places() {
     let Some(file) = data_file() else {
-        skip("51DEGREES_IPI_PATH names no data file");
+        skip("_51DEGREES_IPI_PATH names no data file");
         return;
     };
     let manager =

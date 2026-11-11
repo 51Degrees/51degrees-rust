@@ -1596,7 +1596,7 @@ mod tests {
     /// Resolve the 51degrees-cxx checkout the same way `build.rs` does so the
     /// smoke test can find the ASN data file in it.
     fn cxx_dir() -> PathBuf {
-        if let Ok(dir) = std::env::var("FIFTYONE_CXX_DIR") {
+        if let Ok(dir) = std::env::var("_51DEGREES_CXX_DIR") {
             return PathBuf::from(dir);
         }
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1615,9 +1615,9 @@ mod tests {
         path.is_file().then_some(path)
     }
 
-    /// The data file `51DEGREES_IPI_PATH` names, else the ASN file.
+    /// The data file `_51DEGREES_IPI_PATH` names, else the ASN file.
     fn named_or_asn_data_file() -> Option<PathBuf> {
-        std::env::var("51DEGREES_IPI_PATH")
+        std::env::var("_51DEGREES_IPI_PATH")
             .ok()
             .map(PathBuf::from)
             .filter(|path| path.is_file())

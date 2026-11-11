@@ -90,8 +90,8 @@ jobs:
       - name: Configure data files
         shell: bash
         run: |
-          echo "51DEGREES_DD_PATH=${GITHUB_WORKSPACE}/cxx/data/device-detection/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
-          echo "51DEGREES_IPI_PATH=${GITHUB_WORKSPACE}/cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
+          echo "_51DEGREES_DD_PATH=${GITHUB_WORKSPACE}/cxx/data/device-detection/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
+          echo "_51DEGREES_IPI_PATH=${GITHUB_WORKSPACE}/cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
           while IFS= read -r file; do
             if [ -n "$file" ] && [ ! -f "$file" ]; then
               echo "::error::$file is missing, so the on-premise tests would skip"
@@ -191,7 +191,7 @@ jobs:
       #    offline; here they run with a real resource key when one is available.
       #    Each key is passed by name, so the step gets only the secrets it
       #    reads, and a new key needs a line here as well as the organization
-      #    secret. The examples-shared resolver reads 51DEGREES_RESOURCE_KEY
+      #    secret. The examples-shared resolver reads _51DEGREES_RESOURCE_KEY
       #    first, then the bespoke tiered key then the basic tiered key, and
       #    treats an empty value, which a secret that does not exist gives, as
       #    unset.
@@ -201,16 +201,15 @@ jobs:
           _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
           _51DEGREES_RESOURCE_KEY_BASIC: ${{ secrets._51DEGREES_RESOURCE_KEY_BASIC }}
         run: |
-          # Resolve a single key in the examples-shared resolver order. The
-          # leading-digit name must use the ${env:NAME} brace form to read.
-          $key = ${env:51DEGREES_RESOURCE_KEY}
+          # Resolve a single key in the examples-shared resolver order.
+          $key = ${env:_51DEGREES_RESOURCE_KEY}
           if (-not $key) { $key = ${env:_51DEGREES_RESOURCE_KEY_BESPOKE} }
           if (-not $key) { $key = ${env:_51DEGREES_RESOURCE_KEY_BASIC} }
           if (-not $key) {
             Write-Host 'No resource key secret available; skipping live cloud tests.'
             exit 0
           }
-          ${env:51DEGREES_RESOURCE_KEY} = $key
+          ${env:_51DEGREES_RESOURCE_KEY} = $key
           # Run ONLY the ignored tests across the workspace: the live cloud tests
           # that make real calls to the 51Degrees cloud, so a failure here is a
           # real regression. Deliberately --ignored, not --include-ignored: the

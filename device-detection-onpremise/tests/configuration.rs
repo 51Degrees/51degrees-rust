@@ -25,7 +25,7 @@
 //! 4.5.180 on pipeline 4.5.129 made from the same configuration with the
 //! Lite data file. Each expected answer and message is the one .NET gave,
 //! apart from the differences the tests name. The tests need the Lite file
-//! `51DEGREES_DD_PATH` names, or the one at `cxx/data/device-detection`, and
+//! `_51DEGREES_DD_PATH` names, or the one at `cxx/data/device-detection`, and
 //! skip with a note without it.
 
 use std::path::{Path, PathBuf};
@@ -51,7 +51,7 @@ const MOBILE: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) \
 const DISTRIBUTOR: &str = "https://distributor.51degrees.com/api/v2/download";
 
 fn lite_data_file() -> Option<PathBuf> {
-    let given = std::env::var("51DEGREES_DD_PATH").ok().map(PathBuf::from);
+    let given = std::env::var("_51DEGREES_DD_PATH").ok().map(PathBuf::from);
     let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../cxx/data/device-detection/51Degrees-LiteV4.1.hash");
     given
@@ -64,7 +64,7 @@ fn lite_data_file() -> Option<PathBuf> {
 fn lite() -> Option<String> {
     let found = lite_data_file().map(|path| path.to_string_lossy().into_owned());
     if found.is_none() {
-        eprintln!("skipped: no Lite Hash data file at 51DEGREES_DD_PATH or cxx/data");
+        eprintln!("skipped: no Lite Hash data file at _51DEGREES_DD_PATH or cxx/data");
     }
     found
 }

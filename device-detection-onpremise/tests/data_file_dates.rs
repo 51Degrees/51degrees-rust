@@ -25,7 +25,7 @@
 //! the file, data given in memory or a file the data update service
 //! downloads.
 //!
-//! The tests need the Lite file `51DEGREES_DD_PATH` names and skip with a
+//! The tests need the Lite file `_51DEGREES_DD_PATH` names and skip with a
 //! note when it is missing.
 
 use std::io::{Read, Write};
@@ -61,12 +61,12 @@ const NEXT_UPDATE: (i16, u8, u8) = (2001, 2, 4);
 
 /// The Lite file, or [`None`] with a note when it is missing.
 fn lite() -> Option<PathBuf> {
-    let path = std::env::var("51DEGREES_DD_PATH")
+    let path = std::env::var("_51DEGREES_DD_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file());
     if path.is_none() {
-        eprintln!("skipping the data file dates tests: set 51DEGREES_DD_PATH to the Lite file");
+        eprintln!("skipping the data file dates tests: set _51DEGREES_DD_PATH to the Lite file");
     }
     path
 }

@@ -66,12 +66,12 @@ fn find_up(relative: &str) -> Option<PathBuf> {
 fn dd_and_ipi_on_premise_coexist_in_one_binary() {
     // Resolve both data files. Honour explicit overrides first, then fall back to
     // the sibling cxx checkouts beside the workspace.
-    let dd_file = std::env::var("51DEGREES_DD_PATH")
+    let dd_file = std::env::var("_51DEGREES_DD_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|p| p.is_file())
         .or_else(|| find_up("cxx/data/device-detection/51Degrees-LiteV4.1.hash"));
-    let ipi_file = std::env::var("51DEGREES_IPI_PATH")
+    let ipi_file = std::env::var("_51DEGREES_IPI_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|p| p.is_file())
@@ -168,12 +168,12 @@ fn dd_and_ipi_combined_in_one_pipeline() {
 
     use fiftyone_pipeline_core::{FlowElement, Pipeline};
 
-    let dd_file = std::env::var("51DEGREES_DD_PATH")
+    let dd_file = std::env::var("_51DEGREES_DD_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|p| p.is_file())
         .or_else(|| find_up("cxx/data/device-detection/51Degrees-LiteV4.1.hash"));
-    let ipi_file = std::env::var("51DEGREES_IPI_PATH")
+    let ipi_file = std::env::var("_51DEGREES_IPI_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|p| p.is_file())
@@ -381,11 +381,11 @@ mod parallel_group {
     #[test]
     fn dd_ipi_and_a_failing_element_answer_alike_in_a_group_and_in_sequence() {
         let dd_file = data_file(
-            "51DEGREES_DD_PATH",
+            "_51DEGREES_DD_PATH",
             "cxx/data/device-detection/51Degrees-LiteV4.1.hash",
         );
         let ipi_file = data_file(
-            "51DEGREES_IPI_PATH",
+            "_51DEGREES_IPI_PATH",
             "cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi",
         );
         let (Some(dd_file), Some(ipi_file)) = (dd_file, ipi_file) else {

@@ -24,7 +24,7 @@
 //! properties or another tier leaves the engine as an engine built on that
 //! file would be.
 //!
-//! The test needs the Lite file `51DEGREES_DD_PATH` names and a data file
+//! The test needs the Lite file `_51DEGREES_DD_PATH` names and a data file
 //! with more properties beside it, `Enterprise-HashV41.hash` or
 //! `TAC-HashV41.hash`, and skips with a note when either is missing.
 
@@ -48,7 +48,7 @@ const RICHER_PROPERTY: &str = "HardwareModel";
 
 /// The Lite file and a file with more properties beside it.
 fn data_files() -> Option<(PathBuf, PathBuf)> {
-    let lite = PathBuf::from(std::env::var("51DEGREES_DD_PATH").ok()?);
+    let lite = PathBuf::from(std::env::var("_51DEGREES_DD_PATH").ok()?);
     let folder = lite.parent()?;
     let richer = ["Enterprise-HashV41.hash", "TAC-HashV41.hash"]
         .into_iter()
@@ -88,7 +88,7 @@ fn richer_value(engine: &Arc<DeviceDetectionOnPremiseEngine>) -> Result<String, 
 fn a_refresh_reads_and_reports_the_properties_of_the_new_data_file() {
     let Some((lite, richer)) = data_files() else {
         eprintln!(
-            "skipping the refresh test: set 51DEGREES_DD_PATH to the Lite file, with \
+            "skipping the refresh test: set _51DEGREES_DD_PATH to the Lite file, with \
              Enterprise-HashV41.hash or TAC-HashV41.hash beside it"
         );
         return;
@@ -135,7 +135,7 @@ fn a_refresh_reads_and_reports_the_properties_of_the_new_data_file() {
 fn a_refresh_from_memory_reads_and_reports_the_properties_of_the_new_data() {
     let Some((lite, richer)) = data_files() else {
         eprintln!(
-            "skipping the refresh from memory test: set 51DEGREES_DD_PATH to the Lite \
+            "skipping the refresh from memory test: set _51DEGREES_DD_PATH to the Lite \
              file, with Enterprise-HashV41.hash or TAC-HashV41.hash beside it"
         );
         return;

@@ -21,7 +21,7 @@ if (!(Test-Path -Path $publishStep -PathType Leaf)) {
 }
 
 # The IP Intelligence performance example reads the ASN file from the data
-# repository in the cxx submodule (51DEGREES_IPI_PATH). In CI the file is
+# repository in the cxx submodule (_51DEGREES_IPI_PATH). In CI the file is
 # already there, restored from the Actions cache entry that the Data Files
 # workflow refreshes each day when the Distributor has a newer file, so the
 # script keeps it and asks for nothing. It downloads the file only when it is

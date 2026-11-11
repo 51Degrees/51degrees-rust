@@ -670,7 +670,7 @@ fn carries_identifier(json: &str) -> bool {
 /// Validate that a resolved endpoint is a well-formed absolute http(s) URL.
 ///
 /// The base endpoint can come from the builder's `endpoint`/`*_endpoint` setters,
-/// the `51DEGREES_CLOUD_ENDPOINT` environment variable, or the default, so a value with
+/// the `_51DEGREES_CLOUD_ENDPOINT` environment variable, or the default, so a value with
 /// no scheme, an empty host, or stray whitespace is caught here rather than
 /// producing a malformed request URL later. This checks the format only: it
 /// cannot know a deployment-specific path (such as `/api/v4`) is missing, since a
@@ -1035,7 +1035,9 @@ impl CloudRequestEngineBuilder {
 
     /// Set the base endpoint, from which the data, properties and evidence-keys
     /// endpoints are derived by appending `json`, `accessibleproperties` and
-    /// `evidencekeys`. A trailing slash is added if missing.
+    /// `evidencekeys`. A trailing slash is added if missing. Without it, the
+    /// `_51DEGREES_CLOUD_ENDPOINT` environment variable is used, then
+    /// [`CLOUD_URI_DEFAULT`](crate::CLOUD_URI_DEFAULT).
     pub fn endpoint(mut self, endpoint: impl Into<String>) -> Self {
         self.endpoint = Some(endpoint.into());
         self
@@ -1223,7 +1225,7 @@ impl CloudRequestEngineBuilder {
 
         let endpoints = self.resolve_endpoints();
         // Validate the resolved endpoint URLs before any request is attempted, so
-        // a malformed endpoint (from the builder, the 51DEGREES_CLOUD_ENDPOINT
+        // a malformed endpoint (from the builder, the _51DEGREES_CLOUD_ENDPOINT
         // environment variable or a consumer's own config) fails the build with a
         // clear message rather than surfacing later as a confusing request error.
         validate_endpoint_url(&endpoints.data, "data endpoint")?;
@@ -1396,7 +1398,7 @@ impl CloudRequestEngineBuilder {
     }
 
     /// Resolve the three endpoint URLs from the explicit overrides, the base
-    /// endpoint, the `51DEGREES_CLOUD_ENDPOINT` environment variable, or the
+    /// endpoint, the `_51DEGREES_CLOUD_ENDPOINT` environment variable, or the
     /// default.
     fn resolve_endpoints(&self) -> Endpoints {
         let base = self

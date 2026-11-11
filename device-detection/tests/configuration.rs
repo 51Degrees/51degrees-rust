@@ -23,7 +23,7 @@
 //! Pipelines made from a configuration with this crate's registry, compared
 //! with what .NET's FiftyOne.DeviceDetection 4.5.180 found and made with
 //! `FiftyOnePipelineBuilder` once every assembly of the package was loaded.
-//! The on-premise tests need the Lite file `51DEGREES_DD_PATH` names, or the
+//! The on-premise tests need the Lite file `_51DEGREES_DD_PATH` names, or the
 //! one at `cxx/data/device-detection`, and skip with a note without it.
 
 use std::sync::Arc;
@@ -179,7 +179,7 @@ mod on_premise {
     #[test]
     fn the_hash_engine_runs_between_the_sequence_and_usage_sharing() {
         let Some(lite) = data_file(
-            "51DEGREES_DD_PATH",
+            "_51DEGREES_DD_PATH",
             "device-detection/51Degrees-LiteV4.1.hash",
         ) else {
             return;
@@ -220,7 +220,7 @@ mod on_premise {
             AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 
         let Some(lite) = data_file(
-            "51DEGREES_DD_PATH",
+            "_51DEGREES_DD_PATH",
             "device-detection/51Degrees-LiteV4.1.hash",
         ) else {
             return;
@@ -257,13 +257,13 @@ mod on_premise {
         assert_eq!(registry.builder_names(), expected);
 
         let Some(lite) = data_file(
-            "51DEGREES_DD_PATH",
+            "_51DEGREES_DD_PATH",
             "device-detection/51Degrees-LiteV4.1.hash",
         ) else {
             return;
         };
         let Some(asn) = data_file(
-            "51DEGREES_IPI_PATH",
+            "_51DEGREES_IPI_PATH",
             "ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi",
         ) else {
             return;
