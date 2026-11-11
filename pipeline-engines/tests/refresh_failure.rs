@@ -74,6 +74,9 @@ const APPLYING: &str = "ERROR An error occurred when applying a data update to e
 /// How much older than the file last applied a file put in place is.
 const OLDER: Duration = Duration::from_secs(60);
 
+/// How much newer than it was a file is made to be.
+const NEWER: Duration = Duration::from_secs(60);
+
 /// The start of the record logged for a callback that panicked.
 const PANIC_RECORD: &str = "ERROR An update callback for failing panicked.";
 
@@ -252,6 +255,15 @@ fn statuses(reports: &Reports) -> Vec<AutoUpdateStatus> {
     reports.iter().map(|(_, status)| *status).collect()
 }
 
+/// True for a status a check that refreshed nothing gives, being a file no
+/// newer, or a further event for a write already applied.
+fn refreshed_nothing(status: AutoUpdateStatus) -> bool {
+    matches!(
+        status,
+        AutoUpdateStatus::NotNeeded | AutoUpdateStatus::InProgress
+    )
+}
+
 /// Wait until `done` holds for the statuses reported, or [`WAIT`] passes.
 fn wait_for(reports: &Reports, done: impl Fn(&[AutoUpdateStatus]) -> bool) {
     let start = Instant::now();
@@ -282,8 +294,21 @@ fn serve(body: &'static [u8]) -> String {
     url
 }
 
-/// A programmatic update that refreshes the engine from its file.
-fn a_programmatic_update(dir: &Path, refused: &str) {
+/// Give the file at `path` a modified time [`NEWER`] than it has.
+fn make_newer(path: &Path) {
+    let modified = std::fs::metadata(path).unwrap().modified().unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(modified + NEWER)
+        .unwrap();
+}
+
+/// A programmatic update with no update URL, which refreshes the engine from
+/// its file only when the file is newer than the one last applied. A refresh
+/// that fails is reported and given to the caller, and is not logged.
+fn a_programmatic_update(dir: &Path) {
     let path = dir.join("programmatic.dat");
     std::fs::write(&path, b"version 1").unwrap();
     let (engine, shared) = engine(
@@ -299,7 +324,7 @@ fn a_programmatic_update(dir: &Path, refused: &str) {
         .check_for_update(&shared, None)
         .expect_err("the refresh fails");
     assert_eq!(error.status, AutoUpdateStatus::RefreshFailed);
-    assert_eq!(take(), [refused], "a programmatic update");
+    assert_eq!(take(), Vec::<String>::new(), "a programmatic update");
     assert_eq!(statuses(&reports), [AutoUpdateStatus::RefreshFailed]);
 
     let status = service.check_for_update(&shared, None).unwrap();
@@ -309,11 +334,87 @@ fn a_programmatic_update(dir: &Path, refused: &str) {
         statuses(&reports),
         [AutoUpdateStatus::RefreshFailed, AutoUpdateStatus::Success]
     );
+
+    let status = service.check_for_update(&shared, None).unwrap();
+    assert_eq!(status, AutoUpdateStatus::NotNeeded, "a file no newer");
     assert_eq!(engine.refreshes.load(Ordering::SeqCst), 2);
+
+    make_newer(&path);
+    let status = service.check_for_update(&shared, None).unwrap();
+    assert_eq!(status, AutoUpdateStatus::Success, "a newer file");
+    assert_eq!(take(), Vec::<String>::new());
+    assert_eq!(
+        statuses(&reports),
+        [
+            AutoUpdateStatus::RefreshFailed,
+            AutoUpdateStatus::Success,
+            AutoUpdateStatus::NotNeeded,
+            AutoUpdateStatus::Success
+        ]
+    );
+    assert_eq!(engine.refreshes.load(Ordering::SeqCst), 3);
 }
 
-/// An update from data in memory.
-fn an_update_from_memory(refused: &str) {
+/// A programmatic update with no update URL of a registered file no newer
+/// than the one the engine was built from needs no update, and the engine is
+/// not refreshed until the file is newer.
+fn a_programmatic_update_of_a_registered_file(dir: &Path) {
+    let path = dir.join("registered.dat");
+    std::fs::write(&path, b"version 1").unwrap();
+    let (engine, shared) = engine(
+        DataFileConfiguration::builder(&path)
+            .automatic_updates_enabled(false)
+            .build(),
+        0,
+    );
+    let service = DataUpdateService::new();
+    let reports = reports(&service, &data_file(&shared));
+    service
+        .register(Arc::clone(&shared), data_file(&shared))
+        .unwrap();
+
+    let status = service.check_for_update(&shared, None).unwrap();
+    assert_eq!(
+        status,
+        AutoUpdateStatus::NotNeeded,
+        "a registered file no newer"
+    );
+    assert_eq!(statuses(&reports), [AutoUpdateStatus::NotNeeded]);
+    assert_eq!(engine.refreshes.load(Ordering::SeqCst), 0);
+
+    make_newer(&path);
+    let status = service.check_for_update(&shared, None).unwrap();
+    assert_eq!(status, AutoUpdateStatus::Success);
+    assert_eq!(
+        statuses(&reports),
+        [AutoUpdateStatus::NotNeeded, AutoUpdateStatus::Success]
+    );
+    assert_eq!(engine.refreshes.load(Ordering::SeqCst), 1);
+    assert_eq!(take(), Vec::<String>::new(), "a registered file");
+}
+
+/// A programmatic update of data in memory, which has no update URL, needs
+/// no update.
+fn a_programmatic_update_of_data_in_memory() {
+    let (engine, shared) = engine(
+        DataFileConfiguration::memory_builder()
+            .automatic_updates_enabled(false)
+            .build(),
+        0,
+    );
+    let service = DataUpdateService::new();
+    let reports = reports(&service, &data_file(&shared));
+
+    let status = service.check_for_update(&shared, None).unwrap();
+    assert_eq!(status, AutoUpdateStatus::NotNeeded, "data in memory");
+    assert_eq!(statuses(&reports), [AutoUpdateStatus::NotNeeded]);
+    assert_eq!(engine.refreshes.load(Ordering::SeqCst), 0);
+    assert_eq!(take(), Vec::<String>::new(), "data in memory");
+}
+
+/// An update from data in memory, which gives its result to the caller and
+/// reports and logs nothing.
+fn an_update_from_memory() {
     let (engine, shared) = engine(
         DataFileConfiguration::memory_builder()
             .automatic_updates_enabled(false)
@@ -327,18 +428,15 @@ fn an_update_from_memory(refused: &str) {
         .update_from_memory(&shared, None, b"new data")
         .expect_err("the refresh fails");
     assert_eq!(error.status, AutoUpdateStatus::RefreshFailed);
-    assert_eq!(take(), [refused], "an update from memory");
-    assert_eq!(statuses(&reports), [AutoUpdateStatus::RefreshFailed]);
+    assert_eq!(take(), Vec::<String>::new(), "an update from memory");
+    assert_eq!(statuses(&reports), Vec::<AutoUpdateStatus>::new());
 
     let status = service
         .update_from_memory(&shared, None, b"new data")
         .unwrap();
     assert_eq!(status, AutoUpdateStatus::Success);
     assert_eq!(take(), Vec::<String>::new());
-    assert_eq!(
-        statuses(&reports),
-        [AutoUpdateStatus::RefreshFailed, AutoUpdateStatus::Success]
-    );
+    assert_eq!(statuses(&reports), Vec::<AutoUpdateStatus>::new());
     assert_eq!(engine.refreshes.load(Ordering::SeqCst), 2);
 }
 
@@ -459,11 +557,11 @@ fn a_watched_file(dir: &Path, refused: &str) {
     });
     drop(service);
 
-    // One write can raise several events, and each after the first finds
-    // the file no newer, so it is reported as needing no update.
+    // One write can raise several events, and each after the first waited
+    // while the first was applied, so it is reported as in progress.
     let statuses: Vec<AutoUpdateStatus> = statuses(&reports)
         .into_iter()
-        .filter(|status| *status != AutoUpdateStatus::NotNeeded)
+        .filter(|status| !refreshed_nothing(*status))
         .collect();
     assert_eq!(statuses[0], AutoUpdateStatus::RefreshFailed, "{statuses:?}");
     assert!(statuses.len() >= 2, "{statuses:?}");
@@ -590,7 +688,7 @@ fn a_refresh_that_panics_after_a_change(dir: &Path) {
     drop(service);
     let statuses: Vec<AutoUpdateStatus> = statuses(&reports)
         .into_iter()
-        .filter(|status| *status != AutoUpdateStatus::NotNeeded)
+        .filter(|status| !refreshed_nothing(*status))
         .collect();
     assert_eq!(
         statuses.first(),
@@ -612,7 +710,8 @@ type Told = Arc<Mutex<Vec<(&'static str, bool)>>>;
 
 /// Each check tells the callbacks added with `on_update_started` before
 /// those added with `on_update_complete`, naming the same data file, as
-/// .NET raises `CheckForUpdateStarted` before `CheckForUpdateComplete`.
+/// .NET raises `CheckForUpdateStarted` before `CheckForUpdateComplete`. An
+/// update from memory is not a check, and tells neither.
 fn a_check_is_told_when_it_starts(dir: &Path) {
     let path = dir.join("started.dat");
     std::fs::write(&path, b"version 1").unwrap();
@@ -646,12 +745,7 @@ fn a_check_is_told_when_it_starts(dir: &Path) {
 
     assert_eq!(
         *told.lock().unwrap(),
-        [
-            ("started", true),
-            ("complete", true),
-            ("started", true),
-            ("complete", true)
-        ]
+        [("started", true), ("complete", true)]
     );
     assert_eq!(take(), Vec::<String>::new(), "a check that starts");
 }
@@ -684,8 +778,10 @@ fn a_refresh_that_fails_is_logged_and_reported_as_a_failure() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 
-    a_programmatic_update(&dir, &refused);
-    an_update_from_memory(&refused);
+    a_programmatic_update(&dir);
+    a_programmatic_update_of_a_registered_file(&dir);
+    a_programmatic_update_of_data_in_memory();
+    an_update_from_memory();
     the_update_on_start_up(&refused);
     a_scheduled_poll(&refused);
     a_watched_file(&dir, &refused);

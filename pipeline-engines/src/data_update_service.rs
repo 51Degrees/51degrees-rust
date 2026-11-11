@@ -49,10 +49,12 @@
 //! [`DataUpdateService::on_update_started`], and ends by telling those added
 //! with [`DataUpdateService::on_update_complete`] how it ended, as .NET's
 //! `CheckForUpdateStarted` and `CheckForUpdateComplete` events do. A refresh
-//! that fails or panics is logged at error level with the message the
-//! specification's errors table gives and reported as
-//! [`AutoUpdateStatus::RefreshFailed`], never as success. The engine keeps
-//! the data it had, and polling and watching go on.
+//! that fails or panics is reported as [`AutoUpdateStatus::RefreshFailed`],
+//! never as success, and is logged at error level with the message the
+//! specification's errors table gives, apart from a programmatic check,
+//! which gives the error to its caller instead. The engine keeps the data it
+//! had, and polling and watching go on. An update from memory reports and
+//! logs nothing, and gives its result to the caller.
 //!
 //! # Threading
 //!
@@ -194,9 +196,7 @@ impl UpdateCallbacks {
     }
 
     /// End a check for `engine` that gave `result`. A refresh that failed is
-    /// logged, then every callback is told, in the order they were added,
-    /// when the check had a data file. A callback that panics is logged and
-    /// the others are still told.
+    /// logged, then the callbacks are told, as [`Self::report`] tells them.
     fn finish(
         &self,
         engine: &str,
@@ -208,6 +208,19 @@ impl UpdateCallbacks {
                 log_refresh_failed(engine, error);
             }
         }
+        self.report(engine, data_file, result);
+    }
+
+    /// Tell every callback, in the order they were added, that a check for
+    /// `engine` gave `result`, when the check had a data file. Nothing is
+    /// logged apart from a callback that panics, and the others are still
+    /// told.
+    fn report(
+        &self,
+        engine: &str,
+        data_file: Option<&Arc<AspectEngineDataFile>>,
+        result: &DataUpdateResult,
+    ) {
         let Some(data_file) = data_file else {
             return;
         };
@@ -379,10 +392,13 @@ impl DataUpdateService {
     ///
     /// Every callback is told once for each check, being the update on
     /// start-up, each scheduled poll, each change to a watched file, and each
-    /// call to [`Self::check_for_update`] or [`Self::update_from_memory`] for
-    /// a data file the engine has. A change that leaves the watched file no
-    /// newer than the one last applied is reported as
-    /// [`AutoUpdateStatus::NotNeeded`]. A refresh that fails or panics is
+    /// call to [`Self::check_for_update`] for a data file the engine has. A
+    /// call to [`Self::update_from_memory`] is not reported. A change that
+    /// leaves the watched file no newer than the one last applied is reported
+    /// as [`AutoUpdateStatus::NotNeeded`], and a further change event for a
+    /// write already applied as [`AutoUpdateStatus::InProgress`], as .NET
+    /// reports an event that waited while another was applied. A refresh that
+    /// fails or panics is
     /// reported as [`AutoUpdateStatus::RefreshFailed`] and the engine keeps
     /// the data it had. Add callbacks before registering, so they hear the
     /// update on start-up.
@@ -453,6 +469,14 @@ impl DataUpdateService {
         data_file.set_registered(true);
         self.inner.live_registrations();
 
+        // The file as it is now is the one the engine loaded, so only a later
+        // change is newer, for the watcher and for a programmatic check.
+        if data_file.last_applied_modified().is_none() {
+            if let Some(modified) = data_file.data_file_path().and_then(file_modified_time) {
+                data_file.set_last_applied_modified(modified);
+            }
+        }
+
         let registration = Arc::new(Registration {
             engine: Arc::downgrade(&engine),
             data_file: Arc::clone(&data_file),
@@ -520,9 +544,16 @@ impl DataUpdateService {
     /// `data_file_identifier`.
     ///
     /// This is the programmatic-update entry point. If the file has an update
-    /// URL the remote server is polled immediately; otherwise, if the file has
-    /// a path on disk, the engine is refreshed from that file. A single-file
-    /// engine ignores the identifier.
+    /// URL the remote server is polled immediately. Otherwise, if the file has
+    /// a path on disk, the engine is refreshed from that file when it is newer
+    /// than the one last applied, or than the one the engine was built from
+    /// when the file is registered. Anything else needs no update. A
+    /// single-file engine ignores the identifier.
+    ///
+    /// The check is reported to the callbacks, as
+    /// [`Self::on_update_complete`] says, and a failure is given to the
+    /// caller and not logged. An engine with no data file for the identifier
+    /// gives [`AutoUpdateStatus::NoConfiguration`] and reports nothing.
     ///
     /// When the check applies new data to a registered file whose updates are
     /// scheduled, the next scheduled poll waits for the next update date the
@@ -555,18 +586,17 @@ impl DataUpdateService {
             .start(engine.data_key(), Some(&registration.data_file));
         let result = if registration.data_file.data_update_url().is_some() {
             self.check_for_update_from_url(&registration)
-        } else if registration.data_file.data_file_path().is_some() {
-            // No URL: refresh from the file on disk.
-            Self::refresh_engine(engine, &registration)
+        } else if let Some(path) = registration.data_file.data_file_path() {
+            Self::refresh_if_newer(engine, &registration.data_file, path)
         } else {
-            Ok(AutoUpdateStatus::NoConfiguration)
+            Ok(AutoUpdateStatus::NotNeeded)
         };
         if matches!(result, Ok(AutoUpdateStatus::Success)) {
             self.reschedule_after_update(&registration);
         }
         self.inner
             .callbacks
-            .finish(engine.data_key(), Some(&registration.data_file), &result);
+            .report(engine.data_key(), Some(&registration.data_file), &result);
         result
     }
 
@@ -574,21 +604,17 @@ impl DataUpdateService {
     ///
     /// This is the memory data-source programmatic-update path. The bytes are
     /// handed straight to the engine's
-    /// [`OnPremiseAspectEngine::refresh_from_memory`].
+    /// [`OnPremiseAspectEngine::refresh_from_memory`]. The result goes to the
+    /// caller alone, so nothing is reported to the callbacks and a failure
+    /// is not logged.
     pub fn update_from_memory(
         &self,
         engine: &Arc<dyn OnPremiseAspectEngine>,
         data_file_identifier: Option<&str>,
         data: &[u8],
     ) -> DataUpdateResult {
-        let data_file = engine.data_file_meta_data(data_file_identifier);
-        self.inner.callbacks.start(engine.data_key(), data_file);
-        let result = guarded_refresh(|| engine.refresh_from_memory(data_file_identifier, data))
-            .map(|()| AutoUpdateStatus::Success);
-        self.inner
-            .callbacks
-            .finish(engine.data_key(), data_file, &result);
-        result
+        guarded_refresh(|| engine.refresh_from_memory(data_file_identifier, data))
+            .map(|()| AutoUpdateStatus::Success)
     }
 
     /// The number of data files currently registered, whose engines have
@@ -692,14 +718,6 @@ impl DataUpdateService {
         };
         let file_name = path.file_name().map(ToOwned::to_owned);
 
-        // The file as it is now is the one the engine loaded, so only a later
-        // change refreshes it.
-        if registration.data_file.last_applied_modified().is_none() {
-            if let Some(modified) = file_modified_time(&path) {
-                registration.data_file.set_last_applied_modified(modified);
-            }
-        }
-
         let engine = Weak::clone(&registration.engine);
         let data_file = Arc::clone(&registration.data_file);
         let callbacks = Arc::clone(&self.inner.callbacks);
@@ -742,13 +760,23 @@ impl DataUpdateService {
         handle.check_for_update_from_url(registration)
     }
 
-    /// Refresh `engine` from its data file currently on disk.
-    fn refresh_engine(
+    /// Refresh `engine` from the file at `path` when it is newer than the one
+    /// last applied. A file that is gone, or no newer, needs no update. A
+    /// refresh that fails records nothing, so the caller can try again.
+    fn refresh_if_newer(
         engine: &Arc<dyn OnPremiseAspectEngine>,
-        registration: &Registration,
+        data_file: &AspectEngineDataFile,
+        path: &Path,
     ) -> DataUpdateResult {
-        guarded_refresh(|| engine.refresh(Some(registration.data_file.identifier())))
-            .map(|()| AutoUpdateStatus::Success)
+        let Some(modified) = file_modified_time(path) else {
+            return Ok(AutoUpdateStatus::NotNeeded);
+        };
+        if matches!(data_file.last_applied_modified(), Some(last) if modified <= last) {
+            return Ok(AutoUpdateStatus::NotNeeded);
+        }
+        guarded_refresh(|| engine.refresh(Some(data_file.identifier())))?;
+        data_file.set_last_applied_modified(modified);
+        Ok(AutoUpdateStatus::Success)
     }
 
     /// Start the background scheduler thread if it is not already running.
@@ -899,9 +927,8 @@ impl ServiceHandle {
     /// Handle a file-system-watcher event, telling the callbacks when the
     /// check starts and how it ended, as .NET reports every event. The
     /// engine is refreshed from disk only when the file is newer than the one
-    /// last applied, and an event that finds it no newer, as when one write
-    /// raises several events, is reported as needing no update. A file whose
-    /// refresh fails is not tried again, and a file written after it is.
+    /// last applied. A file whose refresh fails is not tried again, and a
+    /// file written after it is.
     fn on_file_changed(
         engine: &Weak<dyn OnPremiseAspectEngine>,
         data_file: &Arc<AspectEngineDataFile>,
@@ -919,7 +946,9 @@ impl ServiceHandle {
     /// Refresh `engine` from its watched data file when the file is newer
     /// than the one last applied. A file that is gone, or no newer, needs no
     /// update, as in .NET, where a missing file's write time is the earliest
-    /// there is.
+    /// there is. A further event for a write that an earlier event took, as
+    /// when one write raises several events, waited while that write was
+    /// applied and has nothing left to do, so it is in progress, as in .NET.
     fn refresh_from_watched_file(
         engine: &Arc<dyn OnPremiseAspectEngine>,
         data_file: &AspectEngineDataFile,
@@ -931,9 +960,13 @@ impl ServiceHandle {
             return Ok(AutoUpdateStatus::NotNeeded);
         };
         if matches!(data_file.last_applied_modified(), Some(last) if modified <= last) {
+            if data_file.last_watched_modified() == Some(modified) {
+                return Ok(AutoUpdateStatus::InProgress);
+            }
             return Ok(AutoUpdateStatus::NotNeeded);
         }
         data_file.set_last_applied_modified(modified);
+        data_file.set_last_watched_modified(modified);
         log::info!(
             "Attempting to refresh Engine '{}' with new data",
             engine.data_key()
@@ -2243,6 +2276,57 @@ mod tests {
         let registrations = service.inner.registrations.lock().unwrap();
         assert_eq!(registrations.len(), 1);
         Arc::clone(&registrations[0])
+    }
+
+    /// How much newer than the file the engine was built from a written file
+    /// is made.
+    const NEWER: Duration = Duration::from_secs(60);
+
+    /// A watcher event for a write that an earlier event applied waited while
+    /// that event was applied, so it is reported as in progress, as .NET
+    /// reports it. An event for a file no newer than the one the engine was
+    /// built from is reported as not needed.
+    #[test]
+    fn a_further_event_for_a_write_already_applied_is_in_progress() {
+        let watched = watched("in-progress");
+        let callbacks = UpdateCallbacks::default();
+        let told = Arc::new(Mutex::new(Vec::new()));
+        let kept = Arc::clone(&told);
+        callbacks.add(Arc::new(move |report: &DataUpdateComplete| {
+            kept.lock().unwrap().push(report.status);
+        }));
+        let engine = Arc::downgrade(&watched.engine);
+        let built = std::fs::metadata(&watched.path)
+            .unwrap()
+            .modified()
+            .unwrap();
+        watched
+            .data_file
+            .set_last_applied_modified(DateTime::<Utc>::from(built));
+
+        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks);
+
+        // One write, which raises two events.
+        std::fs::write(&watched.path, b"version 2").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&watched.path)
+            .unwrap()
+            .set_modified(built + NEWER)
+            .unwrap();
+        watched.finish.send(()).unwrap();
+        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks);
+        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks);
+
+        assert_eq!(
+            *told.lock().unwrap(),
+            [
+                AutoUpdateStatus::NotNeeded,
+                AutoUpdateStatus::Success,
+                AutoUpdateStatus::InProgress
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&watched.dir);
     }
 
     /// While the watcher's callback refreshes the engine, the callback holds

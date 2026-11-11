@@ -39,8 +39,8 @@ pub enum AutoUpdateStatus {
     Success,
     /// No update was needed because the local data is already current.
     NotNeeded,
-    /// An update is in progress (an intermediate state used while a check
-    /// runs).
+    /// A file-system-watcher event waited while another event for the same
+    /// file was applied, and then had nothing left to do.
     InProgress,
     /// The HTTPS request to the update URL failed (connection or transport
     /// error).
@@ -71,7 +71,7 @@ impl AutoUpdateStatus {
     pub fn is_ok(&self) -> bool {
         matches!(
             self,
-            AutoUpdateStatus::Success | AutoUpdateStatus::NotNeeded
+            AutoUpdateStatus::Success | AutoUpdateStatus::NotNeeded | AutoUpdateStatus::InProgress
         )
     }
 }
