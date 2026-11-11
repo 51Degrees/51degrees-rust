@@ -447,6 +447,14 @@ pub mod common {
         /// null.
         #[link_name = "ipi_fiftyoneDegreesEvidenceFree"]
         pub fn fiftyoneDegreesEvidenceFree(evidence: *mut EvidenceKeyValuePairArray);
+
+        /// Returns the number of processors, at least 1, which is the
+        /// expected concurrency a collection configured with 0 opens with.
+        ///
+        /// The native symbol is `ipi_`-prefixed for the same reason as
+        /// [`fiftyoneDegreesExceptionGetMessage`] above.
+        #[link_name = "ipi_fiftyoneDegreesThreadingGetProcessorCount"]
+        pub fn fiftyoneDegreesThreadingGetProcessorCount() -> u16;
     }
 }
 

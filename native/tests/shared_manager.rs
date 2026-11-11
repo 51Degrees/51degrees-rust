@@ -26,9 +26,7 @@
 //! A data set that reads from its file after it is loaded holds a fixed pool
 //! of file handles. Each test shares one opened with the `LowMemory` profile,
 //! which reads everything from the file, across more threads than the pool
-//! holds. The IP Intelligence library ends the process when a read of a
-//! property's values finds no free handle, so a failure of that test shows
-//! as this test binary exiting rather than as a failed assertion.
+//! holds.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Barrier};
