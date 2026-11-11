@@ -61,17 +61,31 @@ pub enum BuiltInScript {
     /// The script is a draft below version 1.0.0, so its thresholds may be
     /// rewritten. Its own comment header says what each one rests on.
     HumanConfidence,
+    /// Whether the General Data Protection Regulation, or the United Kingdom's
+    /// version of it, is likely to apply to the person making the request,
+    /// judged from `ip.CountryCode`. True for the European Economic Area and
+    /// the United Kingdom, and false everywhere else, including where the
+    /// location could not be placed.
+    ///
+    /// The script is a draft below version 1.0.0, so its country list may be
+    /// rewritten. It is a default for a caller that knows nothing about its
+    /// own position, and its own comment header says why it is not a
+    /// determination.
+    IsGdpr,
 }
 
 impl BuiltInScript {
-    /// Every shipped script.
-    pub const ALL: &'static [BuiltInScript] = &[BuiltInScript::HumanConfidence];
+    /// Every shipped script, in the order of .NET's `BuiltInScript`, so the
+    /// place of each is the number configuration selects it by.
+    pub const ALL: &'static [BuiltInScript] =
+        &[BuiltInScript::HumanConfidence, BuiltInScript::IsGdpr];
 
     /// What configuration selects the script by, which is also the name of the
     /// property it produces.
     pub fn name(self) -> &'static str {
         match self {
             BuiltInScript::HumanConfidence => "HumanConfidence",
+            BuiltInScript::IsGdpr => "IsGdpr",
         }
     }
 
@@ -81,6 +95,7 @@ impl BuiltInScript {
             BuiltInScript::HumanConfidence => {
                 include_str!("../vendor/scripts/HumanConfidence.yaml")
             }
+            BuiltInScript::IsGdpr => include_str!("../vendor/scripts/IsGdpr.yaml"),
         }
     }
 

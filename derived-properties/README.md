@@ -37,8 +37,9 @@ source element said about each one. There is no third state.
 The scripts 51Degrees ships are embedded at build time rather than read from a
 file, so an element carrying one runs where there is no file system and where
 fetching a file over the network would defeat the purpose, such as in a
-WebAssembly host or at an edge runtime. `HumanConfidence` is the one shipped
-today, and its own comment header says what each of its thresholds rests on.
+WebAssembly host or at an edge runtime. The crate ships every script in the
+shared repository, as .NET does, which today is `HumanConfidence` and
+`IsGdpr`. Each script's own comment header says what it rests on.
 
 ## Using it
 
