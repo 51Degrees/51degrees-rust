@@ -34,7 +34,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use fiftyone_derived_properties::{
     BuiltInScript, Lookup, MapSource, Outcome, Script, SourceValue, WeightedSourceValue,
@@ -182,31 +182,84 @@ fn the_shipped_script_is_sound() {
     assert_eq!(script.output().dependencies.len(), 10);
 }
 
-#[test]
-fn the_shared_cases_pass() {
-    let script = BuiltInScript::HumanConfidence
-        .compile()
-        .expect("the script");
-    let path = vendor().join("tests").join("HumanConfidence.cases.yaml");
-    let reached = run_cases(&script, &path);
-    // Every rule must be reached by at least one case, because nothing proves
-    // what an unreached rule does.
-    let uncovered: Vec<usize> = (0..script.rules().len())
-        .filter(|index| !reached.contains(index))
+/// The files in the folder `folder` of `vendor` whose names end with one of
+/// `endings`, in order of name.
+fn files_in(folder: &str, endings: &[&str]) -> Vec<PathBuf> {
+    let folder = vendor().join(folder);
+    let mut files: Vec<PathBuf> = fs::read_dir(&folder)
+        .unwrap_or_else(|error| panic!("{}: {error}", folder.display()))
+        .map(|entry| entry.expect("an entry").path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| endings.iter().any(|ending| name.ends_with(ending)))
+        })
         .collect();
-    assert!(
-        uncovered.is_empty(),
-        "no case reaches the rules {uncovered:?}"
-    );
+    files.sort();
+    files
+}
+
+/// The shipped script called `name`, which a file in `vendor` is for. The
+/// test fails where the crate does not ship it, because .NET ships every
+/// script in the shared repository.
+fn shipped(name: &str, file: &Path) -> BuiltInScript {
+    BuiltInScript::named(name).unwrap_or_else(|| {
+        panic!(
+            "{} is for the script {name}, which this crate does not ship",
+            file.display()
+        )
+    })
 }
 
 #[test]
-fn a_script_read_from_a_file_is_the_same_script() {
-    // The shipped script is compiled in, and this proves the embedded copy is
-    // the file it was taken from rather than something that has drifted.
-    let path = vendor().join("scripts").join("HumanConfidence.yaml");
-    let text = fs::read_to_string(&path).expect("the script file");
-    assert_eq!(text, BuiltInScript::HumanConfidence.text());
+fn every_shared_case_file_passes() {
+    let files = files_in("tests", &[".cases.yaml"]);
+    assert!(!files.is_empty(), "there are no case files to run");
+    for path in files {
+        let text = fs::read_to_string(&path).expect("the cases file");
+        let document: Value = serde_norway::from_str(&text).expect("the cases file is YAML");
+        let name = get(&document, "Script")
+            .map(text_of)
+            .expect("the cases file names its script");
+        let script = shipped(&name, &path).compile().expect("the script");
+        let reached = run_cases(&script, &path);
+        // Every rule must be reached by at least one case, because nothing
+        // proves what an unreached rule does.
+        let uncovered: Vec<usize> = (0..script.rules().len())
+            .filter(|index| !reached.contains(index))
+            .collect();
+        assert!(
+            uncovered.is_empty(),
+            "{}: no case reaches the rules {uncovered:?}",
+            path.display()
+        );
+    }
+}
+
+/// The shipped scripts are compiled in, and this proves the crate ships every
+/// script in the shared repository, as .NET does, and that each is the file it
+/// was taken from rather than something that has drifted.
+#[test]
+fn every_shared_script_is_shipped_unaltered() {
+    let files = files_in("scripts", &[".yaml", ".yml", ".json"]);
+    assert!(!files.is_empty(), "there are no scripts");
+    for path in &files {
+        let name = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .expect("a file name");
+        let text = fs::read_to_string(path).expect("the script file");
+        assert!(
+            text == shipped(name, path).text(),
+            "{} differs from the shipped script",
+            path.display()
+        );
+    }
+    assert_eq!(
+        files.len(),
+        BuiltInScript::ALL.len(),
+        "the crate ships a script the shared repository does not hold"
+    );
 }
 
 #[test]
