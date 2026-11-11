@@ -44,7 +44,7 @@ use fiftyone_pipeline_core::{
 };
 use fiftyone_pipeline_engines::{
     AspectEngine, AspectEngineDataFile, AspectPropertyMetaData, AutoUpdateStatus,
-    DataFileConfiguration, DataUpdateError, DataUpdateService, OnPremiseAspectEngine,
+    DataFileConfiguration, DataUpdateService, OnPremiseAspectEngine,
 };
 
 /// How long a test waits for something it expects of the service.
@@ -69,7 +69,8 @@ const PANIC: &str = "a callback that panics";
 const REFRESH_PANIC: &str = "a refresh that panics";
 
 /// The start of the record logged for a refresh that failed.
-const APPLYING: &str = "ERROR An error occurred when applying a data update to engine 'failing'.";
+const APPLYING: &str = "ERROR Error during check for data update. An error occurred when \
+                        applying a data update to engine 'failing'.";
 
 /// How much older than the file last applied a file put in place is.
 const OLDER: Duration = Duration::from_secs(60);
@@ -222,11 +223,12 @@ fn data_file(engine: &Arc<dyn OnPremiseAspectEngine>) -> Arc<AspectEngineDataFil
     Arc::clone(&engine.data_files()[0])
 }
 
-/// The record a refresh that failed with `error` logs.
-fn applying(error: &DataUpdateError) -> String {
+/// The record a refresh that failed because of `cause` logs, being the entry
+/// the errors table gives for a failed check, with the error attached.
+fn applying(cause: &str) -> String {
     format!(
-        "ERROR An error occurred when applying a data update to engine 'failing'. Error \
-         detail: {error}"
+        "ERROR Error during check for data update. An error occurred when applying a data \
+         update to engine 'failing'. Error detail: {cause}"
     )
 }
 
@@ -817,10 +819,7 @@ fn a_refresh_that_fails_is_logged_and_reported_as_a_failure() {
     log::warn!("logger check");
     assert_eq!(take(), ["WARN logger check"]);
 
-    let refused = applying(&DataUpdateError::new(
-        AutoUpdateStatus::RefreshFailed,
-        Error::configuration(REFUSED).to_string(),
-    ));
+    let refused = applying(&Error::configuration(REFUSED).to_string());
     let dir = std::env::temp_dir().join(format!("fiftyone-refresh-failure-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
