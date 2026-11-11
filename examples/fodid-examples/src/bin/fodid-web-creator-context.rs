@@ -75,7 +75,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use axum::body::Body;
 use axum::extract::{Query, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
@@ -107,6 +107,12 @@ const FIND_OUT_MORE: &[(&str, &str)] = &[
 
 /// The route the demo page's relative stylesheet URL resolves to.
 const PAGE_CSS_ROUTE: &str = "/examples-main.min.css";
+
+/// The request headers something terminating the connection in front of this
+/// server uses to pass on the TLS and HTTP/2 fingerprints it worked out. These
+/// are the names the service accepts as evidence, so a header that arrives is
+/// forwarded to it unchanged and the page says nothing is missing.
+const FINGERPRINT_HEADERS: [&str; 2] = ["ja4", "h2"];
 
 /// Where the page sends a visitor whose account holds no licence keys, so the
 /// licence-scoped identifiers the demo shows cannot be created.
@@ -235,7 +241,7 @@ pub async fn run(options: Options) -> anyhow::Result<()> {
 /// The page, with a fresh single-use challenge per load. The challenge is bound
 /// through both verification steps by the cloud, so a result verified under one
 /// page load cannot be redeemed under another.
-async fn home(State(demo): State<Demo>) -> Response {
+async fn home(State(demo): State<Demo>, headers: HeaderMap) -> Response {
     let mut random = [0u8; 16];
     if let Err(error) = getrandom::fill(&mut random) {
         return (
@@ -245,6 +251,14 @@ async fn home(State(demo): State<Demo>) -> Response {
             .into_response();
     }
     let challenge: String = random.iter().map(|b| format!("{b:02x}")).collect();
+    let fingerprints = if FINGERPRINT_HEADERS
+        .iter()
+        .any(|name| headers.contains_key(*name))
+    {
+        "present"
+    } else {
+        "absent"
+    };
     Html(
         page_with_find_out_more()
             .replace("__RESOURCE__", demo.client.resource_key())
@@ -254,6 +268,7 @@ async fn home(State(demo): State<Demo>) -> Response {
                 "__PROXY_SCRIPT__",
                 &WebIntegrationOptions::default().javascript_endpoint,
             )
+            .replace("__FINGERPRINTS__", fingerprints)
             .replace("__CONTACT__", &CONTACT_URL.replace('&', "&amp;")),
     )
     .into_response()
@@ -631,6 +646,37 @@ mod tests {
         )
     }
 
+    /// The page warns that the transport factors are missing only when no
+    /// fingerprint reached this server. Something terminating the connection
+    /// in front of it passes one on under the name the service accepts, and
+    /// the warning then has nothing to say.
+    #[tokio::test]
+    async fn the_page_reports_a_fingerprint_only_when_a_header_carries_one() {
+        let app = app_over(FakeCloud {
+            public_key_pem: String::new(),
+            redeem_status: 500,
+            redeem_body: "",
+        });
+
+        let page = body_string(get(&app, "/").await).await;
+        assert!(page.contains("var FINGERPRINTS = \"absent\""));
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/")
+                    .header("ja4", "t13d1516h2_8daaf6152771_b186095e22b6")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let page = body_string(response).await;
+        assert!(page.contains("var FINGERPRINTS = \"present\""));
+    }
+
     #[tokio::test]
     async fn page_is_filled_in_with_a_fresh_challenge_per_load() {
         // No cloud call is made to serve the page, so placeholder values are
@@ -657,6 +703,7 @@ mod tests {
             "__RESOURCE__",
             "__CHALLENGE__",
             "__PROXY_SCRIPT__",
+            "__FINGERPRINTS__",
             "__CONTACT__",
         ] {
             assert!(

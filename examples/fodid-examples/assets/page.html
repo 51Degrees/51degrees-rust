@@ -39,10 +39,8 @@
       <p><input id="email" name="email" type="email"
         class="b-input b-input--block" autocomplete="off"></p>
       <p><b>How the browser reaches the service.</b> Both routes produce
-      the same identifier. The difference is that through this demo's own
-      server the service sees the server's connection rather than the
-      browser's, so the factors that read the visitor's transport cannot
-      be recorded.</p>
+      the same identifier, and they differ in what the service sees of
+      the visitor's own connection.</p>
       <div class="c-eg-choice">
         <label class="c-eg-choice__option">
           <input class="c-eg-choice__input" type="radio" name="mode"
@@ -56,6 +54,23 @@
     </div>
     <button type="submit" class="b-btn c-eg-message__cta">Apply</button>
   </form>
+
+  <div id="proxy-note" class="c-eg-alert" style="display: none">
+    <p><b>Part of this example is missing on this route.</b> The browser
+    is calling this server and this server is calling the service, so
+    the service reads this server's connection and not the browser's,
+    and has no fingerprint of the browser's TLS and HTTP/2 connection,
+    which are called JA4 and H2. The factors that read the visitor's
+    transport are therefore not recorded, and every other factor is
+    checked as normal. The third party route above does have them,
+    because there the browser connects to the service itself.</p>
+    <p>A real deployment need not lose them either. Whatever terminates
+    the connection in front of the server, which is usually a CDN, works
+    the two fingerprints out and passes them on as the <code>ja4</code>
+    and <code>h2</code> request headers, which this example forwards to
+    the service as evidence with no code of its own. Where they arrive
+    this notice does not appear.</p>
+  </div>
 
   <h3 class="c-eg-page__heading">Result</h3>
   <table class="c-eg-table">
@@ -188,14 +203,6 @@
     the page again.</p>
   </div>
 
-  <div id="proxy-note" class="c-eg-alert" style="display: none">
-    <p><b>Running through this demo's own server.</b> The browser is
-    calling this server, and this server is calling the service, so the
-    service reads this server's connection and not the browser's. The
-    factors that depend on the visitor's own transport are therefore not
-    recorded, and the rest are checked as normal. Choose the third party
-    route above to see every factor.</p>
-  </div>
 
   <div id="caught" class="c-eg-alert" style="display: none">
     <p><b>🎯 Detection demonstrated.</b> This page received a
@@ -219,6 +226,9 @@
   // The route this server mounts the client script on, used when the
   // browser is asked to reach the service through the server.
   var PROXY_SCRIPT = "__PROXY_SCRIPT__";
+  // Whether a JA4 or H2 fingerprint reached this server from whatever
+  // terminates the connection in front of it.
+  var FINGERPRINTS = "__FINGERPRINTS__";
   // The email address the deterministic identifier derives from when
   // the box is left as it ships.
   var DEFAULT_EMAIL = "demo@51did.example";
@@ -255,7 +265,7 @@
   if (/^http:/i.test(API)) {
     document.getElementById("plain-http").style.display = "";
   }
-  if (mode === "proxy") {
+  if (mode === "proxy" && FINGERPRINTS !== "present") {
     document.getElementById("proxy-note").style.display = "";
   }
 
