@@ -43,12 +43,16 @@
       server the service sees the server's connection rather than the
       browser's, so the factors that read the visitor's transport cannot
       be recorded.</p>
-      <p>
-        <label><input type="radio" name="mode" value="direct">
-          Straight to the service as a third party</label><br>
-        <label><input type="radio" name="mode" value="proxy">
+      <div class="c-eg-choice">
+        <label class="c-eg-choice__option">
+          <input class="c-eg-choice__input" type="radio" name="mode"
+            value="direct">
+          Straight to the service as a third party</label>
+        <label class="c-eg-choice__option">
+          <input class="c-eg-choice__input" type="radio" name="mode"
+            value="proxy">
           Through this demo's own server</label>
-      </p>
+      </div>
     </div>
     <button type="submit" class="b-btn c-eg-message__cta">Apply</button>
   </form>
