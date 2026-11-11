@@ -12,7 +12,7 @@ jobs:
       - name: Checkout before the change
         uses: actions/checkout@v4
         with:
-          ref: 0c5755d9f36a2ba2b0a1d60fd1f7ae1f0dcb3f33
+          ref: 0c5755d7c376afd3784b8378fbf858d6582568c0
           path: before
           submodules: recursive
       - name: Checkout the head
