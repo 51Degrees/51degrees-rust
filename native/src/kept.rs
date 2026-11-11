@@ -79,45 +79,80 @@ impl<T> Kept<T> {
     }
 }
 
+/// A slot of [`NameIndexes`] that holds no name.
+const EMPTY: u32 = u32::MAX;
+
 /// The required property index of each name that has one in a data set,
-/// sorted ignoring case as the C library compares names, so that a name is
-/// found as `fiftyoneDegreesPropertiesGetRequiredPropertyIndexFromName` finds
-/// it, with no lock and no write to shared memory.
+/// found ignoring the case of ASCII letters, as the C library's
+/// `fiftyoneDegreesStringCompare` compares names, so that a name is found as
+/// `fiftyoneDegreesPropertiesGetRequiredPropertyIndexFromName` finds it, with
+/// no lock and no write to shared memory.
+///
+/// The names are in a hash table with open addressing, being a power of two
+/// slots, at least twice as many as the names, each the place of a name in
+/// `names` or [`EMPTY`].
 #[derive(PartialEq, Eq)]
-pub(crate) struct NameIndexes(Vec<(Box<str>, c_int)>);
+pub(crate) struct NameIndexes {
+    names: Vec<(Box<str>, c_int)>,
+    slots: Box<[u32]>,
+}
 
 impl NameIndexes {
     /// The table for `found`, each name with the index the C library gives
-    /// it, leaving out a name with none.
+    /// it, leaving out a name with none and a name given again in any case.
     pub(crate) fn new(found: impl IntoIterator<Item = (String, c_int)>) -> Self {
-        let mut names: Vec<(Box<str>, c_int)> = found
-            .into_iter()
-            .filter(|(_, index)| *index >= 0)
-            .map(|(name, index)| (name.into_boxed_str(), index))
-            .collect();
-        names.sort_by(|(a, _), (b, _)| compare_ignoring_case(a, b));
-        NameIndexes(names)
+        let found: Vec<(String, c_int)> =
+            found.into_iter().filter(|(_, index)| *index >= 0).collect();
+        let mut slots = vec![EMPTY; (found.len() * 2).next_power_of_two()].into_boxed_slice();
+        let mut names: Vec<(Box<str>, c_int)> = Vec::with_capacity(found.len());
+        for (name, index) in found {
+            let mask = slots.len() - 1;
+            let mut slot = hash_ignoring_case(&name) & mask;
+            loop {
+                let place = slots[slot];
+                if place == EMPTY {
+                    slots[slot] = names.len() as u32;
+                    names.push((name.into_boxed_str(), index));
+                    break;
+                }
+                if names[place as usize].0.eq_ignore_ascii_case(&name) {
+                    break;
+                }
+                slot = (slot + 1) & mask;
+            }
+        }
+        NameIndexes { names, slots }
     }
 
     /// The index of the property named, ignoring case, or [`None`] when it has
-    /// none or the name holds a nul byte, which ends a C string.
+    /// none. A name holding a nul byte, which ends a C string, is never one of
+    /// the names, so it has none.
     pub(crate) fn find(&self, name: &str) -> Option<c_int> {
-        if name.contains('\0') {
-            return None;
+        let mask = self.slots.len() - 1;
+        let mut slot = hash_ignoring_case(name) & mask;
+        loop {
+            let place = self.slots[slot];
+            if place == EMPTY {
+                return None;
+            }
+            let (key, index) = &self.names[place as usize];
+            if key.eq_ignore_ascii_case(name) {
+                return Some(*index);
+            }
+            slot = (slot + 1) & mask;
         }
-        self.0
-            .binary_search_by(|(key, _)| compare_ignoring_case(key, name))
-            .ok()
-            .map(|at| self.0[at].1)
     }
 }
 
-/// `a` against `b`, ignoring the case of ASCII letters, as the C library's
-/// `fiftyoneDegreesStringCompare` compares them.
-fn compare_ignoring_case(a: &str, b: &str) -> std::cmp::Ordering {
-    a.bytes()
-        .map(|byte| byte.to_ascii_lowercase())
-        .cmp(b.bytes().map(|byte| byte.to_ascii_lowercase()))
+/// The FNV-1a hash of `name` with its ASCII letters in lower case, so two
+/// names that differ only in that case hash the same.
+fn hash_ignoring_case(name: &str) -> usize {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in name.bytes() {
+        hash ^= u64::from(byte.to_ascii_lowercase());
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash as usize
 }
 
 #[cfg(test)]
@@ -140,6 +175,8 @@ mod tests {
         assert_eq!(names.find("Missing"), None);
         assert_eq!(names.find("IsMobile\0"), None);
         assert_eq!(names.find("NoSuchProperty"), None);
+        assert_eq!(names.find(""), None);
+        assert_eq!(NameIndexes::new([]).find("IsMobile"), None);
     }
 
     /// A value lent before a replace stays as it was, a replace by the same
