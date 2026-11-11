@@ -53,10 +53,10 @@ const CLIENT_IP: &str = "1.1.1.1";
 /// The addresses the timed lookups take in turn.
 const CLIENT_IPS: [&str; 3] = [CLIENT_IP, "8.8.8.8", "2606:4700:4700::1111"];
 
-/// The IP Intelligence data file `51DEGREES_IPI_PATH` names, or the free
+/// The IP Intelligence data file `_51DEGREES_IPI_PATH` names, or the free
 /// ASN file in the `cxx` submodule.
 fn data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("51DEGREES_IPI_PATH") {
+    if let Ok(path) = std::env::var("_51DEGREES_IPI_PATH") {
         let path = PathBuf::from(path.trim());
         if path.is_file() {
             return Some(path);
