@@ -154,10 +154,12 @@ fn a_failed_update_from_a_url_carrying_a_licence_key_shows_only_its_masked_form(
     }
 
     let deadline = Instant::now() + Duration::from_secs(POLL_WAIT_SECONDS);
+    // Nothing is listening, so each poll writes the errors table's message
+    // for a data update service that cannot be reached.
     let polled = |logged: &[String]| {
         logged
             .iter()
-            .any(|record| record.contains("Update will be attempted again later"))
+            .any(|record| record.contains("Error accessing data update service at"))
     };
     while !polled(&LOGGED.lock().unwrap()) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(100));
@@ -172,7 +174,7 @@ fn a_failed_update_from_a_url_carrying_a_licence_key_shows_only_its_masked_form(
             "a log record shows the key: {record}"
         );
     }
-    for wanted in ["on start-up", "Update will be attempted again later"] {
+    for wanted in ["on start-up", "Error accessing data update service at"] {
         assert!(
             logged.iter().any(|record| record.contains(wanted)
                 && record.contains(&format!("LicenseKeys={MASKED}"))),
