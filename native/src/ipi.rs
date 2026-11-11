@@ -200,8 +200,9 @@ impl Manager {
     /// under the `LowMemory` and `Balanced` profiles, which is how many calls
     /// can read the data file at once. A call beyond that waits for a handle,
     /// so it should be the number of threads that will look up through the
-    /// data set at once. [`None`] keeps the profile's default. It has no effect
-    /// on the in-memory profiles, where every collection is already resident.
+    /// data set at once. [`None`] keeps the profile's default, which is one for
+    /// each processor. It has no effect on the in-memory profiles, where every
+    /// collection is already resident.
     pub fn open_with_options(
         path: impl AsRef<Path>,
         profile: PerformanceProfile,
@@ -1196,7 +1197,7 @@ mod tests {
         };
         for (profile, concurrency, handles) in [
             (PerformanceProfile::LowMemory, Some(3), 3),
-            (PerformanceProfile::Balanced, None, 10),
+            (PerformanceProfile::Balanced, Some(5), 5),
             (PerformanceProfile::HighPerformance, Some(3), 0),
             (PerformanceProfile::InMemory, None, 0),
         ] {

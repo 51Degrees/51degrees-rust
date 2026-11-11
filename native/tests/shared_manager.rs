@@ -118,9 +118,10 @@ fn ip_intelligence_serves_more_threads_than_file_handles() {
         eprintln!("_51DEGREES_IPI_PATH names no IP Intelligence data file; skipping");
         return;
     };
-    // The profile's own pool of ten handles.
+    // Two handles, so the threads must share them.
     let manager =
-        ipi::Manager::open(&path, PerformanceProfile::LowMemory).expect("the data file loads");
+        ipi::Manager::open_with_options(&path, PerformanceProfile::LowMemory, None, Some(2))
+            .expect("the data file loads");
     let names = manager.available_property_names();
     let addresses = ["1.1.1.1", "9.9.9.9", "2606:4700:4700::1111", "8.8.8.8"];
     let errors = on_every_thread(move |thread| {
