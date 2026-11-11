@@ -292,12 +292,13 @@ pub struct DeviceDetectionOnPremiseEngine {
     /// The property names the engine was built with, each with its index.
     /// Every refresh opens the data file with these names, so each keeps its
     /// index. Empty when the engine was built with no name, which opens the
-    /// data file with every property.
+    /// first data file with every property and each refresh with the names
+    /// the data set before it holds, so each keeps its index too.
     requested: Vec<String>,
 
-    /// The names a read looks a property up in. Built once at build from
-    /// `requested`, or rebuilt from each data set when the engine was built
-    /// with no name, because then the indexes are the data set's own order.
+    /// The names a read looks a property up in, built once when the engine
+    /// is built from the names the first data set was opened with, and never
+    /// from a later data set.
     names: Arc<BuildNames>,
 
     /// The property metadata and tier of the loaded data set, for
@@ -750,12 +751,16 @@ impl DeviceDetectionOnPremiseEngine {
                 self.reuse_temp_file,
             )
         });
-        let manager = open_manager(
-            copy.as_ref().map_or(path, OperationalCopy::path),
-            self.profile,
-            &self.requested,
-            &self.options,
-        )?;
+        let path = copy.as_ref().map_or(path, OperationalCopy::path);
+        let manager = if self.requested.is_empty() {
+            self.loaded.load().manager.reopen_with_hash_options(
+                path,
+                self.profile,
+                &self.options,
+            )?
+        } else {
+            open_manager(path, self.profile, &self.requested, &self.options)?
+        };
         self.swap_in(copy, manager)
     }
 
@@ -768,29 +773,21 @@ impl DeviceDetectionOnPremiseEngine {
             .unwrap_or_else(PoisonError::into_inner);
         // The data set reads the data where it lies, so the manager keeps a
         // copy for as long as the data set.
-        let manager = Manager::open_from_memory(
-            data.to_vec(),
-            self.profile,
-            requested(&self.requested).as_deref(),
-            &self.options,
-        )?;
-        self.swap_in(None, manager)
-    }
-
-    /// The names a read of `manager`'s data set looks a property up in.
-    ///
-    /// An engine built with names keeps the table it was built with, because
-    /// a name's index is its place in those names whatever the new data file
-    /// holds. An engine built with no name takes the new data set's names,
-    /// because its indexes are that data set's own order, which a new data
-    /// file can change. The C library is changing to keep the first load's
-    /// names, and the table here becomes the built one for both.
-    fn names_for(&self, manager: &Arc<Manager>) -> Arc<BuildNames> {
-        if self.requested.is_empty() {
-            Arc::new(BuildNames::new(manager.property_names()))
+        let manager = if self.requested.is_empty() {
+            self.loaded.load().manager.reopen_from_memory(
+                data.to_vec(),
+                self.profile,
+                &self.options,
+            )?
         } else {
-            Arc::clone(&self.names)
-        }
+            Manager::open_from_memory(
+                data.to_vec(),
+                self.profile,
+                requested(&self.requested).as_deref(),
+                &self.options,
+            )?
+        };
+        self.swap_in(None, manager)
     }
 
     /// Replace the live data set with `manager`'s, which reads `copy` when
@@ -801,8 +798,7 @@ impl DeviceDetectionOnPremiseEngine {
     /// failure changes nothing. The caller holds the refresh lock.
     fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
         let evidence_keys = manager.evidence_keys();
-        let names = self.names_for(&manager);
-        let (loaded, metadata) = describe(copy, manager, &self.tier_override, &names)?;
+        let (loaded, metadata) = describe(copy, manager, &self.tier_override, &self.names)?;
         if let Some(file) = self.data_files.first() {
             record_dates(&loaded.manager, file);
         }
@@ -925,7 +921,9 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
 /// Shared by the builder's initial build and the engine's reload path so both
 /// turn the requested-property list into the native call the same way: an empty
 /// list means every property the data file supports, otherwise the data set is
-/// restricted to exactly the named properties.
+/// restricted to exactly the named properties. A reload of an engine built with
+/// no names opens the new data set with the names of the one before it
+/// instead, through [`Manager::reopen_with_hash_options`].
 pub(crate) fn open_manager(
     path: &Path,
     profile: PerformanceProfile,

@@ -1268,6 +1268,19 @@ extern "C" {
         property_name: *const c_char,
     ) -> c_int;
 
+    /// Returns the properties `data_set` was created with, which a data set
+    /// created from another file takes as the `existing` field of
+    /// [`PropertiesRequired`] to keep their names, as the C library's
+    /// reload does, or null when there are none. It takes no reference on
+    /// the data set.
+    ///
+    /// # Safety
+    /// `data_set` must come from [`fiftyoneDegreesDataSetIpiGet`] and not yet be
+    /// released, and the properties are valid only for as long as it is held.
+    pub fn fiftyoneDegreesShimIpiDataSetGetAvailable(
+        data_set: *mut DataSetIpi,
+    ) -> *mut PropertiesAvailable;
+
     /// Writes the data set's name (its tier, for example `Lite`, `Enterprise` or
     /// `TAC`) into `buffer` as a null terminated string and returns the number
     /// of characters written, excluding the terminator. Returns zero when no

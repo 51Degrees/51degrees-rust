@@ -153,12 +153,13 @@ pub struct IpIntelligenceOnPremiseEngine {
     concurrency: Option<u16>,
     /// The property names the engine was built with. Every refresh opens the
     /// data file with these names, so each keeps its index. Empty when the
-    /// engine was built with no name, which opens the data file with every
-    /// property.
+    /// engine was built with no name, which opens the first data file with
+    /// every property and each refresh with the names the data set before it
+    /// holds, so each keeps its index too.
     requested: Vec<String>,
-    /// The names a read looks a property up in. Built once at build from
-    /// `requested`, or rebuilt from each data set when the engine was built
-    /// with no name, because then the indexes are the data set's own order.
+    /// The names a read looks a property up in, built once when the engine
+    /// is built from the names the first data set was opened with, and never
+    /// from a later data set.
     names: Arc<BuildNames>,
     /// The evidence keys of the loaded data file, replaced on refresh.
     evidence_key_filter: DataFileEvidenceKeys,
@@ -384,8 +385,9 @@ impl IpIntelligenceOnPremiseEngine {
     /// it holds them. With properties named, these are the names given, in
     /// the order given, including any the data file has no property for, so
     /// [`Self::populated_property_names`] gives the data file properties a
-    /// lookup reads. Without, this is every property the data file defines.
-    /// Intended for introspection, such as the metadata example.
+    /// lookup reads. Without, this is every property the first data file
+    /// loaded defines, which a refresh keeps. Intended for introspection,
+    /// such as the metadata example.
     pub fn available_property_names(&self) -> Vec<String> {
         self.loaded.load().manager.available_property_names()
     }
@@ -552,22 +554,6 @@ impl IpIntelligenceOnPremiseEngine {
         }
     }
 
-    /// The names a read of `manager`'s data set looks a property up in.
-    ///
-    /// An engine built with names keeps the table it was built with, because
-    /// a name's index is its place in those names whatever the new data file
-    /// holds. An engine built with no name takes the new data set's names,
-    /// because its indexes are that data set's own order, which a new data
-    /// file can change. The C library is changing to keep the first load's
-    /// names, and the table here becomes the built one for both.
-    fn names_for(&self, manager: &Arc<Manager>) -> Arc<BuildNames> {
-        if self.requested.is_empty() {
-            Arc::new(BuildNames::new(manager.available_property_names()))
-        } else {
-            Arc::clone(&self.names)
-        }
-    }
-
     /// Reopen the data file at `path` and atomically swap it in. See
     /// [`Self::swap_in`].
     fn reload_from_path(&self, path: &Path) -> Result<()> {
@@ -585,12 +571,20 @@ impl IpIntelligenceOnPremiseEngine {
                 self.reuse_temp_file,
             )
         });
-        let manager = Manager::open_with_options(
-            copy.as_ref().map_or(path, OperationalCopy::path),
-            self.profile,
-            self.property_refs().as_deref(),
-            self.concurrency,
-        )?;
+        let path = copy.as_ref().map_or(path, OperationalCopy::path);
+        let manager = if self.requested.is_empty() {
+            self.loaded
+                .load()
+                .manager
+                .reopen_with_options(path, self.profile, self.concurrency)?
+        } else {
+            Manager::open_with_options(
+                path,
+                self.profile,
+                self.property_refs().as_deref(),
+                self.concurrency,
+            )?
+        };
         self.swap_in(copy, manager)
     }
 
@@ -603,11 +597,14 @@ impl IpIntelligenceOnPremiseEngine {
             .unwrap_or_else(PoisonError::into_inner);
         // The data set reads the data where it lies, so the manager keeps a
         // copy for as long as the data set.
-        let manager = Manager::open_from_memory(
-            data.to_vec(),
-            self.profile,
-            self.property_refs().as_deref(),
-        )?;
+        let manager = if self.requested.is_empty() {
+            self.loaded
+                .load()
+                .manager
+                .reopen_from_memory(data.to_vec(), self.profile)?
+        } else {
+            Manager::open_from_memory(data.to_vec(), self.profile, self.property_refs().as_deref())?
+        };
         self.swap_in(None, manager)
     }
 
@@ -619,8 +616,7 @@ impl IpIntelligenceOnPremiseEngine {
     /// read, changes nothing. The caller holds the refresh lock.
     fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
         let evidence_keys = DataFileEvidenceKeys::whitelist(&manager);
-        let names = self.names_for(&manager);
-        let (loaded, metadata) = describe(copy, manager, &self.tier_override, &names)?;
+        let (loaded, metadata) = describe(copy, manager, &self.tier_override, &self.names)?;
         let loaded = Arc::new(loaded);
         self.loaded.store(Arc::clone(&loaded));
         self.evidence_key_filter.keys.store(Arc::new(evidence_keys));

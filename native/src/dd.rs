@@ -270,6 +270,16 @@ pub fn data_file_header_size() -> usize {
 // Manager
 // ---------------------------------------------------------------------------
 
+/// The property names a data set is opened with.
+#[derive(Clone, Copy)]
+enum Names<'a> {
+    /// The names given, or every property of the data file when [`None`].
+    Given(Option<&'a [&'a str]>),
+    /// The names another manager's data set holds, as the C library's
+    /// reload takes them.
+    KeptFrom(&'a Manager),
+}
+
 /// A loaded Hash device detection data set.
 ///
 /// Owns a native [`sys::ResourceManager`] initialized from a data file. Cloning
@@ -362,12 +372,40 @@ impl Manager {
         properties: Option<&[&str]>,
         options: &HashOptions,
     ) -> Result<Arc<Manager>> {
-        let path = path.as_ref();
+        Self::open_file(path.as_ref(), profile, Names::Given(properties), options)
+    }
+
+    /// Open a Hash data file as a new data set with the property names this
+    /// manager's data set holds, as the C library's reload of a data set takes
+    /// them, changing the profile's native configuration by `options` first.
+    ///
+    /// Each required property index of the new data set names the property it
+    /// names here. When this manager was opened with no names, the new data set
+    /// keeps the names of the first data set, in their order, so a property
+    /// only the new data file has gets no index, and a detection still walks a
+    /// component's graph only when one of its properties is first read.
+    pub fn reopen_with_hash_options(
+        &self,
+        path: impl AsRef<Path>,
+        profile: PerformanceProfile,
+        options: &HashOptions,
+    ) -> Result<Arc<Manager>> {
+        Self::open_file(path.as_ref(), profile, Names::KeptFrom(self), options)
+    }
+
+    /// Open the Hash data file at `path` with `names`, as
+    /// [`Manager::open_with_hash_options`] describes.
+    fn open_file(
+        path: &Path,
+        profile: PerformanceProfile,
+        names: Names<'_>,
+        options: &HashOptions,
+    ) -> Result<Arc<Manager>> {
         let path_c = crate::path::native_path(path)?;
         let mut config = profile_config(profile, options);
         let indexed = value_profiles::IndexedNames::new(&options.indexed_properties)?;
         Self::init(
-            properties,
+            names,
             None,
             |manager, required, exception| {
                 // Safety: every pointer is valid for the call, the config is
@@ -405,6 +443,30 @@ impl Manager {
         properties: Option<&[&str]>,
         options: &HashOptions,
     ) -> Result<Arc<Manager>> {
+        Self::load_memory(data, profile, Names::Given(properties), options)
+    }
+
+    /// Load a Hash data set from `data`, the whole of a data file held in
+    /// memory, with the property names this manager's data set holds, as
+    /// [`Manager::reopen_with_hash_options`] describes for a file and
+    /// [`Manager::open_from_memory`] for the data.
+    pub fn reopen_from_memory(
+        &self,
+        data: Vec<u8>,
+        profile: PerformanceProfile,
+        options: &HashOptions,
+    ) -> Result<Arc<Manager>> {
+        Self::load_memory(data, profile, Names::KeptFrom(self), options)
+    }
+
+    /// Load a Hash data set from `data` with `names`, as
+    /// [`Manager::open_from_memory`] describes.
+    fn load_memory(
+        data: Vec<u8>,
+        profile: PerformanceProfile,
+        names: Names<'_>,
+        options: &HashOptions,
+    ) -> Result<Arc<Manager>> {
         let memory = HeldMemory::new(data);
         let size = c_long::try_from(memory.length()).map_err(|_| Error::Native {
             status: String::from("InvalidInput"),
@@ -422,7 +484,7 @@ impl Manager {
         let indexed = value_profiles::IndexedNames::new(&options.indexed_properties)?;
         let start = memory.start();
         Self::init(
-            properties,
+            names,
             Some(memory),
             |manager, required, exception| {
                 // Safety: every pointer is valid for the call, the config is
@@ -447,12 +509,11 @@ impl Manager {
         )
     }
 
-    /// Initialize a manager with `init`, requesting the named properties, or
-    /// all of them when `properties` is [`None`]. `memory` is the data a load
-    /// from memory reads, kept until the data set is freed, and `detail`
-    /// gives the message for a failed status.
+    /// Initialize a manager with `init`, requesting the properties `names`
+    /// gives. `memory` is the data a load from memory reads, kept until the
+    /// data set is freed, and `detail` gives the message for a failed status.
     fn init(
-        properties: Option<&[&str]>,
+        names: Names<'_>,
         memory: Option<HeldMemory>,
         init: impl FnOnce(
             *mut sys::ResourceManager,
@@ -463,7 +524,10 @@ impl Manager {
     ) -> Result<Arc<Manager>> {
         // A separated property list, kept alive for the duration of the init
         // call because `PropertiesRequired` only borrows the string pointer.
-        let property_list = properties.map(|names| names.join(","));
+        let property_list = match names {
+            Names::Given(properties) => properties.map(|names| names.join(",")),
+            Names::KeptFrom(_) => None,
+        };
         let property_list_c = property_list
             .as_deref()
             .map(CString::new)
@@ -476,6 +540,15 @@ impl Manager {
         let mut required = sys::PropertiesRequired::all_properties();
         if let Some(list) = property_list_c.as_ref() {
             required.string = list.as_ptr();
+        }
+        if let Names::KeptFrom(existing) = names {
+            // Safety: `existing` holds its data set until it is dropped, and
+            // it is borrowed for the whole of this call. The C library copies
+            // the names, so the new data set does not refer to these
+            // properties once the call returns.
+            required.existing = unsafe {
+                sys::fiftyoneDegreesShimHashDataSetGetAvailable(existing.data_set.as_ptr())
+            };
         }
 
         // Heap allocate a zeroed manager so its address is stable.
