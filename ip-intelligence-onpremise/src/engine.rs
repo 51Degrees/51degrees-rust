@@ -1450,6 +1450,100 @@ mod tests {
         }
     }
 
+    /// A reader over the current data set for a lookup of `ip`, built as
+    /// [`IpIntelligenceOnPremiseEngine::lookup`] builds it.
+    fn lookup_reader(engine: &IpIntelligenceOnPremiseEngine, ip: &str) -> LookupReader {
+        let loaded = engine.loaded.load_full();
+        let mut results = loaded
+            .manager
+            .create_results()
+            .expect("results are created");
+        let evidence = Evidence::builder().add("query.client-ip", ip).build();
+        let client_ip = results
+            .process_client_ip_evidence(&evidence)
+            .expect("the address is read");
+        LookupReader {
+            results: Mutex::new(results),
+            client_ip,
+            loaded,
+        }
+    }
+
+    /// The reader resolves each typed accessor's position once, being the
+    /// position a read by that property's name finds, before and after a
+    /// refresh, and a typed read gives what a read by name gives.
+    #[test]
+    fn each_typed_slot_reads_where_its_name_does() {
+        use fiftyone_ip_intelligence_shared::{IpIntelligenceData, TYPED_PROPERTY_NAMES};
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping the typed slots");
+            return;
+        };
+        // Built with the names in an order that is not the data file's, so
+        // the positions follow the names rather than the data set.
+        let engine = IpIntelligenceOnPremiseEngine::builder(&data_file)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            .properties(["AsnName", "Asn"].iter().copied())
+            .auto_update(false)
+            .build()
+            .expect("the IP Intelligence data file should build an engine");
+        for refreshed in [false, true] {
+            if refreshed {
+                engine.refresh(None).expect("the data file loads again");
+            }
+            let reader = lookup_reader(&engine, "1.1.1.1");
+            let typed = reader
+                .typed_positions()
+                .expect("the reader resolved the typed slots");
+            assert_eq!(typed.len(), TYPED_PROPERTY_NAMES.len());
+            let mut resolved = 0;
+            for (slot, name) in TYPED_PROPERTY_NAMES.iter().enumerate() {
+                let by_name = reader.position(&name.to_lowercase());
+                assert_eq!(typed[slot], by_name, "{name}, refreshed {refreshed}");
+                resolved += usize::from(by_name.is_some());
+            }
+            // The two names the engine was built with, and the two the
+            // reader adds, all read somewhere.
+            for name in ["Asn", "AsnName", "Ip", "IpV6"] {
+                let slot = TYPED_PROPERTY_NAMES
+                    .iter()
+                    .position(|typed| *typed == name)
+                    .expect(name);
+                assert!(typed[slot].is_some(), "{name}, refreshed {refreshed}");
+            }
+            assert_eq!(resolved, 4, "refreshed {refreshed}");
+        }
+
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(engine))
+            .build()
+            .expect("pipeline builds");
+        let mut data = pipeline.create_flow_data_with(
+            Evidence::builder()
+                .add("query.client-ip", "1.1.1.1")
+                .build(),
+        );
+        data.process().expect("processing succeeds");
+        let ip = data.get(IP_DATA_KEY).expect("ip data is present");
+        for (typed, by_name) in [
+            (format!("{:?}", ip.asn()), format!("{:?}", ip.string("Asn"))),
+            (
+                format!("{:?}", ip.asn_name()),
+                format!("{:?}", ip.string("AsnName")),
+            ),
+            (format!("{:?}", ip.ip()), format!("{:?}", ip.string("Ip"))),
+            (
+                format!("{:?}", ip.country()),
+                format!("{:?}", ip.string("Country")),
+            ),
+        ] {
+            assert_eq!(typed, by_name);
+        }
+        let asn = ip.asn();
+        let asn = asn.value().expect("Asn has a value");
+        assert!(asn.contains("AS13335"), "{asn}");
+    }
+
     /// The handles to the data file the engine's current data set holds.
     fn file_pool_size(engine: &IpIntelligenceOnPremiseEngine) -> u16 {
         engine.loaded.load().manager.file_pool_size()

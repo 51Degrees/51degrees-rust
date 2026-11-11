@@ -241,6 +241,15 @@ pub trait IpIntelligencePropertyReader: Send + Sync {
         position: usize,
         data: &mut IpIntelligenceDataBase,
     ) -> Result<(), String>;
+
+    /// The position of the property each typed accessor reads, by the
+    /// accessor's slot in [`TYPED_PROPERTY_NAMES`](crate::TYPED_PROPERTY_NAMES),
+    /// resolved once when the reader's data set loaded, with `None` for a
+    /// property the reader cannot read. A reader that resolves none gives
+    /// `None`, and each typed read then looks its name up.
+    fn typed_positions(&self) -> Option<&[Option<usize>]> {
+        None
+    }
 }
 
 /// The values an [`IpIntelligencePropertyReader`] has read, so each property is
@@ -1684,5 +1693,249 @@ mod tests {
             assert_eq!(handle.join().unwrap(), "United Kingdom");
         }
         assert_eq!(reads_of(&reads, "country"), 1);
+    }
+
+    /// The properties the slot reader below holds, in an order that is not
+    /// the order the typed accessors are declared in.
+    const SLOT_NAMES: [&str; 8] = [
+        "IsVPN",
+        "Asn",
+        "Areas",
+        "Region",
+        "TimeZoneOffset",
+        "CountryCodesGeographical",
+        "AsnName",
+        "Latitude",
+    ];
+
+    /// The same properties again with two more among them, as a data file
+    /// holding a superset lists them, and in another order.
+    const SLOT_NAMES_SUPERSET: [&str; 10] = [
+        "Country",
+        "Latitude",
+        "AsnName",
+        "Region",
+        "CountryCodesGeographical",
+        "ConnectionType",
+        "TimeZoneOffset",
+        "Areas",
+        "Asn",
+        "IsVPN",
+    ];
+
+    /// A reader that resolves each typed accessor's position once, as an
+    /// engine's reader does when its data set loads, and counts the names
+    /// looked up after that.
+    struct SlotReader {
+        /// The lowercase names of the properties this reader holds.
+        names: Vec<String>,
+        /// The position of each typed accessor's property.
+        typed: Vec<Option<usize>>,
+        /// How many names were looked up.
+        lookups: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl SlotReader {
+        /// A reader holding `names` in that order, resolving every typed
+        /// accessor's position once.
+        fn new(names: &[&str]) -> (Self, Arc<std::sync::atomic::AtomicUsize>) {
+            let names: Vec<String> = names.iter().map(|name| name.to_lowercase()).collect();
+            let typed = crate::TYPED_PROPERTY_NAMES
+                .iter()
+                .map(|name| {
+                    let name = name.to_lowercase();
+                    names.iter().position(|held| *held == name)
+                })
+                .collect();
+            let lookups = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let reader = SlotReader {
+                names,
+                typed,
+                lookups: Arc::clone(&lookups),
+            };
+            (reader, lookups)
+        }
+    }
+
+    impl IpIntelligencePropertyReader for SlotReader {
+        fn property_names(&self) -> &[String] {
+            &self.names
+        }
+
+        fn position(&self, name: &str) -> Option<usize> {
+            self.lookups
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.names.iter().position(|held| held == name)
+        }
+
+        fn read_property(
+            &self,
+            position: usize,
+            data: &mut IpIntelligenceDataBase,
+        ) -> Result<(), String> {
+            match self.names[position].as_str() {
+                "asn" => data.set_string("Asn", "AS13335"),
+                "asnname" => data.set_string_no_value("AsnName", "no name for this range"),
+                "isvpn" => data.set_boolean("IsVPN", false),
+                "latitude" => data.set_float("Latitude", 51.45),
+                "timezoneoffset" => data.set_integer("TimeZoneOffset", 60),
+                "areas" => data.set_wkt_string("Areas", "POLYGON((1 2,3 4,5 6,1 2))"),
+                "countrycodesgeographical" => {
+                    data.set_weighted_string("CountryCodesGeographical", sample_countries())
+                }
+                "region" => return Err("the native read failed".to_owned()),
+                _ => {}
+            }
+            Ok(())
+        }
+
+        fn typed_positions(&self) -> Option<&[Option<usize>]> {
+            Some(&self.typed)
+        }
+    }
+
+    /// The count of names looked up so far.
+    fn lookups_of(lookups: &std::sync::atomic::AtomicUsize) -> usize {
+        lookups.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Every typed read of `data`, each paired with the same read by name,
+    /// as text so values of different types compare together.
+    fn typed_and_by_name(data: &IpIntelligenceDataBase) -> Vec<(String, String)> {
+        vec![
+            (
+                format!("{:?}", data.asn()),
+                format!("{:?}", data.string("Asn")),
+            ),
+            (
+                format!("{:?}", data.asn_name()),
+                format!("{:?}", data.string("AsnName")),
+            ),
+            (
+                format!("{:?}", data.is_vpn()),
+                format!("{:?}", data.boolean("IsVPN")),
+            ),
+            (
+                format!("{:?}", data.latitude()),
+                format!("{:?}", data.float("Latitude")),
+            ),
+            (
+                format!("{:?}", data.time_zone_offset()),
+                format!("{:?}", data.integer("TimeZoneOffset")),
+            ),
+            (
+                format!("{:?}", data.areas()),
+                format!("{:?}", data.string("Areas")),
+            ),
+            (
+                format!("{:?}", data.country_codes_geographical()),
+                format!("{:?}", data.weighted_string("CountryCodesGeographical")),
+            ),
+            (
+                format!("{:?}", data.region()),
+                format!("{:?}", data.string("Region")),
+            ),
+        ]
+    }
+
+    /// A typed read gives the value a read by name gives, for a value of
+    /// each type, a property with no value, a read that failed and a
+    /// property the reader does not hold, and looks no name up.
+    #[test]
+    fn a_typed_read_and_a_read_by_name_give_the_same_value_and_index() {
+        let (reader, lookups) = SlotReader::new(&SLOT_NAMES);
+        let data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader);
+
+        let typed: Vec<String> = [
+            format!("{:?}", data.asn()),
+            format!("{:?}", data.asn_name()),
+            format!("{:?}", data.is_vpn()),
+            format!("{:?}", data.latitude()),
+            format!("{:?}", data.time_zone_offset()),
+            format!("{:?}", data.areas()),
+            format!("{:?}", data.country_codes_geographical()),
+            format!("{:?}", data.region()),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(lookups_of(&lookups), 0, "a typed read looked a name up");
+
+        assert_eq!(data.asn().value().unwrap(), "AS13335");
+        assert_eq!(
+            data.asn_name().no_value_message(),
+            Some("no name for this range")
+        );
+        assert_eq!(
+            data.region().no_value_message(),
+            Some("the native read failed")
+        );
+        let pairs = typed_and_by_name(&data);
+        assert_eq!(pairs.len(), typed.len());
+        for (typed, (again, by_name)) in typed.iter().zip(pairs) {
+            assert_eq!(*typed, again);
+            assert_eq!(*typed, by_name);
+        }
+        // A property the reader does not hold is looked up by name, so it
+        // is read after the count above.
+        assert_eq!(
+            format!("{:?}", data.town()),
+            format!("{:?}", data.string("Town"))
+        );
+    }
+
+    /// A typed read follows its property when the data set loads again with
+    /// its properties in another order, or holding more of them, and still
+    /// looks no name up.
+    #[test]
+    fn a_typed_read_follows_its_name_when_the_data_set_reloads_in_another_order() {
+        let (first, first_lookups) = SlotReader::new(&SLOT_NAMES);
+        let (again, again_lookups) = SlotReader::new(&SLOT_NAMES_SUPERSET);
+        assert_ne!(first.typed, again.typed, "the two orders agree");
+        let first = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(first);
+        let again = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(again);
+
+        let read = |data: &IpIntelligenceDataBase| {
+            vec![
+                format!("{:?}", data.asn()),
+                format!("{:?}", data.asn_name()),
+                format!("{:?}", data.is_vpn()),
+                format!("{:?}", data.latitude()),
+                format!("{:?}", data.time_zone_offset()),
+                format!("{:?}", data.areas()),
+                format!("{:?}", data.country_codes_geographical()),
+                format!("{:?}", data.region()),
+            ]
+        };
+        assert_eq!(read(&first), read(&again));
+        assert_eq!(lookups_of(&first_lookups), 0, "the first looked a name up");
+        assert_eq!(lookups_of(&again_lookups), 0, "the second looked a name up");
+    }
+
+    /// A value set on the data takes precedence over the reader's for a
+    /// typed read as it does for a read by name.
+    #[test]
+    fn a_typed_read_takes_a_value_set_on_the_data_first() {
+        let (reader, _) = SlotReader::new(&SLOT_NAMES);
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader);
+        data.set_string("Asn", "AS64496");
+        assert_eq!(data.asn().value().unwrap(), "AS64496");
+        assert_eq!(data.string("Asn").value().unwrap(), "AS64496");
+    }
+
+    /// Each generated accessor passes the slot of the property it reads in
+    /// `TYPED_PROPERTY_NAMES`, and every slot is passed by one accessor.
+    #[test]
+    fn each_typed_accessor_passes_the_slot_of_its_property() {
+        let source = include_str!("ip_intelligence_data.rs");
+        let mut seen = vec![false; crate::TYPED_PROPERTY_NAMES.len()];
+        for call in source.split("_at(").skip(1) {
+            let (slot, rest) = call.split_once(", \"").expect("a slot and a name");
+            let name = rest.split('"').next().expect("a name");
+            let slot: usize = slot.parse().expect("a slot");
+            assert_eq!(crate::TYPED_PROPERTY_NAMES[slot], name, "slot {slot}");
+            assert!(!seen[slot], "slot {slot} is passed twice");
+            seen[slot] = true;
+        }
+        assert!(seen.iter().all(|seen| *seen), "a slot no accessor passes");
     }
 }
