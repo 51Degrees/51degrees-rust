@@ -25,10 +25,10 @@
 //!
 //! A data set that reads from its file after it is loaded holds a fixed pool
 //! of file handles, one for each concurrent operation it was opened to
-//! expect. A read that finds every handle in use does not wait for one. It
-//! fails with `InsufficientHandles`, and in the IP Intelligence library a
-//! failed read of a property's values ends the process. A permit taken before
-//! each such call makes a caller beyond the size of the pool wait instead.
+//! expect, to at most 64. A read that finds every handle in use waits in the
+//! native library until another read releases one. A permit taken before each
+//! such call makes a caller beyond the size of the pool wait here instead,
+//! before it reaches the native library.
 
 use std::sync::{Condvar, Mutex, PoisonError};
 

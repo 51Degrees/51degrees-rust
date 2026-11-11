@@ -111,9 +111,9 @@ a single program can do DD and IPI), those two copies define the same common
 symbols and the linker sees a duplicate-symbol collision.
 
 The fix is applied entirely on the IP Intelligence side, so Device Detection is
-untouched. `fiftyone-ip-intelligence-sys` force-includes a header
-(`src/symbol_prefix.h`) into every C and C++ translation unit it compiles, via
-`/FI` on MSVC and `-include` on the GNU and Clang drivers. That header renames
+untouched. `fiftyone-ip-intelligence-sys` compiles every C translation unit
+with `FIFTYONE_DEGREES_IPI_SYMBOLS` defined, which makes each common header
+include `src/common/ipiSymbols.h` from 51degrees-cxx. That header renames
 this crate's private common symbols to an `ipi_*` namespace at preprocess
 time, so both the definitions compiled here and every call site that references
 them are renamed together. Device Detection keeps the unprefixed names. The two
@@ -121,8 +121,9 @@ copies of the common library therefore no longer collide.
 
 On the Rust side, the affected FFI declarations bind to the prefixed names with
 `#[link_name = "ipi_..."]` (for example `ipi_fiftyoneDegreesResourceManagerFree`
-and `ipi_fiftyoneDegreesExceptionGetMessage`). The header carries the full
-symbol list and the note on how to regenerate it.
+and `ipi_fiftyoneDegreesExceptionGetMessage`). 51degrees-cxx keeps the list
+complete, and `ci/check-native-symbols.ps1` fails when the two built libraries
+define the same common name.
 
 ## IP Intelligence data strategy
 

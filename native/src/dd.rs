@@ -220,8 +220,9 @@ impl Manager {
     /// under the `LowMemory` and `Balanced` profiles, which is how many calls
     /// can read the data file at once. A call beyond that waits for a handle,
     /// so it should be the number of threads that will process through the
-    /// data set at once. [`None`] keeps the profile's default. It has no effect
-    /// on the in-memory profiles, where every collection is already resident.
+    /// data set at once. [`None`] keeps the profile's default, which is one for
+    /// each processor. It has no effect on the in-memory profiles, where every
+    /// collection is already resident.
     pub fn open_with_options(
         path: impl AsRef<Path>,
         profile: PerformanceProfile,
@@ -1099,17 +1100,23 @@ mod tests {
     }
 
     /// A data set that reads from its file has a file handle for each
-    /// concurrent operation it was opened to expect, and one held in memory
-    /// has none, so its calls take no permits.
+    /// concurrent operation it was opened to expect, to at most 64, and one for
+    /// each processor when none is named. One held in memory has none, so its
+    /// calls take no permits.
     #[test]
     fn file_handles_follow_the_expected_concurrency() {
         let Some(path) = data_file() else {
             eprintln!("no Hash data file found; skipping file handles");
             return;
         };
+        // Safety: the function reads no state.
+        let processors =
+            unsafe { fiftyone_common_sys::fiftyoneDegreesThreadingGetProcessorCount() }.min(64);
         for (profile, concurrency, handles) in [
             (PerformanceProfile::LowMemory, Some(3), 3),
-            (PerformanceProfile::Balanced, None, 10),
+            (PerformanceProfile::Balanced, None, processors),
+            (PerformanceProfile::Balanced, Some(5), 5),
+            (PerformanceProfile::Balanced, Some(500), 64),
             (PerformanceProfile::HighPerformance, Some(3), 0),
             (PerformanceProfile::InMemory, None, 0),
         ] {

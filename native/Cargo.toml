@@ -21,8 +21,8 @@ homepage = "https://51degrees.com/services?utm_source=docs.rs&utm_medium=package
 #
 # That collision is now resolved at the source. The IP Intelligence build
 # compiles its private copy of the common C library into an ipi_ prefixed symbol
-# namespace (see fiftyone-ip-intelligence-sys/src/symbol_prefix.h, force
-# included by its build.rs), so its common C library symbols no longer clash
+# namespace (see fiftyone-ip-intelligence-sys/build.rs, which defines
+# FIFTYONE_DEGREES_IPI_SYMBOLS), so its common C library symbols no longer clash
 # with the Device Detection copy. Both products can therefore be linked into one
 # binary and load real data files side by side, which the combined smoke tests
 # in tests/smoke.rs prove.

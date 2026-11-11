@@ -362,8 +362,8 @@ pub mod common {
         ///
         /// The native symbol is `ipi_`-prefixed because this crate's private
         /// copy of the common C library is compiled into its own symbol
-        /// namespace (see `src/symbol_prefix.h` and `build.rs`), so the Rust
-        /// name is bound to the prefixed definition with `link_name`.
+        /// namespace (see `build.rs`), so the Rust name is bound to the
+        /// prefixed definition with `link_name`.
         ///
         /// # Safety
         /// `exception` must point to a valid, set [`Exception`].
@@ -447,6 +447,14 @@ pub mod common {
         /// null.
         #[link_name = "ipi_fiftyoneDegreesEvidenceFree"]
         pub fn fiftyoneDegreesEvidenceFree(evidence: *mut EvidenceKeyValuePairArray);
+
+        /// Returns the number of processors, at least 1, which is the
+        /// expected concurrency a collection configured with 0 opens with.
+        ///
+        /// The native symbol is `ipi_`-prefixed for the same reason as
+        /// [`fiftyoneDegreesExceptionGetMessage`] above.
+        #[link_name = "ipi_fiftyoneDegreesThreadingGetProcessorCount"]
+        pub fn fiftyoneDegreesThreadingGetProcessorCount() -> u16;
     }
 }
 
@@ -858,8 +866,8 @@ extern "C" {
     ///
     /// The native symbol is `ipi_`-prefixed because this crate's private copy of
     /// the common C library is compiled into its own symbol namespace (see
-    /// `src/symbol_prefix.h` and `build.rs`), so the Rust name is bound to the
-    /// prefixed definition with `link_name`. This is what keeps the resource
+    /// `build.rs`), so the Rust name is bound to the prefixed definition with
+    /// `link_name`. This is what keeps the resource
     /// manager freed through the matching wide-offset build rather than the
     /// Device Detection one.
     ///

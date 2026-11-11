@@ -316,8 +316,8 @@ fiftyoneDegreesStatusCode fiftyoneDegreesShimIpiInitManagerFromFile(
  * Returns the number of handles in the file pool of the data set managed by
  * `manager` when any of its collections reads from the data file after it is
  * loaded, or zero when the whole data set is held in memory. A read that
- * finds every handle in use fails rather than waiting for one, so this is
- * how many calls can read the data file at once.
+ * finds every handle in use waits until another read releases one, so this
+ * is how many calls can read the data file at once.
  */
 uint16_t fiftyoneDegreesShimIpiGetFileHandleCount(
     fiftyoneDegreesResourceManager *manager) {

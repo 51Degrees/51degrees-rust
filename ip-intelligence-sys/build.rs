@@ -88,42 +88,18 @@ fn main() {
     println!("cargo:rerun-if-changed={}", shim.display());
     sources.push(shim);
 
-    // The forced-include header that renames this crate's private common C
-    // library symbols to an ipi_ prefixed namespace. It is applied to every C
-    // and C++ translation unit below, so both the common C library definitions
-    // compiled here and every call site that references them are renamed
-    // together at preprocess time. Device Detection keeps the unprefixed names,
-    // so the two copies of the common C library no longer collide when both
-    // engines are linked into one binary. See the header for the full rationale
-    // and how to regenerate the symbol list.
-    let symbol_prefix = PathBuf::from(
-        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is always set by cargo"),
-    )
-    .join("src/symbol_prefix.h");
-    assert!(
-        symbol_prefix.is_file(),
-        "symbol prefix header missing at {}",
-        symbol_prefix.display()
-    );
-    println!("cargo:rerun-if-changed={}", symbol_prefix.display());
-    // `CARGO_MANIFEST_DIR` is already absolute, so the joined path is absolute
-    // too. It is used as is rather than canonicalised, because canonicalising on
-    // Windows yields an extended-length `\\?\` prefix that the MSVC `/FI` flag
-    // does not accept.
-    let symbol_prefix_abs = symbol_prefix.to_string_lossy().into_owned();
-
     let mut build = cc::Build::new();
     build.files(&sources).warnings(false);
 
-    // Force include the symbol prefix header into every translation unit. MSVC
-    // spells this `/FI<file>` and the GNU and Clang drivers spell it
-    // `-include <file>`. Both inject the header before the first line of each
-    // source, so the renames are in effect for the whole unit.
-    if build.get_compiler().is_like_msvc() {
-        build.flag(format!("/FI{symbol_prefix_abs}"));
-    } else {
-        build.flag("-include").flag(&symbol_prefix_abs);
-    }
+    // Give this copy of the common C library its own linked names, so one
+    // program can link both engines. With this define every common header
+    // includes `src/common/ipiSymbols.h`, which renames each common function
+    // and global to an `ipi_` prefixed name, so the definitions compiled here,
+    // the shim and every call to them are renamed together. Device Detection
+    // keeps the unprefixed names in the copy `fiftyone-common-sys` builds.
+    // 51degrees-cxx keeps the list complete, and `ci/check-native-symbols.ps1`
+    // fails when the two built libraries define the same name.
+    build.define("FIFTYONE_DEGREES_IPI_SYMBOLS", None);
 
     // Add only `src/ipi` to the angle bracket search path so the shim can
     // resolve `#include "ipi.h"`. `src/common` must NOT be placed on the search
@@ -181,6 +157,7 @@ fn main() {
     cc::Build::new()
         .file(&declarations)
         .include(&src)
+        .define("FIFTYONE_DEGREES_IPI_SYMBOLS", None)
         .define("FIFTYONE_DEGREES_LARGE_DATA_FILE_SUPPORT", None)
         .define("FIFTYONE_DEGREES_REDUCED_FILE", None)
         .cargo_metadata(false)
