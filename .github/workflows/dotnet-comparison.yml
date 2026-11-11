@@ -957,6 +957,13 @@ jobs:
         run: |
           cases=$(jq length corpus/metadata.json)
           for side in rust dotnet; do
+            # This step runs even where an earlier one failed, so say that
+            # there is nothing to read rather than report the shape of a file
+            # that was never written.
+            if [ ! -f "out/metadata-$side.jsonl" ]; then
+              echo "::error::No $side metadata file was written, so this check had nothing to read. An earlier step in this job failed before the answers were written."
+              exit 1
+            fi
             if ! jq -e -s --argjson cases "$cases" 'length == $cases and all(.[];
                 (.engineMetadata.propertyNames | length) > 0 and
                 (.engineMetadata.componentNames | length) > 0 and
