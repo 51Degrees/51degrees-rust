@@ -774,6 +774,10 @@ impl DataUpdateService {
         if matches!(data_file.last_applied_modified(), Some(last) if modified <= last) {
             return Ok(AutoUpdateStatus::NotNeeded);
         }
+        log::info!(
+            "Attempting to refresh Engine '{}' with new data",
+            engine.data_key()
+        );
         guarded_refresh(|| engine.refresh(Some(data_file.identifier())))?;
         data_file.set_last_applied_modified(modified);
         Ok(AutoUpdateStatus::Success)
