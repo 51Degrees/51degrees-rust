@@ -2190,6 +2190,57 @@ mod tests {
         Arc::clone(&registrations[0])
     }
 
+    /// How much newer than the file the engine was built from a written file
+    /// is made.
+    const NEWER: Duration = Duration::from_secs(60);
+
+    /// A watcher event for a write that an earlier event applied waited while
+    /// that event was applied, so it is reported as in progress, as .NET
+    /// reports it. An event for a file no newer than the one the engine was
+    /// built from is reported as not needed.
+    #[test]
+    fn a_further_event_for_a_write_already_applied_is_in_progress() {
+        let watched = watched("in-progress");
+        let callbacks = UpdateCallbacks::default();
+        let told = Arc::new(Mutex::new(Vec::new()));
+        let kept = Arc::clone(&told);
+        callbacks.add(Arc::new(move |report: &DataUpdateComplete| {
+            kept.lock().unwrap().push(report.status);
+        }));
+        let engine = Arc::downgrade(&watched.engine);
+        let built = std::fs::metadata(&watched.path)
+            .unwrap()
+            .modified()
+            .unwrap();
+        watched
+            .data_file
+            .set_last_applied_modified(DateTime::<Utc>::from(built));
+
+        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks);
+
+        // One write, which raises two events.
+        std::fs::write(&watched.path, b"version 2").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&watched.path)
+            .unwrap()
+            .set_modified(built + NEWER)
+            .unwrap();
+        watched.finish.send(()).unwrap();
+        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks);
+        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks);
+
+        assert_eq!(
+            *told.lock().unwrap(),
+            [
+                AutoUpdateStatus::NotNeeded,
+                AutoUpdateStatus::Success,
+                AutoUpdateStatus::InProgress
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&watched.dir);
+    }
+
     /// While the watcher's callback refreshes the engine, the callback holds
     /// no reference to the registration that owns the watcher. Were it to hold
     /// one, a prune on another thread could leave the callback the last
