@@ -34,7 +34,7 @@ fiftyone-ip-intelligence = { version = "4.5.2", default-features = false, featur
 # JavaScript-builder pipeline by hand through the core Pipeline builder.
 fiftyone-pipeline-core = { version = "4.5.2" }
 fiftyone-json-builder = { version = "4.5.2" }
-# The sequence element, which the JSON builder needs before it in the pipeline.
+# The Sequence element gives the JSON builder its sequence number.
 fiftyone-pipeline-engines-fiftyone = { version = "4.5.2" }
 # The JavaScript builder is benched directly (it is not surfaced through either
 # detection facade). The optional `minify` feature is forwarded from this crate's

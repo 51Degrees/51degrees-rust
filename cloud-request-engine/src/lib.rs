@@ -67,11 +67,12 @@
 //!     .build()
 //!     .unwrap();
 //!
-//! // A license key alongside a resource key adds the products it grants to
-//! // those the resource key carries, so the answer widens.
+//! // A property list beside a resource key adds the listed properties to
+//! // those it carries, and a license key alongside grants the ones it covers.
 //! let _engine = CloudRequestEngine::builder()
 //!     .resource_key("my-resource-key")
 //!     .license_key("my-license-key")
+//!     .values(["device.hardwarevendor"])
 //!     .build()
 //!     .unwrap();
 //!
@@ -86,9 +87,9 @@
 //!
 //! A resource key is public by design, because it travels to the browser inside a
 //! script URL, so it is scoped to what a page is meant to read and it answers
-//! with everything it carries whatever the call asked for. A license key stays on
-//! the server and names what it wants per request, which is usually what a
-//! server-side caller needs.
+//! with everything it carries, plus any properties the call lists. A license
+//! key stays on the server and names what it wants per request, which is
+//! usually what a server-side caller needs.
 //!
 //! Because the combination is settled when the engine is built, a request cannot
 //! fail for this reason afterwards, so a downstream element always receives an
@@ -106,10 +107,12 @@
 //!
 //! The accepted evidence keys (`evidencekeys`) and accessible properties
 //! (`accessibleproperties`) are fetched from the cloud. The builder fetches them
-//! as it builds the engine, so a built engine is fully resolved and immutable
-//! with no lazy first-use discovery. If a fetch fails,
-//! [`CloudRequestEngineBuilder::build`] returns an error rather than producing a
-//! half-initialized engine.
+//! as it builds the engine, so a built engine is normally ready to process. A
+//! 4xx answer, such as an unknown resource key, makes
+//! [`CloudRequestEngineBuilder::build`] return an error. Any other failure is
+//! logged, the build completes, and each process call retries
+//! the missing discovery and fails until it succeeds, so a cloud outage at
+//! start-up cannot stop the application starting.
 //!
 //! The accessible-properties request carries the resource key and, when one is
 //! set, the license key, because the cloud adds the products the license grants
@@ -128,14 +131,6 @@
 //! only the working values it needs and knows nothing about the snapshot. This is
 //! aimed at short-lived hosts such as `wasm32-wasip1` edge runtimes, where
 //! repeating the two round-trips on every cold start would be wasteful.
-//!
-//! This build-time resolution is a deliberate deviation from the specification's
-//! [updated start-up design](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/cloud-request-engine.md#updated-design),
-//! which makes discovery lazy (deferred to the first `Process`) so a
-//! `SuppressProcessExceptions` pipeline can absorb a cloud outage at start-up.
-//! Here the builder returns a `Result`, which a caller can always handle, and the
-//! `set_state` path lets a host that must tolerate an unavailable cloud build from
-//! a cached snapshot instead.
 //!
 //! ## Recovery mode
 //!
@@ -165,9 +160,17 @@
 //! transport backed by `reqwest` is available behind the `reqwest-client`
 //! feature; without it a consumer supplies its own [`CloudHttpClient`] (for
 //! example on `wasm32-wasip1`).
+//!
+//! ## Configuration
+//!
+//! [`configuration::add_builders`] adds the engine's builder to a
+//! [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the name
+//! .NET gives it, with .NET's settings, so a configuration file written for
+//! .NET makes the same engine here.
 
 #![warn(missing_docs)]
 
+pub mod configuration;
 mod constants;
 mod data;
 mod engine;

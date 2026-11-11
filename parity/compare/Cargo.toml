@@ -1,0 +1,15 @@
+[package]
+name = "parity-compare"
+version = "0.0.0"
+description = "Compares the crates' answers with the .NET packages' answers over the corpus."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true

@@ -167,10 +167,10 @@ fn the_shipped_script_is_sound() {
         .unwrap_or_else(|faults| panic!("the shipped script did not validate:\n{faults}"));
     assert_eq!(script.name(), "HumanConfidence");
     assert_eq!(script.output().name, "HumanConfidence");
-    // The script names eight source properties and every one of them is
+    // The script names ten source properties and every one of them is
     // necessary, which is what the cases below turn on.
-    assert_eq!(script.source_properties().len(), 8);
-    assert_eq!(script.output().dependencies.len(), 8);
+    assert_eq!(script.source_properties().len(), 10);
+    assert_eq!(script.output().dependencies.len(), 10);
 }
 
 #[test]

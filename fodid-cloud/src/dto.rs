@@ -33,10 +33,9 @@
 //! to the canonical `IdProbGlobal` / `IdProbLic` accessors) and preserves any
 //! `nullreason` sibling so a no-value keeps the cloud's explanation.
 
+use fiftyone_fodid_core::FodIdDataBase;
 use fiftyone_pipeline_core::PropertyValue;
 use serde_json::Value;
-
-use crate::data::FodIdDataBase;
 
 /// The case-insensitive suffix the cloud uses for the sibling entry that
 /// explains why a property has no value.
@@ -101,7 +100,7 @@ fn is_null_reason_key(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::FodIdData;
+    use fiftyone_fodid_core::FodIdData;
     use fiftyone_pipeline_core::ElementData;
 
     #[test]

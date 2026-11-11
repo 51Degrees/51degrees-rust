@@ -6,11 +6,19 @@ would, on the free data files with no settings, and fails when one fails.
 .DESCRIPTION
 Each example runs from examples/ with no arguments and with every
 _51DEGREES_ variable removed, so it finds the free data files in cxx/data
-itself, downloading one that is missing. The console examples must exit 0,
-print the contact-us link for the Enterprise data file, and end with the
-"Find out more" section. A data file an example could not download fails the
-step too. The two on-premise web examples are started, and their page must
-carry the same link and section.
+itself. Before any example starts, the data repository's script is run once,
+as an example runs it, to download every free file the repository links that
+is not already there, so no two examples download the same file. A try that
+fails, or that does not finish in time and is stopped, is made again, and a
+file still missing after the last try fails the step before the examples are
+built.
+
+The console examples must exit 0, print the contact-us link for the
+Enterprise data file, and end with the "Find out more" section. A data file
+an example could not download fails the step too. An example that runs too
+long is stopped with every process it started, so a download it began cannot
+keep a file open for the next one. The two on-premise web examples are
+started, and their page must carry the same link and section.
 
 Each example's output is printed in a group, and the lines about the
 Enterprise data file and any download are printed outside the groups so the
@@ -60,7 +68,13 @@ $FindOutMore = "Find out more"
 # How long one console example, or one web example's start, may take.
 $TimeoutSeconds = 600
 
+# How long one try at downloading the free data files may take, and how many
+# tries are made.
+$DownloadTimeoutSeconds = 600
+$DownloadTries = 3
+
 $Examples = Join-Path $Root "examples"
+$Data = Join-Path $Root "cxx/data"
 $Logs = Join-Path $Examples "target/free-data-logs"
 $failures = [System.Collections.Generic.List[string]]::new()
 
@@ -89,6 +103,67 @@ function Start-Example([string]$Bin) {
     # Reading the handle now keeps the exit code readable once it exits.
     $null = $process.Handle
     return $process
+}
+
+# Stop a process with every process it started, such as a data file download
+# that would otherwise keep its partial file open after the process is gone.
+function Stop-Tree($Process) {
+    if (-not $Process.HasExited) {
+        $Process.Kill($true)
+        $Process.WaitForExit()
+    }
+}
+
+# The command an example runs to download a missing data file, given no file
+# names so that it downloads every file the data repository links. The script
+# keeps a file that is already there.
+function Get-DownloadCommand {
+    if ($IsWindows) {
+        $script = Join-Path $Data "get-data-files.ps1"
+        return @{
+            FilePath     = "pwsh"
+            ArgumentList = "-NoProfile -ExecutionPolicy Bypass -File `"$script`""
+        }
+    }
+    return @{
+        FilePath     = "sh"
+        ArgumentList = "`"$(Join-Path $Data "get-data-files.sh")`""
+    }
+}
+
+# Download every free data file that is missing, making up to $DownloadTries
+# tries. A try that runs out of time is stopped, and the size of each partial
+# file it left is printed, so the log shows how far the download got. Returns
+# whether every file is there.
+function Get-FreeDataFiles {
+    $command = Get-DownloadCommand
+    for ($try = 1; $try -le $DownloadTries; $try++) {
+        Write-Host ("Downloading any free data file that is missing, " +
+            "try $try of $DownloadTries.")
+        $started = [DateTime]::UtcNow
+        $process = Start-Process @command -PassThru -NoNewWindow
+        $null = $process.Handle
+        if ($process.WaitForExit($DownloadTimeoutSeconds * 1000)) {
+            $seconds = [int]([DateTime]::UtcNow - $started).TotalSeconds
+            if ($process.ExitCode -eq 0) {
+                Write-Host "Every free data file is there, after $seconds seconds."
+                return $true
+            }
+            Write-Host ("::warning::The download failed with exit code " +
+                "$($process.ExitCode) after $seconds seconds.")
+            continue
+        }
+        Stop-Tree $process
+        Write-Host ("::warning::The download did not finish within " +
+            "$DownloadTimeoutSeconds seconds, so it was stopped.")
+        Get-ChildItem -Path $Data -Recurse -File -Include *.part, *.unpacked, *.headers |
+            ForEach-Object {
+                Write-Host ("  {0} held {1:N1} MB" -f $_.Name, ($_.Length / 1MB))
+                Remove-Item -LiteralPath $_.FullName -Force
+            }
+    }
+    $failures.Add("The free data files could not be downloaded in $DownloadTries tries")
+    return $false
 }
 
 # An example's standard error, or an empty string.
@@ -140,14 +215,23 @@ function Invoke-Console($Example) {
     $bin = $Example.Bin
     Write-Host "Running $bin"
     $process = Start-Example $bin
-    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-        Stop-Process -Id $process.Id -Force
-        $failures.Add("$bin did not finish within $TimeoutSeconds seconds")
-        return
+    $finished = $process.WaitForExit($TimeoutSeconds * 1000)
+    if ($finished) {
+        # Only a wait with no time limit also waits for the output to reach
+        # its file, which on Linux PowerShell copies there line by line.
+        $process.WaitForExit()
+    } else {
+        Stop-Tree $process
     }
+    # What the example printed is shown even when it ran out of time, so the
+    # log says what it was doing.
     $text = Get-Content -Raw (Join-Path $Logs "$bin.out.txt")
     if ($null -eq $text) { $text = "" }
     Show-Output $bin $text
+    if (-not $finished) {
+        $failures.Add("$bin did not finish within $TimeoutSeconds seconds")
+        return
+    }
     if ($process.ExitCode -ne 0) {
         $failures.Add("$bin exited with code $($process.ExitCode)")
     }
@@ -187,10 +271,7 @@ function Invoke-Web($Example) {
         Show-Output $bin $page
         if ($page) { Test-Output $bin $page }
     } finally {
-        if (-not $process.HasExited) {
-            Stop-Process -Id $process.Id -Force
-            $process.WaitForExit()
-        }
+        Stop-Tree $process
         Remove-Item Env:PORT -ErrorAction SilentlyContinue
     }
 }
@@ -208,7 +289,11 @@ $run = {
     foreach ($example in $Web) { Invoke-Web $example }
 }
 
-& (Join-Path $PSScriptRoot "test-examples-against-source.ps1") -Root $Root -Command $run
+# Every example reads a free data file, so without them the examples are
+# not built or run.
+if (Get-FreeDataFiles) {
+    & (Join-Path $PSScriptRoot "test-examples-against-source.ps1") -Root $Root -Command $run
+}
 
 if ($failures.Count -gt 0) {
     foreach ($failure in $failures) { Write-Host "::error::$failure" }

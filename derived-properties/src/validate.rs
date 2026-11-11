@@ -181,6 +181,7 @@ impl<'a> Validator<'a> {
             );
         }
 
+        let vendor_ids_written = output.vendor_ids.is_some();
         Some(Script {
             name: name?,
             version: version?,
@@ -188,6 +189,7 @@ impl<'a> Validator<'a> {
             deprecation_note,
             source: self.source.to_owned(),
             output: output.finish()?,
+            vendor_ids_written,
             properties: std::mem::take(&mut self.properties),
             checks,
             rules,
@@ -623,7 +625,7 @@ impl<'a> Validator<'a> {
                     // rather than being refused.
                     let list: Vec<String> = items.iter().map(scalar_text).collect();
                     if key == "VendorIds" {
-                        draft.vendor_ids = list;
+                        draft.vendor_ids = Some(list);
                     } else {
                         draft.dependencies = Some(list);
                     }
@@ -1524,7 +1526,7 @@ struct DraftOutput {
     url: Option<String>,
     display_order: Option<i64>,
     property_id: Option<i64>,
-    vendor_ids: Vec<String>,
+    vendor_ids: Option<Vec<String>>,
     dependencies: Option<Vec<String>>,
     values: Option<Vec<OutputValue>>,
 }
@@ -1548,7 +1550,7 @@ impl DraftOutput {
             url: self.url,
             display_order: self.display_order,
             property_id: self.property_id,
-            vendor_ids: self.vendor_ids,
+            vendor_ids: self.vendor_ids.unwrap_or_default(),
             dependencies: self.dependencies.unwrap_or_default(),
             values: self.values,
         })

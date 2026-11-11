@@ -33,12 +33,15 @@
 
 use std::sync::Arc;
 
-use fiftyone_pipeline_core::{Evidence, Pipeline};
+use fiftyone_pipeline_core::{Error, Evidence, Pipeline};
 
 use fiftyone_cloud_request_engine::{
     CloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine, HttpMethod,
 };
-use fiftyone_device_detection_cloud::{DeviceData, DeviceDetectionCloudEngine, DEVICE_DATA_KEY};
+use fiftyone_device_detection_cloud::{
+    DeviceData, DeviceDetectionCloudEngine, HardwareProfileCloudEngine, DEVICE_DATA_KEY,
+    HARDWARE_DATA_KEY,
+};
 
 /// A fake transport that answers the three cloud endpoints from in-memory
 /// fixtures, so the whole pipeline runs without a network. Requests are routed
@@ -143,6 +146,77 @@ fn fake_pipeline() -> (Arc<Pipeline>, Arc<CloudRequestEngine>) {
     (pipeline, request_engine)
 }
 
+/// A transport whose data endpoint fails, as in a cloud outage.
+struct DataDownCloud;
+
+impl CloudHttpClient for DataDownCloud {
+    fn send(&self, request: &CloudHttpRequest) -> Result<CloudHttpResponse, String> {
+        let (status, body) = if request.url.contains("accessibleproperties") {
+            (200, ACCESSIBLE_PROPERTIES.to_owned())
+        } else if request.url.contains("evidencekeys") {
+            (200, EVIDENCE_KEYS.to_owned())
+        } else {
+            (500, r#"{"errors":["the service failed"]}"#.to_owned())
+        };
+        Ok(CloudHttpResponse {
+            status,
+            body,
+            retry_after: None,
+        })
+    }
+}
+
+/// When the cloud request fails, both engines still store their data, empty,
+/// as .NET's engines store theirs before processing. An element after them
+/// that reads `device` or `hardware`, such as a derived property element,
+/// then finds the data, so it cannot take the failure for a pipeline in the
+/// wrong order.
+#[test]
+fn a_failed_request_stores_empty_device_and_hardware_data() {
+    let request_engine = Arc::new(
+        CloudRequestEngine::builder()
+            .resource_key("test-resource-key")
+            .http_client(Arc::new(DataDownCloud))
+            .build()
+            .expect("request engine builds"),
+    );
+    let device_engine = DeviceDetectionCloudEngine::builder()
+        .cloud_request_engine(request_engine.clone())
+        .build();
+    let hardware_engine = HardwareProfileCloudEngine::builder()
+        .cloud_request_engine(request_engine.clone())
+        .build();
+    let pipeline = Pipeline::builder()
+        .add_element(request_engine)
+        .add_element(Arc::new(device_engine))
+        .add_element(Arc::new(hardware_engine))
+        .suppress_process_exceptions(true)
+        .build()
+        .expect("pipeline builds");
+    let mut data =
+        pipeline.create_flow_data_with(Evidence::builder().add("header.user-agent", "A").build());
+    data.process().expect("errors are suppressed");
+
+    let keys: Vec<&str> = data
+        .errors()
+        .iter()
+        .map(|error| error.element_data_key.as_str())
+        .collect();
+    assert_eq!(
+        keys,
+        vec!["cloud-response", "device", "hardware"],
+        "the request engine's error, then one from each engine that did not process"
+    );
+    let device = data
+        .get(DEVICE_DATA_KEY)
+        .expect("the device data is stored");
+    assert!(!device.is_mobile().has_value());
+    let hardware = data
+        .get(HARDWARE_DATA_KEY)
+        .expect("the hardware data is stored");
+    assert!(hardware.is_empty());
+}
+
 #[test]
 fn populates_device_data_from_cloud_json() {
     let (pipeline, _request_engine) = fake_pipeline();
@@ -216,24 +290,29 @@ fn null_property_becomes_no_value_with_reason() {
     let device = data.get(DEVICE_DATA_KEY).expect("device data present");
 
     // hardwarevendor was null in the response, so the typed accessor is a
-    // no-value rather than a hard error.
+    // no-value carrying the cloud's explanation.
     let vendor = device.hardware_vendor();
     assert!(!vendor.has_value(), "null property must be a no-value");
-
-    // The cloud's explanation is preserved in the data bag under the sibling key.
-    use fiftyone_pipeline_core::ElementData;
     assert_eq!(
-        device.get("hardwarevendornullreason").unwrap().as_str(),
+        vendor.no_value_message(),
         Some("The value cannot be determined until more evidence is provided.")
     );
+
+    // The nullreason entry is not a property, so it is not in the data.
+    use fiftyone_pipeline_core::ElementData;
+    assert!(device.get("hardwarevendornullreason").is_err());
+    assert!(!device
+        .keys()
+        .iter()
+        .any(|name| name.ends_with("nullreason")));
 }
 
 #[test]
 fn derives_aspect_metadata_from_request_engine() {
     let (_pipeline, request_engine) = fake_pipeline();
 
-    // Building with eager properties pulls the device product's metadata up
-    // front. It is the same metadata the engine fills lazily on first process.
+    // The engine reads the device product's metadata when it is built, from
+    // the accessible properties the request engine fetched when it was built.
     let mut engine = DeviceDetectionCloudEngine::builder()
         .cloud_request_engine(request_engine)
         .eager_properties(true)
@@ -257,13 +336,52 @@ fn derives_aspect_metadata_from_request_engine() {
     assert_eq!(engine.aspect_properties().len(), 5);
 }
 
+/// A cloud that cannot be reached, so a request engine built on it has not
+/// completed discovery.
+struct UnreachableCloud;
+
+impl CloudHttpClient for UnreachableCloud {
+    fn send(&self, _request: &CloudHttpRequest) -> Result<CloudHttpResponse, String> {
+        Err("connection refused".to_owned())
+    }
+}
+
+/// While the request engine's discovery has not completed,
+/// `eager_properties(true)` makes `try_build` fail with the request engine's
+/// error, and without it `try_build` leaves the metadata to the first
+/// process call.
 #[test]
-fn properties_are_discovered_lazily_on_process() {
-    // Built without eager properties, the engine exposes no metadata until it
-    // processes. The set-headers element relies on this lazy discovery to see
-    // the device SetHeader* properties at request time, which is what makes the
-    // cloud Accept-CH headers work. Process takes `&self`, so discovery fills an
-    // interior slot that the shared engine reference then reflects.
+fn eager_properties_fails_try_build_while_discovery_is_pending() {
+    let request_engine = Arc::new(
+        CloudRequestEngine::builder()
+            .resource_key("test-resource-key")
+            .http_client(Arc::new(UnreachableCloud))
+            .recovery_seconds(0.0)
+            .build()
+            .expect("a transient failure does not fail the build"),
+    );
+    assert!(!request_engine.has_loaded_metadata());
+
+    let eager = DeviceDetectionCloudEngine::builder()
+        .cloud_request_engine(Arc::clone(&request_engine))
+        .eager_properties(true)
+        .try_build();
+    match eager {
+        Err(Error::CloudRequest { .. }) => {}
+        Err(other) => panic!("unexpected error {other:?}"),
+        Ok(_) => panic!("try_build succeeded while discovery was pending"),
+    }
+    assert!(DeviceDetectionCloudEngine::builder()
+        .cloud_request_engine(request_engine)
+        .try_build()
+        .is_ok());
+}
+
+#[test]
+fn properties_are_read_when_the_engine_is_built() {
+    // The engine exposes its metadata as soon as it is built, so the
+    // set-headers element sees the device SetHeader* properties before the
+    // first request, which is what makes the cloud Accept-CH headers work.
     use fiftyone_pipeline_core::FlowElement;
 
     let fake = Arc::new(FakeCloud {
@@ -284,10 +402,14 @@ fn properties_are_discovered_lazily_on_process() {
             .build(),
     );
 
-    // Nothing is discovered before the first process call.
+    let names: Vec<String> = device_engine
+        .properties()
+        .iter()
+        .map(|p| p.name.to_lowercase())
+        .collect();
     assert!(
-        device_engine.properties().is_empty(),
-        "properties are empty before discovery runs"
+        names.iter().any(|n| n == "screenpixelswidth"),
+        "metadata is read when the engine is built, names were: {names:?}"
     );
 
     let pipeline = Pipeline::builder()
@@ -302,17 +424,8 @@ fn properties_are_discovered_lazily_on_process() {
     );
     data.process().expect("processing succeeds");
 
-    // After processing, the shared engine reflects the discovered metadata, so a
-    // later element such as set-headers can scan it.
-    let names: Vec<String> = device_engine
-        .properties()
-        .iter()
-        .map(|p| p.name.to_lowercase())
-        .collect();
-    assert!(
-        names.iter().any(|n| n == "screenpixelswidth"),
-        "metadata is discovered lazily on the first process, names were: {names:?}"
-    );
+    // Processing keeps the same metadata.
+    assert_eq!(device_engine.properties().len(), names.len());
 }
 
 #[test]

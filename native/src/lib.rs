@@ -109,7 +109,9 @@
 #[cfg(any(feature = "dd", feature = "ipi"))]
 mod buffer;
 #[cfg(any(feature = "dd", feature = "ipi"))]
-mod file_reads;
+mod held_memory;
+#[cfg(any(feature = "dd", feature = "ipi"))]
+mod metadata;
 mod status;
 
 // Device Detection is gated behind the `dd` feature and IP Intelligence behind

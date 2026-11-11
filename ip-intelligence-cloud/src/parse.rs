@@ -32,7 +32,7 @@
 use std::collections::HashMap;
 
 use fiftyone_ip_intelligence_shared::IpIntelligenceDataBase;
-use fiftyone_pipeline_core::WeightedValue;
+use fiftyone_pipeline_core::{round_angle, WeightedValue};
 use serde_json::Value;
 
 /// The JSON field carrying the integer weight factor of a weighted value.
@@ -66,8 +66,8 @@ const UNKNOWN_REASON: &str = "Unknown";
 /// the scalar the data model stores.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ValueKind {
-    /// A plain string property (string, IP range, WKB geometry, JavaScript,
-    /// boolean rendering, and the default for any unrecognised type).
+    /// A plain string property (string, IP range, JavaScript, boolean
+    /// rendering, and the default for any unrecognised type).
     String,
     /// A plain integer property, for example a time-zone offset.
     Integer,
@@ -75,8 +75,12 @@ pub(crate) enum ValueKind {
     Double,
     /// A plain boolean property, for example an `IsVPN` network flag.
     Bool,
+    /// A WKT geometry, being `Areas`, which the cloud sends as an object
+    /// holding its text under `value`, as .NET's JSON builder writes it.
+    WktString,
     /// A weighted list of string values, the only weighted form IP Intelligence
-    /// uses (`CountryCodesGeographical`, `CountryCodesPopulation`, `Mcc`).
+    /// uses (`CountryCodesGeographical`, `CountryCodesPopulation`, `Mcc` and
+    /// `StateGeoNameIdsGeographical`).
     WeightedString,
 }
 
@@ -85,7 +89,7 @@ impl ValueKind {
     ///
     /// A `Weighted<...>` type is a weighted string. A bare type maps to its plain
     /// scalar, defaulting to [`ValueKind::String`] for any type not specifically
-    /// handled (string, IP address, WKT string, JavaScript, boolean, ...).
+    /// handled (string, IP address, JavaScript, ...).
     pub(crate) fn from_cloud_type(type_name: &str) -> ValueKind {
         let lower = type_name.to_ascii_lowercase();
         if lower.starts_with("weighted") {
@@ -99,8 +103,10 @@ impl ValueKind {
             "float" | "double" | "single" => ValueKind::Double,
             // Boolean cloud types.
             "bool" | "boolean" => ValueKind::Bool,
-            // Everything else (String, IpAddress, WktString, JavaScript, ...) is
-            // a plain string.
+            // A WKT geometry, by the names the cloud and the data file use.
+            "wktstring" | "wkb" | "wkbr" => ValueKind::WktString,
+            // Everything else (String, IpAddress, JavaScript, ...) is a plain
+            // string.
             _ => ValueKind::String,
         }
     }
@@ -108,11 +114,18 @@ impl ValueKind {
     /// Infer the kind from a property's encoded JSON value, used when no cloud
     /// metadata is available for the property.
     ///
-    /// An array whose entries are `{ rawweighting, value }` objects is a weighted
+    /// An object holding text under `value` is a WKT value. An array whose
+    /// entries are `{ rawweighting, value }` objects is a weighted
     /// string. Otherwise the kind is inferred from the (single) value: a
     /// whole-number is an integer, a fractional number a double, and anything
     /// else a string.
     pub(crate) fn from_json_value(value: &Value) -> ValueKind {
+        // Only a WKT value is sent as an object holding its text.
+        if let Value::Object(map) = value {
+            if matches!(field_ci(map, VALUE_FIELD), Some(Value::String(_))) {
+                return ValueKind::WktString;
+            }
+        }
         if let Value::Array(items) = value {
             let weighted = items.iter().any(|item| {
                 matches!(item, Value::Object(map) if field_ci(map, RAW_WEIGHTING_FIELD).is_some())
@@ -183,6 +196,15 @@ pub(crate) fn populate_from_aspect(
                 ParsedProperty::Values(_) | ParsedProperty::NoValue => {
                     let reason = lookup_reason(name, aspect, &reasons);
                     data.set_weighted_string_no_value(name, reason);
+                }
+            },
+            // A WKT value is an object holding its text. A `null`, or an object
+            // with no text, is a no-value with its reason.
+            ValueKind::WktString => match wkt_text(value) {
+                Some(text) => data.set_wkt_string(name, text),
+                None => {
+                    let reason = lookup_reason(name, aspect, &reasons);
+                    data.set_wkt_string_no_value(name, reason);
                 }
             },
             // A plain property carries a single value. A `null` (or an array with
@@ -279,9 +301,25 @@ fn plain_scalar(value: &Value) -> Option<Value> {
     }
 }
 
+/// The text of a WKT value, which the cloud sends as an object holding it
+/// under `value`, as .NET's JSON builder writes its `WktString`. A bare
+/// string, or one in an array, is taken as the text.
+fn wkt_text(value: &Value) -> Option<String> {
+    let value = match value {
+        Value::Object(map) => field_ci(map, VALUE_FIELD)?,
+        other => other,
+    };
+    match plain_scalar(value)? {
+        Value::String(text) => Some(text),
+        _ => None,
+    }
+}
+
 /// Insert a single plain value into `data`, converting it to the kind's value
 /// type. A numeric value that fails to parse falls back to its string form so
-/// the value is still surfaced through the dynamic bag.
+/// the value is still surfaced through the dynamic bag. A float is given to 3
+/// decimal places by [`round_angle`], because the IP Intelligence floats are
+/// the latitude and the longitude.
 fn insert_plain(data: &mut IpIntelligenceDataBase, name: &str, kind: ValueKind, value: &Value) {
     match kind {
         ValueKind::String => data.set_string(name, value_to_string(value)),
@@ -290,13 +328,18 @@ fn insert_plain(data: &mut IpIntelligenceDataBase, name: &str, kind: ValueKind, 
             None => data.set_string(name, value_to_string(value)),
         },
         ValueKind::Double => match value_to_f64(value) {
-            Some(float) => data.set_float(name, float as f32),
+            Some(float) => data.set_float(name, round_angle(float)),
             None => data.set_string(name, value_to_string(value)),
         },
         ValueKind::Bool => match value_to_bool(value) {
             Some(flag) => data.set_boolean(name, flag),
             None => data.set_string(name, value_to_string(value)),
         },
+        // WKT values are handled by the caller, not here.
+        ValueKind::WktString => {
+            let text = wkt_text(value).unwrap_or_else(|| value_to_string(value));
+            data.set_wkt_string(name, text);
+        }
         // Weighted properties are handled by the caller, not here.
         ValueKind::WeightedString => {
             data.set_weighted_string(
@@ -315,6 +358,7 @@ fn insert_no_value(data: &mut IpIntelligenceDataBase, name: &str, kind: ValueKin
         ValueKind::Double => data.set_float_no_value(name, reason),
         ValueKind::Bool => data.set_boolean_no_value(name, reason),
         ValueKind::WeightedString => data.set_weighted_string_no_value(name, reason),
+        ValueKind::WktString => data.set_wkt_string_no_value(name, reason),
     }
 }
 
@@ -418,7 +462,8 @@ fn value_to_bool(value: &Value) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fiftyone_ip_intelligence_shared::IP_DATA_KEY_NAME;
+    use fiftyone_ip_intelligence_shared::{IpIntelligenceData, IP_DATA_KEY_NAME};
+    use fiftyone_pipeline_core::{ElementData, PropertyValue};
 
     /// The data key the test data is attributed to.
     const ENGINE_KEY: &str = IP_DATA_KEY_NAME;
@@ -445,10 +490,14 @@ mod tests {
         assert_eq!(ValueKind::from_cloud_type("Int32"), ValueKind::Integer);
         assert_eq!(ValueKind::from_cloud_type("Single"), ValueKind::Double);
         assert_eq!(ValueKind::from_cloud_type("Float"), ValueKind::Double);
-        // String, IP address and WKT string are all plain strings.
+        // String and IP address are plain strings, and a WKT string has its
+        // own kind.
         assert_eq!(ValueKind::from_cloud_type("String"), ValueKind::String);
         assert_eq!(ValueKind::from_cloud_type("IPAddress"), ValueKind::String);
-        assert_eq!(ValueKind::from_cloud_type("WktString"), ValueKind::String);
+        assert_eq!(
+            ValueKind::from_cloud_type("WktString"),
+            ValueKind::WktString
+        );
     }
 
     #[test]
@@ -485,6 +534,55 @@ mod tests {
         );
     }
 
+    /// The cloud sends a WKT value as an object holding its text, as .NET's
+    /// JSON builder writes it, and the object alone shows the kind when there
+    /// is no metadata.
+    #[test]
+    fn parses_an_area_from_the_object_holding_its_text() {
+        let map = aspect(r#"{ "Areas": { "value": "POINT(2 4)" } }"#);
+        let mut kinds = HashMap::new();
+        kinds.insert("areas".to_owned(), ValueKind::WktString);
+        for kinds in [kinds, HashMap::new()] {
+            let mut data = IpIntelligenceDataBase::new(ENGINE_KEY);
+            populate_from_aspect(&mut data, &map, &kinds);
+            assert_eq!(data.areas().value().unwrap().as_str(), "POINT(2 4)");
+            assert_eq!(
+                data.get("Areas")
+                    .unwrap()
+                    .as_wkt_string()
+                    .map(|wkt| wkt.as_str()),
+                Some("POINT(2 4)")
+            );
+        }
+    }
+
+    #[test]
+    fn parses_an_area_given_as_text() {
+        let map = aspect(r#"{ "Areas": "POINT(2 4)" }"#);
+        let mut kinds = HashMap::new();
+        kinds.insert("areas".to_owned(), ValueKind::WktString);
+        let mut data = IpIntelligenceDataBase::new(ENGINE_KEY);
+        populate_from_aspect(&mut data, &map, &kinds);
+        assert_eq!(data.areas().value().unwrap().as_str(), "POINT(2 4)");
+    }
+
+    #[test]
+    fn an_area_with_no_value_carries_its_reason() {
+        let map = aspect(r#"{ "Areas": null, "Areasnullreason": "No area for this range." }"#);
+        let mut kinds = HashMap::new();
+        kinds.insert("areas".to_owned(), ValueKind::WktString);
+        let mut data = IpIntelligenceDataBase::new(ENGINE_KEY);
+        populate_from_aspect(&mut data, &map, &kinds);
+        assert_eq!(
+            data.areas().no_value_message(),
+            Some("No area for this range.")
+        );
+        assert_eq!(
+            data.get("Areas").unwrap_err().message,
+            "No area for this range."
+        );
+    }
+
     #[test]
     fn parses_plain_integer_and_float_by_metadata() {
         // The cloud may still wrap a single plain value in an array; the plain
@@ -504,6 +602,28 @@ mod tests {
 
         assert_eq!(*data.integer("TimeZoneOffset").value().unwrap(), 60_i32);
         assert!((data.float("Latitude").value().unwrap() - 51.45_f32).abs() < 1e-4);
+    }
+
+    /// A latitude or longitude the response gives with more places is given
+    /// to 3, as the on-premise engine gives it, and kept as a 32-bit float.
+    #[test]
+    fn a_float_is_given_to_three_decimal_places() {
+        let map = aspect(
+            r#"{
+                "Latitude": 18.542741172521133,
+                "Longitude": [ { "rawweighting": 65535, "value": -0.0625 } ]
+            }"#,
+        );
+        let mut kinds = HashMap::new();
+        kinds.insert("latitude".to_owned(), ValueKind::Double);
+        kinds.insert("longitude".to_owned(), ValueKind::Double);
+
+        let mut data = IpIntelligenceDataBase::new(ENGINE_KEY);
+        populate_from_aspect(&mut data, &map, &kinds);
+
+        assert_eq!(*data.float("Latitude").value().unwrap(), 18.543_f32);
+        assert_eq!(*data.float("Longitude").value().unwrap(), -0.063_f32);
+        assert_eq!(data.get("Latitude").unwrap(), PropertyValue::Float(18.543));
     }
 
     #[test]

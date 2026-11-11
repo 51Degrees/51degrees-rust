@@ -24,20 +24,23 @@
 //!
 //! On-premise IP Intelligence metadata console example.
 //!
-//! Inspects an on-premise engine and prints its available properties (with
-//! value types and any descriptions/tiers), which Enterprise properties the
-//! data file lacks, the evidence keys its data file defines and a summary of
-//! the data file in use. The descriptive block the documentation tooling
-//! renders lives at the bottom of the file.
+//! Inspects an on-premise engine and prints a summary of the data file in
+//! use, each component the data file defines with its properties, each
+//! property's category, value type, description, data tiers and first few
+//! values, which Enterprise properties the data file lacks, and the evidence
+//! keys its data file defines. The descriptive block the documentation
+//! tooling renders lives at the bottom of the file.
 //!
 //! @snippet ipi-onprem-metadata.rs example
 
+use std::borrow::Cow;
 use std::io::Write;
 
 use anyhow::Context;
 use fiftyone_ip_intelligence::{IpIntelligenceOnPremiseEngine, PerformanceProfile};
-use fiftyone_pipeline_core::FlowElement;
+use fiftyone_pipeline_core::PropertyValueType;
 use fiftyone_pipeline_engines::AspectEngine;
+use fiftyone_pipeline_engines_fiftyone::FiftyOneAspectPropertyMetaData;
 use ip_intelligence_examples::ENTERPRISE_PROPERTIES;
 
 /// Where to ask about a copy of the Enterprise data file.
@@ -89,7 +92,7 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
         .context("failed to build the on-premise IP Intelligence engine")?;
 
     output_data_file_details(&engine, out)?;
-    output_property_details(&engine, out)?;
+    output_components(&engine, out)?;
     let missing = output_enterprise_properties(&engine, out)?;
     output_evidence_key_details(&engine, out)?;
     output_warnings(&engine, out)?;
@@ -118,55 +121,142 @@ fn output_data_file_details(
     Ok(())
 }
 
-/// Print every property the engine populates, with its value type and (where
-/// known) description and the data tiers in which it carries a value.
-fn output_property_details(
+/// The number of a property's values the example prints.
+const SHOWN_VALUES: usize = 20;
+
+/// The number of characters of a value the example prints, because an area's
+/// value is the whole boundary of the area as text.
+const SHOWN_VALUE_CHARACTERS: usize = 60;
+
+/// Print each component with its properties, then any property the engine
+/// lists in no component.
+///
+/// The data file groups its properties into components, such as the location
+/// and the network. The engine adds `Ip` and `IpV6`, which belong to no
+/// component it lists.
+fn output_components(
     engine: &IpIntelligenceOnPremiseEngine,
     out: &mut dyn Write,
 ) -> anyhow::Result<()> {
-    // The data file's full property catalogue, read from the data set, so the
-    // listing reflects the tier (an Enterprise file carries the location and
-    // behavioural properties a free file does not).
-    let available = engine.available_property_names();
+    let components = engine.components();
     writeln!(out)?;
-    writeln!(out, "Available properties ({}):", available.len())?;
-    // Core metadata carries the value type; the aspect metadata carries the
-    // description and the data tiers. Both are paired to a catalogue name by
-    // name. Every IP Intelligence property is a weighted key-value list, so the
-    // type defaults to that of the engine's typed properties for any catalogue
-    // entry the curated model does not describe.
-    let core = engine.properties();
-    let default_type = core.first().map(|property| &property.value_type);
-    for name in &available {
-        let value_type = core
-            .iter()
-            .find(|property| property.name.eq_ignore_ascii_case(name))
-            .map(|property| &property.value_type)
-            .or(default_type);
-        let aspect = engine
-            .aspect_properties()
-            .iter()
-            .find(|a| a.name().eq_ignore_ascii_case(name));
+    writeln!(out, "Components and their properties:")?;
+    for component in components.iter() {
+        writeln!(
+            out,
+            "Component - {} ({} properties)",
+            component.name,
+            component.properties().len()
+        )?;
+        for property in component.properties() {
+            output_property(engine, property, out)?;
+        }
+    }
 
-        let description = aspect
-            .map(|a| a.description())
-            .filter(|d| !d.is_empty())
-            .unwrap_or("(no description)");
-        let tiers = aspect
-            .map(|a| a.data_tiers_where_present())
-            .filter(|t| !t.is_empty())
-            .map(|t| t.join(", "))
-            .unwrap_or_else(|| "(unspecified)".to_owned());
-
-        match value_type {
-            Some(value_type) => writeln!(
-                out,
-                "\t{name} [{value_type:?}] in '{tiers}' tier(s): {description}"
-            )?,
-            None => writeln!(out, "\t{name} in '{tiers}' tier(s): {description}")?,
+    let properties = engine.fiftyone_properties();
+    let others: Vec<&FiftyOneAspectPropertyMetaData> = properties
+        .iter()
+        .filter(|property| {
+            !components.iter().any(|component| {
+                component
+                    .properties()
+                    .iter()
+                    .any(|listed| listed.name() == property.name())
+            })
+        })
+        .collect();
+    if !others.is_empty() {
+        writeln!(out, "Properties in no listed component:")?;
+        for property in others {
+            output_property(engine, property, out)?;
         }
     }
     Ok(())
+}
+
+/// Print a property's category, value type, description and data tiers, and
+/// the first few of its values with how many there are.
+fn output_property(
+    engine: &IpIntelligenceOnPremiseEngine,
+    property: &FiftyOneAspectPropertyMetaData,
+    out: &mut dyn Write,
+) -> anyhow::Result<()> {
+    writeln!(
+        out,
+        "\tProperty - {} [Category: {}] ({}) - {}",
+        property.name(),
+        property.core().category,
+        value_type_name(property.core().value_type),
+        property.aspect().description()
+    )?;
+    // A property listed only under higher tiers than the data file's needs a
+    // better data file rather than a change of configuration.
+    let tiers = property.aspect().data_tiers_where_present();
+    let tiers = if tiers.is_empty() {
+        "(none)".to_owned()
+    } else {
+        tiers.join(", ")
+    };
+    writeln!(out, "\t\tData tiers: {tiers}")?;
+
+    // A property can have millions of values, so only those shown are read,
+    // and the rest are counted without reading them.
+    let count = engine
+        .property_value_count(property.name())
+        .unwrap_or_default();
+    let values = match engine.property_value_range(property.name(), 0..SHOWN_VALUES) {
+        Ok(values) => values.unwrap_or_default(),
+        Err(error) => {
+            writeln!(out, "\t\tValues could not be read: {error}")?;
+            return Ok(());
+        }
+    };
+    let shown: Vec<String> = values
+        .iter()
+        .map(|value| {
+            let name = shorten(&value.name);
+            if value.description.is_empty() {
+                name
+            } else {
+                format!("{name} ({})", value.description)
+            }
+        })
+        .collect();
+    write!(out, "\t\tPossible values ({count}): {}", shown.join(", "))?;
+    if count > SHOWN_VALUES {
+        write!(out, " + {} more ...", count - SHOWN_VALUES)?;
+    }
+    writeln!(out)?;
+    Ok(())
+}
+
+/// The first line of `value`, cut to [`SHOWN_VALUE_CHARACTERS`] characters,
+/// with " ..." added when anything was left out.
+fn shorten(value: &str) -> String {
+    let line = value.lines().next().unwrap_or_default();
+    let mut shown: String = line.chars().take(SHOWN_VALUE_CHARACTERS).collect();
+    if shown.len() < value.len() {
+        shown.push_str(" ...");
+    }
+    shown
+}
+
+/// A short display name for a property value type.
+fn value_type_name(value_type: PropertyValueType) -> Cow<'static, str> {
+    Cow::Borrowed(match value_type {
+        PropertyValueType::String => "String",
+        PropertyValueType::Bool => "Boolean",
+        PropertyValueType::Integer => "Integer",
+        PropertyValueType::Double => "Double",
+        PropertyValueType::Float => "Float",
+        PropertyValueType::StringList => "String[]",
+        PropertyValueType::JavaScript => "JavaScript",
+        PropertyValueType::KeyValueList => "KeyValue[]",
+        // PropertyValueType is non-exhaustive, so a type not named here, such
+        // as WktString for Areas, is named as Rust names it. Naming it would
+        // not build against crates without it.
+        other => return Cow::Owned(format!("{other:?}")),
+    })
 }
 
 /// Print whether the data file carries each property only the Enterprise data
@@ -258,13 +348,20 @@ mod tests {
         run(&options, &mut buffer).expect("the metadata example should run");
 
         let printed = String::from_utf8(buffer).expect("output should be valid UTF-8");
-        // The headings and at least one property the ASN tier carries must
-        // appear. The ASN data file's catalogue is the autonomous-system
-        // properties, so assert on one of those rather than a location property a
-        // richer tier would add.
-        assert!(printed.contains("Available properties"));
+        // The headings appear, and the two properties the engine adds are
+        // listed after the components, with their one value.
+        assert!(printed.contains("Components and their properties"));
         assert!(printed.contains("Accepted evidence keys"));
-        assert!(printed.contains("Asn"));
+        let others = printed
+            .find("Properties in no listed component:")
+            .expect("Ip and IpV6 are listed");
+        let first_component = printed.find("Component - ").expect("a component");
+        assert!(first_component < others, "{printed}");
+        for name in ["Ip", "IpV6"] {
+            let line = format!("\tProperty - {name} [Category: Network] (String)");
+            assert!(printed[others..].contains(&line), "{printed}");
+        }
+        assert!(printed.contains("\t\tPossible values (1): N/A\n"));
         // The data file's keys are listed, every query key before any server
         // key, and nothing else is.
         let query = printed.find("\tquery.client-ip-51d\n");
@@ -277,6 +374,15 @@ mod tests {
         // says so. _51DEGREES_IPI_PATH can name another file.
         let asn_file = examples_shared::IPI_ASN_RELATIVE_PATH.rsplit('/').next();
         if options.data_file.file_name().and_then(|n| n.to_str()) == asn_file {
+            // The ASN file's properties are listed under their component, the
+            // first values of each read from the data file and the rest counted.
+            assert!(
+                printed.contains("\tProperty - Asn [Category: "),
+                "{printed}"
+            );
+            assert!(printed.contains("\t\tPossible values ("), "{printed}");
+            assert!(printed.contains("): AS0, AS1, AS1000, "), "{printed}");
+            assert!(printed.contains(" more ...\n"), "{printed}");
             assert!(printed.contains("Country: needs the Enterprise data file"));
             assert!(printed.contains("utm_term=enterprise-data-file"));
         }
@@ -293,10 +399,13 @@ mod tests {
  *
  * 1. The data file in use, reported through the `AspectEngine` and
  *    `OnPremiseAspectEngine` traits (its data-source tier and publish date).
- * 2. The properties the engine populates. Each is listed with its value type
- *    (the weighted IP Intelligence properties are surfaced as a key-value list
- *    of value/weight records) and, where the metadata carries them, a
- *    description and the data tiers in which the property has a value.
+ * 2. Each component the data file defines, with its properties. Each property
+ *    is listed with its category, value type, description and the data tiers
+ *    in which it has a value, all read from the data file, then the number of
+ *    values it has and the first 20 of them. The values are read from the data
+ *    file when asked for, because one property can have millions. `Ip` and
+ *    `IpV6`, which the engine adds, belong to no component it lists, so they
+ *    come last.
  * 3. The evidence keys the engine accepts, which its data file defines, in
  *    the order the engine tries them. Each header the data file names is
  *    accepted as a query value and as a server value, and every query value

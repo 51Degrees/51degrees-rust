@@ -103,12 +103,14 @@ pub fn build_app(
     data_file: &std::path::Path,
     share_usage: bool,
 ) -> anyhow::Result<(Router, DataFileNotes)> {
-    // Build the on-premise engine. The HighPerformance profile suits a
-    // long-running web server. Every property the data file supports is loaded by
-    // default.
+    // Build the on-premise engine. Every property the data file supports is
+    // loaded by default. LowMemory reads the data file from disk, so the server
+    // needs little memory even with the Enterprise file, which is over 6 GB.
+    // Where there is memory for the whole file, HighPerformance holds it in
+    // memory for faster lookups, and the answers are the same.
     let engine = Arc::new(
         IpIntelligenceOnPremiseEngine::builder(data_file.to_path_buf())
-            .performance_profile(PerformanceProfile::HighPerformance)
+            .performance_profile(PerformanceProfile::LowMemory)
             // Off so no licence key is needed; see the update-data-file example.
             .auto_update(false)
             .build()
@@ -454,6 +456,12 @@ mod tests {
  * Usage sharing is enabled, as a web deployment should. The engine is built once:
  * its data-file warnings are read before it is handed to the web pipeline as an
  * application element, so no data file is opened twice.
+ *
+ * The engine uses the `LowMemory` profile, which reads the data file from
+ * disk, so the server runs in little memory even with the Enterprise file.
+ * Where there is memory for the whole file, changing the profile in
+ * `build_app` to `HighPerformance` holds the file in memory for faster
+ * lookups. The profile changes memory use and speed, not the answers.
  *
  * Resolve the data file with `_51DEGREES_IPI_PATH` (or rely on the Lite file in
  * the data repository inside the `cxx` submodule, which is downloaded when it

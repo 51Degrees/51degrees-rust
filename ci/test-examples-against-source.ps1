@@ -70,22 +70,27 @@ try {
     & (Join-Path $PSScriptRoot "set-crate-versions.ps1") -Version $Version -Root $Root
 
     # The committed lock names the published versions, and Cargo keeps a locked
-    # version until that package is updated. Each crate is updated on its own,
-    # because Cargo refuses the whole update if one named crate is in no
-    # example's dependencies.
-    $PSNativeCommandUseErrorActionPreference = $false
+    # version until that package is updated. The crates of one release require
+    # each other exactly, so they move in one update. Updated one at a time,
+    # each would be held back by the published crates still locked beside it,
+    # which require its old version exactly. Only the crates the lock holds
+    # are named, because Cargo refuses the whole update if one named crate is
+    # in no example's dependencies.
+    $locked = @((Get-Content -Raw -Path "Cargo.lock") -split '\[\[package\]\]' |
+        ForEach-Object { [regex]::Match($_, '(?m)^name = "([^"]+)"').Groups[1].Value } |
+        Where-Object { $patched -contains $_ } |
+        Sort-Object -Unique)
+    if ($locked.Count -eq 0) {
+        throw "examples/Cargo.lock holds none of the crates source.toml patches"
+    }
     foreach ($crate in $patched) {
-        $output = cargo update --config source.toml -p $crate 2>&1 | ForEach-Object { "$_" }
-        if ($LASTEXITCODE -ne 0) {
-            if ($output -match 'did not match any packages') {
-                Write-Output "  $crate is not used by any example."
-                continue
-            }
-            $output | Write-Output
-            throw "cargo update failed for $crate"
+        if ($locked -notcontains $crate) {
+            Write-Output "  $crate is not used by any example."
         }
     }
-    $PSNativeCommandUseErrorActionPreference = $true
+    $update = @("update", "--config", "source.toml") +
+        @($locked | ForEach-Object { "-p", $_ })
+    cargo @update
 
     # A patched crate that still resolves from crates.io carries a registry
     # source in the lock, where the copy in this tree carries none.

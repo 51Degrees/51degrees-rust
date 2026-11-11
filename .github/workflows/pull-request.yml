@@ -224,9 +224,10 @@ jobs:
 
   # The cloud crates must keep compiling for WebAssembly (wasm32-wasip1) so a
   # wasm consumer (for example a trusted-server deployment) can link them and
-  # supply its own synchronous CloudHttpClient. The derived property element is
-  # covered too, because it compiles its scripts in so that it can run where
-  # there is no file system. They build with reqwest and the
+  # supply its own synchronous CloudHttpClient. The derived property element and
+  # the IP Intelligence translation engines are covered too, because they
+  # compile their scripts and translations in so that they can run where there
+  # is no file system. They build with reqwest and the
   # data-update service disabled (default-features = false), so this job needs
   # neither the C/C++ sources the -sys crates compile nor the data submodules,
   # and it runs on Linux alone because a cross-compile to wasm is host-neutral.
@@ -240,7 +241,8 @@ jobs:
   # no transport for. fiftyone-caching's concurrency tests are also skipped, but
   # only those: they spawn threads and so live in a native-only test file, while
   # the crate's single-threaded behavioural suite does run here on wasm. The
-  # derived property element's conformance cases and its one script file test
+  # derived property element's conformance cases and its one script file test,
+  # and the check of the compiled in translations against the data repository,
   # read from disk, so they are native only as well.
   wasm:
     name: wasm (wasm32-wasip1)
@@ -285,8 +287,11 @@ jobs:
             fiftyone-cloud-request-engine \
             fiftyone-device-detection-cloud \
             fiftyone-ip-intelligence-cloud \
+            fiftyone-fodid-core \
             fiftyone-fodid-cloud \
             fiftyone-derived-properties \
+            fiftyone-pipeline-translation \
+            fiftyone-ip-intelligence-translation \
             fodid-client; do
             echo "::group::build ${crate}"
             cargo build -p "${crate}" --no-default-features --target wasm32-wasip1
@@ -302,8 +307,11 @@ jobs:
             fiftyone-cloud-request-engine \
             fiftyone-device-detection-cloud \
             fiftyone-ip-intelligence-cloud \
+            fiftyone-fodid-core \
             fiftyone-fodid-cloud \
             fiftyone-derived-properties \
+            fiftyone-pipeline-translation \
+            fiftyone-ip-intelligence-translation \
             fodid-client; do
             echo "::group::clippy ${crate}"
             cargo clippy -p "${crate}" --no-default-features --target wasm32-wasip1 -- -D warnings
@@ -311,12 +319,11 @@ jobs:
           done
 
       # wasmtime is the runner that actually executes the wasm test binaries the
-      # next step builds. The install script drops it in ~/.wasmtime/bin, which is
-      # added to PATH so cargo's configured runner can find it.
+      # next step builds. The action looks up the release with the workflow's
+      # token, puts wasmtime on PATH and runs `wasmtime --version`, so a failed
+      # install fails this step rather than the tests.
       - name: Install wasmtime (the wasm test runner)
-        run: |
-          curl https://wasmtime.dev/install.sh -sSf | bash
-          echo "${HOME}/.wasmtime/bin" >> "${GITHUB_PATH}"
+        uses: bytecodealliance/actions/wasmtime/setup@v1
 
       # Run the wasm-safe test suites on the target under wasmtime, so the
       # pure-Rust logic is exercised on wasm and not merely compiled. cargo runs
@@ -339,10 +346,21 @@ jobs:
             fiftyone-ip-intelligence-shared \
             fiftyone-device-detection-cloud \
             fiftyone-ip-intelligence-cloud \
+            fiftyone-fodid-core \
             fiftyone-fodid-cloud \
             fiftyone-derived-properties \
+            fiftyone-pipeline-translation \
+            fiftyone-ip-intelligence-translation \
             fodid-client; do
             echo "::group::test ${crate}"
             cargo test -p "${crate}" --no-default-features --target wasm32-wasip1
             echo "::endgroup::"
           done
+
+      # CountriesTranslationEngine compiles in the Unicode collation data for
+      # every locale icu_collator holds, and edge platforms limit the size of
+      # a deployed module. This builds a release module with and without the
+      # engine, prints both sizes to the log and the run's summary, and runs
+      # both under wasmtime. The crate README's figure comes from here.
+      - name: Measure what the countries translation engine adds to a module
+        run: bash ci/measure-wasm-size.sh

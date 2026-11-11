@@ -20,15 +20,15 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! The strongly-typed 51Degrees-identifier element-data model.
+//! The strongly-typed 51Did element-data model.
 //!
-//! [`FodIdData`] is the typed view of a 51Did (FODid) cloud result.
-//! [`FodIdDataBase`] is the concrete type the cloud engine populates, stored
-//! under [`FODID_DATA_KEY`].
+//! [`FodIdData`] is the typed view of a 51Did result. [`FodIdDataBase`] is
+//! the concrete type an engine producing 51Dids populates, stored under
+//! [`FODID_DATA_KEY`].
 //!
 //! # Two layers: the raw envelope and the parsed identifier
 //!
-//! The cloud returns each identifier as a base64-encoded
+//! Each identifier is a base64-encoded
 //! [OWID](https://github.com/SWAN-community/owid) envelope, the signed data
 //! model that carries the value two recipients compare to decide whether they
 //! observed the same browser instance under the same usage purpose. This model
@@ -44,8 +44,8 @@
 //!
 //! # Three identifier kinds, global and license scoped
 //!
-//! The cloud can return up to six identifiers (see [`IDENTIFIER_PROPERTIES`]),
-//! each with a raw and a parsed accessor:
+//! A result holds up to six identifiers (see [`IDENTIFIER_PROPERTIES`]), each
+//! with a raw and a parsed accessor:
 //!
 //! - **probabilistic** ([`IdProbGlobal`](ID_PROB_GLOBAL_PROPERTY) /
 //!   [`IdProbLic`](ID_PROB_LIC_PROPERTY)), derived from the device and network,
@@ -71,12 +71,8 @@
 
 use std::any::Any;
 
-use fiftyone_pipeline_core::{
-    ElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType, TypedKey,
-};
-use fiftyone_pipeline_engines::{
-    AspectData, AspectDataBase, AspectPropertyMetaData, AspectPropertyValue,
-};
+use fiftyone_pipeline_core::{ElementData, NoValueError, PropertyValue, TypedKey};
+use fiftyone_pipeline_engines::{AspectData, AspectDataBase, AspectPropertyValue};
 use fodid::FodId;
 
 /// The string data key the 51Degrees identifier engine stores its element data
@@ -139,19 +135,19 @@ const ABSENT_MESSAGE: &str = "The property was not present in the 51Degrees iden
 const WRONG_TYPE_MESSAGE: &str =
     "The property was present but its stored value was not a 51Did string.";
 
-/// Strongly-typed accessors for a 51Degrees-identifier (51Did / FODid) result.
+/// Strongly-typed accessors for a 51Did result.
 ///
 /// This trait extends [`AspectData`] (and so [`ElementData`]) with named
 /// accessors for the six identifier properties ([`IDENTIFIER_PROPERTIES`]), each
 /// available both as the raw base64 envelope and as a parsed [`FodId`]. Each
 /// accessor returns an
-/// [`AspectPropertyValue<T>`] so the caller can tell "the cloud issued an
+/// [`AspectPropertyValue<T>`] so the caller can tell "the engine issued an
 /// identifier" from "no identifier was available" (and, for the parsed form,
 /// from "the value could not be read as a 51Did") without losing the
 /// explanation.
 pub trait FodIdData: AspectData {
     /// The globally-scoped 51Did as the raw base64 OWID envelope string, as the
-    /// cloud sent it. Property name [`ID_PROB_GLOBAL_PROPERTY`].
+    /// engine stored it. Property name [`ID_PROB_GLOBAL_PROPERTY`].
     ///
     /// This value is unique across all callers observing the same device and
     /// network. Store or forward it unchanged; compare two identifiers by their
@@ -215,7 +211,7 @@ pub trait FodIdData: AspectData {
     fn id_hem_lic_fod_id(&self) -> AspectPropertyValue<FodId>;
 }
 
-/// The concrete 51Degrees-identifier element data the cloud engine produces.
+/// The concrete 51Did element data an engine producing 51Dids populates.
 ///
 /// It wraps an [`AspectDataBase`] property bag holding the raw base64 strings
 /// keyed by their property names, and implements [`FodIdData`] on top, parsing
@@ -224,9 +220,9 @@ pub trait FodIdData: AspectData {
 /// # Example
 ///
 /// ```
-/// use fiftyone_fodid_cloud::{FodIdData, FodIdDataBase};
+/// use fiftyone_fodid_core::{FodIdData, FodIdDataBase};
 ///
-/// // Built by the engine from the cloud response; constructed directly here.
+/// // Built by an engine, constructed directly here.
 /// let data = FodIdDataBase::new().set("IdProbGlobal", "not-a-valid-envelope");
 ///
 /// // The raw value is always available.
@@ -406,28 +402,6 @@ impl FodIdData for FodIdDataBase {
     }
 }
 
-/// The default core property metadata for the 51Degrees-identifier product: the
-/// six base64 identifier properties ([`IDENTIFIER_PROPERTIES`]), each a string.
-///
-/// The cloud engine reports this set until it has discovered the live product
-/// metadata from the cloud request engine's accessible properties, so a consumer
-/// always sees the documented property set.
-pub fn default_property_metadata() -> Vec<PropertyMetaData> {
-    IDENTIFIER_PROPERTIES
-        .into_iter()
-        .map(|name| PropertyMetaData::new(name, FODID_ELEMENT_DATA_KEY, PropertyValueType::String))
-        .collect()
-}
-
-/// The default aspect-property metadata, the aspect view of
-/// [`default_property_metadata`].
-pub fn default_aspect_property_metadata() -> Vec<AspectPropertyMetaData> {
-    default_property_metadata()
-        .into_iter()
-        .map(AspectPropertyMetaData::from_core)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -508,20 +482,5 @@ mod tests {
         let empty = FodIdDataBase::new();
         assert!(!empty.id_rand_global().has_value());
         assert!(!empty.id_hem_lic_fod_id().has_value());
-    }
-
-    #[test]
-    fn default_metadata_lists_all_six_identifier_properties() {
-        let core = default_property_metadata();
-        assert_eq!(core.len(), 6);
-        assert!(core.iter().all(|p| p.element_data_key == "fodid"));
-        assert!(core
-            .iter()
-            .all(|p| p.value_type == PropertyValueType::String));
-        let names: Vec<&str> = core.iter().map(|p| p.name.as_str()).collect();
-        for expected in IDENTIFIER_PROPERTIES {
-            assert!(names.contains(&expected), "missing {expected}");
-        }
-        assert_eq!(default_aspect_property_metadata().len(), 6);
     }
 }

@@ -53,10 +53,29 @@
 //!
 //! The template has a section that gathers the visitor's answer from the
 //! 51Degrees Preference Management Platform (PMP) or a consent platform on the
-//! page, which is what a 51Did is created from. It is rendered only when the
-//! builder was given a cloud request engine, through
-//! [`JavaScriptBuilderElementBuilder::set_cloud_request_engine`], whose
-//! resource key is licensed for 51Did.
+//! page, which is what a 51Did is created from. By default it is rendered when
+//! the pipeline has an element whose data key is `fodid`, ignoring case, whose
+//! properties are loaded and include at least one available property, as
+//! .NET's builder decides.
+//! [`JavaScriptBuilderElementBuilder::set_user_prompt`] renders it in every
+//! script or in none. A builder given a cloud request engine renders it when
+//! the engine's resource key is licensed for 51Did, through
+//! [`JavaScriptBuilderElementBuilder::set_shared_cloud_request_engine`], which
+//! waits for the engine's discovery to complete, or
+//! [`JavaScriptBuilderElementBuilder::set_cloud_request_engine`], which decides
+//! when it is called. The last of the three settings decides. A caller that
+//! decides for each request replaces the
+//! [`JavaScriptBuilderSteps::render_user_prompt`] step.
+//!
+//! ## Replacing steps and the template
+//!
+//! [`JavaScriptBuilderSteps`] lets a caller replace the steps that give the
+//! request parameters, the session id, the sequence and the user prompt
+//! decision, which match the methods a subclass can override in .NET's
+//! `JavaScriptBuilderElement`. Each step's default is a function in
+//! [`default_steps`], so a caller's step can keep the default for part of its
+//! work. [`JavaScriptBuilderElementBuilder::set_template`] renders the script
+//! from a template the caller gives in place of the bundled one.
 //!
 //! ## Minification
 //!
@@ -75,8 +94,7 @@
 //! use fiftyone_javascript_builder::{JavaScriptBuilderElement, JAVASCRIPT_BUILDER_DATA_KEY};
 //! use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 //!
-//! // The sequence element leads, because the JSON builder needs the sequence
-//! // number it writes.
+//! // The JSON builder needs the sequence number the Sequence element gives.
 //! let pipeline = Pipeline::builder()
 //!     .add_element(Arc::new(SequenceElement::new()))
 //!     .add_element(Arc::new(JsonBuilderElement::new()))
@@ -92,15 +110,26 @@
 //! let js = data.get(JAVASCRIPT_BUILDER_DATA_KEY).unwrap().javascript().to_owned();
 //! assert!(js.contains("fiftyoneDegreesManager"));
 //! ```
+//!
+//! ## Configuration
+//!
+//! [`configuration::add_builders`] adds the JavaScript builder to a
+//! [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the name
+//! .NET gives it, with .NET's settings, so a configuration file written for
+//! .NET makes the same element here.
 
 #![warn(missing_docs)]
 
 mod builder;
+mod callback_url;
+pub mod configuration;
 mod constants;
 mod data;
+pub mod default_steps;
 mod element;
 mod minify;
 mod mustache;
+mod steps;
 mod template_data;
 
 pub use builder::JavaScriptBuilderElementBuilder;
@@ -113,4 +142,5 @@ pub use constants::{
 };
 pub use data::{JavaScriptBuilderElementData, JAVASCRIPT_BUILDER_DATA_KEY};
 pub use element::JavaScriptBuilderElement;
+pub use steps::{DefaultJavaScriptBuilderSteps, JavaScriptBuilderContext, JavaScriptBuilderSteps};
 pub use template_data::JavaScriptResource;

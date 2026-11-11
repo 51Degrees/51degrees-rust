@@ -242,3 +242,227 @@ fn dd_and_ipi_combined_in_one_pipeline() {
         "the Cloudflare IPv4 resolves to AS13335, got {value}"
     );
 }
+
+/// Device Detection, IP Intelligence and an element that always fails, run as
+/// a parallel group, give the values and errors they give in sequence.
+mod parallel_group {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use fiftyone_pipeline_core::{
+        Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+        Pipeline, PropertyMetaData, Result,
+    };
+
+    use super::{
+        find_up, DeviceData, DeviceDetectionPipelineBuilder, IpIntelligencePipelineBuilder,
+        PerformanceProfile, DEVICE_DATA_KEY, IP_DATA_KEY,
+    };
+
+    /// An element that always fails.
+    #[derive(Default)]
+    struct AlwaysFails {
+        filter: EvidenceKeyFilterWhitelist,
+    }
+
+    impl FlowElement for AlwaysFails {
+        fn process(&self, _data: &mut FlowData) -> Result<()> {
+            Err(Error::configuration("deliberate failure"))
+        }
+        fn data_key(&self) -> &str {
+            "always-fails"
+        }
+        fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+            &self.filter
+        }
+        fn properties(&self) -> &[PropertyMetaData] {
+            &[]
+        }
+    }
+
+    /// What processing gave: its returned error, every value by data key and
+    /// property name, and every error as its data key and message.
+    #[derive(Debug, PartialEq)]
+    struct Answers {
+        returned: Option<String>,
+        values: BTreeMap<String, BTreeMap<String, String>>,
+        errors: Vec<(String, String)>,
+    }
+
+    fn answers(pipeline: &Arc<Pipeline>, evidence: Evidence) -> Answers {
+        let mut data = pipeline.create_flow_data_with(evidence);
+        let returned = data.process().err().map(|error| error.to_string());
+        let values = data
+            .data_keys()
+            .into_iter()
+            .map(|key| {
+                let found = data.get_str(&key).unwrap();
+                let properties = found
+                    .keys()
+                    .into_iter()
+                    .map(|name| {
+                        let value = format!("{:?}", found.get(&name));
+                        (name, value)
+                    })
+                    .collect();
+                (key, properties)
+            })
+            .collect();
+        let errors = data
+            .errors()
+            .iter()
+            .map(|error| (error.element_data_key.clone(), error.source.to_string()))
+            .collect();
+        Answers {
+            returned,
+            values,
+            errors,
+        }
+    }
+
+    /// The data file a variable names, or else the Lite file at `relative`.
+    fn data_file(variable: &str, relative: &str) -> Option<PathBuf> {
+        std::env::var(variable)
+            .ok()
+            .map(PathBuf::from)
+            .filter(|path| path.is_file())
+            .or_else(|| find_up(relative))
+    }
+
+    /// The element under `key` in a facade's pipeline.
+    fn engine(pipeline: &Pipeline, key: &str) -> Arc<dyn FlowElement> {
+        pipeline
+            .flow_elements()
+            .iter()
+            .find(|element| element.data_key() == key)
+            .cloned()
+            .unwrap_or_else(|| panic!("the pipeline has an element under '{key}'"))
+    }
+
+    fn cases() -> Vec<(&'static str, Evidence)> {
+        vec![
+            (
+                "an iPhone and an IPv4 address",
+                Evidence::builder()
+                    .add(
+                        "header.user-agent",
+                        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) \
+                         AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 \
+                         Mobile/15E148 Safari/604.1",
+                    )
+                    .add("server.client-ip", "1.1.1.1")
+                    .build(),
+            ),
+            (
+                "Chrome with client hints and an IPv6 address",
+                Evidence::builder()
+                    .add(
+                        "header.user-agent",
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
+                         AppleWebKit/537.36 (KHTML, like Gecko) \
+                         Chrome/120.0.0.0 Safari/537.36",
+                    )
+                    .add("header.sec-ch-ua-platform", "\"Windows\"")
+                    .add("header.sec-ch-ua-platform-version", "\"15.0.0\"")
+                    .add("server.client-ip", "2606:4700:4700::1111")
+                    .build(),
+            ),
+            (
+                "an address that does not parse",
+                Evidence::builder()
+                    .add("server.client-ip", "not an address")
+                    .build(),
+            ),
+            ("no evidence", Evidence::default()),
+        ]
+    }
+
+    #[test]
+    fn dd_ipi_and_a_failing_element_answer_alike_in_a_group_and_in_sequence() {
+        let dd_file = data_file(
+            "_51DEGREES_DD_PATH",
+            "cxx/data/device-detection/51Degrees-LiteV4.1.hash",
+        );
+        let ipi_file = data_file(
+            "_51DEGREES_IPI_PATH",
+            "cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi",
+        );
+        let (Some(dd_file), Some(ipi_file)) = (dd_file, ipi_file) else {
+            eprintln!("skipping the parallel group test: both data files are required");
+            return;
+        };
+
+        let dd_pipeline = DeviceDetectionPipelineBuilder::on_premise(&dd_file)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            // Off so the test sends nothing to 51Degrees.
+            .share_usage(false)
+            // Off so the build needs no licence key.
+            .auto_update(false)
+            .build()
+            .expect("device-detection on-premise pipeline builds");
+        let ipi_pipeline = IpIntelligencePipelineBuilder::on_premise(&ipi_file)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            // Off so the test sends nothing to 51Degrees.
+            .share_usage(false)
+            // Off so the build needs no licence key.
+            .auto_update(false)
+            .build()
+            .expect("ip-intelligence on-premise pipeline builds");
+        let elements: Vec<Arc<dyn FlowElement>> = vec![
+            engine(&dd_pipeline, DEVICE_DATA_KEY.name()),
+            engine(&ipi_pipeline, IP_DATA_KEY.name()),
+            Arc::new(AlwaysFails::default()),
+        ];
+
+        for suppress in [false, true] {
+            let mut in_sequence = Pipeline::builder().suppress_process_exceptions(suppress);
+            for element in &elements {
+                in_sequence = in_sequence.add_element(Arc::clone(element));
+            }
+            let in_sequence = in_sequence.build().unwrap();
+            let in_group = Pipeline::builder()
+                .suppress_process_exceptions(suppress)
+                .add_parallel_elements(elements.iter().cloned())
+                .build()
+                .unwrap();
+            assert!(in_group.is_concurrent());
+
+            for (case, evidence) in cases() {
+                let sequence = answers(&in_sequence, evidence.clone());
+                let group = answers(&in_group, evidence);
+                assert_eq!(group, sequence, "{case}, suppress {suppress}");
+                assert!(
+                    group.errors.contains(&(
+                        "always-fails".to_owned(),
+                        "pipeline configuration error: deliberate failure".to_owned()
+                    )),
+                    "{case}: {:?}",
+                    group.errors
+                );
+                assert_eq!(group.returned.is_some(), !suppress, "{case}");
+            }
+        }
+
+        let in_group = Pipeline::builder()
+            .suppress_process_exceptions(true)
+            .add_parallel_elements(elements)
+            .build()
+            .unwrap();
+        let mut data = in_group.create_flow_data_with(cases().remove(0).1);
+        data.process().unwrap();
+        let device = data
+            .get(DEVICE_DATA_KEY)
+            .expect("the group ran Device Detection");
+        assert!(
+            *device.is_mobile().value().expect("IsMobile resolves"),
+            "the iPhone user agent is mobile"
+        );
+        let ip = data
+            .get(IP_DATA_KEY)
+            .expect("the group ran IP Intelligence");
+        let asn = ip.string("Asn");
+        let value = asn.value().expect("Asn resolves");
+        assert!(value.contains("AS13335"), "got {value}");
+    }
+}

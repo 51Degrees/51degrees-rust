@@ -26,16 +26,19 @@
 //! are exercised against hand-built requests.
 
 use std::any::Any;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
+use fiftyone_javascript_builder::JavaScriptBuilderElement;
 use fiftyone_pipeline_core::{
     ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
     MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue, PropertyValueType,
     Result, TypedKey,
 };
+use fiftyone_pipeline_engines_fiftyone::SetHeadersElement;
 use fiftyone_pipeline_web::{
-    apply_set_headers, build_evidence, response_headers, serve_javascript, serve_json, vary_header,
-    EndpointOptions, RequestData, WebEndpoint, WebIntegrationOptions, WebPipeline, WebResponse,
+    apply_set_headers, build_evidence, compute_etag, response_headers, serve_javascript,
+    serve_json, vary_header, EndpointOptions, RequestData, WebEndpoint, WebIntegrationOptions,
+    WebPipeline, WebResponse,
 };
 
 // ----------------------------------------------------------------------------
@@ -126,6 +129,7 @@ struct TestRequest {
     form: Vec<(String, String)>,
     client_ip: Option<String>,
     https: bool,
+    method: Option<String>,
 }
 
 impl RequestData for TestRequest {
@@ -147,6 +151,9 @@ impl RequestData for TestRequest {
     fn is_https(&self) -> bool {
         self.https
     }
+    fn method(&self) -> Option<String> {
+        self.method.clone()
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -160,6 +167,17 @@ fn web_pipeline(fail: bool) -> WebPipeline {
         WebIntegrationOptions::default(),
     )
     .expect("web pipeline builds")
+}
+
+/// The session id the requests in these tests carry.
+const SESSION_ID: &str = "0f8fad5b-d9cb-469f-a165-70867728950e";
+
+/// Evidence for a request from `user_agent` in the session [`SESSION_ID`].
+fn page_evidence(user_agent: &str) -> Evidence {
+    Evidence::builder()
+        .add("header.user-agent", user_agent)
+        .add("query.session-id", SESSION_ID)
+        .build()
 }
 
 /// Process a flow data through the pipeline with the given evidence.
@@ -221,6 +239,165 @@ fn a_sequence_element_among_the_elements_is_not_added_again() {
             "javascriptbuilderelement",
         ]
     );
+}
+
+/// Runs a set-headers element under the data key it is given, as an element
+/// wrapping another does.
+struct WrappedSetHeaders {
+    data_key: &'static str,
+    inner: SetHeadersElement,
+}
+
+impl FlowElement for WrappedSetHeaders {
+    fn process(&self, data: &mut FlowData) -> Result<()> {
+        self.inner.process(data)
+    }
+    fn data_key(&self) -> &str {
+        self.data_key
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        self.inner.evidence_key_filter()
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        self.inner.properties()
+    }
+}
+
+/// The data keys of the pipeline's elements, in the order they run.
+fn data_keys(web: &WebPipeline) -> Vec<&str> {
+    web.pipeline()
+        .flow_elements()
+        .iter()
+        .map(|element| element.data_key())
+        .collect()
+}
+
+/// True if the pipeline's element with this data key is `element` itself.
+fn runs<T>(web: &WebPipeline, data_key: &str, element: &Arc<T>) -> bool {
+    web.pipeline()
+        .flow_elements()
+        .iter()
+        .find(|e| e.data_key() == data_key)
+        .is_some_and(|e| std::ptr::addr_eq(Arc::as_ptr(e), Arc::as_ptr(element)))
+}
+
+/// True if processing a request gives the `Accept-CH` header the test
+/// element asks for, which only a set-headers element after it writes.
+fn sets_accept_ch(web: &WebPipeline) -> bool {
+    let data = processed(web.pipeline(), page_evidence("agent"));
+    response_headers(&data)
+        .iter()
+        .any(|(name, value)| name == "Accept-CH" && value == "Sec-CH-UA")
+}
+
+#[test]
+fn a_set_headers_element_among_the_elements_is_not_added_again() {
+    let given = Arc::new(SetHeadersElement::new());
+    let web = WebPipeline::build(
+        vec![
+            Arc::new(TestElement::new(false)),
+            Arc::clone(&given) as Arc<dyn FlowElement>,
+        ],
+        WebIntegrationOptions::default(),
+    )
+    .expect("web pipeline builds");
+    assert_eq!(
+        data_keys(&web),
+        vec![
+            "sequence",
+            "device",
+            "set-headers",
+            "json-builder",
+            "javascriptbuilderelement",
+        ]
+    );
+    assert!(runs(&web, "set-headers", &given));
+    assert!(sets_accept_ch(&web));
+}
+
+#[test]
+fn a_set_headers_element_among_the_elements_runs_where_it_was_put() {
+    // Given before a JavaScript builder the application also gives. Added in
+    // its usual place, a set-headers element would follow that builder.
+    let given = Arc::new(SetHeadersElement::new());
+    let web = WebPipeline::build(
+        vec![
+            Arc::new(TestElement::new(false)),
+            Arc::clone(&given) as Arc<dyn FlowElement>,
+            Arc::new(JavaScriptBuilderElement::new()),
+        ],
+        WebIntegrationOptions::default(),
+    )
+    .expect("web pipeline builds");
+    assert_eq!(
+        data_keys(&web),
+        vec![
+            "sequence",
+            "device",
+            "set-headers",
+            "json-builder",
+            "javascriptbuilderelement",
+        ]
+    );
+    assert!(runs(&web, "set-headers", &given));
+    assert!(sets_accept_ch(&web));
+}
+
+#[test]
+fn a_set_headers_element_among_the_elements_runs_without_the_option() {
+    let given = Arc::new(SetHeadersElement::new());
+    let options = WebIntegrationOptions {
+        use_set_header_properties: false,
+        ..WebIntegrationOptions::default()
+    };
+    let web = WebPipeline::build(
+        vec![
+            Arc::new(TestElement::new(false)),
+            Arc::clone(&given) as Arc<dyn FlowElement>,
+        ],
+        options,
+    )
+    .expect("builds");
+    assert_eq!(
+        data_keys(&web),
+        vec![
+            "sequence",
+            "device",
+            "set-headers",
+            "json-builder",
+            "javascriptbuilderelement",
+        ]
+    );
+    assert!(runs(&web, "set-headers", &given));
+    assert!(sets_accept_ch(&web));
+}
+
+#[test]
+fn a_set_headers_element_is_found_by_its_data_key_ignoring_case() {
+    let given = Arc::new(WrappedSetHeaders {
+        data_key: "Set-Headers",
+        inner: SetHeadersElement::new(),
+    });
+    let web = WebPipeline::build(
+        vec![
+            Arc::new(TestElement::new(false)),
+            Arc::clone(&given) as Arc<dyn FlowElement>,
+        ],
+        WebIntegrationOptions::default(),
+    )
+    .expect("web pipeline builds");
+    assert_eq!(
+        data_keys(&web),
+        vec![
+            "sequence",
+            "device",
+            "Set-Headers",
+            "json-builder",
+            "javascriptbuilderelement",
+        ]
+    );
+    assert!(runs(&web, "Set-Headers", &given));
+    assert!(sets_accept_ch(&web));
 }
 
 #[test]
@@ -347,7 +524,7 @@ fn javascript_content_type() {
 }
 
 // ----------------------------------------------------------------------------
-// Cache-Control: private when clean, no-cache on failure.
+// Cache-Control: private on every response, no-cache on failure.
 // ----------------------------------------------------------------------------
 
 #[test]
@@ -369,7 +546,7 @@ fn cache_control_no_cache_on_processing_failure() {
     assert!(!data.errors().is_empty(), "processing recorded an error");
     let options = EndpointOptions::new(web.vary_whitelist().clone());
     let response = serve_json(&data, &TestRequest::default(), &options);
-    assert_eq!(response.header("Cache-Control"), Some("no-cache"));
+    assert_eq!(response.header("Cache-Control"), Some("private, no-cache"));
 }
 
 // ----------------------------------------------------------------------------
@@ -419,8 +596,8 @@ fn no_vary_header_when_whitelist_empty() {
 #[test]
 fn etag_is_stable_and_present() {
     let web = web_pipeline(false);
-    let evidence_a = Evidence::builder().add("header.user-agent", "abc").build();
-    let evidence_b = Evidence::builder().add("header.user-agent", "abc").build();
+    let evidence_a = page_evidence("abc");
+    let evidence_b = page_evidence("abc");
     let data_a = processed(web.pipeline(), evidence_a);
     let data_b = processed(web.pipeline(), evidence_b);
     let options = EndpointOptions::new(web.vary_whitelist().clone());
@@ -430,9 +607,123 @@ fn etag_is_stable_and_present() {
 
     let etag_a = resp_a.header("ETag").unwrap();
     let etag_b = resp_b.header("ETag").unwrap();
-    // Same evidence => same ETag, and it is a quoted token.
+    // Same evidence => same ETag, and it is a weak entity tag holding 16 hex
+    // digits, because it stands for the evidence rather than the content
+    // (RFC 9110 section 8.8.3).
     assert_eq!(etag_a, etag_b);
-    assert!(etag_a.starts_with('"') && etag_a.ends_with('"'));
+    let digits = etag_a
+        .strip_prefix("W/\"")
+        .and_then(|rest| rest.strip_suffix('"'))
+        .unwrap_or_else(|| panic!("{etag_a} is not W/\"...\""));
+    assert_eq!(digits.len(), 16, "{etag_a}");
+    assert!(
+        digits
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        "{etag_a}"
+    );
+}
+
+/// RFC 9110 sections 8.8.3.2 and 13.1.2: `If-None-Match` takes the weak
+/// comparison, so the tag a `200` sent matches with or without `W/`, alone or
+/// in a list, as does `*`.
+#[test]
+fn the_weak_etag_matches_in_every_form() {
+    let web = web_pipeline(false);
+    let options = EndpointOptions::new(web.vary_whitelist().clone());
+    let serve = |if_none_match: Option<&str>| {
+        let request = TestRequest {
+            headers: if_none_match
+                .map(|value| ("If-None-Match".to_owned(), value.to_owned()))
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        serve_javascript(
+            &processed(web.pipeline(), page_evidence("abc")),
+            &request,
+            &options,
+        )
+    };
+
+    let first = serve(None);
+    assert_eq!(first.status, WebResponse::STATUS_OK);
+    let etag = first
+        .header("ETag")
+        .expect("the 200 has an ETag")
+        .to_owned();
+    let strong = etag.strip_prefix("W/").expect("a weak ETag").to_owned();
+
+    for matching in [
+        etag.clone(),
+        strong.clone(),
+        format!("\"other\", {etag}"),
+        format!("W/\"other\", {strong}"),
+        "*".to_owned(),
+    ] {
+        let response = serve(Some(&matching));
+        assert_eq!(
+            response.status,
+            WebResponse::STATUS_NOT_MODIFIED,
+            "{matching}"
+        );
+        assert_eq!(response.header("ETag"), Some(etag.as_str()), "{matching}");
+    }
+    for other in ["W/\"other\"".to_owned(), format!("w/{strong}")] {
+        assert_eq!(
+            serve(Some(&other)).status,
+            WebResponse::STATUS_OK,
+            "{other}"
+        );
+    }
+}
+
+/// The Sequence element adds a new session id to the evidence of each request
+/// that has none, but the ETag is worked out from the evidence the request
+/// supplied. So two requests with the same evidence and no session id get the
+/// same tag, and the second, sending it back, gets a `304` from both
+/// endpoints.
+#[test]
+fn requests_without_a_session_id_get_the_same_etag_and_a_304() {
+    type Serve = fn(&FlowData, &dyn RequestData, &EndpointOptions) -> WebResponse;
+    let web = web_pipeline(false);
+    let options = EndpointOptions::new(web.vary_whitelist().clone());
+    let request = |if_none_match: Option<&str>| TestRequest {
+        headers: if_none_match
+            .map(|value| ("If-None-Match".to_owned(), value.to_owned()))
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    let evidence = || Evidence::builder().add("header.user-agent", "abc").build();
+    let endpoints: [(&str, Serve); 2] = [("javascript", serve_javascript), ("json", serve_json)];
+
+    for (name, serve) in endpoints {
+        let first_data = processed(web.pipeline(), evidence());
+        let second_data = processed(web.pipeline(), evidence());
+        let session_id = |data: &FlowData| {
+            data.evidence()
+                .get("query.session-id")
+                .map(str::to_owned)
+                .expect("the Sequence element added a session id")
+        };
+        assert_ne!(session_id(&first_data), session_id(&second_data), "{name}");
+
+        let first = serve(&first_data, &request(None), &options);
+        assert_eq!(first.status, WebResponse::STATUS_OK, "{name}");
+        let etag = first
+            .header("ETag")
+            .expect("the 200 has an ETag")
+            .to_owned();
+        let second = serve(&second_data, &request(Some(&etag)), &options);
+
+        assert_eq!(
+            second.status,
+            WebResponse::STATUS_NOT_MODIFIED,
+            "{name} {etag}"
+        );
+        assert_eq!(second.header("ETag"), Some(etag.as_str()), "{name}");
+    }
 }
 
 #[test]
@@ -440,14 +731,8 @@ fn different_evidence_gives_different_etag() {
     let web = web_pipeline(false);
     let options = EndpointOptions::new(web.vary_whitelist().clone());
 
-    let data_a = processed(
-        web.pipeline(),
-        Evidence::builder().add("header.user-agent", "abc").build(),
-    );
-    let data_b = processed(
-        web.pipeline(),
-        Evidence::builder().add("header.user-agent", "xyz").build(),
-    );
+    let data_a = processed(web.pipeline(), page_evidence("abc"));
+    let data_b = processed(web.pipeline(), page_evidence("xyz"));
     let etag_a = serve_json(&data_a, &TestRequest::default(), &options)
         .header("ETag")
         .unwrap()
@@ -459,44 +744,242 @@ fn different_evidence_gives_different_etag() {
     assert_ne!(etag_a, etag_b);
 }
 
+/// RFC 9110 section 15.4.5: a 304 carries the `Cache-Control`, `Vary` and
+/// `ETag` a 200 to the same request would, and the CORS header comes with
+/// them so a script that reads the 304 passes the CORS check.
 #[test]
-fn matching_if_none_match_returns_304_cleared() {
+fn a_304_carries_the_fields_the_200_would() {
     let web = web_pipeline(false);
     let options = EndpointOptions::new(web.vary_whitelist().clone());
-
-    // First request: capture the ETag.
-    let evidence = Evidence::builder().add("header.user-agent", "abc").build();
-    let data = processed(web.pipeline(), evidence);
-    let first = serve_json(&data, &TestRequest::default(), &options);
-    let etag = first.header("ETag").unwrap().to_owned();
-
-    // Second request: send the captured ETag as If-None-Match.
-    let conditional = TestRequest {
-        headers: vec![("If-None-Match".into(), etag)],
+    let request = |etag: Option<&str>| TestRequest {
+        headers: std::iter::once(("Origin".to_owned(), "https://example.com".to_owned()))
+            .chain(etag.map(|etag| ("If-None-Match".to_owned(), etag.to_owned())))
+            .collect(),
         ..Default::default()
     };
-    let evidence2 = Evidence::builder().add("header.user-agent", "abc").build();
-    let data2 = processed(web.pipeline(), evidence2);
-    let second = serve_json(&data2, &conditional, &options);
+    let evidence = || page_evidence("abc");
+
+    let first = serve_json(
+        &processed(web.pipeline(), evidence()),
+        &request(None),
+        &options,
+    );
+    let etag = first
+        .header("ETag")
+        .expect("the 200 has an ETag")
+        .to_owned();
+    let second = serve_json(
+        &processed(web.pipeline(), evidence()),
+        &request(Some(&etag)),
+        &options,
+    );
 
     assert_eq!(second.status, WebResponse::STATUS_NOT_MODIFIED);
     assert!(second.is_not_modified());
-    // 304 is fully cleared: no body, no headers.
     assert!(second.body.is_empty());
-    assert!(second.headers.is_empty());
+    for name in [
+        "Cache-Control",
+        "Vary",
+        "ETag",
+        "Access-Control-Allow-Origin",
+    ] {
+        assert!(first.header(name).is_some(), "the 200 has {name}");
+        assert_eq!(second.header(name), first.header(name), "{name}");
+    }
+    assert_eq!(
+        second.header("Cache-Control"),
+        Some("private, max-age=1800")
+    );
+    for name in ["Content-Type", "Content-Length"] {
+        assert_eq!(second.header(name), None, "the 304 has no {name}");
+    }
+    assert_eq!(second.headers.len(), 4, "{:?}", second.headers);
+}
+
+#[test]
+fn a_304_without_the_extra_headers_carries_none() {
+    let web = web_pipeline(false);
+    let options = EndpointOptions::new(web.vary_whitelist().clone()).without_extra_headers();
+    let evidence = || page_evidence("abc");
+    let data = processed(web.pipeline(), evidence());
+    let request = TestRequest {
+        headers: vec![(
+            "If-None-Match".to_owned(),
+            compute_etag(&data, data.evidence_key_filter()),
+        )],
+        ..Default::default()
+    };
+
+    let response = serve_json(&data, &request, &options);
+
+    assert_eq!(response.status, WebResponse::STATUS_NOT_MODIFIED);
+    assert!(response.headers.is_empty(), "{:?}", response.headers);
 }
 
 #[test]
 fn non_matching_if_none_match_returns_200() {
     let web = web_pipeline(false);
     let options = EndpointOptions::new(web.vary_whitelist().clone());
-    let conditional = TestRequest {
-        headers: vec![("If-None-Match".into(), "\"not-the-tag\"".into())],
+    let data = processed(web.pipeline(), Evidence::default());
+    for method in [None, Some("POST")] {
+        let conditional = TestRequest {
+            headers: vec![("If-None-Match".into(), "\"not-the-tag\"".into())],
+            method: method.map(str::to_owned),
+            ..Default::default()
+        };
+        let response = serve_json(&data, &conditional, &options);
+        assert_eq!(response.status, WebResponse::STATUS_OK, "{method:?}");
+    }
+}
+
+/// RFC 9110 section 13.1.2: a field that is neither `*` nor a list of entity
+/// tags makes the condition true, so both endpoints give `200` with the body,
+/// even when the field holds the tag. A field over two lines is read whole
+/// (section 5.3), so the tag on the second line matches, and a second line
+/// that is not a tag stops the first matching.
+#[test]
+fn an_if_none_match_that_is_not_a_list_of_tags_gets_the_body() {
+    let web = web_pipeline(false);
+    let options = EndpointOptions::new(web.vary_whitelist().clone());
+    let data = processed(web.pipeline(), page_evidence("abc"));
+    let etag = compute_etag(&data, data.evidence_key_filter());
+    let cases = [
+        (vec![format!("{etag}, other")], false),
+        (vec![format!("\"other\" {etag}")], false),
+        (vec![format!("other, {etag}")], false),
+        (vec![format!("\"oth er\", {etag}")], false),
+        (vec![format!("{etag}, *")], false),
+        (vec![format!("\"other\",\t{etag}")], true),
+        (vec!["\"other\"".to_owned(), etag.clone()], true),
+        (vec![etag.clone(), "other".to_owned()], false),
+    ];
+    for (lines, matches) in &cases {
+        for method in [None, Some("POST")] {
+            let request = TestRequest {
+                headers: lines
+                    .iter()
+                    .map(|line| ("If-None-Match".to_owned(), line.clone()))
+                    .collect(),
+                method: method.map(str::to_owned),
+                ..Default::default()
+            };
+            let status = match (matches, method) {
+                (false, _) => WebResponse::STATUS_OK,
+                (true, None) => WebResponse::STATUS_NOT_MODIFIED,
+                (true, Some(_)) => WebResponse::STATUS_PRECONDITION_FAILED,
+            };
+            for response in [
+                serve_json(&data, &request, &options),
+                serve_javascript(&data, &request, &options),
+            ] {
+                assert_eq!(response.status, status, "{lines:?} {method:?}");
+                assert_eq!(
+                    response.body.is_empty(),
+                    status != WebResponse::STATUS_OK,
+                    "{lines:?} {method:?}"
+                );
+            }
+        }
+    }
+}
+
+/// RFC 9110 section 13.1.2: a matching `If-None-Match` gets a `304` on `GET`
+/// or `HEAD` and a `412` on any other method. Method names are case-sensitive
+/// (section 9.1), so `get` is not `GET`. A request that gives no method is
+/// treated as `GET`.
+#[test]
+fn a_matching_if_none_match_gets_a_304_only_on_get_or_head() {
+    let web = web_pipeline(false);
+    let options = EndpointOptions::new(web.vary_whitelist().clone());
+    let data = processed(web.pipeline(), page_evidence("abc"));
+    let etag = compute_etag(&data, data.evidence_key_filter());
+    let cases = [
+        (None, WebResponse::STATUS_NOT_MODIFIED),
+        (Some("GET"), WebResponse::STATUS_NOT_MODIFIED),
+        (Some("HEAD"), WebResponse::STATUS_NOT_MODIFIED),
+        (Some("POST"), WebResponse::STATUS_PRECONDITION_FAILED),
+        (Some("PUT"), WebResponse::STATUS_PRECONDITION_FAILED),
+        (Some("get"), WebResponse::STATUS_PRECONDITION_FAILED),
+    ];
+    for (method, status) in cases {
+        let request = TestRequest {
+            headers: vec![("If-None-Match".to_owned(), etag.clone())],
+            method: method.map(str::to_owned),
+            ..Default::default()
+        };
+        for response in [
+            serve_json(&data, &request, &options),
+            serve_javascript(&data, &request, &options),
+        ] {
+            assert_eq!(response.status, status, "{method:?}");
+            assert!(response.body.is_empty(), "{method:?}");
+        }
+    }
+}
+
+/// The `412` carries only the CORS header, so a script on another origin can
+/// read the status, and none of the caching fields of a `200` or `304`.
+#[test]
+fn a_412_carries_only_the_cors_header() {
+    let web = web_pipeline(false);
+    let options = EndpointOptions::new(web.vary_whitelist().clone());
+    let request = |etag: Option<&str>| TestRequest {
+        headers: std::iter::once(("Origin".to_owned(), "https://example.com".to_owned()))
+            .chain(etag.map(|etag| ("If-None-Match".to_owned(), etag.to_owned())))
+            .collect(),
+        method: Some("POST".to_owned()),
         ..Default::default()
     };
-    let data = processed(web.pipeline(), Evidence::default());
-    let response = serve_json(&data, &conditional, &options);
-    assert_eq!(response.status, WebResponse::STATUS_OK);
+    let evidence = || page_evidence("abc");
+
+    let first = serve_json(
+        &processed(web.pipeline(), evidence()),
+        &request(None),
+        &options,
+    );
+    assert_eq!(first.status, WebResponse::STATUS_OK);
+    let etag = first
+        .header("ETag")
+        .expect("the 200 has an ETag")
+        .to_owned();
+    let second = serve_json(
+        &processed(web.pipeline(), evidence()),
+        &request(Some(&etag)),
+        &options,
+    );
+
+    assert_eq!(second.status, WebResponse::STATUS_PRECONDITION_FAILED);
+    assert!(second.body.is_empty());
+    assert_eq!(
+        second.headers,
+        vec![(
+            "Access-Control-Allow-Origin".to_owned(),
+            "https://example.com".to_owned()
+        )]
+    );
+}
+
+#[test]
+fn a_412_without_the_extra_headers_carries_none() {
+    let web = web_pipeline(false);
+    let options = EndpointOptions::new(web.vary_whitelist().clone()).without_extra_headers();
+    let data = processed(web.pipeline(), page_evidence("abc"));
+    let request = TestRequest {
+        headers: vec![
+            ("Origin".to_owned(), "https://example.com".to_owned()),
+            (
+                "If-None-Match".to_owned(),
+                compute_etag(&data, data.evidence_key_filter()),
+            ),
+        ],
+        method: Some("POST".to_owned()),
+        ..Default::default()
+    };
+
+    let response = serve_json(&data, &request, &options);
+
+    assert_eq!(response.status, WebResponse::STATUS_PRECONDITION_FAILED);
+    assert!(response.headers.is_empty(), "{:?}", response.headers);
 }
 
 /// Set in the environment of the second process the ETag test starts, which
@@ -510,10 +993,7 @@ fn the_same_evidence_gives_the_same_etag_in_another_process() {
     // the same evidence must not depend on the process that computed it.
     let web = web_pipeline(false);
     let options = EndpointOptions::new(web.vary_whitelist().clone());
-    let data = processed(
-        web.pipeline(),
-        Evidence::builder().add("header.user-agent", "abc").build(),
-    );
+    let data = processed(web.pipeline(), page_evidence("abc"));
     let response = serve_json(&data, &TestRequest::default(), &options);
     let etag = response.header("ETag").expect("an ETag").to_owned();
 
@@ -613,6 +1093,7 @@ fn evidence_population_honours_filter() {
         form: vec![("fod-js-object-name".into(), "fromform".into())],
         client_ip: Some("1.2.3.4".into()),
         https: true,
+        method: Some("POST".into()),
     };
 
     let evidence = build_evidence(&request, &filter);
@@ -725,6 +1206,122 @@ fn vary_lists_a_header_only_the_element_knows() {
 }
 
 // ----------------------------------------------------------------------------
+// Vary after an element learns its accepted evidence.
+// ----------------------------------------------------------------------------
+
+/// An element that learns the evidence it accepts after it is built, as the
+/// cloud request engine does after a transient discovery failure. Its filter
+/// is complete once `learned` is set. `later` stands for a filter that changes
+/// after it said it was complete, so a test can see whether the list was kept.
+#[derive(Default)]
+struct LearningElement {
+    learned: OnceLock<EvidenceKeyFilterWhitelist>,
+    later: OnceLock<EvidenceKeyFilterWhitelist>,
+    nothing: EvidenceKeyFilterWhitelist,
+}
+
+impl FlowElement for LearningElement {
+    fn process(&self, _data: &mut FlowData) -> Result<()> {
+        Ok(())
+    }
+    fn data_key(&self) -> &str {
+        "learning"
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        self.later
+            .get()
+            .or(self.learned.get())
+            .unwrap_or(&self.nothing)
+    }
+    fn is_evidence_key_filter_complete(&self) -> bool {
+        self.learned.get().is_some()
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        &[]
+    }
+}
+
+/// The `Vary` header names of a JSON response served with `options`.
+fn vary_names(web: &WebPipeline, options: &EndpointOptions) -> Vec<String> {
+    let data = processed(web.pipeline(), Evidence::default());
+    serve_json(&data, &TestRequest::default(), options)
+        .header("Vary")
+        .map(|vary| vary.split(',').map(str::to_owned).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn vary_gains_the_headers_an_element_learns_after_the_build() {
+    let element = Arc::new(LearningElement::default());
+    let web = WebPipeline::build(vec![element.clone()], WebIntegrationOptions::default())
+        .expect("web pipeline builds");
+    let options = web.endpoint_options();
+    let copy = EndpointOptions::new(web.vary_whitelist().clone());
+
+    let before = vary_names(&web, &options);
+    assert!(before.iter().any(|h| h == "host"), "{before:?}");
+    assert!(!before.iter().any(|h| h == "x-learned"), "{before:?}");
+    assert!(!web.vary_whitelist().include("header.x-learned"));
+
+    element
+        .learned
+        .set(EvidenceKeyFilterWhitelist::new(["header.x-learned"]))
+        .unwrap();
+
+    let after = vary_names(&web, &options);
+    assert!(after.iter().any(|h| h == "x-learned"), "{after:?}");
+    assert!(after.iter().any(|h| h == "host"), "{after:?}");
+    assert!(web.vary_whitelist().include("header.x-learned"));
+    assert!(options
+        .current_vary_whitelist()
+        .is_some_and(|list| list.include("header.x-learned")));
+
+    // A copy of the list taken before the element learned stays as it was.
+    let copied = vary_names(&web, &copy);
+    assert!(!copied.iter().any(|h| h == "x-learned"), "{copied:?}");
+}
+
+#[test]
+fn vary_is_kept_once_every_element_is_complete() {
+    let element = Arc::new(LearningElement::default());
+    let web = WebPipeline::build(vec![element.clone()], WebIntegrationOptions::default())
+        .expect("web pipeline builds");
+    let options = web.endpoint_options();
+    element
+        .learned
+        .set(EvidenceKeyFilterWhitelist::new(["header.x-learned"]))
+        .unwrap();
+    let first = vary_names(&web, &options);
+    assert!(first.iter().any(|h| h == "x-learned"), "{first:?}");
+
+    // The list is collected once after every filter is complete, so a later
+    // change to a filter does not reach it.
+    element
+        .later
+        .set(EvidenceKeyFilterWhitelist::new(["header.x-later"]))
+        .unwrap();
+    assert_eq!(vary_names(&web, &options), first);
+    assert!(!web.vary_whitelist().include("header.x-later"));
+}
+
+#[test]
+fn a_supplied_vary_list_is_used_in_place_of_the_pipelines() {
+    let web = web_pipeline(false);
+    let mut options = web.endpoint_options();
+    options.vary_whitelist = Some(EvidenceKeyFilterWhitelist::new(["header.x-mine"]));
+    assert_eq!(vary_names(&web, &options), vec!["x-mine".to_owned()]);
+}
+
+#[test]
+fn endpoint_options_give_the_same_vary_as_the_list() {
+    let web = web_pipeline(false);
+    let from_list = EndpointOptions::new(web.vary_whitelist().clone());
+    let names = vary_names(&web, &web.endpoint_options());
+    assert!(names.iter().any(|h| h == "user-agent"), "{names:?}");
+    assert_eq!(names, vary_names(&web, &from_list));
+}
+
+// ----------------------------------------------------------------------------
 // The response to a failed request.
 // ----------------------------------------------------------------------------
 
@@ -774,7 +1371,7 @@ fn the_response_to_a_failed_request_is_not_kept_once_processing_recovers() {
     )
     .expect("web pipeline builds");
     let options = EndpointOptions::new(web.vary_whitelist().clone());
-    let evidence = || Evidence::builder().add("header.user-agent", "abc").build();
+    let evidence = || page_evidence("abc");
 
     let failed = serve_javascript(
         &processed(web.pipeline(), evidence()),
@@ -782,7 +1379,7 @@ fn the_response_to_a_failed_request_is_not_kept_once_processing_recovers() {
         &options,
     );
     assert_eq!(failed.status, WebResponse::STATUS_OK);
-    assert_eq!(failed.header("Cache-Control"), Some("no-cache"));
+    assert_eq!(failed.header("Cache-Control"), Some("private, no-cache"));
     assert!(
         failed.header("ETag").is_none(),
         "the response to a failed request carries no validator"
@@ -813,4 +1410,65 @@ fn the_response_to_a_failed_request_is_not_kept_once_processing_recovers() {
             .contains("ismobile"),
         "the response once processing recovers carries the device data"
     );
+}
+
+#[test]
+fn a_304_while_processing_is_failing_carries_the_fields_of_a_failed_200() {
+    // A browser that holds a good response revalidates it with its ETag.
+    // While processing is failing the 304 carries what a failed 200 would,
+    // being private, no-cache and no ETag, and once processing recovers it
+    // carries the cacheable fields and the ETag again.
+    let failing = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let web = WebPipeline::build(
+        vec![Arc::new(FlakyElement {
+            inner: TestElement::new(false),
+            failing: Arc::clone(&failing),
+        })],
+        WebIntegrationOptions::default(),
+    )
+    .expect("web pipeline builds");
+    let options = EndpointOptions::new(web.vary_whitelist().clone());
+    let evidence = || page_evidence("abc");
+
+    let good = serve_javascript(
+        &processed(web.pipeline(), evidence()),
+        &TestRequest::default(),
+        &options,
+    );
+    let etag = good.header("ETag").expect("a good response has an ETag");
+    let revalidation = TestRequest {
+        headers: vec![("If-None-Match".to_owned(), etag.to_owned())],
+        ..Default::default()
+    };
+
+    failing.store(true, std::sync::atomic::Ordering::SeqCst);
+    let during = serve_javascript(
+        &processed(web.pipeline(), evidence()),
+        &revalidation,
+        &options,
+    );
+    assert_eq!(during.status, WebResponse::STATUS_NOT_MODIFIED);
+    assert_eq!(during.header("Cache-Control"), Some("private, no-cache"));
+    assert_eq!(during.header("ETag"), None);
+    assert!(during.header("Vary").is_some());
+    assert_eq!(during.header("Vary"), good.header("Vary"));
+
+    failing.store(false, std::sync::atomic::Ordering::SeqCst);
+    let after = serve_javascript(
+        &processed(web.pipeline(), evidence()),
+        &revalidation,
+        &options,
+    );
+    assert_eq!(after.status, WebResponse::STATUS_NOT_MODIFIED);
+    assert_eq!(after.header("Cache-Control"), Some("private, max-age=1800"));
+    assert_eq!(after.header("ETag"), Some(etag));
+}
+
+/// `EndpointOptions` is `Send`, `Sync`, `UnwindSafe` and `RefUnwindSafe`, as
+/// removing an auto trait from a public type breaks callers. This test fails
+/// to compile if it loses one.
+#[test]
+fn endpoint_options_keep_their_auto_traits() {
+    fn has_auto_traits<T: Send + Sync + std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
+    has_auto_traits::<EndpointOptions>();
 }

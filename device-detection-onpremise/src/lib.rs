@@ -41,6 +41,8 @@
 //! - [`DeviceDetectionOnPremiseEngineBuilder`], a fluent builder that takes the
 //!   data file path, a [`PerformanceProfile`](fiftyone_native::PerformanceProfile),
 //!   an optional restricted property set and optional automatic-update settings.
+//! - [`configuration`], which makes the engine from a configuration file
+//!   written for .NET's `DeviceDetectionHashEngineBuilder`.
 //!
 //! ## Interface compatibility with the cloud engine
 //!
@@ -58,8 +60,12 @@
 //! The loaded data set lives behind an
 //! [`ArcSwap`](arc_swap::ArcSwap), so
 //! [`refresh`](fiftyone_pipeline_engines::OnPremiseAspectEngine::refresh) can
-//! atomically replace it with a reloaded data file while in-flight detections
-//! keep using the data set they snapshotted. Each result keeps its detection's
+//! atomically replace it with a reloaded data file, and
+//! [`refresh_from_memory`](fiftyone_pipeline_engines::OnPremiseAspectEngine::refresh_from_memory)
+//! with the whole of a data file given in memory, while in-flight detections
+//! keep using the data set they snapshotted. Each load records the dates in the
+//! data file header, when the file was published and when the next is
+//! expected, for the data update service. Each result keeps its detection's
 //! native results and reads a property from them the first time it is
 //! requested, so a caller that reads one property does not pay to read the
 //! rest. Those native results, and the data set they came from, stay alive
@@ -104,9 +110,10 @@
 #![warn(missing_docs)]
 
 mod builder;
+pub mod configuration;
 mod engine;
 mod operational_copy;
 mod retained;
 
 pub use builder::{DeviceDetectionOnPremiseEngineBuilder, DATA_DOWNLOAD_TYPE};
-pub use engine::DeviceDetectionOnPremiseEngine;
+pub use engine::{DeviceDetectionOnPremiseEngine, PROFILE_ID_PROPERTY_NAME};

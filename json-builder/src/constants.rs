@@ -39,12 +39,13 @@ pub const JSON_BUILDER_ELEMENT_DATA_KEY: &str = "json-builder";
 /// [`fiftyone_pipeline_core::ElementData::get`].
 pub const JSON_PROPERTY_KEY: &str = "json";
 
-/// The evidence key under which the client posts the request sequence number
-/// back, `"query.sequence"`.
+/// The evidence key carrying the request's sequence, `"query.sequence"`.
 ///
-/// It is the sequence element's input. That value is the text a query string
-/// carries rather than a sequence number, so the JSON builder does not read it,
-/// and takes the number from the sequence element's data instead.
+/// The client script sends it each time it posts collected evidence back,
+/// and the Sequence element adds one to it. The JSON builder does not read
+/// this evidence. It takes the number from the Sequence element's data (see
+/// [`crate::JsonBuilderElement::sequence_number`]) and compares it with
+/// [`MAX_JAVASCRIPT_ITERATIONS`].
 pub const SEQUENCE_EVIDENCE_KEY: &str = "query.sequence";
 
 /// The maximum sequence number at which the JavaScript-properties list is still
@@ -63,6 +64,10 @@ pub const JAVASCRIPT_PROPERTIES_KEY: &str = "javascriptProperties";
 /// The top-level key under which collected flow errors are emitted. The key is
 /// `"errors"`.
 pub const ERRORS_KEY: &str = "errors";
+
+/// The top-level key under which the flow data's warnings are emitted. The
+/// key is `"warnings"`.
+pub const WARNINGS_KEY: &str = "warnings";
 
 /// The suffix appended to a property name to emit the reason it has no value.
 /// The suffix is `"nullreason"`.
@@ -95,9 +100,8 @@ pub const DEFAULT_ELEMENT_EXCLUSION_LIST: &[&str] = &[
     fiftyone_pipeline_engines_fiftyone::constants::SHARE_USAGE_DEFAULT_ELEMENT_DATA_KEY,
 ];
 
-/// The property names excluded from the JSON output by default.
-///
-/// These are the cloud metadata properties that describe the whole result set
-/// rather than a single device or location, and are not useful client side.
-/// Matching is case-insensitive.
-pub const DEFAULT_PROPERTY_EXCLUSION_LIST: &[&str] = &["products", "properties"];
+/// The property names excluded from the JSON output by default, which is
+/// none, so every property an element data lists is written, as .NET writes
+/// it. A caller excludes names with
+/// [`JsonBuilderElementBuilder::exclude_property`](crate::JsonBuilderElementBuilder::exclude_property).
+pub const DEFAULT_PROPERTY_EXCLUSION_LIST: &[&str] = &[];

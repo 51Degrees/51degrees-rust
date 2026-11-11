@@ -170,21 +170,24 @@ fn posts_url_encoded_form_with_stripped_prefixes_and_origin() {
 }
 
 #[test]
-fn transport_failure_to_dead_endpoint_fails_the_build() {
+fn transport_failure_to_dead_endpoint_builds_and_leaves_discovery_to_first_use() {
     // Point at a port nothing is listening on. The builder's discovery fetch
-    // fails at the transport level, so the build itself returns a cloud error
-    // rather than producing a half-initialized engine.
-    let result = CloudRequestEngine::builder()
+    // fails at the transport level, which is transient, so the build completes
+    // and the engine has no discovery results until a process call fetches
+    // them.
+    let engine = CloudRequestEngine::builder()
         .resource_key("rk")
         .endpoint("http://127.0.0.1:1/") // port 1: refused
         .timeout_seconds(2)
-        .build();
+        .build()
+        .expect("a transport failure during discovery does not fail the build");
+    assert!(!engine.has_loaded_metadata());
     assert!(
         matches!(
-            result,
+            engine.accepted_evidence_keys(),
             Err(fiftyone_pipeline_core::Error::CloudRequest { status_code: 0, .. })
         ),
-        "a transport failure during discovery should fail the build"
+        "the evidence keys are not known"
     );
 }
 

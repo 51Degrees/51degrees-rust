@@ -84,7 +84,7 @@ pub enum Error {
 /// Display alone would not be enough, because `Result::unwrap` and
 /// `Result::expect` print the `Debug` form, and that is how a resource key
 /// reaches a test log. The shape matches what the derive would print, so
-/// nothing a reader relies on changes apart from the removed values.
+/// nothing a reader relies on changes apart from the masked values.
 impl core::fmt::Debug for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {

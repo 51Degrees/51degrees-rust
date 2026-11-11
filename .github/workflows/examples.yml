@@ -14,8 +14,11 @@ name: Examples
 
 on:
   pull_request:
+  # A push to a branch that pull requests target also saves the week's Lite
+  # IP Intelligence file where those pull requests can restore it, as the
+  # steps that restore and save it say.
   push:
-    branches: [main]
+    branches: [main, 'release/**']
   workflow_dispatch:
 
 jobs:
@@ -121,13 +124,17 @@ jobs:
       # Enterprise data file, and end with its "Find out more" section. It
       # runs even when a test failed, so the log shows both.
       # Every on-premise IP Intelligence example but performance and update
-      # reads the Lite IP Intelligence file, a download of about 320 MB that
+      # reads the Lite IP Intelligence file, a download of about 455 MB that
       # the daily entry does not hold, so the file has an entry of its own for
       # the week. Each example that reads it finds it restored, and on a miss
-      # the first one downloads it for the rest. Each system has its own
-      # entry, so on a miss Windows downloads the file through the PowerShell
-      # script, as Linux does through the shell script, rather than restoring
-      # the copy Linux saved.
+      # ci/run-examples-on-free-data.ps1 downloads it once before the examples
+      # start. Each system has its own entry, so on a miss Windows downloads
+      # the file through the PowerShell script, as Linux does through the
+      # shell script, rather than restoring the copy Linux saved.
+      # Only a run that is not for a pull request saves the entry, because
+      # an entry a pull request saves can be restored by that pull request
+      # alone. A pull request restores the entry a push to its base branch or
+      # to main saved this week, and downloads the file when neither has one.
       - name: Name the week for the Lite IP Intelligence file
         id: week
         if: ${{ !cancelled() }}
@@ -148,7 +155,9 @@ jobs:
       # A file that was not downloaded leaves nothing to save, which is not a
       # failure of this job.
       - name: Save the Lite IP Intelligence file for later runs this week
-        if: ${{ !cancelled() && steps.ipi-lite.outputs.cache-hit != 'true' }}
+        if: >-
+          ${{ !cancelled() && github.event_name != 'pull_request' &&
+          steps.ipi-lite.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
@@ -191,7 +200,14 @@ jobs:
       matrix:
         mode: [cloud, onpremise]
     steps:
+      # The script builds the example from this checkout's crates, whose -sys
+      # crates compile the C sources in the cxx submodule. Its data
+      # submodules are not needed, because the TAC file is fetched below. The
+      # crates are versioned from the release tags.
       - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2

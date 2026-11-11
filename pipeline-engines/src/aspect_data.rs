@@ -32,11 +32,24 @@
 //! [`AspectDataBase`] is a ready-made backing an engine's concrete data struct
 //! can embed. It forwards the core [`ElementData`] property bag to a
 //! [`MapElementData`] and tracks the engine keys and cache-hit flag for the
-//! aspect layer.
+//! aspect layer. With a [`MissingPropertySource`] from each engine that wrote
+//! to it, it also gives the reason a property it does not hold is missing,
+//! and logs a warning for each read of such a property. A cloud engine whose
+//! request failed marks its data, so each such read gives
+//! [`MissingPropertyReason::CloudRequestFailed`](crate::MissingPropertyReason::CloudRequestFailed)
+//! instead and logs at info level. A read for a product the resource key
+//! lacks logs nothing, because the cloud engine logs that once.
 
 use std::any::Any;
+use std::sync::Arc;
 
-use fiftyone_pipeline_core::{ElementData, MapElementData, NoValueError, PropertyValue};
+use fiftyone_pipeline_core::{
+    ElementData, MapElementData, MissingPropertyReason, NoValueError, PropertyValue,
+};
+
+use crate::missing_property::{
+    cloud_request_failed, first_known_reason, MissingPropertyResult, MissingPropertySource,
+};
 
 /// Element data produced by an aspect engine.
 ///
@@ -46,8 +59,11 @@ use fiftyone_pipeline_core::{ElementData, MapElementData, NoValueError, Property
 ///
 /// Implementations are usually built by embedding an [`AspectDataBase`] and
 /// delegating to it, so the trait has no required methods beyond the two
-/// accessors below. Like [`ElementData`], it is `Send` but not `Sync`: aspect
-/// data is accessed from a single thread per request.
+/// accessors below. Like [`ElementData`], it is `Send + Sync`. Only the engine
+/// that adds it writes it, and the elements of a parallel group can then read
+/// it from several threads at once. The
+/// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#aspect-data)
+/// says aspect data should be thread-safe.
 pub trait AspectData: ElementData {
     /// The data keys of the engines that contributed to this data.
     ///
@@ -70,7 +86,9 @@ pub trait AspectData: ElementData {
 ///
 /// Concrete aspect data embeds one of these and forwards the [`ElementData`]
 /// and [`AspectData`] traits to it. It holds the property bag (a
-/// [`MapElementData`]), the contributing engine keys and the cache-hit flag.
+/// [`MapElementData`]), the contributing engine keys, the cache-hit flag, the
+/// [`MissingPropertySource`] of each engine that added one, whether the
+/// cloud request failed and whether a read of a missing property is logged.
 /// The lazy-loading task list lives on the engine wrapper rather than the data
 /// (see [`crate::AspectEngineBase`]).
 #[derive(Debug, Clone)]
@@ -78,6 +96,9 @@ pub struct AspectDataBase {
     values: MapElementData,
     engine_keys: Vec<String>,
     cache_hit: bool,
+    missing_property_sources: Vec<Arc<MissingPropertySource>>,
+    cloud_request_failed: bool,
+    log_missing_properties: bool,
 }
 
 impl AspectDataBase {
@@ -88,6 +109,9 @@ impl AspectDataBase {
             values: MapElementData::new(),
             engine_keys: vec![engine_key.into()],
             cache_hit: false,
+            missing_property_sources: Vec::new(),
+            cloud_request_failed: false,
+            log_missing_properties: true,
         }
     }
 
@@ -98,6 +122,9 @@ impl AspectDataBase {
             values,
             engine_keys: vec![engine_key.into()],
             cache_hit: false,
+            missing_property_sources: Vec::new(),
+            cloud_request_failed: false,
+            log_missing_properties: true,
         }
     }
 
@@ -149,11 +176,123 @@ impl AspectDataBase {
     pub fn cache_hit(&self) -> bool {
         self.cache_hit
     }
+
+    /// Add the details of an engine that wrote to this data, so that a
+    /// property this data does not hold gives that engine's reason.
+    pub fn add_missing_property_source(&mut self, source: Arc<MissingPropertySource>) {
+        self.missing_property_sources.push(source);
+    }
+
+    /// Mark this data as written for a flow data whose cloud request failed,
+    /// so every property it does not hold gives
+    /// [`MissingPropertyReason::CloudRequestFailed`]. A cloud engine calls this
+    /// when the cloud request engine left no response.
+    pub fn mark_cloud_request_failed(&mut self) {
+        self.cloud_request_failed = true;
+    }
+
+    /// True when a cloud engine marked this data with
+    /// [`mark_cloud_request_failed`](Self::mark_cloud_request_failed).
+    pub fn cloud_request_failed(&self) -> bool {
+        self.cloud_request_failed
+    }
+
+    /// Stop a read of a property this data does not hold logging a record.
+    /// The read still gives the reason. An engine calls this for data that
+    /// .NET builds with no logger, such as a cloud hardware profile.
+    pub fn stop_logging_missing_properties(&mut self) {
+        self.log_missing_properties = false;
+    }
+
+    /// Why `property_name` is missing. When the cloud request failed that is
+    /// the reason, naming the first engine key. Otherwise it is from the
+    /// sources in the order they were added, the first reason other than
+    /// [`MissingPropertyReason::Unknown`] deciding. [`None`] when no source
+    /// was added and the cloud request did not fail.
+    ///
+    /// The bag is not consulted, so ask only about a property this data does
+    /// not hold.
+    pub fn missing_property_reason(&self, property_name: &str) -> Option<MissingPropertyResult> {
+        if self.cloud_request_failed {
+            return Some(cloud_request_failed(
+                property_name,
+                self.engine_keys.first().map(String::as_str),
+            ));
+        }
+        first_known_reason(
+            self.missing_property_sources
+                .iter()
+                .map(|source| source.reason(property_name)),
+        )
+    }
+
+    /// Why `property_name` is missing, as
+    /// [`missing_property_reason`](Self::missing_property_reason) gives it,
+    /// logging a record that names `data_type` when there is a reason.
+    ///
+    /// Call this for a read of a property the data does not hold, so each
+    /// such read logs once, as .NET's aspect data does. A failed cloud request
+    /// logs at info level, because the cloud request engine has already
+    /// recorded the failure and one failure leads to many such reads. A
+    /// product the resource key lacks logs nothing, because the cloud engine
+    /// logs the missing product once, as the cloud aspect engine
+    /// specification says. Every other reason logs a warning. Nothing is
+    /// logged after
+    /// [`stop_logging_missing_properties`](Self::stop_logging_missing_properties).
+    pub fn missing_property(
+        &self,
+        property_name: &str,
+        data_type: &str,
+    ) -> Option<MissingPropertyResult> {
+        let missing = self.missing_property_reason(property_name)?;
+        if !self.log_missing_properties
+            || missing.reason == MissingPropertyReason::ProductNotAccessibleWithResourceKey
+        {
+            return Some(missing);
+        }
+        if missing.reason == MissingPropertyReason::CloudRequestFailed {
+            log::info!(
+                "Property '{property_name}' missing from aspect data '{data_type}' because \
+                 the upstream cloud request failed for this request ({:?}). See \
+                 FlowData::errors for details.",
+                missing.reason
+            );
+        } else {
+            log::warn!(
+                "Property '{property_name}' missing from aspect data '{data_type}'. {:?}",
+                missing.reason
+            );
+        }
+        Some(missing)
+    }
+
+    /// True when an engine added a [`MissingPropertySource`] or the cloud
+    /// request failed, so a property the data does not hold is known to be
+    /// missing.
+    pub fn knows_missing_properties(&self) -> bool {
+        self.cloud_request_failed || !self.missing_property_sources.is_empty()
+    }
 }
 
 impl ElementData for AspectDataBase {
+    /// The value of a property in the bag. For a property the bag does not
+    /// hold, the error carries the reason it is missing when a source was
+    /// added, logged as [`missing_property`](Self::missing_property) says,
+    /// and otherwise the bag's own explanation.
     fn get(&self, name: &str) -> Result<PropertyValue, NoValueError> {
-        self.values.get(name)
+        self.values.get(name).map_err(|absent| {
+            self.missing_property(name, "AspectDataBase")
+                .map_or(absent, |missing| NoValueError::new(missing.description))
+        })
+    }
+
+    /// Whether the bag holds the property. Unless
+    /// [`knows_missing_properties`](Self::knows_missing_properties) it answers
+    /// `true`, because a cloud engine leaves a property with no value out of
+    /// the bag, so the bag alone cannot tell that property from one the data
+    /// lacks.
+    fn has_property(&self, name: &str) -> bool {
+        !self.knows_missing_properties() || self.values.has_property(name)
     }
 
     fn keys(&self) -> Vec<String> {
@@ -182,6 +321,8 @@ impl AspectData for AspectDataBase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{AspectPropertyMetaData, EngineDeployment, MissingPropertyReason};
+    use fiftyone_pipeline_core::PropertyValueType;
 
     #[test]
     fn property_bag_round_trips() {
@@ -206,6 +347,201 @@ mod tests {
 
         data.set_cache_hit();
         assert!(data.cache_hit());
+    }
+
+    fn source(element_data_key: &str, tier: &str) -> Arc<MissingPropertySource> {
+        Arc::new(
+            MissingPropertySource::new(
+                element_data_key,
+                "TestEngine",
+                EngineDeployment::OnPremise,
+                tier,
+                vec![AspectPropertyMetaData::new(
+                    "IsMobile",
+                    element_data_key,
+                    PropertyValueType::Bool,
+                )
+                .with_data_tiers(["Premium"])],
+            )
+            .with_typed_properties(|name: &str| name.eq_ignore_ascii_case("IsMobile")),
+        )
+    }
+
+    #[test]
+    fn without_a_source_the_bag_explains_a_missing_property() {
+        let data = AspectDataBase::new("device").set("PlatformName", "iOS");
+        assert_eq!(data.missing_property_reason("IsMobile"), None);
+        assert_eq!(
+            data.get("IsMobile").unwrap_err().message,
+            "No value for property 'IsMobile'."
+        );
+    }
+
+    #[test]
+    fn a_source_explains_a_missing_property() {
+        let mut data = AspectDataBase::new("device").set("PlatformName", "iOS");
+        let source = source("device", "Lite");
+        data.add_missing_property_source(Arc::clone(&source));
+
+        let missing = data.missing_property_reason("IsMobile").unwrap();
+        assert_eq!(missing, source.reason("IsMobile"));
+        assert_eq!(
+            missing.reason,
+            MissingPropertyReason::DataFileUpgradeRequired
+        );
+        assert_eq!(
+            data.get("IsMobile").unwrap_err().message,
+            missing.description
+        );
+        assert_eq!(
+            data.get("NotAProperty").unwrap_err().message,
+            source.reason("NotAProperty").description
+        );
+        // A property the bag holds is still read from it.
+        assert_eq!(data.get("PlatformName").unwrap().as_str(), Some("iOS"));
+    }
+
+    #[test]
+    fn the_first_source_with_a_known_reason_decides() {
+        let mut data = AspectDataBase::new("device");
+        let unknown = Arc::new(MissingPropertySource::new(
+            "device",
+            "FirstEngine",
+            EngineDeployment::OnPremise,
+            "Lite",
+            Vec::new(),
+        ));
+        let known = source("device", "Lite");
+        let later = Arc::new(MissingPropertySource::new(
+            "device",
+            "LaterEngine",
+            EngineDeployment::Cloud,
+            "",
+            Vec::new(),
+        ));
+        assert_ne!(
+            later.reason("IsMobile").reason,
+            known.reason("IsMobile").reason,
+            "the later source must give a different known reason"
+        );
+        assert_ne!(
+            later.reason("IsMobile").reason,
+            MissingPropertyReason::Unknown
+        );
+        data.add_missing_property_source(unknown);
+        data.add_missing_property_source(Arc::clone(&known));
+        data.add_missing_property_source(Arc::clone(&later));
+        assert_eq!(
+            data.missing_property_reason("IsMobile"),
+            Some(known.reason("IsMobile"))
+        );
+        // Neither earlier source knows why NotAProperty is missing, so the
+        // later one decides.
+        assert_eq!(
+            known.reason("NotAProperty").reason,
+            MissingPropertyReason::Unknown
+        );
+        assert_eq!(
+            data.missing_property_reason("NotAProperty"),
+            Some(later.reason("NotAProperty"))
+        );
+    }
+
+    #[test]
+    fn printing_a_source_gives_the_number_of_properties_not_the_properties() {
+        let printed = format!("{:?}", source("device", "Lite"));
+        assert!(printed.contains("properties: 1"), "{printed}");
+        assert!(!printed.contains("IsMobile"), "{printed}");
+    }
+
+    #[test]
+    fn a_source_lets_the_data_say_what_it_holds() {
+        let mut data = AspectDataBase::new("device").set("PlatformName", "iOS");
+        assert!(!data.knows_missing_properties());
+        assert!(data.has_property("NotAProperty"));
+
+        data.add_missing_property_source(source("device", "Lite"));
+        assert!(data.knows_missing_properties());
+        assert!(data.has_property("platformname"));
+        assert!(!data.has_property("IsMobile"));
+        assert!(!data.has_property("NotAProperty"));
+    }
+
+    #[test]
+    fn missing_property_gives_the_same_reason() {
+        let mut data = AspectDataBase::new("device");
+        assert_eq!(data.missing_property("IsMobile", "AspectDataBase"), None);
+        data.add_missing_property_source(source("device", "Lite"));
+        assert_eq!(
+            data.missing_property("IsMobile", "AspectDataBase"),
+            data.missing_property_reason("IsMobile")
+        );
+    }
+
+    /// The description of a property of data whose cloud request failed.
+    const IS_MOBILE_FAILED: &str = "Property 'IsMobile' not found in data for element \
+         'device'. This is because an upstream cloud request failed, so no data was \
+         available to populate the property.";
+
+    #[test]
+    fn a_failed_cloud_request_explains_every_property_the_data_lacks() {
+        let mut data = AspectDataBase::new("device").set("PlatformName", "iOS");
+        assert!(!data.cloud_request_failed());
+        data.mark_cloud_request_failed();
+        assert!(data.cloud_request_failed());
+        assert!(data.knows_missing_properties());
+
+        let missing = data.missing_property_reason("IsMobile").unwrap();
+        assert_eq!(missing.reason, MissingPropertyReason::CloudRequestFailed);
+        assert_eq!(missing.description, IS_MOBILE_FAILED);
+        assert_eq!(data.get("IsMobile").unwrap_err().message, IS_MOBILE_FAILED);
+        assert_eq!(
+            data.missing_property("IsMobile", "AspectDataBase"),
+            Some(missing)
+        );
+        assert!(!data.has_property("IsMobile"));
+        // A property the bag holds is still read from it.
+        assert!(data.has_property("PlatformName"));
+        assert_eq!(data.get("PlatformName").unwrap().as_str(), Some("iOS"));
+    }
+
+    #[test]
+    fn a_failed_cloud_request_comes_before_any_source() {
+        // .NET's cloud missing property service looks at the mark first.
+        let mut data = AspectDataBase::new("device");
+        data.add_missing_property_source(source("device", "Lite"));
+        data.mark_cloud_request_failed();
+        assert_eq!(
+            data.missing_property_reason("IsMobile").unwrap().reason,
+            MissingPropertyReason::CloudRequestFailed
+        );
+        assert_eq!(
+            data.missing_property_reason("NotAProperty").unwrap().reason,
+            MissingPropertyReason::CloudRequestFailed
+        );
+    }
+
+    #[test]
+    fn a_failed_cloud_request_names_the_first_engine() {
+        let mut data = AspectDataBase::new("location");
+        data.add_engine_key("device");
+        data.mark_cloud_request_failed();
+        assert!(data
+            .missing_property_reason("Town")
+            .unwrap()
+            .description
+            .starts_with("Property 'Town' not found in data for element 'location'. "));
+        assert!(
+            data.clone().cloud_request_failed(),
+            "a clone keeps the mark"
+        );
+    }
+
+    #[test]
+    fn a_clone_keeps_its_sources() {
+        let mut data = AspectDataBase::new("device");
+        data.add_missing_property_source(source("device", "Lite"));
+        assert!(data.clone().missing_property_reason("IsMobile").is_some());
     }
 
     #[test]

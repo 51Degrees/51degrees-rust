@@ -17,9 +17,22 @@ thiserror.workspace = true
 # pipeline is used in high-traffic web servers, so a faster hasher than the
 # default SipHash is worthwhile.
 ahash.workspace = true
-# Processing logs the errors it suppresses through the log facade, which does
+# Processing logs each element's error through the log facade, which does
 # nothing until the application installs a logger.
 log = "0.4"
+# The ordered map behind Evidence, so entries keep the order and the key
+# spelling they were given in while lookups ignore case.
+indexmap = "2"
+
+# The group_load bench reads the process's CPU time with getrusage.
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"
+
+# Parallel groups under load, against the same elements added one at a time.
+# It runs only when asked for, with `cargo bench`, and takes its own options.
+[[bench]]
+name = "group_load"
+harness = false
 
 [package.metadata.docs.rs]
 # Build the documentation on docs.rs with every feature enabled, so the

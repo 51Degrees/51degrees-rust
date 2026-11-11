@@ -1,5 +1,7 @@
 # Cargo build output for every workspace in the repo (root and examples/).
 target/
+# The copy of Cargo.lock that ci/measure-wasm-size.sh places in its crate.
+/ci/wasm-size/Cargo.lock
 # Performance results written by the nightly performance workflow.
 /test-results
 *.log
