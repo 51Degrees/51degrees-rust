@@ -172,8 +172,10 @@ path, so cloud-only users and most of CI build without a C compiler.
   `pipeline.resource::<DataUpdateService>()` reaches the service for a check
   on demand. `DataUpdateService::on_update_complete` adds a callback that is
   told how each check ended, with a refresh that fails or panics reported as
-  `RefreshFailed` while the engine keeps the data it had, and a change to a
-  watched file that is no newer reported as `NotNeeded`.
+  `RefreshFailed` while the engine keeps the data it had, a change to a
+  watched file that is no newer reported as `NotNeeded`, and a further event
+  for a write already applied reported as `InProgress`. An update from memory
+  is not reported, and gives its result to the caller alone.
   `DataUpdateService::on_update_started` adds one told when each check
   starts. A callback added to a service given to the builder with
   `.data_update_service(..)` also hears the update on start-up.

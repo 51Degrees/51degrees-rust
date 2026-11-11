@@ -392,6 +392,11 @@ struct DataFileState {
     /// data-update service touches it, so it is gated on that feature.
     #[cfg(feature = "data-update")]
     last_applied_modified: Option<DateTime<Utc>>,
+    /// The last-modified time of the file a file-system-watcher event last
+    /// took, so a further event for the same write is told apart from a file
+    /// that is no newer.
+    #[cfg(feature = "data-update")]
+    last_watched_modified: Option<DateTime<Utc>>,
     /// True once the file has been registered with a data update service.
     registered: bool,
 }
@@ -541,6 +546,20 @@ impl AspectEngineDataFile {
     #[cfg(feature = "data-update")]
     pub(crate) fn set_last_applied_modified(&self, when: DateTime<Utc>) {
         self.lock().last_applied_modified = Some(when);
+    }
+
+    /// The last-modified time of the file a file-system-watcher event last
+    /// took.
+    #[cfg(feature = "data-update")]
+    pub(crate) fn last_watched_modified(&self) -> Option<DateTime<Utc>> {
+        self.lock().last_watched_modified
+    }
+
+    /// Record the last-modified time of the file a file-system-watcher event
+    /// has just taken.
+    #[cfg(feature = "data-update")]
+    pub(crate) fn set_last_watched_modified(&self, when: DateTime<Utc>) {
+        self.lock().last_watched_modified = Some(when);
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, DataFileState> {
