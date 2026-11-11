@@ -86,7 +86,7 @@ use std::any::Any;
 use std::collections::hash_map::RandomState;
 use std::hash::{Hash, Hasher};
 use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
@@ -147,6 +147,16 @@ type UpdateCallback = Arc<dyn Fn(&DataUpdateComplete) + Send + Sync>;
 /// A callback told when each check starts.
 type StartCallback = Arc<dyn Fn(&DataUpdateStarted) + Send + Sync>;
 
+/// What a check does with a completion callback that panics.
+#[derive(Clone, Copy)]
+enum CallbackPanic {
+    /// Log it, as update polling and the file watcher do.
+    Log,
+    /// Pass it to the caller, as a programmatic check and the update on
+    /// start-up do.
+    Raise,
+}
+
 /// The callbacks the service reports to. The file-system watchers share
 /// them, as a watcher holds no reference to the service.
 #[derive(Default)]
@@ -202,24 +212,26 @@ impl UpdateCallbacks {
         engine: &str,
         data_file: Option<&Arc<AspectEngineDataFile>>,
         result: &DataUpdateResult,
+        on_panic: CallbackPanic,
     ) {
         if let Err(error) = result {
             if error.status == AutoUpdateStatus::RefreshFailed {
                 log_refresh_failed(engine, error);
             }
         }
-        self.report(engine, data_file, result);
+        self.report(engine, data_file, result, on_panic);
     }
 
     /// Tell every callback, in the order they were added, that a check for
-    /// `engine` gave `result`, when the check had a data file. Nothing is
-    /// logged apart from a callback that panics, and the others are still
-    /// told.
+    /// `engine` gave `result`, when the check had a data file. A callback
+    /// that panics is logged or passed to the caller, as `on_panic` says, and
+    /// the callbacks after it are not called.
     fn report(
         &self,
         engine: &str,
         data_file: Option<&Arc<AspectEngineDataFile>>,
         result: &DataUpdateResult,
+        on_panic: CallbackPanic,
     ) {
         let Some(data_file) = data_file else {
             return;
@@ -241,17 +253,22 @@ impl UpdateCallbacks {
         };
         for callback in callbacks {
             if let Err(panic) = catch_unwind(AssertUnwindSafe(|| callback(&report))) {
-                log_callback_panic(engine, panic.as_ref());
+                match on_panic {
+                    CallbackPanic::Log => log_callback_panic(engine, panic.as_ref()),
+                    CallbackPanic::Raise => resume_unwind(panic),
+                }
+                return;
             }
         }
     }
 }
 
-/// Log an update callback for `engine` that panicked.
+/// Log an update callback for `engine` that panicked, with the message the
+/// errors table gives for an error of any other kind.
 fn log_callback_panic(engine: &str, panic: &(dyn Any + Send)) {
     log::error!(
-        "An update callback for {engine} panicked. The data update service carries on. \
-         Error detail: {}",
+        "An unhandled error occurred while checking for automatic updates for engine \
+         '{engine}'. Error detail: {}",
         panic_message(panic)
     );
 }
@@ -405,8 +422,11 @@ impl DataUpdateService {
     ///
     /// A callback runs on the thread that made the check, which is the
     /// service's own thread for a scheduled poll and the watcher's for a
-    /// file change, so one that blocks delays the checks after it. One that
-    /// panics is logged and the others are still told.
+    /// file change, so one that blocks delays the checks after it. The
+    /// callbacks after one that panics are not called. On a scheduled poll
+    /// or a file change the panic is logged, and on the update on start-up
+    /// or a call to [`Self::check_for_update`] it passes to the caller, as
+    /// .NET passes on an exception a handler raises.
     pub fn on_update_complete(
         &self,
         callback: impl Fn(&DataUpdateComplete) + Send + Sync + 'static,
@@ -503,9 +523,12 @@ impl DataUpdateService {
                     );
                 }
             }
-            self.inner
-                .callbacks
-                .finish(engine.data_key(), Some(&data_file), &startup);
+            self.inner.callbacks.finish(
+                engine.data_key(),
+                Some(&data_file),
+                &startup,
+                CallbackPanic::Raise,
+            );
         }
 
         // Install the file-system watcher if requested and automatic updates,
@@ -594,9 +617,12 @@ impl DataUpdateService {
         if matches!(result, Ok(AutoUpdateStatus::Success)) {
             self.reschedule_after_update(&registration);
         }
-        self.inner
-            .callbacks
-            .report(engine.data_key(), Some(&registration.data_file), &result);
+        self.inner.callbacks.report(
+            engine.data_key(),
+            Some(&registration.data_file),
+            &result,
+            CallbackPanic::Raise,
+        );
         result
     }
 
@@ -905,6 +931,7 @@ impl ServiceHandle {
                     engine.data_key(),
                     Some(&registration.data_file),
                     &result,
+                    CallbackPanic::Log,
                 );
                 // Once new data is in use, the next poll waits for the next
                 // update date that data gives, as at registration. A poll
@@ -939,12 +966,18 @@ impl ServiceHandle {
         callbacks: &UpdateCallbacks,
     ) {
         let Some(engine) = engine.upgrade() else {
+            // With its engine gone the watcher belongs to no registered data
+            // file, so the event has nothing to do, as .NET reports it.
+            let name = data_file.identifier();
+            callbacks.start(name, Some(data_file));
+            let result = Ok(AutoUpdateStatus::InProgress);
+            callbacks.report(name, Some(data_file), &result, CallbackPanic::Log);
             return;
         };
         let key = engine.data_key();
         callbacks.start(key, Some(data_file));
         let result = Self::refresh_from_watched_file(&engine, data_file);
-        callbacks.finish(key, Some(data_file), &result);
+        callbacks.finish(key, Some(data_file), &result, CallbackPanic::Log);
     }
 
     /// Refresh `engine` from its watched data file when the file is newer
@@ -2285,6 +2318,30 @@ mod tests {
     /// How much newer than the file the engine was built from a written file
     /// is made.
     const NEWER: Duration = Duration::from_secs(60);
+
+    /// A watcher event after its engine is gone belongs to no registered data
+    /// file and has nothing left to do, so it is reported as in progress, as
+    /// .NET reports it.
+    #[test]
+    fn an_event_after_the_engine_is_gone_is_in_progress() {
+        let watched = watched("engine-gone");
+        let callbacks = UpdateCallbacks::default();
+        let told = Arc::new(Mutex::new(Vec::new()));
+        let kept = Arc::clone(&told);
+        callbacks.add(Arc::new(move |report: &DataUpdateComplete| {
+            kept.lock().unwrap().push(report.status);
+        }));
+        let engine = Arc::downgrade(&watched.engine);
+        let data_file = Arc::clone(&watched.data_file);
+        let dir = watched.dir.clone();
+        drop(watched);
+        assert!(engine.upgrade().is_none(), "the engine is still held");
+
+        ServiceHandle::on_file_changed(&engine, &data_file, &callbacks);
+
+        assert_eq!(*told.lock().unwrap(), [AutoUpdateStatus::InProgress]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// A watcher event for a write that an earlier event applied waited while
     /// that event was applied, so it is reported as in progress, as .NET
