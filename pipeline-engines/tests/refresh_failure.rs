@@ -255,6 +255,15 @@ fn statuses(reports: &Reports) -> Vec<AutoUpdateStatus> {
     reports.iter().map(|(_, status)| *status).collect()
 }
 
+/// True for a status a check that refreshed nothing gives, being a file no
+/// newer, or a further event for a write already applied.
+fn refreshed_nothing(status: AutoUpdateStatus) -> bool {
+    matches!(
+        status,
+        AutoUpdateStatus::NotNeeded | AutoUpdateStatus::InProgress
+    )
+}
+
 /// Wait until `done` holds for the statuses reported, or [`WAIT`] passes.
 fn wait_for(reports: &Reports, done: impl Fn(&[AutoUpdateStatus]) -> bool) {
     let start = Instant::now();
@@ -546,7 +555,7 @@ fn a_watched_file(dir: &Path, refused: &str) {
     // while the first was applied, so it is reported as in progress.
     let statuses: Vec<AutoUpdateStatus> = statuses(&reports)
         .into_iter()
-        .filter(|status| *status != AutoUpdateStatus::InProgress)
+        .filter(|status| !refreshed_nothing(*status))
         .collect();
     assert_eq!(statuses[0], AutoUpdateStatus::RefreshFailed, "{statuses:?}");
     assert!(statuses.len() >= 2, "{statuses:?}");
@@ -670,7 +679,7 @@ fn a_refresh_that_panics_after_a_change(dir: &Path) {
     drop(service);
     let statuses: Vec<AutoUpdateStatus> = statuses(&reports)
         .into_iter()
-        .filter(|status| *status != AutoUpdateStatus::NotNeeded)
+        .filter(|status| !refreshed_nothing(*status))
         .collect();
     assert_eq!(
         statuses.first(),
