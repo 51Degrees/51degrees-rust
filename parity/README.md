@@ -771,6 +771,6 @@ A metadata case goes in `corpus/metadata.json` in the same way. The step
 step too.
 
 A derived property case is added to the case file in derived-properties,
-and reaches this comparison when the crate's `vendor` folder is next copied
-from that repository. A new case file needs its script built into both
+and reaches this comparison when the crate's `vendor` submodule next moves
+to a commit that has it. A new case file needs its script built into both
 the crate and the .NET package.

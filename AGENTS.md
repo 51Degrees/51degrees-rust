@@ -162,6 +162,23 @@ and run `pwsh ./ci/check-native-symbols.ps1`, which fails when both C
 libraries define the same common C function, meaning 51degrees-cxx's
 `src/common/ipiSymbols.h` lacks it.
 
+Three crates compile in files from other 51Degrees repositories, as the other
+languages do. `derived-properties/vendor` is a submodule of
+[derived-properties](https://github.com/51Degrees/derived-properties), whose
+scripts the derived property element embeds and whose cases its tests run. It
+sits inside the crate's folder, so cargo packages the files the crate's
+`include` names from it. `javascript-templates` at the root is a submodule of
+[javascript-templates](https://github.com/51Degrees/javascript-templates), as
+in PHP and Go, and the JavaScript builder renders the copy of its
+`JavaScriptResource.mustache` committed in `javascript-builder/assets`, because
+cargo packages only the files inside a crate's folder.
+`ci/check-javascript-templates.ps1` fails when the copy differs from the
+submodule, so after the submodule moves, copy the template across in the same
+pull request. The IP Intelligence translation engines compile in the files of
+`cxx/data/ip-intelligence/Translations`, the data repository inside `cxx`, and
+their `build.rs` falls back to a copy inside the crate, which only a packaged
+crate has.
+
 ## Building and testing
 
 Once per clone, and again whenever the `owid-rust` submodule moves, check out
@@ -289,6 +306,18 @@ path. Each copy is ignored by git, listed in the crate manifest's `include`,
 and records the 51degrees-cxx commit in `cxx/SOURCE.txt`. A build in the
 workspace reads the submodule and never needs the copy.
 
+The IP Intelligence translation files are carried the same way.
+`ci/copy-translations.ps1` copies them from the data repository inside `cxx`
+into `ip-intelligence-translation/translations`, which is ignored by git and
+listed in the crate's `include`, and records the data commit in
+`translations/SOURCE.txt`. The derived property crate needs no copy, because
+its submodule is inside its folder, but the published crate has no git to say
+which commit its scripts came from, so
+`ci/record-derived-properties-commit.ps1` writes that commit to
+`derived-properties/SOURCE.txt`, which is ignored by git and listed in the
+crate's `include`. Its `build.rs` reads the commit from git where the
+submodule is checked out and from that file otherwise.
+
 ## CI gates
 
 - `pull-request.yml` runs fmt, build, test, clippy and doc on Windows, Linux
@@ -345,13 +374,10 @@ workspace reads the submodule and never needs the copy.
 - `publish.yml` publishes on push to `main`, then a `verify-published` job
   builds and tests `examples/` against the just-released crates.io packages.
 - `utm-link-lint.yml` checks the UTM links described below, on every PR.
-- `mustache-drift.yml` guards the generated JavaScript resource template.
-  Push and pull request builds compare against a pinned upstream commit
-  rather than the branch, so a change upstream does not fail work here that
-  has nothing to do with it. The weekly schedule and a manual run still
-  compare against the branch, so a real drift is still reported. A refresh
-  moves the bundled asset and `UPSTREAM_PINNED_REF` to the same commit in one
-  pull request.
+- `javascript-templates-check.yml` fails when the template committed in
+  `javascript-builder/assets` differs from the `javascript-templates`
+  submodule, on every PR that touches either and on every push to `main` and
+  `rc`.
 - `dotnet-comparison.yml` runs the crates and the published .NET packages
   over the corpus in `parity/` and fails on any difference that
   `parity/allowed-differences.json` does not list with its reason. See

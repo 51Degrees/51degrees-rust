@@ -23,9 +23,16 @@
 //! The translation sources, compiled into the crate so the engines need no
 //! files.
 //!
-//! They are copies of the IP Intelligence translation files in the
-//! 51Degrees data repository, under `ip-intelligence/Translations`. The
-//! crate's tests check each copy against that folder byte for byte.
+//! They are the IP Intelligence translation files of the 51Degrees data
+//! repository, under `ip-intelligence/Translations`, read from the folder
+//! `build.rs` chooses.
+
+/// The text of the translation file `file`, a path in the translation folder.
+macro_rules! translation {
+    ($file:literal) => {
+        include_str!(concat!(env!("_51DEGREES_TRANSLATIONS_DIR"), "/", $file))
+    };
+}
 
 /// The country code sources, as pairs of a file name and its text. The one
 /// source, `countrycodes.en_GB.yml`, gives each country's English name for
@@ -35,7 +42,7 @@
 /// its type.
 pub const COUNTRY_CODE_SOURCES: &[(&str, &str)] = &[(
     "countrycodes.en_GB.yml",
-    include_str!("../translations/countrycodes.en_GB.yml"),
+    translation!("countrycodes.en_GB.yml"),
 )];
 
 /// The country name sources, as pairs of a file name and its text, in order
@@ -47,67 +54,67 @@ pub const COUNTRY_CODE_SOURCES: &[(&str, &str)] = &[(
 pub const COUNTRY_SOURCES: &[(&str, &str)] = &[
     (
         "countries.cs_CZ.yml",
-        include_str!("../translations/OSM/countries.cs_CZ.yml"),
+        translation!("OSM/countries.cs_CZ.yml"),
     ),
     (
         "countries.de_DE.yml",
-        include_str!("../translations/OSM/countries.de_DE.yml"),
+        translation!("OSM/countries.de_DE.yml"),
     ),
     (
         "countries.es_ES.yml",
-        include_str!("../translations/OSM/countries.es_ES.yml"),
+        translation!("OSM/countries.es_ES.yml"),
     ),
     (
         "countries.fr_FR.yml",
-        include_str!("../translations/OSM/countries.fr_FR.yml"),
+        translation!("OSM/countries.fr_FR.yml"),
     ),
     (
         "countries.hu_HU.yml",
-        include_str!("../translations/OSM/countries.hu_HU.yml"),
+        translation!("OSM/countries.hu_HU.yml"),
     ),
     (
         "countries.it_IT.yml",
-        include_str!("../translations/OSM/countries.it_IT.yml"),
+        translation!("OSM/countries.it_IT.yml"),
     ),
     (
         "countries.ja_JP.yml",
-        include_str!("../translations/OSM/countries.ja_JP.yml"),
+        translation!("OSM/countries.ja_JP.yml"),
     ),
     (
         "countries.nl_NL.yml",
-        include_str!("../translations/OSM/countries.nl_NL.yml"),
+        translation!("OSM/countries.nl_NL.yml"),
     ),
     (
         "countries.pl_PL.yml",
-        include_str!("../translations/OSM/countries.pl_PL.yml"),
+        translation!("OSM/countries.pl_PL.yml"),
     ),
     (
         "countries.pt_PT.yml",
-        include_str!("../translations/OSM/countries.pt_PT.yml"),
+        translation!("OSM/countries.pt_PT.yml"),
     ),
     (
         "countries.ro_RO.yml",
-        include_str!("../translations/OSM/countries.ro_RO.yml"),
+        translation!("OSM/countries.ro_RO.yml"),
     ),
     (
         "countries.sk_SK.yml",
-        include_str!("../translations/OSM/countries.sk_SK.yml"),
+        translation!("OSM/countries.sk_SK.yml"),
     ),
     (
         "countries.sv_SE.yml",
-        include_str!("../translations/OSM/countries.sv_SE.yml"),
+        translation!("OSM/countries.sv_SE.yml"),
     ),
     (
         "countries.tr_TR.yml",
-        include_str!("../translations/OSM/countries.tr_TR.yml"),
+        translation!("OSM/countries.tr_TR.yml"),
     ),
     (
         "countries.uk_UA.yml",
-        include_str!("../translations/OSM/countries.uk_UA.yml"),
+        translation!("OSM/countries.uk_UA.yml"),
     ),
     (
         "countries.vi_VN.yml",
-        include_str!("../translations/OSM/countries.vi_VN.yml"),
+        translation!("OSM/countries.vi_VN.yml"),
     ),
 ];
 

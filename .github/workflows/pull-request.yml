@@ -228,9 +228,9 @@ jobs:
   # the IP Intelligence translation engines are covered too, because they
   # compile their scripts and translations in so that they can run where there
   # is no file system. They build with reqwest and the
-  # data-update service disabled (default-features = false), so this job needs
-  # neither the C/C++ sources the -sys crates compile nor the data submodules,
-  # and it runs on Linux alone because a cross-compile to wasm is host-neutral.
+  # data-update service disabled (default-features = false), so this job does
+  # not compile the C/C++ sources the -sys crates compile, and it runs on Linux
+  # alone because a cross-compile to wasm is host-neutral.
   #
   # Beyond compiling, the wasm-safe test suites are executed on the target under
   # wasmtime, so the pure-Rust logic is exercised on wasm rather than only built.
@@ -241,20 +241,22 @@ jobs:
   # no transport for. fiftyone-caching's concurrency tests are also skipped, but
   # only those: they spawn threads and so live in a native-only test file, while
   # the crate's single-threaded behavioural suite does run here on wasm. The
-  # derived property element's conformance cases and its one script file test,
-  # and the check of the compiled in translations against the data repository,
-  # read from disk, so they are native only as well.
+  # derived property element's conformance cases and its script file tests,
+  # and the check that every translation file of the data repository is
+  # compiled in, read from disk, so they are native only as well.
   wasm:
     name: wasm (wasm32-wasip1)
     # Cross-compile to wasm is host-neutral; pin to a current LTS for consistency.
     runs-on: ubuntu-24.04
     steps:
       # The owid-rust submodule holds the OWID source that the fodid crate
-      # compiles in, so it is needed here even though the C/C++ sources are not.
+      # compiles in, and the data repository inside cxx holds the translations
+      # the IP Intelligence translation engines compile in, so the checkout is
+      # recursive even though the C/C++ sources are not compiled here.
       - name: Checkout workspace
         uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
 
       - name: Install Rust toolchain with wasm target
         uses: dtolnay/rust-toolchain@stable
@@ -364,3 +366,36 @@ jobs:
       # both under wasmtime. The crate README's figure comes from here.
       - name: Measure what the countries translation engine adds to a module
         run: bash ci/measure-wasm-size.sh
+
+  # Two crates compile in files that come from submodules and are not
+  # committed here, being the derived-properties scripts and the translations
+  # in the data repository inside cxx. This writes what the publish workflow
+  # writes before publishing, lists what cargo would publish for each of the
+  # two, checks the shared files are in it and nothing else from the
+  # submodules is, and then builds each crate from its own package, which has
+  # no git and no submodule, as crates.io and docs.rs build it.
+  package:
+    name: package (shared files)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout workspace
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: package
+
+      - name: Write the files the publish workflow writes
+        shell: pwsh
+        run: |
+          ./ci/copy-translations.ps1
+          ./ci/record-derived-properties-commit.ps1
+
+      - name: Check and build the two packages
+        run: bash ci/check-packages.sh
