@@ -1381,6 +1381,18 @@ mod tests {
         assert_eq!(engine.populated_property_names(), file_names);
     }
 
+    /// A name given twice keeps the index of its first place, as the C
+    /// library gives it.
+    #[test]
+    fn a_name_given_twice_keeps_its_first_index() {
+        let names = BuildNames::new(vec![
+            "Asn".to_owned(),
+            "AsnName".to_owned(),
+            "ASN".to_owned(),
+        ]);
+        assert!(matches!(names.by_name.get("asn"), Some(NameSlot::Index(0))));
+    }
+
     /// The reader lists the data file properties in the order the engine was
     /// built with their names, then `Ip` and `IpV6`, because each name's
     /// index is its place among those names.

@@ -1808,6 +1808,21 @@ mod tests {
         reader.read_property(reader.position(name).expect(name))
     }
 
+    /// A name given twice keeps the index of its first place, as the C
+    /// library gives it.
+    #[test]
+    fn a_name_given_twice_keeps_its_first_index() {
+        let names = BuildNames::new(vec![
+            "IsMobile".to_owned(),
+            "PlatformName".to_owned(),
+            "ismobile".to_owned(),
+        ]);
+        assert!(matches!(
+            names.by_name.get("ismobile"),
+            Some(NameSlot::Index(0))
+        ));
+    }
+
     /// Names in an order that is not the data file's.
     const NAMES_OUT_OF_ORDER: [&str; 3] = ["PlatformName", "IsMobile", "BrowserName"];
 
