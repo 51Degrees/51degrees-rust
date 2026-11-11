@@ -29,10 +29,11 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use fiftyone_caching::PutCache;
+use fiftyone_pipeline_core::constants::EVIDENCE_HTTP_REQUEST_KEY;
 use fiftyone_pipeline_core::redact::{mask, redact_with};
 use fiftyone_pipeline_core::{
-    compare_keys, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, EvidencePrefix, FlowData,
-    FlowElement, FlowError, PropertyMetaData, PropertyValueType, Result, TypedKey,
+    Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, EvidencePrefix, FlowData, FlowElement,
+    FlowError, PropertyMetaData, PropertyValueType, Result, TypedKey,
 };
 use fiftyone_pipeline_engines::{AspectEngine, AspectPropertyMetaData, EngineDeployment};
 use serde::de::IgnoredAny;
@@ -405,19 +406,21 @@ impl CloudRequestEngine {
         Ok(())
     }
 
-    /// Build the url-encoded form body for a flow data.
+    /// Build the url-encoded form body for a flow data from the evidence
+    /// `from` names.
     ///
     /// The credentials lead the body, followed by the asked-for property list
     /// when there is one. Every evidence value then has its prefix stripped, so
-    /// `query.user-agent` becomes `user-agent`. When two evidence values map to
-    /// the same stripped key, the evidence precedence order (query > header >
-    /// cookie > others) decides the winner. This realises the
-    /// [processing rules](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/cloud-request-engine.md#processing).
+    /// `query.user-agent` becomes `user-agent`, apart from the reserved names
+    /// and the web request key. When two evidence values map to the same
+    /// stripped key, the one whose prefix ranks first is written, as
+    /// [`request_precedence`] ranks them. This realises the
+    /// [processing rules](https://github.com/51Degrees/specifications/blob/d72eb074feb014a22e67d19802e1158a27658664/pipeline-specification/pipeline-elements/cloud-request-engine.md#processing).
     ///
     /// The property list travels in the form body rather than the query string,
     /// which the service also accepts, because a body has no practical length
     /// limit and a long list of property names would otherwise be at risk of one.
-    fn build_content(&self, data: &FlowData) -> Vec<(String, String)> {
+    fn build_content(&self, data: &FlowData, from: FormEvidence) -> Vec<(String, String)> {
         let mut form: Vec<(String, String)> = Vec::new();
         // The builder settled which credentials are present, so at least one
         // of these two writes a field.
@@ -437,19 +440,24 @@ impl CloudRequestEngine {
             ));
         }
 
-        // Collect the evidence the server accepts, so only the keys the
-        // accepted-evidence filter includes are sent.
+        // The web request a web integration gives is not one of the evidence's
+        // text values, but a text value under its key is left out too, because
+        // the key names the whole request rather than a value to send.
         let accepted = self.accepted();
         let mut entries: Vec<(&str, &str)> = data
             .evidence()
             .iter()
-            .filter(|(key, _)| accepted.include(key))
+            .filter(|(key, _)| !key.eq_ignore_ascii_case(EVIDENCE_HTTP_REQUEST_KEY))
+            .filter(|(key, _)| from == FormEvidence::All || accepted.include(key))
             .collect();
 
         // Sort so that lower-precedence evidence is written first and
-        // higher-precedence evidence overwrites it. `compare_keys` orders by
-        // precedence ascending (query first), so reverse it to apply query last.
-        entries.sort_by(|(left, _), (right, _)| compare_keys(left, right).reverse());
+        // higher-precedence evidence overwrites it.
+        entries.sort_by(|(left, _), (right, _)| {
+            request_precedence(left)
+                .cmp(&request_precedence(right))
+                .reverse()
+        });
 
         // Strip prefixes and de-duplicate on the stripped key, keeping the last
         // (highest-precedence) writer.
@@ -462,13 +470,16 @@ impl CloudRequestEngine {
             // and leave which list applied to the request undecided. The engine's
             // own fields win, which also keeps the request in step with the list
             // the missing-property check compares against.
-            if is_engine_owned_field(&field) {
+            if is_reserved_field(&field) {
                 continue;
             }
             if let Some(existing) = stripped.iter_mut().find(|(k, _)| k == &field) {
                 // Query evidence is expected to replace what the request
-                // carried, so only other clashes are logged.
-                if !has_prefix(key, EvidencePrefix::Query) {
+                // carried, so only other clashes are logged, and only for the
+                // body that is sent.
+                if from == FormEvidence::All
+                    && !key_prefix(key).eq_ignore_ascii_case(EvidencePrefix::Query.as_str())
+                {
                     log_conflict(key, value, &field, &entries);
                 }
                 existing.1 = value.to_owned();
@@ -616,13 +627,38 @@ fn log_cloud_warnings(warnings: &[String]) {
     }
 }
 
-/// Whether a form field is one the engine writes itself, so evidence of the same
-/// name is left out of the body rather than duplicating it.
-fn is_engine_owned_field(field: &str) -> bool {
-    matches!(
-        field,
-        constants::RESOURCE_PARAMETER | constants::LICENSE_PARAMETER | constants::VALUES_PARAMETER
-    )
+/// The other spelling of [`constants::LICENSE_PARAMETER`], which the service
+/// also reads as the licence key.
+const LICENCE_SPELLING: &str = "licence";
+
+/// The credential fields, whose values a log record masks.
+const CREDENTIAL_FIELDS: [&str; 3] = [
+    constants::RESOURCE_PARAMETER,
+    constants::LICENSE_PARAMETER,
+    LICENCE_SPELLING,
+];
+
+/// Which evidence a form body is built from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FormEvidence {
+    /// Every evidence value, which is what a request sends.
+    All,
+    /// Only the evidence the service lists as accepted, which is what a
+    /// stored response is found by, as the
+    /// [caching specification](https://github.com/51Degrees/specifications/blob/d72eb074feb014a22e67d19802e1158a27658664/pipeline-specification/features/caching.md#generation-of-keys)
+    /// asks.
+    Accepted,
+}
+
+/// Whether a field is a reserved name, being the credentials in either
+/// spelling of the licence key and the property list, in any letter case.
+/// The engine writes these itself, so evidence of the same name is left out
+/// of the body rather than adding a second field the service could read.
+fn is_reserved_field(field: &str) -> bool {
+    CREDENTIAL_FIELDS
+        .iter()
+        .chain([constants::VALUES_PARAMETER].iter())
+        .any(|name| field.eq_ignore_ascii_case(name))
 }
 
 /// Whether the cloud response carries the property that `asked` names.
@@ -731,10 +767,24 @@ fn strip_prefix(key: &str) -> String {
     }
 }
 
-/// Whether an evidence key starts with `prefix` and a separator.
-fn has_prefix(key: &str, prefix: EvidencePrefix) -> bool {
-    key.split_once('.')
-        .is_some_and(|(start, _)| start.eq_ignore_ascii_case(prefix.as_str()))
+/// The prefix of an evidence key, being the part before its first separator,
+/// or the whole key when it has none, as .NET takes it.
+fn key_prefix(key: &str) -> &str {
+    key.split_once('.').map_or(key, |(prefix, _)| prefix)
+}
+
+/// The rank of every prefix after the six the Evidence specification names.
+const OTHER_PREFIX_RANK: u32 = 6;
+
+/// The precedence of an evidence key in a request, lowest first. Prefixes rank
+/// query, header, cookie, server, fiftyone and location, as the
+/// [Evidence specification](https://github.com/51Degrees/specifications/blob/d72eb074feb014a22e67d19802e1158a27658664/pipeline-specification/features/evidence.md#overview)
+/// lists them, then any other prefix alphabetically, then the whole key. The
+/// evidence gives its keys in lowercase, so the order ignores letter case.
+fn request_precedence(key: &str) -> (u32, &str, &str) {
+    let prefix = key_prefix(key);
+    let rank = EvidencePrefix::parse(prefix).map_or(OTHER_PREFIX_RANK, |known| known.precedence());
+    (rank, prefix, key)
 }
 
 /// Log a warning that `key` replaces evidence sent under the same `field`,
@@ -755,10 +805,11 @@ fn log_conflict(key: &str, value: &str, field: &str, entries: &[(&str, &str)]) {
 }
 
 /// An evidence value as a log record shows it. The value of a resource key
-/// or licence key field is masked to its last 4 characters.
+/// or licence key field, in either spelling, is masked to its last 4
+/// characters.
 fn shown_value<'a>(key: &str, value: &'a str) -> Cow<'a, str> {
     let field = strip_prefix(key);
-    let is_credential = [constants::RESOURCE_PARAMETER, constants::LICENSE_PARAMETER]
+    let is_credential = CREDENTIAL_FIELDS
         .iter()
         .any(|name| field.eq_ignore_ascii_case(name));
     if is_credential {
@@ -781,16 +832,18 @@ impl FlowElement for CloudRequestEngine {
         // succeeds.
         self.discover()?;
 
-        let form = self.build_content(data);
-
-        // When a response cache is configured, key on this request's evidence and
-        // serve a stored response without calling the cloud. The lookup runs
-        // before the recovery gate, so a cache hit also avoids being blocked
-        // during a recovery period. A short-lived host supplies its own cache so
-        // hits survive across cold starts. A stored body carrying 51Did values,
-        // which a store shared with other writers can hold, was made for another
-        // request, so it is not served and the cloud is asked instead.
-        let cache_key = self.response_cache.as_ref().map(|_| cache_key(&form));
+        // When a response cache is configured, key on this request's accepted
+        // evidence and serve a stored response without calling the cloud. The
+        // lookup runs before the recovery gate, so a cache hit also avoids
+        // being blocked during a recovery period. A short-lived host supplies
+        // its own cache so hits survive across cold starts. A stored body
+        // carrying 51Did values, which a store shared with other writers can
+        // hold, was made for another request, so it is not served and the cloud
+        // is asked instead.
+        let cache_key = self
+            .response_cache
+            .as_ref()
+            .map(|_| cache_key(&self.build_content(data, FormEvidence::Accepted)));
         if let (Some(cache), Some(key)) = (&self.response_cache, &cache_key) {
             if let Some(body) = cache.get(key).filter(|body| !carries_identifier(body)) {
                 // The body validated when it was stored, so re-validating it
@@ -822,10 +875,12 @@ impl FlowElement for CloudRequestEngine {
             }
         }
 
+        // The request sends every evidence value, including evidence the
+        // service does not list, because what the service uses changes over time.
         let request = CloudHttpRequest {
             method: HttpMethod::Post,
             url: self.endpoints.data.clone(),
-            form,
+            form: self.build_content(data, FormEvidence::All),
             origin: self.cloud_request_origin.clone(),
         };
         let mut parsed = send_and_validate(
@@ -2031,7 +2086,7 @@ mod tests {
                 .add("header.user-agent", "header-ua")
                 .build(),
         );
-        let form = engine.build_content(&data);
+        let form = engine.build_content(&data, FormEvidence::All);
         assert_eq!(form[0], ("resource".to_owned(), "rk".to_owned()));
         assert_eq!(
             form[1],
@@ -2066,7 +2121,7 @@ mod tests {
                 .add("header.user-agent", "header-ua")
                 .build(),
         );
-        let form = engine.build_content(&data);
+        let form = engine.build_content(&data, FormEvidence::All);
         assert_eq!(form[0], ("resource".to_owned(), "rk".to_owned()));
         assert_eq!(form[1], ("license".to_owned(), "lk".to_owned()));
         assert_eq!(
@@ -2251,7 +2306,7 @@ mod tests {
                 .build(),
         );
 
-        let form = engine.build_content(&data);
+        let form = engine.build_content(&data, FormEvidence::All);
         // Resource key leads.
         assert_eq!(form[0], ("resource".to_owned(), "rk".to_owned()));
         // user-agent is present once, with the query value winning over header.

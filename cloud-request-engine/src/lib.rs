@@ -40,11 +40,14 @@
 //!
 //! On [`fiftyone_pipeline_core::FlowElement::process`] the engine:
 //!
-//! 1. Filters the flow data's evidence down to the keys the server accepts (the
-//!    accepted-evidence filter was resolved at build time, see
-//!    [discovery](#discovery)) and strips each key's prefix following the evidence
-//!    precedence rules, so `query.user-agent` becomes `user-agent` and a query
-//!    value beats a header value of the same name.
+//! 1. Takes every evidence value, whether or not the server lists its key as
+//!    accepted, apart from the reserved names `resource`, `license`, `licence`
+//!    and `values` and the web request key `server.http-request`, and strips
+//!    each key's prefix following the evidence precedence rules, so
+//!    `query.user-agent` becomes `user-agent` and a query value beats a header
+//!    value of the same name. The accepted evidence, resolved at build time
+//!    (see [discovery](#discovery)), is what the engine advertises to the
+//!    pipeline and what a stored response is found by.
 //! 2. POSTs the result as url-encoded form data (with the credential, and the
 //!    asked-for property list when there is one) to the `json` endpoint.
 //! 3. Stores the raw JSON response body in its [`CloudRequestData`] under the
