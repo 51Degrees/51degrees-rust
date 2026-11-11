@@ -44,6 +44,13 @@ const LICENCE_MASKED: &str = "****************6789";
 /// A resource key a caller passes as evidence. It is not a real key.
 const RESOURCE_EVIDENCE: &str = "RESOURCE-VALUE-0001";
 
+/// A licence key a caller passes as evidence under the spelling `licence`.
+/// It is not a real key.
+const LICENCE_EVIDENCE: &str = "LICENCE-VALUE-0002";
+
+/// [`LICENCE_EVIDENCE`] as a message may show it.
+const LICENCE_EVIDENCE_MASKED: &str = "**************0002";
+
 /// [`RESOURCE_EVIDENCE`] as a message may show it.
 const RESOURCE_EVIDENCE_MASKED: &str = "***************0001";
 
@@ -234,6 +241,35 @@ fn a_resource_key_given_as_evidence_is_masked_in_a_conflict_warning() {
             .iter()
             .any(|record| record.contains("evidence conflicts with")
                 && record.contains(&format!("query.resource={RESOURCE_EVIDENCE_MASKED}"))),
+        "the conflict was not logged with the masked key: {logged:?}"
+    );
+}
+
+/// A licence key given as evidence under the spelling `licence` is never
+/// sent, and a conflict warning that names it shows it masked, as for the
+/// spelling `license`.
+#[test]
+fn a_licence_key_given_as_evidence_is_masked_in_a_conflict_warning() {
+    let _serial = start();
+    process(
+        FakeCloud {
+            evidence_keys: r#"["header.ence","cookie.ence","query.licence"]"#,
+            data: (200, r#"{"device":{"ismobile":true}}"#.to_owned()),
+        },
+        &[
+            ("header.ence", "first"),
+            ("cookie.ence", "second"),
+            ("query.licence", LICENCE_EVIDENCE),
+        ],
+    );
+    let logged = take_logged();
+
+    assert_none_shows(&logged, LICENCE_EVIDENCE);
+    assert!(
+        logged
+            .iter()
+            .any(|record| record.contains("evidence conflicts with")
+                && record.contains(&format!("query.licence={LICENCE_EVIDENCE_MASKED}"))),
         "the conflict was not logged with the masked key: {logged:?}"
     );
 }

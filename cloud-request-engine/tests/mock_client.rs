@@ -151,44 +151,197 @@ fn happy_path_stores_raw_json_under_cloud_key() {
     assert_eq!(client.request_count(), 3);
 }
 
-#[test]
-fn evidence_is_filtered_to_accepted_keys_and_prefixes_stripped() {
+/// The form of the one data request an engine sends for `evidence` when the
+/// service lists `evidence_keys` as its accepted evidence, sorted so a test
+/// can compare it whole.
+fn form_sent(evidence_keys: &str, evidence: Evidence) -> Vec<(String, String)> {
     let client = Arc::new(FakeClient::default());
-    // The server only accepts the user-agent header.
-    client.set_evidence_keys(FakeClient::ok(r#"["header.user-agent"]"#));
+    client.set_evidence_keys(FakeClient::ok(evidence_keys));
     client.set_data(FakeClient::ok(r#"{"device":{}}"#));
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(engine_with(client.clone())))
+        .build()
+        .unwrap();
+    let mut data = pipeline.create_flow_data_with(evidence);
+    data.process().unwrap();
 
-    let engine = engine_with(client.clone());
+    let requests = client.requests.lock().unwrap();
+    let mut form = requests
+        .iter()
+        .find(|r| r.method == HttpMethod::Post)
+        .expect("a POST to the data endpoint")
+        .form
+        .clone();
+    form.sort();
+    form
+}
+
+/// `expected` as owned pairs, sorted as [`form_sent`] sorts a form.
+fn sorted(expected: &[(&str, &str)]) -> Vec<(String, String)> {
+    let mut pairs: Vec<(String, String)> = expected
+        .iter()
+        .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+        .collect();
+    pairs.sort();
+    pairs
+}
+
+/// Every evidence value is sent with its prefix removed, whether or not the
+/// service lists its key, apart from the reserved names `resource`,
+/// `license`, `licence` and `values` under any prefix and in any letter case.
+#[test]
+fn every_evidence_value_but_the_reserved_names_is_sent() {
+    let form = form_sent(
+        r#"["query.user-agent"]"#,
+        Evidence::builder()
+            .add("header.User-Agent", "UA")
+            .add("header.accept-language", "en-GB")
+            .add("header.X-Other", "other")
+            .add("cookie.session", "abc")
+            .add("server.client-ip", "203.0.113.1")
+            .add("other.VALUES", "device.iscrawler")
+            .add("server.licence", "licence-evidence")
+            .add("query.Resource", "resource-evidence")
+            .add("header.LICENSE", "license-evidence")
+            .build(),
+    );
+    assert_eq!(
+        form,
+        sorted(&[
+            ("resource", "test-resource-key"),
+            ("user-agent", "UA"),
+            ("accept-language", "en-GB"),
+            ("x-other", "other"),
+            ("session", "abc"),
+            ("client-ip", "203.0.113.1"),
+        ])
+    );
+}
+
+/// Evidence whose key has no prefix is sent under its whole key, and a
+/// reserved name with no prefix is still left out.
+#[test]
+fn evidence_with_no_prefix_is_sent_under_its_whole_key() {
+    let form = form_sent(
+        r#"["header.user-agent"]"#,
+        Evidence::builder()
+            .add("bare", "value")
+            .add("Values", "device.iscrawler")
+            .add("license", "license-evidence")
+            .add("RESOURCE", "resource-evidence")
+            .add("licence", "licence-evidence")
+            .build(),
+    );
+    assert_eq!(
+        form,
+        sorted(&[("resource", "test-resource-key"), ("bare", "value")])
+    );
+}
+
+/// When two keys share a name once their prefixes are removed, the one whose
+/// prefix ranks first is sent. A key's prefix is the part before its first
+/// separator, or the whole key when it has none, so a bare `query` ranks as
+/// query evidence and a bare `x-thing` among the other prefixes. Prefixes
+/// rank query, header, cookie, server, fiftyone and location, then any other
+/// prefix alphabetically.
+#[test]
+fn evidence_is_ranked_by_its_prefix() {
+    let form = form_sent(
+        r#"["header.user-agent"]"#,
+        Evidence::builder()
+            .add("x-thing", "bare")
+            .add("header.x-thing", "header")
+            .add("query", "bare-query")
+            .add("header.query", "header-query")
+            .add("a-b.place", "a-b")
+            .add("a.place", "a")
+            .add("aaa.where", "aaa")
+            .add("location.where", "location")
+            .add("fiftyone.where", "fiftyone")
+            .build(),
+    );
+    assert_eq!(
+        form,
+        sorted(&[
+            ("resource", "test-resource-key"),
+            ("x-thing", "header"),
+            ("query", "bare-query"),
+            ("place", "a"),
+            ("where", "fiftyone"),
+        ])
+    );
+}
+
+/// A text value under `server.http-request`, the key of the web request a
+/// web integration gives, is never sent, in any letter case, even when the
+/// service lists the key.
+#[test]
+fn a_value_under_the_web_request_key_is_never_sent() {
+    let form = form_sent(
+        r#"["header.user-agent","server.http-request"]"#,
+        Evidence::builder()
+            .add("header.user-agent", "UA")
+            .add("SERVER.Http-Request", "not a value to send")
+            .build(),
+    );
+    assert_eq!(
+        form,
+        sorted(&[("resource", "test-resource-key"), ("user-agent", "UA")])
+    );
+}
+
+/// A stored response is found by the evidence the service lists, so two
+/// requests that differ only in evidence it does not list share one entry,
+/// although the first request sends that evidence.
+#[test]
+fn evidence_the_service_does_not_list_does_not_change_the_cache_key() {
+    let client = Arc::new(FakeClient::default());
+    client.set_evidence_keys(FakeClient::ok(r#"["header.user-agent"]"#));
+    client.set_data(FakeClient::ok(r#"{"device":{"ismobile":true}}"#));
+    let cache = Arc::new(RecordingCache::default());
+    let engine = CloudRequestEngine::builder()
+        .resource_key("test-resource-key")
+        .endpoint("https://cloud.example.test/api/v4/")
+        .http_client(client.clone())
+        .cache(cache.clone())
+        .build()
+        .unwrap();
     let pipeline = Pipeline::builder()
         .add_element(Arc::new(engine))
         .build()
         .unwrap();
-
-    let mut data = pipeline.create_flow_data_with(
+    let evidence = |platform: &str| {
         Evidence::builder()
             .add("header.user-agent", "UA")
-            .add("cookie.not-accepted", "should-be-dropped")
-            .build(),
-    );
-    data.process().unwrap();
+            .add("header.sec-ch-ua-platform", platform)
+            .build()
+    };
+
+    let mut first = pipeline.create_flow_data_with(evidence("Windows"));
+    first.process().unwrap();
+    let mut second = pipeline.create_flow_data_with(evidence("macOS"));
+    second.process().unwrap();
 
     let requests = client.requests.lock().unwrap();
-    let data_request = requests
+    let posts: Vec<&CloudHttpRequest> = requests
         .iter()
-        .find(|r| r.method == HttpMethod::Post)
-        .expect("a POST to the data endpoint");
-
-    // Resource key is present, the accepted header is stripped to `user-agent`,
-    // and the non-accepted cookie is absent.
-    assert!(data_request
-        .form
-        .iter()
-        .any(|(k, v)| k == "resource" && v == "test-resource-key"));
-    assert!(data_request
-        .form
-        .iter()
-        .any(|(k, v)| k == "user-agent" && v == "UA"));
-    assert!(!data_request.form.iter().any(|(k, _)| k == "not-accepted"));
+        .filter(|r| r.method == HttpMethod::Post)
+        .collect();
+    assert_eq!(
+        posts.len(),
+        1,
+        "the second request is served from the cache"
+    );
+    assert!(
+        posts[0]
+            .form
+            .iter()
+            .any(|(k, v)| k == "sec-ch-ua-platform" && v == "Windows"),
+        "the first request sends the evidence the service does not list: {:?}",
+        posts[0].form
+    );
+    let cloud = second.get(CloudRequestEngine::DATA_KEY).unwrap();
+    assert!(cloud.cache_hit(), "the second request is a cache hit");
 }
 
 /// A web integration gives the whole web request with the evidence, under
@@ -1060,7 +1213,7 @@ fn injected_state_skips_discovery_and_makes_no_discovery_request() {
     let mut data = pipeline.create_flow_data_with(
         Evidence::builder()
             .add("header.user-agent", "UA")
-            .add("cookie.not-accepted", "should-be-dropped")
+            .add("cookie.not-listed", "sent all the same")
             .build(),
     );
     data.process().unwrap();
@@ -1076,13 +1229,17 @@ fn injected_state_skips_discovery_and_makes_no_discovery_request() {
         .iter()
         .find(|r| r.method == HttpMethod::Post)
         .expect("a POST to the data endpoint");
-    // The injected evidence filter was applied: the accepted header is present
-    // and stripped, the non-accepted cookie is dropped.
+    // The injected evidence keys decide what the engine advertises, not what
+    // it sends, so the header and the cookie the state does not list are both
+    // sent with their prefixes removed.
     assert!(data_request
         .form
         .iter()
         .any(|(k, v)| k == "user-agent" && v == "UA"));
-    assert!(!data_request.form.iter().any(|(k, _)| k == "not-accepted"));
+    assert!(data_request
+        .form
+        .iter()
+        .any(|(k, v)| k == "not-listed" && v == "sent all the same"));
 }
 
 #[test]
