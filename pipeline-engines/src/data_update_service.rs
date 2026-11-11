@@ -216,7 +216,7 @@ impl UpdateCallbacks {
     ) {
         if let Err(error) = result {
             if error.status == AutoUpdateStatus::RefreshFailed {
-                log_refresh_failed(engine, error);
+                log_check_failed(error);
             }
         }
         self.report(engine, data_file, result, on_panic);
@@ -277,17 +277,21 @@ fn log_callback_panic(engine: &str, panic: &(dyn Any + Send)) {
 /// [`AutoUpdateStatus::RefreshFailed`], so a panic in a refresh is reported
 /// like a failure and never ends the thread that made the check.
 fn guarded_refresh(
+    engine: &str,
     refresh: impl FnOnce() -> fiftyone_pipeline_core::Result<()>,
 ) -> Result<(), DataUpdateError> {
-    match catch_unwind(AssertUnwindSafe(refresh)) {
-        Ok(result) => {
-            result.map_err(|e| DataUpdateError::new(AutoUpdateStatus::RefreshFailed, e.to_string()))
-        }
-        Err(panic) => Err(DataUpdateError::new(
-            AutoUpdateStatus::RefreshFailed,
-            format!("the refresh panicked: {}", panic_message(panic.as_ref())),
-        )),
-    }
+    let cause = match catch_unwind(AssertUnwindSafe(refresh)) {
+        Ok(Ok(())) => return Ok(()),
+        Ok(Err(error)) => error.to_string(),
+        Err(panic) => format!("the refresh panicked: {}", panic_message(panic.as_ref())),
+    };
+    Err(DataUpdateError::new(
+        AutoUpdateStatus::RefreshFailed,
+        format!(
+            "An error occurred when applying a data update to engine '{engine}'. \
+             Error detail: {cause}"
+        ),
+    ))
 }
 
 /// The message a panic carries, when it is text.
@@ -639,8 +643,10 @@ impl DataUpdateService {
         data_file_identifier: Option<&str>,
         data: &[u8],
     ) -> DataUpdateResult {
-        guarded_refresh(|| engine.refresh_from_memory(data_file_identifier, data))
-            .map(|()| AutoUpdateStatus::Success)
+        guarded_refresh(engine.data_key(), || {
+            engine.refresh_from_memory(data_file_identifier, data)
+        })
+        .map(|()| AutoUpdateStatus::Success)
     }
 
     /// The number of data files currently registered, whose engines have
@@ -804,7 +810,9 @@ impl DataUpdateService {
             "Attempting to refresh Engine '{}' with new data",
             engine.data_key()
         );
-        guarded_refresh(|| engine.refresh(Some(data_file.identifier())))?;
+        guarded_refresh(engine.data_key(), || {
+            engine.refresh(Some(data_file.identifier()))
+        })?;
         data_file.set_last_applied_modified(modified);
         Ok(AutoUpdateStatus::Success)
     }
@@ -926,7 +934,7 @@ impl ServiceHandle {
                     .start(engine.data_key(), Some(&registration.data_file));
                 let result = self.check_for_update_from_url(&registration);
                 let applied = matches!(result, Ok(AutoUpdateStatus::Success));
-                log_poll(engine.data_key(), &registration, &result);
+                log_poll(&result);
                 self.inner.callbacks.finish(
                     engine.data_key(),
                     Some(&registration.data_file),
@@ -1008,16 +1016,10 @@ impl ServiceHandle {
             "Attempting to refresh Engine '{}' with new data",
             engine.data_key()
         );
-        let result = guarded_refresh(|| engine.refresh(Some(data_file.identifier())))
-            .map(|()| AutoUpdateStatus::Success);
-        if result.is_ok() {
-            log::info!(
-                "The data file for {} was refreshed from '{}'.",
-                engine.data_key(),
-                path.display()
-            );
-        }
-        result
+        guarded_refresh(engine.data_key(), || {
+            engine.refresh(Some(data_file.identifier()))
+        })
+        .map(|()| AutoUpdateStatus::Success)
     }
 
     /// True once the service has been dropped.
@@ -1183,7 +1185,9 @@ impl ServiceHandle {
             };
             let recorded = data_file.published_changes();
             log::info!("Attempting to refresh Engine '{name}' with new data");
-            guarded_refresh(|| engine.refresh_from_memory(Some(data_file.identifier()), &data))?;
+            guarded_refresh(engine.data_key(), || {
+                engine.refresh_from_memory(Some(data_file.identifier()), &data)
+            })?;
             Self::record_published(data_file, recorded);
             return Ok(AutoUpdateStatus::Success);
         };
@@ -1229,7 +1233,9 @@ impl ServiceHandle {
         })?;
         let recorded = data_file.published_changes();
         log::info!("Attempting to refresh Engine '{name}' with new data");
-        guarded_refresh(|| engine.refresh(Some(data_file.identifier())))?;
+        guarded_refresh(engine.data_key(), || {
+            engine.refresh(Some(data_file.identifier()))
+        })?;
         Self::record_published(data_file, recorded);
 
         Ok(AutoUpdateStatus::Success)
@@ -1246,40 +1252,24 @@ impl ServiceHandle {
     }
 }
 
-/// Log the outcome of a scheduled poll, with the messages the specification's
-/// logging section gives. The URL logged is the configured one, without the
-/// keys the formatter adds, and with any licence key it carries itself masked
-/// to its last 4 characters. A refresh that failed is logged where the check
-/// ends.
-fn log_poll(engine: &str, registration: &Registration, result: &DataUpdateResult) {
-    let data_file = &registration.data_file;
-    let url = redact_with(
-        data_file.data_update_url().unwrap_or(""),
-        &data_file.configuration().data_update_license_keys,
-    );
-    match result {
-        Ok(AutoUpdateStatus::Success) => {
-            log::info!("A data file update for {engine} was downloaded from '{url}' and applied.")
+/// Log a scheduled poll that failed, as the errors table gives for a failed
+/// check the service logs: the entry "Error during check for data update",
+/// with the error, which carries the table's message, attached. A refresh
+/// that failed is logged where the check ends, and a poll that worked logs
+/// nothing more here, as the table's messages for it are written where they
+/// happen.
+fn log_poll(result: &DataUpdateResult) {
+    if let Err(error) = result {
+        if error.status != AutoUpdateStatus::RefreshFailed {
+            log_check_failed(error);
         }
-        Ok(_) => {}
-        // A refresh that failed is logged where the check ends.
-        Err(error) if error.status == AutoUpdateStatus::RefreshFailed => {}
-        // Every other error already carries the message the errors table
-        // gives, written where the failure was found and its detail was to
-        // hand. Every row of that table is at Error apart from the two
-        // warnings, which are written where they happen and never reach here.
-        Err(error) => log::error!("{}", error.message),
     }
 }
 
-/// Log a refresh that failed, with the level and message the specification's
-/// [errors table](https://github.com/51Degrees/specifications/blob/16ecea439490552e3d1f13c17dc48ac8ae8d9684/pipeline-specification/features/data-updates.md#errors)
-/// gives for an error when calling refresh on an engine.
-fn log_refresh_failed(engine: &str, error: &DataUpdateError) {
-    log::error!(
-        "An error occurred when applying a data update to engine '{engine}'. \
-         Error detail: {error}"
-    );
+/// Log a check that failed, as the errors table gives: the entry "Error
+/// during check for data update", with the error attached.
+fn log_check_failed(error: &DataUpdateError) {
+    log::error!("Error during check for data update. {}", error.message);
 }
 
 /// The message of a failed request and each of its causes, without the URL
@@ -1476,7 +1466,7 @@ fn verify_md5(
                 AutoUpdateStatus::Md5ValidationFailed,
                 format!(
                     "Integrity check failed. MD5 hash in HTTP response '{expected}' \
-                     for '{engine}' data update does not match calculated hash for \
+                     for '{engine}'data update does not match calculated hash for \
                      the downloaded file '{actual}'."
                 ),
             ))
