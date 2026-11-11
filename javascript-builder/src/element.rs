@@ -157,8 +157,12 @@ fn safe_sequence(sequence: i32) -> i32 {
 /// use fiftyone_pipeline_core::{Evidence, Pipeline};
 /// use fiftyone_json_builder::JsonBuilderElement;
 /// use fiftyone_javascript_builder::{JavaScriptBuilderElement, JAVASCRIPT_BUILDER_DATA_KEY};
+/// use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 ///
+/// // The sequence element leads, because the JSON builder needs the sequence
+/// // number it writes.
 /// let pipeline = Pipeline::builder()
+///     .add_element(Arc::new(SequenceElement::new()))
 ///     .add_element(Arc::new(JsonBuilderElement::new()))
 ///     .add_element(Arc::new(JavaScriptBuilderElement::new()))
 ///     .build()
@@ -443,11 +447,17 @@ impl JavaScriptBuilderElement {
     }
 
     /// Read the JSON payload from the JSON builder's element data, or an empty
-    /// string if the JSON builder did not run.
+    /// object when the JSON builder did not run.
+    ///
+    /// The template writes this value into `var json = ...;` as bare code, so
+    /// an empty string would leave the script unparseable. A pipeline can
+    /// reach here with no JSON builder data, because the JSON builder needs a
+    /// sequence element before it and fails without one.
     fn json_object(data: &FlowData) -> String {
         data.get(JSON_BUILDER_DATA_KEY)
             .map(|json| json.json().to_owned())
-            .unwrap_or_default()
+            .filter(|json| !json.is_empty())
+            .unwrap_or_else(|| "{}".to_owned())
     }
 
     /// Render and (optionally) minify the JavaScript for this request, returning

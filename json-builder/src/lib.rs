@@ -35,6 +35,10 @@
 //! depend on its exact shape. See [`JsonBuilderElement`] for the field
 //! conventions and a worked example.
 //!
+//! A sequence element has to run before it. Without one the element fails and
+//! sets no JSON, as the specification requires. The web integration adds both
+//! for you.
+//!
 //! ## What it emits
 //!
 //! Each remaining element's data becomes a nested object keyed by that element's

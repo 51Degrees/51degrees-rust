@@ -25,8 +25,8 @@
 use std::collections::{HashMap, HashSet};
 
 use fiftyone_pipeline_core::{
-    ElementData, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, Pipeline,
-    PropertyMetaData, PropertyValue, PropertyValueType, Result,
+    ElementData, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    Pipeline, PropertyMetaData, PropertyValue, PropertyValueType, Result,
 };
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 use serde_json::{Map, Value};
@@ -35,9 +35,15 @@ use crate::builder::JsonBuilderElementBuilder;
 use crate::constants::{
     DELAY_EXECUTION_SUFFIX, ERRORS_KEY, EVIDENCE_PROPERTIES_SUFFIX, JAVASCRIPT_PROPERTIES_KEY,
     JSON_BUILDER_ELEMENT_DATA_KEY, JSON_PROPERTY_KEY, MAX_JAVASCRIPT_ITERATIONS,
-    NULL_REASON_SUFFIX, SEQUENCE_EVIDENCE_KEY,
+    NULL_REASON_SUFFIX,
 };
 use crate::data::{JsonBuilderData, JSON_BUILDER_DATA_KEY};
+
+/// What the element says when no sequence element has produced a sequence
+/// number. The wording matches the other 51Degrees pipelines, so the same
+/// misconfiguration reads the same whichever language a deployment uses.
+const NO_SEQUENCE_MESSAGE: &str = "the JSON Builder Element found no sequence number, so a \
+     Sequence Element needs to be placed before it in the Pipeline";
 
 /// The pipeline-derived metadata the builder needs to add the `delayexecution`
 /// and `evidenceproperties` sibling keys.
@@ -158,6 +164,17 @@ impl PipelineConfig {
 ///   any. The specification gives it this shape and the client script reads it
 ///   as one.
 ///
+/// # The sequence number
+///
+/// A [`SequenceElement`] has to run before this element, because the sequence
+/// number it writes is what caps the `javascriptProperties` list. Without one
+/// this element fails with [`fiftyone_pipeline_core::Error::PipelineConfiguration`]
+/// and sets no JSON, which the
+/// [specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/json-builder.md#sequence-number)
+/// requires. `fiftyone_pipeline_web::WebPipeline` adds one for you. The
+/// `query.sequence` evidence is the text a query string carries, which the
+/// same page says is not a sequence number, so it is not read here.
+///
 /// # Determinism
 ///
 /// Element keys and property names are sorted before serialization and the
@@ -175,6 +192,7 @@ impl PipelineConfig {
 ///     PropertyValueType, Result, TypedKey,
 /// };
 /// use fiftyone_json_builder::{JsonBuilderElement, JSON_BUILDER_DATA_KEY};
+/// use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 ///
 /// // A tiny element that publishes one property.
 /// struct DeviceData(MapElementData);
@@ -203,7 +221,10 @@ impl PipelineConfig {
 ///     fn properties(&self) -> &[PropertyMetaData] { &self.props }
 /// }
 ///
+/// // The sequence element comes first. The JSON builder reads the sequence
+/// // number from its data and fails without it.
 /// let pipeline = Pipeline::builder()
+///     .add_element(Arc::new(SequenceElement::new()))
 ///     .add_element(Arc::new(DeviceElement {
 ///         filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
 ///         props: vec![PropertyMetaData::new("ismobile", "device", PropertyValueType::Bool)],
@@ -272,33 +293,24 @@ impl JsonBuilderElement {
         self.property_exclusion.contains(lowercased_name)
     }
 
-    /// The request sequence number that the cap is compared against.
+    /// The request sequence number, taken from the sequence element's data.
     ///
-    /// Taken from the sequence element's data when that element ran, because
-    /// it has already added one to any `query.sequence` evidence. The other
-    /// 51Degrees pipelines write that new value back into the evidence before
-    /// their JSON builder reads it, whilst evidence is immutable here, so
-    /// reading the evidence alone kept the list for one request more than they
-    /// do. Without a sequence element the evidence is read instead.
+    /// The sequence element has already added one to any `query.sequence`
+    /// evidence, and evidence is immutable here, so its data is where the
+    /// number lives. The `query.sequence` evidence itself is the text a query
+    /// string carries, which the specification says is not a sequence number,
+    /// so it is not read.
     ///
-    /// Returns `None` when neither holds a whole number. The caller treats a
-    /// missing sequence number as "do not cap" by defaulting to `0`, which
-    /// keeps the JavaScript-properties list on for direct, non-web callers that
-    /// never set the sequence.
+    /// Returns `None` when no sequence element ran, which [`Self::process`]
+    /// turns into an error.
     fn sequence_number(data: &FlowData) -> Option<i64> {
-        if let Some(sequence) = data
-            .get(SequenceElement::KEY)
+        data.get(SequenceElement::KEY)
             .and_then(|sequence| sequence.sequence())
-        {
-            return Some(sequence);
-        }
-        data.evidence()
-            .get(SEQUENCE_EVIDENCE_KEY)
-            .and_then(|s| s.trim().parse::<i64>().ok())
     }
 
-    /// Build the full JSON document for the flow data.
-    fn build_json(&self, data: &FlowData, config: &PipelineConfig) -> String {
+    /// Build the full JSON document for the flow data, capping the
+    /// JavaScript-properties list at the given sequence number.
+    fn build_json(&self, data: &FlowData, config: &PipelineConfig, sequence: i64) -> String {
         let mut root = Map::new();
 
         // Element data, in sorted key order for determinism.
@@ -319,7 +331,6 @@ impl JsonBuilderElement {
         }
 
         // The JavaScript-properties list, capped by the sequence number.
-        let sequence = Self::sequence_number(data).unwrap_or(0);
         if sequence < MAX_JAVASCRIPT_ITERATIONS {
             let javascript_properties = self.javascript_property_paths(data);
             if !javascript_properties.is_empty() {
@@ -443,6 +454,11 @@ impl Default for JsonBuilderElement {
 
 impl FlowElement for JsonBuilderElement {
     fn process(&self, data: &mut FlowData) -> Result<()> {
+        // Without a sequence number there is no JSON, so this comes before any
+        // work and before the element data is added.
+        let sequence =
+            Self::sequence_number(data).ok_or_else(|| Error::configuration(NO_SEQUENCE_MESSAGE))?;
+
         // The pipeline config (delay-execution and evidence-property paths) is
         // derived from the element metadata of the pipeline that owns this flow
         // data. It is cheap to compute and avoids holding a Sync cache of
@@ -452,7 +468,7 @@ impl FlowElement for JsonBuilderElement {
             PipelineConfig::from_pipeline(pipeline, &self.element_exclusion)
         };
 
-        let json = self.build_json(data, &config);
+        let json = self.build_json(data, &config, sequence);
 
         let result = data.get_or_add(JSON_BUILDER_DATA_KEY, JsonBuilderData::new);
         match result {

@@ -35,15 +35,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use fiftyone_javascript_builder::{JavaScriptBuilderElement, JAVASCRIPT_BUILDER_DATA_KEY};
-use fiftyone_json_builder::JsonBuilderElement;
 use fiftyone_pipeline_core::{Evidence, Pipeline};
 
-/// Render the script for the supplied evidence. The pipeline is the JSON
-/// builder and the JavaScript builder, with a host so the callback URL and
-/// the sections that use it are rendered.
+/// Render the script for the supplied evidence, with a host so the callback
+/// URL and the sections that use it are rendered.
+///
+/// These tests are about what this builder makes of the session id and
+/// sequence a caller supplies, so the pipeline has no sequence element, which
+/// would replace both before this builder saw them. That leaves out the JSON
+/// builder too, because it needs a sequence element and would fail here, and
+/// this builder renders an empty JSON object without it.
 fn render(evidence: &[(&str, &str)]) -> String {
     let pipeline = Pipeline::builder()
-        .add_element(Arc::new(JsonBuilderElement::new()))
         .add_element(Arc::new(
             JavaScriptBuilderElement::builder()
                 .set_minify(false)

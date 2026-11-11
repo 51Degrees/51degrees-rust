@@ -131,9 +131,12 @@ impl FlowElement for DeviceElement {
     }
 }
 
-/// Build a pipeline: optional device element, then JSON builder, then the
-/// JavaScript builder (configured via `configure`). Returns the generated
-/// JavaScript for the supplied evidence.
+/// Build a pipeline: sequence element, optional device element, then JSON
+/// builder, then the JavaScript builder (configured via `configure`). Returns
+/// the generated JavaScript for the supplied evidence.
+///
+/// The sequence element leads because the JSON builder needs the sequence
+/// number it writes, and it adds one to any `query.sequence` evidence.
 fn run(
     device: Option<DeviceElement>,
     configure: impl FnOnce(
@@ -141,7 +144,7 @@ fn run(
     ) -> JavaScriptBuilderElement,
     evidence: &[(&str, &str)],
 ) -> String {
-    let mut builder = Pipeline::builder();
+    let mut builder = Pipeline::builder().add_element(Arc::new(SequenceElement::new()));
     if let Some(device) = device {
         builder = builder.add_element(Arc::new(device));
     }
@@ -303,7 +306,8 @@ fn full_template_renders_through_pipeline() {
     assert!(js.contains("fiftyoneDegreesManager = function()"));
     assert!(js.contains("var fod = new fiftyoneDegreesManager();"));
     assert!(js.contains("fetch('https://example.com/51dpipeline/json'"));
-    assert!(js.contains("var sequence = 1;"));
+    // The sequence element turned the request's 1 into 2.
+    assert!(js.contains("var sequence = 2;"));
     // No unrendered Mustache tags survive in the output.
     assert!(!js.contains("{{"));
     assert!(!js.contains("}}"));
@@ -514,17 +518,34 @@ fn supplied_session_id_is_kept_and_the_sequence_moves_on() {
 #[test]
 fn without_a_sequence_element_the_evidence_is_used() {
     // A pipeline with no sequence element still reads the evidence directly.
-    let js = run(
-        None,
-        |b| b.set_minify(false).build(),
-        &[
-            ("header.host", "localhost"),
-            ("query.session-id", "abc"),
-            ("query.sequence", "4"),
-        ],
+    // The JSON builder is left out of this one, because it needs a sequence
+    // element and would fail here, and this builder renders without it.
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(
+            JavaScriptBuilderElement::builder()
+                .set_minify(false)
+                .build(),
+        ))
+        .build()
+        .expect("pipeline builds");
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("header.host", "localhost")
+            .add("query.session-id", "abc")
+            .add("query.sequence", "4")
+            .build(),
     );
+    data.process().expect("processing succeeds");
+    let js = data
+        .get(JAVASCRIPT_BUILDER_DATA_KEY)
+        .expect("javascript builder data present")
+        .javascript()
+        .to_owned();
+
     assert_eq!(rendered_session_id(&js), "abc");
     assert!(js.contains("var sequence = 4;"));
+    // With no JSON builder the script still has a usable object to work from.
+    assert!(js.contains("var json = {};"));
 }
 
 #[test]
@@ -594,6 +615,7 @@ fn a_request_without_device_data_leaves_later_visitors_unaffected() {
     // and fetch belongs to the request, so a request that got no device answer
     // must not change the script the next visitor is given.
     let pipeline = Pipeline::builder()
+        .add_element(Arc::new(SequenceElement::new()))
         .add_element(Arc::new(CloudLikeDevice::new()))
         .add_element(Arc::new(JsonBuilderElement::new()))
         .add_element(Arc::new(

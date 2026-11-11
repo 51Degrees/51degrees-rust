@@ -53,6 +53,7 @@ use fiftyone_pipeline_core::{
     ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
     NoValueError, Pipeline, PropertyMetaData, PropertyValue, PropertyValueType, Result, TypedKey,
 };
+use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 
 // ---------------------------------------------------------------------------
 // An element with one value, so the payload can be read back from the object.
@@ -181,7 +182,10 @@ fn render(
     configure: impl FnOnce(JavaScriptBuilderElementBuilder) -> JavaScriptBuilderElement,
     evidence: &[(&str, &str)],
 ) -> String {
+    // The sequence element leads, because the JSON builder needs the sequence
+    // number it writes.
     let pipeline = Pipeline::builder()
+        .add_element(Arc::new(SequenceElement::new()))
         .add_element(Arc::new(ValueElement::new()))
         .add_element(Arc::new(JsonBuilderElement::new()))
         .add_element(Arc::new(configure(JavaScriptBuilderElement::builder())))

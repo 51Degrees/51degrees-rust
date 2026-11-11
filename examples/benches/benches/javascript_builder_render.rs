@@ -32,18 +32,22 @@ use fiftyone_javascript_builder::{
 };
 use fiftyone_json_builder::JsonBuilderElement;
 use fiftyone_pipeline_core::{Evidence, Pipeline};
+use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 
-/// Build a pipeline of JSON builder then JavaScript builder, configured by
-/// `configure`.
+/// Build a pipeline of sequence element, JSON builder then JavaScript builder,
+/// configured by `configure`.
 ///
 /// The JSON builder produces the JSON payload the JavaScript-builder template
-/// embeds, so the two run together as they do in a real client-side pipeline.
-/// This mirrors the JavaScript-builder integration test's pipeline assembly.
+/// embeds, so the two run together as they do in a real client-side pipeline,
+/// and the sequence element leads because the JSON builder needs the sequence
+/// number it writes. This mirrors the JavaScript-builder integration test's
+/// pipeline assembly.
 fn build_pipeline(
     configure: impl FnOnce(JavaScriptBuilderElementBuilder) -> JavaScriptBuilderElement,
 ) -> Arc<Pipeline> {
     let js_element = configure(JavaScriptBuilderElement::builder());
     Pipeline::builder()
+        .add_element(Arc::new(SequenceElement::new()))
         .add_element(Arc::new(JsonBuilderElement::new()))
         .add_element(Arc::new(js_element))
         .build()
