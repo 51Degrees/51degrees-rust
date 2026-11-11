@@ -152,8 +152,7 @@ const LEAST_KEY_TAIL: usize = 12;
 
 /// The endpoint the test and the client both use.
 fn endpoint() -> String {
-    non_blank_variable("_51DEGREES_CLOUD_ENDPOINT")
-        .unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned())
+    non_blank_variable("_51DEGREES_CLOUD_ENDPOINT").unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned())
 }
 
 /// Percent-encode a query string value, leaving only the characters that
