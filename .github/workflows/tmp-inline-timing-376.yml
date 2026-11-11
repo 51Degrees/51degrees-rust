@@ -1,0 +1,106 @@
+name: Temporary three-way Device Detection read timing
+
+on:
+  push:
+    branches:
+      - 'tmp/inline-timing-376'
+
+jobs:
+  DeviceDetection:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout before the typed accessor change
+        uses: actions/checkout@v4
+        with:
+          ref: ac382623782a6715aa76785eca1b180b01027513
+          path: before
+          submodules: recursive
+      - name: Checkout the draft head
+        uses: actions/checkout@v4
+        with:
+          ref: 3a79f26c764071ac9f2db71239add5947020481f
+          path: head
+          submodules: recursive
+      - name: Checkout the head with the conversion inlined
+        uses: actions/checkout@v4
+        with:
+          path: inline
+          submodules: recursive
+      - name: Restore the data files
+        uses: ./inline/.github/actions/restore-data-files
+        with:
+          root: inline
+      - name: Download any data file not restored
+        continue-on-error: true
+        shell: pwsh
+        working-directory: inline
+        run: ./cxx/data/get-data-files.ps1 51Degrees-LiteV4.1.hash 51Degrees-IPIV4AsnIpiV41.ipi
+      - name: Configure data files
+        shell: bash
+        run: |
+          echo "51DEGREES_DD_PATH=${GITHUB_WORKSPACE}/inline/cxx/data/device-detection/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
+          echo "51DEGREES_IPI_PATH=${GITHUB_WORKSPACE}/inline/cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
+          for file in "${GITHUB_WORKSPACE}/inline/cxx/data/device-detection/51Degrees-LiteV4.1.hash" "${GITHUB_WORKSPACE}/inline/cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi"; do
+            if [ ! -f "$file" ]; then
+              echo "::error::$file is missing"
+              exit 1
+            fi
+          done
+      - name: Build all three in release
+        run: |
+          for side in before head inline; do
+            (cd $side && cargo test --release -p fiftyone-device-detection-onpremise --test read_timing --no-run)
+          done
+      - name: Alternate the three, eight rounds each
+        run: |
+          for round in 1 2 3 4 5 6 7 8; do
+            for side in before head inline; do
+              (cd $side && cargo test --release -p fiftyone-device-detection-onpremise --test read_timing -- --nocapture --test-threads=1 2>&1) | grep -E "No names|IsMobile read" | sed "s/^/ROUND $round $side: /"
+            done
+          done
+  IpIntelligence:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout before the typed accessor change
+        uses: actions/checkout@v4
+        with:
+          ref: 0c5755d7c376afd3784b8378fbf858d6582568c0
+          path: before
+          submodules: recursive
+      - name: Checkout the head with the conversion inlined
+        uses: actions/checkout@v4
+        with:
+          path: inline
+          submodules: recursive
+      - name: Restore the data files
+        uses: ./inline/.github/actions/restore-data-files
+        with:
+          root: inline
+      - name: Download any data file not restored
+        continue-on-error: true
+        shell: pwsh
+        working-directory: inline
+        run: ./cxx/data/get-data-files.ps1 51Degrees-LiteV4.1.hash 51Degrees-IPIV4AsnIpiV41.ipi
+      - name: Configure data files
+        shell: bash
+        run: |
+          echo "51DEGREES_DD_PATH=${GITHUB_WORKSPACE}/inline/cxx/data/device-detection/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
+          echo "51DEGREES_IPI_PATH=${GITHUB_WORKSPACE}/inline/cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
+          for file in "${GITHUB_WORKSPACE}/inline/cxx/data/device-detection/51Degrees-LiteV4.1.hash" "${GITHUB_WORKSPACE}/inline/cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi"; do
+            if [ ! -f "$file" ]; then
+              echo "::error::$file is missing"
+              exit 1
+            fi
+          done
+      - name: Build both in release
+        run: |
+          for side in before inline; do
+            (cd $side && cargo test --release -p fiftyone-ip-intelligence-onpremise --test read_timing --no-run)
+          done
+      - name: Alternate before and the inlined head, eight rounds each
+        run: |
+          for round in 1 2 3 4 5 6 7 8; do
+            for side in before inline; do
+              (cd $side && cargo test --release -p fiftyone-ip-intelligence-onpremise --test read_timing -- --nocapture --test-threads=1 2>&1) | grep -E "No names|Asn read" | sed "s/^/ROUND $round $side: /"
+            done
+          done

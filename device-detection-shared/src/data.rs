@@ -411,6 +411,9 @@ impl DeviceDataBase {
     }
 
     /// Convert a looked-up value to a typed value, explaining a no-value.
+    /// Inlined so that a read by name costs no more for sharing this with a
+    /// read at a slot.
+    #[inline]
     fn converted<T>(
         lookup: Lookup,
         convert: impl FnOnce(PropertyValue) -> Option<T>,
