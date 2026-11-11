@@ -39,8 +39,8 @@ pub enum AutoUpdateStatus {
     Success,
     /// No update was needed because the local data is already current.
     NotNeeded,
-    /// An update is in progress (an intermediate state used while a check
-    /// runs).
+    /// A file-system-watcher event waited while another event for the same
+    /// file was applied, and then had nothing left to do.
     InProgress,
     /// The HTTPS request to the update URL failed (connection or transport
     /// error).
@@ -71,7 +71,7 @@ impl AutoUpdateStatus {
     pub fn is_ok(&self) -> bool {
         matches!(
             self,
-            AutoUpdateStatus::Success | AutoUpdateStatus::NotNeeded
+            AutoUpdateStatus::Success | AutoUpdateStatus::NotNeeded | AutoUpdateStatus::InProgress
         )
     }
 }
@@ -100,3 +100,35 @@ impl DataUpdateError {
 
 /// The result type used by the data update service.
 pub type DataUpdateResult = std::result::Result<AutoUpdateStatus, DataUpdateError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A check that applied an update or needed none is ok, as is a watcher
+    /// event that had nothing left to do, and every failure is not.
+    #[test]
+    fn only_a_failure_is_not_ok() {
+        for status in [
+            AutoUpdateStatus::Success,
+            AutoUpdateStatus::NotNeeded,
+            AutoUpdateStatus::InProgress,
+        ] {
+            assert!(status.is_ok(), "{status:?}");
+        }
+        for status in [
+            AutoUpdateStatus::HttpsError,
+            AutoUpdateStatus::TooManyRequests,
+            AutoUpdateStatus::Forbidden,
+            AutoUpdateStatus::StreamError,
+            AutoUpdateStatus::Md5ValidationFailed,
+            AutoUpdateStatus::NewFileCannotRename,
+            AutoUpdateStatus::RefreshFailed,
+            AutoUpdateStatus::NoConfiguration,
+            AutoUpdateStatus::TempPathNotSet,
+            AutoUpdateStatus::UnknownError,
+        ] {
+            assert!(!status.is_ok(), "{status:?}");
+        }
+    }
+}
