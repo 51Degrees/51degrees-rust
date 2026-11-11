@@ -2227,6 +2227,30 @@ mod tests {
     /// is made.
     const NEWER: Duration = Duration::from_secs(60);
 
+    /// A watcher event after its engine is gone belongs to no registered data
+    /// file and has nothing left to do, so it is reported as in progress, as
+    /// .NET reports it.
+    #[test]
+    fn an_event_after_the_engine_is_gone_is_in_progress() {
+        let watched = watched("engine-gone");
+        let callbacks = UpdateCallbacks::default();
+        let told = Arc::new(Mutex::new(Vec::new()));
+        let kept = Arc::clone(&told);
+        callbacks.add(Arc::new(move |report: &DataUpdateComplete| {
+            kept.lock().unwrap().push(report.status);
+        }));
+        let engine = Arc::downgrade(&watched.engine);
+        let data_file = Arc::clone(&watched.data_file);
+        let dir = watched.dir.clone();
+        drop(watched);
+        assert!(engine.upgrade().is_none(), "the engine is still held");
+
+        ServiceHandle::on_file_changed(&engine, &data_file, &callbacks);
+
+        assert_eq!(*told.lock().unwrap(), [AutoUpdateStatus::InProgress]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A watcher event for a write that an earlier event applied waited while
     /// that event was applied, so it is reported as in progress, as .NET
     /// reports it. An event for a file no newer than the one the engine was

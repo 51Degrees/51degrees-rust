@@ -78,7 +78,8 @@ const OLDER: Duration = Duration::from_secs(60);
 const NEWER: Duration = Duration::from_secs(60);
 
 /// The start of the record logged for a callback that panicked.
-const PANIC_RECORD: &str = "ERROR An update callback for failing panicked.";
+const PANIC_RECORD: &str =
+    "ERROR An unhandled error occurred while checking for automatic updates for engine 'failing'.";
 
 /// Log records at warning level or above, as "LEVEL message".
 static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -474,8 +475,8 @@ fn the_update_on_start_up(refused: &str) {
 }
 
 /// A scheduled poll, retried one interval after the refresh fails, when it
-/// applies the update. A callback that panics stops neither the callbacks
-/// after it nor the polls that follow.
+/// applies the update. A callback that panics is logged and the callbacks
+/// after it are not called, and the polls that follow still run.
 fn a_scheduled_poll(refused: &str) {
     let url = serve(b"new data");
     let (engine, shared) = engine(
@@ -488,8 +489,13 @@ fn a_scheduled_poll(refused: &str) {
         1,
     );
     let service = DataUpdateService::new();
-    service.on_update_complete(|_| panic!("{PANIC}"));
     let reports = reports(&service, &data_file(&shared));
+    service.on_update_complete(|_| panic!("{PANIC}"));
+    let after = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&after);
+    service.on_update_complete(move |_| {
+        counted.fetch_add(1, Ordering::SeqCst);
+    });
 
     let status = service
         .register(Arc::clone(&shared), data_file(&shared))
@@ -520,6 +526,41 @@ fn a_scheduled_poll(refused: &str) {
     );
     assert_eq!(records.len(), 1 + statuses.len(), "{records:?}");
     assert!(engine.refreshes.load(Ordering::SeqCst) >= 2);
+    assert_eq!(
+        after.load(Ordering::SeqCst),
+        0,
+        "a callback after the one that panicked was called"
+    );
+}
+
+/// A callback that panics on a programmatic check passes the panic to the
+/// caller, logs nothing, and the callbacks after it are not called.
+fn a_callback_that_panics_on_a_programmatic_check(dir: &Path) {
+    let path = dir.join("callback.dat");
+    std::fs::write(&path, b"version 1").unwrap();
+    let (_engine, shared) = engine(
+        DataFileConfiguration::builder(&path)
+            .automatic_updates_enabled(false)
+            .build(),
+        0,
+    );
+    let service = DataUpdateService::new();
+    service.on_update_complete(|_| panic!("{PANIC}"));
+    let after = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&after);
+    service.on_update_complete(move |_| {
+        counted.fetch_add(1, Ordering::SeqCst);
+    });
+
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        service.check_for_update(&shared, None)
+    }));
+    assert!(
+        caught.is_err(),
+        "the panic did not reach the caller: {caught:?}"
+    );
+    assert_eq!(after.load(Ordering::SeqCst), 0, "a programmatic check");
+    assert_eq!(take(), Vec::<String>::new(), "a programmatic check");
 }
 
 /// A change to a watched file. The file stays watched after its refresh
@@ -786,6 +827,7 @@ fn a_refresh_that_fails_is_logged_and_reported_as_a_failure() {
     a_refresh_that_panics_in_a_poll();
     a_refresh_that_panics_after_a_change(&dir);
     a_check_is_told_when_it_starts(&dir);
+    a_callback_that_panics_on_a_programmatic_check(&dir);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
