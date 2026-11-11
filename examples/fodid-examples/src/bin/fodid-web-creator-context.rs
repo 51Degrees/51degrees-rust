@@ -77,9 +77,18 @@ use axum::body::Body;
 use axum::extract::{Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 use examples_web_shared::serve_css;
+use fiftyone_cloud_request_engine::CloudRequestEngine;
+use fiftyone_derived_properties::{BuiltInScript, DerivedPropertyElement};
+use fiftyone_device_detection_cloud::DeviceDetectionCloudEngine;
+use fiftyone_fodid_cloud::FodIdCloudEngine;
+use fiftyone_ip_intelligence_cloud::IpIntelligenceCloudEngine;
+use fiftyone_pipeline_core::FlowElement;
+use fiftyone_pipeline_engines_fiftyone::ShareUsageElement;
+use fiftyone_pipeline_web::{WebIntegrationOptions, WebPipeline};
+use fiftyone_pipeline_web_axum::{javascript_handler, json_handler, FiftyOneState};
 use fodid::FodId;
 use fodid_client::{DidClient, Error as ClientError, RedeemResult, SignatureOutcome};
 use serde::Deserialize;
@@ -98,6 +107,10 @@ const FIND_OUT_MORE: &[(&str, &str)] = &[
 
 /// The route the demo page's relative stylesheet URL resolves to.
 const PAGE_CSS_ROUTE: &str = "/examples-main.min.css";
+
+/// Where the page sends a visitor whose account holds no licence keys, so the
+/// licence-scoped identifiers the demo shows cannot be created.
+const CONTACT_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=licence-key-required";
 
 /// The environment variable holding the optional licence key.
 const LICENCE_KEY_ENV_VAR: &str = "51DEGREES_LICENSE_KEY";
@@ -136,10 +149,75 @@ pub fn build_app(client: DidClient) -> Router {
         })
 }
 
+/// The two routes the browser uses when it reaches the service through this
+/// server rather than calling it directly: the client script, and the callback
+/// the script sends its evidence to.
+///
+/// Only the two endpoint handlers are mounted, not the per-request middleware
+/// the web integration usually adds, because the demo's own page, stylesheet
+/// and redeem routes have no use for a result and running the pipeline for
+/// each of them would call the service on every request.
+fn proxy_router(resource_key: &str, endpoint: &str) -> anyhow::Result<Router> {
+    let request_engine = Arc::new(
+        CloudRequestEngine::builder()
+            .resource_key(resource_key)
+            .endpoint(endpoint)
+            .build()
+            .context("building the cloud request engine")?,
+    );
+    let identifiers = FodIdCloudEngine::builder()
+        .cloud_request_engine(request_engine.clone())
+        .build()
+        .context("building the 51Did engine")?;
+    // The device and address properties the HumanConfidence script reads, which
+    // is the only reason these two engines are here.
+    let devices = DeviceDetectionCloudEngine::builder()
+        .cloud_request_engine(request_engine.clone())
+        .build();
+    let addresses = IpIntelligenceCloudEngine::builder()
+        .cloud_request_engine(request_engine.clone())
+        .build()
+        .context("building the IP intelligence engine")?;
+    // The service works HumanConfidence out for itself when the browser calls
+    // it directly, so the same property is added here and the page reads the
+    // answer either way without knowing which route produced it.
+    let derived = DerivedPropertyElement::builder()
+        .add_built_in(BuiltInScript::HumanConfidence)
+        .build()
+        .map_err(|faults| anyhow::anyhow!("building the derived properties: {faults:?}"))?;
+    // Usage sharing is required for a web example, because it lets 51Degrees
+    // improve detection.
+    let elements: Vec<Arc<dyn FlowElement>> = vec![
+        Arc::new(ShareUsageElement::with_defaults()),
+        request_engine,
+        Arc::new(devices),
+        Arc::new(addresses),
+        Arc::new(identifiers),
+        Arc::new(derived),
+    ];
+    let options = WebIntegrationOptions::default();
+    let javascript_route = options.javascript_endpoint.clone();
+    let json_route = options.json_endpoint.clone();
+    let web = WebPipeline::build(elements, options).context("assembling the web pipeline")?;
+    let state = FiftyOneState::from_web_pipeline(&web);
+    Ok(Router::new()
+        .route(&javascript_route, get(javascript_handler))
+        .route(&json_route, post(json_handler))
+        .with_state(state))
+}
+
 // [example]
 /// Serve the demo over TCP until interrupted.
 pub async fn run(options: Options) -> anyhow::Result<()> {
-    let app = build_app(options.client);
+    // The second route the page offers. Building it stands up and tears down a
+    // blocking HTTP client of its own, which cannot be dropped on an async
+    // thread, so it is built on a blocking one.
+    let resource_key = options.client.resource_key().to_owned();
+    let endpoint = options.client.endpoint().to_owned();
+    let proxy = tokio::task::spawn_blocking(move || proxy_router(&resource_key, &endpoint))
+        .await
+        .context("building the proxy routes")??;
+    let app = build_app(options.client).merge(proxy);
     let listener = tokio::net::TcpListener::bind(options.address)
         .await
         .with_context(|| format!("binding {}", options.address))?;
@@ -171,7 +249,12 @@ async fn home(State(demo): State<Demo>) -> Response {
         page_with_find_out_more()
             .replace("__RESOURCE__", demo.client.resource_key())
             .replace("__CHALLENGE__", &challenge)
-            .replace("__API__", demo.client.endpoint()),
+            .replace("__API__", demo.client.endpoint())
+            .replace(
+                "__PROXY_SCRIPT__",
+                &WebIntegrationOptions::default().javascript_endpoint,
+            )
+            .replace("__CONTACT__", &CONTACT_URL.replace('&', "&amp;")),
     )
     .into_response()
 }
@@ -431,8 +514,8 @@ mod tests {
     use super::*;
     use axum::body::{to_bytes, Body};
     use axum::http::{HeaderValue, Request};
-    use fodid_client::{DidHttpClient, DidHttpRequest, DidHttpResponse, LocalBoxFuture};
     use fodid::{Creator, Crypto};
+    use fodid_client::{DidHttpClient, DidHttpRequest, DidHttpResponse, LocalBoxFuture};
     use tower::ServiceExt;
 
     const RESOURCE_KEY: &str = "resource-key-placeholder";
@@ -569,7 +652,13 @@ mod tests {
         let response = get(&app, "/").await;
         assert_eq!(response.status(), StatusCode::OK);
         let page = body_string(response).await;
-        for placeholder in ["__API__", "__RESOURCE__", "__CHALLENGE__"] {
+        for placeholder in [
+            "__API__",
+            "__RESOURCE__",
+            "__CHALLENGE__",
+            "__PROXY_SCRIPT__",
+            "__CONTACT__",
+        ] {
             assert!(
                 !page.contains(placeholder),
                 "{placeholder} was not substituted"

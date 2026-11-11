@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <!-- 51Did creator context demo page.
      Served by the small server beside this file, which injects the
-     three placeholders and holds the licence key server side. This
-     page is identical in every language folder.
+     placeholders and holds the licence key server side. This page is
+     identical in every language folder.
 
      Styling follows the 51Degrees example pattern. The built
      examples-main.min.css is vendored beside this page, exactly as the
@@ -23,10 +23,35 @@
 <body>
 <div class="c-eg-page">
   <h2 class="c-eg-page__title">🔐 51Did creator context demo</h2>
-  <p class="c-eg-page__lead">This page creates a 51Did in your browser,
-  verifies it from your browser, and redeems the encrypted creator
+  <p class="c-eg-page__lead">This page runs the 51Degrees client script
+  in your browser, creates a 51Did from what the script reports, verifies
+  that identifier from your browser, and redeems the encrypted creator
   context result on its own server, which is the only place the licence
   key lives.</p>
+
+  <h3 class="c-eg-page__heading">Settings</h3>
+  <form id="settings" class="c-eg-message">
+    <div class="c-eg-message__text">
+      <p><label for="email"><b>Email address.</b></label> The
+      deterministic identifier is derived from an email address, so it
+      is the same on every device that address appears on. Clear this
+      box to ask for no deterministic identifier at all.</p>
+      <p><input id="email" name="email" type="email"
+        class="b-input b-input--block" autocomplete="off"></p>
+      <p><b>How the browser reaches the service.</b> Both routes produce
+      the same identifier. The difference is that through this demo's own
+      server the service sees the server's connection rather than the
+      browser's, so the factors that read the visitor's transport cannot
+      be recorded.</p>
+      <p>
+        <label><input type="radio" name="mode" value="direct">
+          Straight to the service as a third party</label><br>
+        <label><input type="radio" name="mode" value="proxy">
+          Through this demo's own server</label>
+      </p>
+    </div>
+    <button type="submit" class="b-btn c-eg-message__cta">Apply</button>
+  </form>
 
   <h3 class="c-eg-page__heading">Result</h3>
   <table class="c-eg-table">
@@ -38,16 +63,22 @@
     </thead>
     <tbody>
       <tr class="c-eg-table__row">
+        <td class="c-eg-table__cell c-eg-table__cell--key">Human
+          confidence</td>
+        <td class="c-eg-table__cell"><span id="s-human"
+          class="c-eg-status c-eg-status--none">waiting&#8230;</span></td>
+      </tr>
+      <tr class="c-eg-table__row c-eg-table__row--alt">
         <td class="c-eg-table__cell c-eg-table__cell--key">Identifier</td>
         <td class="c-eg-table__cell"><span id="s-create"
           class="c-eg-status c-eg-status--none">working&#8230;</span></td>
       </tr>
-      <tr class="c-eg-table__row c-eg-table__row--alt">
+      <tr class="c-eg-table__row">
         <td class="c-eg-table__cell c-eg-table__cell--key">Signature</td>
         <td class="c-eg-table__cell"><span id="s-signature"
           class="c-eg-status c-eg-status--none">waiting&#8230;</span></td>
       </tr>
-      <tr class="c-eg-table__row">
+      <tr class="c-eg-table__row c-eg-table__row--alt">
         <td class="c-eg-table__cell c-eg-table__cell--key">Creator
           context</td>
         <td class="c-eg-table__cell"><span id="s-context"
@@ -72,26 +103,30 @@
 
   <div id="ids" style="display: none">
     <h3 class="c-eg-page__heading">Your 51Did identifiers</h3>
-    <p class="c-eg-page__lead">One request created every kind at once.
-    The probabilistic pair derives from this connection, the
-    deterministic pair derives from an email address (this demo uses
-    <span class="b-text--code">demo@51did.example</span>) so it is the
-    same on every device the same email appears on, and the random pair
-    is created fresh. Global identifiers are shared across customers,
-    licensed ones are scoped to the licence key. The rest of this page
-    carries the licensed probabilistic identifier through
-    verification.</p>
+    <p class="c-eg-page__lead">One request created every kind at once,
+    each one scoped to the licence key this demo redeems with. The
+    probabilistic identifier derives from this connection, the
+    deterministic one derives from the email address above, and the
+    random one is created fresh. The rest of this page carries the
+    probabilistic identifier through verification.</p>
     <table class="c-eg-table">
       <thead class="c-eg-table__head">
         <tr class="c-eg-table__row">
           <th class="c-eg-table__cell">Kind</th>
-          <th class="c-eg-table__cell">Scope</th>
           <th class="c-eg-table__cell">Identifier</th>
           <th class="c-eg-table__cell">Test</th>
         </tr>
       </thead>
       <tbody id="idrows"></tbody>
     </table>
+  </div>
+
+  <div id="nolicence" class="c-eg-alert" style="display: none">
+    <p><b>This account holds no licence keys.</b> Licence-scoped
+    identifiers need one, so the service returned none and this page has
+    nothing to carry through verification.
+    <a href="__CONTACT__">Ask us about a licence key</a> to run the rest
+    of the demo.</p>
   </div>
 
   <div id="share" class="c-eg-message" style="display: none">
@@ -118,6 +153,26 @@
     <button id="copy" class="b-btn c-eg-message__cta">Copy link</button>
   </div>
 
+  <div id="shell" class="c-eg-message" style="display: none">
+    <div class="c-eg-message__text">
+      <p><b>⌨️ Or present it from a terminal.</b> Opening the link above
+      in another browser is one way to move the identifier. Running these
+      two commands is another, and it makes the point without a second
+      browser. The first asks the service to verify this 51Did over the
+      terminal's own connection, which returns a sealed result that tells
+      the terminal nothing. The second redeems that result here, where
+      the licence key is, and prints the verdict.</p>
+      <p><textarea id="curl" class="b-input b-input--block" rows="4"
+        readonly></textarea></p>
+      <p>Expect the signature to verify, because the identifier is
+      genuine, and the creator context to come back
+      <span class="b-text--code">mismatch</span>, because a terminal is
+      not the browser the identifier was made for.</p>
+    </div>
+    <button id="copy-curl" class="b-btn c-eg-message__cta">Copy
+      commands</button>
+  </div>
+
   <div id="plain-http" class="c-eg-alert" style="display: none">
     <p><b>Transport mismatches will not be identified.</b> This page is
     calling the service over plain HTTP, so there is no TLS handshake
@@ -127,6 +182,15 @@
     transport factor at work, point the demo at an HTTPS address of the
     service (the endpoint environment variable in the README) and open
     the page again.</p>
+  </div>
+
+  <div id="proxy-note" class="c-eg-alert" style="display: none">
+    <p><b>Running through this demo's own server.</b> The browser is
+    calling this server, and this server is calling the service, so the
+    service reads this server's connection and not the browser's. The
+    factors that depend on the visitor's own transport are therefore not
+    recorded, and the rest are checked as normal. Choose the third party
+    route above to see every factor.</p>
   </div>
 
   <div id="caught" class="c-eg-alert" style="display: none">
@@ -148,11 +212,47 @@
   // The cloud API base ending in /api/v4/, as the server read it from
   // its endpoint environment variable.
   var API = "__API__";
+  // The route this server mounts the client script on, used when the
+  // browser is asked to reach the service through the server.
+  var PROXY_SCRIPT = "__PROXY_SCRIPT__";
+  // The email address the deterministic identifier derives from when
+  // the box is left as it ships.
+  var DEFAULT_EMAIL = "demo@51did.example";
+
+  var query = new URLSearchParams(location.search);
+  var given = query.get("51did");
+  // Absent means the settings have not been applied yet, so the box
+  // ships filled. An empty value is a deliberate choice to ask for no
+  // deterministic identifier, so it is kept.
+  var email = query.get("email");
+  if (email === null) { email = DEFAULT_EMAIL; }
+  var mode = query.get("mode") === "proxy" ? "proxy" : "direct";
+
+  document.getElementById("email").value = email;
+  var radios = document.getElementsByName("mode");
+  for (var i = 0; i < radios.length; i += 1) {
+    radios[i].checked = radios[i].value === mode;
+  }
+  // Applying the settings reloads the page, because the client script
+  // reads them from the URL it was loaded with and a script that has
+  // already run cannot be asked again.
+  document.getElementById("settings").onsubmit = function (event) {
+    event.preventDefault();
+    var next = new URLSearchParams();
+    next.set("email", document.getElementById("email").value.trim());
+    next.set("mode", document.querySelector(
+      "input[name=mode]:checked").value);
+    location.search = next.toString();
+  };
+
   // Over plain HTTP the service sees no TLS handshake, so the transport
   // factor is its default on both sides and can never mismatch. Say so
   // up front rather than let a verified transport row mislead.
   if (/^http:/i.test(API)) {
     document.getElementById("plain-http").style.display = "";
+  }
+  if (mode === "proxy") {
+    document.getElementById("proxy-note").style.display = "";
   }
 
   // The four states of the design system's example status component.
@@ -186,6 +286,27 @@
   function testLink(owid) {
     return location.origin + location.pathname + "?51did="
       + urlSafe(owid);
+  }
+
+  // The two commands that present one identifier from a terminal. The
+  // first verifies over the terminal's own connection and returns a
+  // sealed result that tells the terminal nothing, the second redeems
+  // that result here, where the licence key is.
+  function shellCheck(owid) {
+    var safe = urlSafe(owid);
+    return "R=$(curl -s '" + API + "id/verify-full/" + RESOURCE + "/"
+      + safe + "?challenge=" + CHALLENGE
+      + "' | sed 's/.*\"result\":\"\\([^\"]*\\)\".*/\\1/')\n"
+      + "curl -s '" + location.origin + "/redeem?51did=" + safe
+      + "&challenge=" + CHALLENGE + "&result='\"$R\"\n";
+  }
+
+  function copyButton(id, text) {
+    var button = document.getElementById(id);
+    button.onclick = function () {
+      navigator.clipboard.writeText(text);
+      button.textContent = "Copied";
+    };
   }
 
   function linkButton(owid) {
@@ -280,78 +401,158 @@
     tr.appendChild(result);
   }
 
-  var given = new URLSearchParams(location.search).get("51did");
+  // The URL the 51Degrees client script is loaded from. The usage and
+  // the email ride on it, because the service forms a 51Did from the
+  // evidence the script sends with its own call and not from a separate
+  // request the page makes afterwards.
+  function clientScriptUrl() {
+    var base = mode === "proxy" ? PROXY_SCRIPT : API + RESOURCE + ".js";
+    var parameters = new URLSearchParams();
+    parameters.set("id.usage", "non-marketing");
+    // The deterministic identifier is the only thing the email is for,
+    // so an empty box simply does not ask for one.
+    if (email) { parameters.set("id.email", email); }
+    return base + "?" + parameters.toString();
+  }
 
-  // 1. The identifier: created for THIS browser's connection, or
-  // taken from the link when demonstrating the transplant.
-  var owidPromise = given
-    ? Promise.resolve(given).then(function (owid) {
+  // The JavaScript evidence the client script gathered, as query
+  // parameters. Verification compares this browser against the one the
+  // identifier was made for, so it needs the same values creation
+  // needed, and the service answers 400 without them. The script leaves
+  // them ready to send, and only its own 51D_ values are taken, because
+  // the rest of what it stores belongs to its own call.
+  function javascriptEvidence() {
+    var stored;
+    try {
+      stored = sessionStorage.getItem("fod_inputs");
+    } catch (error) {
+      // A browser refusing session storage leaves nothing to forward,
+      // which the service reports for itself.
+      return "";
+    }
+    if (!stored) { return ""; }
+    return stored.split("&").filter(function (pair) {
+      return pair.indexOf("51D_") === 0;
+    }).join("&");
+  }
+
+  // Load the client script and resolve with the payload it reports once
+  // it has finished. Everything this page shows comes out of that one
+  // payload, because the evidence the service needs travels with the
+  // script's own call.
+  function runClientScript() {
+    return new Promise(function (resolve, reject) {
+      var url = clientScriptUrl();
+      var script = document.createElement("script");
+      script.async = true;
+      script.src = url;
+      script.onerror = function () {
+        reject(new Error("the 51Degrees client script did not load from "
+          + url));
+      };
+      script.onload = function () {
+        if (typeof window.fod === "undefined") {
+          reject(new Error("the 51Degrees client script loaded from "
+            + url + " but defined no fod object, so there is no "
+            + "complete event to wait for"));
+          return;
+        }
+        window.fod.complete(resolve);
+      };
+      document.head.appendChild(script);
+    });
+  }
+
+  // Human confidence is read straight off the same payload. How the
+  // service reaches the value is the service's concern, so the page
+  // shows what came back and nothing more.
+  function showHumanConfidence(data) {
+    var derived = data.derived || {};
+    var value = derived.humanconfidence;
+    if (value === undefined || value === null) {
+      show("s-human", "not returned for this resource key", NONE);
+      return;
+    }
+    show("s-human", value,
+      value === "High" ? PASS : (value === "Low" ? FAIL : PART));
+  }
+
+  // The licence-scoped identifiers, which are the ones this demo shows.
+  var FAMILIES = [
+    ["Probabilistic", "idproblic"],
+    ["Deterministic, hashed email address", "idhemlic"],
+    ["Random", "idrandlic"],
+  ];
+
+  function showIdentifiers(fodid) {
+    FAMILIES.forEach(function (family, index) {
+      var value = fodid[family[1]];
+      var tr = row("idrows", index);
+      tr.appendChild(cell(
+        "c-eg-table__cell c-eg-table__cell--key", family[0]));
+      // An absent deterministic identifier with an empty email box is
+      // the box doing its job, not a failure, so it says which it is.
+      var absent = family[1] === "idhemlic" && !email
+        ? "(no email address given)"
+        : "(not returned)";
+      var valueCell = cell(
+        "c-eg-table__cell c-eg-value",
+        value ? value.slice(0, 30) + "…" : absent);
+      if (value) { valueCell.title = value; }
+      tr.appendChild(valueCell);
+      // Each identifier gets its own link, so any of them can be
+      // opened in another browser and put through the same check as
+      // the one this page carries below.
+      var testCell = cell("c-eg-table__cell");
+      if (value) { testCell.appendChild(linkButton(value)); }
+      tr.appendChild(testCell);
+    });
+    reveal("ids");
+  }
+
+  // 1. The identifier: created for THIS browser's connection by the
+  // client script, or taken from the link when demonstrating the
+  // transplant. The script runs either way, because the human
+  // confidence row describes the browser looking at the page rather
+  // than the identifier it was handed.
+  var owidPromise = runClientScript()
+    .then(function (data) {
+      showHumanConfidence(data);
+      var fodid = data.fodid || {};
+      showIdentifiers(fodid);
+      if (given) {
         // The row shows the identifier itself, truncated as the table
-        // below truncates every identifier, so the reader sees which
+        // above truncates every identifier, so the reader sees which
         // 51Did the link carried rather than a description of it.
-        show("s-create", owid.slice(0, 30) + "…", NONE);
-        return owid;
-      })
-    : fetch(API + "json?resource=" + RESOURCE
-        + "&id.usage=non-marketing"
-        + "&id.email=" + encodeURIComponent("demo@51did.example")
-        + "&values=FODiD.IdProbGlobal&values=FODiD.IdProbLic"
-        + "&values=FODiD.IdHemGlobal&values=FODiD.IdHemLic"
-        + "&values=FODiD.IdRandGlobal&values=FODiD.IdRandLic")
-      .then(asJson)
-      .then(function (json) {
-        var families = [
-          ["Probabilistic", "Global", "idprobglobal"],
-          ["Probabilistic", "Licensed", "idproblic"],
-          ["Deterministic, hashed email address", "Global", "idhemglobal"],
-          ["Deterministic, hashed email address", "Licensed", "idhemlic"],
-          ["Random", "Global", "idrandglobal"],
-          ["Random", "Licensed", "idrandlic"],
-        ];
-        families.forEach(function (family, index) {
-          var value = json.fodid && json.fodid[family[2]];
-          var tr = row("idrows", index);
-          tr.appendChild(cell(
-            "c-eg-table__cell c-eg-table__cell--key", family[0]));
-          tr.appendChild(cell("c-eg-table__cell", family[1]));
-          var valueCell = cell(
-            "c-eg-table__cell c-eg-value",
-            value ? value.slice(0, 30) + "…" : "(not returned)");
-          if (value) { valueCell.title = value; }
-          tr.appendChild(valueCell);
-          // Each identifier gets its own link, so any of the six can be
-          // opened in another browser and put through the same check as
-          // the one this page carries below.
-          var testCell = cell("c-eg-table__cell");
-          if (value) { testCell.appendChild(linkButton(value)); }
-          tr.appendChild(testCell);
-        });
-        reveal("ids");
-        // The licensed identifier where the account holds licence keys,
-        // otherwise the global one. Both carry the creator context, which
-        // is what this page goes on to check, and they differ only in
-        // whether the match key is scoped to one licence or shared across
-        // customers. An account with no licence keys returns no licensed
-        // identifier at all, and without this the page would carry a null
-        // through verification and report a failure that was really just
-        // the account it was run against.
-        var owid = urlSafe(
-          json.fodid.idproblic || json.fodid.idprobglobal);
-        show("s-create", "created for this browser", PASS);
-        return owid;
-      })
-      .catch(function (error) {
-        // Without this, a creation failure would leave step 1 spinning
-        // and mark step 3 instead, the row furthest from the cause.
-        fail("s-create", error);
-        throw error;
-      });
+        show("s-create", given.slice(0, 30) + "…", NONE);
+        return given;
+      }
+      var owid = fodid.idproblic;
+      if (!owid) {
+        // Without this the page would carry a null through verification
+        // and report a failure that was really just the account it was
+        // run against.
+        reveal("nolicence");
+        throw new Error("the service returned no licence-scoped "
+          + "probabilistic identifier, so there is nothing to verify");
+      }
+      show("s-create", "created for this browser", PASS);
+      return urlSafe(owid);
+    })
+    .catch(function (error) {
+      // Without this, a creation failure would leave step 1 spinning
+      // and mark step 3 instead, the row furthest from the cause.
+      fail("s-create", error);
+      throw error;
+    });
 
   owidPromise.then(function (owid) {
     // 2. Verify from THIS browser, so the cloud observes this live
     // connection. The verdict returns only as an encrypted result.
+    var evidence = javascriptEvidence();
     return fetch(API + "id/verify-full/" + RESOURCE + "/"
-        + owid + "?challenge=" + CHALLENGE)
+        + owid + "?challenge=" + CHALLENGE
+        + (evidence ? "&" + evidence : ""))
       .then(asJson)
       .then(function (verified) {
         if (!verified.result) {
@@ -435,10 +636,11 @@
                 document.getElementById("local-only").style.display = "";
               }
               reveal("share");
-              document.getElementById("copy").onclick = function () {
-                navigator.clipboard.writeText(link);
-                this.textContent = "Copied";
-              };
+              copyButton("copy", link);
+              var commands = shellCheck(owid);
+              document.getElementById("curl").value = commands;
+              reveal("shell");
+              copyButton("copy-curl", commands);
             }
             if (!good && given) {
               reveal("caught");
