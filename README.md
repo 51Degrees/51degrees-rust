@@ -388,12 +388,12 @@ git clone --recurse-submodules https://github.com/51Degrees/51degrees-rust.git
 cd 51degrees-rust/examples
 
 # On-premise examples run with no settings. Each reads the free data files in
-# cxx/data, downloading one that is missing, unless 51DEGREES_DD_PATH or
-# 51DEGREES_IPI_PATH names another file.
+# cxx/data, downloading one that is missing, unless _51DEGREES_DD_PATH or
+# _51DEGREES_IPI_PATH names another file.
 cargo run -p device-detection-examples --bin dd-onprem-getting-started
 cargo run -p ip-intelligence-examples --bin ipi-onprem-getting-started
 
-# Cloud examples read 51DEGREES_RESOURCE_KEY from the environment.
+# Cloud examples read _51DEGREES_RESOURCE_KEY from the environment.
 cargo run -p device-detection-examples --bin dd-cloud-getting-started
 cargo run -p ip-intelligence-examples --bin ipi-cloud-getting-started
 
@@ -416,7 +416,7 @@ reads both, the ASN file for Asn and AsnName. Every example ends with a "Find
 out more" section.
 
 Every cloud example calls the public 51Degrees cloud at
-`https://cloud.51degrees.com/api/v4/` unless `51DEGREES_CLOUD_ENDPOINT` names
+`https://cloud.51degrees.com/api/v4/` unless `_51DEGREES_CLOUD_ENDPOINT` names
 another host. A host other than cloud.51degrees.com would be used to (a) use an
 on premise web server, or (b) use a privately hosted version of the 51Degrees
 cloud for performance reasons. This is the private hosting option of the
@@ -426,7 +426,7 @@ reads, so setting it once points every example at the same place, and the
 value is the API base including the `/api/v4/` segment.
 
 ```sh
-51DEGREES_CLOUD_ENDPOINT=http://localhost:8080/api/v4/ cargo run -p ip-intelligence-examples --bin ipi-cloud-getting-started
+_51DEGREES_CLOUD_ENDPOINT=http://localhost:8080/api/v4/ cargo run -p ip-intelligence-examples --bin ipi-cloud-getting-started
 ```
 
 #### Browser (Selenium) tests

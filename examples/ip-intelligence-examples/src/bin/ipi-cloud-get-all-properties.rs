@@ -166,7 +166,7 @@ fn main() -> Result<()> {
 
     let Some(resource_key) = resource_key else {
         println!(
-            "No resource key available. Set the 51DEGREES_RESOURCE_KEY environment \
+            "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
              variable or pass a key as the first argument. Create a key for free at \
              https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-get-all-properties.rs&utm_term=resource-key-required."
         );
@@ -176,7 +176,7 @@ fn main() -> Result<()> {
 
     let result = run(Options {
         resource_key,
-        // The cloud endpoint from 51DEGREES_CLOUD_ENDPOINT, or the public cloud
+        // The cloud endpoint from _51DEGREES_CLOUD_ENDPOINT, or the public cloud
         // when unset. A host other than cloud.51degrees.com is an on premise web
         // server or a privately hosted 51Degrees cloud (see
         // examples_shared::CLOUD_ENDPOINT_ENV_VAR).
@@ -251,8 +251,8 @@ mod tests {
  * production deployment should enable usage sharing.
  *
  * To run this example, create a Resource Key for free at
- * https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-get-all-properties.rs&utm_term=ipi-cloud-get-all-properties and supply it via the 51DEGREES_RESOURCE_KEY
+ * https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-get-all-properties.rs&utm_term=ipi-cloud-get-all-properties and supply it via the _51DEGREES_RESOURCE_KEY
  * environment variable or as the first command-line argument. By default the
- * pipeline talks to the public cloud endpoint; set the 51DEGREES_CLOUD_ENDPOINT
+ * pipeline talks to the public cloud endpoint; set the _51DEGREES_CLOUD_ENDPOINT
  * environment variable to point at a self-hosted Cloud service instead.
  */

@@ -59,7 +59,7 @@ pub struct ExampleOptions {
     /// The cloud resource key the pipeline authenticates with.
     pub resource_key: String,
     /// An optional override for the cloud endpoint, read from
-    /// `51DEGREES_CLOUD_ENDPOINT`. `None` leaves the choice to the cloud request
+    /// `_51DEGREES_CLOUD_ENDPOINT`. `None` leaves the choice to the cloud request
     /// engine, which reads the same variable and defaults to the public cloud.
     pub endpoint: Option<String>,
 }
@@ -196,7 +196,7 @@ fn main() -> Result<()> {
 
     let Some(resource_key) = resource_key else {
         eprintln!(
-            "No resource key available. Set the 51DEGREES_RESOURCE_KEY environment \
+            "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
              variable (or pass the key as the first argument). The 51Degrees cloud \
              service is accessed using a resource key, which you can create for free \
              at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=resource-key-required."
@@ -208,7 +208,7 @@ fn main() -> Result<()> {
     let result = run(ExampleOptions {
         resource_key,
         // The cloud endpoint. Unset, the cloud request engine reads
-        // 51DEGREES_CLOUD_ENDPOINT itself, and it is passed here as well so the
+        // _51DEGREES_CLOUD_ENDPOINT itself, and it is passed here as well so the
         // choice is visible. A host other than cloud.51degrees.com is an on
         // premise web server or a privately hosted 51Degrees cloud (see
         // examples_shared::CLOUD_ENDPOINT_ENV_VAR).
@@ -228,7 +228,7 @@ mod tests {
     /// It is skipped (not failed) when no resource key is configured, and runs
     /// for real when one is present and the test is invoked with `--ignored`.
     #[test]
-    #[ignore = "requires a live cloud resource key (set 51DEGREES_RESOURCE_KEY)"]
+    #[ignore = "requires a live cloud resource key (set _51DEGREES_RESOURCE_KEY)"]
     fn runs_against_the_cloud() {
         let Some(resource_key) = examples_shared::resource_key_from_env() else {
             eprintln!("skipping: no resource key set");
@@ -279,6 +279,6 @@ mod tests {
  * default, so 51Degrees receives evidence that improves detection.
  *
  * The resource key is read from the first command-line argument or the
- * `51DEGREES_RESOURCE_KEY` environment variable. Create a free key, or a paid key
+ * `_51DEGREES_RESOURCE_KEY` environment variable. Create a free key, or a paid key
  * with the full property set, at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=dd-cloud-getting-started.
  */

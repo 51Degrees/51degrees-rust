@@ -179,14 +179,13 @@ if ($IsWindows) { $Exe += ".exe" }
 $example = $null
 $passed = $false
 try {
-    # The example reads these at start-up. The names start with a digit, so
-    # they need the brace form.
+    # The example reads these at start-up.
     $env:PORT = "$Port"
     if ($Mode -eq "cloud") {
-        ${env:51DEGREES_RESOURCE_KEY} = $ResourceKey
-        ${env:51DEGREES_CLOUD_ENDPOINT} = "https://cloud.51degrees.com/api/v4/"
+        ${env:_51DEGREES_RESOURCE_KEY} = $ResourceKey
+        ${env:_51DEGREES_CLOUD_ENDPOINT} = "https://cloud.51degrees.com/api/v4/"
     } else {
-        ${env:51DEGREES_DD_PATH} = $DataFile
+        ${env:_51DEGREES_DD_PATH} = $DataFile
     }
 
     Write-Host "Starting $Bin on port $Port"
@@ -304,6 +303,6 @@ try {
             }
         }
     }
-    Remove-Item Env:PORT, Env:51DEGREES_RESOURCE_KEY, Env:51DEGREES_CLOUD_ENDPOINT, `
-        Env:51DEGREES_DD_PATH -ErrorAction SilentlyContinue
+    Remove-Item Env:PORT, Env:_51DEGREES_RESOURCE_KEY, Env:_51DEGREES_CLOUD_ENDPOINT, `
+        Env:_51DEGREES_DD_PATH -ErrorAction SilentlyContinue
 }

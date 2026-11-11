@@ -113,8 +113,8 @@ fn on_threads(
 #[test]
 fn device_detection_serves_more_threads_than_file_handles() {
     use fiftyone_native::dd;
-    let Some(path) = data_file("51DEGREES_DD_PATH") else {
-        eprintln!("51DEGREES_DD_PATH names no Hash data file; skipping");
+    let Some(path) = data_file("_51DEGREES_DD_PATH") else {
+        eprintln!("_51DEGREES_DD_PATH names no Hash data file; skipping");
         return;
     };
     let manager =
@@ -166,8 +166,8 @@ fn device_detection_serves_more_threads_than_file_handles() {
 #[test]
 fn ip_intelligence_serves_more_threads_than_file_handles() {
     use fiftyone_native::ipi;
-    let Some(path) = data_file("51DEGREES_IPI_PATH") else {
-        eprintln!("51DEGREES_IPI_PATH names no IP Intelligence data file; skipping");
+    let Some(path) = data_file("_51DEGREES_IPI_PATH") else {
+        eprintln!("_51DEGREES_IPI_PATH names no IP Intelligence data file; skipping");
         return;
     };
     let manager =

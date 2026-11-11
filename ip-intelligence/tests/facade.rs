@@ -75,7 +75,7 @@ fn find_up(relative: &str) -> Option<std::path::PathBuf> {
 fn on_premise_facade_resolves_asn() {
     use fiftyone_ip_intelligence::PerformanceProfile;
 
-    let data_file = std::env::var("51DEGREES_IPI_PATH")
+    let data_file = std::env::var("_51DEGREES_IPI_PATH")
         .ok()
         .map(std::path::PathBuf::from)
         .filter(|p| p.is_file())
@@ -121,7 +121,7 @@ fn on_premise_facade_resolves_asn() {
 #[cfg(feature = "reqwest-client")]
 fn live_resource_key() -> Option<String> {
     [
-        "51DEGREES_RESOURCE_KEY",
+        "_51DEGREES_RESOURCE_KEY",
         "_51DEGREES_RESOURCE_KEY_BESPOKE",
         "_51DEGREES_RESOURCE_KEY_BASIC",
     ]
@@ -139,7 +139,7 @@ fn live_resource_key() -> Option<String> {
 // on reqwest-client (which implies cloud). The workspace build unifies it on.
 #[cfg(feature = "reqwest-client")]
 #[test]
-#[ignore = "requires network and a resource key (51DEGREES_RESOURCE_KEY or the _51DEGREES_RESOURCE_KEY_BESPOKE/_BASIC tiered names)"]
+#[ignore = "requires network and a resource key (_51DEGREES_RESOURCE_KEY or the _51DEGREES_RESOURCE_KEY_BESPOKE/_BASIC tiered names)"]
 fn cloud_facade_resolves_country_code() {
     let Some(resource_key) = live_resource_key() else {
         eprintln!("no resource key in the environment; skipping live cloud facade test");

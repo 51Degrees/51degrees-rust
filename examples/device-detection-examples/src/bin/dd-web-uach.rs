@@ -197,7 +197,7 @@ async fn home(result: FiftyOneResult, available: Arc<Vec<String>>) -> Html<Strin
 
 fn main() -> anyhow::Result<()> {
     let data_file = examples_shared::dd_data_path().context(
-        "no on-premise Hash data file found. Set 51DEGREES_DD_PATH to a .hash data file.",
+        "no on-premise Hash data file found. Set _51DEGREES_DD_PATH to a .hash data file.",
     )?;
 
     let port: u16 = std::env::var("PORT")
@@ -275,7 +275,7 @@ mod tests {
         let Some(app) = test_app() else {
             eprintln!(
                 "skipping server_starts_and_serves_page_and_client_script: no Hash data file \
-                 (set 51DEGREES_DD_PATH to enable this test)"
+                 (set _51DEGREES_DD_PATH to enable this test)"
             );
             return;
         };
@@ -303,7 +303,7 @@ mod tests {
             "the page ends with the Find out more section"
         );
         // The Lite file carries none of the Enterprise properties, so each says
-        // so with the contact link. 51DEGREES_DD_PATH can name another file.
+        // so with the contact link. _51DEGREES_DD_PATH can name another file.
         let lite = examples_shared::dd_data_path()
             .is_some_and(|file| file.ends_with(examples_shared::DD_LITE_RELATIVE_PATH));
         if lite {
@@ -355,7 +355,7 @@ mod tests {
  * with a link to contact 51Degrees about a copy. The page ends with a "Find out
  * more" section.
  *
- * Resolve the data file with `51DEGREES_DD_PATH` (or the Lite file in the data
+ * Resolve the data file with `_51DEGREES_DD_PATH` (or the Lite file in the data
  * repository inside the `cxx` submodule, which is downloaded when it is
  * missing), run the binary and open the page in a
  * Chromium-based browser (which supports client hints) at http://127.0.0.1:8083.

@@ -685,7 +685,7 @@ mod tests {
     #[cfg(feature = "reqwest-client")]
     fn live_resource_key() -> Option<String> {
         [
-            "51DEGREES_RESOURCE_KEY",
+            "_51DEGREES_RESOURCE_KEY",
             "_51DEGREES_RESOURCE_KEY_BESPOKE",
             "_51DEGREES_RESOURCE_KEY_BASIC",
         ]
@@ -701,7 +701,7 @@ mod tests {
     // that feature on, and a standalone run needs `--features reqwest-client`.
     #[cfg(feature = "reqwest-client")]
     #[test]
-    #[ignore = "requires network and a resource key (51DEGREES_RESOURCE_KEY or the _51DEGREES_RESOURCE_KEY_BESPOKE/_BASIC tiered names)"]
+    #[ignore = "requires network and a resource key (_51DEGREES_RESOURCE_KEY or the _51DEGREES_RESOURCE_KEY_BESPOKE/_BASIC tiered names)"]
     fn live_cloud_returns_country_code() {
         use fiftyone_pipeline_core::{Evidence, Pipeline};
 
