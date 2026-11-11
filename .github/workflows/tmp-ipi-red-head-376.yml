@@ -1,0 +1,38 @@
+name: Temporary IP Intelligence typed read tests, the head with only the fix reverted
+
+on:
+  push:
+    branches:
+      - 'tmp/ipi-red-head-376'
+
+jobs:
+  Test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Restore the data files
+        uses: ./.github/actions/restore-data-files
+      - name: Download any data file not restored
+        continue-on-error: true
+        shell: pwsh
+        run: ./cxx/data/get-data-files.ps1 51Degrees-LiteV4.1.hash 51Degrees-IPIV4AsnIpiV41.ipi
+      - name: Configure data files
+        shell: bash
+        run: |
+          echo "51DEGREES_DD_PATH=${GITHUB_WORKSPACE}/cxx/data/device-detection/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
+          echo "51DEGREES_IPI_PATH=${GITHUB_WORKSPACE}/cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
+          for file in "${GITHUB_WORKSPACE}/cxx/data/device-detection/51Degrees-LiteV4.1.hash" "${GITHUB_WORKSPACE}/cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi"; do
+            if [ ! -f "$file" ]; then
+              echo "::error::$file is missing"
+              exit 1
+            fi
+          done
+      - name: The IP Intelligence typed read tests, every one run
+        run: |
+          status=0
+          cargo test --no-fail-fast -p fiftyone-ip-intelligence-shared -p fiftyone-ip-intelligence-onpremise > result.txt 2>&1 || status=$?
+          grep -E "typed|test result|panicked at" result.txt || true
+          exit $status
