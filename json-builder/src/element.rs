@@ -40,10 +40,11 @@ use crate::constants::{
 use crate::data::{JsonBuilderData, JSON_BUILDER_DATA_KEY};
 
 /// What the element says when no sequence element has produced a sequence
-/// number. The wording matches the other 51Degrees pipelines, so the same
-/// misconfiguration reads the same whichever language a deployment uses.
-const NO_SEQUENCE_MESSAGE: &str = "the JSON Builder Element found no sequence number, so a \
-     Sequence Element needs to be placed before it in the Pipeline";
+/// number. The [specification](https://github.com/51Degrees/specifications/blob/dcacc016/pipeline-specification/pipeline-elements/json-builder.md#sequence-number)
+/// gives this text and every language gives the same, so that the message
+/// reads the same whichever one a deployment uses.
+const NO_SEQUENCE_MESSAGE: &str = "The JSON Builder needs a sequence number. \
+     Place a Sequence Element before the JSON Builder in the Pipeline.";
 
 /// The pipeline-derived metadata the builder needs to add the `delayexecution`
 /// and `evidenceproperties` sibling keys.
