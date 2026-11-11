@@ -1579,6 +1579,16 @@ mod tests {
             for ((name, got), want) in names.iter().zip(&got).zip(&want) {
                 assert_eq!(got, want, "{name}, {context}");
             }
+            // The ASN and Lite files share no property, so every name is in
+            // one of the cases checked here and below.
+            let shared = names
+                .iter()
+                .filter(|name| {
+                    other_names
+                        .iter()
+                        .any(|other| other.eq_ignore_ascii_case(name))
+                })
+                .count();
             let read = names
                 .iter()
                 .zip(&got)
@@ -1589,7 +1599,7 @@ mod tests {
                         && value.as_str() != "None"
                 })
                 .count();
-            assert!(read > 0, "{context}");
+            assert_eq!(read > 0, shared > 0, "{context}");
 
             let second_only: Vec<String> = other_names
                 .iter()
@@ -1772,7 +1782,9 @@ mod tests {
                 .manager
                 .data_file_properties()
                 .expect("the properties are read");
-            let mut kept = 0;
+            // The ASN and Lite files share no property, so no property of the
+            // new data set has a position.
+            assert!(!properties.is_empty(), "{context}");
             for property in &properties {
                 let place = names
                     .iter()
@@ -1783,9 +1795,7 @@ mod tests {
                     "{}, {context}",
                     property.name
                 );
-                kept += usize::from(place.is_some());
             }
-            assert!(kept > 1, "{context}");
             let readable = &loaded.readable;
             for (name, index) in readable.names.iter().zip(&readable.indexes) {
                 let at = usize::try_from(*index).expect("an index is not negative");
@@ -1980,9 +1990,9 @@ mod tests {
     }
 
     /// The expected concurrency reaches the native data set when the engine
-    /// is built and when it is refreshed, sizing its file handle pool, and
-    /// more than the square root of the Balanced profiles cache of 20,000
-    /// entries, 141, opens.
+    /// is built, sizing its file handle pool, a refresh keeps it, as the C
+    /// library's reload keeps the configuration, and more than the square
+    /// root of the Balanced profiles cache of 20,000 entries, 141, opens.
     #[test]
     fn the_expected_concurrency_opens_the_data_set_and_its_refresh() {
         let Some(data_file) = ipi_data_file() else {
@@ -2008,9 +2018,8 @@ mod tests {
             .build()
             .expect("the data set opens");
         assert_eq!(file_pool_size(&engine), 3);
-        let engine = engine.with_concurrency(Some(5));
         engine.refresh(None).expect("the refresh opens");
-        assert_eq!(file_pool_size(&engine), 5);
+        assert_eq!(file_pool_size(&engine), 3);
     }
 
     /// With properties requested each lookup reads only those.

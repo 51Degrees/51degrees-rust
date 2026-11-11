@@ -20,8 +20,10 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! A refresh to a data file of another tier leaves the engine reporting what
-//! an engine built on that file reports.
+//! A refresh to a data file of another tier leaves the engine reporting the
+//! tier and the publish date an engine built on that file reports, and its
+//! properties, with only those the first data file names available, because
+//! an engine built with no names keeps the names of the first file it loads.
 //!
 //! The test needs the ASN file `_51DEGREES_IPI_PATH` names and the Lite file
 //! `51Degrees-LiteV41.ipi` beside it, and skips with a note when either is
@@ -32,6 +34,10 @@ use std::path::PathBuf;
 use fiftyone_ip_intelligence_onpremise::IpIntelligenceOnPremiseEngine;
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_engines::{AspectEngine, OnPremiseAspectEngine};
+
+/// The properties a lookup adds, which hold the address looked up rather
+/// than anything in the data file.
+const ADDED_PROPERTIES: [&str; 2] = ["Ip", "IpV6"];
 
 /// The ASN file and the Lite file beside it.
 fn data_files() -> Option<(PathBuf, PathBuf)> {
@@ -67,14 +73,28 @@ fn a_refresh_reports_the_tier_and_publish_date_of_the_new_data_file() {
 
     let refreshed = engine(&path);
     let asn_tier = refreshed.data_source_tier().to_owned();
+    let asn_names = refreshed.available_property_names();
     std::fs::copy(&lite, &path).unwrap();
     refreshed.refresh(None).expect("the Lite file loads");
     let built = engine(&path);
 
     assert_ne!(built.data_source_tier(), asn_tier, "the files share a tier");
     assert_eq!(refreshed.data_source_tier(), built.data_source_tier());
-    assert_eq!(refreshed.aspect_properties(), built.aspect_properties());
     assert_eq!(refreshed.data_file_published(), built.data_file_published());
+    let refreshed_properties = refreshed.aspect_properties();
+    let built_properties = built.aspect_properties();
+    assert_eq!(refreshed_properties.len(), built_properties.len());
+    for (got, want) in refreshed_properties.iter().zip(built_properties) {
+        let name = want.name();
+        assert_eq!(got.name(), name);
+        let named = asn_names.iter().any(|asn| asn.eq_ignore_ascii_case(name));
+        let added = ADDED_PROPERTIES.contains(&name);
+        assert_eq!(
+            got.available(),
+            want.available() && (named || added),
+            "{name}"
+        );
+    }
 
     drop(refreshed);
     drop(built);
