@@ -153,16 +153,23 @@ fn run(with_sequence_element: bool, evidence: &[(&str, &str)], suppress: bool) -
     Outcome { json, error }
 }
 
-/// Assert that the request failed, that no JSON was set and that the message
-/// says a sequence element is needed.
+/// The message the specification gives, written out here rather than read
+/// from the element, so that a change to the element's own text fails this
+/// test instead of moving it along.
+const SPECIFICATION_MESSAGE: &str = "The JSON Builder needs a sequence number. \
+     Place a Sequence Element before the JSON Builder in the Pipeline.";
+
+/// Assert that the request failed, that no JSON was set and that the error
+/// carries the message the specification gives, word for word.
 fn assert_failed(outcome: &Outcome) {
     let error = outcome
         .error
         .as_deref()
         .expect("the JSON builder ran with no sequence number");
     assert!(
-        error.contains("Sequence Element"),
-        "the error does not say a Sequence Element is needed, got {error}"
+        error.contains(SPECIFICATION_MESSAGE),
+        "the error does not carry the message the specification gives, \
+         got {error}"
     );
     assert!(
         outcome.json.is_none(),
