@@ -40,7 +40,7 @@
 //! of any need to mirror those private C layouts.
 //!
 //! The sources are found as `resolve_cxx_dir` describes. When a Lite Hash data
-//! file is found beside them, its path is exported as the `51DEGREES_DD_PATH`
+//! file is found beside them, its path is exported as the `_51DEGREES_DD_PATH`
 //! compile time environment variable so the crate's smoke test can run a real
 //! detection.
 
@@ -157,7 +157,7 @@ fn main() {
     // Absence is not an error: the test then only asserts the symbols link.
     if let Some(data_file) = find_lite_data_file(&cxx) {
         println!("cargo:rerun-if-changed={}", data_file.display());
-        println!("cargo:rustc-env=51DEGREES_DD_PATH={}", data_file.display());
+        println!("cargo:rustc-env=_51DEGREES_DD_PATH={}", data_file.display());
     }
 }
 

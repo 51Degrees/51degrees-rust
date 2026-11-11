@@ -29,7 +29,7 @@
 //! resulting [`DeviceDataBase`] is asserted on.
 //!
 //! The live test at the end is `#[ignore]` and runs only when a real resource key
-//! is supplied through `51DEGREES_RESOURCE_KEY`.
+//! is supplied through `_51DEGREES_RESOURCE_KEY`.
 
 use std::sync::Arc;
 
@@ -355,7 +355,7 @@ fn missing_cloud_request_engine_is_a_configuration_error() {
 
 /// Resolve a cloud resource key from the environment for the live test.
 ///
-/// The aligned `51DEGREES_RESOURCE_KEY` is checked first, then the CI-exported
+/// The aligned `_51DEGREES_RESOURCE_KEY` is checked first, then the CI-exported
 /// bespoke and basic tiered names, mirroring the order in
 /// `examples-shared::keys::resource_key_from_env`, so the live test runs from an
 /// explicit key or the keys CI exports. Returns `None` when none is set, so the
@@ -367,7 +367,7 @@ fn missing_cloud_request_engine_is_a_configuration_error() {
 #[cfg(feature = "reqwest-client")]
 fn live_resource_key() -> Option<String> {
     [
-        "51DEGREES_RESOURCE_KEY",
+        "_51DEGREES_RESOURCE_KEY",
         "_51DEGREES_RESOURCE_KEY_BESPOKE",
         "_51DEGREES_RESOURCE_KEY_BASIC",
     ]
@@ -380,13 +380,13 @@ fn live_resource_key() -> Option<String> {
 
 /// A live test that hits the real 51Degrees cloud. It is ignored by default and
 /// runs only when a resource key is present in the environment, for example:
-/// `51DEGREES_RESOURCE_KEY=... cargo test -p fiftyone-device-detection-cloud -- --ignored`.
+/// `_51DEGREES_RESOURCE_KEY=... cargo test -p fiftyone-device-detection-cloud -- --ignored`.
 // Builds a CloudRequestEngine relying on the built-in reqwest client, so it only
 // compiles with the reqwest-client feature. The workspace build unifies that
 // feature on, and a standalone run needs `--features reqwest-client`.
 #[cfg(feature = "reqwest-client")]
 #[test]
-#[ignore = "requires a network and a real resource key (51DEGREES_RESOURCE_KEY or the _51DEGREES_RESOURCE_KEY_BESPOKE/_BASIC tiered names)"]
+#[ignore = "requires a network and a real resource key (_51DEGREES_RESOURCE_KEY or the _51DEGREES_RESOURCE_KEY_BESPOKE/_BASIC tiered names)"]
 fn live_cloud_detection() {
     let Some(resource_key) = live_resource_key() else {
         eprintln!("no resource key in the environment; skipping live cloud test");

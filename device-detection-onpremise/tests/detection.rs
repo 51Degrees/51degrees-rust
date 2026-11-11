@@ -44,11 +44,11 @@ const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Ma
     AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 
 /// Locate the packaged Lite Hash data file, mirroring the native crate's test
-/// resolution. Resolution order: an explicit `51DEGREES_DD_PATH`
+/// resolution. Resolution order: an explicit `_51DEGREES_DD_PATH`
 /// environment variable, then the `cxx` submodule, then
 /// the wider `Workspace` tree where the other products keep their data.
 fn lite_data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("51DEGREES_DD_PATH") {
+    if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);
@@ -420,7 +420,7 @@ fn method_and_user_agents_are_written() {
 
 #[test]
 fn paid_tier_data_resolves_hardware_vendor() {
-    // Uses whatever `51DEGREES_DD_PATH` points at (or the bundled Lite file as a
+    // Uses whatever `_51DEGREES_DD_PATH` points at (or the bundled Lite file as a
     // fallback). HardwareVendor is a paid-tier property the free Lite file does
     // not carry, so this test asserts it only when a paid data file is
     // configured, and skips the paid-tier assertion otherwise.
@@ -439,7 +439,7 @@ fn paid_tier_data_resolves_hardware_vendor() {
 
     // HardwareVendor is only present in the paid Enterprise/TAC data. When the
     // configured file does not resolve it (the free Lite file does not), skip the
-    // paid-tier assertion rather than fail. Point `51DEGREES_DD_PATH` at a paid
+    // paid-tier assertion rather than fail. Point `_51DEGREES_DD_PATH` at a paid
     // data file to exercise it. For an iPhone User-Agent the vendor is Apple.
     let vendor = device.hardware_vendor();
     if !vendor.has_value() {

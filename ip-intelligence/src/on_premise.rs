@@ -290,11 +290,11 @@ mod tests {
     /// Resolve the ASN IP-intelligence data file at run time.
     ///
     /// The default test/CI data file is the ASN file from the data repository
-    /// (small, current and loads reliably). Set `51DEGREES_IPI_PATH`
+    /// (small, current and loads reliably). Set `_51DEGREES_IPI_PATH`
     /// to override the path. Returns [`None`] when no data file is present, so
     /// the test skips cleanly on a machine without it.
     fn asn_data_file() -> Option<PathBuf> {
-        if let Ok(path) = std::env::var("51DEGREES_IPI_PATH") {
+        if let Ok(path) = std::env::var("_51DEGREES_IPI_PATH") {
             let path = PathBuf::from(path);
             if path.is_file() {
                 return Some(path);

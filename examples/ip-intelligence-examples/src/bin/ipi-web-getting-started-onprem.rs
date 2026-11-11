@@ -285,7 +285,7 @@ fn main() -> anyhow::Result<()> {
     // the Lite file from the data repository, downloaded when it is missing, or
     // Enterprise when the production share is reachable.
     let data_file = examples_shared::ipi_data_path(examples_shared::IpiTier::default()).context(
-        "no on-premise IP Intelligence data file found. Set 51DEGREES_IPI_PATH to an .ipi \
+        "no on-premise IP Intelligence data file found. Set _51DEGREES_IPI_PATH to an .ipi \
          data file.",
     )?;
 
@@ -354,7 +354,7 @@ mod tests {
         let Some(app) = test_app() else {
             eprintln!(
                 "skipping server_starts_and_serves_page_and_client_script: no .ipi data file \
-                 (set 51DEGREES_IPI_PATH to enable this test)"
+                 (set _51DEGREES_IPI_PATH to enable this test)"
             );
             return;
         };
@@ -382,7 +382,7 @@ mod tests {
             );
             assert!(page_body.contains("ASN"), "the page shows the ASN rows");
             // The ASN file carries none of the Enterprise properties, so the
-            // page says so. 51DEGREES_IPI_PATH can name another file.
+            // page says so. _51DEGREES_IPI_PATH can name another file.
             let asn_file = examples_shared::IPI_ASN_RELATIVE_PATH.rsplit('/').next();
             let data_file = examples_shared::ipi_data_path(examples_shared::IpiTier::Asn);
             if data_file
@@ -455,7 +455,7 @@ mod tests {
  * its data-file warnings are read before it is handed to the web pipeline as an
  * application element, so no data file is opened twice.
  *
- * Resolve the data file with `51DEGREES_IPI_PATH` (or rely on the Lite file in
+ * Resolve the data file with `_51DEGREES_IPI_PATH` (or rely on the Lite file in
  * the data repository inside the `cxx` submodule, which is downloaded when it
  * is missing), then run the binary and open http://127.0.0.1:8083.
  */

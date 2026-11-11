@@ -261,9 +261,9 @@ async fn home(
 }
 
 fn main() -> anyhow::Result<()> {
-    // The resource key is read from the aligned/legacy/CI environment variables.
+    // The resource key is read from `_51DEGREES_RESOURCE_KEY` or the CI names.
     let resource_key = examples_shared::resource_key_from_env().context(
-        "no 51Degrees cloud resource key found. Set 51DEGREES_RESOURCE_KEY to a key from \
+        "no 51Degrees cloud resource key found. Set _51DEGREES_RESOURCE_KEY to a key from \
          https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-cloud.rs&utm_term=resource-key-required and run again.",
     )?;
 
@@ -276,7 +276,7 @@ fn main() -> anyhow::Result<()> {
 
     run(Options {
         resource_key,
-        // The cloud endpoint from 51DEGREES_CLOUD_ENDPOINT, or the public cloud
+        // The cloud endpoint from _51DEGREES_CLOUD_ENDPOINT, or the public cloud
         // when unset. A host other than cloud.51degrees.com is an on premise web
         // server or a privately hosted 51Degrees cloud (see
         // examples_shared::CLOUD_ENDPOINT_ENV_VAR).
@@ -432,5 +432,5 @@ mod tests {
  * more" section.
  *
  * Build a resource key at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-cloud.rs&utm_term=ipi-web-getting-started-cloud and export it as
- * `51DEGREES_RESOURCE_KEY`, then run the binary and open http://127.0.0.1:8082.
+ * `_51DEGREES_RESOURCE_KEY`, then run the binary and open http://127.0.0.1:8082.
  */

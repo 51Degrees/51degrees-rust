@@ -880,10 +880,10 @@ mod tests {
 
     use fiftyone_pipeline_core::Evidence;
 
-    /// The Hash data file `51DEGREES_DD_PATH` names, or the Lite file in the
+    /// The Hash data file `_51DEGREES_DD_PATH` names, or the Lite file in the
     /// `cxx` submodule.
     fn data_file() -> Option<PathBuf> {
-        if let Ok(path) = std::env::var("51DEGREES_DD_PATH") {
+        if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
             let path = PathBuf::from(path);
             if path.is_file() {
                 return Some(path);

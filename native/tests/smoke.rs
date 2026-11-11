@@ -98,7 +98,7 @@ fn find_data_file(
 #[cfg(feature = "dd")]
 fn dd_lite_data_file() -> Option<PathBuf> {
     find_data_file(
-        "51DEGREES_DD_PATH",
+        "_51DEGREES_DD_PATH",
         "cxx",
         "data/device-detection",
         "51Degrees-LiteV4.1.hash",
@@ -112,7 +112,7 @@ fn dd_lite_data_file() -> Option<PathBuf> {
 #[cfg(feature = "ipi")]
 fn ipi_data_file() -> Option<PathBuf> {
     find_data_file(
-        "51DEGREES_IPI_PATH",
+        "_51DEGREES_IPI_PATH",
         "cxx",
         "data/ip-intelligence",
         "51Degrees-IPIV4AsnIpiV41.ipi",

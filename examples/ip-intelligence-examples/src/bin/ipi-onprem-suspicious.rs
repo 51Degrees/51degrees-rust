@@ -432,7 +432,7 @@ mod tests {
         let printed = String::from_utf8(buffer).expect("output should be valid UTF-8");
         assert!(printed.contains("Asn:"));
         assert!(printed.contains(examples_shared::FIND_OUT_MORE_HEADING));
-        // 51DEGREES_IPI_PATH can name another file.
+        // _51DEGREES_IPI_PATH can name another file.
         let asn_file = examples_shared::IPI_ASN_RELATIVE_PATH.rsplit('/').next();
         if options.data_file.file_name().and_then(|n| n.to_str()) == asn_file {
             assert!(

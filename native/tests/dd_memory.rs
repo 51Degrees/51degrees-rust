@@ -103,9 +103,9 @@ const GHEV: &str = "eyJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24i
     b3dzIiwicGxhdGZvcm1WZXJzaW9uIjoiMTUuMC4wIiwiYXJjaGl0ZWN0dXJlIjoieDg2IiwiYml0\
     bmVzcyI6IjY0In0=";
 
-/// The Hash data file `51DEGREES_DD_PATH` names.
+/// The Hash data file `_51DEGREES_DD_PATH` names.
 fn data_file() -> Option<PathBuf> {
-    let path = PathBuf::from(std::env::var("51DEGREES_DD_PATH").ok()?);
+    let path = PathBuf::from(std::env::var("_51DEGREES_DD_PATH").ok()?);
     path.is_file().then_some(path)
 }
 
@@ -224,7 +224,7 @@ fn measure_profile(leaks: &mut Leaks, path: &Path, profile: PerformanceProfile) 
 #[test]
 fn every_entry_point_leaves_no_native_memory_allocated() {
     let Some(path) = data_file() else {
-        eprintln!("51DEGREES_DD_PATH names no Hash data file; skipping");
+        eprintln!("_51DEGREES_DD_PATH names no Hash data file; skipping");
         return;
     };
     count_native_allocations();

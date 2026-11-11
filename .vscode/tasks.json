@@ -150,7 +150,7 @@
         "$rustc"
       ],
       "group": "test",
-      "detail": "Runs the live cloud and data-file tests too; needs 51DEGREES_RESOURCE_KEY and data files in the environment."
+      "detail": "Runs the live cloud and data-file tests too; needs _51DEGREES_RESOURCE_KEY and data files in the environment."
     },
     {
       "label": "cargo: clippy (all targets, deny warnings)",

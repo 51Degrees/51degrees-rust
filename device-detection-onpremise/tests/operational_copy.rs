@@ -22,7 +22,7 @@
 
 //! A data update replaces the data file of a running engine under every
 //! profile, and the copy the engine reads leaves with it. The tests need the
-//! Lite file `51DEGREES_DD_PATH` names, and skip with a note without it.
+//! Lite file `_51DEGREES_DD_PATH` names, and skip with a note without it.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -44,7 +44,7 @@ const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Ma
     AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 
 fn lite_data_file() -> Option<PathBuf> {
-    std::env::var("51DEGREES_DD_PATH")
+    std::env::var("_51DEGREES_DD_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())
@@ -144,7 +144,7 @@ fn is_mobile(data: &FlowData) -> Option<bool> {
 #[test]
 fn an_update_replaces_the_data_file_under_every_profile() {
     let Some(lite) = lite_data_file() else {
-        eprintln!("skipping operational copies: set 51DEGREES_DD_PATH to the Lite file");
+        eprintln!("skipping operational copies: set _51DEGREES_DD_PATH to the Lite file");
         return;
     };
     for profile in [
@@ -183,7 +183,7 @@ fn an_update_replaces_the_data_file_under_every_profile() {
 #[test]
 fn each_copy_goes_with_the_data_set_read_from_it() {
     let Some(lite) = lite_data_file() else {
-        eprintln!("skipping operational copies: set 51DEGREES_DD_PATH to the Lite file");
+        eprintln!("skipping operational copies: set _51DEGREES_DD_PATH to the Lite file");
         return;
     };
     let name = format!("copied-{}.hash", std::process::id());
@@ -227,7 +227,7 @@ fn each_copy_goes_with_the_data_set_read_from_it() {
 #[test]
 fn the_copy_goes_in_the_folder_the_builder_names() {
     let Some(lite) = lite_data_file() else {
-        eprintln!("skipping operational copies: set 51DEGREES_DD_PATH to the Lite file");
+        eprintln!("skipping operational copies: set _51DEGREES_DD_PATH to the Lite file");
         return;
     };
     let (dir, path) = folder_with(&lite, "named", "51Degrees.hash");

@@ -92,9 +92,9 @@ fn count_native_allocations() {
     }
 }
 
-/// The IP Intelligence data file `51DEGREES_IPI_PATH` names.
+/// The IP Intelligence data file `_51DEGREES_IPI_PATH` names.
 fn data_file() -> Option<PathBuf> {
-    let path = PathBuf::from(std::env::var("51DEGREES_IPI_PATH").ok()?);
+    let path = PathBuf::from(std::env::var("_51DEGREES_IPI_PATH").ok()?);
     path.is_file().then_some(path)
 }
 
@@ -230,7 +230,7 @@ fn native_reload(path: &Path) {
 #[test]
 fn every_entry_point_leaves_no_native_memory_allocated() {
     let Some(path) = data_file() else {
-        eprintln!("51DEGREES_IPI_PATH names no IP Intelligence data file; skipping");
+        eprintln!("_51DEGREES_IPI_PATH names no IP Intelligence data file; skipping");
         return;
     };
     count_native_allocations();

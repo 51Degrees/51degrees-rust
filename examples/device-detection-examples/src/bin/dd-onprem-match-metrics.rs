@@ -356,7 +356,7 @@ fn main() -> Result<()> {
 
     let Some(data_file) = data_file else {
         anyhow::bail!(
-            "No device-detection data file found. Set 51DEGREES_DD_PATH, or pass \
+            "No device-detection data file found. Set _51DEGREES_DD_PATH, or pass \
              the path as the first argument."
         );
     };
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn runs_against_the_lite_data_file() {
         let Some(data_file) = examples_shared::dd_data_path() else {
-            eprintln!("skipping: no on-premise data file found (set 51DEGREES_DD_PATH)");
+            eprintln!("skipping: no on-premise data file found (set _51DEGREES_DD_PATH)");
             return;
         };
         run(ExampleOptions {
@@ -388,7 +388,7 @@ mod tests {
         .expect("the on-premise match-metrics example should complete");
 
         // The Lite file carries none of the Enterprise properties shown, so the
-        // run names them all with the contact link. 51DEGREES_DD_PATH can name
+        // run names them all with the contact link. _51DEGREES_DD_PATH can name
         // another file.
         if data_file.ends_with(examples_shared::DD_LITE_RELATIVE_PATH) {
             let available = device_detection_examples::data_file_properties(&data_file)
@@ -454,7 +454,7 @@ mod tests {
  * default, so 51Degrees receives evidence that improves detection.
  *
  * The data file is read from the first command-line argument, the
- * `51DEGREES_DD_PATH` environment variable, or the Lite Hash file in the data
+ * `_51DEGREES_DD_PATH` environment variable, or the Lite Hash file in the data
  * repository inside the cxx submodule, which the example downloads when it is
  * missing.
  */
