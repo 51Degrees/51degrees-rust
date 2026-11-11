@@ -23,9 +23,10 @@
 //! The time one read of a property takes through the device data, by name
 //! and through its typed accessor, once its value has been read, so the
 //! figures time finding the property, and the time to build an engine and
-//! to process a detection with no names and with every name. They mean
-//! something only in an optimised build, so the tests time nothing in a
-//! debug build, and `cargo test --release -p
+//! to process a detection with no names and with every name, and the time
+//! to refresh an engine built with no names and to read from it after.
+//! They mean something only in an optimised build, so the tests time nothing
+//! in a debug build, and `cargo test --release -p
 //! fiftyone-device-detection-onpremise --test read_timing -- --nocapture`
 //! prints them.
 
@@ -40,6 +41,7 @@ use fiftyone_device_detection_onpremise::{
 use fiftyone_device_detection_shared::{DeviceData, DEVICE_DATA_KEY};
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{Evidence, FlowElement, Pipeline};
+use fiftyone_pipeline_engines::OnPremiseAspectEngine;
 
 /// The reads timed for each figure.
 const READS: u32 = 1_000_000;
@@ -186,5 +188,53 @@ fn a_read_by_name_and_a_typed_read() {
     });
     println!(
         "IsMobile read by name {by_name:.1} ns, typed {typed:.1} ns, the mean of {READS} reads each"
+    );
+}
+
+/// The refreshes timed for each figure.
+const REFRESHES: u32 = 20;
+
+#[test]
+fn refreshing_and_reading_with_no_names() {
+    if cfg!(debug_assertions) {
+        eprintln!("the refreshes are timed only in an optimised build; skipping");
+        return;
+    }
+    let Some(path) = data_file() else {
+        eprintln!("no Hash data file found; skipping the refresh timing");
+        return;
+    };
+    let (engine, _) = build(&path, &[]);
+    let start = Instant::now();
+    for _ in 0..REFRESHES {
+        engine.refresh(None).expect("the data file loads again");
+    }
+    let refresh = start.elapsed().as_secs_f64() * 1000.0 / f64::from(REFRESHES);
+    let element: Arc<dyn FlowElement> = engine.clone();
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("the pipeline builds");
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("header.user-agent", USER_AGENT)
+            .build(),
+    );
+    data.process().expect("processing succeeds");
+    let device = data.get(DEVICE_DATA_KEY).expect("device data was produced");
+    assert_eq!(
+        format!("{:?}", device.is_mobile()),
+        format!("{:?}", device.bool_property("IsMobile"))
+    );
+    let by_name = mean_nanoseconds(|| {
+        black_box(device.bool_property(black_box("IsMobile")));
+    });
+    let typed = mean_nanoseconds(|| {
+        black_box(device.is_mobile());
+    });
+    let detection = mean_detection_microseconds(engine);
+    println!(
+        "No names, after {REFRESHES} refreshes: a refresh {refresh:.1} ms, {detection:.2} us a \
+         detection, IsMobile read by name {by_name:.1} ns, typed {typed:.1} ns."
     );
 }

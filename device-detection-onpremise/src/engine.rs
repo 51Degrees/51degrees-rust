@@ -1998,6 +1998,127 @@ mod tests {
         }
     }
 
+    /// An engine built with no names keeps the table of the names it was
+    /// built with across a refresh from its file and from memory, and the
+    /// new data set holds the first data set's names, in their order, rather
+    /// than the engine building its table again from each new data set.
+    #[test]
+    fn an_engine_with_no_names_keeps_its_names_across_a_refresh() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the names kept across a refresh");
+            return;
+        };
+        let (engine, _) = engine_and_data(&path);
+        let names = engine.loaded.load().manager.property_names();
+        let bytes = std::fs::read(&path).expect("the data file reads");
+        for from_memory in [false, true] {
+            if from_memory {
+                engine
+                    .refresh_from_memory(None, &bytes)
+                    .expect("the data loads again");
+            } else {
+                engine.refresh(None).expect("the data file loads again");
+            }
+            let loaded = engine.loaded.load();
+            assert!(
+                Arc::ptr_eq(&loaded.readable.names, &engine.names),
+                "the table was built again, from memory {from_memory}"
+            );
+            assert_eq!(
+                loaded.manager.property_names(),
+                names,
+                "from memory {from_memory}"
+            );
+        }
+    }
+
+    /// An engine built with no names over one data file and reloaded from
+    /// another whose properties differ keeps the first file's names, in their
+    /// order, so each index names the same property. A property both files
+    /// have reads as an engine built on the second file reads it, a property
+    /// only the first file has reads as one the data set does not have, and
+    /// a property only the second file has gets no index and is listed as
+    /// not available, until the engine is built again. Runs when the TAC file
+    /// is beside the Lite file, both ways round.
+    #[test]
+    fn an_engine_with_no_names_keeps_the_first_files_names_after_a_reload_from_another_file() {
+        let Some(lite) = data_file() else {
+            eprintln!("no Hash data file found; skipping the reload from another file");
+            return;
+        };
+        let tac = lite.with_file_name("TAC-HashV41.hash");
+        if !tac.is_file() {
+            eprintln!(
+                "no TAC file beside {}; skipping the reload from another file",
+                lite.display()
+            );
+            return;
+        }
+        for (first, second) in [(&lite, &tac), (&tac, &lite)] {
+            let context = format!("{} then {}", first.display(), second.display());
+            let (engine, data) = engine_and_data(first);
+            let names = engine.loaded.load().manager.property_names();
+            let (other, _) = engine_and_data(second);
+            let other_names = other.loaded.load().manager.property_names();
+            assert_ne!(names, other_names, "{context}");
+
+            engine
+                .reload_from_path(second)
+                .expect("the other data file loads");
+            let loaded = engine.loaded.load();
+            assert_eq!(loaded.manager.property_names(), names, "{context}");
+            assert!(
+                Arc::ptr_eq(&loaded.readable.names, &engine.names),
+                "{context}"
+            );
+
+            let reader = engine.detection_reader(&data).expect("detection succeeds");
+            let expected = other.detection_reader(&data).expect("detection succeeds");
+            let value = |reader: &DetectionReader, name: &str| {
+                reader
+                    .position(name)
+                    .map(|position| reader.read_property(position))
+            };
+            let mut read = 0;
+            for name in names.iter().map(|name| name.to_lowercase()) {
+                if other_names
+                    .iter()
+                    .any(|other| other.eq_ignore_ascii_case(&name))
+                {
+                    assert_eq!(
+                        value(&reader, &name),
+                        value(&expected, &name),
+                        "{name}, {context}"
+                    );
+                    read += 1;
+                } else {
+                    assert!(reader.position(&name).is_none(), "{name}, {context}");
+                }
+            }
+            assert!(read > 1, "{context}");
+            for name in other_names
+                .iter()
+                .filter(|other| !names.iter().any(|name| name.eq_ignore_ascii_case(other)))
+            {
+                assert_eq!(
+                    loaded.manager.required_property_index(name),
+                    None,
+                    "{name}, {context}"
+                );
+                assert!(
+                    reader.position(&name.to_lowercase()).is_none(),
+                    "{name}, {context}"
+                );
+                let listed = engine
+                    .properties()
+                    .iter()
+                    .find(|property| property.name.eq_ignore_ascii_case(name))
+                    .map(|property| property.available);
+                assert_eq!(listed, Some(false), "{name}, {context}");
+            }
+        }
+    }
+
     /// Each match metric gives the same value as when it is read first when
     /// it is read after another property, from a reader kept across a refresh
     /// of the engine's data file, and on another thread, because each walk

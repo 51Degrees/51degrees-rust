@@ -1464,6 +1464,163 @@ mod tests {
         }
     }
 
+    /// An engine over `path` built with no names.
+    fn no_names_engine(path: &Path) -> IpIntelligenceOnPremiseEngine {
+        IpIntelligenceOnPremiseEngine::builder(path)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            .auto_update(false)
+            .build()
+            .expect("the IP Intelligence data file should build an engine")
+    }
+
+    /// An engine built with no names keeps the table of the names it was
+    /// built with across a refresh from its file and from memory, and the
+    /// new data set holds the first data set's names, in their order, rather
+    /// than the engine building its table again from each new data set.
+    #[test]
+    fn an_engine_with_no_names_keeps_its_names_across_a_refresh() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!(
+                "no usable IP-intelligence data file; skipping the names kept across a refresh"
+            );
+            return;
+        };
+        let engine = no_names_engine(&data_file);
+        let names = engine.loaded.load().manager.available_property_names();
+        let bytes = std::fs::read(&data_file).expect("the data file reads");
+        for from_memory in [false, true] {
+            if from_memory {
+                engine
+                    .refresh_from_memory(None, &bytes)
+                    .expect("the data loads again");
+            } else {
+                engine.refresh(None).expect("the data file loads again");
+            }
+            let loaded = engine.loaded.load();
+            assert!(
+                Arc::ptr_eq(&loaded.readable.build, &engine.names),
+                "the table was built again, from memory {from_memory}"
+            );
+            assert_eq!(
+                loaded.manager.available_property_names(),
+                names,
+                "from memory {from_memory}"
+            );
+        }
+    }
+
+    /// The value `engine` gives each of `names` for a lookup of 1.1.1.1, read
+    /// by name, or `None` for one with no value.
+    fn values_by_name(
+        engine: &Arc<IpIntelligenceOnPremiseEngine>,
+        names: &[String],
+    ) -> Vec<String> {
+        let element: Arc<dyn fiftyone_pipeline_core::FlowElement> = engine.clone();
+        let pipeline = Pipeline::builder()
+            .add_element(element)
+            .build()
+            .expect("pipeline builds");
+        let mut data = pipeline.create_flow_data_with(
+            Evidence::builder()
+                .add("query.client-ip", "1.1.1.1")
+                .build(),
+        );
+        data.process().expect("processing succeeds");
+        let ip = data.get(IP_DATA_KEY).expect("ip data is present");
+        names
+            .iter()
+            .map(|name| format!("{:?}", ElementData::get(ip, name).ok()))
+            .collect()
+    }
+
+    /// An engine built with no names over one data file and reloaded from
+    /// another whose properties differ keeps the first file's names, in their
+    /// order, so each index names the same property. A property both files
+    /// have reads as an engine built on the second file reads it, a property
+    /// only the first file has reads as one the data set does not have, and
+    /// a property only the second file has gets no index and is listed as
+    /// not available, until the engine is built again. Runs when the Lite
+    /// file is beside the ASN file, both ways round.
+    #[test]
+    fn an_engine_with_no_names_keeps_the_first_files_names_after_a_reload_from_another_file() {
+        let Some(asn) = ipi_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping the reload from another file");
+            return;
+        };
+        let lite = asn.with_file_name("51Degrees-LiteV41.ipi");
+        if !lite.is_file() {
+            eprintln!(
+                "no IP Intelligence Lite file beside {}; skipping the reload from another file",
+                asn.display()
+            );
+            return;
+        }
+        for (first, second) in [(&asn, &lite), (&lite, &asn)] {
+            let context = format!("{} then {}", first.display(), second.display());
+            let engine = Arc::new(no_names_engine(first));
+            let names = engine.loaded.load().manager.available_property_names();
+            let other = Arc::new(no_names_engine(second));
+            let other_names = other.loaded.load().manager.available_property_names();
+            assert_ne!(names, other_names, "{context}");
+
+            engine
+                .reload_from_path(second)
+                .expect("the other data file loads");
+            let loaded = engine.loaded.load();
+            assert_eq!(
+                loaded.manager.available_property_names(),
+                names,
+                "{context}"
+            );
+            assert!(
+                Arc::ptr_eq(&loaded.readable.build, &engine.names),
+                "{context}"
+            );
+
+            let got = values_by_name(&engine, &names);
+            let want = values_by_name(&other, &names);
+            for ((name, got), want) in names.iter().zip(&got).zip(&want) {
+                assert_eq!(got, want, "{name}, {context}");
+            }
+            let read = names
+                .iter()
+                .zip(&got)
+                .filter(|(name, value)| {
+                    other_names
+                        .iter()
+                        .any(|other| other.eq_ignore_ascii_case(name))
+                        && value.as_str() != "None"
+                })
+                .count();
+            assert!(read > 0, "{context}");
+
+            let second_only: Vec<String> = other_names
+                .iter()
+                .filter(|other| !names.iter().any(|name| name.eq_ignore_ascii_case(other)))
+                .cloned()
+                .collect();
+            for name in &second_only {
+                assert_eq!(
+                    loaded.manager.required_property_index(name),
+                    None,
+                    "{name}, {context}"
+                );
+                assert!(
+                    loaded.readable.position(&name.to_lowercase()).is_none(),
+                    "{name}, {context}"
+                );
+                let listed = fiftyone_pipeline_core::FlowElement::properties(&*engine)
+                    .iter()
+                    .find(|property| property.name.eq_ignore_ascii_case(name))
+                    .map(|property| property.available);
+                assert_eq!(listed, Some(false), "{name}, {context}");
+            }
+            for value in values_by_name(&engine, &second_only) {
+                assert_eq!(value, "None", "{context}");
+            }
+        }
+    }
+
     /// A reader over the current data set for a lookup of `ip`, built as
     /// [`IpIntelligenceOnPremiseEngine::lookup`] builds it.
     fn lookup_reader(engine: &IpIntelligenceOnPremiseEngine, ip: &str) -> LookupReader {
