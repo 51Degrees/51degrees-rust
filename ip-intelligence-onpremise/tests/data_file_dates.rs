@@ -27,7 +27,7 @@
 //!
 //! Each test holds several copies of the data at once, so the tests use the
 //! ASN file in the data repository inside the `cxx` submodule whatever
-//! `51DEGREES_IPI_PATH` names, and skip with a note when it is missing.
+//! `_51DEGREES_IPI_PATH` names, and skip with a note when it is missing.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -203,6 +203,35 @@ fn a_failed_refresh_from_memory_keeps_the_data_and_dates() {
         ("half the data", &data[..data.len() / 2]),
     ] {
         engine.refresh_from_memory(None, refused).expect_err(case);
+        assert_dates(&engine, case);
+        assert!(answers(&engine), "{case}");
+    }
+    drop(engine);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A refresh from half a data file, or from no file, fails, and the engine
+/// keeps the data and the dates it had. The engine holds its data in memory,
+/// so the file can be replaced on every platform.
+#[test]
+fn a_failed_refresh_from_the_file_keeps_the_data_and_dates() {
+    let Some(asn) = asn_file() else {
+        return;
+    };
+    let dir = folder("failed-file");
+    let path = dir.join("51Degrees.ipi");
+    let data = dated(&asn);
+    std::fs::write(&path, &data).unwrap();
+    let engine = built_on(&path, PerformanceProfile::InMemory);
+    for (case, refused) in [
+        ("half a data file", Some(data[..data.len() / 2].to_vec())),
+        ("no file", None),
+    ] {
+        match refused {
+            Some(refused) => std::fs::write(&path, refused).unwrap(),
+            None => std::fs::remove_file(&path).unwrap(),
+        }
+        engine.refresh(None).expect_err(case);
         assert_dates(&engine, case);
         assert!(answers(&engine), "{case}");
     }

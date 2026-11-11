@@ -400,7 +400,7 @@ impl StaticInfo {
     fn gather() -> Self {
         StaticInfo {
             core_version: env!("CARGO_PKG_VERSION").to_owned(),
-            language_version: env!("FIFTYONE_RUSTC_VERSION").to_owned(),
+            language_version: env!("_51DEGREES_RUSTC_VERSION").to_owned(),
             server_ip: crate::host_address::host_address(),
             platform: platform(),
         }

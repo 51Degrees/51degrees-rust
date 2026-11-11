@@ -24,7 +24,7 @@
 //! walk fails when the data file cannot be read, so the test reads a copy of
 //! the Lite file under the low memory profile, which reads the graphs from
 //! the file, and empties the copy after the detections. It needs the Lite
-//! file `51DEGREES_DD_PATH` names, and skips with a note without it.
+//! file `_51DEGREES_DD_PATH` names, and skips with a note without it.
 
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
@@ -44,7 +44,7 @@ const DESKTOP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
     AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 fn lite_data_file() -> Option<PathBuf> {
-    std::env::var("51DEGREES_DD_PATH")
+    std::env::var("_51DEGREES_DD_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())

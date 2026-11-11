@@ -984,7 +984,7 @@ fn a_412_without_the_extra_headers_carries_none() {
 
 /// Set in the environment of the second process the ETag test starts, which
 /// then prints its ETag rather than comparing.
-const ETAG_CHILD_VARIABLE: &str = "FIFTYONE_WEB_ETAG_CHILD";
+const ETAG_CHILD_VARIABLE: &str = "_51DEGREES_WEB_ETAG_CHILD";
 
 #[test]
 fn the_same_evidence_gives_the_same_etag_in_another_process() {

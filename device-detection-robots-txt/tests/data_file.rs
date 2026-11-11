@@ -22,7 +22,7 @@
 
 //! The engine in a pipeline with the on-premise Device Detection engine.
 //!
-//! These run against the Lite Hash data file, or the file `51DEGREES_DD_PATH`
+//! These run against the Lite Hash data file, or the file `_51DEGREES_DD_PATH`
 //! names, and skip with a note when there is none. The Lite file holds no
 //! crawler properties, so against it the text allows every crawler, and the
 //! checks of each crawler run against a file that holds them, such as the
@@ -47,10 +47,10 @@ const SITE: &str = "https://example.com/";
 
 const TDL: &str = "https://m4ow.uk/socw/1.txt";
 
-/// The Hash data file `51DEGREES_DD_PATH` names, or the Lite file in the `cxx`
+/// The Hash data file `_51DEGREES_DD_PATH` names, or the Lite file in the `cxx`
 /// submodule.
 fn data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("51DEGREES_DD_PATH") {
+    if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);

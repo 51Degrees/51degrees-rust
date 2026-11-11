@@ -37,7 +37,7 @@
 //! its own, so the `Asn` each of its forms reads shows which address was
 //! looked up. `8.8.8.8` reads `Asn` as its default in that file, so for its
 //! forms only `Ip` and `IpV6` tell the two families apart. The tests run when
-//! `51DEGREES_IPI_PATH` names that file, or when it is in the data repository
+//! `_51DEGREES_IPI_PATH` names that file, or when it is in the data repository
 //! inside the `cxx` submodule, and skip otherwise.
 
 use std::path::PathBuf;
@@ -71,11 +71,11 @@ const NULL_PROFILE: &str = "The results contained a null profile for the \
 /// Added to a failure that a change in the data file could explain.
 const DATA_HINT: &str = "Has the data file gained a new lowest key?";
 
-/// The ASN data file, being the file `51DEGREES_IPI_PATH` names when it is
+/// The ASN data file, being the file `_51DEGREES_IPI_PATH` names when it is
 /// that file, then the file in the data repository inside the `cxx`
 /// submodule.
 fn asn_data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("51DEGREES_IPI_PATH") {
+    if let Ok(path) = std::env::var("_51DEGREES_IPI_PATH") {
         let path = PathBuf::from(path.trim());
         if path.file_name().is_some_and(|name| name == ASN_FILE_NAME) && path.is_file() {
             return Some(path);

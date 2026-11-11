@@ -21,7 +21,7 @@
  * ********************************************************************* */
 
 //! Update on start-up when the update cannot be fetched. The test needs the
-//! ASN file `51DEGREES_IPI_PATH` names, and skips with a note without it.
+//! ASN file `_51DEGREES_IPI_PATH` names, and skips with a note without it.
 
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -37,12 +37,12 @@ use fiftyone_pipeline_engines::DataUpdateService;
 /// it. The data file stays registered for later updates.
 #[test]
 fn an_engine_builds_from_its_data_file_when_the_update_on_start_up_fails() {
-    let Some(asn) = std::env::var("51DEGREES_IPI_PATH")
+    let Some(asn) = std::env::var("_51DEGREES_IPI_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())
     else {
-        eprintln!("skipping update on start-up: set 51DEGREES_IPI_PATH to the ASN file");
+        eprintln!("skipping update on start-up: set _51DEGREES_IPI_PATH to the ASN file");
         return;
     };
     let dir = std::env::temp_dir().join(format!("fiftyone-ipi-startup-{}", std::process::id()));

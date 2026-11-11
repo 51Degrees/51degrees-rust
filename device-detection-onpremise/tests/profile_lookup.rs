@@ -26,7 +26,7 @@
 //! again.
 //!
 //! The tests need a Hash data file with the `BrowserName` property, the one
-//! `51DEGREES_DD_PATH` names or the Lite file in the `cxx` submodule, and skip
+//! `_51DEGREES_DD_PATH` names or the Lite file in the `cxx` submodule, and skip
 //! with a note when there is none.
 
 use std::path::{Path, PathBuf};
@@ -55,10 +55,10 @@ const PROFILE_IDS_KEY: &str = "query.51D_ProfileIds";
 /// every this many values, as each such read is the slowest.
 const FILE_PROFILE_FULL_READ_EVERY: usize = 10;
 
-/// The Hash data file `51DEGREES_DD_PATH` names, else the Lite file in the
+/// The Hash data file `_51DEGREES_DD_PATH` names, else the Lite file in the
 /// `cxx` submodule, or `None` with a note that the test is skipped.
 fn data_file() -> Option<PathBuf> {
-    let given = std::env::var("51DEGREES_DD_PATH").ok().map(PathBuf::from);
+    let given = std::env::var("_51DEGREES_DD_PATH").ok().map(PathBuf::from);
     let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../cxx/data/device-detection/51Degrees-LiteV4.1.hash");
     let found = given
@@ -66,7 +66,7 @@ fn data_file() -> Option<PathBuf> {
         .chain([bundled])
         .find(|path| path.is_file());
     if found.is_none() {
-        eprintln!("skipped: no Hash data file at 51DEGREES_DD_PATH or cxx/data");
+        eprintln!("skipped: no Hash data file at _51DEGREES_DD_PATH or cxx/data");
     }
     found
 }

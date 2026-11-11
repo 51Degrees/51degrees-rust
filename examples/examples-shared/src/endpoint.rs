@@ -36,7 +36,7 @@
 /// honours this variable, either by passing [`cloud_endpoint_from_env`] to its
 /// builder or by leaving the endpoint unset so the cloud request engine reads
 /// the variable itself, and the value is normalised to end in one `/`.
-pub const CLOUD_ENDPOINT_ENV_VAR: &str = "51DEGREES_CLOUD_ENDPOINT";
+pub const CLOUD_ENDPOINT_ENV_VAR: &str = "_51DEGREES_CLOUD_ENDPOINT";
 
 /// Read the optional cloud endpoint from [`CLOUD_ENDPOINT_ENV_VAR`].
 ///

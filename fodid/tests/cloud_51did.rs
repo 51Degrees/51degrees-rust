@@ -24,7 +24,7 @@
 //! checks that it parses into a [`FodId`].
 //!
 //! The test uses a single resource key from the environment. Set
-//! `51DEGREES_RESOURCE_KEY` (or one of the CI-exported tiered names
+//! `_51DEGREES_RESOURCE_KEY` (or one of the CI-exported tiered names
 //! `_51DEGREES_RESOURCE_KEY_BESPOKE` / `_51DEGREES_RESOURCE_KEY_BASIC`) to a key
 //! whose properties include `fodid.*`. Create one with the 51Degrees Configurator
 //! sharing link <https://configure.51degrees.com/N57Wygby> (the free tier now
@@ -36,12 +36,12 @@
 //!
 //! ```text
 //! # set the key as an environment variable, then run:
-//! #   PowerShell: $env:51DEGREES_RESOURCE_KEY = '<key>'
-//! #   bash:       export 51DEGREES_RESOURCE_KEY=<key>
+//! #   PowerShell: $env:_51DEGREES_RESOURCE_KEY = '<key>'
+//! #   bash:       export _51DEGREES_RESOURCE_KEY=<key>
 //! cargo test -p fodid --test cloud_51did -- --include-ignored
 //!
 //! # or supply it inline for a single run:
-//! 51DEGREES_RESOURCE_KEY=<key> cargo test -p fodid --test cloud_51did -- --include-ignored
+//! _51DEGREES_RESOURCE_KEY=<key> cargo test -p fodid --test cloud_51did -- --include-ignored
 //! ```
 //!
 //! Run without a key it fails with those instructions instead of passing
@@ -49,7 +49,7 @@
 //!
 //! To exercise more than one key (for example a free key and a paid key), the
 //! CI workflow runs this test once per `_51DEGREES_RESOURCE_KEY*` secret,
-//! setting `51DEGREES_RESOURCE_KEY` to each in turn. The test itself only ever
+//! setting `_51DEGREES_RESOURCE_KEY` to each in turn. The test itself only ever
 //! reads the single variable.
 //!
 //! For each key the test checks the cloud `id.usage` levels. `non-marketing` is
@@ -64,10 +64,10 @@ use fodid::{FodId, IdType, Usage};
 mod layout;
 
 /// The resource-key environment variable names, in the workspace's resolution
-/// order: the aligned name first, then the CI-exported bespoke and basic tiered
-/// names. Mirrors `examples-shared::keys::resource_key_from_env`.
+/// order: `_51DEGREES_RESOURCE_KEY` first, then the CI-exported bespoke and
+/// basic tiered names. Mirrors `examples-shared::keys::resource_key_from_env`.
 const RESOURCE_KEY_ENVS: [&str; 3] = [
-    "51DEGREES_RESOURCE_KEY",
+    "_51DEGREES_RESOURCE_KEY",
     "_51DEGREES_RESOURCE_KEY_BESPOKE",
     "_51DEGREES_RESOURCE_KEY_BASIC",
 ];
@@ -190,7 +190,7 @@ fn request_with(resource_key: &str, name: &str, value: &str) -> serde_json::Valu
 ///
 /// Marked `#[ignore]` for the same reason as the test above.
 #[test]
-#[ignore = "live cloud test: set 51DEGREES_RESOURCE_KEY and run with `--include-ignored` (see module docs)"]
+#[ignore = "live cloud test: set _51DEGREES_RESOURCE_KEY and run with `--include-ignored` (see module docs)"]
 fn consent_string_sets_the_usage_is_indirect_bit() {
     let Some(resource_key) = resource_key() else {
         panic!(
@@ -367,7 +367,7 @@ fn string_field<'a>(element: &'a serde_json::Value, name: &str) -> Option<&'a st
 // Marked `#[ignore]` because it needs a cloud resource key and network access.
 // Run it with `cargo test -p fodid --test cloud_51did -- --include-ignored`.
 #[test]
-#[ignore = "live cloud test: set 51DEGREES_RESOURCE_KEY and run with `--include-ignored` (see module docs)"]
+#[ignore = "live cloud test: set _51DEGREES_RESOURCE_KEY and run with `--include-ignored` (see module docs)"]
 fn resource_key_returns_51did_for_supported_usages() {
     let Some(resource_key) = resource_key() else {
         panic!(

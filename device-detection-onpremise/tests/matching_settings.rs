@@ -23,7 +23,7 @@
 //! The builder's matching settings and expected concurrency reach the data
 //! set, and a refresh keeps them.
 //!
-//! These run against the Lite Hash data file, or the file `51DEGREES_DD_PATH`
+//! These run against the Lite Hash data file, or the file `_51DEGREES_DD_PATH`
 //! names, and skip with a note when neither is found.
 
 use std::path::PathBuf;
@@ -46,10 +46,10 @@ const DESKTOP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
 /// a difference of 10.
 const NOTHING_TO_MATCH: &str = "nothing to match";
 
-/// The Hash data file `51DEGREES_DD_PATH` names, or the Lite file in the
+/// The Hash data file `_51DEGREES_DD_PATH` names, or the Lite file in the
 /// `cxx` submodule.
 fn data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("51DEGREES_DD_PATH") {
+    if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);

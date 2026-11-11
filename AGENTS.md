@@ -95,20 +95,20 @@ to run, so an exit code of 0 means it ran against a file.
 
 ### Paths and keys from the environment
 
-The examples read `51DEGREES_DD_PATH` and `51DEGREES_IPI_PATH` for a data file
-elsewhere, and the cloud examples read `51DEGREES_RESOURCE_KEY`, for which a
+The examples read `_51DEGREES_DD_PATH` and `_51DEGREES_IPI_PATH` for a data file
+elsewhere, and the cloud examples read `_51DEGREES_RESOURCE_KEY`, for which a
 key comes from the
 [Configurator](https://configure.51degrees.com/?utm_source=github&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=agents.md&utm_term=configure).
-These names start with a digit, so bash and sh refuse both `export
-51DEGREES_RESOURCE_KEY=...` and the `51DEGREES_RESOURCE_KEY=... cargo run`
-prefix. Use `env` there, and `$env:` in PowerShell.
+Every name starts with an underscore, because bash and sh refuse a name that
+starts with a digit, so `export` works in a shell and `$env:` in PowerShell.
 
 ```sh
-env 51DEGREES_RESOURCE_KEY=<key> cargo run -p device-detection-examples --bin dd-cloud-getting-started
+export _51DEGREES_RESOURCE_KEY=<key>
+cargo run -p device-detection-examples --bin dd-cloud-getting-started
 ```
 
 ```powershell
-$env:51DEGREES_RESOURCE_KEY = '<key>'
+$env:_51DEGREES_RESOURCE_KEY = '<key>'
 cargo run -p device-detection-examples --bin dd-cloud-getting-started
 ```
 
@@ -190,7 +190,7 @@ CI builds with `RUSTFLAGS=-D warnings` and `RUSTDOCFLAGS=-D warnings`, so any
 warning fails the build. Match that locally before pushing.
 
 Each `-sys` `build.rs` resolves its C sources in this order: the
-`FIFTYONE_CXX_DIR` environment variable, pointing at a 51degrees-cxx checkout,
+`_51DEGREES_CXX_DIR` environment variable, pointing at a 51degrees-cxx checkout,
 then the `cxx` submodule, then the `cxx` folder inside the crate, which only a
 packaged crate has (see "Releasing to crates.io" below).
 
@@ -200,10 +200,10 @@ build and tests stay green without data. An example that cannot find its file
 runs the data repository's script for that one file, with the source
 `examples-51degrees-rust`, and fails with the command to run if it still
 cannot find it. To run them against another file,
-point the relevant variable at it: `51DEGREES_DD_PATH` for a Device Detection
-`.hash` file, `51DEGREES_IPI_PATH` for an IP Intelligence `.ipi` file. Live
+point the relevant variable at it: `_51DEGREES_DD_PATH` for a Device Detection
+`.hash` file, `_51DEGREES_IPI_PATH` for an IP Intelligence `.ipi` file. Live
 cloud tests are `#[ignore]`d and read a resource key from
-`51DEGREES_RESOURCE_KEY` (or the CI tiered names `_51DEGREES_RESOURCE_KEY_BESPOKE`
+`_51DEGREES_RESOURCE_KEY` (or the CI tiered names `_51DEGREES_RESOURCE_KEY_BESPOKE`
 then `_51DEGREES_RESOURCE_KEY_BASIC`).
 
 ## examples/

@@ -24,7 +24,7 @@
 //! messages of .NET's `RobotsTxtEngineBuilder`. The comparison with .NET
 //! builds the same configurations (`parity/corpus/configuration.json`).
 //! The test that makes the engine needs the Lite Hash data file in the
-//! `cxx` submodule, or the file `51DEGREES_DD_PATH` names, and skips
+//! `cxx` submodule, or the file `_51DEGREES_DD_PATH` names, and skips
 //! without one.
 
 use std::path::PathBuf;
@@ -85,10 +85,10 @@ fn failed(message: &str) -> String {
     failed_with(message, NO_INNER)
 }
 
-/// The Hash data file `51DEGREES_DD_PATH` names, or the Lite file in the `cxx`
+/// The Hash data file `_51DEGREES_DD_PATH` names, or the Lite file in the `cxx`
 /// submodule.
 fn data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("51DEGREES_DD_PATH") {
+    if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);

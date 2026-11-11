@@ -37,7 +37,7 @@
 //! Every tier resolves its data file at run time and skips cleanly when the file
 //! is absent, so a checkout without the data files (and an off-network CI) stays
 //! green while a developer with the files gets real native coverage. An explicit
-//! `51DEGREES_IPI_PATH` overrides the ASN path so a single file can drive the
+//! `_51DEGREES_IPI_PATH` overrides the ASN path so a single file can drive the
 //! default tests.
 
 use std::path::PathBuf;
@@ -83,10 +83,10 @@ fn find_up(relative: &str) -> Option<PathBuf> {
     }
 }
 
-/// Resolve the ASN data file: an explicit `51DEGREES_IPI_PATH` first, then the
+/// Resolve the ASN data file: an explicit `_51DEGREES_IPI_PATH` first, then the
 /// ASN file in the data repository inside the `cxx` submodule.
 fn asn_data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("51DEGREES_IPI_PATH") {
+    if let Ok(path) = std::env::var("_51DEGREES_IPI_PATH") {
         let path = PathBuf::from(path.trim());
         if path.is_file() {
             return Some(path);
@@ -100,12 +100,12 @@ const ENTERPRISE_FILE_NAME: &str = "51Degrees-IPIV4EnterpriseIpiV41.ipi";
 
 /// The environment variable giving the root of the dated Enterprise share, laid
 /// out as `<root>/YYYY/MM/DD/<file>`. Unset off the 51Degrees network.
-const ENTERPRISE_SHARE_ENV_VAR: &str = "51DEGREES_IPI_ENTERPRISE_SHARE";
+const ENTERPRISE_SHARE_ENV_VAR: &str = "_51DEGREES_IPI_ENTERPRISE_SHARE";
 
-/// Set where `51DEGREES_IPI_PATH` names the Enterprise file, as in the
+/// Set where `_51DEGREES_IPI_PATH` names the Enterprise file, as in the
 /// comparison with .NET, so a check that needs that file fails rather than
 /// skips.
-const REQUIRE_ENTERPRISE: &str = "51DEGREES_REQUIRE_ENTERPRISE";
+const REQUIRE_ENTERPRISE: &str = "_51DEGREES_REQUIRE_ENTERPRISE";
 
 /// Resolve the latest Enterprise data file on the configured share, or `None`
 /// when the variable is unset or the share is not mounted (the common off-network
@@ -334,10 +334,10 @@ fn asn_refresh_round_trips() {
 ///
 /// The engine is asked for the whole generated property set so an Enterprise data
 /// file populates a wide cross-section. Skips cleanly when no data file is
-/// present; point `51DEGREES_IPI_PATH` at an Enterprise file for full coverage.
-/// With [`REQUIRE_ENTERPRISE`] set it fails rather than skips, and fails unless
-/// `StateGeoNameIdsGeographical`, which only the Enterprise file holds, is
-/// present for one of the addresses.
+/// present; point `_51DEGREES_IPI_PATH` at an Enterprise file for full
+/// coverage. With [`REQUIRE_ENTERPRISE`] set it fails rather than skips, and
+/// fails unless `StateGeoNameIdsGeographical`, which only the Enterprise file
+/// holds, is present for one of the addresses.
 #[test]
 fn every_present_property_unpacks_as_its_declared_type() {
     let require_enterprise = std::env::var_os(REQUIRE_ENTERPRISE).is_some();

@@ -22,9 +22,9 @@
 
 //! The engine's property and component metadata, read from the data file as
 //! the .NET engine reads it. The tests run against the ASN file in the data
-//! repository, or the file `51DEGREES_IPI_PATH` names, and skip when neither
+//! repository, or the file `_51DEGREES_IPI_PATH` names, and skip when neither
 //! is present. A test that needs an Enterprise file skips on any other, and
-//! fails instead when `51DEGREES_REQUIRE_ENTERPRISE` is set. The failed
+//! fails instead when `_51DEGREES_REQUIRE_ENTERPRISE` is set. The failed
 //! refresh test always uses the ASN file, because it holds two copies of the
 //! file in memory and writes a third to disk.
 
@@ -45,7 +45,7 @@ const ADDED_PROPERTIES: [&str; 2] = ["Ip", "IpV6"];
 
 /// Set where the Enterprise file must be given, as in the comparison with
 /// .NET, so a test that needs it fails rather than skips.
-const REQUIRE_ENTERPRISE: &str = "51DEGREES_REQUIRE_ENTERPRISE";
+const REQUIRE_ENTERPRISE: &str = "_51DEGREES_REQUIRE_ENTERPRISE";
 
 /// The ASN file in the data repository.
 const ASN_FILE_NAME: &str = "51Degrees-IPIV4AsnIpiV41.ipi";
@@ -59,9 +59,9 @@ fn skip_without_enterprise(reason: &str, what: &str) {
     eprintln!("{reason}; skipping {what}");
 }
 
-/// The data file `51DEGREES_IPI_PATH` names, else [`asn_file`].
+/// The data file `_51DEGREES_IPI_PATH` names, else [`asn_file`].
 fn data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("51DEGREES_IPI_PATH") {
+    if let Ok(path) = std::env::var("_51DEGREES_IPI_PATH") {
         let path = PathBuf::from(path.trim());
         if path.is_file() {
             return Some(path);
@@ -536,7 +536,7 @@ fn later_with_unreadable_metadata(file: &Path) -> Vec<u8> {
 /// fails and changes nothing. The engine keeps the old file's publish date,
 /// so the update service's `If-Modified-Since` still asks for the new file.
 /// The test needs no particular file, so it uses the small ASN file whatever
-/// `51DEGREES_IPI_PATH` names.
+/// `_51DEGREES_IPI_PATH` names.
 #[test]
 fn a_refresh_whose_metadata_cannot_be_read_changes_nothing() {
     let Some(file) = asn_file() else {
