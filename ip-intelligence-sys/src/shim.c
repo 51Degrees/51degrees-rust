@@ -153,18 +153,6 @@ int fiftyoneDegreesShimIpiDataSetGetRequiredPropertyIndexFromName(
 }
 
 /*
- * Returns the properties `dataSet` was created with, which a data set created
- * from another file takes as its existing properties to keep their names, as
- * the C library's reload does, or NULL when there are none. It takes no
- * reference on the data set, so the caller holds one for as long as it uses
- * the properties.
- */
-fiftyoneDegreesPropertiesAvailable* fiftyoneDegreesShimIpiDataSetGetAvailable(
-    fiftyoneDegreesDataSetIpi *dataSet) {
-    return dataSet == NULL ? NULL : dataSet->b.b.available;
-}
-
-/*
  * Writes the data set's name into `buffer` as a null terminated string and
  * returns the number of characters written, excluding the terminator. The data
  * set name is the file's tier, for example "Lite", "Enterprise" or "TAC".
@@ -492,10 +480,10 @@ static const fiftyoneDegreesProperty* get_property(
 /*
  * Finds `property` by name among the available properties, as the C++
  * builder does, and sets `available` to 1 when the data set was created with
- * it, being when it has a required property index, otherwise 0, and
- * `requiredIndex` to that index, which the results getters take, or -1 when
- * it has none. The C library matches the name ignoring case. Returns 1, or 0
- * when the name cannot be read, as the C++ builder raises an exception there.
+ * it, otherwise 0, and `requiredIndex` to its required property index, which
+ * the results getters take, or -1 when it has none. The C library matches the
+ * name ignoring case. Returns 1, or 0 when the name cannot be read, as the
+ * C++ builder raises an exception there.
  */
 static int find_available(
     fiftyoneDegreesDataSetIpi *dataSet,
@@ -514,14 +502,12 @@ static int find_available(
         if (FIFTYONE_DEGREES_EXCEPTION_OKAY) {
             const char *value = FIFTYONE_DEGREES_STRING(name);
             if (dataSet->b.b.available != NULL) {
-                // Available when results can hold its values, which needs
-                // a required index. A data set that keeps the names of an
-                // earlier one holds a property only it has with no required
-                // index.
+                *available =
+                    fiftyoneDegreesPropertiesGetPropertyIndexFromName(
+                        dataSet->b.b.available, value) >= 0 ? 1 : 0;
                 *requiredIndex =
                     fiftyoneDegreesPropertiesGetRequiredPropertyIndexFromName(
                         dataSet->b.b.available, value);
-                *available = *requiredIndex >= 0 ? 1 : 0;
             }
             read = 1;
         }

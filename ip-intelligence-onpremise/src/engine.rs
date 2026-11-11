@@ -153,13 +153,12 @@ pub struct IpIntelligenceOnPremiseEngine {
     concurrency: Option<u16>,
     /// The property names the engine was built with. Every refresh opens the
     /// data file with these names, so each keeps its index. Empty when the
-    /// engine was built with no name, which opens the first data file with
-    /// every property and each refresh with the names the data set before it
-    /// holds, so each keeps its index too.
+    /// engine was built with no name, which opens the data file with every
+    /// property.
     requested: Vec<String>,
-    /// The names a read looks a property up in, built once when the engine
-    /// is built from the names the first data set was opened with, and never
-    /// from a later data set.
+    /// The names a read looks a property up in. Built once at build from
+    /// `requested`, or rebuilt from each data set when the engine was built
+    /// with no name, because then the indexes are the data set's own order.
     names: Arc<BuildNames>,
     /// The evidence keys of the loaded data file, replaced on refresh.
     evidence_key_filter: DataFileEvidenceKeys,
@@ -385,9 +384,8 @@ impl IpIntelligenceOnPremiseEngine {
     /// it holds them. With properties named, these are the names given, in
     /// the order given, including any the data file has no property for, so
     /// [`Self::populated_property_names`] gives the data file properties a
-    /// lookup reads. Without, this is every property the first data file
-    /// loaded defines, which a refresh keeps. Intended for introspection,
-    /// such as the metadata example.
+    /// lookup reads. Without, this is every property the data file defines.
+    /// Intended for introspection, such as the metadata example.
     pub fn available_property_names(&self) -> Vec<String> {
         self.loaded.load().manager.available_property_names()
     }
@@ -554,6 +552,22 @@ impl IpIntelligenceOnPremiseEngine {
         }
     }
 
+    /// The names a read of `manager`'s data set looks a property up in.
+    ///
+    /// An engine built with names keeps the table it was built with, because
+    /// a name's index is its place in those names whatever the new data file
+    /// holds. An engine built with no name takes the new data set's names,
+    /// because its indexes are that data set's own order, which a new data
+    /// file can change. The C library is changing to keep the first load's
+    /// names, and the table here becomes the built one for both.
+    fn names_for(&self, manager: &Arc<Manager>) -> Arc<BuildNames> {
+        if self.requested.is_empty() {
+            Arc::new(BuildNames::new(manager.available_property_names()))
+        } else {
+            Arc::clone(&self.names)
+        }
+    }
+
     /// Reopen the data file at `path` and atomically swap it in. See
     /// [`Self::swap_in`].
     fn reload_from_path(&self, path: &Path) -> Result<()> {
@@ -571,20 +585,12 @@ impl IpIntelligenceOnPremiseEngine {
                 self.reuse_temp_file,
             )
         });
-        let path = copy.as_ref().map_or(path, OperationalCopy::path);
-        let manager = if self.requested.is_empty() {
-            self.loaded
-                .load()
-                .manager
-                .reopen_with_options(path, self.profile, self.concurrency)?
-        } else {
-            Manager::open_with_options(
-                path,
-                self.profile,
-                self.property_refs().as_deref(),
-                self.concurrency,
-            )?
-        };
+        let manager = Manager::open_with_options(
+            copy.as_ref().map_or(path, OperationalCopy::path),
+            self.profile,
+            self.property_refs().as_deref(),
+            self.concurrency,
+        )?;
         self.swap_in(copy, manager)
     }
 
@@ -597,14 +603,11 @@ impl IpIntelligenceOnPremiseEngine {
             .unwrap_or_else(PoisonError::into_inner);
         // The data set reads the data where it lies, so the manager keeps a
         // copy for as long as the data set.
-        let manager = if self.requested.is_empty() {
-            self.loaded
-                .load()
-                .manager
-                .reopen_from_memory(data.to_vec(), self.profile)?
-        } else {
-            Manager::open_from_memory(data.to_vec(), self.profile, self.property_refs().as_deref())?
-        };
+        let manager = Manager::open_from_memory(
+            data.to_vec(),
+            self.profile,
+            self.property_refs().as_deref(),
+        )?;
         self.swap_in(None, manager)
     }
 
@@ -616,7 +619,8 @@ impl IpIntelligenceOnPremiseEngine {
     /// read, changes nothing. The caller holds the refresh lock.
     fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
         let evidence_keys = DataFileEvidenceKeys::whitelist(&manager);
-        let (loaded, metadata) = describe(copy, manager, &self.tier_override, &self.names)?;
+        let names = self.names_for(&manager);
+        let (loaded, metadata) = describe(copy, manager, &self.tier_override, &names)?;
         let loaded = Arc::new(loaded);
         self.loaded.store(Arc::clone(&loaded));
         self.evidence_key_filter.keys.store(Arc::new(evidence_keys));
@@ -1615,6 +1619,268 @@ mod tests {
                 assert_eq!(value, "None", "{context}");
             }
         }
+    }
+
+    /// A refresh reloads the data set into the engine's own manager, as the
+    /// C library's reload does, from the file, from memory and from another
+    /// path, so the engine's manager is the same one after each.
+    #[test]
+    fn a_refresh_reloads_the_data_set_in_the_engines_manager() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping the reload in place");
+            return;
+        };
+        let engine = no_names_engine(&data_file);
+        let manager = Arc::clone(&engine.loaded.load().manager);
+        let bytes = std::fs::read(&data_file).expect("the data file reads");
+        let same = || Arc::ptr_eq(&manager, &engine.loaded.load().manager);
+        engine.refresh(None).expect("the data file loads again");
+        assert!(same(), "from the file");
+        engine
+            .refresh_from_memory(None, &bytes)
+            .expect("the data loads again");
+        assert!(same(), "from memory");
+        engine
+            .reload_from_path(&data_file)
+            .expect("the data file loads again");
+        assert!(same(), "from a path");
+    }
+
+    /// Flow data holding the client IP 1.1.1.1, from a pipeline of `engine`.
+    fn flow_data_for(engine: &Arc<IpIntelligenceOnPremiseEngine>) -> FlowData {
+        let element: Arc<dyn FlowElement> = engine.clone();
+        let pipeline = Pipeline::builder()
+            .add_element(element)
+            .build()
+            .expect("pipeline builds");
+        pipeline.create_flow_data_with(
+            Evidence::builder()
+                .add("query.client-ip", "1.1.1.1")
+                .build(),
+        )
+    }
+
+    /// The value `ip` gives each of `names`, read by name, or `None` for one
+    /// with no value.
+    fn read_by_name(ip: &IpIntelligenceDataBase, names: &[String]) -> Vec<String> {
+        names
+            .iter()
+            .map(|name| format!("{:?}", ElementData::get(ip, name).ok()))
+            .collect()
+    }
+
+    /// A reload of `engine` the tests below make, with the words its
+    /// messages name it by.
+    type Reload<'a> = (String, Box<dyn Fn() -> Result<()> + 'a>);
+
+    /// The reloads of `engine` from the file, from memory, from `bytes`, and
+    /// last from `other` when it is given.
+    fn reloads<'a>(
+        engine: &'a IpIntelligenceOnPremiseEngine,
+        bytes: &'a [u8],
+        other: Option<&'a Path>,
+    ) -> Vec<Reload<'a>> {
+        let mut reloads: Vec<Reload<'a>> = vec![
+            (
+                "from the file".to_owned(),
+                Box::new(move || engine.refresh(None)),
+            ),
+            (
+                "from memory".to_owned(),
+                Box::new(move || engine.refresh_from_memory(None, bytes)),
+            ),
+        ];
+        if let Some(other) = other {
+            reloads.push((
+                format!("from {}", other.display()),
+                Box::new(move || engine.reload_from_path(other)),
+            ));
+        }
+        reloads
+    }
+
+    /// A lookup made before a reload reads every property as a lookup on the
+    /// data file it was made from reads it, though nothing was read from it
+    /// before the reload, because its results keep the data set they came
+    /// from. Each reload is from the file, from memory, and from the Lite IP
+    /// Intelligence file when it is beside the ASN file, under a profile that
+    /// holds the data set in memory and one that reads the data file through
+    /// its file handles.
+    #[test]
+    fn a_lookup_made_before_a_reload_reads_as_it_did_before_it() {
+        let Some(asn) = ipi_data_file() else {
+            eprintln!(
+                "no usable IP-intelligence data file; skipping the lookups kept across a reload"
+            );
+            return;
+        };
+        let lite = asn.with_file_name("51Degrees-LiteV41.ipi");
+        let lite = lite.is_file().then_some(lite);
+        let bytes = std::fs::read(&asn).expect("the data file reads");
+        let reference = Arc::new(no_names_engine(&asn));
+        let names = reference.loaded.load().manager.available_property_names();
+        let data = flow_data_for(&reference);
+        let expected = read_by_name(
+            &reference.lookup(&data).expect("the lookup succeeds"),
+            &names,
+        );
+        assert!(expected.iter().any(|value| value != "None"), "{expected:?}");
+        for profile in [
+            PerformanceProfile::HighPerformance,
+            PerformanceProfile::LowMemory,
+        ] {
+            let engine = IpIntelligenceOnPremiseEngine::builder(&asn)
+                .performance_profile(profile)
+                .auto_update(false)
+                .build()
+                .expect("the IP Intelligence data file should build an engine");
+            for (reload, run) in reloads(&engine, &bytes, lite.as_deref()) {
+                let context = format!("{}, {reload}", profile.as_str());
+                let before = engine.lookup(&data).expect("the lookup succeeds");
+                run().expect("the reload succeeds");
+                assert_eq!(read_by_name(&before, &names), expected, "{context}");
+            }
+        }
+    }
+
+    /// An engine built with no names over one data file and reloaded from
+    /// another whose properties differ gives each property of the new data
+    /// set the index of its name among the first file's names, and no index
+    /// to one the first file does not name, so every name keeps its position
+    /// and each typed accessor reads where its name does. Runs when the Lite
+    /// file is beside the ASN file, both ways round.
+    #[test]
+    fn an_engine_with_no_names_keeps_each_names_position_after_a_reload_from_another_file() {
+        let Some(asn) = ipi_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping the positions after a reload");
+            return;
+        };
+        let lite = asn.with_file_name("51Degrees-LiteV41.ipi");
+        if !lite.is_file() {
+            eprintln!(
+                "no IP Intelligence Lite file beside {}; skipping the positions after a reload",
+                asn.display()
+            );
+            return;
+        }
+        for (first, second) in [(&asn, &lite), (&lite, &asn)] {
+            let context = format!("{} then {}", first.display(), second.display());
+            let engine = no_names_engine(first);
+            let names = engine.loaded.load().manager.available_property_names();
+            engine
+                .reload_from_path(second)
+                .expect("the other data file loads");
+            let loaded = engine.loaded.load();
+            let properties = loaded
+                .manager
+                .data_file_properties()
+                .expect("the properties are read");
+            let mut kept = 0;
+            for property in &properties {
+                let place = names
+                    .iter()
+                    .position(|name| name.eq_ignore_ascii_case(&property.name));
+                assert_eq!(
+                    property.required_property_index,
+                    place.map(|place| place as c_int),
+                    "{}, {context}",
+                    property.name
+                );
+                kept += usize::from(place.is_some());
+            }
+            assert!(kept > 1, "{context}");
+            let readable = &loaded.readable;
+            for (name, index) in readable.names.iter().zip(&readable.indexes) {
+                let at = usize::try_from(*index).expect("an index is not negative");
+                assert!(
+                    names[at].eq_ignore_ascii_case(name),
+                    "{name} at {index}, {context}"
+                );
+            }
+            for (slot, name) in TYPED_PROPERTY_NAMES.iter().enumerate() {
+                assert_eq!(
+                    readable.typed[slot],
+                    readable.position(&name.to_lowercase()),
+                    "{name}, {context}"
+                );
+            }
+        }
+    }
+
+    /// The handles this process has open to the file at `path`.
+    #[cfg(target_os = "linux")]
+    fn open_handles(path: &Path) -> usize {
+        let path = std::fs::canonicalize(path).expect("the file exists");
+        std::fs::read_dir("/proc/self/fd")
+            .expect("the open files are listed")
+            .flatten()
+            .filter(|entry| std::fs::read_link(entry.path()).is_ok_and(|target| target == path))
+            .count()
+    }
+
+    /// A reload leaves the data set it replaces open while a lookup made from
+    /// it is held, and the data set is freed, closing its handles to the data
+    /// file, when the last lookup holding it is dropped, or at once when none
+    /// holds it. The handles are counted through `/proc`, so this runs on
+    /// Linux.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_reload_frees_the_data_set_it_replaces_once_no_lookup_holds_it() {
+        let Some(source) = ipi_data_file() else {
+            eprintln!(
+                "no usable IP-intelligence data file; skipping the data sets freed by a reload"
+            );
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("fiftyone-ipi-reload-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the folder is made");
+        let first = dir.join("first.ipi");
+        let second = dir.join("second.ipi");
+        std::fs::copy(&source, &first).expect("the data file copies");
+        std::fs::copy(&source, &second).expect("the data file copies");
+        let engine = IpIntelligenceOnPremiseEngine::builder(&first)
+            .performance_profile(PerformanceProfile::LowMemory)
+            .auto_update(false)
+            .build()
+            .expect("the IP Intelligence data file should build an engine");
+        assert!(
+            open_handles(&first) > 0,
+            "the first data set reads its file"
+        );
+
+        let held = lookup_reader(&engine, "1.1.1.1");
+        engine
+            .reload_from_path(&second)
+            .expect("the second file loads");
+        assert!(open_handles(&second) > 0, "the new data set reads its file");
+        assert!(
+            open_handles(&first) > 0,
+            "the data set a lookup holds is freed"
+        );
+        let position = held.position("asn").expect("the ASN file has Asn");
+        let mut ip = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        held.read_property(position, &mut ip)
+            .expect("the held lookup reads");
+        drop(held);
+        assert_eq!(
+            open_handles(&first),
+            0,
+            "the data set is kept after its last lookup"
+        );
+
+        engine
+            .reload_from_path(&first)
+            .expect("the first file loads again");
+        assert!(open_handles(&first) > 0, "the new data set reads its file");
+        assert_eq!(
+            open_handles(&second),
+            0,
+            "the data set no lookup holds is kept"
+        );
+        drop(engine);
+        assert_eq!(open_handles(&first), 0, "the engine's data set is kept");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A reader over the current data set for a lookup of `ip`, built as

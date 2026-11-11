@@ -148,16 +148,6 @@ pub fn data_file_header_size() -> usize {
 // Manager
 // ---------------------------------------------------------------------------
 
-/// The property names a data set is opened with.
-#[derive(Clone, Copy)]
-enum Names<'a> {
-    /// The names given, or every property of the data file when [`None`].
-    Given(Option<&'a [&'a str]>),
-    /// The names another manager's data set holds, as the C library's
-    /// reload takes them.
-    KeptFrom(&'a Manager),
-}
-
 /// A loaded IP Intelligence data set.
 ///
 /// Owns a native [`sys::ResourceManager`] initialized from an `.ipi` data file.
@@ -234,44 +224,10 @@ impl Manager {
         properties: Option<&[&str]>,
         concurrency: Option<u16>,
     ) -> Result<Arc<Manager>> {
-        Self::open_file(
-            path.as_ref(),
-            profile,
-            Names::Given(properties),
-            concurrency,
-        )
-    }
-
-    /// Open an IP Intelligence data file as a new data set with the property
-    /// names this manager's data set holds, as the C library's reload of a
-    /// data set takes them, and an optional expected concurrency, as
-    /// [`Manager::open_with_options`] describes.
-    ///
-    /// Each required property index of the new data set names the property it
-    /// names here. When this manager was opened with no names, the new data set
-    /// keeps the names of the first data set, in their order, so a property
-    /// only the new data file has gets no index, and a lookup still walks a
-    /// component's graph only when one of its properties is first read.
-    pub fn reopen_with_options(
-        &self,
-        path: impl AsRef<Path>,
-        profile: PerformanceProfile,
-        concurrency: Option<u16>,
-    ) -> Result<Arc<Manager>> {
-        Self::open_file(path.as_ref(), profile, Names::KeptFrom(self), concurrency)
-    }
-
-    /// Open the IP Intelligence data file at `path` with `names`, as
-    /// [`Manager::open_with_options`] describes.
-    fn open_file(
-        path: &Path,
-        profile: PerformanceProfile,
-        names: Names<'_>,
-        concurrency: Option<u16>,
-    ) -> Result<Arc<Manager>> {
+        let path = path.as_ref();
         let path_c = crate::path::native_path(path)?;
         Self::init(
-            names,
+            properties,
             None,
             |manager, required, exception| {
                 // Safety: all pointers are valid for the call and the path is
@@ -306,28 +262,6 @@ impl Manager {
         profile: PerformanceProfile,
         properties: Option<&[&str]>,
     ) -> Result<Arc<Manager>> {
-        Self::load_memory(data, profile, Names::Given(properties))
-    }
-
-    /// Load an IP Intelligence data set from `data`, the whole of a data file
-    /// held in memory, with the property names this manager's data set holds,
-    /// as [`Manager::reopen_with_options`] describes for a file and
-    /// [`Manager::open_from_memory`] for the data.
-    pub fn reopen_from_memory(
-        &self,
-        data: Vec<u8>,
-        profile: PerformanceProfile,
-    ) -> Result<Arc<Manager>> {
-        Self::load_memory(data, profile, Names::KeptFrom(self))
-    }
-
-    /// Load an IP Intelligence data set from `data` with `names`, as
-    /// [`Manager::open_from_memory`] describes.
-    fn load_memory(
-        data: Vec<u8>,
-        profile: PerformanceProfile,
-        names: Names<'_>,
-    ) -> Result<Arc<Manager>> {
         let memory = HeldMemory::new(data);
         let size = sys::FileOffset::try_from(memory.length()).map_err(|_| Error::Native {
             status: String::from("InvalidInput"),
@@ -338,7 +272,7 @@ impl Manager {
         })?;
         let start = memory.start();
         Self::init(
-            names,
+            properties,
             Some(memory),
             |manager, required, exception| {
                 // Safety: every pointer is valid for the call, the shim copies
@@ -361,11 +295,12 @@ impl Manager {
         )
     }
 
-    /// Initialize a manager with `init`, requesting the properties `names`
-    /// gives. `memory` is the data a load from memory reads, kept until the
-    /// data set is freed, and `detail` gives the message for a failed status.
+    /// Initialize a manager with `init`, requesting the named properties, or
+    /// all of them when `properties` is [`None`]. `memory` is the data a load
+    /// from memory reads, kept until the data set is freed, and `detail`
+    /// gives the message for a failed status.
     fn init(
-        names: Names<'_>,
+        properties: Option<&[&str]>,
         memory: Option<HeldMemory>,
         init: impl FnOnce(
             *mut sys::ResourceManager,
@@ -374,10 +309,7 @@ impl Manager {
         ) -> sys::StatusCode,
         detail: impl FnOnce(sys::StatusCode) -> String,
     ) -> Result<Arc<Manager>> {
-        let property_list = match names {
-            Names::Given(properties) => properties.map(|names| names.join(",")),
-            Names::KeptFrom(_) => None,
-        };
+        let property_list = properties.map(|names| names.join(","));
         let property_list_c = property_list
             .as_deref()
             .map(CString::new)
@@ -390,15 +322,6 @@ impl Manager {
         let mut required = sys::PropertiesRequired::all_properties();
         if let Some(list) = property_list_c.as_ref() {
             required.string = list.as_ptr();
-        }
-        if let Names::KeptFrom(existing) = names {
-            // Safety: `existing` holds its data set until it is dropped, and
-            // it is borrowed for the whole of this call. The C library copies
-            // the names, so the new data set does not refer to these
-            // properties once the call returns.
-            required.existing = unsafe {
-                sys::fiftyoneDegreesShimIpiDataSetGetAvailable(existing.data_set.as_ptr())
-            };
         }
 
         let boxed = Box::new(sys::ResourceManager::zeroed());

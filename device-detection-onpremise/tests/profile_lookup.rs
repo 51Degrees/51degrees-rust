@@ -322,6 +322,82 @@ fn the_reader_of_a_value_gives_the_profiles_of_its_ids() {
     );
 }
 
+/// The reader of a value, and the profiles of a value, found before a refresh
+/// from another data file read each id's profile from the data set the ids
+/// were found in, as those of an engine that was not refreshed read it. Runs
+/// when the TAC file is beside the Lite file.
+#[test]
+fn the_profiles_of_a_value_come_from_its_ids_data_set_after_a_refresh() {
+    let Some(path) = data_file() else {
+        return;
+    };
+    let tac = path.with_file_name("TAC-HashV41.hash");
+    if !tac.is_file() {
+        eprintln!("skipped: no TAC file beside {}", path.display());
+        return;
+    }
+    let build = || {
+        DeviceDetectionOnPremiseEngineBuilder::new(&path)
+            .indexed_property(BROWSER_NAME)
+            .build()
+            .expect("the data file loads")
+    };
+    let reference = build();
+    let engine = build();
+    let Some(all) = browser_names(&reference) else {
+        return;
+    };
+    let all_ids = ids(&reference, &all);
+    let values: Vec<String> = all
+        .into_iter()
+        .zip(all_ids)
+        .filter(|(_, found)| !found.is_empty())
+        .map(|(value, _)| value)
+        .take(3)
+        .collect();
+    assert!(
+        !values.is_empty(),
+        "no value of {BROWSER_NAME} has a profile"
+    );
+    let found: Vec<_> = values
+        .iter()
+        .map(|value| {
+            let (ids, reader) = engine
+                .profile_ids_and_reader_for_property_value(BROWSER_NAME, value)
+                .expect("the ids are found");
+            let profiles = engine
+                .profiles_for_property_value(BROWSER_NAME, value)
+                .expect("the profiles read");
+            (ids, reader, profiles)
+        })
+        .collect();
+    let bytes = std::fs::read(&tac).expect("the TAC file reads");
+    engine
+        .refresh_from_memory(None, &bytes)
+        .expect("the TAC file loads");
+    for (value, (ids, reader, profiles)) in values.iter().zip(&found) {
+        let (expected_ids, expected) = reference
+            .profile_ids_and_reader_for_property_value(BROWSER_NAME, value)
+            .expect("the ids are found");
+        assert_eq!(ids, &expected_ids, "{value}");
+        assert_eq!(profiles.len(), ids.len(), "{value}");
+        for (id, profile) in ids.iter().zip(profiles) {
+            let want = expected.read_profile(*id);
+            let read = reader.read_profile(*id);
+            for (got, how) in [(&read, "read"), (profile, "found")] {
+                assert_eq!(got.keys(), want.keys(), "profile {id} {how}");
+                for name in want.keys() {
+                    assert_eq!(
+                        got.get(&name).ok(),
+                        want.get(&name).ok(),
+                        "profile {id} {name} {how}"
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// An engine restricted to another property still indexes and finds the
 /// profiles of the property named to index, which it does not give.
 #[test]

@@ -366,7 +366,9 @@ fn a_build_that_fails_leaves_no_copy() {
 }
 
 /// A refresh that fails after the new data set is open leaves only the copy
-/// the engine still reads, and the engine keeps detecting from it.
+/// the engine still reads, and the engine keeps detecting from it. The reload
+/// replaces the data set in the engine's manager, so that is the new copy,
+/// and the old one goes with the data set it held.
 #[test]
 fn a_refresh_that_fails_leaves_only_the_copy_in_use() {
     let Some(lite) = lite_data_file() else {
@@ -397,7 +399,9 @@ fn a_refresh_that_fails_leaves_only_the_copy_in_use() {
             .expect_err("the new metadata cannot be read");
 
         assert!(is_unreadable_metadata(&error), "{profile:?}: {error}");
-        assert_eq!(files_in(&temp), in_use, "{profile:?}");
+        let left = files_in(&temp);
+        assert_eq!(left.len(), 1, "{profile:?}: {left:?}");
+        assert_ne!(left, in_use, "{profile:?}");
         assert_eq!(is_mobile(&detect(&engine)), Some(true), "{profile:?}");
         drop(engine);
         assert_eq!(files_in(&temp), Vec::<String>::new(), "{profile:?}");
