@@ -12,12 +12,12 @@
           },
           {
             "element": "json-builder",
-            "message": "The value for the 'sequence' parameter could not be found. A Sequence element needs to be placed before the JSON builder element in the pipeline. See https://51degrees.com/documentation/4.5/_services__cloud__error_messages.html?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=json-builder-src-element.rs&utm_term=sequence-number-not-present for more information."
+            "message": "The JSON Builder needs a sequence number. Place a Sequence Element before the JSON Builder in the Pipeline."
           }
         ]
       ]
     },
-    "reason": "For a sequence that is not a 32-bit integer each side gives an error from the Sequence element and another from the JSON builder, and each message starts with the same sentence. The links in the messages carry each repository's own campaign tags, and the crates' JSON builder message adds a sentence saying where the Sequence element goes. The crates' side is pinned, so the entry allows only .NET's tags and wording."
+    "reason": "For a sequence that is not a 32-bit integer each side gives an error from the Sequence element and another from the JSON builder, and the two Sequence element messages start with the same sentence, their links carrying each repository's own campaign tags. The crates' JSON builder gives the message the specification's json-builder.md gives, word for word, where the .NET release this comparison runs gives its own. The crates' side is pinned, so the entry allows only .NET's tags and wording."
   },
   {
     "path": "properties.sequence",

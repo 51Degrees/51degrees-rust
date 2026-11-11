@@ -334,11 +334,12 @@ impl Manager {
     /// many calls can read the data file at once. A call beyond that waits for
     /// a handle, so it should be the number of threads that will process
     /// through the data set at once. [`None`] keeps the profile's default,
-    /// one for each processor. `HighPerformance` holds in memory everything
-    /// detection reads, so detection never waits on the pool, but it still
-    /// opens one handle for each concurrent operation and keeps them open
-    /// until the data set is freed (see [`Manager::file_pool_size`]).
-    /// `InMemory` opens no pool.
+    /// one for each processor. Any value loads, and the pool holds at most 64
+    /// handles. `HighPerformance` holds in memory everything detection reads,
+    /// so detection never waits on the pool, but it still opens one handle for
+    /// each concurrent operation, to at most 64, and keeps them open until the
+    /// data set is freed (see [`Manager::file_pool_size`]). `InMemory` opens
+    /// no pool.
     pub fn open_with_options(
         path: impl AsRef<Path>,
         profile: PerformanceProfile,

@@ -30,7 +30,7 @@
 //! any JavaScript-typed properties the JSON carries, and (when a callback URL is
 //! configured) posts the evidence it gathers back to the server for a refreshed
 //! result. It implements the
-//! [javascript-builder specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/javascript-builder.md).
+//! [javascript-builder specification](https://github.com/51Degrees/specifications/blob/e89679e9/pipeline-specification/pipeline-elements/javascript-builder.md).
 //!
 //! ## The template
 //!

@@ -28,12 +28,16 @@
 //! [`fiftyone_pipeline_core::FlowData`] into a single JSON object and stores it
 //! on the flow data under the [`JSON_PROPERTY_KEY`] property of its own element
 //! data. It implements the
-//! [json-builder specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/json-builder.md).
+//! [json-builder specification](https://github.com/51Degrees/specifications/blob/d72eb074/pipeline-specification/pipeline-elements/json-builder.md).
 //!
 //! The JSON it produces is what the client-side `51Degrees.core.js` and the
 //! callback endpoint consume, so the JavaScript builder and the web layers
 //! depend on its exact shape. See [`JsonBuilderElement`] for the field
 //! conventions and a worked example.
+//!
+//! A sequence element has to run before it. Without one the element fails and
+//! sets no JSON, as the specification requires. The web integration adds both
+//! for you.
 //!
 //! ## What it emits
 //!
