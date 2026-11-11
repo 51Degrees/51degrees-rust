@@ -45,7 +45,8 @@
 //!    and `values` and the web request key `server.http-request`, and strips
 //!    each key's prefix following the evidence precedence rules, so
 //!    `query.user-agent` becomes `user-agent` and a query value beats a header
-//!    value of the same name. The accepted evidence, resolved at build time
+//!    value of the same name in any letter case. Each name is sent as the
+//!    winning key spells it. The accepted evidence, resolved at build time
 //!    (see [discovery](#discovery)), is what the engine advertises to the
 //!    pipeline and what a stored response is found by.
 //! 2. POSTs the result as url-encoded form data (with the credential, and the

@@ -32,8 +32,8 @@ use fiftyone_caching::PutCache;
 use fiftyone_pipeline_core::constants::EVIDENCE_HTTP_REQUEST_KEY;
 use fiftyone_pipeline_core::redact::{mask, redact_with};
 use fiftyone_pipeline_core::{
-    Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, EvidencePrefix, FlowData, FlowElement,
-    FlowError, PropertyMetaData, PropertyValueType, Result, TypedKey,
+    Error, EvidenceEntry, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, EvidencePrefix, FlowData,
+    FlowElement, FlowError, PropertyMetaData, PropertyValueType, Result, TypedKey,
 };
 use fiftyone_pipeline_engines::{AspectEngine, AspectPropertyMetaData, EngineDeployment};
 use serde::de::IgnoredAny;
@@ -413,8 +413,11 @@ impl CloudRequestEngine {
     /// when there is one. Every evidence value then has its prefix stripped, so
     /// `query.user-agent` becomes `user-agent`, apart from the reserved names
     /// and the web request key. When two evidence values map to the same
-    /// stripped key, the one whose prefix ranks first is written, as
-    /// [`request_precedence`] ranks them. This realises the
+    /// stripped key in any letter case, the one whose prefix ranks first is
+    /// written, as [`request_precedence`] ranks them. A request names each
+    /// field as the winning key spells it, and the body a stored response is
+    /// found by names it in lowercase, because evidence keys ignore letter
+    /// case. This realises the
     /// [processing rules](https://github.com/51Degrees/specifications/blob/d72eb074feb014a22e67d19802e1158a27658664/pipeline-specification/pipeline-elements/cloud-request-engine.md#processing).
     ///
     /// The property list travels in the form body rather than the query string,
@@ -440,29 +443,29 @@ impl CloudRequestEngine {
             ));
         }
 
-        // The web request a web integration gives is not one of the evidence's
-        // text values, but a text value under its key is left out too, because
-        // the key names the whole request rather than a value to send.
+        // The entries give each key in lowercase, which every match below
+        // uses, and as first spelled, which names the field sent.
         let accepted = self.accepted();
-        let mut entries: Vec<(&str, &str)> = data
+        let mut entries: Vec<EvidenceEntry<'_>> = data
             .evidence()
-            .iter()
-            .filter(|(key, _)| !key.eq_ignore_ascii_case(EVIDENCE_HTTP_REQUEST_KEY))
-            .filter(|(key, _)| from == FormEvidence::All || accepted.include(key))
+            .entries()
+            .filter(|entry| !is_web_request_key(entry.key()))
+            .filter(|entry| from == FormEvidence::All || accepted.include(entry.key()))
             .collect();
 
         // Sort so that lower-precedence evidence is written first and
         // higher-precedence evidence overwrites it.
-        entries.sort_by(|(left, _), (right, _)| {
-            request_precedence(left)
-                .cmp(&request_precedence(right))
+        entries.sort_by(|left, right| {
+            request_precedence(left.key())
+                .cmp(&request_precedence(right.key()))
                 .reverse()
         });
 
-        // Strip prefixes and de-duplicate on the stripped key, keeping the last
-        // (highest-precedence) writer.
-        let mut stripped: Vec<(String, String)> = Vec::new();
-        for &(key, value) in &entries {
+        // Strip prefixes and de-duplicate on the lowercase stripped key, keeping
+        // the last (highest-precedence) writer's name and value.
+        let mut stripped: Vec<(String, String, String)> = Vec::new();
+        for entry in &entries {
+            let (key, value) = (entry.key(), entry.value());
             let field = strip_prefix(key);
             // The engine writes the credential and the property list itself, and
             // the service advertises `query.values` as accepted evidence, so
@@ -473,7 +476,11 @@ impl CloudRequestEngine {
             if is_reserved_field(&field) {
                 continue;
             }
-            if let Some(existing) = stripped.iter_mut().find(|(k, _)| k == &field) {
+            let name = match from {
+                FormEvidence::All => strip_prefix(entry.key_as_given()),
+                FormEvidence::Accepted => field.clone(),
+            };
+            if let Some(existing) = stripped.iter_mut().find(|(k, _, _)| k == &field) {
                 // Query evidence is expected to replace what the request
                 // carried, so only other clashes are logged, and only for the
                 // body that is sent.
@@ -482,12 +489,13 @@ impl CloudRequestEngine {
                 {
                     log_conflict(key, value, &field, &entries);
                 }
-                existing.1 = value.to_owned();
+                existing.1 = name;
+                existing.2 = value.to_owned();
             } else {
-                stripped.push((field, value.to_owned()));
+                stripped.push((field, name, value.to_owned()));
             }
         }
-        form.extend(stripped);
+        form.extend(stripped.into_iter().map(|(_, name, value)| (name, value)));
         form
     }
 
@@ -643,8 +651,8 @@ const CREDENTIAL_FIELDS: [&str; 3] = [
 enum FormEvidence {
     /// Every evidence value, which is what a request sends.
     All,
-    /// Only the evidence the service lists as accepted, which is what a
-    /// stored response is found by, as the
+    /// Only the evidence the service lists as accepted, with each name in
+    /// lowercase, which is what a stored response is found by, as the
     /// [caching specification](https://github.com/51Degrees/specifications/blob/d72eb074feb014a22e67d19802e1158a27658664/pipeline-specification/features/caching.md#generation-of-keys)
     /// asks.
     Accepted,
@@ -659,6 +667,14 @@ fn is_reserved_field(field: &str) -> bool {
         .iter()
         .chain([constants::VALUES_PARAMETER].iter())
         .any(|name| field.eq_ignore_ascii_case(name))
+}
+
+/// Whether an evidence key is the web request key, in any letter case. The
+/// web request a web integration gives is not one of the evidence's text
+/// values, but a text value under its key is left out too, because the key
+/// names the whole request rather than a value to send.
+fn is_web_request_key(key: &str) -> bool {
+    key.eq_ignore_ascii_case(EVIDENCE_HTTP_REQUEST_KEY)
 }
 
 /// Whether the cloud response carries the property that `asked` names.
@@ -791,9 +807,10 @@ fn request_precedence(key: &str) -> (u32, &str, &str) {
 /// naming every other entry whose key ends with that field, as .NET does.
 /// A credential can be among them, as `query.resource` ends with `source`, so
 /// each value is written as [`shown_value`] gives it.
-fn log_conflict(key: &str, value: &str, field: &str, entries: &[(&str, &str)]) {
+fn log_conflict(key: &str, value: &str, field: &str, entries: &[EvidenceEntry<'_>]) {
     let conflicts: Vec<String> = entries
         .iter()
+        .map(|entry| (entry.key(), entry.value()))
         .filter(|(other, _)| *other != key && other.ends_with(field))
         .map(|(other, other_value)| format!("{other}={}", shown_value(other, other_value)))
         .collect();
@@ -1933,6 +1950,26 @@ mod tests {
         }
         for field in ["Value", "x-values", "licenses", "resources"] {
             assert!(!is_reserved_field(field), "{field} is not reserved");
+        }
+    }
+
+    /// As for the reserved names, the web request key is given here in
+    /// letters the evidence would never hold.
+    #[test]
+    fn the_web_request_key_matches_in_any_letter_case() {
+        for key in [
+            "SERVER.Http-Request",
+            "Server.HTTP-REQUEST",
+            "server.http-request",
+        ] {
+            assert!(is_web_request_key(key), "{key} is the web request key");
+        }
+        for key in [
+            "server.http-requests",
+            "header.http-request",
+            "http-request",
+        ] {
+            assert!(!is_web_request_key(key), "{key} is not the web request key");
         }
     }
 
