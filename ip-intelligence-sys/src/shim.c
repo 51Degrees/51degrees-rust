@@ -170,6 +170,11 @@ fiftyoneDegreesDataSetIpi* fiftyoneDegreesShimIpiResultsGetDataSet(
  * When the C library cannot allocate the new data set itself the copy is not
  * freed, because the status does not tell that failure apart from the ones
  * after which the C library has freed it.
+ *
+ * The flag stays on for the life of the manager, because every reload copies
+ * the configuration of the data set in use. So after a reload through this
+ * function, a reload through the C library's own reload from memory frees the
+ * bytes it is given, which a caller that still owns them must not allow.
  */
 fiftyoneDegreesStatusCode fiftyoneDegreesShimIpiReloadManagerFromMemoryCopy(
     fiftyoneDegreesResourceManager *manager,

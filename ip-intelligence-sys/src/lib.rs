@@ -983,12 +983,21 @@ extern "C" {
     ) -> StatusCode;
 
     /// Reloads the data set from contiguous memory using the original
-    /// configuration.
+    /// configuration. The new data set reads the bytes where they lie, and
+    /// frees them when it is freed only when the configuration of the data
+    /// set in use has `freeData` set.
+    ///
+    /// [`fiftyoneDegreesShimIpiReloadManagerFromMemoryCopy`] sets that flag
+    /// and leaves it set, and every reload copies the configuration of the
+    /// data set in use, so after a reload through the shim this function
+    /// frees the bytes it is given.
     ///
     /// # Safety
     /// `manager` must be initialized. `source` must point to `length` readable
     /// bytes that outlive the manager. `exception` must point to a cleared
-    /// [`Exception`].
+    /// [`Exception`]. The caller must not own `source` when the manager has
+    /// reloaded through
+    /// [`fiftyoneDegreesShimIpiReloadManagerFromMemoryCopy`].
     pub fn fiftyoneDegreesIpiReloadManagerFromMemory(
         manager: *mut ResourceManager,
         source: *mut c_void,

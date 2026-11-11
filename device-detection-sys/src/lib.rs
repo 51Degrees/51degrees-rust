@@ -485,9 +485,16 @@ extern "C" {
     /// when it is freed only when the configuration of the data set in use
     /// has [`free_data`](ConfigBase::free_data) set.
     ///
+    /// [`fiftyoneDegreesShimHashReloadManagerFromMemoryCopy`] sets that flag
+    /// and leaves it set, and every reload copies the configuration of the
+    /// data set in use, so after a reload through the shim this function
+    /// frees the bytes it is given.
+    ///
     /// # Safety
     /// As [`fiftyoneDegreesHashReloadManagerFromOriginalFile`], and `source`
     /// must point to `length` readable bytes that outlive the new data set.
+    /// The caller must not own `source` when the manager has reloaded through
+    /// [`fiftyoneDegreesShimHashReloadManagerFromMemoryCopy`].
     pub fn fiftyoneDegreesHashReloadManagerFromMemory(
         manager: *mut ResourceManager,
         source: *mut c_void,
