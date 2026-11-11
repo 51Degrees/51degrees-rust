@@ -39,7 +39,7 @@ use arc_swap::ArcSwap;
 
 use fiftyone_device_detection_shared::{
     declared_property_value_type, DeviceDataBase, DevicePropertyReader, DEVICE_DATA_KEY,
-    DEVICE_ELEMENT_DATA_KEY,
+    DEVICE_ELEMENT_DATA_KEY, TYPED_PROPERTY_NAMES,
 };
 use fiftyone_native::dd::{
     hardware_profile_script, DataFileComponent, DataFileProperty, DataFileValue, HashOptions,
@@ -1026,6 +1026,10 @@ struct ReadableProperties {
     places: Vec<Option<usize>>,
     /// The place in `properties` of the first match metric.
     first_metric: usize,
+    /// The place in `properties` of the property each typed accessor reads,
+    /// by the accessor's slot in [`TYPED_PROPERTY_NAMES`], resolved once
+    /// when the data set loads.
+    typed: Vec<Option<usize>>,
 }
 
 impl ReadableProperties {
@@ -1073,13 +1077,19 @@ impl ReadableProperties {
             .iter()
             .map(|property| property.name().to_lowercase())
             .collect();
-        ReadableProperties {
+        let mut readable = ReadableProperties {
             properties,
             lowercase_names,
             names: Arc::clone(names),
             places,
             first_metric,
-        }
+            typed: Vec::new(),
+        };
+        readable.typed = TYPED_PROPERTY_NAMES
+            .iter()
+            .map(|name| readable.position(&name.to_lowercase()))
+            .collect();
+        readable
     }
 
     /// The place of the property named, found in the table of the names the
@@ -1121,6 +1131,10 @@ impl DevicePropertyReader for DetectionReader {
 
     fn position(&self, name: &str) -> Option<usize> {
         self.loaded.readable.position(name)
+    }
+
+    fn typed_positions(&self) -> Option<&[Option<usize>]> {
+        Some(&self.loaded.readable.typed)
     }
 
     fn read_property(&self, position: usize) -> ReadOutcome {
@@ -1821,6 +1835,48 @@ mod tests {
             names.by_name.get("ismobile"),
             Some(NameSlot::Index(0))
         ));
+    }
+
+    /// The reader resolves each typed accessor's position once, being the
+    /// position a read by its property's name finds, and a typed read gives
+    /// what a read by name gives.
+    #[test]
+    fn each_typed_slot_reads_where_its_name_does() {
+        use fiftyone_device_detection_shared::DeviceData;
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the typed slots");
+            return;
+        };
+        let (engine, mut data) = engine_and_data(&path);
+        let reader = engine.detection_reader(&data).expect("detection succeeds");
+        let typed = &reader.loaded.readable.typed;
+        assert_eq!(typed.len(), TYPED_PROPERTY_NAMES.len());
+        let mut resolved = 0;
+        for (slot, name) in TYPED_PROPERTY_NAMES.iter().enumerate() {
+            let by_name = reader.position(&name.to_lowercase());
+            assert_eq!(typed[slot], by_name, "{name}");
+            resolved += usize::from(by_name.is_some());
+        }
+        assert!(resolved > 1, "only {resolved} typed accessors resolved");
+
+        data.process().expect("processing succeeds");
+        let device = data.get(DEVICE_DATA_KEY).expect("device data was produced");
+        assert_eq!(
+            format!("{:?}", device.is_mobile()),
+            format!("{:?}", device.bool_property("IsMobile"))
+        );
+        assert_eq!(
+            format!("{:?}", device.platform_name()),
+            format!("{:?}", device.string_property("PlatformName"))
+        );
+        assert_eq!(
+            format!("{:?}", device.screen_pixels_width()),
+            format!("{:?}", device.integer_property("ScreenPixelsWidth"))
+        );
+        assert_eq!(
+            format!("{:?}", device.hardware_vendor()),
+            format!("{:?}", device.string_property("HardwareVendor"))
+        );
     }
 
     /// Names in an order that is not the data file's.

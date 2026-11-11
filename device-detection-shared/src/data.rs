@@ -95,6 +95,15 @@ pub trait DevicePropertyReader: Send + Sync {
     /// Read the property at `position`. `Ok(None)` when it has no value, and
     /// `Err` with a message when the read fails.
     fn read_property(&self, position: usize) -> Result<Option<PropertyValue>, String>;
+
+    /// The position of the property each typed accessor reads, by the
+    /// accessor's slot in [`TYPED_PROPERTY_NAMES`](crate::TYPED_PROPERTY_NAMES),
+    /// resolved once when the reader's data set loaded, with `None` for a
+    /// property the reader cannot read. A reader that resolves none gives
+    /// `None`, and each typed read then looks its name up.
+    fn typed_positions(&self) -> Option<&[Option<usize>]> {
+        None
+    }
 }
 
 /// The outcome of reading one property.
@@ -138,6 +147,18 @@ impl DeferredValues {
     fn readable(&self, name: &str) -> Option<usize> {
         self.position(name)
             .filter(|position| *position < self.reader.property_names().len())
+    }
+
+    /// The value of the property a typed accessor reads, by the accessor's
+    /// slot, read on its first request, or `None` when the reader resolved no
+    /// position for the slot.
+    fn get_at(&self, slot: usize) -> Option<ReadOutcome> {
+        let position = (*self.reader.typed_positions()?.get(slot)?)?;
+        if position >= self.reader.property_names().len() {
+            return None;
+        }
+        let mut read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
+        Some(self.outcome(&mut read, position).clone())
     }
 
     /// The value of a property, read on its first request, or `None` when the
@@ -320,6 +341,28 @@ impl DeviceDataBase {
         }
     }
 
+    /// Look up the property a typed accessor reads, by the accessor's slot
+    /// and the property's name. With nothing in the bag and nothing held with
+    /// no value, the reader reads it at the position it resolved for the
+    /// slot, so no name is looked up. Otherwise, or when the reader resolved
+    /// no position, it is looked up by name as [`Self::lookup`] does.
+    fn lookup_at(&self, slot: usize, name: &str) -> Lookup {
+        if self.base.values().is_empty() && self.no_values.is_empty() {
+            if let Some(outcome) = self
+                .deferred
+                .as_ref()
+                .and_then(|deferred| deferred.get_at(slot))
+            {
+                return match outcome {
+                    Ok(Some(value)) => Lookup::Found(value),
+                    Err(message) => Lookup::Failed(message),
+                    Ok(None) => self.absent(name),
+                };
+            }
+        }
+        self.lookup(name)
+    }
+
     /// The message of a property held with no value.
     fn no_value_message(&self, name: &str) -> Option<&str> {
         self.no_values
@@ -346,13 +389,33 @@ impl DeviceDataBase {
         }
     }
 
-    /// Convert a looked-up value to a typed value, explaining a no-value.
+    /// Look a property up by name and convert its value to a typed value,
+    /// explaining a no-value.
     fn typed<T>(
         &self,
         name: &str,
         convert: impl FnOnce(PropertyValue) -> Option<T>,
     ) -> AspectPropertyValue<T> {
-        match self.lookup(name) {
+        Self::converted(self.lookup(name), convert)
+    }
+
+    /// As [`Self::typed`], for the property a typed accessor reads by its
+    /// slot.
+    fn typed_at<T>(
+        &self,
+        slot: usize,
+        name: &str,
+        convert: impl FnOnce(PropertyValue) -> Option<T>,
+    ) -> AspectPropertyValue<T> {
+        Self::converted(self.lookup_at(slot, name), convert)
+    }
+
+    /// Convert a looked-up value to a typed value, explaining a no-value.
+    fn converted<T>(
+        lookup: Lookup,
+        convert: impl FnOnce(PropertyValue) -> Option<T>,
+    ) -> AspectPropertyValue<T> {
+        match lookup {
             Lookup::Found(value) => match convert(value) {
                 Some(typed) => AspectPropertyValue::new(typed),
                 None => AspectPropertyValue::no_value(WRONG_TYPE_MESSAGE),
@@ -449,11 +512,49 @@ impl DeviceDataBase {
     /// as a one-element list, since some sources return a scalar where the
     /// property is declared as a list.
     pub fn string_list_property(&self, name: &str) -> AspectPropertyValue<Vec<String>> {
-        self.typed(name, |value| match value {
-            PropertyValue::StringList(list) => Some(list),
-            PropertyValue::String(s) => Some(vec![s]),
-            _ => None,
-        })
+        self.typed(name, string_list)
+    }
+
+    /// Read a string-typed property through the slot of its typed accessor
+    /// in [`TYPED_PROPERTY_NAMES`](crate::TYPED_PROPERTY_NAMES), as
+    /// [`Self::string_property`] reads it by `name`. The generated
+    /// [`DeviceData`](crate::DeviceData) accessors call this and its
+    /// siblings.
+    pub fn string_property_at(&self, slot: usize, name: &str) -> AspectPropertyValue<String> {
+        self.typed_at(slot, name, |value| value.as_str().map(str::to_owned))
+    }
+
+    /// Read a boolean-typed property through its typed accessor's slot.
+    pub fn bool_property_at(&self, slot: usize, name: &str) -> AspectPropertyValue<bool> {
+        self.typed_at(slot, name, |value| value.as_bool())
+    }
+
+    /// Read an integer-typed property through its typed accessor's slot.
+    pub fn integer_property_at(&self, slot: usize, name: &str) -> AspectPropertyValue<i64> {
+        self.typed_at(slot, name, |value| value.as_integer())
+    }
+
+    /// Read a double-typed property through its typed accessor's slot.
+    pub fn double_property_at(&self, slot: usize, name: &str) -> AspectPropertyValue<f64> {
+        self.typed_at(slot, name, |value| value.as_double())
+    }
+
+    /// Read a string-list-typed property through its typed accessor's slot.
+    pub fn string_list_property_at(
+        &self,
+        slot: usize,
+        name: &str,
+    ) -> AspectPropertyValue<Vec<String>> {
+        self.typed_at(slot, name, string_list)
+    }
+}
+
+/// A string list, or a single string as a one-element list.
+fn string_list(value: PropertyValue) -> Option<Vec<String>> {
+    match value {
+        PropertyValue::StringList(list) => Some(list),
+        PropertyValue::String(s) => Some(vec![s]),
+        _ => None,
     }
 }
 
@@ -1084,5 +1185,115 @@ mod tests {
             assert_eq!(handle.join().unwrap(), "Android");
         }
         assert_eq!(reads_of(&reads, "platformname"), 1);
+    }
+
+    /// A reader that resolves each typed accessor's position once, as an
+    /// engine's reader does when its data set loads, and counts the names
+    /// looked up after that.
+    struct SlotReader {
+        inner: CountingReader,
+        typed: Vec<Option<usize>>,
+        lookups: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl SlotReader {
+        fn new() -> (Self, Arc<std::sync::atomic::AtomicUsize>) {
+            let (inner, _) = CountingReader::new();
+            let typed = crate::TYPED_PROPERTY_NAMES
+                .iter()
+                .map(|name| inner.position(&name.to_lowercase()))
+                .collect();
+            let lookups = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let reader = SlotReader {
+                inner,
+                typed,
+                lookups: Arc::clone(&lookups),
+            };
+            (reader, lookups)
+        }
+    }
+
+    impl DevicePropertyReader for SlotReader {
+        fn property_names(&self) -> &[String] {
+            self.inner.property_names()
+        }
+
+        fn position(&self, name: &str) -> Option<usize> {
+            self.lookups
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.position(name)
+        }
+
+        fn read_property(&self, position: usize) -> ReadOutcome {
+            self.inner.read_property(position)
+        }
+
+        fn typed_positions(&self) -> Option<&[Option<usize>]> {
+            Some(&self.typed)
+        }
+    }
+
+    /// A typed read gives the value a read by name gives, from the position
+    /// the read by name finds, and looks no name up.
+    #[test]
+    fn a_typed_read_and_a_read_by_name_give_the_same_value_and_index() {
+        let (reader, lookups) = SlotReader::new();
+        let slot = crate::TYPED_PROPERTY_NAMES
+            .iter()
+            .position(|name| *name == "IsMobile")
+            .expect("IsMobile has a typed accessor");
+        assert_eq!(reader.typed[slot], reader.inner.position("ismobile"));
+        assert_eq!(reader.typed[slot], Some(0));
+        let device = DeviceDataBase::new().with_reader(reader);
+
+        let typed = device.is_mobile();
+        let no_value = device.browser_name();
+        let failed = device.hardware_vendor();
+        assert_eq!(
+            lookups.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "a typed read looked a name up"
+        );
+        assert_eq!(
+            format!("{typed:?}"),
+            format!("{:?}", device.bool_property("IsMobile"))
+        );
+        assert!(*typed.value().unwrap());
+        assert_eq!(
+            format!("{no_value:?}"),
+            format!("{:?}", device.string_property("BrowserName"))
+        );
+        assert_eq!(
+            format!("{failed:?}"),
+            format!("{:?}", device.string_property("HardwareVendor"))
+        );
+    }
+
+    /// A value in the bag takes precedence over the reader's for a typed read
+    /// as it does for a read by name.
+    #[test]
+    fn a_typed_read_takes_a_value_in_the_bag_first() {
+        let (reader, _) = SlotReader::new();
+        let device = DeviceDataBase::new()
+            .with_reader(reader)
+            .set("IsMobile", false);
+        assert!(!*device.is_mobile().value().unwrap());
+    }
+
+    /// Each generated accessor passes the slot of the property it reads in
+    /// `TYPED_PROPERTY_NAMES`, and every slot is passed by one accessor.
+    #[test]
+    fn each_typed_accessor_passes_the_slot_of_its_property() {
+        let source = include_str!("device_data.rs");
+        let mut seen = vec![false; crate::TYPED_PROPERTY_NAMES.len()];
+        for call in source.split("_property_at(").skip(1) {
+            let (slot, rest) = call.split_once(", \"").expect("a slot and a name");
+            let name = rest.split('"').next().expect("a name");
+            let slot: usize = slot.parse().expect("a slot");
+            assert_eq!(crate::TYPED_PROPERTY_NAMES[slot], name, "slot {slot}");
+            assert!(!seen[slot], "slot {slot} is passed twice");
+            seen[slot] = true;
+        }
+        assert!(seen.iter().all(|seen| *seen), "a slot no accessor passes");
     }
 }
