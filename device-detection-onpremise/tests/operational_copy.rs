@@ -263,7 +263,7 @@ fn the_copy_goes_in_the_folder_the_builder_names() {
 #[test]
 fn a_refresh_with_reuse_reads_the_copy_already_made() {
     let Some(lite) = lite_data_file() else {
-        eprintln!("skipping operational copies: set 51DEGREES_DD_PATH to the Lite file");
+        eprintln!("skipping operational copies: set _51DEGREES_DD_PATH to the Lite file");
         return;
     };
     let (dir, path) = folder_with(&lite, "reuse-refresh", "51Degrees.hash");
@@ -337,7 +337,7 @@ fn is_unreadable_metadata(error: &impl std::fmt::Display) -> bool {
 #[test]
 fn a_build_that_fails_leaves_no_copy() {
     let Some(lite) = lite_data_file() else {
-        eprintln!("skipping operational copies: set 51DEGREES_DD_PATH to the Lite file");
+        eprintln!("skipping operational copies: set _51DEGREES_DD_PATH to the Lite file");
         return;
     };
     let unreadable = with_unreadable_metadata(&lite);
@@ -370,7 +370,7 @@ fn a_build_that_fails_leaves_no_copy() {
 #[test]
 fn a_refresh_that_fails_leaves_only_the_copy_in_use() {
     let Some(lite) = lite_data_file() else {
-        eprintln!("skipping operational copies: set 51DEGREES_DD_PATH to the Lite file");
+        eprintln!("skipping operational copies: set _51DEGREES_DD_PATH to the Lite file");
         return;
     };
     let unreadable = with_unreadable_metadata(&lite);

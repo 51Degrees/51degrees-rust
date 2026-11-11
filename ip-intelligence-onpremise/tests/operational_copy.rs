@@ -207,12 +207,12 @@ fn finds_cloudflare(engine: &Arc<IpIntelligenceOnPremiseEngine>) -> bool {
 /// folder then holds that copy or nothing.
 #[test]
 fn a_refresh_with_reuse_reads_the_copy_already_made() {
-    let Some(asn) = std::env::var("51DEGREES_IPI_PATH")
+    let Some(asn) = std::env::var("_51DEGREES_IPI_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())
     else {
-        eprintln!("skipping operational copies: set 51DEGREES_IPI_PATH to the ASN file");
+        eprintln!("skipping operational copies: set _51DEGREES_IPI_PATH to the ASN file");
         return;
     };
     let dir =

@@ -1757,7 +1757,7 @@ mod tests {
 
     /// The ASN file from the data repository, for a test that holds several
     /// copies of the data file and so needs a small one whatever
-    /// `51DEGREES_IPI_PATH` names.
+    /// `_51DEGREES_IPI_PATH` names.
     fn asn_file() -> Option<PathBuf> {
         let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()?
@@ -3070,7 +3070,7 @@ mod tests {
 
     /// Set where the Enterprise file must be given, as in the comparison with
     /// .NET, so a test that needs it fails rather than skips.
-    const REQUIRE_ENTERPRISE: &str = "51DEGREES_REQUIRE_ENTERPRISE";
+    const REQUIRE_ENTERPRISE: &str = "_51DEGREES_REQUIRE_ENTERPRISE";
 
     /// The length of the buffer the shim gives the C library for a value's
     /// text, `SHIM_TEXT_BUFFER_LENGTH` in `shim.c`.
@@ -3085,7 +3085,7 @@ mod tests {
         eprintln!("{reason}; skipping {what}");
     }
 
-    /// The Enterprise file `51DEGREES_IPI_PATH` names, opened in LowMemory,
+    /// The Enterprise file `_51DEGREES_IPI_PATH` names, opened in LowMemory,
     /// and its properties, or [`None`] after skipping `what` when there is
     /// none.
     fn enterprise_file(what: &str) -> Option<(Arc<Manager>, Vec<DataFileProperty>)> {

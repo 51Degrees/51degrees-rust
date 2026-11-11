@@ -135,7 +135,7 @@ fn a_refresh_reads_and_reports_the_properties_of_the_new_data_file() {
 fn a_refresh_from_memory_reads_and_reports_the_properties_of_the_new_data() {
     let Some((lite, richer)) = data_files() else {
         eprintln!(
-            "skipping the refresh from memory test: set 51DEGREES_DD_PATH to the Lite \
+            "skipping the refresh from memory test: set _51DEGREES_DD_PATH to the Lite \
              file, with Enterprise-HashV41.hash or TAC-HashV41.hash beside it"
         );
         return;

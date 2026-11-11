@@ -102,10 +102,10 @@ const ENTERPRISE_FILE_NAME: &str = "51Degrees-IPIV4EnterpriseIpiV41.ipi";
 /// out as `<root>/YYYY/MM/DD/<file>`. Unset off the 51Degrees network.
 const ENTERPRISE_SHARE_ENV_VAR: &str = "_51DEGREES_IPI_ENTERPRISE_SHARE";
 
-/// Set where `51DEGREES_IPI_PATH` names the Enterprise file, as in the
+/// Set where `_51DEGREES_IPI_PATH` names the Enterprise file, as in the
 /// comparison with .NET, so a check that needs that file fails rather than
 /// skips.
-const REQUIRE_ENTERPRISE: &str = "51DEGREES_REQUIRE_ENTERPRISE";
+const REQUIRE_ENTERPRISE: &str = "_51DEGREES_REQUIRE_ENTERPRISE";
 
 /// Resolve the latest Enterprise data file on the configured share, or `None`
 /// when the variable is unset or the share is not mounted (the common off-network

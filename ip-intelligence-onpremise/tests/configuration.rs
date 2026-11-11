@@ -25,7 +25,7 @@
 //! 4.5.155 on pipeline 4.5.129 made from the same configuration with the
 //! free ASN data file. Each expected answer and message is the one .NET
 //! gave, apart from the differences the tests name. The tests need the ASN
-//! file `51DEGREES_IPI_PATH` names, or the one at `cxx/data/ip-intelligence`,
+//! file `_51DEGREES_IPI_PATH` names, or the one at `cxx/data/ip-intelligence`,
 //! and skip with a note without it.
 
 use std::path::{Path, PathBuf};
@@ -50,7 +50,7 @@ const IPV6: &str = "2606:4700:4700::1111";
 const DISTRIBUTOR: &str = "https://distributor.51degrees.com/api/v2/download";
 
 fn asn_data_file() -> Option<PathBuf> {
-    let given = std::env::var("51DEGREES_IPI_PATH").ok().map(PathBuf::from);
+    let given = std::env::var("_51DEGREES_IPI_PATH").ok().map(PathBuf::from);
     let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi");
     given
@@ -63,7 +63,7 @@ fn asn_data_file() -> Option<PathBuf> {
 fn asn() -> Option<String> {
     let found = asn_data_file().map(|path| path.to_string_lossy().into_owned());
     if found.is_none() {
-        eprintln!("skipped: no ASN data file at 51DEGREES_IPI_PATH or cxx/data");
+        eprintln!("skipped: no ASN data file at _51DEGREES_IPI_PATH or cxx/data");
     }
     found
 }

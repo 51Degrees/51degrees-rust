@@ -186,10 +186,10 @@ fn cases() -> Vec<Case> {
     ]
 }
 
-/// The Lite Hash data file `51DEGREES_DD_PATH` names, or else the one in the
+/// The Lite Hash data file `_51DEGREES_DD_PATH` names, or else the one in the
 /// `cxx` submodule found from this crate's directory upwards.
 fn lite_data_file() -> Option<PathBuf> {
-    if let Some(path) = std::env::var("51DEGREES_DD_PATH")
+    if let Some(path) = std::env::var("_51DEGREES_DD_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())

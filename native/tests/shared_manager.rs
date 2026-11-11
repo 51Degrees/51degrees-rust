@@ -238,8 +238,8 @@ fn differences_on_many_threads(
 #[test]
 fn device_detection_balanced_serves_far_more_threads_than_its_concurrency() {
     use fiftyone_native::dd;
-    let Some(path) = data_file("51DEGREES_DD_PATH") else {
-        eprintln!("51DEGREES_DD_PATH names no Hash data file; skipping");
+    let Some(path) = data_file("_51DEGREES_DD_PATH") else {
+        eprintln!("_51DEGREES_DD_PATH names no Hash data file; skipping");
         return;
     };
     // The User-Agents the data files repository keeps beside the Lite file,
@@ -296,8 +296,8 @@ fn device_detection_balanced_serves_far_more_threads_than_its_concurrency() {
 #[test]
 fn ip_intelligence_balanced_serves_far_more_threads_than_its_concurrency() {
     use fiftyone_native::ipi;
-    let Some(path) = data_file("51DEGREES_IPI_PATH") else {
-        eprintln!("51DEGREES_IPI_PATH names no IP Intelligence data file; skipping");
+    let Some(path) = data_file("_51DEGREES_IPI_PATH") else {
+        eprintln!("_51DEGREES_IPI_PATH names no IP Intelligence data file; skipping");
         return;
     };
     // Addresses spread across the IPv4 space by an odd multiplier, which gives

@@ -381,11 +381,11 @@ mod parallel_group {
     #[test]
     fn dd_ipi_and_a_failing_element_answer_alike_in_a_group_and_in_sequence() {
         let dd_file = data_file(
-            "51DEGREES_DD_PATH",
+            "_51DEGREES_DD_PATH",
             "cxx/data/device-detection/51Degrees-LiteV4.1.hash",
         );
         let ipi_file = data_file(
-            "51DEGREES_IPI_PATH",
+            "_51DEGREES_IPI_PATH",
             "cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi",
         );
         let (Some(dd_file), Some(ipi_file)) = (dd_file, ipi_file) else {

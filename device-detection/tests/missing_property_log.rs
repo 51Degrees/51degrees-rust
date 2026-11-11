@@ -117,7 +117,7 @@ fn each_read_of_a_missing_property_logs_one_warning() {
 /// The Hash engine restricted to IsMobile.
 fn device_detection() {
     let Some(file) = data_file(
-        "51DEGREES_DD_PATH",
+        "_51DEGREES_DD_PATH",
         "cxx/data/device-detection/51Degrees-LiteV4.1.hash",
     ) else {
         eprintln!("no Lite Hash data file found; skipping Device Detection");
@@ -170,7 +170,7 @@ fn device_detection() {
 /// The IP Intelligence engine restricted to the ASN properties.
 fn ip_intelligence() {
     let Some(file) = data_file(
-        "51DEGREES_IPI_PATH",
+        "_51DEGREES_IPI_PATH",
         "cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi",
     ) else {
         eprintln!("no ASN data file found; skipping IP Intelligence");

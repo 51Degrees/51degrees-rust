@@ -26,7 +26,7 @@
 //! counting allocator, which every test in the same process would share. It
 //! is therefore the only test in this file.
 //!
-//! `51DEGREES_IPI_MEMORY_PROFILES` names the profiles to measure, separated
+//! `_51DEGREES_IPI_MEMORY_PROFILES` names the profiles to measure, separated
 //! by commas, such as `LowMemory`, and every profile is measured when it is
 //! not set. The stages that hold the whole data file in memory run only when
 //! the list names InMemory, so a large file can be measured under LowMemory
@@ -66,12 +66,12 @@ extern "C" {
 }
 
 /// Names the profiles to measure, separated by commas.
-const PROFILES: &str = "51DEGREES_IPI_MEMORY_PROFILES";
+const PROFILES: &str = "_51DEGREES_IPI_MEMORY_PROFILES";
 
 /// Set where the Enterprise file must be given, as in the comparison with
 /// .NET, so the test fails rather than skips without a data file, and the
 /// check of long values must find one.
-const REQUIRE_ENTERPRISE: &str = "51DEGREES_REQUIRE_ENTERPRISE";
+const REQUIRE_ENTERPRISE: &str = "_51DEGREES_REQUIRE_ENTERPRISE";
 
 /// `SHIM_TEXT_BUFFER_LENGTH` in the shim, the length of the buffer the shim
 /// gives the C library for a value's text. A longer text is written into a

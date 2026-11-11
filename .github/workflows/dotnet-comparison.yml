@@ -295,7 +295,7 @@ jobs:
 
       # Only the TAC file holds the TAC and NativeModel properties, so the
       # lookup of profiles by their values is checked here over every value
-      # of each, and 51DEGREES_REQUIRE_TAC makes the test fail rather than
+      # of each, and _51DEGREES_REQUIRE_TAC makes the test fail rather than
       # skip if the file stops carrying them or does not reach the test.
       # cargo test passes when no test matches its name, so the step names
       # the test exactly and fails unless the output says one test passed.
@@ -303,7 +303,7 @@ jobs:
         if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
         run: |
           test=tac_and_native_model_values_find_their_profiles
-          env 51DEGREES_DD_PATH="$DD_FILE" 51DEGREES_REQUIRE_TAC=1 \
+          env _51DEGREES_DD_PATH="$DD_FILE" _51DEGREES_REQUIRE_TAC=1 \
             cargo test -p fiftyone-native --test value_profiles \
             -- --exact "$test" --nocapture | tee "$RUNNER_TEMP/tac-lookup.txt"
           if ! grep -qF 'test result: ok. 1 passed;' "$RUNNER_TEMP/tac-lookup.txt"; then
@@ -313,14 +313,14 @@ jobs:
 
       # Latitude, Longitude and the points of Areas are given to 3 decimal
       # places. Only the Enterprise file carries them, so the test runs here,
-      # and 51DEGREES_REQUIRE_LOCATION makes it fail rather than skip if the
+      # and _51DEGREES_REQUIRE_LOCATION makes it fail rather than skip if the
       # file stops carrying them or does not reach the test. As above, the
       # step names the test exactly and fails unless one test passed.
       - name: Check locations have 3 decimal places
         if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
         run: |
           test=locations_are_given_to_three_decimal_places
-          env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_LOCATION=1 \
+          env _51DEGREES_IPI_PATH="$IPI_FILE" _51DEGREES_REQUIRE_LOCATION=1 \
             cargo test -p fiftyone-ip-intelligence-onpremise \
             --test decimal_places -- --exact "$test" --nocapture \
             | tee "$RUNNER_TEMP/decimal-places.txt"
@@ -332,7 +332,7 @@ jobs:
       # The build jobs read the data file metadata of the ASN file. Only the
       # Enterprise file has float, bool and weighted properties, addresses
       # and areas, so the metadata tests run here too, opening the file in
-      # LowMemory, and 51DEGREES_REQUIRE_ENTERPRISE makes a test that needs
+      # LowMemory, and _51DEGREES_REQUIRE_ENTERPRISE makes a test that needs
       # the Enterprise file fail rather than skip. The failed refresh test
       # always uses the ASN file. Every property the Enterprise file gives
       # must read as its declared type, and that test is named exactly, so
@@ -343,10 +343,10 @@ jobs:
       - name: Check the IP Intelligence metadata of the Enterprise file
         if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
         run: |
-          env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_ENTERPRISE=1 \
+          env _51DEGREES_IPI_PATH="$IPI_FILE" _51DEGREES_REQUIRE_ENTERPRISE=1 \
             cargo test -p fiftyone-ip-intelligence-onpremise --test metadata
           test=every_present_property_unpacks_as_its_declared_type
-          env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_ENTERPRISE=1 \
+          env _51DEGREES_IPI_PATH="$IPI_FILE" _51DEGREES_REQUIRE_ENTERPRISE=1 \
             cargo test -p fiftyone-ip-intelligence-onpremise \
             --test detection -- --exact "$test" --nocapture \
             | tee "$RUNNER_TEMP/declared-types.txt"
@@ -354,7 +354,7 @@ jobs:
             echo "::error::$test did not run and pass"
             exit 1
           fi
-          env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_ENTERPRISE=1 \
+          env _51DEGREES_IPI_PATH="$IPI_FILE" _51DEGREES_REQUIRE_ENTERPRISE=1 \
             cargo test -p fiftyone-native --no-default-features --features ipi \
             --lib -- --exact \
             ipi::tests::each_property_gives_as_many_values_as_it_counts_and_its_default_among_them \
@@ -365,31 +365,31 @@ jobs:
             ipi::tests::an_enterprise_file_gives_each_value_as_text \
             ipi::tests::an_ip_range_is_written_as_dotnet_writes_it \
             ipi::tests::a_value_is_found_by_its_text_to_more_places
-          env 51DEGREES_IPI_PATH="$IPI_FILE" 51DEGREES_REQUIRE_ENTERPRISE=1 \
-            51DEGREES_IPI_MEMORY_PROFILES=LowMemory \
+          env _51DEGREES_IPI_PATH="$IPI_FILE" _51DEGREES_REQUIRE_ENTERPRISE=1 \
+            _51DEGREES_IPI_MEMORY_PROFILES=LowMemory \
             cargo test -p fiftyone-native --no-default-features --features ipi \
             --test ipi_memory -- --nocapture
 
-      # With 51DEGREES_REQUIRE_ENTERPRISE set, the leak test must fail when
-      # 51DEGREES_IPI_PATH names no file, rather than pass having checked
+      # With _51DEGREES_REQUIRE_ENTERPRISE set, the leak test must fail when
+      # _51DEGREES_IPI_PATH names no file, rather than pass having checked
       # nothing, so the step above relies on the test alone and not on the
       # order of its commands.
       - name: Check that the leak test fails with no data file
         if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
         run: |
           out="$RUNNER_TEMP/leak-test-no-file.txt"
-          if env 51DEGREES_IPI_PATH="$RUNNER_TEMP/no-such-file.ipi" \
-            51DEGREES_REQUIRE_ENTERPRISE=1 \
-            51DEGREES_IPI_MEMORY_PROFILES=LowMemory \
+          if env _51DEGREES_IPI_PATH="$RUNNER_TEMP/no-such-file.ipi" \
+            _51DEGREES_REQUIRE_ENTERPRISE=1 \
+            _51DEGREES_IPI_MEMORY_PROFILES=LowMemory \
             cargo test -p fiftyone-native --no-default-features --features ipi \
             --test ipi_memory > "$out" 2>&1; then
             cat "$out"
-            echo "::error::the leak test passed with no data file and 51DEGREES_REQUIRE_ENTERPRISE set"
+            echo "::error::the leak test passed with no data file and _51DEGREES_REQUIRE_ENTERPRISE set"
             exit 1
           fi
           cat "$out"
-          if ! grep -qF '51DEGREES_REQUIRE_ENTERPRISE is set, but 51DEGREES_IPI_PATH names no IP Intelligence data file' "$out"; then
-            echo "::error::the leak test failed, but not because 51DEGREES_IPI_PATH names no file"
+          if ! grep -qF '_51DEGREES_REQUIRE_ENTERPRISE is set, but _51DEGREES_IPI_PATH names no IP Intelligence data file' "$out"; then
+            echo "::error::the leak test failed, but not because _51DEGREES_IPI_PATH names no file"
             exit 1
           fi
 
@@ -420,18 +420,18 @@ jobs:
       - name: Test the robots.txt engine over the Enterprise file
         if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
         run: |
-          env 51DEGREES_DD_PATH="$DD_FILE" \
+          env _51DEGREES_DD_PATH="$DD_FILE" \
             cargo test -p fiftyone-device-detection-robots-txt \
             --test data_file -- --nocapture
 
       # The TAC and Native engines find profiles only over a file with the
       # TAC and NativeModel properties, which the Lite file the Pull Request
-      # workflow gives them lacks. 51DEGREES_REQUIRE_TAC makes those tests
+      # workflow gives them lacks. _51DEGREES_REQUIRE_TAC makes those tests
       # fail rather than skip if the file stops carrying them.
       - name: Test the TAC and Native engines over the TAC file
         if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
         run: |
-          env 51DEGREES_DD_PATH="$DD_FILE" 51DEGREES_REQUIRE_TAC=1 \
+          env _51DEGREES_DD_PATH="$DD_FILE" _51DEGREES_REQUIRE_TAC=1 \
             cargo test -p fiftyone-device-detection-property-keyed \
             --test data_file -- --nocapture
 

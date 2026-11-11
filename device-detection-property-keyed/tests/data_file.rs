@@ -22,12 +22,12 @@
 
 //! The TAC and Native engines after the on-premise Device Detection engine.
 //!
-//! The tests run on the Hash data file `51DEGREES_DD_PATH` names, or the Lite
+//! The tests run on the Hash data file `_51DEGREES_DD_PATH` names, or the Lite
 //! file in the `cxx` submodule, and skip when there is neither. The Lite file
 //! has no `TAC` or `NativeModel` property, so over it the engines accept no
 //! evidence and write nothing. The tests that find profiles need a file with
 //! both properties, such as the TAC file, and skip over any other. When
-//! `51DEGREES_REQUIRE_TAC` is set, as the comparison workflow sets it, they
+//! `_51DEGREES_REQUIRE_TAC` is set, as the comparison workflow sets it, they
 //! fail rather than skip.
 
 use std::path::PathBuf;
@@ -64,16 +64,16 @@ const VALID_NATIVE_MODEL: &str = "SM-G960F";
 
 /// Set where the tests that find profiles must run, so they fail rather than
 /// skip.
-const REQUIRE_TAC: &str = "51DEGREES_REQUIRE_TAC";
+const REQUIRE_TAC: &str = "_51DEGREES_REQUIRE_TAC";
 
 /// How many of a property's values, in the data file's order, are searched
 /// for one that passes the engine's check and that a profile holds.
 const VALUES_SEARCHED: usize = 1000;
 
-/// The Hash data file `51DEGREES_DD_PATH` names, or the Lite file in the `cxx`
+/// The Hash data file `_51DEGREES_DD_PATH` names, or the Lite file in the `cxx`
 /// submodule.
 fn data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("51DEGREES_DD_PATH") {
+    if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);
@@ -158,7 +158,7 @@ fn warnings(data: &FlowData) -> Vec<&str> {
 }
 
 /// Note why a test that finds profiles is skipped, or fail when
-/// `51DEGREES_REQUIRE_TAC` is set.
+/// `_51DEGREES_REQUIRE_TAC` is set.
 fn skip_tac(reason: &str) {
     assert!(
         std::env::var_os(REQUIRE_TAC).is_none(),
