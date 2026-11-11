@@ -1857,7 +1857,26 @@ mod tests {
             assert_eq!(typed[slot], by_name, "{name}");
             resolved += usize::from(by_name.is_some());
         }
-        assert!(resolved > 1, "only {resolved} typed accessors resolved");
+        // Every property the reader holds that has a typed accessor
+        // resolves, and no other slot does.
+        let expected = reader
+            .property_names()
+            .iter()
+            .filter(|name| {
+                TYPED_PROPERTY_NAMES
+                    .iter()
+                    .any(|typed| typed.to_lowercase() == **name)
+            })
+            .count();
+        assert_eq!(resolved, expected);
+        assert!(resolved > 10, "only {resolved} typed accessors resolved");
+        for name in ["IsMobile", "PlatformName"] {
+            let slot = TYPED_PROPERTY_NAMES
+                .iter()
+                .position(|typed| *typed == name)
+                .expect(name);
+            assert!(typed[slot].is_some(), "{name}");
+        }
 
         data.process().expect("processing succeeds");
         let device = data.get(DEVICE_DATA_KEY).expect("device data was produced");
