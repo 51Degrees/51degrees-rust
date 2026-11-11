@@ -1924,6 +1924,18 @@ mod tests {
         assert_eq!(strip_prefix("bare"), "bare");
     }
 
+    /// The evidence gives its keys in lowercase, so the reserved names are
+    /// given here in letters it would never hold.
+    #[test]
+    fn reserved_names_match_in_any_letter_case() {
+        for field in ["VALUES", "Resource", "LICENSE", "Licence", "values"] {
+            assert!(is_reserved_field(field), "{field} is reserved");
+        }
+        for field in ["Value", "x-values", "licenses", "resources"] {
+            assert!(!is_reserved_field(field), "{field} is not reserved");
+        }
+    }
+
     use crate::state::EvidenceKeyEntry;
 
     /// A resolved state with a few accepted evidence keys, so a built engine

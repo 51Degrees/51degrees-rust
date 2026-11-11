@@ -188,7 +188,9 @@ fn sorted(expected: &[(&str, &str)]) -> Vec<(String, String)> {
 
 /// Every evidence value is sent with its prefix removed, whether or not the
 /// service lists its key, apart from the reserved names `resource`,
-/// `license`, `licence` and `values` under any prefix and in any letter case.
+/// `license`, `licence` and `values` under any prefix. The evidence matches
+/// keys in lowercase, so the letter case of a reserved name is tested on the
+/// compare itself, in `engine.rs`.
 #[test]
 fn every_evidence_value_but_the_reserved_names_is_sent() {
     let form = form_sent(
@@ -209,11 +211,64 @@ fn every_evidence_value_but_the_reserved_names_is_sent() {
         form,
         sorted(&[
             ("resource", "test-resource-key"),
-            ("user-agent", "UA"),
+            ("User-Agent", "UA"),
             ("accept-language", "en-GB"),
-            ("x-other", "other"),
+            ("X-Other", "other"),
             ("session", "abc"),
             ("client-ip", "203.0.113.1"),
+        ])
+    );
+}
+
+/// Each name is sent as its key spells it, with only the prefix removed. A key
+/// added again in other letters is the same key, so it keeps its first
+/// spelling and takes the new value.
+#[test]
+fn each_name_is_sent_as_its_key_spells_it() {
+    let form = form_sent(
+        r#"["header.user-agent"]"#,
+        Evidence::builder()
+            .add("cookie.51D_Experiment", "a")
+            .add("header.Sec-CH-UA-Platform", "\"Windows\"")
+            .add("Bare-Key", "bare")
+            .add("header.Accept", "first")
+            .add("header.accept", "second")
+            .build(),
+    );
+    assert_eq!(
+        form,
+        sorted(&[
+            ("resource", "test-resource-key"),
+            ("51D_Experiment", "a"),
+            ("Sec-CH-UA-Platform", "\"Windows\""),
+            ("Bare-Key", "bare"),
+            ("Accept", "second"),
+        ])
+    );
+}
+
+/// One name under two prefixes in two letter cases is one field, sent once
+/// with the value and the spelling of the key whose prefix ranks first.
+#[test]
+fn one_name_in_two_letter_cases_is_sent_once_as_the_winning_key_spells_it() {
+    let form = form_sent(
+        r#"["header.user-agent"]"#,
+        Evidence::builder()
+            .add("header.User-Agent", "header")
+            .add("query.user-agent", "query")
+            .add("fiftyone.x-thing", "fiftyone")
+            .add("server.X-Thing", "server")
+            .add("Query.X-Q", "query")
+            .add("header.x-q", "header")
+            .build(),
+    );
+    assert_eq!(
+        form,
+        sorted(&[
+            ("resource", "test-resource-key"),
+            ("user-agent", "query"),
+            ("X-Thing", "server"),
+            ("X-Q", "query"),
         ])
     );
 }
@@ -273,8 +328,9 @@ fn evidence_is_ranked_by_its_prefix() {
 }
 
 /// A text value under `server.http-request`, the key of the web request a
-/// web integration gives, is never sent, in any letter case, even when the
-/// service lists the key.
+/// web integration gives, is never sent, even when the service lists the key.
+/// The evidence matches keys in lowercase, so the letter case of the key is
+/// tested on the compare itself, in `engine.rs`.
 #[test]
 fn a_value_under_the_web_request_key_is_never_sent() {
     let form = form_sent(
@@ -339,6 +395,48 @@ fn evidence_the_service_does_not_list_does_not_change_the_cache_key() {
             .any(|(k, v)| k == "sec-ch-ua-platform" && v == "Windows"),
         "the first request sends the evidence the service does not list: {:?}",
         posts[0].form
+    );
+    let cloud = second.get(CloudRequestEngine::DATA_KEY).unwrap();
+    assert!(cloud.cache_hit(), "the second request is a cache hit");
+}
+
+/// Evidence keys ignore letter case, so a stored response is found by the
+/// same evidence however its keys are spelled, although each request sends
+/// the names as its keys spell them.
+#[test]
+fn a_stored_response_is_found_whatever_the_letter_case_of_the_keys() {
+    let client = Arc::new(FakeClient::default());
+    client.set_evidence_keys(FakeClient::ok(r#"["header.user-agent"]"#));
+    client.set_data(FakeClient::ok(r#"{"device":{"ismobile":true}}"#));
+    let cache = Arc::new(RecordingCache::default());
+    let engine = CloudRequestEngine::builder()
+        .resource_key("test-resource-key")
+        .endpoint("https://cloud.example.test/api/v4/")
+        .http_client(client.clone())
+        .cache(cache.clone())
+        .build()
+        .unwrap();
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(engine))
+        .build()
+        .unwrap();
+
+    let mut first =
+        pipeline.create_flow_data_with(Evidence::builder().add("header.User-Agent", "UA").build());
+    first.process().unwrap();
+    let mut second =
+        pipeline.create_flow_data_with(Evidence::builder().add("header.user-agent", "UA").build());
+    second.process().unwrap();
+
+    let requests = client.requests.lock().unwrap();
+    let posts: Vec<&CloudHttpRequest> = requests
+        .iter()
+        .filter(|r| r.method == HttpMethod::Post)
+        .collect();
+    assert_eq!(
+        posts.len(),
+        1,
+        "the second request is served from the cache"
     );
     let cloud = second.get(CloudRequestEngine::DATA_KEY).unwrap();
     assert!(cloud.cache_hit(), "the second request is a cache hit");
