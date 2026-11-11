@@ -91,7 +91,7 @@ fn scripts_commit() -> String {
                 .to_owned();
         }
     }
-    env!("FIFTYONE_DERIVED_PROPERTIES_COMMIT").to_owned()
+    env!("_51DEGREES_DERIVED_PROPERTIES_COMMIT").to_owned()
 }
 
 /// A script named `name` producing an int, deprecated where `note` is given.

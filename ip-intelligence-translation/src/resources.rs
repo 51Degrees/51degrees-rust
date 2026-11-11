@@ -30,7 +30,7 @@
 /// The text of the translation file `file`, a path in the translation folder.
 macro_rules! translation {
     ($file:literal) => {
-        include_str!(concat!(env!("FIFTYONE_TRANSLATIONS_DIR"), "/", $file))
+        include_str!(concat!(env!("_51DEGREES_TRANSLATIONS_DIR"), "/", $file))
     };
 }
 

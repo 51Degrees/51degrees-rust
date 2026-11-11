@@ -22,7 +22,7 @@
 
 //! Build script for `fiftyone-derived-properties`.
 //!
-//! Sets `FIFTYONE_DERIVED_PROPERTIES_COMMIT` to the commit of
+//! Sets `_51DEGREES_DERIVED_PROPERTIES_COMMIT` to the commit of
 //! 51Degrees/derived-properties that the scripts under `vendor` come from.
 //!
 //! In the repository `vendor` is a submodule, and git gives the commit it is
@@ -35,7 +35,7 @@ use std::path::Path;
 use std::process::Command;
 
 /// The variable the crate reads the commit from.
-const COMMIT_VARIABLE: &str = "FIFTYONE_DERIVED_PROPERTIES_COMMIT";
+const COMMIT_VARIABLE: &str = "_51DEGREES_DERIVED_PROPERTIES_COMMIT";
 
 /// What the commit is where nothing records it.
 const UNKNOWN: &str = "unknown";

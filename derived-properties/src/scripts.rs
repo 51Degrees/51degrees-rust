@@ -39,7 +39,7 @@ pub(crate) const BUILT_IN_SOURCE: &str = "built in";
 /// from, which the element logs at build so that anyone holding the log can
 /// find the exact scripts that ran. `build.rs` says where it is found.
 pub(crate) fn built_in_scripts_commit() -> &'static str {
-    env!("FIFTYONE_DERIVED_PROPERTIES_COMMIT")
+    env!("_51DEGREES_DERIVED_PROPERTIES_COMMIT")
 }
 
 /// The names of the shipped scripts, joined by ", ", as messages list them.

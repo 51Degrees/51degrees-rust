@@ -22,7 +22,7 @@
 
 //! Build script for `fiftyone-ip-intelligence-translation`.
 //!
-//! Sets `FIFTYONE_TRANSLATIONS_DIR` to the folder the translation sources are
+//! Sets `_51DEGREES_TRANSLATIONS_DIR` to the folder the translation sources are
 //! compiled in from, which holds the IP Intelligence translation files of the
 //! 51Degrees data repository.
 //!
@@ -35,7 +35,7 @@
 use std::path::PathBuf;
 
 /// The variable the crate reads the folder from.
-const FOLDER_VARIABLE: &str = "FIFTYONE_TRANSLATIONS_DIR";
+const FOLDER_VARIABLE: &str = "_51DEGREES_TRANSLATIONS_DIR";
 
 /// A file every translation folder holds.
 const MARKER: &str = "countrycodes.en_GB.yml";
