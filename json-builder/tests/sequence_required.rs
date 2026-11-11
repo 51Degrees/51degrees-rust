@@ -23,10 +23,10 @@
 //! The JSON builder fails, and sets no JSON, when no sequence element has
 //! produced a sequence number.
 //!
-//! See the [JSON Builder specification](https://github.com/51Degrees/specifications/blob/e89679e9/pipeline-specification/pipeline-elements/json-builder.md#sequence-number),
+//! See the [JSON Builder specification](https://github.com/51Degrees/specifications/blob/d72eb074/pipeline-specification/pipeline-elements/json-builder.md#sequence-number),
 //! which says the element MUST fail with an error and MUST NOT set its JSON
-//! value, that the error SHOULD say a sequence element needs to be placed
-//! before it, and that a `query.sequence` value taken from a query string is
+//! value, that the error MUST carry the message the page gives and nothing
+//! added to it, and that a `query.sequence` value taken from a query string is
 //! text rather than a sequence number.
 
 use std::any::Any;

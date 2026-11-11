@@ -40,7 +40,7 @@ use crate::constants::{
 use crate::data::{JsonBuilderData, JSON_BUILDER_DATA_KEY};
 
 /// What the element says when no sequence element has produced a sequence
-/// number. The [specification](https://github.com/51Degrees/specifications/blob/dcacc016/pipeline-specification/pipeline-elements/json-builder.md#sequence-number)
+/// number. The [specification](https://github.com/51Degrees/specifications/blob/d72eb074/pipeline-specification/pipeline-elements/json-builder.md#sequence-number)
 /// gives this text and every language gives the same, so that the message
 /// reads the same whichever one a deployment uses.
 const NO_SEQUENCE_MESSAGE: &str = "The JSON Builder needs a sequence number. \
@@ -171,7 +171,7 @@ impl PipelineConfig {
 /// number it writes is what caps the `javascriptProperties` list. Without one
 /// this element fails with [`fiftyone_pipeline_core::Error::PipelineConfiguration`]
 /// and sets no JSON, which the
-/// [specification](https://github.com/51Degrees/specifications/blob/e89679e9/pipeline-specification/pipeline-elements/json-builder.md#sequence-number)
+/// [specification](https://github.com/51Degrees/specifications/blob/d72eb074/pipeline-specification/pipeline-elements/json-builder.md#sequence-number)
 /// requires. `fiftyone_pipeline_web::WebPipeline` adds one for you. The
 /// `query.sequence` evidence is the text a query string carries, which the
 /// same page says is not a sequence number, so it is not read here.
