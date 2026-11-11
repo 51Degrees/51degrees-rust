@@ -269,8 +269,9 @@ impl DidHttpClient for HostTransport {
 
 The default endpoint is the public cloud, `https://cloud.51degrees.com/api/v4/`.
 A privately hosted copy of the service is reached by giving the builder its
-base with `endpoint(...)`, or by setting the `FOD_CLOUD_API_URL` environment
-variable, which is the same variable the cloud request engine honours.
+base with `endpoint(...)`, or by setting the `_51DEGREES_CLOUD_ENDPOINT`
+environment variable, which is the same variable the cloud request engine
+honours.
 
 ## License
 

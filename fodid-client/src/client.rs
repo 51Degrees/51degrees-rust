@@ -45,7 +45,7 @@ pub const DEFAULT_ENDPOINT: &str = "https://cloud.51degrees.com/api/v4/";
 /// none, the same variable the cloud request engine honours. A host other
 /// than the public cloud is used for a privately hosted copy of the same
 /// service.
-pub const ENDPOINT_ENVIRONMENT_VARIABLE: &str = "FOD_CLOUD_API_URL";
+pub const ENDPOINT_ENVIRONMENT_VARIABLE: &str = "_51DEGREES_CLOUD_ENDPOINT";
 
 /// How old the held key list may be before a lookup fetches the whole list
 /// again, with no `datetime`. Only a fetch of the whole list, which the first

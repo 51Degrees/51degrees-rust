@@ -74,8 +74,9 @@
 use fodid::FodId;
 use fodid_client::{ContextOutcome, DidClient, SignatureCheck, SignatureOutcome};
 
-/// The cloud the test runs against, overridden with `FOD_CLOUD_API_URL` for a
-/// private deployment, exactly as the client itself is.
+/// The cloud the test runs against, overridden with
+/// `_51DEGREES_CLOUD_ENDPOINT` for a private deployment, exactly as the client
+/// itself is.
 const DEFAULT_ENDPOINT: &str = "https://cloud.51degrees.com/api/v4/";
 
 /// The User-Agent supplied as evidence at creation. It travels as a query
@@ -151,7 +152,8 @@ const LEAST_KEY_TAIL: usize = 12;
 
 /// The endpoint the test and the client both use.
 fn endpoint() -> String {
-    non_blank_variable("FOD_CLOUD_API_URL").unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned())
+    non_blank_variable("_51DEGREES_CLOUD_ENDPOINT")
+        .unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned())
 }
 
 /// Percent-encode a query string value, leaving only the characters that
