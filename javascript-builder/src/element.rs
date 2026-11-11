@@ -74,7 +74,7 @@ const MAX_SESSION_ID_LENGTH: usize = 64;
 /// The template writes the session id inside quotes without any escaping, so
 /// a value holding a quote, a backslash or a line break would end the string
 /// early and break the script or change what it does. The
-/// [javascript-builder specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/javascript-builder.md)
+/// [javascript-builder specification](https://github.com/51Degrees/specifications/blob/e89679e9/pipeline-specification/pipeline-elements/javascript-builder.md)
 /// says a session id that is not 1 to 64 ASCII letters, digits and hyphens is
 /// rendered as an empty string.
 fn safe_session_id(session_id: String) -> String {
@@ -113,7 +113,7 @@ fn safe_sequence(sequence: i32) -> i32 {
 /// result. The generated JavaScript is stored on the flow data under the
 /// [`crate::JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY`] element data key. It implements
 /// the
-/// [javascript-builder specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/javascript-builder.md).
+/// [javascript-builder specification](https://github.com/51Degrees/specifications/blob/e89679e9/pipeline-specification/pipeline-elements/javascript-builder.md).
 ///
 /// # Derivation rules
 ///

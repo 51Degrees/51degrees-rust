@@ -170,7 +170,7 @@ impl PipelineConfig {
 /// number it writes is what caps the `javascriptProperties` list. Without one
 /// this element fails with [`fiftyone_pipeline_core::Error::PipelineConfiguration`]
 /// and sets no JSON, which the
-/// [specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/json-builder.md#sequence-number)
+/// [specification](https://github.com/51Degrees/specifications/blob/e89679e9/pipeline-specification/pipeline-elements/json-builder.md#sequence-number)
 /// requires. `fiftyone_pipeline_web::WebPipeline` adds one for you. The
 /// `query.sequence` evidence is the text a query string carries, which the
 /// same page says is not a sequence number, so it is not read here.

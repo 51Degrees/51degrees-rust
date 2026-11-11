@@ -23,7 +23,7 @@
 //! The JSON builder fails, and sets no JSON, when no sequence element has
 //! produced a sequence number.
 //!
-//! See the [JSON Builder specification](https://github.com/51Degrees/specifications/blob/67ead698/pipeline-specification/pipeline-elements/json-builder.md#sequence-number),
+//! See the [JSON Builder specification](https://github.com/51Degrees/specifications/blob/e89679e9/pipeline-specification/pipeline-elements/json-builder.md#sequence-number),
 //! which says the element MUST fail with an error and MUST NOT set its JSON
 //! value, that the error SHOULD say a sequence element needs to be placed
 //! before it, and that a `query.sequence` value taken from a query string is
