@@ -106,6 +106,11 @@
     </tbody>
   </table>
 
+  <p><b>Human confidence and the 51Did are separate today.</b> The human
+  confidence answer does not yet take the identifier into account, so
+  creating one or presenting one does not change it. That is expected to
+  change.</p>
+
   <div id="detail" style="display: none">
     <h3 class="c-eg-page__heading">Why</h3>
     <p class="c-eg-page__lead"><span id="s-detail"></span></p>
@@ -181,6 +186,14 @@
       terminal's own connection, which returns a sealed result that tells
       the terminal nothing. The second redeems that result here, where
       the licence key is, and prints the verdict.</p>
+      <div class="c-eg-tabs" role="tablist">
+        <button type="button" class="c-eg-tabs__tab" role="tab"
+          data-shell="bash" aria-selected="true"
+          aria-controls="curl">Bash</button>
+        <button type="button" class="c-eg-tabs__tab" role="tab"
+          data-shell="powershell" aria-selected="false"
+          aria-controls="curl">PowerShell</button>
+      </div>
       <p><textarea id="curl" class="b-input b-input--block" rows="4"
         readonly></textarea></p>
       <p>Expect the signature to verify, because the identifier is
@@ -302,21 +315,56 @@
       + urlSafe(owid);
   }
 
-  // The two commands that present one identifier from a terminal. The
-  // first verifies over the terminal's own connection and returns a
-  // sealed result that tells the terminal nothing, the second redeems
-  // that result here, where the licence key is.
-  function shellCheck(owid) {
+  // The commands that present one identifier from a terminal. The first
+  // verifies over the terminal's own connection and returns a sealed
+  // result that tells the terminal nothing, the second redeems that
+  // result here, where the licence key is. One version per shell, so a
+  // reader pastes rather than translates.
+  var SHELLS = {
+    bash: function (verify, redeem) {
+      return "R=$(curl -s '" + verify
+        + "' | grep -o '\"result\":\"[^\"]*' | cut -d'\"' -f4)\n"
+        + "curl -s '" + redeem + "'\"$R\"\n";
+    },
+    powershell: function (verify, redeem) {
+      return "$R = (Invoke-RestMethod \"" + verify + "\").result\n"
+        + "Invoke-RestMethod \"" + redeem + "$R\" | ConvertTo-Json\n";
+    }
+  };
+
+  // Fill the commands box and keep the tabs over it in step.
+  function showShell(owid) {
     var safe = urlSafe(owid);
-    return "R=$(curl -s '" + API + "id/verify-full/" + RESOURCE + "/"
-      + safe + "?challenge=" + CHALLENGE
-      + "' | sed 's/.*\"result\":\"\\([^\"]*\\)\".*/\\1/')\n"
-      + "curl -s '" + location.origin + "/redeem?51did=" + safe
-      + "&challenge=" + CHALLENGE + "&result='\"$R\"\n";
+    var verify = API + "id/verify-full/" + RESOURCE + "/" + safe
+      + "?challenge=" + CHALLENGE;
+    var redeem = location.origin + "/redeem?51did=" + safe
+      + "&challenge=" + CHALLENGE + "&result=";
+    var tabs = document.querySelectorAll(".c-eg-tabs__tab");
+    function choose(name) {
+      var text = SHELLS[name](verify, redeem);
+      document.getElementById("curl").value = text;
+      copyButton("copy-curl", text);
+      for (var i = 0; i < tabs.length; i += 1) {
+        tabs[i].setAttribute("aria-selected",
+          tabs[i].getAttribute("data-shell") === name ? "true" : "false");
+      }
+    }
+    for (var i = 0; i < tabs.length; i += 1) {
+      tabs[i].onclick = function () {
+        choose(this.getAttribute("data-shell"));
+      };
+    }
+    choose("bash");
   }
 
   function copyButton(id, text) {
     var button = document.getElementById(id);
+    // Keep the first label, so pointing the button at new text puts it
+    // back from "Copied".
+    if (!button.getAttribute("data-label")) {
+      button.setAttribute("data-label", button.textContent);
+    }
+    button.textContent = button.getAttribute("data-label");
     button.onclick = function () {
       navigator.clipboard.writeText(text);
       button.textContent = "Copied";
@@ -651,10 +699,8 @@
               }
               reveal("share");
               copyButton("copy", link);
-              var commands = shellCheck(owid);
-              document.getElementById("curl").value = commands;
+              showShell(owid);
               reveal("shell");
-              copyButton("copy-curl", commands);
             }
             if (!good && given) {
               reveal("caught");
