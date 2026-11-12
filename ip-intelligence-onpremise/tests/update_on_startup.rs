@@ -23,6 +23,10 @@
 //! Update on start-up when the update cannot be fetched. The test needs the
 //! ASN file `_51DEGREES_IPI_PATH` names, and skips with a note without it.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -37,7 +41,7 @@ use fiftyone_pipeline_engines::DataUpdateService;
 /// it. The data file stays registered for later updates.
 #[test]
 fn an_engine_builds_from_its_data_file_when_the_update_on_start_up_fails() {
-    let Some(asn) = std::env::var("_51DEGREES_IPI_PATH")
+    let Some(asn) = crate::deprecated_names::var("_51DEGREES_IPI_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())

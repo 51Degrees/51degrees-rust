@@ -112,6 +112,11 @@
 
 #![warn(missing_docs)]
 
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 mod builder;
 pub mod configuration;
 mod engine;

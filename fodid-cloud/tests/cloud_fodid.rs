@@ -30,6 +30,10 @@
 //! OWID envelope, created here with the `owid` library, so the parsed path is
 //! exercised against real bytes rather than a hand-rolled string.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::sync::{Arc, Mutex};
 
 use fiftyone_pipeline_core::{ElementData, Evidence, FlowData, Pipeline};
@@ -554,7 +558,7 @@ fn live_resource_key() -> Option<String> {
         "_51DEGREES_RESOURCE_KEY_BASIC",
     ]
     .into_iter()
-    .find_map(|name| match std::env::var(name) {
+    .find_map(|name| match crate::deprecated_names::var(name) {
         Ok(value) if !value.trim().is_empty() => Some(value.trim().to_owned()),
         _ => None,
     })

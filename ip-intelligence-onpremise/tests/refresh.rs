@@ -29,6 +29,10 @@
 //! `51Degrees-LiteV41.ipi` beside it, and skips with a note when either is
 //! missing.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::PathBuf;
 
 use fiftyone_ip_intelligence_onpremise::IpIntelligenceOnPremiseEngine;
@@ -41,7 +45,7 @@ const ADDED_PROPERTIES: [&str; 2] = ["Ip", "IpV6"];
 
 /// The ASN file and the Lite file beside it.
 fn data_files() -> Option<(PathBuf, PathBuf)> {
-    let asn = PathBuf::from(std::env::var("_51DEGREES_IPI_PATH").ok()?);
+    let asn = PathBuf::from(crate::deprecated_names::var("_51DEGREES_IPI_PATH").ok()?);
     let lite = asn.parent()?.join("51Degrees-LiteV41.ipi");
     (asn.is_file() && lite.is_file()).then_some((asn, lite))
 }

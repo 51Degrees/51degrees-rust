@@ -72,6 +72,9 @@ pub mod evidence;
 
 mod data_file_check;
 mod data_paths;
+#[allow(dead_code)]
+#[path = "../../../deprecated-names/environment.rs"]
+mod deprecated_names;
 mod endpoint;
 mod enterprise;
 mod find_file;

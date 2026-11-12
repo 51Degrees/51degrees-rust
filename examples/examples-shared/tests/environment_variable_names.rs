@@ -26,10 +26,12 @@
 //! than spelled out in words because the shorter form is preferred. The tests
 //! read every file git tracks, which leaves out build output and the
 //! submodules, and fail on any name that starts with the digit, or with the
-//! number spelled out where an environment variable is named. The two
-//! exceptions are the deprecated names in [`STILL_READ`], each allowed only
-//! in the folders of the crates that still read it when the name that
-//! replaced it is not set.
+//! number spelled out where an environment variable is named. The
+//! exceptions are the deprecated names that are still read when the name
+//! that replaced each is unset or empty. A crate's own old name is allowed
+//! only in that crate's folder ([`STILL_READ`]), and the names the tests and
+//! the examples read are allowed only in the one file they all read them
+//! through ([`SHARED_READER`]).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -60,9 +62,28 @@ const STILL_READ: [(&str, &[&str]); 2] = [
     ),
 ];
 
-/// True when `name` is a deprecated name that the crate holding the file at
-/// `relative` still reads.
+/// The folder of the file every test and example reads a renamed variable
+/// through, which holds each of [`READ_THROUGH_SHARED_READER`] once.
+const SHARED_READER: &str = "deprecated-names/";
+
+/// The deprecated names [`SHARED_READER`] reads, each split so this file
+/// does not match itself.
+const READ_THROUGH_SHARED_READER: [&str; 7] = [
+    concat!("5", "1DEGREES_RESOURCE_KEY"),
+    concat!("5", "1DEGREES_LICENSE_KEY"),
+    concat!("5", "1DEGREES_DD_PATH"),
+    concat!("5", "1DEGREES_IPI_PATH"),
+    concat!("5", "1DEGREES_IPI_ENTERPRISE_SHARE"),
+    DEPRECATED_CLOUD_ENDPOINT,
+    DEPRECATED_CXX_DIR,
+];
+
+/// True when `name` is a deprecated name that the file at `relative` may
+/// hold, because the code there still reads it.
 fn still_read(relative: &str, name: &str) -> bool {
+    if relative.starts_with(SHARED_READER) && READ_THROUGH_SHARED_READER.contains(&name) {
+        return true;
+    }
     STILL_READ.iter().any(|(deprecated, folders)| {
         name == *deprecated && folders.iter().any(|folder| relative.starts_with(*folder))
     })
@@ -243,6 +264,11 @@ fn a_deprecated_name_is_allowed_only_where_it_is_still_read() {
         "ip-intelligence-sys/tests/cxx_dir.rs",
         DEPRECATED_CXX_DIR
     ));
+    for name in READ_THROUGH_SHARED_READER {
+        assert!(still_read("deprecated-names/environment.rs", name));
+        assert!(!still_read("native/tests/smoke.rs", name));
+        assert!(!still_read("examples/examples-shared/src/keys.rs", name));
+    }
     // Not in another crate, an example, a workflow or a document.
     for elsewhere in [
         "fodid-client/src/client.rs",

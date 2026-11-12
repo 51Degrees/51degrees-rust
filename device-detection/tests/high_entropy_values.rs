@@ -28,6 +28,10 @@
 
 #![cfg(feature = "on-premise")]
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::PathBuf;
 
 use fiftyone_device_detection::{
@@ -45,7 +49,7 @@ const DECODER_DATA_KEY: &str = "uach";
 /// The data file `_51DEGREES_DD_PATH` names, or else the Lite file found from
 /// this crate's directory upwards.
 fn data_file() -> Option<PathBuf> {
-    if let Some(path) = std::env::var("_51DEGREES_DD_PATH")
+    if let Some(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH")
         .ok()
         .map(|path| PathBuf::from(path.trim()))
         .filter(|path| path.is_file())

@@ -34,6 +34,10 @@
 
 #![cfg(feature = "ipi")]
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 mod support;
 
 use std::ffi::CString;
@@ -135,7 +139,7 @@ fn count_native_allocations() {
 
 /// The IP Intelligence data file `_51DEGREES_IPI_PATH` names.
 fn data_file() -> Option<PathBuf> {
-    let path = PathBuf::from(std::env::var("_51DEGREES_IPI_PATH").ok()?);
+    let path = PathBuf::from(crate::deprecated_names::var("_51DEGREES_IPI_PATH").ok()?);
     path.is_file().then_some(path)
 }
 

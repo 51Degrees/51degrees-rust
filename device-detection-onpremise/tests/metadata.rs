@@ -27,6 +27,10 @@
 //! names, and skip with a note when there is none. They check what every Hash
 //! data file holds, so they pass against any tier.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -58,7 +62,7 @@ const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Ma
 /// The Hash data file `_51DEGREES_DD_PATH` names, or the Lite file in the `cxx`
 /// submodule.
 fn data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
+    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);

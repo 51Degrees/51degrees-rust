@@ -29,6 +29,10 @@
 //! with .NET sets it for the Enterprise file, the test fails where it would
 //! skip.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -71,7 +75,11 @@ fn skip(reason: &str) {
 
 /// The data file `_51DEGREES_IPI_PATH` names, if it exists.
 fn data_file() -> Option<PathBuf> {
-    let path = PathBuf::from(std::env::var("_51DEGREES_IPI_PATH").ok()?.trim());
+    let path = PathBuf::from(
+        crate::deprecated_names::var("_51DEGREES_IPI_PATH")
+            .ok()?
+            .trim(),
+    );
     path.is_file().then_some(path)
 }
 

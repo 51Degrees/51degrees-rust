@@ -30,6 +30,10 @@
 //! fiftyone-device-detection-onpremise --test read_timing -- --nocapture`
 //! prints them.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -128,7 +132,7 @@ fn building_and_processing_with_no_names_and_with_every_name() {
 /// The Hash data file `_51DEGREES_DD_PATH` names, or the Lite file in the
 /// `cxx` submodule.
 fn data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
+    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);

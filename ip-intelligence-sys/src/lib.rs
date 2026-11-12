@@ -93,6 +93,11 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::os::raw::{c_char, c_int, c_void};
 
 pub use common::{
@@ -1647,7 +1652,7 @@ mod tests {
     /// Resolve the 51degrees-cxx checkout the same way `build.rs` does so the
     /// smoke test can find the ASN data file in it.
     fn cxx_dir() -> PathBuf {
-        if let Ok(dir) = std::env::var("_51DEGREES_CXX_DIR") {
+        if let Ok(dir) = crate::deprecated_names::var("_51DEGREES_CXX_DIR") {
             return PathBuf::from(dir);
         }
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1668,7 +1673,7 @@ mod tests {
 
     /// The data file `_51DEGREES_IPI_PATH` names, else the ASN file.
     fn named_or_asn_data_file() -> Option<PathBuf> {
-        std::env::var("_51DEGREES_IPI_PATH")
+        crate::deprecated_names::var("_51DEGREES_IPI_PATH")
             .ok()
             .map(PathBuf::from)
             .filter(|path| path.is_file())

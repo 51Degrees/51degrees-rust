@@ -29,6 +29,10 @@
 //! `_51DEGREES_DD_PATH` names or the Lite file in the `cxx` submodule, and skip
 //! with a note when there is none.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -58,7 +62,9 @@ const FILE_PROFILE_FULL_READ_EVERY: usize = 10;
 /// The Hash data file `_51DEGREES_DD_PATH` names, else the Lite file in the
 /// `cxx` submodule, or `None` with a note that the test is skipped.
 fn data_file() -> Option<PathBuf> {
-    let given = std::env::var("_51DEGREES_DD_PATH").ok().map(PathBuf::from);
+    let given = crate::deprecated_names::var("_51DEGREES_DD_PATH")
+        .ok()
+        .map(PathBuf::from);
     let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../cxx/data/device-detection/51Degrees-LiteV4.1.hash");
     let found = given

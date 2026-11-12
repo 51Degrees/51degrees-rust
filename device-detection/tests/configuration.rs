@@ -26,6 +26,10 @@
 //! The on-premise tests need the Lite file `_51DEGREES_DD_PATH` names, or the
 //! one at `cxx/data/device-detection`, and skip with a note without it.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::sync::Arc;
 
 use fiftyone_device_detection::configuration::{self, ElementOptions, PipelineOptions};
@@ -148,7 +152,9 @@ mod on_premise {
     /// The file `variable` names, or the one at `bundled` under `cxx/data`,
     /// or `None` with a note that the test is skipped.
     fn data_file(variable: &str, bundled: &str) -> Option<String> {
-        let given = std::env::var(variable).ok().map(PathBuf::from);
+        let given = crate::deprecated_names::var(variable)
+            .ok()
+            .map(PathBuf::from);
         let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../cxx/data")
             .join(bundled);

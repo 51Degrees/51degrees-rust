@@ -28,6 +28,10 @@
 //! checks of each crawler run against a file that holds them, such as the
 //! Enterprise file.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -50,7 +54,7 @@ const TDL: &str = "https://m4ow.uk/socw/1.txt";
 /// The Hash data file `_51DEGREES_DD_PATH` names, or the Lite file in the `cxx`
 /// submodule.
 fn data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
+    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);

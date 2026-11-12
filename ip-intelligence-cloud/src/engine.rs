@@ -690,7 +690,7 @@ mod tests {
             "_51DEGREES_RESOURCE_KEY_BASIC",
         ]
         .into_iter()
-        .find_map(|name| match std::env::var(name) {
+        .find_map(|name| match crate::deprecated_names::var(name) {
             Ok(value) if !value.trim().is_empty() => Some(value.trim().to_owned()),
             _ => None,
         })

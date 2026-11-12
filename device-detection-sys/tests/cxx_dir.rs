@@ -85,9 +85,17 @@ fn neither_variable_gives_none() {
 }
 
 #[test]
-fn a_variable_set_to_nothing_still_counts_as_set() {
+fn an_empty_new_variable_leaves_the_old_one_read() {
     assert_eq!(
         cxx_dir_override(holding(Some(""), Some("old"))),
+        Some(("old".to_owned(), OLD_VARIABLE))
+    );
+}
+
+#[test]
+fn a_variable_set_to_nothing_alone_still_counts_as_set() {
+    assert_eq!(
+        cxx_dir_override(holding(Some(""), None)),
         Some((String::new(), CXX_DIR_VARIABLE))
     );
     assert_eq!(

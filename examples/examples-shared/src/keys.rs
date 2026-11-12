@@ -88,9 +88,11 @@ pub fn license_key_from_env() -> Option<String> {
 }
 
 /// Read `name` from the environment, returning the trimmed value only when it is
-/// present and not blank (a null-or-whitespace value is rejected).
+/// present and not blank (a null-or-whitespace value is rejected). A renamed
+/// variable is also read under its deprecated name when `name` is unset or
+/// empty.
 fn non_blank_env(name: &str) -> Option<String> {
-    match std::env::var(name) {
+    match crate::deprecated_names::var(name) {
         Ok(value) if !value.trim().is_empty() => Some(value.trim().to_owned()),
         _ => None,
     }
