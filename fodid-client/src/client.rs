@@ -26,7 +26,7 @@
 use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll, Waker};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Once};
 
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use fodid::FodId;
@@ -37,15 +37,24 @@ use crate::key::{candidates_for_date, covers, in_force_at, merge_keys, parse_key
 use crate::outcome::SignatureCheck;
 use crate::redeem::RedeemResult;
 
-/// The public cloud API base, used when no endpoint is given and
-/// [`ENDPOINT_ENVIRONMENT_VARIABLE`] is not set.
+/// The public cloud API base, used when no endpoint is given and neither
+/// [`CLOUD_ENDPOINT_VARIABLE`] nor the deprecated
+/// [`ENDPOINT_ENVIRONMENT_VARIABLE`] is set.
 pub const DEFAULT_ENDPOINT: &str = "https://cloud.51degrees.com/api/v4/";
 
 /// The environment variable read for the API base when the builder is given
 /// none, the same variable the cloud request engine honours. A host other
 /// than the public cloud is used for a privately hosted copy of the same
 /// service.
-pub const ENDPOINT_ENVIRONMENT_VARIABLE: &str = "_51DEGREES_CLOUD_ENDPOINT";
+pub const CLOUD_ENDPOINT_VARIABLE: &str = "_51DEGREES_CLOUD_ENDPOINT";
+
+/// The old name of the environment variable read for the API base, which
+/// [`CLOUD_ENDPOINT_VARIABLE`] replaces.
+///
+/// The old name is read only when [`CLOUD_ENDPOINT_VARIABLE`] is unset or
+/// blank, and a warning is logged the first time its value is used.
+#[deprecated(note = "use CLOUD_ENDPOINT_VARIABLE, which names _51DEGREES_CLOUD_ENDPOINT")]
+pub const ENDPOINT_ENVIRONMENT_VARIABLE: &str = "FOD_CLOUD_API_URL";
 
 /// How old the held key list may be before a lookup fetches the whole list
 /// again, with no `datetime`. Only a fetch of the whole list, which the first
@@ -203,7 +212,8 @@ impl DidClientBuilder {
     }
 
     /// The API base including `/api/v4/`. When not given,
-    /// [`ENDPOINT_ENVIRONMENT_VARIABLE`] is read, and when that is unset too
+    /// [`CLOUD_ENDPOINT_VARIABLE`] is read, then the deprecated
+    /// [`ENDPOINT_ENVIRONMENT_VARIABLE`], and when both are unset
     /// [`DEFAULT_ENDPOINT`] is used. A value with or without a trailing
     /// slash is accepted, and is normalised to end in exactly one.
     pub fn endpoint(mut self, endpoint: impl Into<String>) -> Self {
@@ -288,10 +298,29 @@ fn default_transport() -> Result<Arc<dyn DidHttpClient>> {
     ))
 }
 
+/// The API base from the environment. [`CLOUD_ENDPOINT_VARIABLE`] is read
+/// first. When it is unset or blank the deprecated name it replaced is read,
+/// and a warning is logged the first time that value is used.
 fn read_endpoint_variable() -> Option<String> {
-    std::env::var(ENDPOINT_ENVIRONMENT_VARIABLE)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
+    static WARNED: Once = Once::new();
+    let read = |name: &str| {
+        std::env::var(name)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+    };
+    if let Some(current) = read(CLOUD_ENDPOINT_VARIABLE) {
+        return Some(current);
+    }
+    #[allow(deprecated)]
+    let old_name = ENDPOINT_ENVIRONMENT_VARIABLE;
+    let old = read(old_name)?;
+    WARNED.call_once(|| {
+        log::warn!(
+            "The environment variable '{old_name}' is deprecated and \
+             '{CLOUD_ENDPOINT_VARIABLE}' replaces it."
+        );
+    });
+    Some(old)
 }
 
 /// Trims the endpoint, makes it end in exactly one slash, and refuses
@@ -1263,19 +1292,19 @@ mod tests {
     fn the_default_endpoint_and_the_environment_variable() {
         // Only this test touches the variable, and every other test gives
         // the builder an endpoint, so nothing else reads it.
-        std::env::remove_var(ENDPOINT_ENVIRONMENT_VARIABLE);
+        std::env::remove_var(CLOUD_ENDPOINT_VARIABLE);
         let default = DidClient::builder(RESOURCE_KEY)
             .http_client(FakeHttp::answering(vec![]))
             .build()
             .unwrap();
         assert_eq!(default.endpoint(), DEFAULT_ENDPOINT);
 
-        std::env::set_var(ENDPOINT_ENVIRONMENT_VARIABLE, "https://private.test/api/v4");
+        std::env::set_var(CLOUD_ENDPOINT_VARIABLE, "https://private.test/api/v4");
         let from_variable = DidClient::builder(RESOURCE_KEY)
             .http_client(FakeHttp::answering(vec![]))
             .build()
             .unwrap();
-        std::env::remove_var(ENDPOINT_ENVIRONMENT_VARIABLE);
+        std::env::remove_var(CLOUD_ENDPOINT_VARIABLE);
         assert_eq!(from_variable.endpoint(), "https://private.test/api/v4/");
     }
 
@@ -1288,7 +1317,7 @@ mod tests {
         // does not depend on it, and a test that asked this crate what it
         // expects would agree with itself whatever the name became.
         assert_eq!(
-            ENDPOINT_ENVIRONMENT_VARIABLE, "_51DEGREES_CLOUD_ENDPOINT",
+            CLOUD_ENDPOINT_VARIABLE, "_51DEGREES_CLOUD_ENDPOINT",
             "the endpoint variable has to be the one the cloud request engine reads"
         );
     }

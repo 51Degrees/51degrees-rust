@@ -271,7 +271,9 @@ The default endpoint is the public cloud, `https://cloud.51degrees.com/api/v4/`.
 A privately hosted copy of the service is reached by giving the builder its
 base with `endpoint(...)`, or by setting the `_51DEGREES_CLOUD_ENDPOINT`
 environment variable, which is the same variable the cloud request engine
-honours.
+honours. The variable's old name, `FOD_CLOUD_API_URL`, is deprecated. The old
+name is still read when `_51DEGREES_CLOUD_ENDPOINT` is not set, and the client
+logs a warning the first time the old name is used.
 
 ## License
 

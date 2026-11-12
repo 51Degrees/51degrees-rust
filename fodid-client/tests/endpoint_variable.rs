@@ -182,6 +182,11 @@ fn the_old_variable_is_warned_about_once() {
 }
 
 #[test]
+fn the_new_constant_holds_the_new_name() {
+    assert_eq!(fodid_client::CLOUD_ENDPOINT_VARIABLE, VARIABLE);
+}
+
+#[test]
 #[allow(deprecated)]
 fn the_old_constant_still_holds_the_old_name() {
     assert_eq!(fodid_client::ENDPOINT_ENVIRONMENT_VARIABLE, OLD_VARIABLE);
