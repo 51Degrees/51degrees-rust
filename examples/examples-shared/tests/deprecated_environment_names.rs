@@ -23,15 +23,26 @@
 //! The file every test and example reads a renamed environment variable
 //! through, `deprecated-names/environment.rs`. The new name is read first,
 //! and the deprecated name it replaced is read when the new one is unset or
-//! empty. The rule is tested against a stand-in for the environment.
+//! empty. The rule is tested against a stand-in for the environment. What is
+//! said on standard error is tested in a child process, because the line is
+//! said once for the life of a process and a test's own standard error
+//! cannot be read from inside it.
 
 #[allow(dead_code)]
 #[path = "../../../deprecated-names/environment.rs"]
 mod deprecated_names;
 
 use std::ffi::OsString;
+use std::process::Command;
 
 use deprecated_names::{old_name, resolve, OLD_NAMES};
+
+/// The variable the child process reads.
+const READ_BY_CHILD: &str = "_51DEGREES_DD_PATH";
+
+/// Set only for the child process, to the value it must read. Without it
+/// [`the_child_reads_a_renamed_variable_twice`] does nothing.
+const CHILD_EXPECTS: &str = "_51DEGREES_DEPRECATED_NAMES_CHILD_EXPECTS";
 
 /// The start of a name that a shell cannot set, split so the test that
 /// refuses such names does not find one here.
@@ -121,6 +132,69 @@ fn a_name_that_replaced_none_is_read_alone() {
     assert_eq!(
         resolve("new", None, &holding(None, Some("from old"))),
         (None, None)
+    );
+}
+
+/// Runs [`the_child_reads_a_renamed_variable_twice`] in a new process with
+/// the variable's two names set as given, and counts the deprecation line on
+/// its standard error.
+fn deprecation_lines_from_a_child(new: Option<&str>, old: Option<&str>, expects: &str) -> usize {
+    let old_name = old_name(READ_BY_CHILD).expect("the variable replaced an old name");
+    let mut child = Command::new(std::env::current_exe().expect("this test binary"));
+    child
+        .args([
+            "--exact",
+            "the_child_reads_a_renamed_variable_twice",
+            "--nocapture",
+        ])
+        .env(CHILD_EXPECTS, expects)
+        .env_remove(READ_BY_CHILD)
+        .env_remove(old_name);
+    if let Some(new) = new {
+        child.env(READ_BY_CHILD, new);
+    }
+    if let Some(old) = old {
+        child.env(old_name, old);
+    }
+    let output = child.output().expect("the child process runs");
+    let standard_error = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "the child process failed:\n{}\n{standard_error}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let line = format!(
+        "The environment variable '{old_name}' is deprecated and '{READ_BY_CHILD}' replaces it."
+    );
+    standard_error.matches(&line).count()
+}
+
+#[test]
+fn the_child_reads_a_renamed_variable_twice() {
+    let Some(expected) = std::env::var_os(CHILD_EXPECTS) else {
+        return;
+    };
+    for _ in 0..2 {
+        assert_eq!(
+            deprecated_names::var_os(READ_BY_CHILD),
+            Some(expected.clone())
+        );
+    }
+}
+
+#[test]
+fn an_old_name_is_reported_once_on_standard_error() {
+    assert_eq!(
+        deprecation_lines_from_a_child(None, Some("from old"), "from old"),
+        1
+    );
+}
+
+#[test]
+fn nothing_is_reported_while_the_new_name_is_read() {
+    assert_eq!(
+        deprecation_lines_from_a_child(Some("from new"), Some("from old"), "from new"),
+        0
     );
 }
 
