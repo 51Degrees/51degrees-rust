@@ -45,6 +45,10 @@ fn main() {
     // Rebuild whenever the override variable changes so a relocated checkout is
     // picked up without a manual clean.
     println!("cargo:rerun-if-env-changed={}", cxx_dir::CXX_DIR_VARIABLE);
+    println!(
+        "cargo:rerun-if-env-changed={}",
+        cxx_dir::OLD_CXX_DIR_VARIABLE
+    );
 
     // A changed header must rebuild the C library, as a changed source file
     // does. Cargo scans a directory for any change.
@@ -140,7 +144,9 @@ const MARKER: &str = "src/common/fiftyone.h";
 /// Resolve the root of the 51degrees-cxx sources.
 ///
 /// Resolution order:
-/// 1. `_51DEGREES_CXX_DIR` when set, for a developer pointing at a checkout.
+/// 1. `_51DEGREES_CXX_DIR` when set, for a developer pointing at a checkout,
+///    or the deprecated `FIFTYONE_CXX_DIR` when only that is set, which
+///    prints a warning.
 /// 2. The `cxx` submodule at the root of the workspace, which a source
 ///    checkout builds from.
 /// 3. The `cxx` folder inside this crate. `ci/copy-cxx-sources.ps1` copies
@@ -148,6 +154,13 @@ const MARKER: &str = "src/common/fiftyone.h";
 ///    them and builds with no submodule or environment setup.
 fn resolve_cxx_dir() -> PathBuf {
     if let Some((dir, name)) = cxx_dir::cxx_dir_override(|name| std::env::var(name).ok()) {
+        if name == cxx_dir::OLD_CXX_DIR_VARIABLE {
+            println!(
+                "cargo:warning=The environment variable '{name}' is deprecated and '{}' \
+                 replaces it.",
+                cxx_dir::CXX_DIR_VARIABLE
+            );
+        }
         let path = PathBuf::from(dir);
         assert!(
             path.join(MARKER).is_file(),

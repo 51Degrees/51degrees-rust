@@ -51,6 +51,11 @@ fn the_new_constant_holds_the_new_name() {
 }
 
 #[test]
+fn the_old_constant_holds_the_old_name() {
+    assert_eq!(cxx_dir::OLD_CXX_DIR_VARIABLE, OLD_VARIABLE);
+}
+
+#[test]
 fn only_the_old_variable_gives_its_checkout() {
     assert_eq!(
         cxx_dir_override(holding(None, Some("old"))),

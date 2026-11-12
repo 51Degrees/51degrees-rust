@@ -35,8 +35,9 @@ pub const CLOUD_ENDPOINT_VARIABLE: &str = "_51DEGREES_CLOUD_ENDPOINT";
 /// The old name of the environment variable that overrides the base cloud
 /// URL, which [`CLOUD_ENDPOINT_VARIABLE`] replaces.
 ///
-/// The old name is read only when [`CLOUD_ENDPOINT_VARIABLE`] is unset or
-/// empty, and a warning is logged the first time its value is used.
+/// The old name is read only when the builder is given no base endpoint
+/// and [`CLOUD_ENDPOINT_VARIABLE`] is unset or empty, and a warning is logged
+/// the first time the old name is found set.
 #[deprecated(note = "use CLOUD_ENDPOINT_VARIABLE, which names _51DEGREES_CLOUD_ENDPOINT")]
 pub const CLOUD_ENDPOINT_ENV_VAR: &str = "51DEGREES_CLOUD_ENDPOINT";
 
