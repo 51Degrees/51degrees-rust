@@ -154,6 +154,18 @@ fn neither_variable_gives_the_default() {
 }
 
 #[test]
+fn a_blank_old_variable_gives_the_default() {
+    let _serial = start();
+    assert_eq!(endpoint_with(None, Some(" ")), DEFAULT_ENDPOINT);
+}
+
+#[test]
+fn a_blank_new_variable_alone_gives_the_default() {
+    let _serial = start();
+    assert_eq!(endpoint_with(Some(" "), None), DEFAULT_ENDPOINT);
+}
+
+#[test]
 fn the_builders_endpoint_wins_over_both_variables_with_no_warning() {
     let _serial = start();
     let before = deprecation_warnings();

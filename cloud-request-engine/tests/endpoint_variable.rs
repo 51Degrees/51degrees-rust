@@ -178,6 +178,32 @@ fn neither_variable_gives_the_default() {
 }
 
 #[test]
+fn an_empty_old_variable_gives_the_default() {
+    let _serial = start();
+    assert_eq!(
+        data_endpoint_with(None, Some("")),
+        format!("{CLOUD_URI_DEFAULT}json")
+    );
+}
+
+#[test]
+fn an_empty_new_variable_alone_is_refused_as_before() {
+    let _serial = start();
+    set(VARIABLE, Some(""));
+    set(OLD_VARIABLE, None);
+    let built = CloudRequestEngine::builder()
+        .resource_key("test-resource-key")
+        .http_client(Arc::new(FakeCloud))
+        .build();
+    set(VARIABLE, None);
+    let message = match built {
+        Err(error) => error.message().into_owned(),
+        Ok(_) => panic!("the engine was built"),
+    };
+    assert!(message.contains("is not a valid absolute URL"), "{message}");
+}
+
+#[test]
 fn the_builders_endpoint_wins_over_both_variables_with_no_warning() {
     let _serial = start();
     let before = deprecation_warnings();
