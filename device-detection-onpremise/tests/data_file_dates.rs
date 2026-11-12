@@ -28,6 +28,10 @@
 //! The tests need the Lite file `_51DEGREES_DD_PATH` names and skip with a
 //! note when it is missing.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -61,7 +65,7 @@ const NEXT_UPDATE: (i16, u8, u8) = (2001, 2, 4);
 
 /// The Lite file, or [`None`] with a note when it is missing.
 fn lite() -> Option<PathBuf> {
-    let path = std::env::var("_51DEGREES_DD_PATH")
+    let path = crate::deprecated_names::var("_51DEGREES_DD_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file());

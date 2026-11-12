@@ -307,7 +307,7 @@ mod tests {
     /// to override the path. Returns [`None`] when no data file is present, so
     /// the test skips cleanly on a machine without it.
     fn asn_data_file() -> Option<PathBuf> {
-        if let Ok(path) = std::env::var("_51DEGREES_IPI_PATH") {
+        if let Ok(path) = crate::deprecated_names::var("_51DEGREES_IPI_PATH") {
             let path = PathBuf::from(path);
             if path.is_file() {
                 return Some(path);

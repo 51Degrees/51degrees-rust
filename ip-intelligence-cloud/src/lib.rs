@@ -94,6 +94,11 @@
 
 #![warn(missing_docs)]
 
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 pub mod configuration;
 mod engine;
 mod parse;

@@ -39,6 +39,10 @@
 //! test skips that half rather than failing, so a checkout without the data
 //! files is still green, while a developer (and CI) with them gets real coverage.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::PathBuf;
 
 use fiftyone_device_detection::{
@@ -66,12 +70,12 @@ fn find_up(relative: &str) -> Option<PathBuf> {
 fn dd_and_ipi_on_premise_coexist_in_one_binary() {
     // Resolve both data files. Honour explicit overrides first, then fall back to
     // the sibling cxx checkouts beside the workspace.
-    let dd_file = std::env::var("_51DEGREES_DD_PATH")
+    let dd_file = crate::deprecated_names::var("_51DEGREES_DD_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|p| p.is_file())
         .or_else(|| find_up("cxx/data/device-detection/51Degrees-LiteV4.1.hash"));
-    let ipi_file = std::env::var("_51DEGREES_IPI_PATH")
+    let ipi_file = crate::deprecated_names::var("_51DEGREES_IPI_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|p| p.is_file())
@@ -168,12 +172,12 @@ fn dd_and_ipi_combined_in_one_pipeline() {
 
     use fiftyone_pipeline_core::{FlowElement, Pipeline};
 
-    let dd_file = std::env::var("_51DEGREES_DD_PATH")
+    let dd_file = crate::deprecated_names::var("_51DEGREES_DD_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|p| p.is_file())
         .or_else(|| find_up("cxx/data/device-detection/51Degrees-LiteV4.1.hash"));
-    let ipi_file = std::env::var("_51DEGREES_IPI_PATH")
+    let ipi_file = crate::deprecated_names::var("_51DEGREES_IPI_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|p| p.is_file())
@@ -323,7 +327,7 @@ mod parallel_group {
 
     /// The data file a variable names, or else the Lite file at `relative`.
     fn data_file(variable: &str, relative: &str) -> Option<PathBuf> {
-        std::env::var(variable)
+        crate::deprecated_names::var(variable)
             .ok()
             .map(PathBuf::from)
             .filter(|path| path.is_file())

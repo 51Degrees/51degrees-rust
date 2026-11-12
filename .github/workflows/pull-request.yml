@@ -203,6 +203,13 @@ jobs:
         run: |
           # Resolve a single key in the examples-shared resolver order.
           $key = ${env:_51DEGREES_RESOURCE_KEY}
+          if (-not $key -and ${env:51DEGREES_RESOURCE_KEY}) {
+            # The deprecated name, read when the new one is unset or empty.
+            $key = ${env:51DEGREES_RESOURCE_KEY}
+            Write-Host ("::warning::The environment variable " +
+              "'51DEGREES_RESOURCE_KEY' is deprecated and " +
+              "'_51DEGREES_RESOURCE_KEY' replaces it.")
+          }
           if (-not $key) { $key = ${env:_51DEGREES_RESOURCE_KEY_BESPOKE} }
           if (-not $key) { $key = ${env:_51DEGREES_RESOURCE_KEY_BASIC} }
           if (-not $key) {

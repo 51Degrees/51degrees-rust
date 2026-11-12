@@ -23,6 +23,10 @@
 //! Update on start-up when the update cannot be fetched. The test needs the
 //! Lite file `_51DEGREES_DD_PATH` names, and skips with a note without it.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -42,7 +46,7 @@ const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Ma
 /// it. The data file stays registered for later updates.
 #[test]
 fn an_engine_builds_from_its_data_file_when_the_update_on_start_up_fails() {
-    let Some(lite) = std::env::var("_51DEGREES_DD_PATH")
+    let Some(lite) = crate::deprecated_names::var("_51DEGREES_DD_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())

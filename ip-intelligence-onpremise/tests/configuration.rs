@@ -28,6 +28,10 @@
 //! file `_51DEGREES_IPI_PATH` names, or the one at `cxx/data/ip-intelligence`,
 //! and skip with a note without it.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, ThreadId};
@@ -50,7 +54,9 @@ const IPV6: &str = "2606:4700:4700::1111";
 const DISTRIBUTOR: &str = "https://distributor.51degrees.com/api/v2/download";
 
 fn asn_data_file() -> Option<PathBuf> {
-    let given = std::env::var("_51DEGREES_IPI_PATH").ok().map(PathBuf::from);
+    let given = crate::deprecated_names::var("_51DEGREES_IPI_PATH")
+        .ok()
+        .map(PathBuf::from);
     let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi");
     given

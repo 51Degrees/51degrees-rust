@@ -30,6 +30,10 @@
 //! fiftyone-ip-intelligence-onpremise --test read_timing -- --nocapture`
 //! prints them.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -58,7 +62,7 @@ const CLIENT_IPS: [&str; 3] = [CLIENT_IP, "8.8.8.8", "2606:4700:4700::1111"];
 /// The IP Intelligence data file `_51DEGREES_IPI_PATH` names, or the free
 /// ASN file in the `cxx` submodule.
 fn data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("_51DEGREES_IPI_PATH") {
+    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_IPI_PATH") {
         let path = PathBuf::from(path.trim());
         if path.is_file() {
             return Some(path);

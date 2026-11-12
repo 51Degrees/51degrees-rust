@@ -28,6 +28,10 @@
 //! refresh test always uses the ASN file, because it holds two copies of the
 //! file in memory and writes a third to disk.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -61,7 +65,7 @@ fn skip_without_enterprise(reason: &str, what: &str) {
 
 /// The data file `_51DEGREES_IPI_PATH` names, else [`asn_file`].
 fn data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("_51DEGREES_IPI_PATH") {
+    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_IPI_PATH") {
         let path = PathBuf::from(path.trim());
         if path.is_file() {
             return Some(path);

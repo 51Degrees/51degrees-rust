@@ -38,6 +38,10 @@
 //! can end the process, so a failure of these tests can show as this test
 //! binary exiting too.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::PathBuf;
 use std::sync::{Arc, Barrier};
 
@@ -77,7 +81,7 @@ fn answer<T: std::fmt::Debug, E: std::fmt::Display>(read: Result<T, E>) -> Strin
 }
 
 fn data_file(variable: &str) -> Option<PathBuf> {
-    let path = PathBuf::from(std::env::var(variable).ok()?);
+    let path = PathBuf::from(crate::deprecated_names::var(variable).ok()?);
     path.is_file().then_some(path)
 }
 

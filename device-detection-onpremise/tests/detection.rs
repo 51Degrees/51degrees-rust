@@ -26,6 +26,10 @@
 //! found the tests skip cleanly with an explanatory note rather than failing, so
 //! the suite is green on a checkout without the data file.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -48,7 +52,7 @@ const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Ma
 /// environment variable, then the `cxx` submodule, then
 /// the wider `Workspace` tree where the other products keep their data.
 fn lite_data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
+    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);
