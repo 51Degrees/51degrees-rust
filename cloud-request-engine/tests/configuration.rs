@@ -32,7 +32,7 @@ use std::time::Duration;
 
 use fiftyone_cloud_request_engine::{
     configuration, CloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine,
-    CloudRequestEngineBuilder, HttpMethod, CLOUD_ENDPOINT_ENV_VAR, CLOUD_URI_DEFAULT,
+    CloudRequestEngineBuilder, HttpMethod, CLOUD_ENDPOINT_VARIABLE, CLOUD_URI_DEFAULT,
 };
 use fiftyone_pipeline_core::configuration::{
     BuildContext, BuilderDefinition, BuilderRegistry, ElementOptions, PipelineOptions,
@@ -185,7 +185,7 @@ fn refused_in_code(builder: CloudRequestEngineBuilder) -> String {
 
 /// The base URL an endpoint not given is made from.
 fn default_base() -> String {
-    std::env::var(CLOUD_ENDPOINT_ENV_VAR).unwrap_or_else(|_| CLOUD_URI_DEFAULT.to_string())
+    std::env::var(CLOUD_ENDPOINT_VARIABLE).unwrap_or_else(|_| CLOUD_URI_DEFAULT.to_string())
 }
 
 fn process(pipeline: &Arc<Pipeline>, user_agent: &str) -> FlowData {

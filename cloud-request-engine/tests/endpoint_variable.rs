@@ -210,6 +210,14 @@ fn the_old_variable_is_warned_about_once() {
 }
 
 #[test]
+fn the_new_constant_holds_the_new_name() {
+    assert_eq!(
+        fiftyone_cloud_request_engine::CLOUD_ENDPOINT_VARIABLE,
+        VARIABLE
+    );
+}
+
+#[test]
 #[allow(deprecated)]
 fn the_old_constant_still_holds_the_old_name() {
     assert_eq!(

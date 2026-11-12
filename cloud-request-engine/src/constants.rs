@@ -30,7 +30,15 @@
 ///
 /// The name starts with an underscore because a POSIX shell cannot set a name
 /// that starts with a digit, so `export _51DEGREES_CLOUD_ENDPOINT=...` works.
-pub const CLOUD_ENDPOINT_ENV_VAR: &str = "_51DEGREES_CLOUD_ENDPOINT";
+pub const CLOUD_ENDPOINT_VARIABLE: &str = "_51DEGREES_CLOUD_ENDPOINT";
+
+/// The old name of the environment variable that overrides the base cloud
+/// URL, which [`CLOUD_ENDPOINT_VARIABLE`] replaces.
+///
+/// The old name is read only when [`CLOUD_ENDPOINT_VARIABLE`] is unset or
+/// empty, and a warning is logged the first time its value is used.
+#[deprecated(note = "use CLOUD_ENDPOINT_VARIABLE, which names _51DEGREES_CLOUD_ENDPOINT")]
+pub const CLOUD_ENDPOINT_ENV_VAR: &str = "51DEGREES_CLOUD_ENDPOINT";
 
 /// The default base URL for the cloud service, including the API version path.
 /// The endpoint filenames are appended to this to form the full URLs.
