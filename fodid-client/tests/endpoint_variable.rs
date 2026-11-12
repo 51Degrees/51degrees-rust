@@ -25,7 +25,9 @@
 //! deprecated and is read only when the first is unset or blank, with one
 //! warning. Kept in its own test binary because the environment and the
 //! logger belong to the whole process, and each test holds [`SERIAL`] so no
-//! other test changes the variables under it.
+//! other test changes the variables under it. That nothing is logged while
+//! the old name goes unread is tested in `endpoint_variable_quiet.rs`, which
+//! needs a process the warning has never been logged in.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -140,11 +142,9 @@ fn a_blank_new_variable_leaves_the_old_one_read() {
 }
 
 #[test]
-fn both_variables_give_the_new_one_with_no_warning() {
+fn both_variables_give_the_new_one() {
     let _serial = start();
-    let before = deprecation_warnings();
     assert_eq!(endpoint_with(Some(NEW_BASE), Some(OLD_BASE)), NEW_BASE);
-    assert_eq!(deprecation_warnings(), before);
 }
 
 #[test]
@@ -166,9 +166,8 @@ fn a_blank_new_variable_alone_gives_the_default() {
 }
 
 #[test]
-fn the_builders_endpoint_wins_over_both_variables_with_no_warning() {
+fn the_builders_endpoint_wins_over_both_variables() {
     let _serial = start();
-    let before = deprecation_warnings();
     set(VARIABLE, Some(NEW_BASE));
     set(OLD_VARIABLE, Some(OLD_BASE));
     let built = DidClient::builder("test-resource-key")
@@ -181,7 +180,6 @@ fn the_builders_endpoint_wins_over_both_variables_with_no_warning() {
         built.expect("the client builds").endpoint(),
         "https://given.example.test/api/v4/"
     );
-    assert_eq!(deprecation_warnings(), before);
 }
 
 #[test]
