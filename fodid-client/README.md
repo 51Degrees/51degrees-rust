@@ -298,5 +298,5 @@ On 51degrees.com:
 - [51Did](https://51degrees.com/developers/51did?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=51did)
 - [What a 51Did is and how it is used](https://51degrees.com/documentation/_identifiers__index.html?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=identifiers-documentation)
 - [The 51Did inspector, a visual breakdown of an identifier](https://51degrees.com/developers/51did-inspector?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=51did-inspector)
-- [Get a resource key](https://configure.51degrees.com/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=configure)
+- [Get a resource key](https://51degrees.com/configure/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=configure)
 - [Pricing](https://51degrees.com/pricing?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=pricing)
