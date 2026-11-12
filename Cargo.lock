@@ -1089,6 +1089,7 @@ dependencies = [
  "chrono",
  "fodid",
  "fodid-client",
+ "log",
  "reqwest",
  "serde_json",
  "thiserror 2.0.18",

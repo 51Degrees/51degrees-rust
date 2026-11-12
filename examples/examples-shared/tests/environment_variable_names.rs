@@ -26,7 +26,9 @@
 //! than spelled out in words because the shorter form is preferred. The tests
 //! read every file git tracks, which leaves out build output and the
 //! submodules, and fail on any name that starts with the digit, or with the
-//! number spelled out where an environment variable is named.
+//! number spelled out where an environment variable is named. The one
+//! exception is the deprecated name of the cloud endpoint variable, which is
+//! still read when the name that replaced it is not set.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -34,6 +36,11 @@ use std::process::Command;
 /// The start of a name that a shell cannot set, split so this file does not
 /// match itself.
 const DIGIT_INITIAL: &str = concat!("5", "1DEGREES_");
+
+/// The deprecated name of the cloud endpoint variable, the only name that
+/// starts with the digit and may still be written, split so this file does
+/// not match itself.
+const DEPRECATED_CLOUD_ENDPOINT: &str = concat!("5", "1DEGREES_CLOUD_ENDPOINT");
 
 /// The start of a name with the number spelled out in words, split so this
 /// file does not match itself.
@@ -102,6 +109,15 @@ fn digit_initial_names(line: &[u8]) -> Vec<String> {
         }
     }
     names
+}
+
+/// Each name [`digit_initial_names`] finds in `line` that no file may hold,
+/// which is every one but [`DEPRECATED_CLOUD_ENDPOINT`].
+fn refused_digit_initial_names(line: &[u8]) -> Vec<String> {
+    digit_initial_names(line)
+        .into_iter()
+        .filter(|name| name != DEPRECATED_CLOUD_ENDPOINT)
+        .collect()
 }
 
 /// True for a file in which every name is an environment variable's, being
@@ -194,6 +210,13 @@ fn the_name_matcher_finds_only_names_that_start_with_the_digit() {
 }
 
 #[test]
+fn only_the_deprecated_cloud_endpoint_name_may_start_with_the_digit() {
+    let other = format!("{DEPRECATED_CLOUD_ENDPOINT}_OTHER");
+    let line = format!("var(\"{DEPRECATED_CLOUD_ENDPOINT}\") var(\"{other}\")");
+    assert_eq!(refused_digit_initial_names(line.as_bytes()), vec![other]);
+}
+
+#[test]
 fn no_file_names_a_variable_that_starts_with_a_digit() {
     let root = repository_root();
     let mut found = Vec::new();
@@ -206,7 +229,7 @@ fn no_file_names_a_variable_that_starts_with_a_digit() {
         }
         let bytes = std::fs::read(&path).unwrap_or_else(|error| panic!("read {relative}: {error}"));
         for (index, line) in bytes.split(|byte| *byte == b'\n').enumerate() {
-            for name in digit_initial_names(line) {
+            for name in refused_digit_initial_names(line) {
                 found.push(format!("{relative}:{}: {name}", index + 1));
             }
         }

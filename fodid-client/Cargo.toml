@@ -40,6 +40,8 @@ fodid = { path = "../fodid", version = "4.5.5", features = ["creator"] }
 # proves the futures need not be Send. The crate itself has no async runtime
 # dependency.
 tokio = { workspace = true, features = ["macros", "rt"] }
+# The endpoint variable tests install a logger to read what the client logs.
+log = "0.4"
 
 # The live cloud test (tests/live_cloud.rs) needs the built-in transport, so
 # the crate depends on itself here with the feature on, and needs a blocking
