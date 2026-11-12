@@ -499,7 +499,7 @@ fn build_description(
         MissingPropertyReason::ProductNotAccessibleWithResourceKey => format!(
             "This is because your resource key does not include access to any \
              properties under '{element}'. Check or create a resource key with the \
-             properties you need in the configurator at {CONFIGURATOR_PRODUCT_URL}."
+             properties you need on the configuration page at {CONFIGURATOR_PRODUCT_URL}."
         ),
         MissingPropertyReason::PropertyNotAccessibleWithResourceKey => {
             let available = engine
@@ -511,7 +511,7 @@ fn build_description(
             format!(
                 "This is because your resource key does not include access to this \
                  property. The properties included for your key under '{element}' are \
-                 {available}. Check or change your key in the configurator at \
+                 {available}. Check or change your key on the configuration page at \
                  {CONFIGURATOR_PROPERTY_URL}."
             )
         }
@@ -720,7 +720,7 @@ mod tests {
             format!(
                 "{PREFIX}This is because your resource key does not include access to \
                  any properties under 'device'. Check or create a resource key with \
-                 the properties you need in the configurator at \
+                 the properties you need on the configuration page at \
                  {CONFIGURATOR_PRODUCT_URL}."
             )
         );
@@ -739,8 +739,8 @@ mod tests {
             format!(
                 "{PREFIX}This is because your resource key does not include access to \
                  this property. The properties included for your key under 'device' \
-                 are ScreenWidth,ScreenHeight. Check or change your key in the \
-                 configurator at {CONFIGURATOR_PROPERTY_URL}."
+                 are ScreenWidth,ScreenHeight. Check or change your key on the \
+                 configuration page at {CONFIGURATOR_PROPERTY_URL}."
             )
         );
     }
