@@ -49,10 +49,10 @@ use crate::aspect_property_metadata::AspectPropertyMetaData;
 /// The pricing page link in the data file upgrade message.
 const PRICING_URL: &str = "https://51degrees.com/pricing?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=pipeline-engines-src-missing_property.rs&utm_term=data-upgrade-required";
 
-/// The configurator link in the message for a product the resource key lacks.
+/// The configuration page link in the message for a product the resource key lacks.
 const CONFIGURATOR_PRODUCT_URL: &str = "https://51degrees.com/configure?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=pipeline-engines-src-missing_property.rs&utm_term=product-not-in-resource";
 
-/// The configurator link in the message for a property the resource key lacks.
+/// The configuration page link in the message for a property the resource key lacks.
 const CONFIGURATOR_PROPERTY_URL: &str = "https://51degrees.com/configure?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=pipeline-engines-src-missing_property.rs&utm_term=property-not-in-resource";
 
 /// The description for [`MissingPropertyReason::PropertyExcludedFromConfig`].

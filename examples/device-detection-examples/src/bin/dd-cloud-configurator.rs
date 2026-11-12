@@ -226,7 +226,7 @@ mod tests {
  * @example dd-cloud-configurator.rs
  *
  * The device-detection cloud configurator console example. It illustrates how a
- * resource key created in the 51Degrees configurator (https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-configurator.rs&utm_term=dd-cloud-configurator) is
+ * resource key created on the configuration page (https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-configurator.rs&utm_term=dd-cloud-configurator) is
  * turned into a configured, ready-to-run cloud pipeline.
  *
  * The configurator lets you choose exactly which properties a key returns and,

@@ -26,7 +26,7 @@
 //! The test uses a single resource key from the environment. Set
 //! `_51DEGREES_RESOURCE_KEY` (or one of the CI-exported tiered names
 //! `_51DEGREES_RESOURCE_KEY_BESPOKE` / `_51DEGREES_RESOURCE_KEY_BASIC`) to a key
-//! whose properties include `fodid.*`. Create one with the 51Degrees Configurator
+//! whose properties include `fodid.*`. Create one with the 51Degrees configuration page
 //! sharing link <https://51degrees.com/configure/N57Wygby> (the free tier now
 //! includes 51Did).
 //!
