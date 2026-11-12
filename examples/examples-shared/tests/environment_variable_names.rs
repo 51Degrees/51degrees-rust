@@ -44,14 +44,22 @@ const DIGIT_INITIAL: &str = concat!("5", "1DEGREES_");
 /// does not match itself.
 const DEPRECATED_CLOUD_ENDPOINT: &str = concat!("5", "1DEGREES_CLOUD_ENDPOINT");
 
+/// The deprecated name of the resource key variable, which one workflow
+/// step still reads, split so this file does not match itself.
+const DEPRECATED_RESOURCE_KEY: &str = concat!("5", "1DEGREES_RESOURCE_KEY");
+
 /// The deprecated name of the variable that points a build at a checkout of
 /// the C sources, split so this file does not match itself.
 const DEPRECATED_CXX_DIR: &str = concat!("FIFTY", "ONE_CXX_DIR");
 
 /// Each deprecated name that may still be written, with the folders of the
 /// crates that still read it. Anywhere else the name is refused.
-const STILL_READ: [(&str, &[&str]); 2] = [
+const STILL_READ: [(&str, &[&str]); 3] = [
     (DEPRECATED_CLOUD_ENDPOINT, &["cloud-request-engine/"]),
+    (
+        DEPRECATED_RESOURCE_KEY,
+        &[".github/workflows/pull-request.yml"],
+    ),
     (
         DEPRECATED_CXX_DIR,
         &[
@@ -69,7 +77,7 @@ const SHARED_READER: &str = "deprecated-names/";
 /// The deprecated names [`SHARED_READER`] reads, each split so this file
 /// does not match itself.
 const READ_THROUGH_SHARED_READER: [&str; 7] = [
-    concat!("5", "1DEGREES_RESOURCE_KEY"),
+    DEPRECATED_RESOURCE_KEY,
     concat!("5", "1DEGREES_LICENSE_KEY"),
     concat!("5", "1DEGREES_DD_PATH"),
     concat!("5", "1DEGREES_IPI_PATH"),
@@ -263,6 +271,14 @@ fn a_deprecated_name_is_allowed_only_where_it_is_still_read() {
     assert!(still_read(
         "ip-intelligence-sys/tests/cxx_dir.rs",
         DEPRECATED_CXX_DIR
+    ));
+    assert!(still_read(
+        ".github/workflows/pull-request.yml",
+        DEPRECATED_RESOURCE_KEY
+    ));
+    assert!(!still_read(
+        ".github/workflows/examples.yml",
+        DEPRECATED_RESOURCE_KEY
     ));
     for name in READ_THROUGH_SHARED_READER {
         assert!(still_read("deprecated-names/environment.rs", name));

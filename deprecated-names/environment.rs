@@ -62,8 +62,14 @@ pub fn resolve(
     old: Option<&'static str>,
     read: &dyn Fn(&str) -> Option<OsString>,
 ) -> (Option<OsString>, Option<&'static str>) {
-    let _ = old;
-    (read(name), None)
+    let current = read(name);
+    if current.as_ref().is_some_and(|value| !value.is_empty()) {
+        return (current, None);
+    }
+    match old.and_then(|old| read(old).map(|value| (value, old))) {
+        Some((value, old)) => (Some(value), Some(old)),
+        None => (current, None),
+    }
 }
 
 fn read_environment(name: &str) -> Option<OsString> {

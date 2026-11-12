@@ -193,9 +193,9 @@ const MARKER: &str = "src/dd/hash/hash.h";
 /// Resolve the root of the 51degrees-cxx sources.
 ///
 /// Resolution order:
-/// 1. `_51DEGREES_CXX_DIR` when set, for a developer pointing at a checkout,
-///    or the deprecated `FIFTYONE_CXX_DIR` when only that is set, which
-///    prints a warning.
+/// 1. `_51DEGREES_CXX_DIR` when set, for a developer pointing at a checkout.
+///    When `_51DEGREES_CXX_DIR` is unset or empty, the deprecated
+///    `FIFTYONE_CXX_DIR` is read in its place, which prints a warning.
 /// 2. The `cxx` submodule at the root of the workspace, which a source
 ///    checkout builds from.
 /// 3. The `cxx` folder inside this crate. `ci/copy-cxx-sources.ps1` copies
