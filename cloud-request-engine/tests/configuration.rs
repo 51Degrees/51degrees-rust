@@ -32,7 +32,7 @@ use std::time::Duration;
 
 use fiftyone_cloud_request_engine::{
     configuration, CloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine,
-    CloudRequestEngineBuilder, HttpMethod, CLOUD_ENDPOINT_VARIABLE, CLOUD_URI_DEFAULT,
+    CloudRequestEngineBuilder, HttpMethod, CLOUD_URI_DEFAULT,
 };
 use fiftyone_pipeline_core::configuration::{
     BuildContext, BuilderDefinition, BuilderRegistry, ElementOptions, PipelineOptions,
@@ -183,9 +183,16 @@ fn refused_in_code(builder: CloudRequestEngineBuilder) -> String {
     }
 }
 
-/// The base URL an endpoint not given is made from.
+/// The base URL an endpoint not given is made from, which is the one the
+/// environment names under the new name or the deprecated one, or else the
+/// default.
+#[allow(deprecated)]
 fn default_base() -> String {
-    std::env::var(CLOUD_ENDPOINT_VARIABLE).unwrap_or_else(|_| CLOUD_URI_DEFAULT.to_string())
+    use fiftyone_cloud_request_engine::{CLOUD_ENDPOINT_ENV_VAR, CLOUD_ENDPOINT_VARIABLE};
+    [CLOUD_ENDPOINT_VARIABLE, CLOUD_ENDPOINT_ENV_VAR]
+        .into_iter()
+        .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
+        .unwrap_or_else(|| CLOUD_URI_DEFAULT.to_string())
 }
 
 fn process(pipeline: &Arc<Pipeline>, user_agent: &str) -> FlowData {

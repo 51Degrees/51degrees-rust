@@ -26,9 +26,10 @@
 //! than spelled out in words because the shorter form is preferred. The tests
 //! read every file git tracks, which leaves out build output and the
 //! submodules, and fail on any name that starts with the digit, or with the
-//! number spelled out where an environment variable is named. The one
-//! exception is the deprecated name of the cloud endpoint variable, which is
-//! still read when the name that replaced it is not set.
+//! number spelled out where an environment variable is named. The two
+//! exceptions are the deprecated names in [`STILL_READ`], each allowed only
+//! in the folders of the crates that still read it when the name that
+//! replaced it is not set.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -37,10 +38,35 @@ use std::process::Command;
 /// match itself.
 const DIGIT_INITIAL: &str = concat!("5", "1DEGREES_");
 
-/// The deprecated name of the cloud endpoint variable, the only name that
-/// starts with the digit and may still be written, split so this file does
-/// not match itself.
+/// The deprecated name of the cloud endpoint variable, split so this file
+/// does not match itself.
 const DEPRECATED_CLOUD_ENDPOINT: &str = concat!("5", "1DEGREES_CLOUD_ENDPOINT");
+
+/// The deprecated name of the variable that points a build at a checkout of
+/// the C sources, split so this file does not match itself.
+const DEPRECATED_CXX_DIR: &str = concat!("FIFTY", "ONE_CXX_DIR");
+
+/// Each deprecated name that may still be written, with the folders of the
+/// crates that still read it. Anywhere else the name is refused.
+const STILL_READ: [(&str, &[&str]); 2] = [
+    (DEPRECATED_CLOUD_ENDPOINT, &["cloud-request-engine/"]),
+    (
+        DEPRECATED_CXX_DIR,
+        &[
+            "common-sys/",
+            "device-detection-sys/",
+            "ip-intelligence-sys/",
+        ],
+    ),
+];
+
+/// True when `name` is a deprecated name that the crate holding the file at
+/// `relative` still reads.
+fn still_read(relative: &str, name: &str) -> bool {
+    STILL_READ.iter().any(|(deprecated, folders)| {
+        name == *deprecated && folders.iter().any(|folder| relative.starts_with(*folder))
+    })
+}
 
 /// The start of a name with the number spelled out in words, split so this
 /// file does not match itself.
@@ -109,15 +135,6 @@ fn digit_initial_names(line: &[u8]) -> Vec<String> {
         }
     }
     names
-}
-
-/// Each name [`digit_initial_names`] finds in `line` that no file may hold,
-/// which is every one but [`DEPRECATED_CLOUD_ENDPOINT`].
-fn refused_digit_initial_names(line: &[u8]) -> Vec<String> {
-    digit_initial_names(line)
-        .into_iter()
-        .filter(|name| name != DEPRECATED_CLOUD_ENDPOINT)
-        .collect()
 }
 
 /// True for a file in which every name is an environment variable's, being
@@ -189,7 +206,9 @@ fn no_file_names_a_variable_with_the_number_spelled_out() {
         let workflow = is_workflow(&relative);
         for (index, line) in bytes.split(|byte| *byte == b'\n').enumerate() {
             for name in spelled_out_names(line, workflow) {
-                found.push(format!("{relative}:{}: {name}", index + 1));
+                if !still_read(&relative, &name) {
+                    found.push(format!("{relative}:{}: {name}", index + 1));
+                }
             }
         }
     }
@@ -210,10 +229,45 @@ fn the_name_matcher_finds_only_names_that_start_with_the_digit() {
 }
 
 #[test]
-fn only_the_deprecated_cloud_endpoint_name_may_start_with_the_digit() {
-    let other = format!("{DEPRECATED_CLOUD_ENDPOINT}_OTHER");
-    let line = format!("var(\"{DEPRECATED_CLOUD_ENDPOINT}\") var(\"{other}\")");
-    assert_eq!(refused_digit_initial_names(line.as_bytes()), vec![other]);
+fn a_deprecated_name_is_allowed_only_where_it_is_still_read() {
+    assert!(still_read(
+        "cloud-request-engine/src/constants.rs",
+        DEPRECATED_CLOUD_ENDPOINT
+    ));
+    assert!(still_read("common-sys/build.rs", DEPRECATED_CXX_DIR));
+    assert!(still_read(
+        "device-detection-sys/src/cxx_dir.rs",
+        DEPRECATED_CXX_DIR
+    ));
+    assert!(still_read(
+        "ip-intelligence-sys/tests/cxx_dir.rs",
+        DEPRECATED_CXX_DIR
+    ));
+    // Not in another crate, an example, a workflow or a document.
+    for elsewhere in [
+        "fodid-client/src/client.rs",
+        "examples/examples-shared/src/endpoint.rs",
+        ".github/workflows/pull-request.yml",
+        "README.md",
+    ] {
+        assert!(!still_read(elsewhere, DEPRECATED_CLOUD_ENDPOINT));
+        assert!(!still_read(elsewhere, DEPRECATED_CXX_DIR));
+    }
+    // Each name only in its own crates.
+    assert!(!still_read(
+        "common-sys/build.rs",
+        DEPRECATED_CLOUD_ENDPOINT
+    ));
+    assert!(!still_read(
+        "cloud-request-engine/src/engine.rs",
+        DEPRECATED_CXX_DIR
+    ));
+    // A longer name that begins with a deprecated one is another name.
+    let longer = format!("{DEPRECATED_CLOUD_ENDPOINT}_OTHER");
+    assert!(!still_read(
+        "cloud-request-engine/src/constants.rs",
+        &longer
+    ));
 }
 
 #[test]
@@ -229,8 +283,10 @@ fn no_file_names_a_variable_that_starts_with_a_digit() {
         }
         let bytes = std::fs::read(&path).unwrap_or_else(|error| panic!("read {relative}: {error}"));
         for (index, line) in bytes.split(|byte| *byte == b'\n').enumerate() {
-            for name in refused_digit_initial_names(line) {
-                found.push(format!("{relative}:{}: {name}", index + 1));
+            for name in digit_initial_names(line) {
+                if !still_read(&relative, &name) {
+                    found.push(format!("{relative}:{}: {name}", index + 1));
+                }
             }
         }
     }

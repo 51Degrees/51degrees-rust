@@ -177,29 +177,41 @@ fn neither_variable_gives_the_default() {
     );
 }
 
-#[test]
-fn an_empty_old_variable_gives_the_default() {
-    let _serial = start();
-    assert_eq!(
-        data_endpoint_with(None, Some("")),
-        format!("{CLOUD_URI_DEFAULT}json")
-    );
-}
-
-#[test]
-fn an_empty_new_variable_alone_is_refused_as_before() {
-    let _serial = start();
-    set(VARIABLE, Some(""));
-    set(OLD_VARIABLE, None);
+/// The message of the error a build gives with the two variables set as
+/// given. Both are cleared again afterwards.
+fn refusal_with(new: Option<&str>, old: Option<&str>) -> String {
+    set(VARIABLE, new);
+    set(OLD_VARIABLE, old);
     let built = CloudRequestEngine::builder()
         .resource_key("test-resource-key")
         .http_client(Arc::new(FakeCloud))
         .build();
     set(VARIABLE, None);
-    let message = match built {
+    set(OLD_VARIABLE, None);
+    match built {
         Err(error) => error.message().into_owned(),
         Ok(_) => panic!("the engine was built"),
-    };
+    }
+}
+
+#[test]
+fn an_empty_old_variable_alone_is_refused() {
+    let _serial = start();
+    let message = refusal_with(None, Some(""));
+    assert!(message.contains("is not a valid absolute URL"), "{message}");
+}
+
+#[test]
+fn an_empty_new_variable_alone_is_refused() {
+    let _serial = start();
+    let message = refusal_with(Some(""), None);
+    assert!(message.contains("is not a valid absolute URL"), "{message}");
+}
+
+#[test]
+fn both_variables_empty_are_refused() {
+    let _serial = start();
+    let message = refusal_with(Some(""), Some(""));
     assert!(message.contains("is not a valid absolute URL"), "{message}");
 }
 

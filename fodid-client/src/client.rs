@@ -1289,10 +1289,12 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn the_default_endpoint_and_the_environment_variable() {
-        // Only this test touches the variable, and every other test gives
-        // the builder an endpoint, so nothing else reads it.
+        // Only this test touches the variables, and every other test gives
+        // the builder an endpoint, so nothing else reads them.
         std::env::remove_var(CLOUD_ENDPOINT_VARIABLE);
+        std::env::remove_var(ENDPOINT_ENVIRONMENT_VARIABLE);
         let default = DidClient::builder(RESOURCE_KEY)
             .http_client(FakeHttp::answering(vec![]))
             .build()

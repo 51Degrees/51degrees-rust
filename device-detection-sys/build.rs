@@ -46,6 +46,9 @@
 
 use std::path::{Path, PathBuf};
 
+#[path = "src/cxx_dir.rs"]
+mod cxx_dir;
+
 fn main() {
     let cxx = resolve_cxx_dir();
     let src = cxx.join("src").join("dd");
@@ -53,7 +56,7 @@ fn main() {
 
     // Rebuild whenever the override variable changes so a relocated checkout is
     // picked up without a manual clean.
-    println!("cargo:rerun-if-env-changed=_51DEGREES_CXX_DIR");
+    println!("cargo:rerun-if-env-changed={}", cxx_dir::CXX_DIR_VARIABLE);
 
     // A changed header must rebuild the C library and rerun the checks in
     // src/declarations.c, as a changed source file does. Cargo scans a
@@ -193,11 +196,11 @@ const MARKER: &str = "src/dd/hash/hash.h";
 ///    the sources there before publishing, so the published crate carries
 ///    them and builds with no submodule or environment setup.
 fn resolve_cxx_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("_51DEGREES_CXX_DIR") {
+    if let Some((dir, name)) = cxx_dir::cxx_dir_override(|name| std::env::var(name).ok()) {
         let path = PathBuf::from(dir);
         assert!(
             path.join(MARKER).is_file(),
-            "_51DEGREES_CXX_DIR={} does not contain {MARKER}",
+            "{name}={} does not contain {MARKER}",
             path.display()
         );
         return path;
