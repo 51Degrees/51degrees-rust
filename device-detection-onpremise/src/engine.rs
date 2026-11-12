@@ -254,10 +254,12 @@ impl Metric {
 
 /// An on-premise Hash device-detection engine.
 ///
-/// Holds a loaded Hash data set (behind an [`ArcSwap`] so [`Self::refresh`] can
-/// hot-swap a reloaded data file while in-flight detections keep the old data
-/// set alive), the engine's published property and evidence-key metadata, and
-/// the [`AspectEngineDataFile`] run-time state the
+/// Holds a Hash manager, whose data set a refresh reloads in place as the C
+/// library's reload does, and what a detection reads from the data set in use
+/// (behind an [`ArcSwap`], so a refresh replaces it while in-flight
+/// detections keep what they read and their results the data set they came
+/// from), the engine's published property and evidence-key metadata, and the
+/// [`AspectEngineDataFile`] run-time state the
 /// [`fiftyone_pipeline_engines::DataUpdateService`] tracks.
 ///
 /// Build one with [`DeviceDetectionOnPremiseEngineBuilder`](crate::DeviceDetectionOnPremiseEngineBuilder).
@@ -279,25 +281,19 @@ impl Metric {
 /// never caches results. Only the cloud path, whose data is plain owned values,
 /// may use a results cache.
 pub struct DeviceDetectionOnPremiseEngine {
-    /// The loaded Hash data set and the properties a detection reads from it,
-    /// swapped together atomically on refresh. In-flight
-    /// [`fiftyone_native::dd::Results`] hold their own [`Arc`] to the manager
-    /// they were created from, so a swap does not invalidate them.
+    /// The manager and the properties a detection reads from the data set it
+    /// holds, replaced together after each reload. In-flight
+    /// [`fiftyone_native::dd::Results`] hold the data set they were created
+    /// from, so a reload does not change what they read.
     loaded: ArcSwap<LoadedDataSet>,
 
-    /// The performance profile used to (re)load the data file, retained so a
-    /// refresh reloads with the same profile.
+    /// The performance profile the data file was opened with, which a reload
+    /// keeps.
     profile: PerformanceProfile,
 
-    /// The property names the engine was built with, each with its index.
-    /// Every refresh opens the data file with these names, so each keeps its
-    /// index. Empty when the engine was built with no name, which opens the
-    /// data file with every property.
-    requested: Vec<String>,
-
-    /// The names a read looks a property up in. Built once at build from
-    /// `requested`, or rebuilt from each data set when the engine was built
-    /// with no name, because then the indexes are the data set's own order.
+    /// The names a read looks a property up in, each at its index. Built once,
+    /// at build, from the names the manager was opened with, which every
+    /// reload keeps, so a name keeps its index.
     names: Arc<BuildNames>,
 
     /// The property metadata and tier of the loaded data set, for
@@ -315,9 +311,8 @@ pub struct DeviceDetectionOnPremiseEngine {
     /// The evidence keys this engine reads, replaced on refresh.
     evidence_key_filter: HashEvidenceKeyFilter,
 
-    /// The settings the data set opens with over the profile's own, the
-    /// expected concurrency always among them. Carried so a reload opens the
-    /// data set with the same settings.
+    /// The settings the data set was opened with over the profile's own, the
+    /// expected concurrency always among them, which a reload keeps.
     options: HashOptions,
 
     /// The folder a refresh copies the data file into, or `None` for the
@@ -336,8 +331,9 @@ pub struct DeviceDetectionOnPremiseEngine {
     data_files: Vec<Arc<AspectEngineDataFile>>,
 }
 
-/// A loaded Hash data set, the properties a detection reads from it and the
-/// copy of the data file it was read from, if any.
+/// The engine's manager, the properties a detection reads from the data set
+/// it held when they were read, and the copy of the data file that data set
+/// reads, if any.
 struct LoadedDataSet {
     manager: Arc<Manager>,
     readable: Arc<ReadableProperties>,
@@ -352,8 +348,9 @@ struct LoadedDataSet {
     fiftyone_properties: Arc<[FiftyOneAspectPropertyMetaData]>,
     /// The components, each with its properties, freed in the same way.
     components: Arc<[ComponentMetaData]>,
-    /// Held only to be dropped with the data set, and declared after the
-    /// manager, so it is removed after the data set that has it open is freed.
+    /// Held only to be removed once the data set reading it has been
+    /// replaced and the last detection holding it, whose results are freed
+    /// first, has been dropped.
     _copy: Option<OperationalCopy>,
 }
 
@@ -456,14 +453,13 @@ impl DeviceDetectionOnPremiseEngine {
         copy: Option<OperationalCopy>,
         manager: Arc<Manager>,
         profile: PerformanceProfile,
-        requested: Vec<String>,
         data_file_config: DataFileConfiguration,
         data_source_tier: Option<String>,
         options: HashOptions,
     ) -> Result<Self> {
         let evidence_key_filter = HashEvidenceKeyFilter::new(manager.evidence_keys());
-        // The names the manager was opened with, which every refresh opens it
-        // with, so each name keeps its index.
+        // The names the manager was opened with, which every reload keeps, so
+        // each name keeps its index.
         let names = Arc::new(BuildNames::new(manager.property_names()));
         let (loaded, metadata) = describe(copy, manager, &data_source_tier, &names)?;
 
@@ -473,7 +469,6 @@ impl DeviceDetectionOnPremiseEngine {
         Ok(DeviceDetectionOnPremiseEngine {
             loaded: ArcSwap::from_pointee(loaded),
             profile,
-            requested,
             names,
             metadata: Retained::new(metadata),
             tier_override: data_source_tier,
@@ -573,12 +568,16 @@ impl DeviceDetectionOnPremiseEngine {
         Arc::clone(&self.loaded.load().components)
     }
 
-    /// The native data set the engine has loaded, for an element that reads
-    /// the data file's profiles and their values, as the robots.txt engine
-    /// reads the crawlers.
+    /// The engine's native manager, for an element that reads the data file's
+    /// profiles and their values, as the robots.txt engine reads the crawlers.
     ///
-    /// The data set is the loaded one. A refresh loads a new data set and
-    /// frees this one once no caller holds it.
+    /// A refresh reloads the manager's data set in place, so this is the same
+    /// manager after it, and each call on it reads the data set in use when
+    /// the call is made. Results it creates keep reading the data set in use
+    /// when they were created. A caller that reads the data set in several
+    /// calls can check that they all read one data set with
+    /// [`Results::same_data_set`](fiftyone_native::dd::Results::same_data_set),
+    /// as the robots.txt engine does.
     pub fn data_set(&self) -> Arc<Manager> {
         Arc::clone(&self.loaded.load().manager)
     }
@@ -731,10 +730,13 @@ impl DeviceDetectionOnPremiseEngine {
         builder.build()
     }
 
-    /// Reload the data set from the data file on disk and atomically swap it in.
+    /// Reload the data set in the engine's manager from the data file at
+    /// `path`, or from the copy of it the engine reads, and describe the new
+    /// data set. See [`Self::swap_in`].
     ///
     /// Shared by [`OnPremiseAspectEngine::refresh`] and the builder's reload
-    /// path. See [`Self::swap_in`].
+    /// path. A reload that fails leaves the data set in use and removes the
+    /// copy, which nothing then reads.
     fn reload_from_path(&self, path: &Path) -> Result<()> {
         let _refreshing = self
             .refresh_lock
@@ -750,59 +752,46 @@ impl DeviceDetectionOnPremiseEngine {
                 self.reuse_temp_file,
             )
         });
-        let manager = open_manager(
-            copy.as_ref().map_or(path, OperationalCopy::path),
-            self.profile,
-            &self.requested,
-            &self.options,
-        )?;
+        let manager = Arc::clone(&self.loaded.load().manager);
+        manager.reload_from_file(copy.as_ref().map_or(path, OperationalCopy::path))?;
         self.swap_in(copy, manager)
     }
 
-    /// Reload the data set from `data`, the whole of a data file, and
-    /// atomically swap it in. See [`Self::swap_in`].
+    /// Reload the data set in the engine's manager from `data`, the whole of
+    /// a data file, which the C library copies, and describe the new data
+    /// set. See [`Self::swap_in`].
     fn reload_from_memory(&self, data: &[u8]) -> Result<()> {
         let _refreshing = self
             .refresh_lock
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        // The data set reads the data where it lies, so the manager keeps a
-        // copy for as long as the data set.
-        let manager = Manager::open_from_memory(
-            data.to_vec(),
-            self.profile,
-            requested(&self.requested).as_deref(),
-            &self.options,
-        )?;
+        let manager = Arc::clone(&self.loaded.load().manager);
+        manager.reload_from_memory(data)?;
         self.swap_in(None, manager)
     }
 
-    /// The names a read of `manager`'s data set looks a property up in.
-    ///
-    /// An engine built with names keeps the table it was built with, because
-    /// a name's index is its place in those names whatever the new data file
-    /// holds. An engine built with no name takes the new data set's names,
-    /// because its indexes are that data set's own order, which a new data
-    /// file can change. The C library is changing to keep the first load's
-    /// names, and the table here becomes the built one for both.
-    fn names_for(&self, manager: &Arc<Manager>) -> Arc<BuildNames> {
-        if self.requested.is_empty() {
-            Arc::new(BuildNames::new(manager.property_names()))
-        } else {
-            Arc::clone(&self.names)
-        }
-    }
-
-    /// Replace the live data set with `manager`'s, which reads `copy` when
-    /// there is one, together with the properties a detection reads, the
+    /// Give detections the properties of the data set `manager` holds after a
+    /// reload, which reads `copy` when there is one, together with the
     /// evidence keys, the metadata and the dates in the data file header,
     /// because a new data file can carry different properties or a different
-    /// tier. In-flight detections keep using the data set they snapshotted. A
-    /// failure changes nothing. The caller holds the refresh lock.
+    /// tier. In-flight detections keep what they read and the data set their
+    /// results came from. The caller holds the refresh lock.
+    ///
+    /// When the new data set's metadata cannot be read the error is returned
+    /// and detections go on reading the new data set by the properties of the
+    /// one before, whose names and indexes it keeps, with `copy` kept until
+    /// nothing reads it.
     fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
         let evidence_keys = manager.evidence_keys();
-        let names = self.names_for(&manager);
-        let (loaded, metadata) = describe(copy, manager, &self.tier_override, &names)?;
+        let (mut loaded, metadata) = match describe(None, manager, &self.tier_override, &self.names)
+        {
+            Ok(described) => described,
+            Err(error) => {
+                self.keep_copy(copy);
+                return Err(error);
+            }
+        };
+        loaded._copy = copy;
         if let Some(file) = self.data_files.first() {
             record_dates(&loaded.manager, file);
         }
@@ -810,6 +799,23 @@ impl DeviceDetectionOnPremiseEngine {
         self.loaded.store(Arc::new(loaded));
         self.metadata.replace(metadata);
         Ok(())
+    }
+
+    /// Keep `copy`, which the data set the manager now holds reads, with what
+    /// detections read from the data set before it, because the new data set's
+    /// metadata could not be read. The copy before it then goes once nothing
+    /// reads its data set, and this one once nothing reads the new data set.
+    fn keep_copy(&self, copy: Option<OperationalCopy>) {
+        let current = self.loaded.load();
+        self.loaded.store(Arc::new(LoadedDataSet {
+            manager: Arc::clone(&current.manager),
+            readable: Arc::clone(&current.readable),
+            file_properties: current.file_properties.clone(),
+            missing: Arc::clone(&current.missing),
+            fiftyone_properties: Arc::clone(&current.fiftyone_properties),
+            components: Arc::clone(&current.components),
+            _copy: copy,
+        }));
     }
 }
 
@@ -884,8 +890,8 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
     }
 
     fn refresh(&self, _data_file_identifier: Option<&str>) -> Result<()> {
-        // A single-file engine ignores the identifier. Reload from the file's
-        // configured path on disk and hot-swap it in. A reload that fails is
+        // A single-file engine ignores the identifier. Reload the data set
+        // from the file's configured path on disk. A reload that fails is
         // logged at error level, as .NET does, and returned. The message keeps
         // .NET's "If issue persists" so support can search for one phrase
         // across languages.
@@ -920,12 +926,10 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
     }
 }
 
-/// Open the Hash data set with the requested property restriction.
-///
-/// Shared by the builder's initial build and the engine's reload path so both
-/// turn the requested-property list into the native call the same way: an empty
-/// list means every property the data file supports, otherwise the data set is
-/// restricted to exactly the named properties.
+/// Open the Hash data set with the requested property restriction, for the
+/// builder. An empty list means every property the data file supports,
+/// otherwise the data set is restricted to exactly the named properties. A
+/// reload keeps them.
 pub(crate) fn open_manager(
     path: &Path,
     profile: PerformanceProfile,
@@ -1996,6 +2000,368 @@ mod tests {
             }
             assert!(checked > 1, "refreshed {refreshed}");
         }
+    }
+
+    /// An engine built with no names keeps the table of the names it was
+    /// built with across a refresh from its file and from memory, and the
+    /// new data set holds the first data set's names, in their order, rather
+    /// than the engine building its table again from each new data set.
+    #[test]
+    fn an_engine_with_no_names_keeps_its_names_across_a_refresh() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the names kept across a refresh");
+            return;
+        };
+        let (engine, _) = engine_and_data(&path);
+        let names = engine.loaded.load().manager.property_names();
+        let bytes = std::fs::read(&path).expect("the data file reads");
+        for from_memory in [false, true] {
+            if from_memory {
+                engine
+                    .refresh_from_memory(None, &bytes)
+                    .expect("the data loads again");
+            } else {
+                engine.refresh(None).expect("the data file loads again");
+            }
+            let loaded = engine.loaded.load();
+            assert!(
+                Arc::ptr_eq(&loaded.readable.names, &engine.names),
+                "the table was built again, from memory {from_memory}"
+            );
+            assert_eq!(
+                loaded.manager.property_names(),
+                names,
+                "from memory {from_memory}"
+            );
+        }
+    }
+
+    /// An engine built with no names over one data file and reloaded from
+    /// another whose properties differ keeps the first file's names, in their
+    /// order, so each index names the same property. A property both files
+    /// have reads as an engine built on the second file reads it, a property
+    /// only the first file has reads as one the data set does not have, and
+    /// a property only the second file has gets no index and is listed as
+    /// not available, until the engine is built again. Runs when the TAC file
+    /// is beside the Lite file, both ways round.
+    #[test]
+    fn an_engine_with_no_names_keeps_the_first_files_names_after_a_reload_from_another_file() {
+        let Some(lite) = data_file() else {
+            eprintln!("no Hash data file found; skipping the reload from another file");
+            return;
+        };
+        let tac = lite.with_file_name("TAC-HashV41.hash");
+        if !tac.is_file() {
+            eprintln!(
+                "no TAC file beside {}; skipping the reload from another file",
+                lite.display()
+            );
+            return;
+        }
+        for (first, second) in [(&lite, &tac), (&tac, &lite)] {
+            let context = format!("{} then {}", first.display(), second.display());
+            let (engine, data) = engine_and_data(first);
+            let names = engine.loaded.load().manager.property_names();
+            let (other, _) = engine_and_data(second);
+            let other_names = other.loaded.load().manager.property_names();
+            assert_ne!(names, other_names, "{context}");
+
+            engine
+                .reload_from_path(second)
+                .expect("the other data file loads");
+            let loaded = engine.loaded.load();
+            assert_eq!(loaded.manager.property_names(), names, "{context}");
+            assert!(
+                Arc::ptr_eq(&loaded.readable.names, &engine.names),
+                "{context}"
+            );
+
+            let reader = engine.detection_reader(&data).expect("detection succeeds");
+            let expected = other.detection_reader(&data).expect("detection succeeds");
+            let value = |reader: &DetectionReader, name: &str| {
+                reader
+                    .position(name)
+                    .map(|position| reader.read_property(position))
+            };
+            let mut read = 0;
+            for name in names.iter().map(|name| name.to_lowercase()) {
+                if other_names
+                    .iter()
+                    .any(|other| other.eq_ignore_ascii_case(&name))
+                {
+                    assert_eq!(
+                        value(&reader, &name),
+                        value(&expected, &name),
+                        "{name}, {context}"
+                    );
+                    read += 1;
+                } else {
+                    assert!(reader.position(&name).is_none(), "{name}, {context}");
+                }
+            }
+            assert!(read > 1, "{context}");
+            for name in other_names
+                .iter()
+                .filter(|other| !names.iter().any(|name| name.eq_ignore_ascii_case(other)))
+            {
+                assert_eq!(
+                    loaded.manager.required_property_index(name),
+                    None,
+                    "{name}, {context}"
+                );
+                assert!(
+                    reader.position(&name.to_lowercase()).is_none(),
+                    "{name}, {context}"
+                );
+                let listed = engine
+                    .properties()
+                    .iter()
+                    .find(|property| property.name.eq_ignore_ascii_case(name))
+                    .map(|property| property.available);
+                assert_eq!(listed, Some(false), "{name}, {context}");
+            }
+        }
+    }
+
+    /// A refresh reloads the data set into the engine's own manager, as the
+    /// C library's reload does, from the file, from memory and from another
+    /// path, so the manager [`DeviceDetectionOnPremiseEngine::data_set`]
+    /// gives is the same one after each.
+    #[test]
+    fn a_refresh_reloads_the_data_set_in_the_engines_manager() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the reload in place");
+            return;
+        };
+        let (engine, _) = engine_and_data(&path);
+        let manager = engine.data_set();
+        let bytes = std::fs::read(&path).expect("the data file reads");
+        engine.refresh(None).expect("the data file loads again");
+        assert!(Arc::ptr_eq(&manager, &engine.data_set()), "from the file");
+        engine
+            .refresh_from_memory(None, &bytes)
+            .expect("the data loads again");
+        assert!(Arc::ptr_eq(&manager, &engine.data_set()), "from memory");
+        engine
+            .reload_from_path(&path)
+            .expect("the data file loads again");
+        assert!(Arc::ptr_eq(&manager, &engine.data_set()), "from a path");
+    }
+
+    /// A reload of `engine` the tests below make, with the words its
+    /// messages name it by.
+    type Reload<'a> = (String, Box<dyn Fn() -> Result<()> + 'a>);
+
+    /// The reloads of `engine` from the file, from memory, from `bytes`, and
+    /// last from `other` when it is given.
+    fn reloads<'a>(
+        engine: &'a DeviceDetectionOnPremiseEngine,
+        bytes: &'a [u8],
+        other: Option<&'a Path>,
+    ) -> Vec<Reload<'a>> {
+        let mut reloads: Vec<Reload<'a>> = vec![
+            (
+                "from the file".to_owned(),
+                Box::new(move || engine.refresh(None)),
+            ),
+            (
+                "from memory".to_owned(),
+                Box::new(move || engine.refresh_from_memory(None, bytes)),
+            ),
+        ];
+        if let Some(other) = other {
+            reloads.push((
+                format!("from {}", other.display()),
+                Box::new(move || engine.reload_from_path(other)),
+            ));
+        }
+        reloads
+    }
+
+    /// A detection made before a reload reads every property, the match
+    /// metrics among them, as a detection on the data file it was made from
+    /// reads it, though nothing was read from it before the reload, because
+    /// its results keep the data set they came from. Each reload is from the
+    /// file, from memory, and from the TAC file when it is beside the Lite
+    /// file, under a profile that holds the data set in memory and one that
+    /// reads the data file through its file handles.
+    #[test]
+    fn a_detection_made_before_a_reload_reads_as_it_did_before_it() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the detections kept across a reload");
+            return;
+        };
+        let tac = path.with_file_name("TAC-HashV41.hash");
+        let tac = tac.is_file().then_some(tac);
+        let bytes = std::fs::read(&path).expect("the data file reads");
+        let (reference, data) = engine_and_data(&path);
+        let expected = reference
+            .detection_reader(&data)
+            .expect("detection succeeds");
+        for profile in [
+            PerformanceProfile::HighPerformance,
+            PerformanceProfile::LowMemory,
+        ] {
+            let engine = crate::DeviceDetectionOnPremiseEngineBuilder::new(&path)
+                .performance_profile(profile)
+                .build()
+                .expect("the data file loads");
+            for (reload, run) in reloads(&engine, &bytes, tac.as_deref()) {
+                let context = format!("{}, {reload}", profile.as_str());
+                let before = engine.detection_reader(&data).expect("detection succeeds");
+                run().expect("the reload succeeds");
+                assert_eq!(
+                    before.property_names(),
+                    expected.property_names(),
+                    "{context}"
+                );
+                for name in expected.property_names() {
+                    assert_eq!(
+                        read(&before, name),
+                        read(&expected, name),
+                        "{name}, {context}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// An engine built with no names over one data file and reloaded from
+    /// another whose properties differ gives each property of the new data
+    /// set the index of its name among the first file's names, and no index
+    /// to one the first file does not name, so every name keeps its position
+    /// and each typed accessor reads where its name does. Runs when the TAC
+    /// file is beside the Lite file, both ways round.
+    #[test]
+    fn an_engine_with_no_names_keeps_each_names_position_after_a_reload_from_another_file() {
+        let Some(lite) = data_file() else {
+            eprintln!("no Hash data file found; skipping the positions after a reload");
+            return;
+        };
+        let tac = lite.with_file_name("TAC-HashV41.hash");
+        if !tac.is_file() {
+            eprintln!(
+                "no TAC file beside {}; skipping the positions after a reload",
+                lite.display()
+            );
+            return;
+        }
+        for (first, second) in [(&lite, &tac), (&tac, &lite)] {
+            let context = format!("{} then {}", first.display(), second.display());
+            let (engine, data) = engine_and_data(first);
+            let names = engine.data_set().property_names();
+            engine
+                .reload_from_path(second)
+                .expect("the other data file loads");
+            let properties = engine
+                .data_set()
+                .data_file_properties()
+                .expect("the properties are read");
+            let mut kept = 0;
+            for property in &properties {
+                let place = names
+                    .iter()
+                    .position(|name| name.eq_ignore_ascii_case(&property.name));
+                assert_eq!(
+                    property.required_property_index,
+                    place.map(|place| place as c_int),
+                    "{}, {context}",
+                    property.name
+                );
+                kept += usize::from(place.is_some());
+            }
+            assert!(kept > 1, "{context}");
+            let reader = engine.detection_reader(&data).expect("detection succeeds");
+            let readable = &reader.loaded.readable;
+            for property in &readable.properties {
+                if let ReadableProperty::File { name, index, .. } = property {
+                    let at = usize::try_from(*index).expect("an index is not negative");
+                    assert!(
+                        names[at].eq_ignore_ascii_case(name),
+                        "{name} at {index}, {context}"
+                    );
+                }
+            }
+            for (slot, name) in TYPED_PROPERTY_NAMES.iter().enumerate() {
+                assert_eq!(
+                    readable.typed[slot],
+                    readable.position(&name.to_lowercase()),
+                    "{name}, {context}"
+                );
+            }
+        }
+    }
+
+    /// The handles this process has open to the file at `path`.
+    #[cfg(target_os = "linux")]
+    fn open_handles(path: &Path) -> usize {
+        let path = std::fs::canonicalize(path).expect("the file exists");
+        std::fs::read_dir("/proc/self/fd")
+            .expect("the open files are listed")
+            .flatten()
+            .filter(|entry| std::fs::read_link(entry.path()).is_ok_and(|target| target == path))
+            .count()
+    }
+
+    /// A reload leaves the data set it replaces open while a detection made
+    /// from it is held, and the data set is freed, closing its handles to the
+    /// data file, when the last detection holding it is dropped, or at once
+    /// when none holds it. The handles are counted through `/proc`, so this
+    /// runs on Linux.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_reload_frees_the_data_set_it_replaces_once_no_detection_holds_it() {
+        let Some(source) = data_file() else {
+            eprintln!("no Hash data file found; skipping the data sets freed by a reload");
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("fiftyone-dd-reload-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the folder is made");
+        let first = dir.join("first.hash");
+        let second = dir.join("second.hash");
+        std::fs::copy(&source, &first).expect("the data file copies");
+        std::fs::copy(&source, &second).expect("the data file copies");
+        let engine = crate::DeviceDetectionOnPremiseEngineBuilder::new(&first)
+            .performance_profile(PerformanceProfile::LowMemory)
+            .build()
+            .expect("the data file loads");
+        let (_, data) = engine_and_data(&source);
+        assert!(
+            open_handles(&first) > 0,
+            "the first data set reads its file"
+        );
+
+        let held = engine.detection_reader(&data).expect("detection succeeds");
+        engine
+            .reload_from_path(&second)
+            .expect("the second file loads");
+        assert!(open_handles(&second) > 0, "the new data set reads its file");
+        assert!(
+            open_handles(&first) > 0,
+            "the data set a detection holds is freed"
+        );
+        let mobile = || read(&held, "ismobile");
+        assert!(matches!(mobile(), Ok(Some(_))), "{:?}", mobile());
+        drop(held);
+        assert_eq!(
+            open_handles(&first),
+            0,
+            "the data set is kept after its last detection"
+        );
+
+        engine
+            .reload_from_path(&first)
+            .expect("the first file loads again");
+        assert!(open_handles(&first) > 0, "the new data set reads its file");
+        assert_eq!(
+            open_handles(&second),
+            0,
+            "the data set no detection holds is kept"
+        );
+        drop(engine);
+        assert_eq!(open_handles(&first), 0, "the engine's data set is kept");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Each match metric gives the same value as when it is read first when

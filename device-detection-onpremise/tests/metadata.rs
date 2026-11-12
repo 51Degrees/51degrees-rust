@@ -344,13 +344,14 @@ fn a_refresh_frees_the_lists_it_replaces_once_no_caller_holds_them() {
     engine.refresh(None).expect("the data file loads again");
 
     // A caller keeps the list it holds, and the engine gives the new data
-    // set's, which the same file makes equal.
+    // set's, which the same file makes equal. The data set is reloaded in
+    // the engine's manager, so the manager held is the engine's.
     assert!(!Arc::ptr_eq(
         &held_properties,
         &engine.fiftyone_properties()
     ));
     assert!(!Arc::ptr_eq(&held_components, &engine.components()));
-    assert!(!Arc::ptr_eq(&held_data_set, &engine.data_set()));
+    assert!(Arc::ptr_eq(&held_data_set, &engine.data_set()));
     assert_eq!(
         held_data_set.data_file_profiles().unwrap(),
         engine.data_set().data_file_profiles().unwrap()

@@ -44,6 +44,12 @@
 //!   [`fiftyoneDegreesHashInitManagerFromMemory`], plus the matching size
 //!   helpers, and the `...WithIndexedProperties` forms of both, which index
 //!   the profiles holding each value of the properties named).
+//! - **Reload** ([`fiftyoneDegreesHashReloadManagerFromOriginalFile`],
+//!   [`fiftyoneDegreesHashReloadManagerFromFile`] and
+//!   [`fiftyoneDegreesHashReloadManagerFromMemory`], with
+//!   [`fiftyoneDegreesShimHashReloadManagerFromMemoryCopy`] reloading from a
+//!   copy the new data set frees), which replace a manager's data set in
+//!   place.
 //! - **Profiles by property value**
 //!   ([`fiftyoneDegreesHashGetProfileIdsForPropertyAndValue`], with
 //!   [`fiftyoneDegreesShimHashGetIndexedPropertyCount`] and
@@ -446,6 +452,56 @@ extern "C" {
         exception: *mut Exception,
     ) -> StatusCode;
 
+    /// Reloads the data set `manager` holds from the data file it was
+    /// initialized from, with the configuration and the property names of
+    /// the data set in use, indexing the properties that data set indexed.
+    /// The data set it replaces is freed when the last reference to it is
+    /// released. Any status but success leaves the data set in use.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager that no other reload is
+    /// using at the same time. `exception` must be valid.
+    pub fn fiftyoneDegreesHashReloadManagerFromOriginalFile(
+        manager: *mut ResourceManager,
+        exception: *mut Exception,
+    ) -> StatusCode;
+
+    /// Reloads the data set `manager` holds from the data file at
+    /// `file_name`, as [`fiftyoneDegreesHashReloadManagerFromOriginalFile`]
+    /// does.
+    ///
+    /// # Safety
+    /// As [`fiftyoneDegreesHashReloadManagerFromOriginalFile`], and
+    /// `file_name` must be a valid null terminated path.
+    pub fn fiftyoneDegreesHashReloadManagerFromFile(
+        manager: *mut ResourceManager,
+        file_name: *const c_char,
+        exception: *mut Exception,
+    ) -> StatusCode;
+
+    /// Reloads the data set `manager` holds from the `length` bytes at
+    /// `source`, as [`fiftyoneDegreesHashReloadManagerFromOriginalFile`]
+    /// does. The new data set reads the bytes where they lie, and frees them
+    /// when it is freed only when the configuration of the data set in use
+    /// has [`free_data`](ConfigBase::free_data) set.
+    ///
+    /// [`fiftyoneDegreesShimHashReloadManagerFromMemoryCopy`] sets that flag
+    /// and leaves it set, and every reload copies the configuration of the
+    /// data set in use, so after a reload through the shim this function
+    /// frees the bytes it is given.
+    ///
+    /// # Safety
+    /// As [`fiftyoneDegreesHashReloadManagerFromOriginalFile`], and `source`
+    /// must point to `length` readable bytes that outlive the new data set.
+    /// The caller must not own `source` when the manager has reloaded through
+    /// [`fiftyoneDegreesShimHashReloadManagerFromMemoryCopy`].
+    pub fn fiftyoneDegreesHashReloadManagerFromMemory(
+        manager: *mut ResourceManager,
+        source: *mut c_void,
+        length: std::os::raw::c_long,
+        exception: *mut Exception,
+    ) -> StatusCode;
+
     /// Sets the ids of the profiles that hold the value `value_name` of the
     /// property `property_name` in `profile_ids`, at most `length` of them,
     /// and returns how many profiles hold it. When that is more than
@@ -783,12 +839,40 @@ extern "C" {
     /// writes no shared memory.
     ///
     /// # Safety
-    /// `data_set` must come from [`fiftyoneDegreesDataSetHashGet`] and not yet
-    /// be released. `property_name` must be a valid null terminated string.
+    /// `data_set` must be held, by a reference from
+    /// [`fiftyoneDegreesDataSetHashGet`] not yet released or by results not
+    /// yet freed (see [`fiftyoneDegreesShimHashResultsGetDataSet`]).
+    /// `property_name` must be a valid null terminated string.
     pub fn fiftyoneDegreesShimHashDataSetGetRequiredPropertyIndexFromName(
         data_set: *mut DataSetHash,
         property_name: *const c_char,
     ) -> c_int;
+
+    /// Returns the data set `results` hold a reference to, which is released
+    /// when the results are freed. It takes no reference of its own.
+    ///
+    /// # Safety
+    /// `results` must come from [`fiftyoneDegreesResultsHashCreate`] and not
+    /// yet be freed.
+    pub fn fiftyoneDegreesShimHashResultsGetDataSet(results: *mut ResultsHash) -> *mut DataSetHash;
+
+    /// Reloads the data set `manager` holds from a copy of the `length` bytes
+    /// at `data`, as [`fiftyoneDegreesHashReloadManagerFromMemory`] does,
+    /// with the copy made by the C library's allocator and freed with the new
+    /// data set, as the C++ engine's `refreshData` makes it. The caller keeps
+    /// nothing. Any status but success leaves the data set in use. When the C
+    /// library cannot allocate the new data set itself the copy is not freed.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager that no other reload is
+    /// using at the same time. `data` must point to `length` readable bytes,
+    /// which are read only during the call. `exception` must be valid.
+    pub fn fiftyoneDegreesShimHashReloadManagerFromMemoryCopy(
+        manager: *mut ResourceManager,
+        data: *const c_void,
+        length: std::os::raw::c_long,
+        exception: *mut Exception,
+    ) -> StatusCode;
 
     /// Writes the data set's name (its tier, for example `Lite`, `Enterprise`
     /// or `TAC`) into `buffer` as a null terminated string and returns the

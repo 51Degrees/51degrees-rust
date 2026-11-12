@@ -23,11 +23,11 @@
 //! Safe RAII wrappers over the native Hash device detection engine.
 //!
 //! [`Manager`] owns a native resource manager loaded from a Hash data file and
-//! frees it on drop. [`Results`] owns a native results structure, holds an
-//! [`Arc`] to the manager so the data set cannot be freed while results exist,
-//! and frees the results on drop. Property name to required-property-index
-//! resolution is computed once per manager and cached, and values are read into
-//! a reusable per-thread buffer.
+//! frees it on drop. Its reloads replace the data set in place through the C
+//! library's reload functions. [`Results`] owns a native results structure,
+//! which holds the data set it was created from until the results are freed,
+//! and an [`Arc`] to the manager, and frees the results on drop. Values are
+//! read into a reusable per-thread buffer.
 //!
 //! # Thread safety
 //!
@@ -52,7 +52,7 @@ use std::ops::Range;
 use std::os::raw::{c_char, c_int, c_long, c_void};
 use std::path::Path;
 use std::ptr::NonNull;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use fiftyone_device_detection_sys as sys;
 use fiftyone_pipeline_core::{Error, PropertyValueType, Result};
@@ -60,6 +60,7 @@ use fiftyone_pipeline_core::{Error, PropertyValueType, Result};
 use crate::buffer::{with_c_str, with_value_string};
 use crate::evidence::with_native_evidence;
 use crate::held_memory::HeldMemory;
+use crate::kept::{Kept, NameIndexes};
 use crate::metadata::{metadata_read_failed, read_metadata_string, take_value_string};
 use crate::profile::PerformanceProfile;
 use crate::status::{status_name, status_to_result, take_message, NativeException, NativeStatus};
@@ -270,34 +271,42 @@ pub fn data_file_header_size() -> usize {
 // Manager
 // ---------------------------------------------------------------------------
 
-/// A loaded Hash device detection data set.
+/// A Hash device detection data set, loaded into a native resource manager.
 ///
 /// Owns a native [`sys::ResourceManager`] initialized from a data file. Cloning
-/// the [`Arc`] returned by [`Manager::open`] shares one loaded data set across
-/// threads cheaply. The data set is freed when the last reference is dropped,
-/// after every [`Results`] referencing it has also been dropped (the [`Arc`]
-/// they hold guarantees that ordering).
+/// the [`Arc`] returned by [`Manager::open`] shares it across threads cheaply.
+/// [`Manager::reload_from_file`] and the other reloads replace the data set in
+/// place, as the C library's reload does, and each call reads the data set in
+/// use when it is made. A replaced data set is freed once the last
+/// [`Results`] created from it is dropped, and the manager when the last
+/// reference to it is dropped, after every [`Results`] (the [`Arc`] they hold
+/// guarantees that ordering).
 pub struct Manager {
     /// The native manager, heap allocated so its address is stable for the
     /// native handle bookkeeping. Boxed and leaked into a raw pointer, freed in
     /// [`Drop`].
     manager: NonNull<sys::ResourceManager>,
-    /// The data set the manager was opened with, held until [`Drop`], so a
-    /// name lookup reads it without taking a reference and threads sharing
-    /// the manager write no shared memory to look a name up.
-    data_set: NonNull<sys::DataSetHash>,
     /// The number of required properties, which a read by index must stay
-    /// below.
+    /// below. A reload keeps the names of the data set it replaces, so it
+    /// keeps this number.
     required_count: u32,
+    /// The required property index of each name in the data set in use, so
+    /// a name is looked up with no lock and no write to shared memory.
+    names: Kept<NameIndexes>,
+    /// Held while a reload replaces the data set, because the C library's
+    /// reload reads the data set in use without taking a reference to it.
+    reload_lock: Mutex<()>,
     /// The data a load from memory reads in place. Fields drop after
-    /// [`Drop::drop`] has freed the data set, so the data outlives it.
+    /// [`Drop::drop`] has freed the data set, so the data outlives it. It is
+    /// kept after a reload, until the manager is dropped, because the C
+    /// library does not say when the data set reading it is freed.
     _memory: Option<HeldMemory>,
 }
 
 // Safety: the native resource manager is internally reference counted and
 // lock protected per `src/common/resource.h`, so concurrent access from several
-// threads through a shared `&Manager` is sound. The data set held for name
-// lookups is only read. Therefore the manager is both `Send` and `Sync`.
+// threads through a shared `&Manager` is sound, and reloads run one at a time
+// under `reload_lock`. Therefore the manager is both `Send` and `Sync`.
 unsafe impl Send for Manager {}
 unsafe impl Sync for Manager {}
 
@@ -395,10 +404,11 @@ impl Manager {
     /// `options` names to index.
     ///
     /// The data set reads its collections from `data` where it lies, so the
-    /// manager keeps `data` until the data set is freed. Every profile holds
-    /// the data set in memory this way, so none opens a file pool. The C
-    /// library takes the length as a C `long`, so where that is 32 bits, as on
-    /// Windows, `data` must be shorter than 2 GiB.
+    /// manager keeps `data` until the manager is dropped, a reload
+    /// notwithstanding. Every profile holds the data set in memory this way,
+    /// so none opens a file pool. The C library takes the length as a C
+    /// `long`, so where that is 32 bits, as on Windows, `data` must be shorter
+    /// than 2 GiB.
     pub fn open_from_memory(
         data: Vec<u8>,
         profile: PerformanceProfile,
@@ -502,19 +512,117 @@ impl Manager {
 
         // Safety: a successful init leaves a non-null, initialized manager.
         let manager = NonNull::new(manager_ptr).expect("init produced a non-null manager");
-        // Safety: the manager was initialized above. The reference is
-        // released in `Drop`, before the manager is freed.
-        let data_set = unsafe { sys::fiftyoneDegreesDataSetHashGet(manager.as_ptr()) };
-        let data_set = NonNull::new(data_set).expect("an initialized manager has a data set");
-        // Safety: as above.
+        // Safety: the manager was initialized above.
         let required_count =
             unsafe { sys::fiftyoneDegreesShimHashGetRequiredPropertyCount(manager.as_ptr()) };
+        // Safety: as above.
+        let names = Kept::new(unsafe { read_name_indexes(manager.as_ptr()) });
         Ok(Arc::new(Manager {
             manager,
-            data_set,
             required_count,
+            names,
+            reload_lock: Mutex::new(()),
             _memory: memory,
         }))
+    }
+
+    /// Reload the data set from the data file it was loaded from, with the
+    /// settings and the property names it was opened with, as the C
+    /// library's `fiftyoneDegreesHashReloadManagerFromOriginalFile` does.
+    ///
+    /// The new data set keeps the names of the one it replaces, in their
+    /// order, so an index names the same property after the reload, and a
+    /// manager opened naming no property keeps the names of the first data
+    /// file it loaded (see [`Manager::property_names`]). A property only the
+    /// new data file has is then not among them. [`Results`] created before
+    /// the reload keep reading the data set they were created from, which is
+    /// freed when the last of them is dropped. A reload that fails leaves the
+    /// data set in use. Reloads of one manager run one at a time.
+    pub fn reload_from_original_file(&self) -> Result<()> {
+        self.reload(
+            |manager, exception| {
+                // Safety: the manager is initialized and the caller holds the
+                // reload lock.
+                unsafe { sys::fiftyoneDegreesHashReloadManagerFromOriginalFile(manager, exception) }
+            },
+            |status| status_detail(status, std::ptr::null()),
+        )
+    }
+
+    /// Reload the data set from the data file at `path`, as
+    /// [`Manager::reload_from_original_file`] does.
+    pub fn reload_from_file(&self, path: impl AsRef<Path>) -> Result<()> {
+        let path_c = crate::path::native_path(path.as_ref())?;
+        self.reload(
+            |manager, exception| {
+                // Safety: the manager is initialized, the caller holds the
+                // reload lock and the path is null terminated.
+                unsafe {
+                    sys::fiftyoneDegreesHashReloadManagerFromFile(
+                        manager,
+                        path_c.as_ptr(),
+                        exception,
+                    )
+                }
+            },
+            |status| status_detail(status, path_c.as_ptr()),
+        )
+    }
+
+    /// Reload the data set from `data`, the whole of a data file held in
+    /// memory, as [`Manager::reload_from_original_file`] does.
+    ///
+    /// The C library copies `data` into memory that the new data set frees,
+    /// as the C++ engine's `refreshData` does, so the caller keeps nothing.
+    /// The C library takes the length as a C `long`, so where that is 32
+    /// bits, as on Windows, `data` must be shorter than 2 GiB.
+    pub fn reload_from_memory(&self, data: &[u8]) -> Result<()> {
+        let length = c_long::try_from(data.len()).map_err(|_| Error::Native {
+            status: String::from("InvalidInput"),
+            message: format!(
+                "the data is {} bytes, more than the C library reads from \
+                 memory on this platform",
+                data.len()
+            ),
+        })?;
+        self.reload(
+            |manager, exception| {
+                // Safety: the manager is initialized, the caller holds the
+                // reload lock, and `data` is `length` bytes, which the shim
+                // copies during the call.
+                unsafe {
+                    sys::fiftyoneDegreesShimHashReloadManagerFromMemoryCopy(
+                        manager,
+                        data.as_ptr().cast::<c_void>(),
+                        length,
+                        exception,
+                    )
+                }
+            },
+            // The C++ engine names no file for a load from memory.
+            |status| status_detail(status, std::ptr::null()),
+        )
+    }
+
+    /// Run `reload` on the native manager while holding the reload lock,
+    /// with `detail` giving the message for a failed status.
+    fn reload(
+        &self,
+        reload: impl FnOnce(*mut sys::ResourceManager, *mut sys::Exception) -> sys::StatusCode,
+        detail: impl FnOnce(sys::StatusCode) -> String,
+    ) -> Result<()> {
+        let _reloading = self
+            .reload_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let mut exception = sys::Exception::cleared();
+        let status = reload(self.as_ptr(), &mut exception);
+        status_to_result(status, || detail(status))?;
+        exception.check()?;
+        // Safety: the manager is initialized.
+        self.names
+            .replace(unsafe { read_name_indexes(self.as_ptr()) }, |a, b| a == b);
+        Ok(())
     }
 
     /// The date the data file was published, from its header, as `(year,
@@ -562,7 +670,8 @@ impl Manager {
 
     /// The number of required properties in the loaded data set, which is the
     /// number of names it was opened with, or the number of its properties
-    /// when it was opened naming none.
+    /// when it was opened naming none. A reload keeps the names, so it keeps
+    /// the number.
     pub fn property_count(&self) -> u32 {
         // Safety: the manager is initialized for the lifetime of `self`.
         unsafe { sys::fiftyoneDegreesShimHashGetRequiredPropertyCount(self.as_ptr()) }
@@ -570,27 +679,11 @@ impl Manager {
 
     /// The names of the required properties, in index order. With properties
     /// named, these are the names given, in the order given, including any the
-    /// data set has no property for.
+    /// data set has no property for. With none named, these are the names of
+    /// the first data file loaded, which every reload keeps.
     pub fn property_names(&self) -> Vec<String> {
-        let count = self.property_count();
-        let mut names = Vec::with_capacity(count as usize);
-        let mut buffer = vec![0u8; 256];
-        for index in 0..count as c_int {
-            // Safety: the buffer is writable for its full length.
-            let written = unsafe {
-                sys::fiftyoneDegreesShimHashGetRequiredPropertyName(
-                    self.as_ptr(),
-                    index,
-                    buffer.as_mut_ptr() as *mut c_char,
-                    buffer.len(),
-                )
-            };
-            if written > 0 {
-                let end = (written as usize).min(buffer.len());
-                names.push(String::from_utf8_lossy(&buffer[..end]).into_owned());
-            }
-        }
-        names
+        // Safety: the manager is initialized for the lifetime of `self`.
+        unsafe { read_property_names(self.as_ptr()) }
     }
 
     /// The evidence keys the data set reads, lowercased, in the C library's
@@ -662,21 +755,15 @@ impl Manager {
     }
 
     /// The required property index of the property named, as the C library
-    /// finds it among the names the data set was opened with, ignoring case.
+    /// finds it among the names of the data set in use, ignoring case.
     ///
     /// Returns [`None`] when the property is not one of the required
-    /// properties, or the name holds a nul byte. A lookup writes no shared
-    /// memory, so threads sharing the manager do not contend.
+    /// properties, or the name holds a nul byte. The name is found in a table
+    /// the manager reads from each data set it loads, so a lookup takes no
+    /// lock and writes no shared memory, and threads sharing the manager do
+    /// not contend. [`Results`] look a name up in the data set they hold.
     pub fn required_property_index(&self, property_name: &str) -> Option<c_int> {
-        // Safety: the data set is held until `Drop`, and the name is null
-        // terminated for the length of the call.
-        let index = with_c_str(property_name, |name| unsafe {
-            sys::fiftyoneDegreesShimHashDataSetGetRequiredPropertyIndexFromName(
-                self.data_set.as_ptr(),
-                name,
-            )
-        })?;
-        (index >= 0).then_some(index)
+        self.names.current().find(property_name)
     }
 
     /// Create a per-thread results structure for running detections.
@@ -695,8 +782,19 @@ impl Manager {
             status: String::from("InsufficientMemory"),
             message: String::from("failed to allocate Hash results"),
         })?;
+        // Safety: the results were created above and are not yet freed.
+        let data_set = unsafe { sys::fiftyoneDegreesShimHashResultsGetDataSet(results.as_ptr()) };
+        let Some(data_set) = NonNull::new(data_set) else {
+            // Safety: the results were created above and nothing else has them.
+            unsafe { sys::fiftyoneDegreesResultsHashFree(results.as_ptr()) };
+            return Err(Error::Native {
+                status: String::from("NullPointer"),
+                message: String::from("the Hash results hold no data set"),
+            });
+        };
         Ok(Results {
             results,
+            data_set,
             manager: Arc::clone(self),
         })
     }
@@ -1081,16 +1179,61 @@ fn data_file_value_type(value_type: u8, is_list: bool) -> PropertyValueType {
     }
 }
 
+/// The names of the required properties of the data set `manager` holds, in
+/// index order, as [`Manager::property_names`] gives them.
+///
+/// # Safety
+/// `manager` must be initialized.
+unsafe fn read_property_names(manager: *mut sys::ResourceManager) -> Vec<String> {
+    let count = sys::fiftyoneDegreesShimHashGetRequiredPropertyCount(manager);
+    let mut names = Vec::with_capacity(count as usize);
+    let mut buffer = vec![0u8; 256];
+    for index in 0..count as c_int {
+        // The buffer is writable for its full length.
+        let written = sys::fiftyoneDegreesShimHashGetRequiredPropertyName(
+            manager,
+            index,
+            buffer.as_mut_ptr() as *mut c_char,
+            buffer.len(),
+        );
+        if written > 0 {
+            let end = written.min(buffer.len());
+            names.push(String::from_utf8_lossy(&buffer[..end]).into_owned());
+        }
+    }
+    names
+}
+
+/// The required property index the C library gives each required property
+/// name of the data set `manager` holds.
+///
+/// # Safety
+/// `manager` must be initialized, and no reload may replace its data set
+/// during the call.
+unsafe fn read_name_indexes(manager: *mut sys::ResourceManager) -> NameIndexes {
+    let mut found = Vec::new();
+    for name in read_property_names(manager) {
+        // A name the C library gave holds no nul byte.
+        let index = match CString::new(name.as_str()) {
+            Ok(name_c) => sys::fiftyoneDegreesShimHashGetRequiredPropertyIndexFromName(
+                manager,
+                name_c.as_ptr(),
+            ),
+            Err(_) => -1,
+        };
+        found.push((name, index));
+    }
+    NameIndexes::new(found)
+}
+
 impl Drop for Manager {
     fn drop(&mut self) {
         // Safety: the manager was initialized by a successful `open`, and every
         // `Results` referencing it held an `Arc` to this `Manager`, so all of
         // them have been dropped (and their data set references released) before
-        // this runs. The data set reference held for name lookups is released
-        // next, so freeing the manager then frees the data set, and the box is
-        // reclaimed afterwards.
+        // this runs, and no reload is running. Freeing the manager frees the
+        // data set in use, and the box is reclaimed afterwards.
         unsafe {
-            sys::fiftyoneDegreesDataSetHashRelease(self.data_set.as_ptr());
             sys::fiftyoneDegreesResourceManagerFree(self.manager.as_ptr());
             drop(Box::from_raw(self.manager.as_ptr()));
         }
@@ -1106,10 +1249,13 @@ impl Drop for Manager {
 /// Produced by [`Manager::create_results`]. Run a detection with
 /// [`Results::process_evidence`], [`Results::process_user_agent`] or
 /// [`Results::process_device_id`], then read values with
-/// [`Results::value_as_string`]. Holds an [`Arc`] to its [`Manager`] so the data
-/// set stays loaded while the results live.
+/// [`Results::value_as_string`]. The native results hold the data set they
+/// were created from, which a reload of the manager does not change, until
+/// they are freed. Holds an [`Arc`] to its [`Manager`] too.
 pub struct Results {
     results: NonNull<sys::ResultsHash>,
+    /// The data set the native results hold, in which a name is looked up.
+    data_set: NonNull<sys::DataSetHash>,
     manager: Arc<Manager>,
 }
 
@@ -1120,13 +1266,41 @@ pub struct Results {
 unsafe impl Send for Results {}
 
 impl Results {
-    /// The manager whose data set these results read from.
+    /// The manager these results were created from. They read the data set
+    /// it held then.
     pub fn manager(&self) -> &Arc<Manager> {
         &self.manager
     }
 
     fn as_ptr(&self) -> *mut sys::ResultsHash {
         self.results.as_ptr()
+    }
+
+    /// The required property index of the property named in the data set
+    /// these results hold, ignoring case, or [`None`] when it is not one of
+    /// its required properties or the name holds a nul byte.
+    fn required_property_index(&self, property_name: &str) -> Option<c_int> {
+        // Safety: the results hold the data set until they are freed, and the
+        // name is null terminated for the length of the call.
+        let index = with_c_str(property_name, |name| unsafe {
+            sys::fiftyoneDegreesShimHashDataSetGetRequiredPropertyIndexFromName(
+                self.data_set.as_ptr(),
+                name,
+            )
+        })?;
+        (index >= 0).then_some(index)
+    }
+
+    /// Whether these results and `other` hold the same data set.
+    ///
+    /// Results hold the data set in use when they were created, a data set
+    /// results hold is not freed, so no later one can take its place in
+    /// memory, and a manager never takes back a data set a reload has
+    /// replaced. So results created before some reads of a manager and
+    /// results created after them hold the same data set only when no reload
+    /// replaced it between, which shows that the reads all came from it.
+    pub fn same_data_set(&self, other: &Results) -> bool {
+        self.data_set == other.data_set
     }
 
     /// Run a detection from pipeline evidence.
@@ -1235,7 +1409,7 @@ impl Results {
     ///
     /// Returns `false` when the property is not one of the required properties.
     pub fn has_values(&self, property_name: &str) -> Result<bool> {
-        let Some(index) = self.manager.required_property_index(property_name) else {
+        let Some(index) = self.required_property_index(property_name) else {
             return Ok(false);
         };
         let mut exception = sys::Exception::cleared();
@@ -1256,11 +1430,7 @@ impl Results {
     pub fn value_as_string(&self, property_name: &str, separator: &str) -> Result<Option<String>> {
         // An unknown property has no value, matching the engine's own
         // behavior.
-        if self
-            .manager
-            .required_property_index(property_name)
-            .is_none()
-        {
+        if self.required_property_index(property_name).is_none() {
             return Ok(None);
         }
 
@@ -1304,10 +1474,10 @@ impl Results {
     /// The same values as [`value_as_string`](Self::value_as_string), without
     /// a name lookup on either side of the native boundary and without
     /// allocating the property name and separator on each call, for callers
-    /// that read the same properties on every detection. An index belongs to
-    /// the data set it came from, so look it up again after a reload. Returns
-    /// [`None`] when the results carry no value, and an error for an index
-    /// outside this data set's required properties.
+    /// that read the same properties on every detection. A reload keeps the
+    /// names, so an index names the same property after it. Returns [`None`]
+    /// when the results carry no value, and an error for an index outside the
+    /// data set's required properties.
     pub fn value_as_string_by_index(
         &self,
         index: c_int,
@@ -1354,10 +1524,10 @@ impl Results {
     /// results hold no value for the property, as
     /// `fiftyoneDegreesResultsHashGetHasValues` decides for a detection with
     /// no evidence, one that matched nothing or a component with no profile,
-    /// and an empty list when the matched profile holds no value for it. An
-    /// index belongs to the data set it came from, so look it up again after
-    /// a reload. Returns an error for an index outside this data set's
-    /// required properties, or when the values cannot be read.
+    /// and an empty list when the matched profile holds no value for it. A
+    /// reload keeps the names, so an index names the same property after it.
+    /// Returns an error for an index outside the data set's required
+    /// properties, or when the values cannot be read.
     pub fn values_by_index(&self, index: c_int) -> Result<Option<Vec<String>>> {
         let count = self.manager.required_count as usize;
         if index < 0 || index as usize >= count {
@@ -2359,6 +2529,132 @@ mod tests {
             };
             assert_eq!(status, expected, "{name}: {message}");
             assert!(!message.is_empty(), "{name}");
+        }
+    }
+
+    /// A reload from a file, from the original file and from memory keeps the
+    /// names and their indexes, and results created before it read the data
+    /// set they were created from, by name and by index, as new results read
+    /// the new one, with names and with none.
+    #[test]
+    fn a_reload_keeps_the_names_and_the_results_created_before_it() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the reloads");
+            return;
+        };
+        let bytes = std::fs::read(&path).expect("data file reads");
+        let separator = c"|";
+        for named in [None, Some(&["PlatformName", "IsMobile"][..])] {
+            let manager = Manager::open_with_hash_options(
+                &path,
+                PerformanceProfile::HighPerformance,
+                named,
+                &HashOptions::default(),
+            )
+            .expect("data file loads");
+            let names = manager.property_names();
+            let index = manager
+                .required_property_index("IsMobile")
+                .expect("IsMobile is a required property");
+            let expected = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
+            for reload in ["file", "original file", "memory"] {
+                let context = format!("{reload}, named {named:?}");
+                let before = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
+                match reload {
+                    "file" => manager.reload_from_file(&path),
+                    "original file" => manager.reload_from_original_file(),
+                    _ => manager.reload_from_memory(&bytes),
+                }
+                .expect("the data set reloads");
+                assert_eq!(manager.property_names(), names, "{context}");
+                assert_eq!(
+                    manager.required_property_index("IsMobile"),
+                    Some(index),
+                    "{context}"
+                );
+                let after = detect(&manager, "header.user-agent", CHROME_ON_WINDOWS);
+                assert!(!before.same_data_set(&after), "{context}");
+                assert!(
+                    after.same_data_set(&manager.create_results().expect("results allocate")),
+                    "{context}"
+                );
+                for results in [&before, &after] {
+                    for name in ["IsMobile", "PlatformName"] {
+                        assert_eq!(
+                            results.has_values(name).expect("has values reads"),
+                            expected.has_values(name).expect("has values reads"),
+                            "{name}, {context}"
+                        );
+                        assert_eq!(
+                            results.value_as_string(name, "|").expect("value reads"),
+                            expected.value_as_string(name, "|").expect("value reads"),
+                            "{name}, {context}"
+                        );
+                    }
+                    assert_eq!(
+                        results
+                            .value_as_string_by_index(index, separator)
+                            .expect("value reads"),
+                        expected
+                            .value_as_string_by_index(index, separator)
+                            .expect("value reads"),
+                        "{context}"
+                    );
+                    assert_eq!(
+                        results.values_by_index(index).expect("values read"),
+                        expected.values_by_index(index).expect("values read"),
+                        "{context}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A reload that fails, from a file that is not there, from part of a data
+    /// file or from nothing, gives the C library's status and leaves the data
+    /// set in use.
+    #[test]
+    fn a_failed_reload_leaves_the_data_set_in_use() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the failed reloads");
+            return;
+        };
+        let bytes = std::fs::read(&path).expect("data file reads");
+        let manager = Manager::open(&path, PerformanceProfile::InMemory).expect("data file loads");
+        let names = manager.property_names();
+        let is_mobile = |manager: &Arc<Manager>| {
+            detect(manager, "header.user-agent", CHROME_ON_WINDOWS)
+                .value_as_string("IsMobile", "|")
+                .expect("value reads")
+        };
+        let expected = is_mobile(&manager);
+        let missing = path.with_file_name("no-such-data-file.hash");
+        for (name, reloaded, status) in [
+            (
+                "a missing file",
+                manager.reload_from_file(&missing),
+                "FileNotFound",
+            ),
+            (
+                "half the file",
+                manager.reload_from_memory(&bytes[..bytes.len() / 2]),
+                "CorruptData",
+            ),
+            ("nothing", manager.reload_from_memory(&[]), "CorruptData"),
+        ] {
+            let error = reloaded
+                .err()
+                .unwrap_or_else(|| panic!("{name} should be refused"));
+            let Error::Native {
+                status: given,
+                message,
+            } = &error
+            else {
+                panic!("{name}: {error}");
+            };
+            assert_eq!(given, status, "{name}: {message}");
+            assert_eq!(manager.property_names(), names, "{name}");
+            assert_eq!(is_mobile(&manager), expected, "{name}");
         }
     }
 

@@ -153,6 +153,56 @@ int fiftyoneDegreesShimIpiDataSetGetRequiredPropertyIndexFromName(
 }
 
 /*
+ * Returns the data set `results` hold a reference to, which is released when
+ * the results are freed. It takes no reference of its own.
+ */
+fiftyoneDegreesDataSetIpi* fiftyoneDegreesShimIpiResultsGetDataSet(
+    fiftyoneDegreesResultsIpi *results) {
+    return (fiftyoneDegreesDataSetIpi*)results->b.dataSet;
+}
+
+/*
+ * Reloads the data set `manager` holds from a copy of the `length` bytes at
+ * `data`, as the C++ engine's refreshData does. The copy is made with the C
+ * library's allocator, and the configuration of the data set in use, which
+ * the reload copies, is set to free it, so the new data set frees the copy
+ * when it is freed. The flag is read only while a data set is initialised.
+ * When the C library cannot allocate the new data set itself the copy is not
+ * freed, because the status does not tell that failure apart from the ones
+ * after which the C library has freed it.
+ *
+ * The flag stays on for the life of the manager, because every reload copies
+ * the configuration of the data set in use. So after a reload through this
+ * function, a reload through the C library's own reload from memory frees the
+ * bytes it is given, which a caller that still owns them must not allow.
+ */
+fiftyoneDegreesStatusCode fiftyoneDegreesShimIpiReloadManagerFromMemoryCopy(
+    fiftyoneDegreesResourceManager *manager,
+    const void *data,
+    fiftyoneDegreesFileOffset length,
+    fiftyoneDegreesException *exception) {
+    if (data == NULL) {
+        return FIFTYONE_DEGREES_STATUS_NULL_POINTER;
+    }
+    if (length <= 0) {
+        return FIFTYONE_DEGREES_STATUS_CORRUPT_DATA;
+    }
+    void *copy = fiftyoneDegreesMalloc((size_t)length);
+    if (copy == NULL) {
+        return FIFTYONE_DEGREES_STATUS_INSUFFICIENT_MEMORY;
+    }
+    memcpy(copy, data, (size_t)length);
+    fiftyoneDegreesDataSetIpi *dataSet = fiftyoneDegreesDataSetIpiGet(manager);
+    ((fiftyoneDegreesConfigIpi*)&dataSet->config)->b.freeData = true;
+    fiftyoneDegreesDataSetIpiRelease(dataSet);
+    return fiftyoneDegreesIpiReloadManagerFromMemory(
+        manager,
+        copy,
+        length,
+        exception);
+}
+
+/*
  * Writes the data set's name into `buffer` as a null terminated string and
  * returns the number of characters written, excluding the terminator. The data
  * set name is the file's tier, for example "Lite", "Enterprise" or "TAC".
@@ -480,10 +530,10 @@ static const fiftyoneDegreesProperty* get_property(
 /*
  * Finds `property` by name among the available properties, as the C++
  * builder does, and sets `available` to 1 when the data set was created with
- * it, otherwise 0, and `requiredIndex` to its required property index, which
- * the results getters take, or -1 when it has none. The C library matches the
- * name ignoring case. Returns 1, or 0 when the name cannot be read, as the
- * C++ builder raises an exception there.
+ * it, being when it has a required property index, otherwise 0, and
+ * `requiredIndex` to that index, which the results getters take, or -1 when
+ * it has none. The C library matches the name ignoring case. Returns 1, or 0
+ * when the name cannot be read, as the C++ builder raises an exception there.
  */
 static int find_available(
     fiftyoneDegreesDataSetIpi *dataSet,
@@ -502,12 +552,14 @@ static int find_available(
         if (FIFTYONE_DEGREES_EXCEPTION_OKAY) {
             const char *value = FIFTYONE_DEGREES_STRING(name);
             if (dataSet->b.b.available != NULL) {
-                *available =
-                    fiftyoneDegreesPropertiesGetPropertyIndexFromName(
-                        dataSet->b.b.available, value) >= 0 ? 1 : 0;
+                // Available when results can hold its values, which needs
+                // a required index. A data set reloaded with the names of
+                // the one before holds a property only it has with no
+                // required index.
                 *requiredIndex =
                     fiftyoneDegreesPropertiesGetRequiredPropertyIndexFromName(
                         dataSet->b.b.available, value);
+                *available = *requiredIndex >= 0 ? 1 : 0;
             }
             read = 1;
         }

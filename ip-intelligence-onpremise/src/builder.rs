@@ -390,7 +390,6 @@ impl IpIntelligenceOnPremiseEngineBuilder {
             copy,
             manager,
             self.profile,
-            requested,
             self.data_source_tier,
             data_file,
         )?

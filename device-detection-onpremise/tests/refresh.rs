@@ -21,8 +21,9 @@
  * ********************************************************************* */
 
 //! A refresh, from the file or from memory, to a data file with other
-//! properties or another tier leaves the engine as an engine built on that
-//! file would be.
+//! properties or another tier leaves an engine built with no names as an
+//! engine built on that file with the first file's names would be, because
+//! the engine keeps the names of the first data file it loads.
 //!
 //! The test needs the Lite file `_51DEGREES_DD_PATH` names and a data file
 //! with more properties beside it, `Enterprise-HashV41.hash` or
@@ -66,6 +67,15 @@ fn engine(path: &PathBuf) -> Arc<DeviceDetectionOnPremiseEngine> {
         .expect("the data file loads")
 }
 
+/// [`engine`] built with `names`.
+fn named_engine(path: &PathBuf, names: &[String]) -> Arc<DeviceDetectionOnPremiseEngine> {
+    DeviceDetectionOnPremiseEngineBuilder::new(path)
+        .performance_profile(PerformanceProfile::InMemory)
+        .properties(names.iter().cloned())
+        .build()
+        .expect("the data file loads")
+}
+
 /// The value of [`RICHER_PROPERTY`] for a mobile User-Agent, or the reason
 /// there is none.
 fn richer_value(engine: &Arc<DeviceDetectionOnPremiseEngine>) -> Result<String, String> {
@@ -104,9 +114,10 @@ fn a_refresh_reads_and_reports_the_properties_of_the_new_data_file() {
         richer_value(&refreshed).is_err(),
         "the Lite file carries {RICHER_PROPERTY}"
     );
+    let names = refreshed.data_set().property_names();
     std::fs::copy(&richer, &path).unwrap();
     refreshed.refresh(None).expect("the richer file loads");
-    let built = engine(&path);
+    let built = named_engine(&path, &names);
 
     assert_eq!(refreshed.data_source_tier(), built.data_source_tier());
     assert_eq!(
@@ -119,7 +130,7 @@ fn a_refresh_reads_and_reports_the_properties_of_the_new_data_file() {
     assert_eq!(refreshed.aspect_properties(), built.aspect_properties());
     let value = richer_value(&refreshed);
     assert!(
-        value.is_ok(),
+        value.is_err(),
         "{RICHER_PROPERTY} after the refresh: {value:?}"
     );
     assert_eq!(value, richer_value(&built));
@@ -130,7 +141,8 @@ fn a_refresh_reads_and_reports_the_properties_of_the_new_data_file() {
 }
 
 /// A refresh from memory leaves the engine as an engine built on the file
-/// holding that data would be, with the date that data was published.
+/// holding that data with the first file's names would be, with the date that
+/// data was published.
 #[test]
 fn a_refresh_from_memory_reads_and_reports_the_properties_of_the_new_data() {
     let Some((lite, richer)) = data_files() else {
@@ -145,12 +157,13 @@ fn a_refresh_from_memory_reads_and_reports_the_properties_of_the_new_data() {
         richer_value(&refreshed).is_err(),
         "the Lite file carries {RICHER_PROPERTY}"
     );
+    let names = refreshed.data_set().property_names();
     let data = std::fs::read(&richer).unwrap();
     refreshed
         .refresh_from_memory(None, &data)
         .expect("the richer data loads");
     drop(data);
-    let built = engine(&richer);
+    let built = named_engine(&richer, &names);
 
     assert_eq!(refreshed.data_source_tier(), built.data_source_tier());
     assert_eq!(
@@ -163,7 +176,7 @@ fn a_refresh_from_memory_reads_and_reports_the_properties_of_the_new_data() {
     assert_eq!(refreshed.aspect_properties(), built.aspect_properties());
     let value = richer_value(&refreshed);
     assert!(
-        value.is_ok(),
+        value.is_err(),
         "{RICHER_PROPERTY} after the refresh: {value:?}"
     );
     assert_eq!(value, richer_value(&built));
