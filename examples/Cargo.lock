@@ -729,9 +729,9 @@ dependencies = [
 
 [[package]]
 name = "fiftyone-caching"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc36d31701b1d648bd354def7393b30507ac47c66d5685199a3cd80eef97cef6"
+checksum = "848c852cf51a68fc9141705813d6e9014d5fed0db49ff3eb8e2a24cd8080711c"
 dependencies = [
  "ahash",
  "fiftyone-pipeline-core",
@@ -740,13 +740,14 @@ dependencies = [
 
 [[package]]
 name = "fiftyone-cloud-request-engine"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45e21eb093a053d59e4b7ea883368f2c7f5739eff07744e291f9cd4e783d8929"
+checksum = "d8367ce8e2659997af851140aad0e6ecff3ce661560f241e9390c3683b51a7e0"
 dependencies = [
  "fiftyone-caching",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "log",
  "once_cell",
  "reqwest",
  "serde",
@@ -756,9 +757,9 @@ dependencies = [
 
 [[package]]
 name = "fiftyone-common-sys"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b84cd22ced1ef5ca13b6c01b81240b6d9d6e27dc4b7ae80bf80da25d938047e3"
+checksum = "70f4f508b93dd02431ed9cd8573cdda1d5199f488092d5b7e33cb05a0d16b5ef"
 dependencies = [
  "cc",
 ]
@@ -776,9 +777,9 @@ dependencies = [
 
 [[package]]
 name = "fiftyone-device-detection"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5db407000658c91ea0fddcc4096d00467e930e6cbf2f73426c6db124411a1972"
+checksum = "f6b8ecd37d2172888edd744e8312a2d0ae57b62f1c5cb6471b251b89a32d5341"
 dependencies = [
  "fiftyone-cloud-request-engine",
  "fiftyone-device-detection-cloud",
@@ -792,37 +793,39 @@ dependencies = [
 
 [[package]]
 name = "fiftyone-device-detection-cloud"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "956a39509be5f0e96c30bff562f7f4f545e4357925007e131b936625bf7fd833"
+checksum = "3d287a7aa4de028b7f010810d0a5c5c4f9b3d57404bd512579bde60b02edaf58"
 dependencies = [
  "fiftyone-cloud-request-engine",
  "fiftyone-device-detection-shared",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "log",
  "serde",
  "serde_json",
 ]
 
 [[package]]
 name = "fiftyone-device-detection-onpremise"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aee17309189207c1b34b105ba31a70295bd1c9cafce767eb135b571b79169427"
+checksum = "a465bbb57ea66604c7b7d4f370e8cedf114722a492dace8f1978e9436b868e14"
 dependencies = [
  "arc-swap",
- "chrono",
  "fiftyone-device-detection-shared",
  "fiftyone-native",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "fiftyone-pipeline-engines-fiftyone",
+ "log",
 ]
 
 [[package]]
 name = "fiftyone-device-detection-shared"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03956336bf250941377108d5a89c647a6d94d22bb0b2050d86647aa0c72c16d4"
+checksum = "fbc8a1cde1fc169d93a8ad3be2fd818436bfcda1835dc45e410ab256376ec485"
 dependencies = [
  "base64",
  "fiftyone-pipeline-core",
@@ -832,9 +835,9 @@ dependencies = [
 
 [[package]]
 name = "fiftyone-device-detection-sys"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7c1a3a328068593f31acf9bfb9e00cc5fdb9dcfb8e391f127b107f4eb75bf4c"
+checksum = "2d16aea046692cda0f32d5975a0c4860ebe6f9609563846501ed86963ba46733"
 dependencies = [
  "cc",
  "fiftyone-common-sys",
@@ -856,9 +859,9 @@ dependencies = [
 
 [[package]]
 name = "fiftyone-ip-intelligence"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c13a656f94eba7a171547044549dad502af203cbeb160b216033386447c86fb9"
+checksum = "823c98ae4f2fbe2850b7f98e9bd26e31df6a05c6e4a28063e872f8b504c19290"
 dependencies = [
  "fiftyone-cloud-request-engine",
  "fiftyone-ip-intelligence-cloud",
@@ -867,18 +870,20 @@ dependencies = [
  "fiftyone-native",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "fiftyone-pipeline-engines-fiftyone",
 ]
 
 [[package]]
 name = "fiftyone-ip-intelligence-cloud"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9ed1bfbe205cb4c963d605066b766c4c31f635c15ce841c397e0201f7a618da"
+checksum = "077d27f406efec327189784f7d859b2c8cb70cc925bc6aeb7601b6509026faca"
 dependencies = [
  "fiftyone-cloud-request-engine",
  "fiftyone-ip-intelligence-shared",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "log",
  "once_cell",
  "serde",
  "serde_json",
@@ -886,23 +891,24 @@ dependencies = [
 
 [[package]]
 name = "fiftyone-ip-intelligence-onpremise"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "570faba55e9346fd876a54b675dc4b562d999e3522867f929090cb11ce750180"
+checksum = "9ac54332d896bda9248cf7c7ce9beaf5b8327b34fca2400e05d566d321d1769e"
 dependencies = [
  "arc-swap",
- "chrono",
  "fiftyone-ip-intelligence-shared",
  "fiftyone-native",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "fiftyone-pipeline-engines-fiftyone",
+ "log",
 ]
 
 [[package]]
 name = "fiftyone-ip-intelligence-shared"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fb8f51624d3e6dc448461a3f3ac7ed82f17a589877a7082bdb7d8019f9acb95"
+checksum = "8890efbdc117facb6f3400f7a0ed646449fc7a0e1cf4fc6a415555e467b943cf"
 dependencies = [
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
@@ -910,18 +916,18 @@ dependencies = [
 
 [[package]]
 name = "fiftyone-ip-intelligence-sys"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8936be5ee40472ce7b1f436a6bd23229208a45b116db792727924a40a183c586"
+checksum = "21c5f84688aae7fc77cd89324ff66f62ef56d13562da2ad817329c9ba98cf680"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "fiftyone-javascript-builder"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c04dbe63998093d465a7fc98520a1e02035dd9d3aaa25cadd2e58ab099ecc13"
+checksum = "ff71bbae1a4d36f2beb30e8d76b69f026136a2d3e3d5eccd5ddf78c8db946c35"
 dependencies = [
  "fiftyone-cloud-request-engine",
  "fiftyone-json-builder",
@@ -936,21 +942,23 @@ dependencies = [
 
 [[package]]
 name = "fiftyone-json-builder"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf5d3611910db0cd44dd493aa242ce43546c2886a412d809eb7c738b65c2af90"
+checksum = "3db873e38c738d2a213211d4a50f0a2aee7b77af51f0dfa4c43bf79d6111b2b5"
 dependencies = [
+ "fiftyone-cloud-request-engine",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
  "fiftyone-pipeline-engines-fiftyone",
+ "indexmap",
  "serde_json",
 ]
 
 [[package]]
 name = "fiftyone-native"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ea731d0557bebb4b28739ff96d0d2992e48e9565a2b33f658cd485f02f4a771"
+checksum = "70758aa753a2fdb51d8c322889b120f4abe980c616655221ea39af6442304ba1"
 dependencies = [
  "fiftyone-common-sys",
  "fiftyone-device-detection-sys",
@@ -960,24 +968,27 @@ dependencies = [
 
 [[package]]
 name = "fiftyone-pipeline-core"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3eec4cfedc77380365d89c98bbf620d529830fc57ec4b0a5033da0ce5cb6ed32"
+checksum = "14ba650f4e5d00f8ba3b46815267f2d628f7bcef361040f7cb559c17ec08301f"
 dependencies = [
  "ahash",
+ "indexmap",
+ "log",
  "thiserror",
 ]
 
 [[package]]
 name = "fiftyone-pipeline-engines"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6aaf4218f0cc9d98af4dda9aab39967c3ed9a7bd02db3205b383c0e66e85d58e"
+checksum = "74bb58cb334454f1a2da5be0c57b6dcaa6d9471a67a9368596a864103decd472"
 dependencies = [
  "chrono",
  "fiftyone-caching",
  "fiftyone-pipeline-core",
  "flate2",
+ "log",
  "md-5",
  "notify",
  "reqwest",
@@ -986,15 +997,19 @@ dependencies = [
 
 [[package]]
 name = "fiftyone-pipeline-engines-fiftyone"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ecbae93fcca7dbab95d57dfda5ac9911c334385b223d2fce79840439fe2dcbc7"
+checksum = "910174137d48fb4f0029bd5ca06dad8f0885fcf632d177f3ea0895f4ee477760"
 dependencies = [
  "ahash",
+ "arc-swap",
+ "fastrand",
+ "fiftyone-caching",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
  "flate2",
- "quick-xml",
+ "libc",
+ "log",
  "reqwest",
  "thiserror",
  "uuid",
@@ -1002,9 +1017,9 @@ dependencies = [
 
 [[package]]
 name = "fiftyone-pipeline-web"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "186f00ac5e81f520b0c1f240e5055a6830738ffe9a479afb68a8ac3f621d9c89"
+checksum = "bf5d62021a3ed27303c697bd9dff937d56429888b98567ff1e927c84afac64f1"
 dependencies = [
  "ahash",
  "fiftyone-javascript-builder",
@@ -1012,13 +1027,14 @@ dependencies = [
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
  "fiftyone-pipeline-engines-fiftyone",
+ "log",
 ]
 
 [[package]]
 name = "fiftyone-pipeline-web-axum"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5f2b73c1d82dabaee18229724af59251c84066ee16e0bdfa577cb00d1800cff"
+checksum = "97bed117641fe6a09898714764d511b1705fa997b76a7f3619510991fa81388e"
 dependencies = [
  "axum",
  "fiftyone-pipeline-core",
@@ -1055,9 +1071,9 @@ dependencies = [
 
 [[package]]
 name = "fodid"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d65caa02a1f35ec9e1fa70b1787219b9cb5050c6fba1801299c3ea764774eca"
+checksum = "5ada26ef181be1e0e0302db961f7445696cbb35f52cc4a1a3e0100a15ea30c1c"
 dependencies = [
  "base64",
  "chrono",
@@ -1067,12 +1083,13 @@ dependencies = [
 
 [[package]]
 name = "fodid-client"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03fef46d2e9b9950587aec26ded5a8be91bd0deffae5897de6e237fbaf68d902"
+checksum = "69d8bc86daa08f00ff97d950b993c8cedd485635e9bd5a03a85b9128d423fbc2"
 dependencies = [
  "chrono",
  "fodid",
+ "log",
  "reqwest",
  "serde_json",
  "thiserror",
@@ -2460,15 +2477,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "quick-xml"
-version = "0.37.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
-dependencies = [
- "memchr",
 ]
 
 [[package]]
