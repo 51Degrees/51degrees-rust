@@ -1111,6 +1111,20 @@ mod tests {
         assert!(compare_case(&case("a", true), &line(true), &line(true)).is_empty());
     }
 
+    /// The errors a pipeline returns as the sub-errors of one error are
+    /// compared, as a pipeline whose errors are not suppressed returns them.
+    #[test]
+    fn errors_returned_as_sub_errors_are_compared() {
+        let mut dotnet = line(true);
+        dotnet["thrown"] = json!(["The failing element always fails."]);
+        let mut rust = line(true);
+        rust["thrown"] = json!([]);
+        let differences = compare_case(&case("a", true), &dotnet, &rust);
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].path, "thrown");
+        assert_eq!(differences[0].kind, Kind::Value);
+    }
+
     #[test]
     fn a_changed_value_is_a_difference_at_its_path() {
         let differences = compare_case(&case("a", true), &line(true), &line(false));
