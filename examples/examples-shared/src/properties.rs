@@ -41,7 +41,8 @@ pub const NO_VALUE_MARKER: &str = "Unknown";
 /// names case-insensitively) and formats the result:
 ///
 /// - a string or JavaScript value is returned as-is,
-/// - a boolean, integer or double is formatted with its natural `Display`,
+/// - a boolean, integer, double or float is formatted with its natural
+///   `Display`, so a float prints its own 32-bit digits,
 /// - a list of strings is joined with `", "`,
 /// - a list of key-value collections is rendered compactly as
 ///   `[{k=v, ...}, ...]`.
@@ -66,6 +67,9 @@ pub fn property_value_to_string(value: &PropertyValue) -> String {
         PropertyValue::Bool(b) => b.to_string(),
         PropertyValue::Integer(i) => i.to_string(),
         PropertyValue::Double(d) => d.to_string(),
+        // The f32's own text, as widening it to f64 first adds digits the
+        // data does not hold.
+        PropertyValue::Float(f) => f.to_string(),
         PropertyValue::StringList(list) => list.join(", "),
         PropertyValue::KeyValueList(records) => {
             let rendered: Vec<String> = records
