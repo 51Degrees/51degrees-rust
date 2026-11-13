@@ -1,35 +1,5 @@
 [
   {
-    "path": "errors",
-    "kind": "value",
-    "cases": ["sequence-over-int", "sequence-text", "sequence-empty", "sequence-decimal"],
-    "rust": {
-      "value": [
-        [
-          {
-            "element": "sequence",
-            "message": "The value for the 'sequence' parameter is not valid. See https://51degrees.com/documentation/4.5/_services__cloud__error_messages.html?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=pipeline-engines-fiftyone-src-sequence_element.rs&utm_term=sequence-not-valid for more information."
-          },
-          {
-            "element": "json-builder",
-            "message": "The JSON Builder needs a sequence number. Place a Sequence Element before the JSON Builder in the Pipeline."
-          }
-        ]
-      ]
-    },
-    "reason": "For a sequence that is not a 32-bit integer each side gives an error from the Sequence element and another from the JSON builder, and the two Sequence element messages start with the same sentence, their links carrying each repository's own campaign tags. The crates' JSON builder gives the message the specification's json-builder.md gives, word for word, where the .NET release this comparison runs gives its own. The crates' side is pinned, so the entry allows only .NET's tags and wording."
-  },
-  {
-    "path": "properties.sequence",
-    "kind": "onlyInRust",
-    "reason": "The specification's Element Data for the Sequence element is session-id and sequence, so the crates' Sequence element lists them as properties of its own data. .NET's Sequence element has no data and lists none."
-  },
-  {
-    "path": "json.sequence",
-    "kind": "onlyInRust",
-    "reason": "The JSON builder writes the data of the crates' Sequence element, being the session-id and sequence the specification's Element Data gives. .NET's Sequence element has no data."
-  },
-  {
     "path": "properties.ip.ip",
     "kind": "type",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
@@ -84,9 +54,9 @@
     "kind": "noValueMessage",
     "cases": ["metadata-device-ismobile"],
     "data": "lite",
-    "dotnet": {"pattern": ["Property 'Hardware*' not found in data for element 'device'. The reason for this is unknown. Please check that the aspect and property name are correct."]},
-    "rust": {"pattern": ["Property 'Hardware*' not found in data for element 'device'. This is because your license or data file does not include this property. To see which licenses include it, see *"]},
-    "reason": "The Lite file has no HardwareVendor, HardwareModel or HardwareName, which the Device Detection engine defines, as its data type has an accessor for each. The Missing Properties section of the pipeline specification's properties.md gives the reason \"Not available in the current data file\" for a property defined for an engine that the data file does not hold, and the missing property service's tests in automated-testing.md check that \"upgrade needed\" is returned for a property available in a different tier. The crates give that reason. .NET gives the unknown reason, because its MissingPropertyService looks for the accessor among the properties IDeviceDataHash declares, which are none, as Type.GetProperties on an interface leaves out those of the interfaces it extends, so it never sees IDeviceData's HardwareVendor. This entry goes when .NET's service also looks in the interfaces its data type extends, 51degrees-dotnet#111."
+    "dotnet": {"pattern": ["Property '*' not found in data for element '*'. This is because your license or data file does not include this property. To see which licenses include it, see https://51degrees.com/pricing?utm_source=code&utm_medium=comment&utm_campaign=51degrees-dotnet&utm_content=*&utm_term=*."]},
+    "rust": {"pattern": ["Property '*' not found in data for element '*'. This is because your license or data file does not include this property. To see which licenses include it, see https://51degrees.com/pricing?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=*&utm_term=*."]},
+    "reason": "The Lite file lacks HardwareVendor, HardwareModel and HardwareName, which the Device Detection engine defines, and both sides give the reason for data tiers that are not known, word for word apart from the pricing link's campaign tags, which name each repository and the file the message is in. The Missing Properties section of properties.md (https://github.com/51Degrees/specifications/blob/77dc1f62ac11fac1f3358f38eb67cc7ef0e5b00e/pipeline-specification/features/properties.md#missing-properties) says \"An implementation SHOULD give the same text, and MAY add to each link the campaign parameters its own repository requires.\" The text before the link is pinned on both sides."
   },
   {
     "path": "properties.device.*",
@@ -108,25 +78,11 @@
     "issue": 223
   },
   {
-    "path": "json.device.*javascript*nullreason",
-    "kind": "type",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "dotnet": {"value": [null]},
-    "rust": {"pattern": ["No value for property *"]},
-    "reason": "json-builder.md line 52 says that where the Property value is null the nullreason meta-Property \"MUST be added with a string message that explains why this Property does not have a value\", so the crates give their sentence when the matched profile holds no value for a property. .NET gives no reason then, because the C++ ResultsBase sets no message when the profile holds no value, so its JSON writes null. In the corpus only the JavaScript properties have no value in a matched profile. This entry stays until .NET gives a reason or the specification changes."
-  },
-  {
     "path": "javascript",
     "kind": "text",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "reason": "The JavaScript holds the JSON, so every JSON difference in the engines' pipeline shows here too. The crates also write the request's parameters in name order with lower case names, because their evidence has no order and lowercases its keys. The values pipeline's cases are not listed, so their JavaScript must be the same.",
     "issue": 230
-  },
-  {
-    "path": "javascript",
-    "kind": "lineEndings",
-    "rust": {"value": [0]},
-    "reason": "The .NET 4.5.129 package embeds its template with CRLF line endings, so each line of its script that comes from the template ends with CRLF. The template the specification names and the copy the crates bundle end each line with LF, and the crates write no CRLF."
   },
   {
     "path": "usage*",
@@ -170,21 +126,6 @@
     "reason": "The crates refuse a creator domain that is not ASCII, so every field but the status is null, where .NET reads the 51Did and gives each field."
   },
   {
-    "path": "fodid.status",
-    "kind": "value",
-    "cases": ["*-encoding-url-spaced", "*-text-url-space-1", "*-text-url-tabs", "*-text-url-line-breaks", "*-text-url-unpadded-space-1", "*-text-url-unpadded-space-2", "*-text-url-unpadded-space-4", "*-text-standard-space-1"],
-    "dotnet": {"value": ["Parsed"]},
-    "rust": {"value": ["InvalidBase64"]},
-    "reason": "identifier-layout.md asks a reader to refuse a text with any character outside the base64 alphabet, white space inside the text included, as RFC 4648 section 3.3 requires when the referring specification says nothing else. The crates refuse these texts with InvalidBase64. .NET skips spaces, tabs and line breaks inside the text in its OWID reader and reads them."
-  },
-  {
-    "path": "fodid.*",
-    "kind": "presence",
-    "cases": ["*-encoding-url-spaced", "*-text-url-space-1", "*-text-url-tabs", "*-text-url-line-breaks", "*-text-url-unpadded-space-1", "*-text-url-unpadded-space-2", "*-text-url-unpadded-space-4", "*-text-standard-space-1"],
-    "rust": {"value": [null]},
-    "reason": "The crates refuse a text with white space inside it, so every field but the status is null, where .NET reads the 51Did and gives each field."
-  },
-  {
     "path": "configuration.error",
     "kind": "value",
     "cases": ["configuration-unknown-builder", "configuration-unknown-builder-in-group"],
@@ -223,21 +164,6 @@
     "dotnet": {"value": ["Configuration failed to build.\nBuilderName: BuilderName not set\nSubElement Builder Names: DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder\nBuilder '{type}' for element 1 in element 1 has no 'Set' methods or 'Build' methods that match (case-insensitively) the following parameters: CREATETEMPDATACOPY,DATAFILE,NOSUCHSETTING. The available configuration methods on this builder are: \nSetReuseTempFile\nSetPerformanceProfile\nSetConcurrency\nSetCache\nSetCacheSize\nSetDataDownloadType\nSetDataUpdateUrl\nSetDataUpdateUrlFormatter\nSetDataUpdateUseUrlFormatter\nSetDataUpdateVerifyMd5\nSetDataUpdateDecompress\nSetAutoUpdate\nSetDataFileSystemWatcher\nSetUpdatePollingInterval\nSetUpdateRandomisationMax\nSetVerifyIfModifiedSince\nSetDataUpdateLicenseKey\nSetDataUpdateLicenseKeys\nSetDataUpdateOnStartup\nAddDataFile\nSetTempDirPath\nSetLazyLoading\nSetLazyLoadingTimeout\nSetCacheHitOrMiss\nSetProperties\nSetProperty\nThe available 'Build' methods have the following signatures: \ndatafile (String),createTempDataCopy (Boolean)\ndata (Stream)\n\n\nNo Inner Exception.\n"]},
     "rust": {"value": ["Configuration failed to build.\nBuilderName: BuilderName not set\nSubElement Builder Names: DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder\nBuilder '{type}' for element 1 in element 1 has no 'Set' methods or 'Build' methods that match (case-insensitively) the following parameters: CREATETEMPDATACOPY,DATAFILE,NOSUCHSETTING. The available configuration methods on this builder are: \nSetReuseTempFile\nSetPerformanceProfile\nSetConcurrency\nSetCache\nSetCacheSize\nSetDataDownloadType\nSetDataUpdateUrl\nSetDataUpdateUrlFormatter\nSetDataUpdateUseUrlFormatter\nSetDataUpdateVerifyMd5\nSetDataUpdateDecompress\nSetAutoUpdate\nSetDataFileSystemWatcher\nSetUpdatePollingInterval\nSetUpdateRandomisationMax\nSetVerifyIfModifiedSince\nSetDataUpdateLicenseKey\nSetDataUpdateLicenseKeys\nSetLicenseKeyRequired\nSetDataUpdateOnStartup\nAddDataFile\nSetTempDirPath\nSetLazyLoading\nSetLazyLoadingTimeout\nSetCacheHitOrMiss\nSetProperties\nSetProperty\nThe available 'Build' methods have the following signatures: \ndatafile (String),createTempDataCopy (Boolean)\ndata (Stream)\n\n\nNo Inner Exception.\n"]},
     "reason": "The crates' on-premise engines take SetLicenseKeyRequired, so a configuration can say that its update source serves the data file without a license key, as the specification allows (#312). .NET's engine builders have no such setting, because .NET never asks for a key when an engine is built from a configuration, so the list of settings given for an unknown setting has one more name than .NET's."
-  },
-  {
-    "path": "fodid.status",
-    "kind": "value",
-    "cases": ["*-text-url-one-plus", "*-text-url-one-slash", "*-text-standard-one-underscore"],
-    "dotnet": {"value": ["Parsed"]},
-    "rust": {"value": ["InvalidBase64"]},
-    "reason": "identifier-layout.md asks a reader to refuse a text holding a character from each base64 alphabet, and to check for that before it reads - as + and _ as /. The crates refuse these texts with InvalidBase64. .NET maps - and _ onto + and / without checking, so it reads each as the clean text."
-  },
-  {
-    "path": "fodid.*",
-    "kind": "presence",
-    "cases": ["*-text-url-one-plus", "*-text-url-one-slash", "*-text-standard-one-underscore"],
-    "rust": {"value": [null]},
-    "reason": "The crates refuse a text that mixes the two base64 alphabets, so every field but the status is null, where .NET reads the 51Did and gives each field."
   },
   {
     "path": "properties.countrynames*",
@@ -285,39 +211,12 @@
     "reason": "A property the cloud's response does not give is missing on both sides, with the same reason word for word apart from the configurator link's campaign tags, which name each repository and the file the message is in. An entry cannot pin a missing property's reason, so the workflow step that checks the cloud translation cases compares the two reasons with the link's tags removed. The same kind covers the reason for a null value, which that step compares exactly."
   },
   {
-    "path": "plainText",
-    "kind": "text",
-    "data": "enterprise",
-    "cases": ["robots-txt-*"],
-    "dotnet": {"pattern": ["line *: User-Agent: N/A"]},
-    "reason": "A crawler with no usable product token, its tokens all blank or N/A, cannot be named in a User-Agent line. Since https://github.com/51Degrees/51degrees-dotnet/pull/78, in .NET's rc, .NET leaves such a crawler out of the text entirely, and the crate does the same. The Device Detection release this comparison runs predates that change, so when the N/A usage is refused it writes NotCrawler, whose only product token is N/A, as User-Agent: N/A with Disallow: /. This entry and the annotatedText entry for the same crawlers come out when the comparison runs a .NET release with that change."
-  },
-  {
-    "path": "annotatedText",
-    "kind": "text",
-    "data": "enterprise",
-    "cases": ["robots-txt-*"],
-    "dotnet": {"pattern": ["line *: # N: *"]},
-    "rust": {"pattern": ["line *: # N: *"]},
-    "reason": "The crawlers with no usable product token, as the plainText entry for these cases says. The Device Detection release this comparison runs writes NotCrawler's group when the N/A usage is refused, and the notes of every such crawler in the User-Agent: * group when its usage is allowed, where the crate leaves them out entirely. So the first line that differs names one of those crawlers on the .NET side and the next crawler on the crates' side. A text difference names only its first line, so this entry also hides any later difference in the same text. Removing those crawlers' notes from .NET's text left no other difference over the Enterprise file when this entry was written."
-  },
-  {
     "path": "*Text",
     "kind": "text",
-    "data": "lite",
     "cases": ["robots-txt-tdl-written-form"],
-    "dotnet": {"pattern": ["line *: # Terms https://example.com/Terms Of Use/1.txt?v=1#top"]},
+    "dotnet": {"pattern": ["line *: # Terms HTTPS://Example.COM/Terms%20Of%20Use/1.txt?v=1#top"]},
     "rust": {"pattern": ["line *: # Terms https://example.com/Terms%20Of%20Use/1.txt?v=1#top"]},
-    "reason": "A Terms Document Locator is written as a URI, and the crate keeps its escapes, so a space in the path stays %20, the only form RFC 3986 allows (section 2.1, and pchar in section 3.3). .NET writes Uri.ToString(), which removes the escapes, so its line holds a space and is not a URI. Over the Enterprise file this case first differs at a crawler the two entries for crawlers with no usable product token allow, so this entry is for the Lite file until those entries come out."
-  },
-  {
-    "path": "*Text",
-    "kind": "text",
-    "data": "lite",
-    "cases": ["robots-txt-tdl-path"],
-    "dotnet": {"pattern": ["line *: # Terms file:///terms/1.txt"]},
-    "rust": {"pattern": ["line *: Allow: /"]},
-    "reason": "An entry starting with a slash, here /terms/1.txt, is an absolute-path reference by RFC 3986 section 4.2, not a URI, so the crate leaves it out, as .NET's engine documentation asks when it says each entry must be a valid absolute URI. .NET's Uri.TryCreate with UriKind.Absolute reads such a string as a file path on Linux and macOS but not on Windows, so .NET writes file:///terms/1.txt on the comparison's Linux runner and leaves the entry out on Windows. Over the Enterprise file this case first differs at a crawler the two entries for crawlers with no usable product token allow, so this entry is for the Lite file until those entries come out."
+    "reason": "A Terms Document Locator is written as a URI, and the crate writes its scheme and host in lower case, as RFC 3986 asks of a program that writes a URI, in section 3.1 (https://www.rfc-editor.org/rfc/rfc3986#section-3.1), \"An implementation should accept uppercase letters as equivalent to lowercase in scheme names ... but should only produce lowercase scheme names for consistency\", and section 3.2.2 (https://www.rfc-editor.org/rfc/rfc3986#section-3.2.2), \"producers and normalizers should use lowercase for registered names\". .NET writes the entry as it was given. Both keep the escapes. The specifications repository has no section for the robots.txt engine."
   },
   {
     "path": "propertyKeyedEngines[*].properties[*].type",
@@ -393,39 +292,53 @@
     "kind": "noValueMessage",
     "cases": ["metadata-ip-asn"],
     "data": "lite",
-    "dotnet": {"pattern": ["Property 'Country' not found in data for element 'ip'. The reason for this is unknown. Please check that the aspect and property name are correct."]},
-    "rust": {"pattern": ["Property 'Country' not found in data for element 'ip'. This is because your license or data file does not include this property. To see which licenses include it, see *"]},
-    "reason": "The ASN file has no Country, which the IP Intelligence engine defines, as its data type has an accessor for it. The Missing Properties section of the pipeline specification's properties.md gives the reason \"Not available in the current data file\" for a property defined for an engine that the data file does not hold, and the missing property service's tests in automated-testing.md check that \"upgrade needed\" is returned for a property available in a different tier. The crates give that reason. .NET gives the unknown reason, because its MissingPropertyService looks for the accessor among the properties IIpDataOnPremise declares, which are none, as Type.GetProperties on an interface leaves out those of the interfaces it extends, so it never sees IIpIntelligenceData's Country. This entry goes when .NET's service also looks in the interfaces its data type extends, 51degrees-dotnet#111."
+    "dotnet": {"pattern": ["Property '*' not found in data for element '*'. This is because your license or data file does not include this property. To see which licenses include it, see https://51degrees.com/pricing?utm_source=code&utm_medium=comment&utm_campaign=51degrees-dotnet&utm_content=*&utm_term=*."]},
+    "rust": {"pattern": ["Property '*' not found in data for element '*'. This is because your license or data file does not include this property. To see which licenses include it, see https://51degrees.com/pricing?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=*&utm_term=*."]},
+    "reason": "The ASN file lacks Country, which the IP Intelligence engine defines, and both sides give the reason for data tiers that are not known, word for word apart from the pricing link's campaign tags, which name each repository and the file the message is in. The Missing Properties section of properties.md (https://github.com/51Degrees/specifications/blob/77dc1f62ac11fac1f3358f38eb67cc7ef0e5b00e/pipeline-specification/features/properties.md#missing-properties) says \"An implementation SHOULD give the same text, and MAY add to each link the campaign parameters its own repository requires.\" The text before the link is pinned on both sides."
   },
   {
-    "path": "*device.*",
-    "cases": ["uach-ghev-query-then-cookie"],
-    "reason": "With high entropy values in both the query string and a cookie, the C library turns whichever it meets first in the evidence it is given into client hints. The crates give it the evidence in the order it was added, so here it uses the query string's macOS values. .NET gives it the evidence from a map ordered by key, so the cookie always comes first and it uses the Android values. evidence.md and uach-high-entropy-decoder.md say the query string value is used, so the crates follow the specification in this case and .NET does not. With the cookie first, both use the cookie. The entry goes when the C library looks at the query string first whatever the order. the_decoder_element_changes_no_device_answer in device-detection-onpremise/tests/high_entropy_values.rs holds the crates' PlatformName and PlatformVersion for this evidence. A web request through build_evidence adds cookies before query parameters, so there the crates use the cookie as .NET does, while the cloud engine sends the query value."
+    "path": "json.device",
+    "kind": "order",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "reason": "The JSON builder writes the same properties on both sides in another order, .NET in the order of each element's data and the crates in name order. The Process section of json-builder.md (https://github.com/51Degrees/specifications/blob/77dc1f62ac11fac1f3358f38eb67cc7ef0e5b00e/pipeline-specification/pipeline-elements/json-builder.md#process) asks for \"a top-level entry for each Element Data containing sub-entries for each Property and its value\" and names no order, and RFC 8259 section 4 (https://www.rfc-editor.org/rfc/rfc8259#section-4) says \"An object is an unordered collection of zero or more name/value pairs\". The values pipeline's cases are not listed, so their JSON must be the same text."
   },
   {
-    "path": "properties.ip.*",
-    "cases": ["ip-forwarded-list", "ip-v6-zone"],
-    "rust": {"noValue": true},
-    "reason": "The client IP rule of the IP Intelligence specification, \"Reading the client IP value\" in specifications#110, reads a value only when all of it is an address, and lists a comma separated list and a zone index among the values that are not read, so the crates read no address from `1.1.1.1, 10.0.0.1` or from `fe80::1%1`. .NET's IP Intelligence engine reads the list's first address and drops the zone index. With no other client IP evidence, every IP Intelligence property has no value in the crates, where .NET gives the values of the address it read. The entry goes when .NET reads a client IP value only when it is wholly an address."
+    "path": "json.ip",
+    "kind": "order",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "data": "enterprise",
+    "reason": "The IP Intelligence properties in another order, as the json.device order entry says. Over the Lite file both sides give the ASN file's few properties in the same order."
   },
   {
-    "path": "properties.ip.*",
-    "kind": "noValueMessage",
-    "cases": ["ip-forwarded-list", "ip-v6-zone"],
-    "dotnet": {"value": ["IPv4 was not supplied as evidence.", "IPv6 was not supplied as evidence."]},
-    "rust": {"value": ["The IP supplied as evidence was not valid."]},
-    "reason": "The crates read no address from these values, as the properties.ip.* entry above says, so they give the reason for client IP evidence that was supplied and is not valid to the one IP property that has no value on either side, being Ip for the zone index and IpV6 for the list. .NET read an address of the other version, so it says this version was not supplied. The entry goes with that entry."
+    "path": "evidenceAfter",
+    "kind": "value",
+    "cases": ["sequence-nul"],
+    "dotnet": {"value": [{"query.session-id": "parity-sequence-nul", "query.sequence": "6"}]},
+    "rust": {"value": [{"query.session-id": "parity-sequence-nul", "query.sequence": "1"}]},
+    "reason": "The Process section of sequence-element.md (https://github.com/51Degrees/specifications/blob/77dc1f62ac11fac1f3358f38eb67cc7ef0e5b00e/pipeline-specification/pipeline-elements/sequence-element.md#process) says \"A `query.sequence` value that is not a whole number, or a string made only of the digits 0 to 9 with no sign or spaces, from 0 up to 2,147,483,646 is not present\", so 5 followed by a NUL character is not present and the crates give 1. .NET reads the text with int.TryParse and NumberStyles.None, which skips NUL characters at the end, so it reads 5 and gives 6."
   },
   {
-    "path": "json.ip.*nullreason",
-    "kind": "onlyInRust",
-    "cases": ["ip-forwarded-list", "ip-v6-zone"],
-    "reason": "The client IP rule of the IP Intelligence specification, \"Reading the client IP value\" in specifications#110, reads a value only when all of it is an address, and lists a comma separated list and a zone index among the values that are not read, so the crates read no address from `1.1.1.1, 10.0.0.1` or from `fe80::1%1`. .NET's IP Intelligence engine reads the list's first address and drops the zone index. So the crates write each IP Intelligence property's null reason in the JSON, where .NET writes its value. The entry goes with the properties.ip.* entry for these cases."
+    "path": "session",
+    "kind": "value",
+    "cases": ["sequence-nul"],
+    "dotnet": {"value": [{"id": "parity-sequence-nul", "sequence": 6}]},
+    "rust": {"value": [{"id": "parity-sequence-nul", "sequence": 1}]},
+    "reason": "The sequence after the Sequence element, as the evidenceAfter entry for this case says."
   },
   {
-    "path": "json.ip.*",
-    "cases": ["ip-forwarded-list", "ip-v6-zone"],
-    "rust": {"value": [null]},
-    "reason": "The client IP rule of the IP Intelligence specification, \"Reading the client IP value\" in specifications#110, reads a value only when all of it is an address, and lists a comma separated list and a zone index among the values that are not read, so the crates read no address from `1.1.1.1, 10.0.0.1` or from `fe80::1%1`. .NET's IP Intelligence engine reads the list's first address and drops the zone index. So the crates write null for each IP Intelligence property in the JSON, where .NET writes its value. The entry goes with the properties.ip.* entry for these cases."
+    "path": "*sequence.sequence",
+    "kind": "value",
+    "cases": ["sequence-nul"],
+    "dotnet": {"value": [6]},
+    "rust": {"value": [1]},
+    "reason": "The Sequence element's data and the JSON hold the sequence, as the evidenceAfter entry for this case says."
+  },
+  {
+    "path": "usage*",
+    "kind": "text",
+    "cases": ["sequence-nul"],
+    "dotnet": {"pattern": ["*<Sequence>6</Sequence>*"]},
+    "rust": {"pattern": ["*<Sequence>1</Sequence>*"]},
+    "reason": "The usage records hold the sequence, as the evidenceAfter entry for this case says."
   }
 ]

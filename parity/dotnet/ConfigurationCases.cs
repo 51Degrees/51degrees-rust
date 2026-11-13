@@ -236,12 +236,25 @@ namespace FiftyOne.Parity
             if (element is ShareUsageElement)
             {
                 result["settings"] = DescribeShareUsage(element);
-                var filter = new JsonObject();
-                foreach (var key in UsageFilterKeys)
-                {
-                    filter[key] = element.EvidenceKeyFilter.Include(key);
-                }
-                result["evidenceFilter"] = filter;
+                // The rules for what is shared, then the evidence the element
+                // accepts, which is none.
+                result["evidenceFilter"] = DescribeFilter(
+                    (FiftyOne.Pipeline.Core.Data.IEvidenceKeyFilter)Field(
+                        element, "_sharedEvidenceFilter"));
+                result["acceptedEvidence"] = DescribeFilter(
+                    element.EvidenceKeyFilter);
+            }
+            return result;
+        }
+
+        // The filter's answer for each of the keys in UsageFilterKeys.
+        private static JsonObject DescribeFilter(
+            FiftyOne.Pipeline.Core.Data.IEvidenceKeyFilter filter)
+        {
+            var result = new JsonObject();
+            foreach (var key in UsageFilterKeys)
+            {
+                result[key] = filter.Include(key);
             }
             return result;
         }

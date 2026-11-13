@@ -239,17 +239,22 @@ fn describe_element(
             .and_then(|element| element.downcast::<ShareUsageElement>().ok())
         {
             out["settings"] = describe_share_usage(share.config());
-            // The rules for what is shared. The element accepts no evidence,
-            // and .NET's element holds these rules as its evidence filter.
-            let filter = share.shared_evidence_filter();
-            out["evidenceFilter"] = USAGE_FILTER_KEYS
-                .iter()
-                .map(|key| (key.to_string(), json!(filter.include(key))))
-                .collect::<serde_json::Map<_, _>>()
-                .into();
+            // The rules for what is shared, then the evidence the element
+            // accepts, which is none.
+            out["evidenceFilter"] = describe_filter(share.shared_evidence_filter());
+            out["acceptedEvidence"] = describe_filter(share.evidence_key_filter());
         }
     }
     out
+}
+
+/// The filter's answer for each of the keys in [`USAGE_FILTER_KEYS`].
+fn describe_filter(filter: &dyn EvidenceKeyFilter) -> Value {
+    USAGE_FILTER_KEYS
+        .iter()
+        .map(|key| (key.to_string(), json!(filter.include(key))))
+        .collect::<serde_json::Map<_, _>>()
+        .into()
 }
 
 /// The data file settings, with the data file's path given as its
