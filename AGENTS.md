@@ -292,7 +292,10 @@ the publish job publishes the crates before it, then fails, naming the crate
 and printing the commands that publish it by hand from the release commit
 with a token of an owner of the other crates and register the workflow as
 its trusted publisher. Running the failed job again then skips every
-version crates.io has and finishes the release.
+version crates.io has and finishes the release. A new run, rather than a
+rerun, that finds a planned version already on crates.io stops before
+publishing anything, because another run published that version from
+another commit and this commit would be tagged with it.
 
 `ci/packages.json` lists each crate `ci/crates.txt` publishes, with its
 folder, its `ExtraPaths` and the crates it depends on, and a `FirstVersion`

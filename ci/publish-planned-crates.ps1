@@ -14,6 +14,11 @@ Every crate the new one requires comes before it in ci/crates.txt, so each
 is on crates.io by then. A rerun once it is published skips every version
 crates.io has and goes on.
 
+Only a rerun should find a planned version on crates.io already. On the
+first attempt of a run, one there was published by another run from another
+commit, and tagging this commit with it would mark this commit's changes as
+released when they never were, so the run stops before publishing anything.
+
 .PARAMETER PlanFile
 The plan ci/get-release-plan.ps1 wrote.
 
@@ -51,12 +56,30 @@ if ($names.Count -eq 0) {
 # published now.
 $new = $null
 $ready = @()
+$taken = @()
 foreach ($name in $names) {
-    if ($null -eq (Get-CratesIoCrate $name $Registry)) {
+    $record = Get-CratesIoCrate $name $Registry
+    if ($null -eq $record) {
         $new = $name
         break
     }
     $ready += $name
+    $version = "$(($plan.Releases | Where-Object Name -eq $name).Version)"
+    if (@($record.versions | Where-Object num -eq $version).Count -gt 0) {
+        $taken += "$name $version"
+    }
+}
+
+$refuse = $null
+if ($taken.Count -gt 0 -and $env:GITHUB_RUN_ATTEMPT -eq '1') {
+    $refuse = "crates.io already has $($taken -join ', '). Only a rerun of " +
+        "the run that published a version should find it there, so another " +
+        "run published it from another commit, and this commit would be " +
+        "tagged with a version it did not publish. Rerun the run that failed " +
+        "rather than starting a new one."
+    if ($DryRun -eq $false) {
+        throw $refuse
+    }
 }
 
 if ($ready.Count -gt 0) {
@@ -66,6 +89,9 @@ if ($ready.Count -gt 0) {
     } else {
         bash (Join-Path $PSScriptRoot 'publish-crates.sh') @ready
     }
+}
+if ($null -ne $refuse) {
+    Write-Output "Dry run. A first attempt of a publish would refuse this plan, as $refuse"
 }
 if ($null -eq $new) {
     return
