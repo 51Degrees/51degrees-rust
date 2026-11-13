@@ -1,0 +1,1009 @@
+name: Comparison with .NET
+
+# Runs the crates and the .NET packages over the corpus in parity/ and fails
+# on any difference that parity/allowed-differences.json does not list with
+# its reason. parity/README.md describes the programs and the line format.
+#
+# The lite job uses the free data files that the data repository inside cxx,
+# at cxx/data, links, restored as pull-request.yml restores them. The
+# enterprise job uses the Enterprise files, fetched with the license keys
+# when they are available to the run, and is skipped with a warning when
+# they are not.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, 'release/**']
+  workflow_dispatch:
+
+concurrency:
+  group: dotnet-comparison-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  compare:
+    name: compare (${{ matrix.data }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        data: [lite, enterprise]
+    defaults:
+      run:
+        shell: bash
+    env:
+      # The Lite files the lite job compares on, one per line. The download
+      # and the check below both take this list, so they cannot drift apart.
+      DATA_FILES: |
+        cxx/data/device-detection/51Degrees-LiteV4.1.hash
+        cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi
+    steps:
+      # The cxx submodule brings the data repository with it at cxx/data.
+      - name: Checkout workspace
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # The data repository holds a link for each data file rather than the
+      # file, and its own script downloads them. As in pull-request.yml, the
+      # files come from the entry the Data Files workflow saves in the Actions
+      # cache each day, and the script downloads only a file that was not
+      # restored. A file that is missing fails the job at the next step.
+      - name: Restore the Lite data files
+        id: data
+        if: matrix.data == 'lite'
+        uses: ./.github/actions/restore-data-files
+
+      - name: Download any Lite data file not restored
+        if: matrix.data == 'lite'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $names = $env:DATA_FILES.Trim() -split '\r?\n' |
+            ForEach-Object { Split-Path -Leaf $_.Trim() }
+          ./cxx/data/get-data-files.ps1 @names
+
+      - name: Choose the Lite data files
+        if: matrix.data == 'lite'
+        run: |
+          while IFS= read -r file; do
+            if [ -n "$file" ] && [ ! -f "$file" ]; then
+              echo "::error::$file is missing"
+              exit 1
+            fi
+          done <<< "$DATA_FILES"
+          echo "DD_FILE=${GITHUB_WORKSPACE}/cxx/data/device-detection/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
+          echo "IPI_FILE=${GITHUB_WORKSPACE}/cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
+          echo "RUN=true" >> "$GITHUB_ENV"
+
+      # As in pull-request.yml, only when nothing was restored, and with the
+      # action's paths, because an entry is found only by the list it was
+      # saved with.
+      - name: Save the Lite data files for later runs today
+        if: matrix.data == 'lite' && steps.data.outputs.save-key != ''
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.data.outputs.paths }}
+          key: ${{ steps.data.outputs.save-key }}
+          enableCrossOsArchive: true
+
+      - name: Check the license keys are available
+        if: matrix.data == 'enterprise'
+        env:
+          DEVICE_DETECTION_KEY: ${{ secrets.DEVICE_DETECTION_KEY }}
+          IP_INTELLIGENCE_KEY: ${{ secrets.IP_INTELLIGENCE_KEY }}
+        run: |
+          if [ -n "$DEVICE_DETECTION_KEY" ] && [ -n "$IP_INTELLIGENCE_KEY" ]; then
+            echo "RUN=true" >> "$GITHUB_ENV"
+          else
+            echo "::warning title=No license keys::DEVICE_DETECTION_KEY and IP_INTELLIGENCE_KEY are not both available, so the Enterprise comparison is skipped."
+            echo "RUN=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Fetch the Enterprise data files
+        if: matrix.data == 'enterprise' && env.RUN == 'true'
+        uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: |
+            TAC-HashV41.hash
+            51Degrees-EnterpriseIpiV41.ipi
+          cache: true
+          device-detection-key: ${{ secrets.DEVICE_DETECTION_KEY }}
+          device-detection-url: ${{ secrets.DEVICE_DETECTION_URL }}
+          ip-intelligence-key: ${{ secrets.IP_INTELLIGENCE_KEY }}
+          ip-intelligence-url: ${{ secrets.IPI_DATA_FILE_URL }}
+
+      - name: Choose the Enterprise data files
+        if: matrix.data == 'enterprise' && env.RUN == 'true'
+        run: |
+          echo "DD_FILE=${GITHUB_WORKSPACE}/assets/TAC-HashV41.hash" >> "$GITHUB_ENV"
+          echo "IPI_FILE=${GITHUB_WORKSPACE}/assets/51Degrees-EnterpriseIpiV41.ipi" >> "$GITHUB_ENV"
+
+      - name: Install .NET SDK
+        if: env.RUN == 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install Rust toolchain
+        if: env.RUN == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        if: env.RUN == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: parity
+
+      # The producer depends on the 51Did crates, which compile in the OWID
+      # source.
+      - name: Copy the OWID source into fodid
+        if: env.RUN == 'true'
+        shell: pwsh
+        run: ./ci/copy-owid-source.ps1
+
+      - name: Check the parity workspace
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test -p parity-compare
+
+      # The parity workspace resolves its own lock. The comparison proves
+      # .NET's order for the collation data that lock holds, so it must be
+      # the data the library's lock, and so the crate's tests, use.
+      - name: Check both locks hold the same collation data
+        if: matrix.data == 'lite'
+        run: |
+          for crate in icu_collator icu_collator_data; do
+            library=$(grep -A1 "^name = \"$crate\"$" Cargo.lock |
+              sed -n 's/^version = "\(.*\)"$/\1/p')
+            parity=$(grep -A1 "^name = \"$crate\"$" parity/Cargo.lock |
+              sed -n 's/^version = "\(.*\)"$/\1/p')
+            echo "$crate: $library in Cargo.lock, $parity in parity/Cargo.lock"
+            if [ -z "$library" ] || [ "$library" != "$parity" ]; then
+              echo "::error::$crate differs between the two locks"
+              exit 1
+            fi
+          done
+
+      - name: Build
+        if: env.RUN == 'true'
+        working-directory: parity
+        run: |
+          cargo build -p parity-rust -p parity-compare
+          dotnet build dotnet -c Release -o out/dotnet
+
+      # Both sides must build the same C code (parity/README.md, "The C
+      # code"). Each engine package records the 51degrees-dotnet commit it
+      # was built from, and that commit's cxx submodule must be the one this
+      # repository records.
+      - name: Check both sides build the same C code
+        if: env.RUN == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ours=$(git rev-parse HEAD:cxx)
+          assets=parity/dotnet/obj/project.assets.json
+          packages=$(jq -r '.packageFolders | keys_unsorted[0]' "$assets")
+          for id in FiftyOne.DeviceDetection.Hash.Engine.OnPremise FiftyOne.IpIntelligence.Engine.OnPremise; do
+            path=$(jq -r --arg id "$id/" \
+              '.libraries | to_entries[] | select(.key | startswith($id)) | .value.path' "$assets")
+            repository=$(grep -o '<repository [^>]*>' "$packages/$path/${id,,}.nuspec")
+            url=$(sed -n 's/.* url="\([^"]*\)".*/\1/p' <<< "$repository")
+            commit=$(sed -n 's/.* commit="\([0-9a-f]*\)".*/\1/p' <<< "$repository")
+            theirs=$(gh api "repos/${url#https://github.com/}/git/trees/$commit" \
+              --jq '.tree[] | select(.path == "cxx" and .type == "commit") | .sha')
+            echo "$id ($path) was built from $url at $commit, whose cxx is ${theirs:-absent}"
+            if [ "$theirs" != "$ours" ]; then
+              echo "::error::$id was built from $url at $commit, whose cxx submodule is ${theirs:-absent}, but this repository's cxx is $ours. Move the package versions in parity/dotnet/Parity.csproj to the 51degrees-dotnet release built from $ours."
+              exit 1
+            fi
+          done
+
+      - name: Write the answers
+        if: env.RUN == 'true'
+        working-directory: parity
+        run: |
+          args=(--corpus corpus/evidence.json --dd "$DD_FILE" --ipi "$IPI_FILE")
+          dotnet out/dotnet/Parity.dll "${args[@]}" --out out/dotnet.jsonl
+          target/debug/parity-rust "${args[@]}" --out out/rust.jsonl
+          # Each side signs the 51Did cases with a key made for the run, then
+          # each reads both signed lists, so each verifies the other's
+          # signatures.
+          target/debug/parity-rust fodid-sign --cases corpus/fodid.json \
+            --prefix rust- --out out/fodid-rust.json
+          dotnet out/dotnet/Parity.dll fodid-sign --cases corpus/fodid.json \
+            --prefix dotnet- --out out/fodid-dotnet.json
+          signed=(--corpus out/fodid-rust.json --corpus out/fodid-dotnet.json)
+          target/debug/parity-rust fodid "${signed[@]}" --out out/fodid-rust.jsonl
+          dotnet out/dotnet/Parity.dll fodid "${signed[@]}" --out out/fodid-dotnet.jsonl
+          # Each side builds the pipeline each configuration case describes
+          # and writes what it built, or the error.
+          config=(--cases corpus/configuration.json --dd "$DD_FILE" --ipi "$IPI_FILE")
+          dotnet out/dotnet/Parity.dll configuration "${config[@]}" \
+            --out out/configuration-dotnet.jsonl
+          target/debug/parity-rust configuration "${config[@]}" \
+            --out out/configuration-rust.jsonl
+          # Each side runs every case of the case files derived-properties
+          # ships through the derived property element with the built-in
+          # script, and the Rust side writes the cases as a corpus.
+          derived=(--cases ../derived-properties/vendor/tests)
+          target/debug/parity-rust derived-cases "${derived[@]}" \
+            --out out/derived-cases.json
+          target/debug/parity-rust derived "${derived[@]}" --out out/derived-rust.jsonl
+          dotnet out/dotnet/Parity.dll derived "${derived[@]}" --out out/derived-dotnet.jsonl
+          # The Rust side writes the robots.txt cases, being the fixed ones and
+          # those for each usage the data file holds, and each side runs them.
+          target/debug/parity-rust robots-txt-cases --corpus corpus/robots-txt.json \
+            --dd "$DD_FILE" --out out/robots-txt-cases.json
+          robots=(--corpus out/robots-txt-cases.json --dd "$DD_FILE")
+          target/debug/parity-rust robots-txt "${robots[@]}" --out out/robots-txt-rust.jsonl
+          dotnet out/dotnet/Parity.dll robots-txt "${robots[@]}" \
+            --out out/robots-txt-dotnet.jsonl
+          # The Rust side writes the TAC and Native cases, being the fixed
+          # ones and those for each TAC and NativeModel value the data file
+          # holds, and each side runs them.
+          target/debug/parity-rust property-keyed-cases \
+            --corpus corpus/property-keyed.json --dd "$DD_FILE" \
+            --out out/property-keyed-cases.json
+          keyed=(--corpus out/property-keyed-cases.json --dd "$DD_FILE")
+          target/debug/parity-rust property-keyed "${keyed[@]}" \
+            --out out/property-keyed-rust.jsonl
+          dotnet out/dotnet/Parity.dll property-keyed "${keyed[@]}" \
+            --out out/property-keyed-dotnet.jsonl
+          # Each side writes each on-premise engine's metadata for every
+          # metadata case, and the reads the restricted engines answer.
+          metadata=(--cases corpus/metadata.json --dd "$DD_FILE" --ipi "$IPI_FILE")
+          target/debug/parity-rust metadata "${metadata[@]}" --out out/metadata-rust.jsonl
+          dotnet out/dotnet/Parity.dll metadata "${metadata[@]}" --out out/metadata-dotnet.jsonl
+
+      - name: Compare
+        if: env.RUN == 'true'
+        working-directory: parity
+        run: |
+          set +e
+          target/debug/parity-compare --corpus corpus/evidence.json \
+            --corpus out/fodid-rust.json --corpus out/fodid-dotnet.json \
+            --corpus corpus/configuration.json --corpus out/derived-cases.json \
+            --corpus out/robots-txt-cases.json --corpus out/property-keyed-cases.json \
+            --corpus corpus/metadata.json \
+            --dotnet out/dotnet.jsonl --dotnet out/fodid-dotnet.jsonl \
+            --dotnet out/configuration-dotnet.jsonl --dotnet out/derived-dotnet.jsonl \
+            --dotnet out/robots-txt-dotnet.jsonl --dotnet out/property-keyed-dotnet.jsonl \
+            --dotnet out/metadata-dotnet.jsonl \
+            --rust out/rust.jsonl --rust out/fodid-rust.jsonl \
+            --rust out/configuration-rust.jsonl --rust out/derived-rust.jsonl \
+            --rust out/robots-txt-rust.jsonl --rust out/property-keyed-rust.jsonl \
+            --rust out/metadata-rust.jsonl \
+            --allowed allowed-differences.json --data ${{ matrix.data }} \
+            --report out/report.md --strict > /dev/null
+          status=$?
+          set -e
+          cat out/report.md >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      # Only the TAC file holds the TAC and NativeModel properties, so the
+      # lookup of profiles by their values is checked here over every value
+      # of each, and _51DEGREES_REQUIRE_TAC makes the test fail rather than
+      # skip if the file stops carrying them or does not reach the test.
+      # cargo test passes when no test matches its name, so the step names
+      # the test exactly and fails unless the output says one test passed.
+      - name: Check the profile lookup on the TAC file
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        run: |
+          test=tac_and_native_model_values_find_their_profiles
+          env _51DEGREES_DD_PATH="$DD_FILE" _51DEGREES_REQUIRE_TAC=1 \
+            cargo test -p fiftyone-native --test value_profiles \
+            -- --exact "$test" --nocapture | tee "$RUNNER_TEMP/tac-lookup.txt"
+          if ! grep -qF 'test result: ok. 1 passed;' "$RUNNER_TEMP/tac-lookup.txt"; then
+            echo "::error::$test did not run and pass"
+            exit 1
+          fi
+
+      # Latitude, Longitude and the points of Areas are given to 3 decimal
+      # places. Only the Enterprise file carries them, so the test runs here,
+      # and _51DEGREES_REQUIRE_LOCATION makes it fail rather than skip if the
+      # file stops carrying them or does not reach the test. As above, the
+      # step names the test exactly and fails unless one test passed.
+      - name: Check locations have 3 decimal places
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        run: |
+          test=locations_are_given_to_three_decimal_places
+          env _51DEGREES_IPI_PATH="$IPI_FILE" _51DEGREES_REQUIRE_LOCATION=1 \
+            cargo test -p fiftyone-ip-intelligence-onpremise \
+            --test decimal_places -- --exact "$test" --nocapture \
+            | tee "$RUNNER_TEMP/decimal-places.txt"
+          if ! grep -qF 'test result: ok. 1 passed;' "$RUNNER_TEMP/decimal-places.txt"; then
+            echo "::error::$test did not run and pass"
+            exit 1
+          fi
+
+      # The build jobs read the data file metadata of the ASN file. Only the
+      # Enterprise file has float, bool and weighted properties, addresses
+      # and areas, so the metadata tests run here too, opening the file in
+      # LowMemory, and _51DEGREES_REQUIRE_ENTERPRISE makes a test that needs
+      # the Enterprise file fail rather than skip. The failed refresh test
+      # always uses the ASN file. Every property the Enterprise file gives
+      # must read as its declared type, and that test is named exactly, so
+      # the step fails unless it ran and passed. The leak test runs under
+      # LowMemory alone, so it never holds the whole file in memory, and
+      # checks that an area's text, too long for the shim's first buffer, is
+      # written into a block from the library's allocator and freed.
+      - name: Check the IP Intelligence metadata of the Enterprise file
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        run: |
+          env _51DEGREES_IPI_PATH="$IPI_FILE" _51DEGREES_REQUIRE_ENTERPRISE=1 \
+            cargo test -p fiftyone-ip-intelligence-onpremise --test metadata
+          test=every_present_property_unpacks_as_its_declared_type
+          env _51DEGREES_IPI_PATH="$IPI_FILE" _51DEGREES_REQUIRE_ENTERPRISE=1 \
+            cargo test -p fiftyone-ip-intelligence-onpremise \
+            --test detection -- --exact "$test" --nocapture \
+            | tee "$RUNNER_TEMP/declared-types.txt"
+          if ! grep -qF 'test result: ok. 1 passed;' "$RUNNER_TEMP/declared-types.txt"; then
+            echo "::error::$test did not run and pass"
+            exit 1
+          fi
+          env _51DEGREES_IPI_PATH="$IPI_FILE" _51DEGREES_REQUIRE_ENTERPRISE=1 \
+            cargo test -p fiftyone-native --no-default-features --features ipi \
+            --lib -- --exact \
+            ipi::tests::each_property_gives_as_many_values_as_it_counts_and_its_default_among_them \
+            ipi::tests::a_value_is_found_by_its_exact_text \
+            ipi::tests::each_property_belongs_to_one_of_the_data_files_components \
+            ipi::tests::each_shim_string_reader_fails_for_an_index_past_the_end \
+            ipi::tests::an_enterprise_file_names_each_type \
+            ipi::tests::an_enterprise_file_gives_each_value_as_text \
+            ipi::tests::an_ip_range_is_written_as_dotnet_writes_it \
+            ipi::tests::a_value_is_found_by_its_text_to_more_places
+          env _51DEGREES_IPI_PATH="$IPI_FILE" _51DEGREES_REQUIRE_ENTERPRISE=1 \
+            _51DEGREES_IPI_MEMORY_PROFILES=LowMemory \
+            cargo test -p fiftyone-native --no-default-features --features ipi \
+            --test ipi_memory -- --nocapture
+
+      # With _51DEGREES_REQUIRE_ENTERPRISE set, the leak test must fail when
+      # _51DEGREES_IPI_PATH names no file, rather than pass having checked
+      # nothing, so the step above relies on the test alone and not on the
+      # order of its commands.
+      - name: Check that the leak test fails with no data file
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        run: |
+          out="$RUNNER_TEMP/leak-test-no-file.txt"
+          if env _51DEGREES_IPI_PATH="$RUNNER_TEMP/no-such-file.ipi" \
+            _51DEGREES_REQUIRE_ENTERPRISE=1 \
+            _51DEGREES_IPI_MEMORY_PROFILES=LowMemory \
+            cargo test -p fiftyone-native --no-default-features --features ipi \
+            --test ipi_memory > "$out" 2>&1; then
+            cat "$out"
+            echo "::error::the leak test passed with no data file and _51DEGREES_REQUIRE_ENTERPRISE set"
+            exit 1
+          fi
+          cat "$out"
+          if ! grep -qF '_51DEGREES_REQUIRE_ENTERPRISE is set, but _51DEGREES_IPI_PATH names no IP Intelligence data file' "$out"; then
+            echo "::error::the leak test failed, but not because _51DEGREES_IPI_PATH names no file"
+            exit 1
+          fi
+
+      # The robots.txt cases for each usage come from the data file, and the
+      # Lite file holds no crawlers. Over the Enterprise file each side must
+      # read the usages and write a group for each crawler the text refuses,
+      # or the comparison would pass with no crawler in either text.
+      - name: Check the robots.txt cases read the crawlers
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        working-directory: parity
+        run: |
+          echo "$(jq length out/robots-txt-cases.json) robots.txt cases"
+          for side in rust dotnet; do
+            keys=$(jq -r 'select(.id == "robots-txt-none") | .robotsTxtEngine.evidenceKeys | length' \
+              "out/robots-txt-$side.jsonl")
+            groups=$(jq -r 'select(.id == "robots-txt-tdl-uri") | .plainText // ""' \
+              "out/robots-txt-$side.jsonl" | grep -Eic '^user-agent:[[:space:]]*[^*[:space:]]' || true)
+            echo "$side: ${keys:-0} evidence keys, ${groups:-0} crawler groups when no usage is allowed"
+            if [ "${keys:-0}" -lt 2 ] || [ "${groups:-0}" -lt 1 ]; then
+              echo "::error::$side read no usages or wrote no crawler from the Enterprise file"
+              exit 1
+            fi
+          done
+
+      # The crate's tests of each crawler read none over the Lite file the
+      # Pull Request workflow gives them, so they run here over the
+      # Enterprise file, which holds the crawlers.
+      - name: Test the robots.txt engine over the Enterprise file
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        run: |
+          env _51DEGREES_DD_PATH="$DD_FILE" \
+            cargo test -p fiftyone-device-detection-robots-txt \
+            --test data_file -- --nocapture
+
+      # The TAC and Native engines find profiles only over a file with the
+      # TAC and NativeModel properties, which the Lite file the Pull Request
+      # workflow gives them lacks. _51DEGREES_REQUIRE_TAC makes those tests
+      # fail rather than skip if the file stops carrying them.
+      - name: Test the TAC and Native engines over the TAC file
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        run: |
+          env _51DEGREES_DD_PATH="$DD_FILE" _51DEGREES_REQUIRE_TAC=1 \
+            cargo test -p fiftyone-device-detection-property-keyed \
+            --test data_file -- --nocapture
+
+      # The TAC and Native cases for each value come from the data file, and
+      # the Lite file holds no TAC or NativeModel. Over the TAC file each
+      # side must find profiles for some case and write the values of some
+      # profile, or the comparison would pass with no profile on either side.
+      - name: Check the TAC and Native cases found profiles
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        working-directory: parity
+        run: |
+          echo "$(jq length out/property-keyed-cases.json) TAC and Native cases"
+          ls -l out/property-keyed-cases.json out/property-keyed-*.jsonl
+          for side in rust dotnet; do
+            found=$(jq -c 'select((.profileIds // []) | length > 0) | .id' \
+              "out/property-keyed-$side.jsonl" | wc -l)
+            profiles=$(jq -c 'select(.properties.device != null) | .id' \
+              "out/property-keyed-$side.jsonl" | wc -l)
+            echo "$side: $found cases found profiles, the values of $profiles profiles written"
+            if [ "$found" -lt 1 ] || [ "$profiles" -lt 1 ]; then
+              echo "::error::$side found no profiles or wrote the values of no profile over the TAC file"
+              exit 1
+            fi
+          done
+
+      # .NET finds a native model name in any case, where the crates match it
+      # exactly, which two entries in allowed-differences.json allow. This
+      # step fails on any NativeModel difference that case alone does not
+      # explain, and on any profile case giving a TAC whose ids differ, so
+      # those entries hide nothing else.
+      - name: Check the NativeModel differences are of case alone
+        if: ${{ !cancelled() && matrix.data == 'enterprise' && env.RUN == 'true' }}
+        working-directory: parity
+        run: |
+          pwsh check-native-model-case.ps1 -Cases out/property-keyed-cases.json \
+            -Rust out/property-keyed-rust.jsonl -DotNet out/property-keyed-dotnet.jsonl
+
+      # A changed Rust answer must fail the comparison and be named in the
+      # report, or the comparison proves nothing.
+      - name: Check that a changed answer fails
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          jq -c 'if .id == "ua-iphone" then .properties.device.ismobile.value |= not else . end' \
+            out/rust.jsonl > out/rust-changed.jsonl
+          if target/debug/parity-compare --corpus corpus/evidence.json \
+            --dotnet out/dotnet.jsonl --rust out/rust-changed.jsonl \
+            --allowed allowed-differences.json --data lite \
+            --report out/report-changed.md > /dev/null; then
+            echo "::error::The comparison passed with a changed Rust answer"
+            exit 1
+          fi
+          grep -q 'ua-iphone.*properties.device.ismobile' out/report-changed.md
+
+      # A lost Rust answer, true or false or 0, must fail too, in the
+      # properties and in the JSON. The screen sizes for curl are 0 on both
+      # sides, from a data file value that is not a number.
+      - name: Check that a lost answer fails
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          jq -c 'if .id == "ua-iphone" or .id == "ua-chrome-windows" then
+              (.properties.device.ismobile |= {name: .name, noValue: "No value for property IsMobile."})
+              | (.json |= (fromjson | del(.device.ismobile) | tojson))
+            elif .id == "ua-curl" then
+              (.properties.device.screenpixelswidth |= {name: .name, noValue: "No value for property ScreenPixelsWidth."})
+              | (.json |= (fromjson | del(.device.screenpixelswidth) | tojson))
+            else . end' out/rust.jsonl > out/rust-lost.jsonl
+          if target/debug/parity-compare --corpus corpus/evidence.json \
+            --dotnet out/dotnet.jsonl --rust out/rust-lost.jsonl \
+            --allowed allowed-differences.json --data lite \
+            --report out/report-lost.md > /dev/null; then
+            echo "::error::The comparison passed with a lost Rust answer"
+            exit 1
+          fi
+          grep -q 'ua-iphone.*properties.device.ismobile' out/report-lost.md
+          grep -q 'ua-iphone.*json.device.ismobile' out/report-lost.md
+          grep -q 'ua-chrome-windows.*properties.device.ismobile' out/report-lost.md
+          grep -q 'ua-chrome-windows.*json.device.ismobile' out/report-lost.md
+          grep -q 'ua-curl.*properties.device.screenpixelswidth' out/report-lost.md
+          grep -q 'ua-curl.*json.device.screenpixelswidth' out/report-lost.md
+
+      # The values cases compare the JSON byte for byte, so a Rust text with
+      # the same structure and one escape written differently must fail too.
+      - name: Check that a changed JSON text fails
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          jq -c 'if .id == "json-values-sequence-8" then .json |= sub("\\\\u2028"; "\u2028") else . end' \
+            out/rust.jsonl > out/rust-text.jsonl
+          if target/debug/parity-compare --corpus corpus/evidence.json \
+            --dotnet out/dotnet.jsonl --rust out/rust-text.jsonl \
+            --allowed allowed-differences.json --data lite \
+            --report out/report-text.md > /dev/null; then
+            echo "::error::The comparison passed with a changed JSON text"
+            exit 1
+          fi
+          grep -q '`json-values-sequence-8`.* at `json`: ' out/report-text.md
+
+      # The values-promise- cases give Promise Full, then no value, then Full
+      # again, so each side's script must turn promises on, off and on.
+      - name: Check promises are decided for each request
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          want='values-promise-full=true values-promise-none=false values-promise-full-again=true'
+          for side in dotnet rust; do
+            got=$(jq -r 'select(.id | startswith("values-promise-"))
+              | "\(.id)=\(.javascript | contains("new Promise("))"' "out/$side.jsonl" | paste -sd ' ')
+            echo "$side: $got"
+            if [ "$got" != "$want" ]; then
+              echo "::error::The $side script did not turn promises on, off and on"
+              exit 1
+            fi
+          done
+
+      # The values cases compare the JavaScript byte for byte apart from
+      # .NET's CRLF line endings, so a Rust script with promises left off, or
+      # with CRLF line endings of its own, must fail.
+      - name: Check that a changed JavaScript text fails
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          jq -c 'if .id == "values-promise-full-again" then .javascript |= sub("new Promise"; "Promise")
+            elif .id == "values-promise-none" then .javascript |= gsub("\n"; "\r\n")
+            else . end' out/rust.jsonl > out/rust-script.jsonl
+          if target/debug/parity-compare --corpus corpus/evidence.json \
+            --dotnet out/dotnet.jsonl --rust out/rust-script.jsonl \
+            --allowed allowed-differences.json --data lite \
+            --report out/report-script.md > /dev/null; then
+            echo "::error::The comparison passed with a changed JavaScript text"
+            exit 1
+          fi
+          grep -q '^- `javascript` text, ' out/report-script.md
+          grep -q '`values-promise-full-again`.* at `javascript`: ' out/report-script.md
+          grep -q '^- `javascript` lineEndings, ' out/report-script.md
+          grep -q '`values-promise-none`.* at `javascript`: ' out/report-script.md
+
+      # Both usage sharing elements must write a record for every case of the
+      # engines' pipeline apart from the one whose evidence they ignore, on
+      # both sides, or comparing the records proves nothing.
+      - name: Check every usage record is written
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          want=$(jq -r '.[] | select(.pipeline == null and .id != "usage-health-check") | .id' \
+            corpus/evidence.json | LC_ALL=C sort | paste -sd ' ')
+          for side in dotnet rust; do
+            for field in usage usageCustom; do
+              got=$(jq -r --arg field "$field" 'select(.[$field] != null) | .id' "out/$side.jsonl" \
+                | LC_ALL=C sort | paste -sd ' ')
+              if [ "$got" != "$want" ]; then
+                echo "::error::The $side $field records are for: $got"
+                exit 1
+              fi
+            done
+          done
+          echo "Both sides wrote both records for: $want"
+
+      # The records are compared as text, so a Rust record with one evidence
+      # value changed, or with one of the second element's Flow Element names
+      # changed, must fail.
+      - name: Check that a changed usage record fails
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          jq -c 'if .id == "usage-evidence" then .usage |= sub("en-GB"; "en-US")
+            elif .id == "ua-iphone" then .usageCustom |= sub("Custom element 2"; "Custom element 3")
+            else . end' out/rust.jsonl > out/rust-usage.jsonl
+          if target/debug/parity-compare --corpus corpus/evidence.json \
+            --dotnet out/dotnet.jsonl --rust out/rust-usage.jsonl \
+            --allowed allowed-differences.json --data lite \
+            --report out/report-usage.md > /dev/null; then
+            echo "::error::The comparison passed with a changed usage record"
+            exit 1
+          fi
+          grep -q '`usage-evidence`.* at `usage`: ' out/report-usage.md
+          grep -q '`ua-iphone`.* at `usageCustom`: ' out/report-usage.md
+
+      # The configuration cases that build must build on both sides, and the
+      # others fail, so none can agree by both failing. Then each changed
+      # Rust answer, compared on its own, must fail at its path: a setting
+      # read back differently, two elements in the other order, the other
+      # answer for the suppress setting, another default usage sharing
+      # setting, a setting given as a number or a fraction read back
+      # differently, another error for a pipeline setting that does not
+      # parse, and another data key for the property keyed engine.
+      - name: Check that a changed configuration answer fails
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          want='configuration-pipeline configuration-no-group configuration-robots-txt'
+          want+=' configuration-property-keyed configuration-property-keyed-default-key'
+          want+=' configuration-setting-in-both-sections'
+          want+=' configuration-setting-forms-in-both-sections'
+          want+=' configuration-setting-case-in-both-sections'
+          want+=' configuration-engines-only configuration-value-forms'
+          want+=' configuration-text-forms configuration-translation-countries'
+          for side in dotnet rust; do
+            got=$(jq -r 'select(.configuration.error == null) | .id' \
+              "out/configuration-$side.jsonl" | paste -sd ' ')
+            if [ "$got" != "$want" ]; then
+              echo "::error::The $side configuration cases that built are: $got"
+              exit 1
+            fi
+          done
+          # <case> <jq change to its Rust answer> <path the report must name>
+          changed() {
+            jq -c --arg id "$1" "if .id == \$id then $2 else . end" \
+              out/configuration-rust.jsonl > out/configuration-rust-changed.jsonl
+            if target/debug/parity-compare --corpus corpus/configuration.json \
+              --dotnet out/configuration-dotnet.jsonl \
+              --rust out/configuration-rust-changed.jsonl \
+              --allowed allowed-differences.json --data lite \
+              --report out/report-configuration.md > /dev/null; then
+              echo "::error::The comparison passed with a changed answer for $1"
+              exit 1
+            fi
+            if ! grep -q "\`$1\`.* at \`$3\`: " out/report-configuration.md; then
+              echo "::error::The report does not name $3 for $1"
+              exit 1
+            fi
+          }
+          changed configuration-pipeline \
+            '.configuration.elements[2].settings.sharePercentage = 1' \
+            'configuration.elements\[2\].settings.sharePercentage'
+          changed configuration-no-group \
+            '.configuration.elements |= [.[0], .[2], .[1]] + .[3:]' \
+            'configuration.elements\[1\].dataKey'
+          changed configuration-setting-forms-in-both-sections \
+            '.configuration.suppressProcessExceptions = true' \
+            'configuration.suppressProcessExceptions'
+          changed configuration-engines-only \
+            '.configuration.elements[3].settings.minimumEntriesPerMessage = 49' \
+            'configuration.elements\[3\].settings.minimumEntriesPerMessage'
+          changed configuration-value-forms \
+            '.configuration.elements[3].dataFile.pollingIntervalSeconds = 1800' \
+            'configuration.elements\[3\].dataFile.pollingIntervalSeconds'
+          changed configuration-text-forms \
+            '.configuration.elements[3].settings.sharePercentage = 1' \
+            'configuration.elements\[3\].settings.sharePercentage'
+          changed configuration-pipeline-setting-does-not-parse \
+            '.configuration.error |= sub("sometimes"; "never")' \
+            'configuration.error'
+          changed configuration-property-keyed \
+            '.configuration.elements[4].dataKey = "profiles-hardwarevendor"' \
+            'configuration.elements\[4\].dataKey'
+
+      # The translation cases must translate and sort on both sides, or the
+      # two could agree by both failing. French must give the United
+      # Kingdom's French name first and list all 250 countries sorted for
+      # fr-FR. Then a Rust line with two countries of a sorted list swapped
+      # must fail.
+      - name: Check the translation cases translate and sort
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          want='Royaume-Uni fr-FR 250'
+          for side in dotnet rust; do
+            got=$(jq -r 'select(.id == "translation-header-fr")
+              | .properties.countrynamestranslated
+              | "\(.countrynamesgeographicaltranslated.value[0].value) \(.sortingcultureused.value) \(.countrynamesgeographicalalltranslated.value | length)"' \
+              "out/$side.jsonl")
+            echo "$side: $got"
+            if [ "$got" != "$want" ]; then
+              echo "::error::The $side translation case gave $got, not $want"
+              exit 1
+            fi
+          done
+          jq -c 'if .id == "translation-header-ja-jp" then
+              .properties.countrynamestranslated.countrynamesgeographicalalltranslated.value
+                |= (.[0:2] + [.[3], .[2]] + .[4:])
+            else . end' out/rust.jsonl > out/rust-sorted.jsonl
+          if target/debug/parity-compare --corpus corpus/evidence.json \
+            --dotnet out/dotnet.jsonl --rust out/rust-sorted.jsonl \
+            --allowed allowed-differences.json --data lite \
+            --report out/report-sorted.md > /dev/null; then
+            echo "::error::The comparison passed with a changed sort"
+            exit 1
+          fi
+          grep -q 'translation-header-ja-jp.*properties.countrynamestranslated.countrynamesgeographicalalltranslated' \
+            out/report-sorted.md
+
+      # The cloud translation cases must read the stand-in cloud's response
+      # on both sides, or the two could agree by both failing. The full case
+      # must give France's German name second with its raw weighting, the
+      # culture the response gives and the three names of its list of every
+      # country. The two cases cut down from the cloud service's responses
+      # must give their last weighted name with its raw weighting and the
+      # six names of their list of every country. The reasons a property is
+      # missing must be the same apart from the link's tags, and the reasons
+      # a value is null exactly the same. Then a Rust line with a changed
+      # raw weighting must fail.
+      - name: Check the cloud translation cases read the response
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          want='Frankreich 30000 de-DE 3'
+          for side in dotnet rust; do
+            got=$(jq -r 'select(.id == "cloud-translation-full")
+              | .properties.countrynamestranslated
+              | "\(.countrynamesgeographicaltranslated.value[1].value) \(.countrynamesgeographicaltranslated.value[1].rawWeighting) \(.sortingcultureused.value) \(.countrynamesgeographicalalltranslated.value | length)"' \
+              "out/$side.jsonl")
+            echo "$side: $got"
+            if [ "$got" != "$want" ]; then
+              echo "::error::The $side cloud translation case gave $got, not $want"
+              exit 1
+            fi
+          done
+          for pair in 'cloud-translation-recorded=Isle of Man 156 6' \
+            'cloud-translation-recorded-unknown=Unknown 65535 6'; do
+            id=${pair%%=*}
+            want=${pair#*=}
+            for side in dotnet rust; do
+              got=$(jq -r --arg id "$id" 'select(.id == $id)
+                | .properties.countrynamestranslated
+                | "\(.countrynamesgeographicaltranslated.value[-1].value) \(.countrynamesgeographicaltranslated.value[-1].rawWeighting) \(.countrynamesgeographicalalltranslated.value | length)"' \
+                "out/$side.jsonl")
+              echo "$side $id: $got"
+              if [ "$got" != "$want" ]; then
+                echo "::error::The $side $id case gave $got, not $want"
+                exit 1
+              fi
+            done
+          done
+          # A property the response does not give is missing on both sides,
+          # and the two reasons must be the same once the configurator
+          # link's campaign tags are removed. The empty section has seven.
+          for side in dotnet rust; do
+            jq -c 'select(.id | startswith("cloud-translation-"))
+              | [.id, ((.properties.countrynamestranslated // {}) | to_entries
+                | map(select(.value.missing != null)
+                  | [.key, (.value.missing | sub("[?]utm_[^ ]*"; ""))])
+                | sort)]' "out/$side.jsonl" > "out/cloud-missing-$side.jsonl"
+          done
+          if ! diff out/cloud-missing-dotnet.jsonl out/cloud-missing-rust.jsonl; then
+            echo "::error::The reasons for a missing cloud translation property differ by more than the link's tags"
+            exit 1
+          fi
+          count=$(jq -r 'select(.[0] == "cloud-translation-section-empty") | .[1] | length' \
+            out/cloud-missing-rust.jsonl)
+          if [ "$count" != 7 ]; then
+            echo "::error::The empty section case has $count missing properties, not 7"
+            exit 1
+          fi
+          # A null value's reason must be the same on both sides, exactly,
+          # as the noValueMessage entry for these cases would allow any
+          # difference in it. The nulls case has three.
+          for side in dotnet rust; do
+            jq -c 'select(.id | startswith("cloud-translation-"))
+              | [.id, ((.properties.countrynamestranslated // {}) | to_entries
+                | map(select(.value.noValue != null) | [.key, .value.noValue])
+                | sort)]' "out/$side.jsonl" > "out/cloud-no-value-$side.jsonl"
+          done
+          if ! diff out/cloud-no-value-dotnet.jsonl out/cloud-no-value-rust.jsonl; then
+            echo "::error::The reasons for a cloud translation property with no value differ"
+            exit 1
+          fi
+          count=$(jq -r 'select(.[0] == "cloud-translation-nulls") | .[1] | length' \
+            out/cloud-no-value-rust.jsonl)
+          if [ "$count" != 3 ]; then
+            echo "::error::The nulls case has $count properties with no value, not 3"
+            exit 1
+          fi
+          jq -c 'if .id == "cloud-translation-any-case" then
+              .properties.countrynamestranslated.countrynamesgeographicaltranslated.value[0].rawWeighting = 30001
+            else . end' out/rust.jsonl > out/rust-cloud.jsonl
+          if target/debug/parity-compare --corpus corpus/evidence.json \
+            --dotnet out/dotnet.jsonl --rust out/rust-cloud.jsonl \
+            --allowed allowed-differences.json --data lite \
+            --report out/report-cloud.md > /dev/null; then
+            echo "::error::The comparison passed with a changed raw weighting"
+            exit 1
+          fi
+          grep -q 'cloud-translation-any-case.*properties.countrynamestranslated.countrynamesgeographicaltranslated' \
+            out/report-cloud.md
+
+      # Each side must read the signed 51Dids of both lists and verify each
+      # signature, or the two could agree by both failing. Of the 31 signed
+      # cases, 18 are meant to read and verify on each side. The rest are the
+      # tampered case, nine whose payload a reader refuses, two with bytes
+      # after the envelope and encoding-url-spaced, whose text has white space
+      # inside it. A new signed case that reads changes the numbers.
+      - name: Check every signed 51Did verifies
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          declare -A want=([dotnet]=18 [rust]=18)
+          for side in dotnet rust; do
+            for list in rust dotnet; do
+              # One row per signed case, its id, whether it was tampered,
+              # and the parse and signature status this side read.
+              rows=$(jq -rn --slurpfile signed "out/fodid-$list.json" '
+                (reduce inputs as $line ({}; .[$line.id] = $line.fodid)) as $read
+                | $signed[0][] | select(.publicKey != null)
+                | "\(.id) \(.tamper) \($read[.id].status) \($read[.id].signatureStatus)"' \
+                "out/fodid-$side.jsonl")
+              valid=$(awk '$2 == "false" && $3 == "Parsed" && $4 == "SignatureValid"' <<< "$rows" | wc -l)
+              wrong=$(awk '($2 == "true" && $4 != "SignatureInvalid") ||
+                ($2 == "false" && $3 == "Parsed" && $4 != "SignatureValid")' <<< "$rows" | paste -sd ',')
+              echo "$side verified $valid of the $list list's signed 51Dids"
+              if [ -n "$wrong" ]; then
+                echo "::error::$side read these signed 51Dids of the $list list wrongly: $wrong"
+                exit 1
+              fi
+              if [ "$valid" -ne "${want[$side]}" ]; then
+                echo "::error::$side verified $valid of the $list list's signed 51Dids, not ${want[$side]}"
+                exit 1
+              fi
+            done
+          done
+
+      # The 51Did lines are compared field by field, so a Rust line read from
+      # the .NET list with a changed match key, and a Rust metadata line with
+      # a changed description, must fail.
+      - name: Check that a changed 51Did answer fails
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          jq -c 'if .id == "dotnet-probabilistic" then .fodid.matchKey = "00"
+            elif .id == "rust-metadata" then .metadata.properties[0].description |= . + " Changed."
+            else . end' out/fodid-rust.jsonl > out/fodid-rust-changed.jsonl
+          if target/debug/parity-compare --corpus out/fodid-rust.json \
+            --corpus out/fodid-dotnet.json --dotnet out/fodid-dotnet.jsonl \
+            --rust out/fodid-rust-changed.jsonl --allowed allowed-differences.json \
+            --data lite --report out/report-fodid-changed.md > /dev/null; then
+            echo "::error::The comparison passed with a changed 51Did answer"
+            exit 1
+          fi
+          grep -q '`dotnet-probabilistic`.* at `fodid\.matchKey`: ' out/report-fodid-changed.md
+          grep -q '`rust-metadata`.* at `metadata\.properties\[0\]\.description`: ' \
+            out/report-fodid-changed.md
+
+      # Every case of each shipped case file must give the answer the file
+      # expects on both sides, or the two could agree by both failing. The
+      # number of cases is counted in the case files themselves, not taken
+      # from the corpus the Rust side wrote.
+      - name: Check every derived property case gives its expected answer
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          want=$(cat ../derived-properties/vendor/tests/*.cases.yaml | grep -c '^ *- Name:')
+          got=$(jq length out/derived-cases.json)
+          if [ "$got" -ne "$want" ]; then
+            echo "::error::The corpus holds $got derived property cases, but the case files hold $want"
+            exit 1
+          fi
+          for side in dotnet rust; do
+            wrong=$(jq -rn --slurpfile cases out/derived-cases.json '
+              (reduce inputs as $line ({}; .[$line.id] = $line.derived)) as $ran
+              | $cases[0][] | . as $case | $ran[$case.id] as $got
+              | select($got == null
+                  or (if $case.expect | has("value")
+                    then $got.value != $case.expect.value
+                    else $got.value != null
+                      or ($got.missing | map(ascii_downcase) | sort)
+                        != ($case.expect.missing | map(ascii_downcase) | sort)
+                    end))
+              | .id' "out/derived-$side.jsonl" | paste -sd ',')
+            echo "$side ran $(wc -l < "out/derived-$side.jsonl") of the $want derived property cases"
+            if [ -n "$wrong" ]; then
+              echo "::error::$side gave these derived property cases an answer their file does not expect: $wrong"
+              exit 1
+            fi
+          done
+
+      # The derived property lines are compared field by field, so a Rust
+      # line with a changed value, and one naming no missing property where
+      # .NET names one, must fail.
+      - name: Check that a changed derived property answer fails
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          valued=$(jq -r 'select(.derived.value != null) | .id' out/derived-rust.jsonl | head -1)
+          missing=$(jq -r 'select((.derived.missing | length) > 0) | .id' out/derived-rust.jsonl | head -1)
+          jq -c --arg valued "$valued" --arg missing "$missing" '
+            if .id == $valued then .derived.value = "Changed"
+            elif .id == $missing then .derived.missing = []
+            else . end' out/derived-rust.jsonl > out/derived-rust-changed.jsonl
+          if target/debug/parity-compare --corpus out/derived-cases.json \
+            --dotnet out/derived-dotnet.jsonl --rust out/derived-rust-changed.jsonl \
+            --allowed allowed-differences.json --data lite \
+            --report out/report-derived-changed.md > /dev/null; then
+            echo "::error::The comparison passed with a changed derived property answer"
+            exit 1
+          fi
+          grep -q "\`$valued\`.* at \`derived\.value\`: " out/report-derived-changed.md
+          grep -q "\`$missing\`.* at \`derived\.missing\[0\]\`: " out/report-derived-changed.md
+
+      # The robots.txt texts are compared line by line, so a Rust text with
+      # one line changed must fail the comparison, named by its case and its
+      # field.
+      - name: Check that a changed robots.txt text fails
+        if: matrix.data == 'lite'
+        working-directory: parity
+        run: |
+          jq -c 'if .id == "robots-txt-tdl-uri" then .plainText |= sub("\nAllow: /\n"; "\nDisallow: /\n") else . end' \
+            out/robots-txt-rust.jsonl > out/robots-txt-rust-changed.jsonl
+          if cmp -s out/robots-txt-rust.jsonl out/robots-txt-rust-changed.jsonl; then
+            echo "::error::The robots.txt case robots-txt-tdl-uri has no Allow line to change"
+            exit 1
+          fi
+          if target/debug/parity-compare --corpus out/robots-txt-cases.json \
+            --dotnet out/robots-txt-dotnet.jsonl --rust out/robots-txt-rust-changed.jsonl \
+            --allowed allowed-differences.json --data lite \
+            --report out/report-robots-txt-changed.md > /dev/null; then
+            echo "::error::The comparison passed with a changed robots.txt text"
+            exit 1
+          fi
+          grep -q "\`robots-txt-tdl-uri\`.* at \`plainText\`: " out/report-robots-txt-changed.md
+
+      # Each metadata line on each side must list properties, components and
+      # values, and each side's metadata-device line must hold last values,
+      # so the two cannot agree by both listing none. Then a changed
+      # description, a changed first value, a changed last value and a
+      # changed reason for a property read with no value, each in a Rust
+      # line, must each fail the comparison.
+      - name: Check that a changed metadata answer fails
+        if: ${{ !cancelled() && env.RUN == 'true' }}
+        working-directory: parity
+        run: |
+          cases=$(jq length corpus/metadata.json)
+          for side in rust dotnet; do
+            # This step runs even where an earlier one failed, so say that
+            # there is nothing to read rather than report the shape of a file
+            # that was never written.
+            if [ ! -f "out/metadata-$side.jsonl" ]; then
+              echo "::error::No $side metadata file was written, so this check had nothing to read. An earlier step in this job failed before the answers were written."
+              exit 1
+            fi
+            if ! jq -e -s --argjson cases "$cases" 'length == $cases and all(.[];
+                (.engineMetadata.propertyNames | length) > 0 and
+                (.engineMetadata.componentNames | length) > 0 and
+                ([.engineMetadata.properties[].values | length] | add) > 0 and
+                (.id != "metadata-device" or
+                  ([.engineMetadata.properties[] | .lastValues // [] | length] | add) > 0))' \
+                "out/metadata-$side.jsonl" > /dev/null; then
+              echo "::error::The $side metadata lines do not each list properties, components and values"
+              exit 1
+            fi
+          done
+          jq -c 'if .id == "metadata-device" then
+              (.engineMetadata.properties.IsMobile.description |= . + " Changed.") |
+              (.engineMetadata.properties.BrowserVersion.lastValues[0].name |= . + " Changed.")
+            elif .id == "metadata-ip" then
+              .engineMetadata.properties.Asn.values[0].name |= . + " Changed."
+            elif .id == "metadata-device-ismobile" then
+              .properties.device.browsername.missing |= . + " Changed."
+            else . end' out/metadata-rust.jsonl > out/metadata-rust-changed.jsonl
+          if target/debug/parity-compare --corpus corpus/metadata.json \
+            --dotnet out/metadata-dotnet.jsonl --rust out/metadata-rust-changed.jsonl \
+            --allowed allowed-differences.json --data ${{ matrix.data }} \
+            --report out/report-metadata-changed.md > /dev/null; then
+            echo "::error::The comparison passed with a changed metadata answer"
+            exit 1
+          fi
+          grep -q '`metadata-device`.* at `engineMetadata\.properties\.IsMobile\.description`: ' \
+            out/report-metadata-changed.md
+          grep -q '`metadata-device`.* at `engineMetadata\.properties\.BrowserVersion\.lastValues\[0\]\.name`: ' \
+            out/report-metadata-changed.md
+          grep -q '`metadata-ip`.* at `engineMetadata\.properties\.Asn\.values\[0\]\.name`: ' \
+            out/report-metadata-changed.md
+          grep -q '`metadata-device-ismobile`.* at `properties\.device\.browsername`: ' \
+            out/report-metadata-changed.md
+
+      - name: Upload the answers and the report
+        if: always() && env.RUN == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: comparison-${{ matrix.data }}
+          path: |
+            parity/out/*.json
+            parity/out/*.jsonl
+            parity/out/*.md
+          if-no-files-found: ignore

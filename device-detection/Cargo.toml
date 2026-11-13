@@ -1,32 +1,34 @@
 [package]
 name = "fiftyone-device-detection"
 version = "4.5.2"
-description = "Device-detection facade re-exporting the engines plus a builder that selects the cloud or on-premise deployment."
+description = "Device Detection and User-Agent parser for Rust. Detects the device type and model, browser, operating system, and crawlers from the User-Agent and User-Agent Client Hints. Works on-premise with a data file or in the cloud, re-exporting both engines with a builder that selects the deployment. Built on the 51Degrees Pipeline API. An alternative to UAParser.js, DeviceAtlas, and WURFL."
+keywords = ["user-agent", "user-agent-parser", "device-detection", "client-hints", "uaparser"]
+categories = ["parser-implementations", "web-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage.workspace = true
+homepage = "https://51degrees.com/device-detection?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-device-detection-cargo.toml&utm_term=homepage"
 
 [dependencies]
 # Always present: the core pipeline plumbing and the shared device-data model
 # (result types and key) every deployment surfaces, plus the engine traits the
 # facade re-exports for consumers who want to introspect aspect metadata.
-fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
-fiftyone-pipeline-engines = { version = "4.5.2", path = "../pipeline-engines" }
-fiftyone-pipeline-engines-fiftyone = { version = "4.5.2", path = "../pipeline-engines-fiftyone" }
-fiftyone-device-detection-shared = { version = "4.5.2", path = "../device-detection-shared" }
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
+fiftyone-pipeline-engines = { version = "=4.5.2", path = "../pipeline-engines" }
+fiftyone-pipeline-engines-fiftyone = { version = "=4.5.2", path = "../pipeline-engines-fiftyone" }
+fiftyone-device-detection-shared = { version = "=4.5.2", path = "../device-detection-shared" }
 
 # The on-premise Hash engine. Pulled in only with the `on-premise` feature so a
 # cloud-only consumer never links the native Hash library.
-fiftyone-device-detection-onpremise = { version = "4.5.2", path = "../device-detection-onpremise", optional = true }
-fiftyone-native = { version = "4.5.2", path = "../native", default-features = false, features = ["dd"], optional = true }
+fiftyone-device-detection-onpremise = { version = "=4.5.2", path = "../device-detection-onpremise", optional = true }
+fiftyone-native = { version = "=4.5.2", path = "../native", default-features = false, features = ["dd"], optional = true }
 
 # The cloud engine and the request engine it reads from. Pulled in only with the
 # `cloud` feature.
-fiftyone-device-detection-cloud = { version = "4.5.2", path = "../device-detection-cloud", optional = true }
-fiftyone-cloud-request-engine = { version = "4.5.2", path = "../cloud-request-engine", optional = true, default-features = false }
+fiftyone-device-detection-cloud = { version = "=4.5.2", path = "../device-detection-cloud", optional = true }
+fiftyone-cloud-request-engine = { version = "=4.5.2", path = "../cloud-request-engine", optional = true, default-features = false }
 
 [features]
 # The full SDK is built and tested here. A cloud-only consumer can opt out of
@@ -34,10 +36,12 @@ fiftyone-cloud-request-engine = { version = "4.5.2", path = "../cloud-request-en
 default = ["cloud", "on-premise", "share-usage"]
 # Pull in the on-premise Hash engine and the native wrapper it needs.
 on-premise = ["dep:fiftyone-device-detection-onpremise", "dep:fiftyone-native"]
-# Turn usage sharing on by default in both pipeline builders, and compile the
-# built-in transport the usage-sharing element sends with. Without it the
-# builders leave usage sharing off unless share_usage(true) is called, and the
-# element sends nothing unless the transport is enabled another way.
+# Turn usage sharing on by default in both pipeline builders and in pipelines
+# made from a configuration, and compile the built-in transport the
+# usage-sharing element sends with. Without it the builders leave usage sharing
+# off unless share_usage(true) is called, a configuration leaves it off unless
+# it sets SetShareUsage to true, and the element sends nothing unless the
+# transport is enabled another way.
 share-usage = ["fiftyone-pipeline-engines-fiftyone/share-usage-transport"]
 # Pull in the cloud engine and the cloud request engine that feeds it.
 cloud = ["dep:fiftyone-device-detection-cloud", "dep:fiftyone-cloud-request-engine"]
@@ -48,12 +52,13 @@ cloud = ["dep:fiftyone-device-detection-cloud", "dep:fiftyone-cloud-request-engi
 reqwest-client = ["cloud", "fiftyone-device-detection-cloud/reqwest-client"]
 
 [dev-dependencies]
-# The IP-intelligence facade is brought in only for the cross-facade coexistence
-# test, which links a Device Detection on-premise engine and an IP Intelligence
-# on-premise engine into one binary and runs a real detection and a real lookup.
-# This proves the namespaced common C library symbols let both native engines
-# coexist at the facade level, not only at the fiftyone-native level. It is a
-# dev-dependency so it never touches the published dependency graph.
+# The IP-intelligence facade is brought in only for the cross-facade tests. The
+# missing data file test builds both facades. The coexistence test links a
+# Device Detection on-premise engine and an IP Intelligence on-premise engine
+# into one binary and runs a real detection and a real lookup. This proves the
+# namespaced common C library symbols let both native engines coexist at the
+# facade level, not only at the fiftyone-native level. It is a dev-dependency
+# so it never touches the published dependency graph.
 fiftyone-ip-intelligence = { version = "4.5.2", path = "../ip-intelligence" }
 fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
 # Depend on this crate itself with reqwest-client enabled, so its own tests get
@@ -61,8 +66,11 @@ fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
 # default (for wasm and lean cloud builds); the examples workspace used to unify
 # it on for the whole build, but now that the examples are a separate workspace
 # the tests opt in here. Dev-dependencies never reach the published graph, so
-# this does not change what a consumer resolves.
-fiftyone-device-detection = { path = ".", features = ["reqwest-client"] }
+# this does not change what a consumer resolves. It leaves the default features
+# to the command line, so a test run with --no-default-features has them off.
+fiftyone-device-detection = { path = ".", default-features = false, features = ["reqwest-client"] }
+# A capturing logger for the test of what a missing data file logs.
+log = "0.4"
 
 [package.metadata.docs.rs]
 # Build the documentation on docs.rs with every feature enabled, so the

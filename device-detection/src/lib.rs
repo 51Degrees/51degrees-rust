@@ -42,8 +42,8 @@
 //!   [`CloudRequestEngine`], re-exported here as [`DeviceDetectionCloudEngine`]
 //!   and [`DeviceDetectionCloudEngineBuilder`] (behind the `cloud` feature).
 //! - The shared model: [`DeviceData`], [`DeviceDataBase`], [`DEVICE_DATA_KEY`]
-//!   and [`AspectPropertyValue`], plus the UA-CH high-entropy decoder
-//!   [`UachJsConversionElement`].
+//!   and [`AspectPropertyValue`], and the deprecated UA-CH high-entropy
+//!   decoder [`UachJsConversionElement`], which no engine needs.
 //! - The core types a caller needs to drive a pipeline: [`Pipeline`],
 //!   [`FlowData`], [`Evidence`] and friends.
 //!
@@ -51,8 +51,9 @@
 //!
 //! - `cloud` (default): the cloud engine and its request engine.
 //! - `on-premise` (default): the native Hash engine.
-//! - `share-usage` (default): usage sharing on in both builders, and the
-//!   built-in transport it sends with.
+//! - `share-usage` (default): usage sharing on in both builders and in
+//!   pipelines made from a configuration, and the built-in transport it
+//!   sends with.
 //!
 //! The default `["cloud", "on-premise", "share-usage"]` builds the full SDK. A
 //! cloud-only consumer that does not want to link the native library sets
@@ -96,6 +97,14 @@
 //! only the watcher off, and `pipeline.resource::<DataUpdateService>()`
 //! reaches the service for a check on demand.
 //!
+//! ## From a configuration file
+//!
+//! [`configuration::registry`] makes a pipeline from a configuration file
+//! written for .NET's `FiftyOne.DeviceDetection` package, finding each
+//! builder and setting by .NET's names, and adding the Sequence element and
+//! usage sharing as .NET's `FiftyOnePipelineBuilder` does. See the
+//! [`configuration`] module.
+//!
 //! ## Examples
 //!
 //! See [`DeviceDetectionPipelineBuilder::on_premise`] for an on-premise example
@@ -108,8 +117,16 @@
 // Re-exports: the shared result model, present in every configuration.
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
+#[allow(deprecated)]
+pub use fiftyone_device_detection_shared::UachJsConversionElement;
 pub use fiftyone_device_detection_shared::{
-    DeviceData, DeviceDataBase, UachJsConversionElement, DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY,
+    DeviceData, DeviceDataBase, MultiDeviceData, DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY,
+    HARDWARE_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY,
 };
 
 // The typed result wrapper a `DeviceData` accessor returns. Re-exported so a
@@ -155,14 +172,21 @@ pub use fiftyone_native::PerformanceProfile;
 #[cfg(feature = "cloud")]
 pub use fiftyone_device_detection_cloud::{
     DeviceDetectionCloudEngine, DeviceDetectionCloudEngineBuilder, HardwareProfileCloudEngine,
-    HardwareProfileCloudEngineBuilder, MultiDeviceData, HARDWARE_DATA_KEY,
-    HARDWARE_ELEMENT_DATA_KEY,
+    HardwareProfileCloudEngineBuilder,
 };
 
 #[cfg(feature = "cloud")]
 pub use fiftyone_cloud_request_engine::{
     CloudEngineState, CloudRequestEngine, CloudRequestEngineBuilder,
 };
+
+pub mod configuration;
+
+/// The examples in the README are compiled as documentation tests, so the
+/// documented way to use this crate cannot quietly stop working.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeExamples;
 
 // ---------------------------------------------------------------------------
 // The convenience top-level pipeline builder.
@@ -187,9 +211,8 @@ impl DeviceDetectionPipelineBuilder {
     /// Start building an on-premise pipeline that loads the Hash data file at
     /// `data_file_path`.
     ///
-    /// The returned [`DeviceDetectionOnPremisePipelineBuilder`] places an
-    /// optional UA-CH high-entropy decoder before the Hash engine (on by
-    /// default), with share usage on.
+    /// The returned [`DeviceDetectionOnPremisePipelineBuilder`] has share
+    /// usage on.
     ///
     /// # Example
     ///
@@ -264,8 +287,8 @@ impl DeviceDetectionPipelineBuilder {
 /// Builds an `Arc<`[`Pipeline`]`>` around the on-premise Hash engine.
 ///
 /// Defaults: the [`PerformanceProfile::Default`] profile, every property the
-/// data file supports, the UA-CH high-entropy decoder enabled, share usage
-/// enabled with the `share-usage` feature, and automatic data updates on.
+/// data file supports, no UA-CH high-entropy decoder, share usage enabled
+/// with the `share-usage` feature, and automatic data updates on.
 /// Override any of these before [`Self::build`].
 #[cfg(feature = "on-premise")]
 pub struct DeviceDetectionOnPremisePipelineBuilder {
@@ -274,6 +297,10 @@ pub struct DeviceDetectionOnPremisePipelineBuilder {
     properties: Vec<String>,
     data_source_tier: Option<String>,
     concurrency: Option<u16>,
+    difference: Option<i32>,
+    allow_unmatched: Option<bool>,
+    use_performance_graph: Option<bool>,
+    use_predictive_graph: Option<bool>,
     use_uach: bool,
     share_usage: bool,
     auto_update: bool,
@@ -296,7 +323,11 @@ impl DeviceDetectionOnPremisePipelineBuilder {
             properties: Vec::new(),
             data_source_tier: None,
             concurrency: None,
-            use_uach: true,
+            difference: None,
+            allow_unmatched: None,
+            use_performance_graph: None,
+            use_predictive_graph: None,
+            use_uach: false,
             share_usage: cfg!(feature = "share-usage"),
             auto_update: true,
             file_system_watcher: true,
@@ -387,15 +418,45 @@ impl DeviceDetectionOnPremisePipelineBuilder {
     }
 
     /// Set the expected concurrency: the number of threads that will process
-    /// through the built pipeline at once.
-    ///
-    /// This sizes the file-handle pool the file-backed collections use under the
-    /// [`PerformanceProfile::LowMemory`] and [`PerformanceProfile::Balanced`]
-    /// profiles, which otherwise defaults to the number of cores. Set it when
-    /// more threads than that will share the pipeline. It has no effect on the
-    /// in-memory profiles.
+    /// through the built pipeline at once, as
+    /// [`DeviceDetectionOnPremiseEngineBuilder::concurrency`] describes. Unset,
+    /// it is the number of processors, held at the most the profile's caches
+    /// take. Every profile but `InMemory` keeps that many handles to the data
+    /// file open, `HighPerformance` included, although detection there never
+    /// reads through them.
     pub fn concurrency(mut self, concurrency: u16) -> Self {
         self.concurrency = Some(concurrency);
+        self
+    }
+
+    /// Set the most difference in hash value a match may have, as
+    /// [`DeviceDetectionOnPremiseEngineBuilder::difference`] describes.
+    pub fn difference(mut self, difference: i32) -> Self {
+        self.difference = Some(difference);
+        self
+    }
+
+    /// Set whether a User-Agent that matches nothing gives each component's
+    /// default profile, as
+    /// [`DeviceDetectionOnPremiseEngineBuilder::allow_unmatched`] describes.
+    pub fn allow_unmatched(mut self, allow: bool) -> Self {
+        self.allow_unmatched = Some(allow);
+        self
+    }
+
+    /// Set whether detection tries the performance graph, as
+    /// [`DeviceDetectionOnPremiseEngineBuilder::use_performance_graph`]
+    /// describes.
+    pub fn use_performance_graph(mut self, use_graph: bool) -> Self {
+        self.use_performance_graph = Some(use_graph);
+        self
+    }
+
+    /// Set whether detection tries the predictive graph, as
+    /// [`DeviceDetectionOnPremiseEngineBuilder::use_predictive_graph`]
+    /// describes.
+    pub fn use_predictive_graph(mut self, use_graph: bool) -> Self {
+        self.use_predictive_graph = Some(use_graph);
         self
     }
 
@@ -438,10 +499,15 @@ impl DeviceDetectionOnPremisePipelineBuilder {
         self
     }
 
-    /// Place a UA-CH high-entropy decoder before the Hash engine. On by default
-    /// so a high-entropy client-hint blob is turned into the `sec-ch-ua*`
-    /// headers the engine understands. Turn it off if the application never
-    /// supplies that blob.
+    /// Place the deprecated UA-CH high-entropy decoder before the Hash engine
+    /// when `enabled` is true, for a caller that reads its `uach` data, which
+    /// the JSON builder then writes too. Off by default. The Hash engine does
+    /// not read that data, because the C library turns
+    /// `51D_GetHighEntropyValues` evidence into the `sec-ch-ua*` headers
+    /// itself, so the device answers are the same either way.
+    #[deprecated(
+        note = "the Hash engine reads high entropy values itself, so the decoder is only for a caller that reads its data"
+    )]
     pub fn use_uach(mut self, enabled: bool) -> Self {
         self.use_uach = enabled;
         self
@@ -465,11 +531,12 @@ impl DeviceDetectionOnPremisePipelineBuilder {
     /// Assemble the pipeline.
     ///
     /// The element order is: the sequence element when usage sharing is on, the
-    /// optional UA-CH decoder, the Hash engine, then usage sharing when it is
-    /// on. Returns the same kind of `Arc<`[`Pipeline`]`>` that
-    /// [`Pipeline::builder`] does, so a caller drives it identically whichever
-    /// deployment built it. Refuses when automatic updates or update on
-    /// startup are on and no licence key is set.
+    /// UA-CH decoder when [`Self::use_uach`] asked for it, the Hash engine,
+    /// then usage sharing when it is on. Returns the same kind of
+    /// `Arc<`[`Pipeline`]`>` that [`Pipeline::builder`] does, so a caller
+    /// drives it identically whichever deployment built it. Refuses when
+    /// automatic updates or update on startup are on and no licence key is
+    /// set.
     pub fn build(self) -> Result<std::sync::Arc<Pipeline>> {
         use std::sync::Arc;
 
@@ -491,6 +558,18 @@ impl DeviceDetectionOnPremisePipelineBuilder {
         }
         if let Some(concurrency) = self.concurrency {
             engine_builder = engine_builder.concurrency(concurrency);
+        }
+        if let Some(difference) = self.difference {
+            engine_builder = engine_builder.difference(difference);
+        }
+        if let Some(allow) = self.allow_unmatched {
+            engine_builder = engine_builder.allow_unmatched(allow);
+        }
+        if let Some(use_graph) = self.use_performance_graph {
+            engine_builder = engine_builder.use_performance_graph(use_graph);
+        }
+        if let Some(use_graph) = self.use_predictive_graph {
+            engine_builder = engine_builder.use_predictive_graph(use_graph);
         }
         if let Some(service) = &service {
             let mut config = DataFileConfiguration::builder(self.data_file_path)
@@ -519,8 +598,9 @@ impl DeviceDetectionOnPremisePipelineBuilder {
             pipeline_builder = pipeline_builder.add_element(Arc::new(SequenceElement::new()));
         }
         if self.use_uach {
-            pipeline_builder =
-                pipeline_builder.add_element(Arc::new(UachJsConversionElement::new()));
+            #[allow(deprecated)]
+            let decoder = Arc::new(UachJsConversionElement::new());
+            pipeline_builder = pipeline_builder.add_element(decoder);
         }
         pipeline_builder = pipeline_builder.add_element(engine);
         if self.share_usage {
@@ -743,7 +823,7 @@ mod tests {
         let Some(data_file) = resolve_dd_data_file() else {
             eprintln!(
                 "skipping on_premise_pipeline_owns_a_data_update_service_by_default: no Lite \
-                 Hash data file found (set 51DEGREES_DD_PATH to enable this test)"
+                 Hash data file found (set _51DEGREES_DD_PATH to enable this test)"
             );
             return;
         };
@@ -790,7 +870,7 @@ mod tests {
         let Some(data_file) = resolve_dd_data_file() else {
             eprintln!(
                 "skipping on_premise_detects_mobile_user_agent: no Lite Hash data file found \
-                 (set 51DEGREES_DD_PATH to enable this test)"
+                 (set _51DEGREES_DD_PATH to enable this test)"
             );
             return;
         };
@@ -835,7 +915,7 @@ mod tests {
         use std::path::PathBuf;
 
         // 1. Explicit override.
-        if let Ok(path) = std::env::var("51DEGREES_DD_PATH") {
+        if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
             let path = PathBuf::from(path);
             if path.is_file() {
                 return Some(path);
@@ -845,12 +925,13 @@ mod tests {
         // 2. Walk up from the crate directory looking for the data file in a
         //    cxx submodule. The crate lives at
         //    <workspace>/device-detection, and the data file at
-        //    <workspace-parent>/cxx/device-detection-data/...
+        //    <workspace>/cxx/data/device-detection/...
         let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         loop {
             let candidate = dir
                 .join("cxx")
-                .join("device-detection-data")
+                .join("data")
+                .join("device-detection")
                 .join("51Degrees-LiteV4.1.hash");
             if candidate.is_file() {
                 return Some(candidate);

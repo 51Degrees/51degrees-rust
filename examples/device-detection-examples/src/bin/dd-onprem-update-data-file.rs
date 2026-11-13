@@ -35,6 +35,18 @@ use anyhow::{Context, Result};
 use fiftyone_device_detection::{DeviceDetectionOnPremiseEngineBuilder, PerformanceProfile};
 use fiftyone_pipeline_engines::{DataFileConfiguration, DataUpdateService, OnPremiseAspectEngine};
 
+use device_detection_examples::ENTERPRISE_PROPERTIES;
+
+/// Where to ask about a license key and a copy of the Enterprise data file.
+const CONTACT_US_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-update-data-file.rs&utm_term=enterprise-data-file";
+
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-update-data-file.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-update-data-file.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-update-data-file.rs&utm_term=find-out-more"),
+];
+
 /// A 51Degrees distributor URL template for downloading an Enterprise Hash data
 /// file. The license key is appended by a real deployment. It is shown here only
 /// to document the remote-polling configuration; this example does not download.
@@ -57,7 +69,9 @@ pub struct ExampleOptions {
 /// update-on-startup, the file-system watcher, remote-update polling, and a
 /// programmatic (on-demand) update. It runs the programmatic path for real
 /// against the supplied file (a safe no-network reload from disk) and documents
-/// the configuration for the other three.
+/// the configuration for the other three. It ends by saying which Enterprise
+/// properties the data file does not carry, with where to ask about a copy,
+/// and the "Find out more" links.
 pub fn run(options: ExampleOptions) -> Result<()> {
     describe_update_mechanisms(options.license_key.as_deref());
 
@@ -112,9 +126,10 @@ pub fn run(options: ExampleOptions) -> Result<()> {
     //
     // Trigger an immediate update check. With no remote URL configured (the case
     // here, since the Lite file has none), the service refreshes the engine from
-    // the file currently on disk, which is a safe no-network operation that
-    // demonstrates the reload path. A `Success` status means the engine swapped
-    // in a freshly read data set.
+    // the file on disk only when that file is newer than the one the engine was
+    // built from, which is a safe no-network check. With the file unchanged the
+    // status is `NotNeeded`, and a `Success` status means the engine reloaded
+    // its data set from the file.
     println!();
     println!("Triggering a programmatic update check ...");
     let as_engine: Arc<dyn OnPremiseAspectEngine> = engine.clone();
@@ -131,8 +146,8 @@ pub fn run(options: ExampleOptions) -> Result<()> {
     //
     // An application can also reload the engine directly, bypassing the service,
     // for example after it has placed a new file on disk itself. This reloads the
-    // same Lite file, proving the hot-swap works while in-flight detections keep
-    // using the data set they snapshotted.
+    // same Lite file, proving the reload works while in-flight detections keep
+    // reading the data set they started with.
     println!();
     println!("Performing a direct engine refresh from the file on disk ...");
     engine
@@ -148,6 +163,27 @@ pub fn run(options: ExampleOptions) -> Result<()> {
     // without building a second engine.
     println!();
     device_detection_examples::print_data_file_warnings_for(engine.as_ref());
+
+    // The engine's properties are those its data file carries, so they say
+    // which Enterprise properties an update to the Enterprise data file adds.
+    let available = engine.available_properties();
+    println!();
+    println!("--- Enterprise properties ---");
+    for name in ENTERPRISE_PROPERTIES {
+        let state = if examples_shared::is_available(name, &available) {
+            "in this data file"
+        } else {
+            examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+        };
+        println!("\t{name:<22}: {state}");
+    }
+    let missing = examples_shared::missing_properties(ENTERPRISE_PROPERTIES, &available);
+    if let Some(message) = examples_shared::enterprise_data_file_message(&missing, CONTACT_US_URL) {
+        println!();
+        println!("{message}");
+    }
+
+    examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::ON_PREMISE_REPOSITORIES);
 
     // Dropping `service` here stops the background scheduler and releases the
     // file-system watcher cleanly.
@@ -190,42 +226,38 @@ fn describe_update_mechanisms(license_key: Option<&str>) {
             "A license key was supplied, so remote polling is enabled and the URL \
              would be built from the template: {DISTRIBUTOR_URL_TEMPLATE}&LicenseKeys=<key>."
         ),
-        None => println!(
-            "No license key was supplied, so this run only illustrates the wiring \
-             and exercises the no-network programmatic refresh. Set a key (argument \
-             or 51DEGREES_LICENSE_KEY) and point at an Enterprise file to perform a \
-             real download. The distributor URL template is: {DISTRIBUTOR_URL_TEMPLATE}."
-        ),
-    }
-}
-
-/// Read the license key from the environment, if present and non-blank.
-fn license_key_from_env() -> Option<String> {
-    match std::env::var("51DEGREES_LICENSE_KEY") {
-        Ok(value) if !value.trim().is_empty() => Some(value.trim().to_owned()),
-        _ => None,
+        None => {
+            println!(
+                "No license key was supplied, so this run only illustrates the wiring \
+                 and exercises the no-network programmatic refresh. Set a key (argument \
+                 or _51DEGREES_LICENSE_KEY) and point at an Enterprise file to perform a \
+                 real download. The distributor URL template is: {DISTRIBUTOR_URL_TEMPLATE}."
+            );
+            println!(
+                "Automatic updates need a license key for the Enterprise data file. \
+                 Contact us about getting one at {CONTACT_US_URL}"
+            );
+        }
     }
 }
 
 /// Resolve the data file then run the example. The data file uses the usual
-/// fallbacks (argument, env var, shipped Lite file); the license key comes from
-/// the second argument or `51DEGREES_LICENSE_KEY`. With no data file present the
-/// example prints a clear message and exits successfully.
+/// fallbacks (argument, env var, Lite file); the license key comes from
+/// the second argument or `_51DEGREES_LICENSE_KEY`. With no data file present the
+/// example fails, after the resolver has printed the command that gets the file.
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let data_file = args
         .next()
         .map(PathBuf::from)
         .or_else(examples_shared::dd_data_path);
-    let license_key = args.next().or_else(license_key_from_env);
+    let license_key = args.next().or_else(examples_shared::license_key_from_env);
 
     let Some(data_file) = data_file else {
-        eprintln!(
-            "No device-detection data file found. Set 51DEGREES_DD_PATH (or pass \
-             the path as the first argument), or run `git submodule update \
-             --recursive` so the Lite Hash file in the cxx submodule is present."
+        anyhow::bail!(
+            "No device-detection data file found. Set _51DEGREES_DD_PATH, or pass \
+             the path as the first argument."
         );
-        return Ok(());
     };
 
     run(ExampleOptions {
@@ -244,15 +276,27 @@ mod tests {
     #[test]
     fn runs_against_the_lite_data_file() {
         let Some(data_file) = examples_shared::dd_data_path() else {
-            eprintln!("skipping: no on-premise data file found (set 51DEGREES_DD_PATH)");
+            eprintln!("skipping: no on-premise data file found (set _51DEGREES_DD_PATH)");
             return;
         };
         run(ExampleOptions {
-            data_file,
+            data_file: data_file.clone(),
             // No license key, so the test never attempts a real download.
             license_key: None,
         })
         .expect("the on-premise update-data-file example should complete");
+
+        // The Lite file carries none of the Enterprise properties, so the run
+        // names them all with the contact link. _51DEGREES_DD_PATH can name
+        // another file.
+        if data_file.ends_with(examples_shared::DD_LITE_RELATIVE_PATH) {
+            let available = device_detection_examples::data_file_properties(&data_file)
+                .expect("the data file opens");
+            assert_eq!(
+                examples_shared::missing_properties(ENTERPRISE_PROPERTIES, &available),
+                ENTERPRISE_PROPERTIES
+            );
+        }
     }
 }
 
@@ -288,18 +332,26 @@ mod tests {
  * and polling configured (but update-on-startup off, so building does not block),
  * then exercises the two no-network paths for real against the supplied file: a
  * programmatic `check_for_update` (which, with no remote URL on the Lite file,
- * refreshes from the file on disk) and a direct `engine.refresh(None)`. Both
- * hot-swap a freshly read data set while in-flight detections keep using the data
- * set they snapshotted.
+ * refreshes from the file on disk when it is newer than the one the engine was
+ * built from) and a direct `engine.refresh(None)`, which always reloads. A reload
+ * replaces the data set in place while in-flight detections keep reading the
+ * data set they started with.
  *
- * The shipped Lite data file cannot actually be auto-updated: automatic updates
+ * The free Lite data file cannot actually be auto-updated: automatic updates
  * require an Enterprise license and a downloadable file. So with no license key
  * the example documents the wiring and runs only the safe no-network paths. Supply
- * a key (second argument or the `51DEGREES_LICENSE_KEY` environment variable) and
- * point at an Enterprise file to perform a real download. An Enterprise license is
+ * a key (second argument or the `_51DEGREES_LICENSE_KEY` environment variable) and
+ * point at an Enterprise file to perform a real download. With no key the
+ * example says that automatic updates need a license key for the Enterprise
+ * data file, with a link to contact 51Degrees. It then lists the properties
+ * only the Enterprise data file carries (HardwareVendor, HardwareModel,
+ * DeviceType, PriceBand and ScreenInchesDiagonal), saying for each whether the
+ * engine's data file carries it, names those it lacks with the same link, and
+ * ends with a "Find out more" section. An Enterprise license is
  * available from https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-update-data-file.rs&utm_term=dd-onprem-update-data-file.
  *
  * The data file is read from the first command-line argument, the
- * `51DEGREES_DD_PATH` environment variable, or the Lite Hash file shipped in the
- * cxx submodule.
+ * `_51DEGREES_DD_PATH` environment variable, or the Lite Hash file in the data
+ * repository inside the cxx submodule, which the example downloads when it is
+ * missing.
  */

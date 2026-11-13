@@ -24,30 +24,37 @@
 //!
 //! Several stores in this crate ([`crate::Evidence`], [`crate::FlowData`] and
 //! [`crate::MapElementData`]) keep their keys lowercased on insertion and then
-//! match lookups case-insensitively. [`ci_get`] is the single implementation of
-//! that "try the key as supplied, then its lowercased form" rule, so every site
-//! behaves identically.
+//! match lookups case-insensitively. [`ci_lookup`] is the single
+//! implementation of that "try the key as supplied, then its lowercased form"
+//! rule, so every site behaves identically, and [`ci_get`] applies it to a
+//! `HashMap`.
 
 use std::collections::HashMap;
 
 use ahash::RandomState;
 
-/// Look up `key` in a map whose keys are stored lowercased, matching
-/// case-insensitively.
+/// Look up `key` through `get`, which finds an exact key in a store whose
+/// keys are stored lowercased, matching case-insensitively.
 ///
 /// The fast path tries the key exactly as supplied (most keys are already
 /// lowercase, so this hits without allocating). Only on a miss for a key that
 /// has uppercase letters does it allocate a lowercased copy and retry, because
 /// a lowercase key that missed would miss again.
-pub(crate) fn ci_get<'a, V>(map: &'a HashMap<String, V, RandomState>, key: &str) -> Option<&'a V> {
-    map.get(key).or_else(|| {
+pub(crate) fn ci_lookup<'a, V>(key: &str, get: impl Fn(&str) -> Option<&'a V>) -> Option<&'a V> {
+    get(key).or_else(|| {
         let has_uppercase = !key.is_ascii() || key.bytes().any(|byte| byte.is_ascii_uppercase());
         if has_uppercase {
-            map.get(&key.to_lowercase())
+            get(key.to_lowercase().as_str())
         } else {
             None
         }
     })
+}
+
+/// Look up `key` in a map whose keys are stored lowercased, matching
+/// case-insensitively by [`ci_lookup`]'s rule.
+pub(crate) fn ci_get<'a, V>(map: &'a HashMap<String, V, RandomState>, key: &str) -> Option<&'a V> {
+    ci_lookup(key, |exact| map.get(exact))
 }
 
 #[cfg(test)]

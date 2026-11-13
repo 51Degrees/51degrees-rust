@@ -58,10 +58,12 @@
 //! - [`LazyLoadingConfiguration`] and [`AspectEngineBuilderOptions`]. Optional
 //!   lazy loading and a builder base that captures the options every engine
 //!   builder shares.
+//! - [`configuration`]. The data file settings an on-premise engine's builder
+//!   takes from a configuration file, by .NET's names.
 //!
 //! ## How the cache wires in
 //!
-//! Element data is `Send` but not `Sync`, so the cache cannot hold
+//! Element data is not `Clone`, so the cache cannot hold
 //! `dyn AspectData`. Each engine instead picks a concrete, `Send + Sync + Clone`
 //! aspect data type and caches that, exactly as the
 //! [`fiftyone_caching`] crate requires. [`AspectEngineBase`] is generic over
@@ -74,6 +76,7 @@ mod aspect_data;
 mod aspect_engine;
 mod aspect_property_metadata;
 mod aspect_property_value;
+pub mod configuration;
 mod data_file;
 #[cfg(feature = "data-update")]
 mod data_update_service;
@@ -85,8 +88,8 @@ mod on_premise_aspect_engine;
 
 pub use aspect_data::{AspectData, AspectDataBase};
 pub use aspect_engine::{
-    engine_missing_property_reason, property_pair, AspectEngine, AspectEngineBase,
-    EnginePropertyPair,
+    default_missing_property_reason, engine_missing_property_reason, property_pair, AspectEngine,
+    AspectEngineBase, EnginePropertyPair,
 };
 pub use aspect_property_metadata::AspectPropertyMetaData;
 pub use aspect_property_value::{AspectPropertyValue, DEFAULT_NO_VALUE_MESSAGE};
@@ -96,13 +99,14 @@ pub use data_file::{
     DEFAULT_MAX_RANDOMISATION_SECONDS, DEFAULT_POLLING_INTERVAL_SECONDS, DISTRIBUTOR_URL,
 };
 #[cfg(feature = "data-update")]
-pub use data_update_service::DataUpdateService;
+pub use data_update_service::{DataUpdateComplete, DataUpdateService, DataUpdateStarted};
 pub use data_update_status::{AutoUpdateStatus, DataUpdateError, DataUpdateResult};
 pub use engine_builder::{AspectEngineBuilderOptions, DEFAULT_CACHE_SIZE};
 pub use lazy_loading::{LazyLoadingConfiguration, LAZY_LOADING_DEFAULT_TIMEOUT_MS};
 pub use missing_property::{
-    missing_property_reason, EngineDeployment, EngineMissingPropertyContext, MissingPropertyResult,
-    MissingPropertyService,
+    missing_property_reason, missing_property_reason_for_engines, EngineDeployment,
+    EngineMissingPropertyContext, MissingPropertyResult, MissingPropertyService,
+    MissingPropertySource,
 };
 pub use on_premise_aspect_engine::OnPremiseAspectEngine;
 

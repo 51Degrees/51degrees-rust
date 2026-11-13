@@ -161,15 +161,16 @@ function Show-Includes([string]$Url, [string]$Directory) {
 # Build first, so the wait below only covers the example starting. The release
 # profile compiles the native Hash code with optimisation, which keeps the
 # TAC file load and each detection fast enough for the suite's timeouts.
-# --config source.toml builds against the crates in this checkout rather than
-# the published ones.
+# The examples depend on the published crates, and Cargo only takes a patch in
+# source.toml whose version is the one it would pick.
+# ci/test-examples-against-source.ps1 versions this checkout's crates above
+# every release, fails if the lock still takes one from crates.io, and puts
+# the manifests and the lock back after the build.
 Write-Host "::group::Build $Bin"
-Push-Location $Examples
-try {
+$build = {
     cargo build --release --config source.toml -p device-detection-examples --bin $Bin
-} finally {
-    Pop-Location
-}
+}.GetNewClosure()
+& (Join-Path $PSScriptRoot "test-examples-against-source.ps1") -Command $build
 Write-Host "::endgroup::"
 
 $Exe = Join-Path $Examples "target/release/$Bin"
@@ -178,14 +179,13 @@ if ($IsWindows) { $Exe += ".exe" }
 $example = $null
 $passed = $false
 try {
-    # The example reads these at start-up. The names start with a digit, so
-    # they need the brace form.
+    # The example reads these at start-up.
     $env:PORT = "$Port"
     if ($Mode -eq "cloud") {
-        ${env:51DEGREES_RESOURCE_KEY} = $ResourceKey
-        ${env:51DEGREES_CLOUD_ENDPOINT} = "https://cloud.51degrees.com/api/v4/"
+        ${env:_51DEGREES_RESOURCE_KEY} = $ResourceKey
+        ${env:_51DEGREES_CLOUD_ENDPOINT} = "https://cloud.51degrees.com/api/v4/"
     } else {
-        ${env:51DEGREES_DD_PATH} = $DataFile
+        ${env:_51DEGREES_DD_PATH} = $DataFile
     }
 
     Write-Host "Starting $Bin on port $Port"
@@ -303,6 +303,6 @@ try {
             }
         }
     }
-    Remove-Item Env:PORT, Env:51DEGREES_RESOURCE_KEY, Env:51DEGREES_CLOUD_ENDPOINT, `
-        Env:51DEGREES_DD_PATH -ErrorAction SilentlyContinue
+    Remove-Item Env:PORT, Env:_51DEGREES_RESOURCE_KEY, Env:_51DEGREES_CLOUD_ENDPOINT, `
+        Env:_51DEGREES_DD_PATH -ErrorAction SilentlyContinue
 }

@@ -6,15 +6,15 @@ name: Pull Request
 #
 # The workspace links the 51Degrees C sources through three -sys crates
 # (common-sys, device-detection-sys, ip-intelligence-sys), whose build scripts
-# compile them from the cxx submodule. The data submodules inside cxx supply
-# the on-premise data files and the evidence the examples read, at the commits
-# the C sources were tested with.
+# compile them from the cxx submodule. The data repository inside cxx, at
+# cxx/data, links the free on-premise data files, which the build job
+# restores from the entry the Data Files workflow keeps in the Actions cache.
 
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, 'release/**']
+    branches: [main, rc, 'release/**']
   workflow_dispatch:
 
 # A newer push to the same ref cancels an in-flight run so the queue stays short.
@@ -47,41 +47,69 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-22.04, ubuntu-24.04, macos-latest]
 
+    env:
+      # The data files the tests read, one per line. The download and the
+      # check below both take this list, so they cannot drift apart.
+      DATA_FILES: |
+        cxx/data/device-detection/51Degrees-LiteV4.1.hash
+        cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi
+
     steps:
       # 1. The Rust workspace with its submodules, recursively, so the cxx
-      #    submodule brings its data submodules with it.
+      #    submodule brings the data repository with it at cxx/data.
       - name: Checkout workspace
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # 2. The data files are stored in Git LFS inside the data submodules.
-      #    actions/checkout brings the submodule pointers down but not their LFS
-      #    content, so fetch it explicitly. Without the real files the native
-      #    loader reads a pointer and reports CorruptData.
-      - name: Fetch LFS data for the cxx submodule
-        shell: bash
-        run: git -C cxx submodule foreach --recursive 'git lfs install --local && git lfs pull'
+      # 2. The data repository holds a link for each data file rather than the
+      #    file, and its own script downloads them. The Distributor refuses an
+      #    address that downloads a file too often, so the files come from the
+      #    entry the Data Files workflow saves in the Actions cache each day.
+      #    The script keeps a restored file and downloads only one that was
+      #    not restored. A failed download leaves the check in step 3 to
+      #    decide. Until a daily entry exists, the files a job downloads are
+      #    saved for later runs here that day, in the step after the check.
+      - name: Restore the data files
+        id: data
+        uses: ./.github/actions/restore-data-files
 
-      # 3. Point the on-premise tests at the data files the cxx submodule
-      #    carries, which they otherwise look for in the workspace and skip
-      #    when they do not find them. Setting these in GITHUB_ENV makes them
-      #    available to every later step in this job. A data file that is
-      #    missing, or is still a Git LFS pointer, fails the job here, because
+      - name: Download any data file not restored
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $names = $env:DATA_FILES.Trim() -split '\r?\n' |
+            ForEach-Object { Split-Path -Leaf $_.Trim() }
+          ./cxx/data/get-data-files.ps1 @names
+
+      # 3. Point the on-premise tests at the data files, which they otherwise
+      #    look for in the workspace and skip when they do not find them.
+      #    Setting these in GITHUB_ENV makes them available to every later step
+      #    in this job. A data file that is missing fails the job here, because
       #    the tests would skip without it.
       - name: Configure data files
         shell: bash
         run: |
-          echo "51DEGREES_DD_PATH=${GITHUB_WORKSPACE}/cxx/device-detection-data/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
-          echo "51DEGREES_IPI_PATH=${GITHUB_WORKSPACE}/cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
-          for file in \
-            "${GITHUB_WORKSPACE}/cxx/device-detection-data/51Degrees-LiteV4.1.hash" \
-            "${GITHUB_WORKSPACE}/cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi"; do
-            if [ ! -f "$file" ] || head -c 64 "$file" | grep -q 'git-lfs'; then
-              echo "::error::$file is missing or is a Git LFS pointer, so the on-premise tests would skip"
+          echo "_51DEGREES_DD_PATH=${GITHUB_WORKSPACE}/cxx/data/device-detection/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
+          echo "_51DEGREES_IPI_PATH=${GITHUB_WORKSPACE}/cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
+          while IFS= read -r file; do
+            if [ -n "$file" ] && [ ! -f "$file" ]; then
+              echo "::error::$file is missing, so the on-premise tests would skip"
               exit 1
             fi
-          done
+          done <<< "$DATA_FILES"
+
+      # Only when nothing was restored, and only once every file is there. The
+      # paths are the action's, because an entry is found only by the list it
+      # was saved with. Jobs that start together each download on a miss, and
+      # the first to save keeps the entry.
+      - name: Save the data files for later runs today
+        if: steps.data.outputs.save-key != ''
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.data.outputs.paths }}
+          key: ${{ steps.data.outputs.save-key }}
+          enableCrossOsArchive: true
 
       # 4. The native build toolchain. ubuntu-latest and windows-latest both ship
       #    a C/C++ compiler and CMake preinstalled, but install CMake explicitly so
@@ -161,47 +189,34 @@ jobs:
 
       # 8. Live cloud tests. These are #[ignore]d so the steps above stay green
       #    offline; here they run with a real resource key when one is available.
-      #    The key is sourced from the organization secrets through the common-ci
-      #    central script when present, with a direct fallback to the well-known
-      #    secret names so the tests still run if the script is unavailable. The
-      #    examples-shared resolver reads 51DEGREES_RESOURCE_KEY first, then the
-      #    bespoke tiered key then the basic tiered key.
-      - name: Checkout common-ci
-        uses: actions/checkout@v4
-        with:
-          repository: 51Degrees/common-ci
-          path: common-ci
-
+      #    Each key is passed by name, so the step gets only the secrets it
+      #    reads, and a new key needs a line here as well as the organization
+      #    secret. The examples-shared resolver reads _51DEGREES_RESOURCE_KEY
+      #    first, then the bespoke tiered key then the basic tiered key, and
+      #    treats an empty value, which a secret that does not exist gives, as
+      #    unset.
       - name: Cloud tests (with resource key when available)
         shell: pwsh
         env:
-          SECRETS: ${{ toJSON(secrets) }}
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY_BASIC: ${{ secrets._51DEGREES_RESOURCE_KEY_BASIC }}
         run: |
-          # Map every organization secret into the process environment so the
-          # central script (when present) and the direct fallback both see them.
-          $all = ConvertFrom-Json -AsHashtable $env:SECRETS
-          $script = './common-ci/steps/set-resource-keys.ps1'
-          if (Test-Path $script) {
-            Write-Host 'Exporting resource keys via common-ci set-resource-keys.ps1'
-            & $script -Keys $all
-          } else {
-            Write-Host 'common-ci set-resource-keys.ps1 not found; using direct secret names'
-            foreach ($name in '_51DEGREES_RESOURCE_KEY_BESPOKE','_51DEGREES_RESOURCE_KEY_BASIC') {
-              if ($all.ContainsKey($name) -and $all[$name]) {
-                [System.Environment]::SetEnvironmentVariable($name, $all[$name])
-              }
-            }
+          # Resolve a single key in the examples-shared resolver order.
+          $key = ${env:_51DEGREES_RESOURCE_KEY}
+          if (-not $key -and ${env:51DEGREES_RESOURCE_KEY}) {
+            # The deprecated name, read when the new one is unset or empty.
+            $key = ${env:51DEGREES_RESOURCE_KEY}
+            Write-Host ("::warning::The environment variable " +
+              "'51DEGREES_RESOURCE_KEY' is deprecated and " +
+              "'_51DEGREES_RESOURCE_KEY' replaces it.")
           }
-          # Resolve a single key in the examples-shared resolver order. The
-          # leading-digit name must use the ${env:NAME} brace form to read.
-          $key = ${env:51DEGREES_RESOURCE_KEY}
           if (-not $key) { $key = ${env:_51DEGREES_RESOURCE_KEY_BESPOKE} }
           if (-not $key) { $key = ${env:_51DEGREES_RESOURCE_KEY_BASIC} }
           if (-not $key) {
             Write-Host 'No resource key secret available; skipping live cloud tests.'
             exit 0
           }
-          ${env:51DEGREES_RESOURCE_KEY} = $key
+          ${env:_51DEGREES_RESOURCE_KEY} = $key
           # Run ONLY the ignored tests across the workspace: the live cloud tests
           # that make real calls to the 51Degrees cloud, so a failure here is a
           # real regression. Deliberately --ignored, not --include-ignored: the
@@ -216,12 +231,13 @@ jobs:
 
   # The cloud crates must keep compiling for WebAssembly (wasm32-wasip1) so a
   # wasm consumer (for example a trusted-server deployment) can link them and
-  # supply its own synchronous CloudHttpClient. The derived property element is
-  # covered too, because it compiles its scripts in so that it can run where
-  # there is no file system. They build with reqwest and the
-  # data-update service disabled (default-features = false), so this job needs
-  # neither the C/C++ sources the -sys crates compile nor the data submodules,
-  # and it runs on Linux alone because a cross-compile to wasm is host-neutral.
+  # supply its own synchronous CloudHttpClient. The derived property element and
+  # the IP Intelligence translation engines are covered too, because they
+  # compile their scripts and translations in so that they can run where there
+  # is no file system. They build with reqwest and the
+  # data-update service disabled (default-features = false), so this job does
+  # not compile the C/C++ sources the -sys crates compile, and it runs on Linux
+  # alone because a cross-compile to wasm is host-neutral.
   #
   # Beyond compiling, the wasm-safe test suites are executed on the target under
   # wasmtime, so the pure-Rust logic is exercised on wasm rather than only built.
@@ -232,19 +248,22 @@ jobs:
   # no transport for. fiftyone-caching's concurrency tests are also skipped, but
   # only those: they spawn threads and so live in a native-only test file, while
   # the crate's single-threaded behavioural suite does run here on wasm. The
-  # derived property element's conformance cases and its one script file test
-  # read from disk, so they are native only as well.
+  # derived property element's conformance cases and its script file tests,
+  # and the check that every translation file of the data repository is
+  # compiled in, read from disk, so they are native only as well.
   wasm:
     name: wasm (wasm32-wasip1)
     # Cross-compile to wasm is host-neutral; pin to a current LTS for consistency.
     runs-on: ubuntu-24.04
     steps:
       # The owid-rust submodule holds the OWID source that the fodid crate
-      # compiles in, so it is needed here even though the C/C++ sources are not.
+      # compiles in, and the data repository inside cxx holds the translations
+      # the IP Intelligence translation engines compile in, so the checkout is
+      # recursive even though the C/C++ sources are not compiled here.
       - name: Checkout workspace
         uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
 
       - name: Install Rust toolchain with wasm target
         uses: dtolnay/rust-toolchain@stable
@@ -277,8 +296,11 @@ jobs:
             fiftyone-cloud-request-engine \
             fiftyone-device-detection-cloud \
             fiftyone-ip-intelligence-cloud \
+            fiftyone-fodid-core \
             fiftyone-fodid-cloud \
             fiftyone-derived-properties \
+            fiftyone-pipeline-translation \
+            fiftyone-ip-intelligence-translation \
             fodid-client; do
             echo "::group::build ${crate}"
             cargo build -p "${crate}" --no-default-features --target wasm32-wasip1
@@ -294,8 +316,11 @@ jobs:
             fiftyone-cloud-request-engine \
             fiftyone-device-detection-cloud \
             fiftyone-ip-intelligence-cloud \
+            fiftyone-fodid-core \
             fiftyone-fodid-cloud \
             fiftyone-derived-properties \
+            fiftyone-pipeline-translation \
+            fiftyone-ip-intelligence-translation \
             fodid-client; do
             echo "::group::clippy ${crate}"
             cargo clippy -p "${crate}" --no-default-features --target wasm32-wasip1 -- -D warnings
@@ -303,12 +328,11 @@ jobs:
           done
 
       # wasmtime is the runner that actually executes the wasm test binaries the
-      # next step builds. The install script drops it in ~/.wasmtime/bin, which is
-      # added to PATH so cargo's configured runner can find it.
+      # next step builds. The action looks up the release with the workflow's
+      # token, puts wasmtime on PATH and runs `wasmtime --version`, so a failed
+      # install fails this step rather than the tests.
       - name: Install wasmtime (the wasm test runner)
-        run: |
-          curl https://wasmtime.dev/install.sh -sSf | bash
-          echo "${HOME}/.wasmtime/bin" >> "${GITHUB_PATH}"
+        uses: bytecodealliance/actions/wasmtime/setup@v1
 
       # Run the wasm-safe test suites on the target under wasmtime, so the
       # pure-Rust logic is exercised on wasm and not merely compiled. cargo runs
@@ -331,10 +355,54 @@ jobs:
             fiftyone-ip-intelligence-shared \
             fiftyone-device-detection-cloud \
             fiftyone-ip-intelligence-cloud \
+            fiftyone-fodid-core \
             fiftyone-fodid-cloud \
             fiftyone-derived-properties \
+            fiftyone-pipeline-translation \
+            fiftyone-ip-intelligence-translation \
             fodid-client; do
             echo "::group::test ${crate}"
             cargo test -p "${crate}" --no-default-features --target wasm32-wasip1
             echo "::endgroup::"
           done
+
+      # CountriesTranslationEngine compiles in the Unicode collation data for
+      # every locale icu_collator holds, and edge platforms limit the size of
+      # a deployed module. This builds a release module with and without the
+      # engine, prints both sizes to the log and the run's summary, and runs
+      # both under wasmtime. The crate README's figure comes from here.
+      - name: Measure what the countries translation engine adds to a module
+        run: bash ci/measure-wasm-size.sh
+
+  # Two crates compile in files that come from submodules and are not
+  # committed here, being the derived-properties scripts and the translations
+  # in the data repository inside cxx. This writes what the publish workflow
+  # writes before publishing, lists what cargo would publish for each of the
+  # two, checks the shared files are in it and nothing else from the
+  # submodules is, and then builds each crate from its own package, which has
+  # no git and no submodule, as crates.io and docs.rs build it.
+  package:
+    name: package (shared files)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout workspace
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: package
+
+      - name: Write the files the publish workflow writes
+        shell: pwsh
+        run: |
+          ./ci/copy-translations.ps1
+          ./ci/record-derived-properties-commit.ps1
+
+      - name: Check and build the two packages
+        run: bash ci/check-packages.sh

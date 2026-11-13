@@ -59,10 +59,11 @@
 //! offline signature check costs nothing per identifier, because the public
 //! keys are fetched once and cached.
 //!
-//! Environment: `51DEGREES_RESOURCE_KEY` is required (the CI names
+//! Environment: `_51DEGREES_RESOURCE_KEY` is required (the CI names
 //! `_51DEGREES_RESOURCE_KEY_BESPOKE` and `_51DEGREES_RESOURCE_KEY_BASIC` are
-//! accepted too), `51DEGREES_LICENSE_KEY` is optional, `51DEGREES_CLOUD_ENDPOINT`
-//! overrides the cloud API base and `PORT` overrides the default port of 5100.
+//! read after it), `_51DEGREES_LICENSE_KEY` is optional,
+//! `_51DEGREES_CLOUD_ENDPOINT` overrides the cloud API base and `PORT`
+//! overrides the default port of 5100.
 //!
 //! Run with `cargo run -p fodid-examples --bin fodid-web-creator-context` and
 //! open <http://localhost:5100/>.
@@ -89,11 +90,15 @@ use serde::Deserialize;
 /// stylesheet URL is served from the shared Rust example asset.
 const PAGE: &str = include_str!("../../assets/page.html");
 
+/// The links the page and the console output end with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("51Did", "https://51degrees.com/documentation/_identifiers_51_did.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=find-out-more"),
+    ("51Did inspector", "https://51degrees.com/developers/51did-inspector?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=find-out-more"),
+];
+
 /// The route the demo page's relative stylesheet URL resolves to.
 const PAGE_CSS_ROUTE: &str = "/examples-main.min.css";
-
-/// The environment variable holding the optional licence key.
-const LICENCE_KEY_ENV_VAR: &str = "51DEGREES_LICENSE_KEY";
 
 /// The port the demo listens on when `PORT` is not set.
 const DEFAULT_PORT: u16 = 5100;
@@ -161,11 +166,32 @@ async fn home(State(demo): State<Demo>) -> Response {
     }
     let challenge: String = random.iter().map(|b| format!("{b:02x}")).collect();
     Html(
-        PAGE.replace("__RESOURCE__", demo.client.resource_key())
+        page_with_find_out_more()
+            .replace("__RESOURCE__", demo.client.resource_key())
             .replace("__CHALLENGE__", &challenge)
             .replace("__API__", demo.client.endpoint()),
     )
     .into_response()
+}
+
+/// [`PAGE`] with a "Find out more" section, set apart by a rule, before its
+/// closing body tag. The section is added here so the page file stays the
+/// same as every other language's copy.
+fn page_with_find_out_more() -> String {
+    let mut html = format!(
+        "<div class=\"c-eg-page\">\n<hr>\n\
+         <h3 class=\"c-eg-page__heading\">{}</h3>\n<ul>\n",
+        examples_shared::FIND_OUT_MORE_HEADING
+    );
+    for (label, url) in FIND_OUT_MORE {
+        let href = url.replace('&', "&amp;");
+        html.push_str(&format!("<li><a href=\"{href}\">{label}</a></li>\n"));
+    }
+    for url in examples_shared::CLOUD_REPOSITORIES {
+        html.push_str(&format!("<li><a href=\"{url}\">{url}</a></li>\n"));
+    }
+    html.push_str("</ul>\n</div>\n</body>");
+    PAGE.replacen("</body>", &html, 1)
 }
 
 /// The three parameters the page sends to `/redeem`. Each defaults to empty
@@ -341,22 +367,22 @@ fn json_response(status: StatusCode, body: serde_json::Value) -> Response {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // The resource key is read from the aligned/legacy/CI environment
-    // variables. Without one there is nothing to demonstrate, so say which
+    // The resource key is read from `_51DEGREES_RESOURCE_KEY` or the CI
+    // names. Without one there is nothing to demonstrate, so say which
     // variables were looked at and stop.
     let Some(resource_key) = examples_shared::resource_key_from_env() else {
         eprintln!(
-            "Set 51DEGREES_RESOURCE_KEY (or _51DEGREES_RESOURCE_KEY_BESPOKE or \
+            "Set _51DEGREES_RESOURCE_KEY (or _51DEGREES_RESOURCE_KEY_BESPOKE or \
              _51DEGREES_RESOURCE_KEY_BASIC) to a resource key from \
              https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=resource-key-required \
              and run again."
         );
+        examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
         std::process::exit(1);
     };
 
-    let licence_key = std::env::var(LICENCE_KEY_ENV_VAR)
-        .map(|value| value.trim().to_owned())
-        .unwrap_or_default();
+    // A value of only spaces counts as no licence key.
+    let licence_key = examples_shared::license_key_from_env().unwrap_or_default();
     if licence_key.is_empty() {
         // Only an account that holds licence keys needs one to redeem,
         // because the licence key is what keeps redemption to the acting
@@ -366,9 +392,10 @@ async fn main() -> anyhow::Result<()> {
         // is diagnosed at start-up rather than by an unreadable verdict
         // three steps later that looks like a cryptographic failure.
         println!(
-            "No {LICENCE_KEY_ENV_VAR} set. Redemption will work where the \
+            "No {} set. Redemption will work where the \
              account holds no licence keys, and will report the context \
-             unreadable where it holds some."
+             unreadable where it holds some.",
+            examples_shared::LICENSE_KEY_ENV_VAR
         );
     }
 
@@ -549,6 +576,11 @@ mod tests {
         assert!(page.contains("var API = \"http://cloud.example/api/v4/\""));
         assert!(page.contains("var RESOURCE = \"resource-key-placeholder\""));
         assert!(page.contains("href=\"examples-main.min.css\""));
+        // The page ends with the "Find out more" section.
+        let section = page
+            .find(examples_shared::FIND_OUT_MORE_HEADING)
+            .expect("the page has a Find out more section");
+        assert!(section < page.find("</body>").unwrap());
 
         // 16 random bytes as 32 lowercase hex characters, different each load.
         let first = challenge_of(&page);
@@ -711,8 +743,10 @@ mod tests {
  * The page is written to the shared 51Degrees example design system. It
  * references the vendored `examples-main.min.css`, embedded in the
  * `examples-web-shared` crate and served at the page's relative URL. It uses
- * the `.c-eg-*` class contract.
+ * the `.c-eg-*` class contract. The server adds a "Find out more" section
+ * before the page's closing body tag, so the page file stays the same as
+ * every other language's copy.
  *
  * Build a resource key at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=fodid-web-creator-context and export it as
- * `51DEGREES_RESOURCE_KEY`, then run the binary and open http://localhost:5100/.
+ * `_51DEGREES_RESOURCE_KEY`, then run the binary and open http://localhost:5100/.
  */

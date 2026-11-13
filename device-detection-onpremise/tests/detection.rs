@@ -26,6 +26,10 @@
 //! found the tests skip cleanly with an explanatory note rather than failing, so
 //! the suite is green on a checkout without the data file.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -33,7 +37,7 @@ use fiftyone_device_detection_onpremise::DeviceDetectionOnPremiseEngineBuilder;
 use fiftyone_device_detection_shared::{DeviceData, DEVICE_DATA_KEY, GENERATED_PROPERTY_TYPES};
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{ElementData, Evidence, FlowElement, Pipeline, PropertyValueType};
-use fiftyone_pipeline_engines::{AspectEngine, OnPremiseAspectEngine};
+use fiftyone_pipeline_engines::{AspectEngine, MissingPropertyReason, OnPremiseAspectEngine};
 
 /// A representative desktop Chrome on Windows User-Agent.
 const DESKTOP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
@@ -44,11 +48,11 @@ const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Ma
     AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 
 /// Locate the packaged Lite Hash data file, mirroring the native crate's test
-/// resolution. Resolution order: an explicit `51DEGREES_DD_PATH`
+/// resolution. Resolution order: an explicit `_51DEGREES_DD_PATH`
 /// environment variable, then the `cxx` submodule, then
 /// the wider `Workspace` tree where the other products keep their data.
 fn lite_data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("51DEGREES_DD_PATH") {
+    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);
@@ -62,7 +66,8 @@ fn lite_data_file() -> Option<PathBuf> {
 
     let sibling = workspace
         .join("cxx")
-        .join("device-detection-data")
+        .join("data")
+        .join("device-detection")
         .join("51Degrees-LiteV4.1.hash");
     if sibling.is_file() {
         return Some(sibling);
@@ -71,7 +76,8 @@ fn lite_data_file() -> Option<PathBuf> {
     if let Some(parent) = workspace.parent() {
         let candidate = parent
             .join("cxx")
-            .join("device-detection-data")
+            .join("data")
+            .join("device-detection")
             .join("51Degrees-LiteV4.1.hash");
         if candidate.is_file() {
             return Some(candidate);
@@ -328,7 +334,7 @@ fn metadata_is_published() {
         .evidence_key_filter()
         .include("header.sec-ch-ua-mobile"));
 
-    // The published date is recorded from the data file on disk.
+    // The published date is recorded from the data file header.
     assert!(
         engine.data_file_published().is_some(),
         "the data-file publish time should be recorded"
@@ -336,7 +342,7 @@ fn metadata_is_published() {
 }
 
 /// The engine accepts every header the data file reads, as a header and as a
-/// query value, alongside the client-side `51d_` values.
+/// query value, and the `51d_` values the data set reads, and no others.
 #[test]
 fn evidence_keys_come_from_the_data_file() {
     let Some(engine) = build_engine() else {
@@ -357,7 +363,18 @@ fn evidence_keys_come_from_the_data_file() {
         );
         assert!(filter.include(key), "{key} should be accepted");
     }
-    assert!(filter.include("query.51d_screenpixelswidth"));
+    for key in [
+        "cookie.51d_javascripthardwareprofile",
+        "query.51d_profileids",
+        "cookie.51d_profileids",
+    ] {
+        assert!(
+            keys.iter().any(|k| k == key),
+            "{key} should be listed: {keys:?}"
+        );
+        assert!(filter.include(key), "{key} should be accepted");
+    }
+    assert!(!filter.include("query.51d_notaproperty"));
     assert!(!filter.include("header.referer"));
 
     engine.refresh(None).expect("refresh succeeds");
@@ -416,9 +433,98 @@ fn method_and_user_agents_are_written() {
     assert!(!user_agents.is_empty());
 }
 
+/// An iPhone gets its `JavascriptHardwareProfile` value as the script the
+/// client runs, which declares the array the stored body fills, runs the body,
+/// then writes the ids to the `51D_ProfileIds` cookie.
+#[test]
+fn an_iphone_gets_the_hardware_profile_as_the_script_the_client_runs() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the hardware profile test");
+        return;
+    };
+    let device = detect(engine, MOBILE_USER_AGENT);
+    let profile = device.javascript_hardware_profile();
+    let script = profile
+        .value()
+        .expect("an iPhone has a hardware profile script");
+    let body = script
+        .strip_prefix("var profileIds = []\n")
+        .and_then(|rest| {
+            rest.strip_suffix("\ndocument.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")")
+        })
+        .unwrap_or_else(|| panic!("not the script the client runs: {script}"));
+    assert!(!body.is_empty(), "the script holds the stored body");
+}
+
+/// A screen size the data file holds as `Unknown` is 0, and a JavaScript
+/// property the matched profile holds no value for has none, as .NET gives
+/// them for `curl/8.5.0` over the Lite file in the comparison with .NET.
+#[test]
+fn values_are_read_as_dotnet_reads_them() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the values test");
+        return;
+    };
+    if engine.data_source_tier() != "Lite" {
+        eprintln!("the values test holds the Lite file's answers; skipping");
+        return;
+    }
+    let device = detect(engine, "curl/8.5.0");
+    assert_eq!(device.screen_pixels_width().value().ok(), Some(&0));
+    assert_eq!(device.screen_pixels_height().value().ok(), Some(&0));
+    assert_eq!(device.is_mobile().value().ok(), Some(&false));
+    assert_eq!(
+        device.platform_name().value().ok().map(String::as_str),
+        Some("Unknown")
+    );
+    assert!(!device.javascript_hardware_profile().has_value());
+    assert!(!device.javascript_get_high_entropy_values().has_value());
+}
+
+/// With no evidence no data file property has a value, where an empty string
+/// would be one, as .NET gives none, and the match metrics say that nothing
+/// matched.
+#[test]
+fn with_no_evidence_no_data_file_property_has_a_value() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the no evidence test");
+        return;
+    };
+    let element: Arc<dyn FlowElement> = engine;
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("pipeline builds");
+    let mut data = pipeline.create_flow_data_with(Evidence::builder().build());
+    data.process().expect("processing succeeds");
+    let device = data.get(DEVICE_DATA_KEY).expect("device data was produced");
+    let metrics = [
+        "matchednodes",
+        "difference",
+        "drift",
+        "deviceid",
+        "useragents",
+        "iterations",
+        "method",
+    ];
+    let keys = device.keys();
+    let files: Vec<&String> = keys
+        .iter()
+        .filter(|key| !metrics.contains(&key.as_str()))
+        .collect();
+    assert!(files.len() > 1, "{keys:?}");
+    for key in files {
+        assert!(device.get(key).is_err(), "{key}: {:?}", device.get(key));
+    }
+    assert_eq!(
+        device.method().value().ok().map(String::as_str),
+        Some("NONE")
+    );
+}
+
 #[test]
 fn paid_tier_data_resolves_hardware_vendor() {
-    // Uses whatever `51DEGREES_DD_PATH` points at (or the bundled Lite file as a
+    // Uses whatever `_51DEGREES_DD_PATH` points at (or the bundled Lite file as a
     // fallback). HardwareVendor is a paid-tier property the free Lite file does
     // not carry, so this test asserts it only when a paid data file is
     // configured, and skips the paid-tier assertion otherwise.
@@ -437,7 +543,7 @@ fn paid_tier_data_resolves_hardware_vendor() {
 
     // HardwareVendor is only present in the paid Enterprise/TAC data. When the
     // configured file does not resolve it (the free Lite file does not), skip the
-    // paid-tier assertion rather than fail. Point `51DEGREES_DD_PATH` at a paid
+    // paid-tier assertion rather than fail. Point `_51DEGREES_DD_PATH` at a paid
     // data file to exercise it. For an iPhone User-Agent the vendor is Apple.
     let vendor = device.hardware_vendor();
     if !vendor.has_value() {
@@ -527,5 +633,163 @@ fn every_present_property_unpacks_as_its_declared_type() {
     assert!(
         present_count > 0,
         "expected at least some properties to resolve for the sample user agents"
+    );
+}
+
+/// The start of the message for a property the data file lacks and whose
+/// tiers are not known, before the pricing link.
+const UPGRADE_MESSAGE: &str = "Property 'HardwareVendor' not found in data for element \
+    'device'. This is because your license or data file does not include this property. \
+    To see which licenses include it, see ";
+
+/// A property the data file does not hold, but that `DeviceData` has an
+/// accessor for, needs a data file upgrade by the specification's typed
+/// accessor rule, which counts the accessors of the shared `DeviceData`. The
+/// file's metadata does not list the property, so the message leaves out the
+/// tier sentence.
+#[test]
+fn a_property_the_data_file_lacks_needs_a_data_file_upgrade() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no on-premise Hash data file found; skipping missing property test");
+        return;
+    };
+    if engine
+        .properties()
+        .iter()
+        .any(|p| p.name == "HardwareVendor")
+    {
+        eprintln!("the configured data file holds HardwareVendor; skipping");
+        return;
+    }
+
+    let result = engine.missing_property_reason("HardwareVendor");
+
+    assert_eq!(
+        result.reason,
+        MissingPropertyReason::DataFileUpgradeRequired
+    );
+    assert!(
+        result.description.starts_with(UPGRADE_MESSAGE),
+        "{}",
+        result.description
+    );
+    assert!(result
+        .description
+        .ends_with("&utm_term=data-upgrade-required."));
+}
+
+/// A name the engine is built with that the data file holds no property for
+/// is not listed, because the metadata lists the data file's own properties.
+/// The typed accessor rule then gives a data file upgrade that names no tier,
+/// rather than the tier the file already has.
+#[test]
+fn a_named_property_the_data_file_lacks_names_no_tier() {
+    let Some(full) = build_engine() else {
+        eprintln!("no on-premise Hash data file found; skipping missing property test");
+        return;
+    };
+    if full.properties().iter().any(|p| p.name == "HardwareVendor") {
+        eprintln!("the configured data file holds HardwareVendor; skipping");
+        return;
+    }
+    drop(full);
+    let data_file = lite_data_file().expect("the data file was found above");
+    let engine = match DeviceDetectionOnPremiseEngineBuilder::new(data_file)
+        .performance_profile(PerformanceProfile::HighPerformance)
+        .properties(["IsMobile", "HardwareVendor"])
+        .build()
+    {
+        Ok(engine) => engine,
+        Err(e) => {
+            eprintln!("the native Hash data set did not load ({e}); skipping");
+            return;
+        }
+    };
+    assert!(
+        !engine
+            .aspect_properties()
+            .iter()
+            .any(|p| p.name() == "HardwareVendor"),
+        "the engine lists only the data file's properties"
+    );
+
+    let result = engine.missing_property_reason("HardwareVendor");
+
+    assert_eq!(
+        result.reason,
+        MissingPropertyReason::DataFileUpgradeRequired
+    );
+    assert!(
+        result.description.starts_with(UPGRADE_MESSAGE),
+        "{}",
+        result.description
+    );
+}
+
+/// A name no engine knows gives .NET's unknown reason and text.
+#[test]
+fn an_unknown_property_has_an_unknown_reason() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no on-premise Hash data file found; skipping missing property test");
+        return;
+    };
+
+    let result = engine.missing_property_reason("NotAProperty");
+
+    assert_eq!(result.reason, MissingPropertyReason::Unknown);
+    assert_eq!(
+        result.description,
+        "Property 'NotAProperty' not found in data for element 'device'. The reason for \
+         this is unknown. Please check that the aspect and property name are correct."
+    );
+}
+
+/// Device data from an engine restricted to IsMobile gives the same reason as
+/// `engine.missing_property_reason` for each property it does not hold,
+/// through its typed accessors and by name. .NET throws a
+/// `PropertyMissingException` instead, and its reason differs for two of
+/// these names. For `BrowserName`, which .NET lists from the file as
+/// unavailable, it gives `PropertyExcludedFromEngineConfiguration`, and for
+/// `HardwareVendor` it gives `Unknown`, because `IDeviceDataHash` declares no
+/// properties of its own.
+#[test]
+fn device_data_gives_the_engine_reason_for_a_missing_property() {
+    let Some(data_file) = lite_data_file() else {
+        eprintln!("no Lite Hash data file found; skipping missing property test");
+        return;
+    };
+    let engine = match DeviceDetectionOnPremiseEngineBuilder::new(data_file)
+        .performance_profile(PerformanceProfile::HighPerformance)
+        .property("IsMobile")
+        .build()
+    {
+        Ok(engine) => engine,
+        Err(e) => {
+            eprintln!("the native Hash data set did not load ({e}); skipping");
+            return;
+        }
+    };
+
+    let device = detect(Arc::clone(&engine), MOBILE_USER_AGENT);
+
+    assert!(*device.is_mobile().value().unwrap());
+    let browser = engine.missing_property_reason("BrowserName");
+    assert_ne!(browser.reason, MissingPropertyReason::Unknown);
+    assert_eq!(
+        device.browser_name().no_value_message(),
+        Some(browser.description.as_str())
+    );
+    for name in ["BrowserName", "HardwareVendor", "NotAProperty"] {
+        let expected = engine.missing_property_reason(name).description;
+        assert_eq!(device.get(name).unwrap_err().message, expected, "{name}");
+        assert_eq!(
+            device.string_property(name).no_value_message(),
+            Some(expected.as_str()),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        engine.missing_property_reason("NotAProperty").reason,
+        MissingPropertyReason::Unknown
     );
 }

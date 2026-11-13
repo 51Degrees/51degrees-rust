@@ -33,7 +33,7 @@ use fiftyone_pipeline_core::{Evidence, Pipeline};
 
 /// The relative path to the IP-intelligence evidence file in the data submodule.
 /// `examples_shared::find_file` walks up the tree to locate it.
-const IPI_EVIDENCE_RELATIVE_PATH: &str = "cxx/ip-intelligence-data/evidence.yml";
+const IPI_EVIDENCE_RELATIVE_PATH: &str = "cxx/data/ip-intelligence/evidence.yml";
 
 /// How many distinct IP addresses to load and replay per benchmark iteration.
 /// A few hundred is enough to amortise per-iteration overhead while keeping each
@@ -120,14 +120,15 @@ fn look_up_all(pipeline: &Arc<Pipeline>, ips: &[String]) -> u64 {
 /// Register the IP Intelligence throughput benchmark, or skip cleanly when the
 /// ASN data file or evidence file is not present in this checkout.
 fn ipi_onprem_throughput(c: &mut Criterion) {
-    // Force the ASN tier: it is the small, current, always-loadable file checked
-    // into the data repository, and the Enterprise share is not reachable
-    // off-network, so ASN is the right target for a reproducible bench. With it
-    // absent the bench registers nothing and `cargo bench` stays green offline.
+    // Force the ASN tier: it is the small, current, always-loadable file from
+    // the data repository, downloaded when it is missing, and the Enterprise
+    // share is not reachable off-network, so ASN is the right target for a
+    // reproducible bench. With it absent the bench registers nothing and
+    // `cargo bench` stays green offline.
     let Some(data_file) = examples_shared::ipi_data_path(examples_shared::IpiTier::Asn) else {
         eprintln!(
             "skipping ipi_onprem_throughput: no ASN IP Intelligence data file found \
-             (set {} or check out the cxx submodule)",
+             (set {})",
             examples_shared::IPI_PATH_ENV_VAR
         );
         return;
@@ -135,7 +136,7 @@ fn ipi_onprem_throughput(c: &mut Criterion) {
     let Some(evidence_file) = examples_shared::find_file(IPI_EVIDENCE_RELATIVE_PATH) else {
         eprintln!(
             "skipping ipi_onprem_throughput: '{IPI_EVIDENCE_RELATIVE_PATH}' not found \
-             (check out the cxx submodule)"
+             (run git submodule update --init --recursive)"
         );
         return;
     };
@@ -177,7 +178,7 @@ criterion_main!(benches);
  *
  * What it measures
  *
- * It loads a few hundred client-IP addresses from the bundled `evidence.yml`,
+ * It loads a few hundred client-IP addresses from `evidence.yml`,
  * builds one on-premise pipeline tuned for speed against the 4.5 ASN `.ipi` file,
  * then times looking every IP up. Criterion is told the element count per
  * iteration via `Throughput::Elements`, so it reports lookups per second.
@@ -195,14 +196,14 @@ criterion_main!(benches);
  * Why the ASN tier
  *
  * The bench forces `IpiTier::Asn`: the ASN file is the small, current,
- * always-loadable file checked into the data repository, and the Enterprise file
+ * always-loadable file from the data repository, and the Enterprise file
  * lives on a network share reachable only inside 51Degrees, so ASN is the
  * reproducible target.
  *
  * Usage sharing is intentionally not enabled, as this is a benchmark tool.
  *
  * Data is resolved through `examples_shared` (the ASN file via `ipi_data_path`,
- * the evidence file via `find_file`). When either is missing the benchmark
- * registers nothing and exits cleanly, so `cargo bench` is safe to run without
- * the data submodules.
+ * which downloads it when it is missing, and the evidence file via `find_file`).
+ * When either cannot be found the benchmark registers nothing and exits cleanly,
+ * so `cargo bench` is safe to run without the data submodules.
  */

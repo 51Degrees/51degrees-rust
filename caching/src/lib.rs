@@ -51,7 +51,7 @@
 //!   an engine can depend on the abstraction rather than the concrete cache.
 //! - [`LruCache`] is the default sharded LRU implementation. It is generic over
 //!   a key `K` and a value `V`, both `Send + Sync`, with `V: Clone`. It is
-//!   never generic over `dyn ElementData` because element data is not `Sync`.
+//!   never generic over `dyn ElementData` because element data is not `Clone`.
 //!   Engines cache their own concrete `Send + Sync + Clone` data, typically an
 //!   [`std::sync::Arc`] around an aspect-data struct, or the cloud JSON.
 //! - [`CacheBuilder`] applies the two tunables from the specification: the

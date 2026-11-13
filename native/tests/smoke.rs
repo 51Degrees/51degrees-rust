@@ -42,6 +42,10 @@
 //! machine without the data files. When a file is present they load it for real
 //! and assert on the result.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 #[cfg(any(feature = "dd", feature = "ipi"))]
 use std::path::PathBuf;
 
@@ -49,7 +53,7 @@ use std::path::PathBuf;
 /// optional name fragment, returning the first that exists.
 ///
 /// Resolution order, all relative to the Rust workspace root:
-/// the matching `FIFTYONE_*` environment variable, then the
+/// the matching `_51DEGREES_*` environment variable, then the
 /// `cxx` submodule, then the parent
 /// `Workspace` tree where the other 51Degrees products keep their data.
 #[cfg(any(feature = "dd", feature = "ipi"))]
@@ -60,7 +64,7 @@ fn find_data_file(
     file_name: &str,
 ) -> Option<PathBuf> {
     // 1. An explicit path from the environment wins.
-    if let Ok(path) = std::env::var(env_var) {
+    if let Ok(path) = crate::deprecated_names::var(env_var) {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);
@@ -98,23 +102,23 @@ fn find_data_file(
 #[cfg(feature = "dd")]
 fn dd_lite_data_file() -> Option<PathBuf> {
     find_data_file(
-        "51DEGREES_DD_PATH",
+        "_51DEGREES_DD_PATH",
         "cxx",
-        "device-detection-data",
+        "data/device-detection",
         "51Degrees-LiteV4.1.hash",
     )
 }
 
 /// Locate an IP Intelligence data file for the IP Intelligence smoke test.
 ///
-/// Resolves the ASN file (`51Degrees-IPIV4AsnIpiV41.ipi`) checked into the data
+/// Resolves the ASN file (`51Degrees-IPIV4AsnIpiV41.ipi`) from the data
 /// repository, which loads against this source revision.
 #[cfg(feature = "ipi")]
 fn ipi_data_file() -> Option<PathBuf> {
     find_data_file(
-        "51DEGREES_IPI_PATH",
+        "_51DEGREES_IPI_PATH",
         "cxx",
-        "ip-intelligence-data",
+        "data/ip-intelligence",
         "51Degrees-IPIV4AsnIpiV41.ipi",
     )
 }
@@ -371,6 +375,48 @@ mod device_detection {
             assert_eq!(device_id(Some(names)), every_property, "{names:?}");
         }
         assert_ne!(device_id(Some(&["IsMobile"])), every_property);
+    }
+
+    /// A name the data set has no property for, such as `DeviceId`, keeps its
+    /// place among the names given, so a property named after it is still
+    /// read, by its name and by its index.
+    #[test]
+    fn a_name_without_a_property_leaves_the_others_readable() {
+        let Some(data_file) = dd_lite_data_file() else {
+            eprintln!("no Lite Hash data file found; skipping a name without a property");
+            return;
+        };
+        for names in [&["DeviceId", "IsMobile"][..], &["IsMobile", "DeviceId"]] {
+            let manager = dd::Manager::open_with_properties(
+                &data_file,
+                PerformanceProfile::Default,
+                Some(names),
+            )
+            .unwrap_or_else(|err| panic!("{names:?} should load: {err}"));
+            let mut results = manager.create_results().expect("results should allocate");
+            results
+                .process_user_agent(MOBILE_USER_AGENT)
+                .expect("processing a user agent should not raise an exception");
+            let index = manager
+                .required_property_index("IsMobile")
+                .unwrap_or_else(|| panic!("{names:?} should give IsMobile an index"));
+            assert_eq!(
+                results
+                    .value_as_string("IsMobile", ",")
+                    .expect("reading IsMobile should not error")
+                    .as_deref(),
+                Some("True"),
+                "{names:?}"
+            );
+            assert_eq!(
+                results
+                    .value_as_string_by_index(index, c",")
+                    .expect("reading IsMobile by index should not error")
+                    .as_deref(),
+                Some("True"),
+                "{names:?}"
+            );
+        }
     }
 
     /// A data file that can't be used is named in the error, so the caller can
@@ -682,10 +728,10 @@ mod ip_intelligence {
             .expect("reading a property should not error");
     }
 
-    /// Looking up evidence with no client IP returns a native input error rather
-    /// than panicking.
+    /// Looking up evidence with no client IP gives results with no values, as
+    /// .NET gives, rather than an error.
     #[test]
-    fn evidence_without_ip_errors() {
+    fn evidence_without_ip_gives_no_values() {
         let Some(data_file) = ipi_data_file() else {
             eprintln!("no IP Intelligence data file found; skipping no-IP test");
             return;
@@ -693,10 +739,15 @@ mod ip_intelligence {
         let manager = open_loaded(&data_file);
         let mut results = manager.create_results().expect("results should allocate");
         let evidence = Evidence::builder().add("header.user-agent", "x").build();
-        assert!(
-            results.process_evidence(&evidence).is_err(),
-            "evidence with no client IP should be an error"
-        );
+        results
+            .process_evidence(&evidence)
+            .expect("evidence with no client IP should be looked up");
+        let index = manager
+            .required_property_index("Asn")
+            .expect("the ASN data set has Asn");
+        assert!(!results
+            .has_values_by_index(index)
+            .expect("asking for values should not error"));
     }
 
     /// An IPv4-mapped IPv6 address gives the answers of its IPv4 address, in
@@ -872,6 +923,33 @@ mod ip_intelligence {
             }
         }
     }
+
+    /// A name the data file has no property for keeps its place among the
+    /// names given, so a property named after it still gives the answers of a
+    /// data set holding every property.
+    #[test]
+    fn a_name_without_a_property_leaves_the_others_readable() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no IP Intelligence data file found; skipping a name without a property");
+            return;
+        };
+        let every_property = ipi::Manager::open(&data_file, PerformanceProfile::LowMemory)
+            .expect("the data file should load");
+        for name in every_property.available_property_names() {
+            let list = ["NoSuchProperty", name.as_str()];
+            let manager = ipi::Manager::open_with_properties(
+                &data_file,
+                PerformanceProfile::LowMemory,
+                Some(list.as_slice()),
+            )
+            .unwrap_or_else(|err| panic!("naming {list:?} should load: {err}"));
+            assert_eq!(
+                answers(&manager, &name),
+                answers(&every_property, &name),
+                "naming {list:?}"
+            );
+        }
+    }
 }
 
 /// The proof that Device Detection and IP Intelligence coexist in one binary.
@@ -890,9 +968,9 @@ mod ip_intelligence {
 /// explicit env path, else a sibling `*-cxx` checkout). When both are present the
 /// proof runs in full and any open or lookup error is a hard failure, so a
 /// reintroduced collision cannot pass silently. When either file is absent (for
-/// example a checkout without the LFS data) the test skips, since the proof needs
-/// both real files. It prints the IsMobile value and one IP Intelligence value so
-/// the proof is visible in the test output.
+/// example a checkout where the data files have not been downloaded) the test
+/// skips, since the proof needs both real files. It prints the IsMobile value and
+/// one IP Intelligence value so the proof is visible in the test output.
 #[cfg(all(feature = "dd", feature = "ipi"))]
 #[test]
 fn both_engines_coexist() {
@@ -900,7 +978,8 @@ fn both_engines_coexist() {
 
     // Resolve both data files the same way the per-product smoke tests do, rather
     // than hard-coding a path. The proof needs both real files, so skip cleanly
-    // when either is absent (for example a checkout without the LFS data).
+    // when either is absent (for example a checkout where the data files have
+    // not been downloaded).
     let (Some(dd_path), Some(ipi_path)) = (dd_lite_data_file(), ipi_data_file()) else {
         eprintln!(
             "skipping both_engines_coexist: both a Device Detection Hash file and \

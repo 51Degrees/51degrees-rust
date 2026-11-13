@@ -83,6 +83,18 @@ pub fn validate_response(
     url: &str,
     check_for_error_messages: bool,
 ) -> Result<ParsedResponse, Error> {
+    let (outcome, warnings) = validate_keeping_warnings(response, url, check_for_error_messages);
+    outcome.map(|json| ParsedResponse { json, warnings })
+}
+
+/// As [`validate_response`], with the response's warnings returned beside
+/// the outcome rather than inside it, so a caller can log them when the
+/// response also carries errors.
+pub(crate) fn validate_keeping_warnings(
+    response: &CloudHttpResponse,
+    url: &str,
+    check_for_error_messages: bool,
+) -> (Result<String, Error>, Vec<String>) {
     let retry_after = parse_retry_after(response.retry_after.as_deref());
     let body = response.body.as_str();
     let mut messages: Vec<String> = Vec::new();
@@ -119,11 +131,12 @@ pub fn validate_response(
                 // errors object, so it is treated as data.
             }
             Err(e) => {
-                return Err(cloud_error(
+                let error = cloud_error(
                     response.status,
                     retry_after,
                     format!("failed to parse the cloud service response as JSON: {e}"),
-                ));
+                );
+                return (Err(error), warnings);
             }
         }
     }
@@ -148,10 +161,7 @@ pub fn validate_response(
     }
 
     if messages.is_empty() {
-        Ok(ParsedResponse {
-            json: response.body.clone(),
-            warnings,
-        })
+        (Ok(response.body.clone()), warnings)
     } else {
         // The service repeats the resource key back inside its own error text,
         // so the joined message is cleaned whatever it was built from.
@@ -164,7 +174,10 @@ pub fn validate_response(
                  https://configure.51degrees.com?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=cloud-request-engine-src-response.rs&utm_term=resource-key-invalid",
             );
         }
-        Err(cloud_error(response.status, retry_after, message))
+        (
+            Err(cloud_error(response.status, retry_after, message)),
+            warnings,
+        )
     }
 }
 

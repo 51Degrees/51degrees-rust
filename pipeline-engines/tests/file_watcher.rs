@@ -152,6 +152,33 @@ fn dropping_the_service_releases_the_engine_and_stops_the_watcher() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The service holds an engine weakly, as a .NET engine unregisters its data
+/// files when disposed. Dropping the engine, or the pipeline holding it,
+/// frees its data set and ends its registration while the service lives on,
+/// so a later change to the file refreshes nothing. The service's unit tests
+/// check that the registration's watcher goes with it.
+#[test]
+fn dropping_the_engine_ends_its_registration() {
+    let (dir, path) = folder("engine");
+    let engine = watched_engine(&path, true);
+    let refreshes = Arc::clone(&engine.refreshes);
+    let service = DataUpdateService::new();
+    register(&service, &engine);
+    assert_eq!(service.registered_count(), 1);
+    let released = Arc::downgrade(&engine);
+
+    drop(engine);
+
+    assert!(
+        released.upgrade().is_none(),
+        "the service kept the engine alive after its caller dropped it"
+    );
+    assert_eq!(service.registered_count(), 0);
+    std::fs::write(&path, b"version 2").unwrap();
+    assert_eq!(refreshes_after(&refreshes, 1, QUIET_WAIT), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Automatic updates are the master switch for the watcher, as the
 /// specification says. With them off a change to the file refreshes nothing,
 /// and with them on it refreshes the engine.

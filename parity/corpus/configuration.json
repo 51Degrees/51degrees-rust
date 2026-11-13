@@ -1,0 +1,1081 @@
+[
+  {
+    "id": "configuration-pipeline",
+    "about": "The Sequence element, the Hash and IP Intelligence engines in a parallel group, the JSON builder and usage sharing, with every parameter given as text, and each setting read back.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "SubElements": [
+              {
+                "BuilderName": "DeviceDetectionHashEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{dd}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false",
+                  "UpdatePollingInterval": "00:45:00",
+                  "UpdateRandomisationMax": "120",
+                  "DataUpdateUrl": "https://parity.test/data",
+                  "DataUpdateLicenseKey": "PARITYKEY",
+                  "DataUpdateVerifyMd5": "false",
+                  "DataUpdateDecompress": "false",
+                  "VerifyIfModifiedSince": "false"
+                }
+              },
+              {
+                "BuilderName": "IpiOnPremiseEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{ipi}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false"
+                }
+              }
+            ]
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          },
+          {
+            "BuilderName": "ShareUsageBuilder",
+            "BuildParameters": {
+              "SharePercentage": "0.5",
+              "MinimumEntriesPerMessage": "20",
+              "MaximumQueueSize": "500",
+              "AddTimeout": "10",
+              "TakeTimeout": "200",
+              "ShareUsageUrl": "https://parity.test/usage",
+              "BlockedHttpHeaders": "Referer,X-Forwarded-For",
+              "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
+              "ShareAllEvidence": "false",
+              "RepeatEvidenceIntervalMinutes": "5"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SuppressProcessExceptions": "true"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-no-group",
+    "about": "The same elements with the two engines on their own, so they are listed in the order given. No element of .NET's pipeline is concurrent, where the crates' usage sharing element is, as the configuration.concurrent allowed difference records.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false",
+              "UpdatePollingInterval": "00:45:00",
+              "UpdateRandomisationMax": "120",
+              "DataUpdateUrl": "https://parity.test/data",
+              "DataUpdateLicenseKey": "PARITYKEY",
+              "DataUpdateVerifyMd5": "false",
+              "DataUpdateDecompress": "false",
+              "VerifyIfModifiedSince": "false"
+            }
+          },
+          {
+            "BuilderName": "IpiOnPremiseEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{ipi}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          },
+          {
+            "BuilderName": "ShareUsageBuilder",
+            "BuildParameters": {
+              "SharePercentage": "0.5",
+              "MinimumEntriesPerMessage": "20",
+              "MaximumQueueSize": "500",
+              "AddTimeout": "10",
+              "TakeTimeout": "200",
+              "ShareUsageUrl": "https://parity.test/usage",
+              "BlockedHttpHeaders": "Referer,X-Forwarded-For",
+              "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
+              "ShareAllEvidence": "false",
+              "RepeatEvidenceIntervalMinutes": "5"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SuppressProcessExceptions": "true"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-unknown-builder",
+    "about": "A builder name no builder has, in place of the JSON builder.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "SubElements": [
+              {
+                "BuilderName": "DeviceDetectionHashEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{dd}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false",
+                  "UpdatePollingInterval": "00:45:00",
+                  "UpdateRandomisationMax": "120",
+                  "DataUpdateUrl": "https://parity.test/data",
+                  "DataUpdateLicenseKey": "PARITYKEY",
+                  "DataUpdateVerifyMd5": "false",
+                  "DataUpdateDecompress": "false",
+                  "VerifyIfModifiedSince": "false"
+                }
+              },
+              {
+                "BuilderName": "IpiOnPremiseEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{ipi}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false"
+                }
+              }
+            ]
+          },
+          {
+            "BuilderName": "NoSuchElementBuilder"
+          },
+          {
+            "BuilderName": "ShareUsageBuilder",
+            "BuildParameters": {
+              "SharePercentage": "0.5",
+              "MinimumEntriesPerMessage": "20",
+              "MaximumQueueSize": "500",
+              "AddTimeout": "10",
+              "TakeTimeout": "200",
+              "ShareUsageUrl": "https://parity.test/usage",
+              "BlockedHttpHeaders": "Referer,X-Forwarded-For",
+              "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
+              "ShareAllEvidence": "false",
+              "RepeatEvidenceIntervalMinutes": "5"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SuppressProcessExceptions": "true"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-unknown-builder-in-group",
+    "about": "A builder name no builder has, in place of the IP Intelligence engine inside the group.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "SubElements": [
+              {
+                "BuilderName": "DeviceDetectionHashEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{dd}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false",
+                  "UpdatePollingInterval": "00:45:00",
+                  "UpdateRandomisationMax": "120",
+                  "DataUpdateUrl": "https://parity.test/data",
+                  "DataUpdateLicenseKey": "PARITYKEY",
+                  "DataUpdateVerifyMd5": "false",
+                  "DataUpdateDecompress": "false",
+                  "VerifyIfModifiedSince": "false"
+                }
+              },
+              {
+                "BuilderName": "NoSuchEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{ipi}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false"
+                }
+              }
+            ]
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          },
+          {
+            "BuilderName": "ShareUsageBuilder",
+            "BuildParameters": {
+              "SharePercentage": "0.5",
+              "MinimumEntriesPerMessage": "20",
+              "MaximumQueueSize": "500",
+              "AddTimeout": "10",
+              "TakeTimeout": "200",
+              "ShareUsageUrl": "https://parity.test/usage",
+              "BlockedHttpHeaders": "Referer,X-Forwarded-For",
+              "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
+              "ShareAllEvidence": "false",
+              "RepeatEvidenceIntervalMinutes": "5"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SuppressProcessExceptions": "true"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-unknown-parameter",
+    "about": "A parameter usage sharing has no setting for.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "SubElements": [
+              {
+                "BuilderName": "DeviceDetectionHashEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{dd}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false",
+                  "UpdatePollingInterval": "00:45:00",
+                  "UpdateRandomisationMax": "120",
+                  "DataUpdateUrl": "https://parity.test/data",
+                  "DataUpdateLicenseKey": "PARITYKEY",
+                  "DataUpdateVerifyMd5": "false",
+                  "DataUpdateDecompress": "false",
+                  "VerifyIfModifiedSince": "false"
+                }
+              },
+              {
+                "BuilderName": "IpiOnPremiseEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{ipi}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false"
+                }
+              }
+            ]
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          },
+          {
+            "BuilderName": "ShareUsageBuilder",
+            "BuildParameters": {
+              "SharePercentage": "0.5",
+              "MinimumEntriesPerMessage": "20",
+              "MaximumQueueSize": "500",
+              "AddTimeout": "10",
+              "TakeTimeout": "200",
+              "ShareUsageUrl": "https://parity.test/usage",
+              "BlockedHttpHeaders": "Referer,X-Forwarded-For",
+              "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
+              "ShareAllEvidence": "false",
+              "RepeatEvidenceIntervalMinutes": "5",
+              "NoSuchSetting": "1"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SuppressProcessExceptions": "true"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-unknown-parameter-in-group",
+    "about": "A parameter the IP Intelligence engine inside the group has no setting for.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "SubElements": [
+              {
+                "BuilderName": "DeviceDetectionHashEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{dd}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false",
+                  "UpdatePollingInterval": "00:45:00",
+                  "UpdateRandomisationMax": "120",
+                  "DataUpdateUrl": "https://parity.test/data",
+                  "DataUpdateLicenseKey": "PARITYKEY",
+                  "DataUpdateVerifyMd5": "false",
+                  "DataUpdateDecompress": "false",
+                  "VerifyIfModifiedSince": "false"
+                }
+              },
+              {
+                "BuilderName": "IpiOnPremiseEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{ipi}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false",
+                  "NoSuchSetting": "1"
+                }
+              }
+            ]
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          },
+          {
+            "BuilderName": "ShareUsageBuilder",
+            "BuildParameters": {
+              "SharePercentage": "0.5",
+              "MinimumEntriesPerMessage": "20",
+              "MaximumQueueSize": "500",
+              "AddTimeout": "10",
+              "TakeTimeout": "200",
+              "ShareUsageUrl": "https://parity.test/usage",
+              "BlockedHttpHeaders": "Referer,X-Forwarded-For",
+              "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
+              "ShareAllEvidence": "false",
+              "RepeatEvidenceIntervalMinutes": "5"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SuppressProcessExceptions": "true"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-robots-txt",
+    "about": "The Hash engine then the robots.txt engine, given each setting .NET's robots.txt builder reads, with usage sharing off.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "RobotsTxtEngineBuilder",
+            "BuildParameters": {
+              "UserAgent": "parity-test/1.0",
+              "CacheSize": "100",
+              "CacheHitOrMiss": "false",
+              "LazyLoadingTimeout": "1000",
+              "Properties": "PlainText,AnnotatedText"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SetShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-robots-txt-unknown-parameter",
+    "about": "A parameter the robots.txt engine has no setting for, so the error lists the settings of .NET's robots.txt builder.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "RobotsTxtEngineBuilder",
+            "BuildParameters": {
+              "NoSuchSetting": "1"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SetShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-property-keyed",
+    "about": "The Hash engine then the TAC, Native and property keyed engines, named in full, without Builder and in lower case, given each setting .NET's builders read, with usage sharing off. The Hash engine indexes no property, because .NET's Hash builder has no IndexedProperties setting.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "TacEngineBuilder",
+            "BuildParameters": {
+              "CacheSize": "100",
+              "CacheHitOrMiss": "false",
+              "LazyLoadingTimeout": "1000",
+              "Properties": "Profiles"
+            }
+          },
+          {
+            "BuilderName": "NativeEngine"
+          },
+          {
+            "BuilderName": "propertykeyeddeviceenginebuilder",
+            "BuildParameters": {
+              "KeyProperty": "HardwareVendor",
+              "ElementDataKey": "vendor-profiles"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SetShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-property-keyed-default-key",
+    "about": "The property keyed engine given only its key property, so its data key is profiles- and the key property in lower case. The Hash engine indexes no property, because .NET's Hash builder has no IndexedProperties setting.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "PropertyKeyedDeviceEngineBuilder",
+            "BuildParameters": {
+              "KeyProperty": "HardwareModel"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SetShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-property-keyed-no-key-property",
+    "about": "The property keyed engine given no key property, which its builder refuses.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "PropertyKeyedDeviceEngineBuilder"
+          }
+        ],
+        "BuildParameters": {
+          "SetShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-tac-unknown-parameter",
+    "about": "A parameter the TAC engine has no setting for, so the error lists the settings of .NET's TAC builder.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "TacEngineBuilder",
+            "BuildParameters": {
+              "NoSuchSetting": "1"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SetShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-native-unknown-parameter",
+    "about": "A parameter the Native engine has no setting for, so the error lists the settings of .NET's Native builder.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "NativeEngineBuilder",
+            "BuildParameters": {
+              "NoSuchSetting": "1"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SetShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-property-keyed-unknown-parameter",
+    "about": "A parameter the property keyed engine has no setting for, so the error lists the settings of .NET's property keyed builder.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "PropertyKeyedDeviceEngineBuilder",
+            "BuildParameters": {
+              "NoSuchSetting": "1"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SetShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-value-does-not-parse",
+    "about": "A share percentage that is not a number.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "SubElements": [
+              {
+                "BuilderName": "DeviceDetectionHashEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{dd}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false",
+                  "UpdatePollingInterval": "00:45:00",
+                  "UpdateRandomisationMax": "120",
+                  "DataUpdateUrl": "https://parity.test/data",
+                  "DataUpdateLicenseKey": "PARITYKEY",
+                  "DataUpdateVerifyMd5": "false",
+                  "DataUpdateDecompress": "false",
+                  "VerifyIfModifiedSince": "false"
+                }
+              },
+              {
+                "BuilderName": "IpiOnPremiseEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{ipi}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false"
+                }
+              }
+            ]
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          },
+          {
+            "BuilderName": "ShareUsageBuilder",
+            "BuildParameters": {
+              "SharePercentage": "half",
+              "MinimumEntriesPerMessage": "20",
+              "MaximumQueueSize": "500",
+              "AddTimeout": "10",
+              "TakeTimeout": "200",
+              "ShareUsageUrl": "https://parity.test/usage",
+              "BlockedHttpHeaders": "Referer,X-Forwarded-For",
+              "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
+              "ShareAllEvidence": "false",
+              "RepeatEvidenceIntervalMinutes": "5"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SuppressProcessExceptions": "true"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-value-does-not-parse-in-group",
+    "about": "A polling interval for the Hash engine inside the group that is not a time span.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "SubElements": [
+              {
+                "BuilderName": "DeviceDetectionHashEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{dd}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false",
+                  "UpdatePollingInterval": "soon",
+                  "UpdateRandomisationMax": "120",
+                  "DataUpdateUrl": "https://parity.test/data",
+                  "DataUpdateLicenseKey": "PARITYKEY",
+                  "DataUpdateVerifyMd5": "false",
+                  "DataUpdateDecompress": "false",
+                  "VerifyIfModifiedSince": "false"
+                }
+              },
+              {
+                "BuilderName": "IpiOnPremiseEngineBuilder",
+                "BuildParameters": {
+                  "DataFile": "{ipi}",
+                  "CreateTempDataCopy": "false",
+                  "AutoUpdate": "false",
+                  "DataFileSystemWatcher": "false",
+                  "DataUpdateOnStartup": "false"
+                }
+              }
+            ]
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          },
+          {
+            "BuilderName": "ShareUsageBuilder",
+            "BuildParameters": {
+              "SharePercentage": "0.5",
+              "MinimumEntriesPerMessage": "20",
+              "MaximumQueueSize": "500",
+              "AddTimeout": "10",
+              "TakeTimeout": "200",
+              "ShareUsageUrl": "https://parity.test/usage",
+              "BlockedHttpHeaders": "Referer,X-Forwarded-For",
+              "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
+              "ShareAllEvidence": "false",
+              "RepeatEvidenceIntervalMinutes": "5"
+            }
+          }
+        ],
+        "BuildParameters": {
+          "SuppressProcessExceptions": "true"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-setting-in-both-sections",
+    "about": "ShareUsage under both PipelineBuilderParameters and BuildParameters, and the suppress setting under PipelineBuilderParameters alone. .NET reads the older section first, into the dictionary BuildParameters then fills, so usage sharing takes the BuildParameters value and the suppress setting still applies.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          }
+        ],
+        "PipelineBuilderParameters": {
+          "ShareUsage": "false",
+          "SuppressProcessExceptions": "true"
+        },
+        "BuildParameters": {
+          "ShareUsage": "true"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-setting-forms-in-both-sections",
+    "about": "The suppress setting under a different form of its name in PipelineBuilderParameters and BuildParameters. Each section is read in its own key order, the older one first, so the BuildParameters form is applied last.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          }
+        ],
+        "PipelineBuilderParameters": {
+          "SuppressProcessExceptions": "true"
+        },
+        "BuildParameters": {
+          "SetSuppressProcessExceptions": "false",
+          "ShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-setting-case-in-both-sections",
+    "about": "The suppress setting under two forms of its name in PipelineBuilderParameters, and under one of them in another case in BuildParameters. .NET's dictionary compares names in their case, so the BuildParameters entry is a second one, applied last.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          }
+        ],
+        "PipelineBuilderParameters": {
+          "SetSuppressProcessExceptions": "true",
+          "SuppressProcessExceptions": "true"
+        },
+        "BuildParameters": {
+          "setsuppressprocessexceptions": "false",
+          "ShareUsage": "false"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-engines-only",
+    "about": "Only the two engines, on their own. .NET's FiftyOnePipelineBuilder adds the Sequence element first and usage sharing last, with usage sharing's default settings, so the elements it adds and those settings are compared.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "DeviceDetectionHashEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{dd}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "IpiOnPremiseEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{ipi}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "configuration-value-forms",
+    "about": "The first case with whole numbers, true, false and null in place of text, and with section, builder and parameter names in other cases. .NET's reader gives a number as the text written, true and false as True and False and null as empty text, and finds every name ignoring case.",
+    "configuration": {
+      "pipelineOptions": {
+        "elements": [
+          {
+            "builderName": "SEQUENCEELEMENTBUILDER"
+          },
+          {
+            "subElements": [
+              {
+                "builderName": "devicedetectionhashengine",
+                "buildParameters": {
+                  "dataFile": "{dd}",
+                  "createTempDataCopy": false,
+                  "AUTOUPDATE": false,
+                  "dataFileSystemWatcher": false,
+                  "dataUpdateOnStartup": false,
+                  "updatePollingInterval": 2700,
+                  "updateRandomisationMax": 120,
+                  "dataUpdateUrl": "https://parity.test/data",
+                  "dataUpdateLicenseKey": "PARITYKEY",
+                  "dataUpdateVerifyMd5": true,
+                  "dataUpdateDecompress": true,
+                  "verifyIfModifiedSince": true
+                }
+              },
+              {
+                "BUILDERNAME": "IpiOnPremiseEngineBuilder",
+                "BUILDPARAMETERS": {
+                  "DATAFILE": "{ipi}",
+                  "createtempdatacopy": false,
+                  "autoupdate": false,
+                  "datafilesystemwatcher": false,
+                  "dataupdateonstartup": false,
+                  "dataupdatelicensekey": null
+                }
+              }
+            ]
+          },
+          {
+            "builderName": "jsonbuilderelement"
+          },
+          {
+            "builderName": "shareusagebuilder",
+            "buildParameters": {
+              "sharePercentage": "0.25",
+              "minimumEntriesPerMessage": 20,
+              "maximumQueueSize": 500,
+              "addTimeout": 10,
+              "takeTimeout": 200,
+              "shareUsageUrl": "https://parity.test/usage",
+              "blockedHttpHeaders": null,
+              "includedQueryStringParameters": "utm_source",
+              "ignoreFlowDataEvidenceFilter": null,
+              "shareAllEvidence": false,
+              "repeatEvidenceIntervalMinutes": 5
+            }
+          }
+        ],
+        "buildParameters": {
+          "suppressProcessExceptions": true
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-text-forms",
+    "about": "A file given as text, with comments, trailing commas, a parameter name holding an escape and a fraction with an exponent, which .NET's reader allows, building the Sequence element, the Hash engine, the JSON builder and usage sharing.",
+    "text": "// A configuration file as written by hand.\n{\n  /* The pipeline. */\n  \"PipelineOptions\": {\n    \"Elements\": [\n      { \"BuilderName\": \"SequenceElementBuilder\", }, // A trailing comma.\n      {\n        \"BuilderName\": \"DeviceDetectionHashEngineBuilder\",\n        \"BuildParameters\": {\n          \"Data\\u0046ile\": \"{dd}\",\n          \"CreateTempDataCopy\": \"false\",\n          \"AutoUpdate\": \"false\",\n          \"DataFileSystemWatcher\": \"false\",\n          \"DataUpdateOnStartup\": \"false\",\n        },\n      },\n      { \"BuilderName\": \"JsonBuilderElementBuilder\" },\n      {\n        \"BuilderName\": \"ShareUsageBuilder\",\n        \"BuildParameters\": {\n          \"SharePercentage\": 2.5e-05, // A fraction with an exponent.\n          \"MinimumEntriesPerMessage\": 20,\n        },\n      },\n    ],\n    \"BuildParameters\": {\n      /* Process errors are not suppressed. */\n      \"SuppressProcessExceptions\": \"false\",\n    },\n  },\n}\n"
+  },
+  {
+    "id": "configuration-pipeline-setting-does-not-parse",
+    "about": "A suppress setting for the pipeline that is not true or false. The pipeline's own settings are read after every element is built, so the error names the pipeline builder.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "SequenceElementBuilder"
+          },
+          {
+            "BuilderName": "JsonBuilderElementBuilder"
+          }
+        ],
+        "BuildParameters": {
+          "SuppressProcessExceptions": "sometimes"
+        }
+      }
+    }
+  },
+  {
+    "id": "configuration-translation-countries",
+    "about": "The two country translation engines after the IP Intelligence engine, one named by its builder's name and one by the name without Builder.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "IpiOnPremiseEngineBuilder",
+            "BuildParameters": {
+              "DataFile": "{ipi}",
+              "CreateTempDataCopy": "false",
+              "AutoUpdate": "false",
+              "DataFileSystemWatcher": "false",
+              "DataUpdateOnStartup": "false"
+            }
+          },
+          {
+            "BuilderName": "CountryCodeTranslationEngineBuilder"
+          },
+          {
+            "BuilderName": "CountriesTranslationEngine"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "configuration-translation-settings",
+    "about": "The translation engine with the three settings a configuration can give, the behavior named in lower case. Its translations are given in code only, so the engine has none and is not built.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "TranslationEngineBuilder",
+            "BuildParameters": {
+              "SourceElementDataKey": "countrynames",
+              "FixedLanguage": "fr_FR",
+              "MissingTranslationBehavior": "emptystring"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "configuration-translation-behavior-does-not-parse",
+    "about": "A missing translation behavior that is not one of the three.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "TranslationEngineBuilder",
+            "BuildParameters": {
+              "MissingTranslationBehavior": "Nonsense"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "configuration-translation-add-translation",
+    "about": "AddTranslation, whose source and destination cannot both be given in one value.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "TranslationEngineBuilder",
+            "BuildParameters": {
+              "AddTranslation": "CountryNamesGeographical"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "configuration-translation-sources",
+    "about": "Sources, which names no setting, so the error lists the four settings that take one value.",
+    "configuration": {
+      "PipelineOptions": {
+        "Elements": [
+          {
+            "BuilderName": "TranslationEngineBuilder",
+            "BuildParameters": {
+              "Sources": "countries.fr_FR.yml"
+            }
+          }
+        ]
+      }
+    }
+  }
+]

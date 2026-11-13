@@ -1,5 +1,7 @@
 # Cargo build output for every workspace in the repo (root and examples/).
 target/
+# The copy of Cargo.lock that ci/measure-wasm-size.sh places in its crate.
+/ci/wasm-size/Cargo.lock
 # Performance results written by the nightly performance workflow.
 /test-results
 *.log
@@ -33,3 +35,13 @@ Thumbs.db
 /common-sys/cxx/
 /device-detection-sys/cxx/
 /ip-intelligence-sys/cxx/
+
+# The translation files that ci/copy-translations.ps1 copies into the
+# translation crate before packaging. The data repository inside the cxx
+# submodule is the only copy that belongs in the repository.
+/ip-intelligence-translation/translations/
+
+# The derived-properties commit that ci/record-derived-properties-commit.ps1
+# writes before packaging. The submodule itself records the commit in the
+# repository.
+/derived-properties/SOURCE.txt

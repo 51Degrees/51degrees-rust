@@ -41,6 +41,14 @@ use pipeline_examples::star_sign::{
     STAR_SIGN_DATA_KEY, STAR_SIGN_PROPERTY, UNKNOWN_STAR_SIGN,
 };
 
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("Client-side evidence", "https://51degrees.com/documentation/_pipeline_api__features__client_side_evidence.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-clientside.rs&utm_term=find-out-more"),
+    ("Pipeline API", "https://51degrees.com/documentation/_pipeline_api__index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-clientside.rs&utm_term=find-out-more"),
+    ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-clientside.rs&utm_term=find-out-more"),
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-clientside.rs&utm_term=find-out-more"),
+];
+
 /// The cookie the client-side JavaScript writes the birth date to. The element
 /// reads it back as `cookie.date-of-birth` evidence on the next request.
 const DATE_OF_BIRTH_COOKIE: &str = "cookie.date-of-birth";
@@ -184,6 +192,7 @@ async fn home(result: FiftyOneResult) -> Html<String> {
 /// every element in the pipeline, which includes the star-sign prompt snippet
 /// when the cookie is absent.
 fn home_page_html(message: &str) -> String {
+    let find_out_more = find_out_more_html();
     format!(
         "<!doctype html>\n\
          <html lang=\"en\">\n\
@@ -198,9 +207,28 @@ fn home_page_html(message: &str) -> String {
          <body>\n\
            <h1>51Degrees star sign</h1>\n\
            <p>{message}</p>\n\
+           {find_out_more}\
          </body>\n\
          </html>\n"
     )
+}
+
+/// The page's "Find out more" section, set apart by a rule, listing
+/// [`FIND_OUT_MORE`] and the repositories as links.
+fn find_out_more_html() -> String {
+    let mut html = format!(
+        "<hr>\n<h2>{}</h2>\n<ul>\n",
+        examples_shared::FIND_OUT_MORE_HEADING
+    );
+    for (label, url) in FIND_OUT_MORE {
+        let href = url.replace('&', "&amp;");
+        html.push_str(&format!("<li><a href=\"{href}\">{label}</a></li>\n"));
+    }
+    for url in pipeline_examples::REPOSITORIES {
+        html.push_str(&format!("<li><a href=\"{url}\">{url}</a></li>\n"));
+    }
+    html.push_str("</ul>\n");
+    html
 }
 
 /// Assemble the axum application: the home route plus the 51Degrees endpoints and
