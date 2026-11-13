@@ -81,8 +81,8 @@
     "path": "javascript",
     "kind": "text",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "reason": "The JavaScript holds the JSON, so every JSON difference in the engines' pipeline shows here too. The crates also write the request's parameters in name order with lower case names, because their evidence has no order and lowercases its keys. The values pipeline's cases are not listed, so their JavaScript must be the same.",
-    "issue": 230
+    "reason": "The JavaScript holds the JSON, so every JSON difference in the engines' pipeline shows here too, being the reasons a property has no value (json.device.*nullreason) and the order of the properties (json.device order). The values pipeline's cases are not listed, so their JavaScript must be the same.",
+    "issue": 223
   },
   {
     "path": "javascript",
