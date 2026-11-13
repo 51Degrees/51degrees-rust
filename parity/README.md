@@ -649,11 +649,11 @@ checks that each change fails the comparison.
 
 Both sides build the same C code. The crates build their native code from
 the [51degrees-cxx](https://github.com/51Degrees/51degrees-cxx) commit the
-`cxx` submodule records, 4.5.103. The .NET packages named in
+`cxx` submodule records, 4.5.105. The .NET packages named in
 `dotnet/Parity.csproj` are the
 [51degrees-dotnet](https://github.com/51Degrees/51degrees-dotnet) release
 whose own `cxx` submodule records the same commit, being Device Detection
-4.5.180, IP Intelligence 4.5.155 and Pipeline 4.5.129. So an engine answer
+4.5.181, IP Intelligence 4.5.156 and Pipeline 4.5.130. So an engine answer
 that differs comes from what each side does with the same C code, including
 which of its functions each side calls, and never from the two sides
 building different versions of it. Latitude and longitude are an example,
