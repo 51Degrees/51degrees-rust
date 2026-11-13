@@ -42,8 +42,9 @@ use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 /// Render the script for the supplied evidence. The pipeline is the Sequence
 /// element, the JSON builder and the JavaScript builder, with a host so the
 /// callback URL and the sections that use it are rendered. The Sequence
-/// element keeps a `query.session-id` as it is given and adds one to a
-/// `query.sequence`, and the JavaScript builder reads both from its data.
+/// element keeps a `query.session-id` that is not empty as it is given and
+/// adds one to a `query.sequence` it can read, and the JavaScript builder
+/// reads both from its data.
 fn render(evidence: &[(&str, &str)]) -> String {
     render_on(
         Pipeline::builder().add_element(Arc::new(SequenceElement::new())),
@@ -175,12 +176,11 @@ fn longest_session_id_is_rendered() {
 fn unsafe_session_id_is_rendered_empty() {
     // The template's own text holds "a b" and "ab", so for those two only the
     // rendered session id is read.
-    let cases: [(&str, bool); 7] = [
+    let cases: [(&str, bool); 6] = [
         ("a\"b", true),
         ("a\\b", true),
         ("</script>", true),
         ("caf\u{e9}", true),
-        ("", false),
         ("a b", false),
         ("ab\n", false),
     ];
@@ -193,7 +193,7 @@ fn unsafe_session_id_is_rendered_empty() {
             ["var sessionId = \"\";"],
             "{value:?} reached the script"
         );
-        if check_text && !value.is_empty() {
+        if check_text {
             assert!(!script.contains(value), "{value:?} reached the script");
         }
         assert_parses(&script);
@@ -223,10 +223,8 @@ fn without_a_sequence_element_the_evidence_is_not_rendered() {
 
 #[test]
 fn unusable_sequence_is_rendered_as_one() {
-    // The Sequence element adds one to a 32-bit integer, so "-1", "-5" and
-    // "2147483647" give 0, -4 and -2147483648, which the script cannot use,
-    // and "0" gives 1. The rest are not 32-bit integers, so the Sequence
-    // element records an error and gives no sequence.
+    // The Sequence element reads only the digits 0 to 9 from 0 up to
+    // 2,147,483,646, and gives 1 for anything else, as it does for "0".
     for value in [
         "-1",
         "-5",
@@ -238,6 +236,7 @@ fn unusable_sequence_is_rendered_as_one() {
         "1;b",
         "1.5",
         "2147483648",
+        " 7 ",
     ] {
         let script = render_suppressed(&[("query.session-id", "abc"), ("query.sequence", value)]);
 
@@ -253,7 +252,7 @@ fn unusable_sequence_is_rendered_as_one() {
 #[test]
 fn usable_sequence_is_rendered() {
     // The Sequence element adds one to the sequence the request carried.
-    for (value, expected) in [("7", 8), (" 7 ", 8), ("2147483646", 2147483647)] {
+    for (value, expected) in [("7", 8), ("2147483646", 2147483647)] {
         let script = render(&[("query.session-id", "abc"), ("query.sequence", value)]);
 
         assert_eq!(
