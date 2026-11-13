@@ -1522,20 +1522,32 @@ mod tests {
 
     #[test]
     fn a_string_joins_its_values_and_keeps_text_as_it_is() {
-        for value_type in [PropertyValueType::String, PropertyValueType::JavaScript] {
-            assert_eq!(
-                native_value(values(&["a", "b"]), value_type),
-                Some(PropertyValue::String("a|b".to_owned()))
-            );
-            assert_eq!(
-                native_value(values(&[""]), value_type),
-                Some(PropertyValue::String(String::new()))
-            );
-            assert_eq!(
-                native_value(values(&["Unknown"]), value_type),
-                Some(PropertyValue::String("Unknown".to_owned()))
-            );
-        }
+        let read = |list: &[&str]| native_value(values(list), PropertyValueType::String);
+        assert_eq!(
+            read(&["a", "b"]),
+            Some(PropertyValue::String("a|b".to_owned()))
+        );
+        assert_eq!(read(&[""]), Some(PropertyValue::String(String::new())));
+        assert_eq!(
+            read(&["Unknown"]),
+            Some(PropertyValue::String("Unknown".to_owned()))
+        );
+    }
+
+    /// A JavaScript property is JavaScript, as .NET's `DeviceDataHash` gives
+    /// it, joining its values as a string property does.
+    #[test]
+    fn a_javascript_property_is_javascript() {
+        let read = |list: &[&str]| native_value(values(list), PropertyValueType::JavaScript);
+        assert_eq!(
+            read(&["a", "b"]),
+            Some(PropertyValue::JavaScript("a|b".to_owned()))
+        );
+        assert_eq!(read(&[""]), Some(PropertyValue::JavaScript(String::new())));
+        assert_eq!(
+            read(&["Unknown"]),
+            Some(PropertyValue::JavaScript("Unknown".to_owned()))
+        );
     }
 
     #[test]
