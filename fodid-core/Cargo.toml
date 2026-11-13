@@ -1,0 +1,25 @@
+[package]
+name = "fiftyone-fodid-core"
+version = "4.5.2"
+description = "The 51Did element data, property names, metadata and engine trait that any engine producing 51Dids is built on, with no cloud request engine."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage = "https://51degrees.com/developers/51did?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-fodid-core-cargo.toml&utm_term=homepage"
+
+[dependencies]
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
+# default-features = false drops the data-update service (reqwest/notify), which
+# the data model never uses, so this crate builds for wasm32-wasip1.
+fiftyone-pipeline-engines = { version = "=4.5.2", path = "../pipeline-engines", default-features = false }
+# The 51Degrees metadata model the property metadata is built in. Its default
+# features are off, so it brings no HTTP client.
+fiftyone-pipeline-engines-fiftyone = { version = "=4.5.2", path = "../pipeline-engines-fiftyone" }
+fodid = { version = "=4.5.5", path = "../fodid" }
+
+[dev-dependencies]
+# The tests sign envelopes, one of them with too short a payload, which needs
+# the OWID creator types fodid exposes under its creator feature.
+fodid = { version = "4.5.5", path = "../fodid", features = ["creator"] }

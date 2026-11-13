@@ -52,9 +52,13 @@
 //! created inside `process`; any hot mutable state (for example a reloadable
 //! data file) belongs behind a synchronisation primitive owned by the element.
 
+use std::any::Any;
+use std::sync::Arc;
+
 use crate::error::Result;
 use crate::evidence::EvidenceKeyFilter;
 use crate::flow_data::FlowData;
+use crate::pipeline::Pipeline;
 use crate::property::PropertyMetaData;
 
 /// The basic building block of a pipeline.
@@ -88,16 +92,62 @@ pub trait FlowElement: Send + Sync {
     /// pipeline-wide filter.
     fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter;
 
+    /// True once [`FlowElement::evidence_key_filter`] holds every key this
+    /// element will accept. Defaults to `true`.
+    ///
+    /// An element that learns its accepted evidence after it is built, as the
+    /// cloud request engine does after a transient discovery failure, returns
+    /// `false` until then. A consumer that keeps the filter's keys, such as the
+    /// web `Vary` list, collects them again until this is `true`, because the
+    /// [cloud request engine specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/cloud-request-engine.md#consequences-for-consumers-of-the-engine)
+    /// forbids keeping a result obtained before discovery completed. An
+    /// element that wraps another forwards this.
+    fn is_evidence_key_filter_complete(&self) -> bool {
+        true
+    }
+
     /// Metadata for the properties this element can populate.
     ///
     /// Publishing produced properties is a specification MUST. See the
     /// [properties specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#property-metadata).
     fn properties(&self) -> &[PropertyMetaData];
 
+    /// True once [`FlowElement::properties`] holds this element's own
+    /// property list. Defaults to `true`.
+    ///
+    /// An element that learns its properties after it is built, as a cloud
+    /// aspect engine does from the cloud request engine's discovery, returns
+    /// `false` until then, and the list it gives meanwhile may be defaults. A
+    /// consumer deciding what the pipeline offers leaves such an element out
+    /// and asks again later. An element that wraps another forwards this.
+    ///
+    /// An aspect engine that can answer `false` from its
+    /// `has_loaded_properties` overrides this as well, reading its property
+    /// list first and then answering `has_loaded_properties`, because this
+    /// default would otherwise count it as loaded before its list is.
+    fn properties_loaded(&self) -> bool {
+        true
+    }
+
     /// True if this element starts multiple threads internally. Defaults to
     /// `false`. A pipeline reports itself concurrent if any element does, which
     /// influences whether thread-safe flow data is needed.
     fn is_concurrent(&self) -> bool {
+        false
+    }
+
+    /// True if this element adds values to the evidence while it processes,
+    /// with [`FlowData::add_evidence`], as the Sequence element does.
+    /// Defaults to `false`.
+    ///
+    /// [`crate::PipelineBuilder::build`] refuses a parallel group holding an
+    /// element that says so, because the other elements of a group read the
+    /// evidence at the same time, as the
+    /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#evidence)
+    /// says. Evidence that an element of a group adds without saying so is
+    /// not added, and the pipeline records a configuration error against the
+    /// element instead. An element that wraps another forwards this.
+    fn adds_evidence(&self) -> bool {
         false
     }
 
@@ -109,5 +159,89 @@ pub trait FlowElement: Send + Sync {
     /// it wraps another and should report the inner type.
     fn type_name(&self) -> &'static str {
         std::any::type_name::<Self>()
+    }
+
+    /// Called by [`crate::PipelineBuilder::build`] once for each place this
+    /// element has in the pipeline being built, after the pipeline is made and
+    /// before it is returned. An error fails the build. The default does
+    /// nothing.
+    ///
+    /// One element instance can be added to several pipelines. An element that
+    /// keeps state for its pipeline must keep that state for each pipeline, or
+    /// refuse a second pipeline here, as the
+    /// [multi-pipeline elements specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/advanced-features/multi-pipeline-elements.md)
+    /// says. Hold the pipeline as a [`std::sync::Weak`], because the pipeline
+    /// holds the element and a clone would keep both alive. An element that
+    /// wraps another passes the call on to it.
+    fn add_pipeline(&self, _pipeline: &Arc<Pipeline>) -> Result<()> {
+        Ok(())
+    }
+
+    /// This element as [`Any`], so code holding it as `Arc<dyn FlowElement>`
+    /// can get back its own type. Defaults to `None`.
+    ///
+    /// An element whose own type a consumer needs returns `Some(self)`. The
+    /// JSON and JavaScript builders do, so the web integration can hold a
+    /// builder the application gives and build a response again with it, and
+    /// so does the usage sharing element, so its settings can be read back.
+    /// An element that wraps another does not pass this on, because the
+    /// wrapper is the element in the pipeline, not the one it wraps.
+    fn into_any(self: Arc<Self>) -> Option<Arc<dyn Any + Send + Sync>> {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::evidence::EvidenceKeyFilterWhitelist;
+
+    /// An element that overrides none of the provided methods.
+    struct Plain {
+        filter: EvidenceKeyFilterWhitelist,
+    }
+
+    impl FlowElement for Plain {
+        fn process(&self, _data: &mut FlowData) -> Result<()> {
+            Ok(())
+        }
+
+        fn data_key(&self) -> &str {
+            "plain"
+        }
+
+        fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+            &self.filter
+        }
+
+        fn properties(&self) -> &[PropertyMetaData] {
+            &[]
+        }
+    }
+
+    #[test]
+    fn an_element_has_its_properties_loaded_unless_it_says_otherwise() {
+        let element = Plain {
+            filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+        };
+        assert!(element.properties_loaded());
+        let element: &dyn FlowElement = &element;
+        assert!(element.properties_loaded());
+    }
+
+    #[test]
+    fn an_element_adds_no_evidence_unless_it_says_otherwise() {
+        let element: &dyn FlowElement = &Plain {
+            filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+        };
+        assert!(!element.adds_evidence());
+    }
+
+    #[test]
+    fn an_element_gives_back_no_type_unless_it_says_otherwise() {
+        let element: Arc<dyn FlowElement> = Arc::new(Plain {
+            filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+        });
+        assert!(element.into_any().is_none());
     }
 }

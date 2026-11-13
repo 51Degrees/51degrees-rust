@@ -66,6 +66,7 @@
         "fiftyone-device-detection-shared",
         "fiftyone-device-detection-sys",
         "fiftyone-fodid-cloud",
+        "fiftyone-fodid-core",
         "fiftyone-ip-intelligence",
         "fiftyone-ip-intelligence-cloud",
         "fiftyone-ip-intelligence-onpremise",
@@ -150,7 +151,7 @@
         "$rustc"
       ],
       "group": "test",
-      "detail": "Runs the live cloud and data-file tests too; needs 51DEGREES_RESOURCE_KEY and data files in the environment."
+      "detail": "Runs the live cloud and data-file tests too; needs _51DEGREES_RESOURCE_KEY and data files in the environment."
     },
     {
       "label": "cargo: clippy (all targets, deny warnings)",
@@ -221,6 +222,8 @@
         "fiftyone-device-detection-cloud",
         "-p",
         "fiftyone-ip-intelligence-cloud",
+        "-p",
+        "fiftyone-fodid-core",
         "-p",
         "fiftyone-fodid-cloud",
         "-p",

@@ -1,0 +1,350 @@
+[
+  {
+    "path": "properties.ip.ip",
+    "kind": "type",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "reason": "The crates give Ip as a string, where .NET gives an IP address. The values are still compared, and are the same.",
+    "issue": 226
+  },
+  {
+    "path": "properties.ip.ipv6",
+    "kind": "type",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "reason": "The crates give IpV6 as a string, where .NET gives an IP address. The values are still compared, and are the same.",
+    "issue": 226
+  },
+  {
+    "path": "json.ip.ip",
+    "kind": "onlyInRust",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "rust": {"value": [null]},
+    "reason": "json-builder.md says \"There MUST be a top-level entry for each Element Data containing sub-entries for each Property and its value (set to 'null' if there is no value)\", so the crates write Ip as null when the evidence holds no IPv4 address. .NET's IpDataOnPremise.AsStrippedDictionary leaves Ip out then, so its JSON has no ip."
+  },
+  {
+    "path": "json.ip.ipnullreason",
+    "kind": "onlyInRust",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "rust": {"value": ["IPv4 was not supplied as evidence.", "The IP supplied as evidence was not valid."]},
+    "reason": "json-builder.md says the nullreason meta-Property \"MUST be added with a string message that explains why this Property does not have a value\" where the Property's value is null, so the crates write the reason .NET gives for Ip having no value. .NET leaves Ip out of its JSON then, and writes no reason."
+  },
+  {
+    "path": "json.ip.ipv6",
+    "kind": "onlyInRust",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "rust": {"value": [null]},
+    "reason": "json-builder.md says \"There MUST be a top-level entry for each Element Data containing sub-entries for each Property and its value (set to 'null' if there is no value)\", so the crates write IpV6 as null when the evidence holds no IPv6 address. .NET's IpDataOnPremise.AsStrippedDictionary leaves IpV6 out then, so its JSON has no ipv6."
+  },
+  {
+    "path": "json.ip.ipv6nullreason",
+    "kind": "onlyInRust",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "rust": {"value": ["IPv6 was not supplied as evidence.", "The IP supplied as evidence was not valid."]},
+    "reason": "json-builder.md says the nullreason meta-Property \"MUST be added with a string message that explains why this Property does not have a value\" where the Property's value is null, so the crates write the reason .NET gives for IpV6 having no value. .NET leaves IpV6 out of its JSON then, and writes no reason."
+  },
+  {
+    "path": "properties.ip.iprange*",
+    "kind": "type",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "data": "enterprise",
+    "reason": "The crates give IpRangeStart and IpRangeEnd as strings, where .NET gives IP addresses.",
+    "issue": 226
+  },
+  {
+    "path": "properties.device.hardware*",
+    "kind": "noValueMessage",
+    "cases": ["metadata-device-ismobile"],
+    "data": "lite",
+    "dotnet": {"pattern": ["Property '*' not found in data for element '*'. This is because your license or data file does not include this property. To see which licenses include it, see *&utm_campaign=51degrees-dotnet&*"]},
+    "rust": {"pattern": ["Property '*' not found in data for element '*'. This is because your license or data file does not include this property. To see which licenses include it, see *&utm_campaign=51degrees-rust&*"]},
+    "reason": "The Lite file lacks HardwareVendor, HardwareModel and HardwareName, which the Device Detection engine defines, and both sides give the reason for data tiers that are not known, word for word apart from the pricing link's campaign tags, which name each repository and the file the message is in. The Missing Properties section of properties.md (https://github.com/51Degrees/specifications/blob/77dc1f62ac11fac1f3358f38eb67cc7ef0e5b00e/pipeline-specification/features/properties.md#missing-properties) says \"An implementation SHOULD give the same text, and MAY add to each link the campaign parameters its own repository requires.\" The text before the link is pinned on both sides."
+  },
+  {
+    "path": "properties.device.*",
+    "kind": "noValueMessage",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "reason": "Every Device Detection property with no value gives the same sentence, where .NET gives the reason for each.",
+    "issue": 223
+  },
+  {
+    "path": "properties.device.*javascript*",
+    "kind": "type",
+    "reason": "The crates read the JavaScript type from the data file (data_file_value_type in native/src/dd.rs), but native_value in device-detection-onpremise gives every type other than true or false, a number or a list as a string, so the JavaScript properties are strings where .NET gives its JavaScript type.",
+    "issue": 223
+  },
+  {
+    "path": "json.device.*nullreason",
+    "kind": "value",
+    "reason": "The crates give every Device Detection property with no value the reason No value for property and its name, where .NET says why it has none, such as that the evidence it needs was not supplied (properties.device.* noValueMessage).",
+    "issue": 223
+  },
+  {
+    "path": "javascript",
+    "kind": "text",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "reason": "The JavaScript holds the JSON, so every JSON difference in the engines' pipeline shows here too. The crates also write the request's parameters in name order with lower case names, because their evidence has no order and lowercases its keys. The values pipeline's cases are not listed, so their JavaScript must be the same.",
+    "issue": 230
+  },
+  {
+    "path": "javascript",
+    "kind": "lineEndings",
+    "rust": {"value": [0]},
+    "reason": "The .NET 4.5.130 package embeds its template with CRLF line endings, so each line of its script that comes from the template ends with CRLF. The Process section of javascript-builder.md (https://github.com/51Degrees/specifications/blob/77dc1f62ac11fac1f3358f38eb67cc7ef0e5b00e/pipeline-specification/pipeline-elements/javascript-builder.md#process) names the template in javascript-templates, \"The Mustache template used by all implementations\", which ends each line with LF at 41e7561f, the commit the crates bundle, and the crates write no CRLF."
+  },
+  {
+    "path": "usage*",
+    "kind": "text",
+    "cases": ["usage-value-replaced-and-cut"],
+    "dotnet": {"pattern": ["*<header Name=\"X-Long\">[TRUNCATED BY USAGE SHARING] é中\\x0001&lt;&amp;]]&gt;aaaa*"]},
+    "rust": {"pattern": ["*<header escaped=\"true\" truncated=\"true\" Name=\"X-Long\">é中\\x0001&lt;&amp;]]&gt;aaaa*"]},
+    "reason": "The crates write the usage record as the Processing section of usage-sharing-element.md on specifications rc asks (https://github.com/51Degrees/specifications/blob/3a677b56cc03afc2b14b8a2b254ed542a5f2b1bc/pipeline-specification/pipeline-elements/usage-sharing-element.md#processing), so a value longer than 10,000 code points is cut to 10,000 with nothing put in front of it and its entry marked truncated=\"true\", and an entry holding a character XML 1.0 does not allow is marked escaped=\"true\". https://github.com/51Degrees/specifications/pull/118 records that .NET keeps its own form, which cuts the value at 10,000 UTF-16 units after the text [TRUNCATED BY USAGE SHARING] and a space, and adds BadSchema to the end of the record. The comparison reads .NET's CDATA sections as text, so every other record is the same on both sides, and this case differs from the long value on."
+  },
+  {
+    "path": "properties.agent-signature.agentsignaturecreated",
+    "kind": "type",
+    "reason": "The crates' property values have no type for a point in time, so the agent signature element gives the time as RFC 3339 text, the form .NET's JSON builder writes, where .NET gives a DateTimeOffset. The values are still compared, and are the same."
+  },
+  {
+    "path": "properties.agent-signature.agentsignatureexpires",
+    "kind": "type",
+    "reason": "The crates' property values have no type for a point in time, so the agent signature element gives the time as RFC 3339 text, the form .NET's JSON builder writes, where .NET gives a DateTimeOffset. The values are still compared, and are the same."
+  },
+  {
+    "path": "fodid.status",
+    "kind": "value",
+    "cases": ["*-payload-version-2-short"],
+    "dotnet": {"value": ["PayloadTooShort"]},
+    "rust": {"value": ["UnsupportedPayloadVersion"]},
+    "reason": "identifier-layout.md asks a reader to refuse a payload version it does not know, naming the version it found, and the 5 byte header is part of the version 0 layout. So the crates read the version first and refuse a 4 byte payload naming version 2 as that version, where .NET checks the length first and gives PayloadTooShort."
+  },
+  {
+    "path": "fodid.status",
+    "kind": "value",
+    "cases": ["*-domain-not-ascii", "*-domain-not-utf8"],
+    "dotnet": {"value": ["Parsed"]},
+    "rust": {"value": ["InvalidDomainEncoding"]},
+    "reason": "identifier-layout.md gives the creator domain as ASCII text, so the crates refuse a domain holding a byte above 7f with InvalidDomainEncoding, the status the OWID reader gives a domain that is not UTF-8. .NET reads each such byte as a question mark and reads the 51Did."
+  },
+  {
+    "path": "fodid.*",
+    "kind": "presence",
+    "cases": ["*-domain-not-ascii", "*-domain-not-utf8"],
+    "rust": {"value": [null]},
+    "reason": "The crates refuse a creator domain that is not ASCII, so every field but the status is null, where .NET reads the 51Did and gives each field."
+  },
+  {
+    "path": "configuration.error",
+    "kind": "value",
+    "cases": ["configuration-unknown-builder", "configuration-unknown-builder-in-group"],
+    "dotnet": {"value": ["Configuration failed to build.\nBuilderName: NoSuchElementBuilder\nSubElement Builder Names: No SubElements\nCould not find builder matching 'NoSuchElementBuilder' for element 2. Available builders are: CustomShareUsageBuilder,SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder,NativeEngineBuilder,PropertyKeyedDeviceEngineBuilder,TacEngineBuilder\nNo Inner Exception.\n", "Configuration failed to build.\nBuilderName: BuilderName not set\nSubElement Builder Names: DeviceDetectionHashEngineBuilder,NoSuchEngineBuilder\nCould not find builder matching 'NoSuchEngineBuilder' for element 1 in element 1. Available builders are: CustomShareUsageBuilder,SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder,NativeEngineBuilder,PropertyKeyedDeviceEngineBuilder,TacEngineBuilder\nNo Inner Exception.\n"]},
+    "rust": {"value": ["Configuration failed to build.\nBuilderName: NoSuchElementBuilder\nSubElement Builder Names: No SubElements\nCould not find builder matching 'NoSuchElementBuilder' for element 2. Available builders are: SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder,NativeEngineBuilder,PropertyKeyedDeviceEngineBuilder,TacEngineBuilder\nNo Inner Exception.\n", "Configuration failed to build.\nBuilderName: BuilderName not set\nSubElement Builder Names: DeviceDetectionHashEngineBuilder,NoSuchEngineBuilder\nCould not find builder matching 'NoSuchEngineBuilder' for element 1 in element 1. Available builders are: SequenceElementBuilder,SetHeadersElementBuilder,ShareUsageBuilder,DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder,JsonBuilderElementBuilder,JavaScriptBuilderElementBuilder,CloudRequestEngineBuilder,AgentSignatureElementBuilder,CountriesTranslationEngineBuilder,CountryCodeTranslationEngineBuilder,TranslationEngineBuilder,CloudCountriesTranslationEngineBuilder,IpiCloudEngineBuilder,RobotsTxtEngineBuilder,NativeEngineBuilder,PropertyKeyedDeviceEngineBuilder,TacEngineBuilder\nNo Inner Exception.\n"]},
+    "reason": "A builder name that matches no builder. .NET lists every type in the loaded assemblies that has a Build method returning a Flow Element, so it also lists CustomShareUsageBuilder, the builder of the .NET program's own usage sharing element, which is in the program's own assembly. The crates list the builders added to the program's registry, which are the others .NET lists, in .NET's order. The comparison leaves the abstract base builders .NET lists out of both sides before comparing, so the .NET side is pinned without them."
+  },
+  {
+    "path": "configuration.error",
+    "kind": "value",
+    "cases": ["configuration-translation-settings"],
+    "dotnet": {"value": ["Configuration failed to build.\nBuilderName: TranslationEngineBuilder\nSubElement Builder Names: No SubElements\nException has been thrown by the target of an invocation.\nAt least one property translation must be configured. (Parameter 'translations')\n"]},
+    "rust": {"value": ["Configuration failed to build.\nBuilderName: TranslationEngineBuilder\nSubElement Builder Names: No SubElements\nAt least one property translation must be configured. (Parameter 'translations')\nNo Inner Exception.\n"]},
+    "reason": "The translation engine refuses to be built with no translation, and a configuration cannot give one. .NET gives the engine's refusal as the inner message of Exception has been thrown by the target of an invocation., as it gives anything a builder throws, and the crates give the refusal itself, as each crate's configuration tests record. The refusal's text is the same."
+  },
+  {
+    "path": "configuration.error",
+    "kind": "value",
+    "cases": ["configuration-property-keyed-no-key-property"],
+    "dotnet": {"value": ["Configuration failed to build.\nBuilderName: PropertyKeyedDeviceEngineBuilder\nSubElement Builder Names: No SubElements\nException has been thrown by the target of an invocation.\nKeyProperty must be set before building\n"]},
+    "rust": {"value": ["Configuration failed to build.\nBuilderName: PropertyKeyedDeviceEngineBuilder\nSubElement Builder Names: No SubElements\nKeyProperty must be set before building\nNo Inner Exception.\n"]},
+    "reason": "The property keyed engine refuses to be built with no key property, and the configuration gives none. .NET gives the builder's refusal as the inner message of Exception has been thrown by the target of an invocation., as it gives anything a builder throws, and the crates give the refusal itself, as the crate's configuration tests record. The refusal's text is the same."
+  },
+  {
+    "path": "configuration.concurrent",
+    "kind": "value",
+    "cases": ["configuration-no-group", "configuration-setting-in-both-sections", "configuration-engines-only", "configuration-text-forms", "configuration-translation-countries"],
+    "dotnet": {"value": [false]},
+    "rust": {"value": [true]},
+    "reason": "The crates' usage sharing element says it is concurrent, because it sends from a thread of its own, so a pipeline holding it is concurrent with no parallel group. .NET's ShareUsageElement says it is not."
+  },
+  {
+    "path": "configuration.error",
+    "kind": "value",
+    "cases": ["configuration-unknown-parameter-in-group"],
+    "dotnet": {"value": ["Configuration failed to build.\nBuilderName: BuilderName not set\nSubElement Builder Names: DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder\nBuilder '{type}' for element 1 in element 1 has no 'Set' methods or 'Build' methods that match (case-insensitively) the following parameters: CREATETEMPDATACOPY,DATAFILE,NOSUCHSETTING. The available configuration methods on this builder are: \nSetReuseTempFile\nSetPerformanceProfile\nSetConcurrency\nSetCache\nSetCacheSize\nSetDataDownloadType\nSetDataUpdateUrl\nSetDataUpdateUrlFormatter\nSetDataUpdateUseUrlFormatter\nSetDataUpdateVerifyMd5\nSetDataUpdateDecompress\nSetAutoUpdate\nSetDataFileSystemWatcher\nSetUpdatePollingInterval\nSetUpdateRandomisationMax\nSetVerifyIfModifiedSince\nSetDataUpdateLicenseKey\nSetDataUpdateLicenseKeys\nSetDataUpdateOnStartup\nAddDataFile\nSetTempDirPath\nSetLazyLoading\nSetLazyLoadingTimeout\nSetCacheHitOrMiss\nSetProperties\nSetProperty\nThe available 'Build' methods have the following signatures: \ndatafile (String),createTempDataCopy (Boolean)\ndata (Stream)\n\n\nNo Inner Exception.\n"]},
+    "rust": {"value": ["Configuration failed to build.\nBuilderName: BuilderName not set\nSubElement Builder Names: DeviceDetectionHashEngineBuilder,IpiOnPremiseEngineBuilder\nBuilder '{type}' for element 1 in element 1 has no 'Set' methods or 'Build' methods that match (case-insensitively) the following parameters: CREATETEMPDATACOPY,DATAFILE,NOSUCHSETTING. The available configuration methods on this builder are: \nSetReuseTempFile\nSetPerformanceProfile\nSetConcurrency\nSetCache\nSetCacheSize\nSetDataDownloadType\nSetDataUpdateUrl\nSetDataUpdateUrlFormatter\nSetDataUpdateUseUrlFormatter\nSetDataUpdateVerifyMd5\nSetDataUpdateDecompress\nSetAutoUpdate\nSetDataFileSystemWatcher\nSetUpdatePollingInterval\nSetUpdateRandomisationMax\nSetVerifyIfModifiedSince\nSetDataUpdateLicenseKey\nSetDataUpdateLicenseKeys\nSetLicenseKeyRequired\nSetDataUpdateOnStartup\nAddDataFile\nSetTempDirPath\nSetLazyLoading\nSetLazyLoadingTimeout\nSetCacheHitOrMiss\nSetProperties\nSetProperty\nThe available 'Build' methods have the following signatures: \ndatafile (String),createTempDataCopy (Boolean)\ndata (Stream)\n\n\nNo Inner Exception.\n"]},
+    "reason": "The crates' on-premise engines take SetLicenseKeyRequired, so a configuration can say that its update source serves the data file without a license key, as the specification allows (#312). .NET's engine builders have no such setting, because .NET never asks for a key when an engine is built from a configuration, so the list of settings given for an unknown setting has one more name than .NET's."
+  },
+  {
+    "path": "properties.countrynames*",
+    "kind": "state",
+    "cases": ["translation-no-ip-data", "translation-bad-item", "translation-unreadable-after-unresolved"],
+    "dotnet": {"value": [null]},
+    "rust": {"noValue": true},
+    "reason": "A property no engine set reads as null in .NET, because its data gives null for a key it does not hold. The crates' data cannot hold null, so such a property has no value, with the reason No value for property and its name. In translation-no-ip-data the country codes engine sets no property. In translation-bad-item the countries engine fails before it sets any, and in translation-unreadable-after-unresolved it fails after setting the weighted names and before the lists of every country. Each happens on both sides, and the errors and the JSON are the same."
+  },
+  {
+    "path": "errors",
+    "kind": "value",
+    "cases": ["cloud-translation-request-failed"],
+    "dotnet": {"value": [[{"element": "cloud-response", "message": "Error returned from 51Degrees cloud service: The cloud service is not available."}, {"element": "countrynamestranslated", "message": "The 'CloudCountriesTranslationEngine' did not process because the JSON response from the CloudRequestEngine was null or empty. This indicates that the cloud request failed."}]]},
+    "rust": {"value": [[{"element": "cloud-response", "message": "The cloud service is not available."}, {"element": "countrynamestranslated", "message": "The 'CloudCountriesTranslationEngine' did not process because the JSON response from the CloudRequestEngine was null or empty. This indicates that the cloud request failed."}]]},
+    "reason": "When the cloud answers with an error, the cloud request engine's error is the text of the response's errors entry, as the HTTP requests section of the specification's cloud request engine says, and the crates give that text. .NET puts Error returned from 51Degrees cloud service before it. The cloud countries translation engine's own error is the same on both sides."
+  },
+  {
+    "path": "json.errors[0]",
+    "kind": "value",
+    "cases": ["cloud-translation-request-failed"],
+    "dotnet": {"value": ["Error returned from 51Degrees cloud service: The cloud service is not available."]},
+    "rust": {"value": ["The cloud service is not available."]},
+    "reason": "The JSON builder writes the cloud request engine's error, which differs as the entry for errors in this case says."
+  },
+  {
+    "path": "errors",
+    "kind": "value",
+    "cases": ["cloud-translation-section-absent", "cloud-translation-section-in-capitals"],
+    "dotnet": {"value": [[{"element": "countrynamestranslated", "message": "The given key 'countrynamestranslated' was not present in the dictionary."}]]},
+    "rust": {"value": [[]]},
+    "reason": "The Processing section of the specification's cloud aspect engine says that where the response has no portion for the engine's Data Key, the engine leaves the Element Data without values and raises no error, so the crates' cloud countries translation engine records none for a response without a countrynamestranslated section. .NET reads the section with a dictionary's indexer, which throws. The properties and the reasons they are missing are the same on both sides."
+  },
+  {
+    "path": "json.errors",
+    "kind": "onlyInDotnet",
+    "cases": ["cloud-translation-section-absent", "cloud-translation-section-in-capitals"],
+    "dotnet": {"value": [["The given key 'countrynamestranslated' was not present in the dictionary."]]},
+    "reason": "The JSON builder writes the errors, and the crates' side has none, as the entry for errors in these cases says."
+  },
+  {
+    "path": "properties.countrynamestranslated.*",
+    "kind": "noValueMessage",
+    "cases": ["cloud-translation-*"],
+    "reason": "A property the cloud's response does not give is missing on both sides, with the same reason word for word apart from the configurator link's campaign tags, which name each repository and the file the message is in. An entry cannot pin a missing property's reason, so the workflow step that checks the cloud translation cases compares the two reasons with the link's tags removed. The same kind covers the reason for a null value, which that step compares exactly."
+  },
+  {
+    "path": "*Text",
+    "kind": "text",
+    "cases": ["robots-txt-tdl-written-form"],
+    "dotnet": {"pattern": ["line *: # Terms HTTPS://Example.COM/Terms%20Of%20Use/1.txt?v=1#top"]},
+    "rust": {"pattern": ["line *: # Terms https://example.com/Terms%20Of%20Use/1.txt?v=1#top"]},
+    "reason": "A Terms Document Locator is written as a URI, and the crate writes its scheme and host in lower case, as RFC 3986 asks of a program that writes a URI, in section 3.1 (https://www.rfc-editor.org/rfc/rfc3986#section-3.1), \"An implementation should accept uppercase letters as equivalent to lowercase in scheme names ... but should only produce lowercase scheme names for consistency\", and section 3.2.2 (https://www.rfc-editor.org/rfc/rfc3986#section-3.2.2), \"producers and normalizers should use lowercase for registered names\". .NET writes the entry as it was given. Both keep the escapes. The specifications repository has no section for the robots.txt engine."
+  },
+  {
+    "path": "propertyKeyedEngines[*].properties[*].type",
+    "kind": "value",
+    "dotnet": {"value": ["dotnet:IReadOnlyList`1"]},
+    "rust": {"value": ["elementDataList"]},
+    "reason": "Profiles is a list of each profile's device data. .NET types it as IReadOnlyList<IDeviceData>, which the .NET program writes as its .NET type name, and the crates as elementDataList, the type they give a list of results each read like an element's own data, which the JSON builder writes as a list of objects with a property that has no value as null with its reason.",
+    "issue": 225
+  },
+  {
+    "path": "indexedValues.NativeModel.*",
+    "data": "enterprise",
+    "cases": ["property-keyed-none"],
+    "reason": "The crates list each NativeModel value the C library's index holds exactly, as the draft specification of the lookup, specifications#62, asks. .NET 4.5.180's engine keys its own index ignoring case, so it counts the values that differ only in case together under the spelling it met first. The step \"Check the NativeModel differences are of case alone\" fails on any difference here that case alone does not explain. This comes out when .NET's engines use the C library's index, 51degrees-dotnet#30.",
+    "issue": 225
+  },
+  {
+    "path": "profileIds*",
+    "data": "enterprise",
+    "cases": ["property-keyed-native-*", "property-keyed-profile-*"],
+    "reason": "The crates find a native model name exactly, through the C library's index, as the draft specification of the lookup, specifications#62, asks. .NET 4.5.180's engine finds it ignoring case, so it gives the profiles of every value that differs only in case, in ascending order, and a profile holding two such values twice. A profile case gives the value that first found its profile, which may be a native model name. The step \"Check the NativeModel differences are of case alone\" fails on any difference here that case alone does not explain, and on any profile case giving a TAC whose ids differ. This comes out when .NET's engines use the C library's index, 51degrees-dotnet#30.",
+    "issue": 225
+  },
+  {
+    "path": "engineMetadata.dataSourceTier",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "data": "lite",
+    "dotnet": {"value": ["IPIV41"]},
+    "rust": {"value": ["IPIV4Asn"]},
+    "reason": "The crates' IP Intelligence engine gives the tier the data file's header names, IPIV4Asn for the ASN file the lite job opens, where .NET gives IPIV41.",
+    "issue": 226
+  },
+  {
+    "path": "engineMetadata.dataSourceTier",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "data": "enterprise",
+    "dotnet": {"value": ["IPIV41"]},
+    "rust": {"value": ["IPIV4Enterprise"]},
+    "reason": "The crates' IP Intelligence engine gives the tier the data file's header names, IPIV4Enterprise for the Enterprise file the enterprise job opens, where .NET gives IPIV41.",
+    "issue": 226
+  },
+  {
+    "path": "engineMetadata.properties.Ip*.type",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "dotnet": {"value": ["ipAddress"]},
+    "rust": {"value": ["string"]},
+    "reason": "The crates' value types have no IP address, so Ip, IpV6, IpRangeStart and IpRangeEnd are strings, where .NET gives IP addresses.",
+    "issue": 226
+  },
+  {
+    "path": "engineMetadata.properties.*.type",
+    "kind": "value",
+    "cases": ["metadata-ip*"],
+    "data": "enterprise",
+    "dotnet": {"value": ["weightedList"]},
+    "rust": {"value": ["keyValueList"]},
+    "reason": "The crates' value types have no weighted list, so each weighted property, being CountryCodesGeographical, CountryCodesPopulation, Mcc and StateGeoNameIdsGeographical, has the type of a list of records, each a raw weighting and a value, which is how the crates give its values. .NET gives a list of weighted values."
+  },
+  {
+    "path": "properties.ip.*",
+    "kind": "noValueMessage",
+    "cases": ["metadata-ip-asn"],
+    "dotnet": {"pattern": ["Property '*' not found in data for element 'ip'. This is because your license or data file does not include this property. It is available with the * license/data for the IpiOnPremiseEngine. To upgrade, see *"]},
+    "rust": {"pattern": ["Property '*' not found in data for element 'ip'. This is because the property has been excluded when configuring the engine."]},
+    "reason": "For a property the data file holds and the engine was opened without, both sides first check that the engine's tier is among the property's data tiers. .NET's IP Intelligence tier, IPIV41, is in none, so .NET gives the upgrade reason. The crates' tier is the name the data file's header gives, which is among them, so they go on to the excluded reason. This follows from the engineMetadata.dataSourceTier entries.",
+    "issue": 226
+  },
+  {
+    "path": "properties.ip.country",
+    "kind": "noValueMessage",
+    "cases": ["metadata-ip-asn"],
+    "data": "lite",
+    "dotnet": {"pattern": ["Property '*' not found in data for element '*'. This is because your license or data file does not include this property. To see which licenses include it, see *&utm_campaign=51degrees-dotnet&*"]},
+    "rust": {"pattern": ["Property '*' not found in data for element '*'. This is because your license or data file does not include this property. To see which licenses include it, see *&utm_campaign=51degrees-rust&*"]},
+    "reason": "The ASN file lacks Country, which the IP Intelligence engine defines, and both sides give the reason for data tiers that are not known, word for word apart from the pricing link's campaign tags, which name each repository and the file the message is in. The Missing Properties section of properties.md (https://github.com/51Degrees/specifications/blob/77dc1f62ac11fac1f3358f38eb67cc7ef0e5b00e/pipeline-specification/features/properties.md#missing-properties) says \"An implementation SHOULD give the same text, and MAY add to each link the campaign parameters its own repository requires.\" The text before the link is pinned on both sides."
+  },
+  {
+    "path": "json.device",
+    "kind": "order",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "reason": "The JSON builder writes the same properties on both sides in another order, .NET in the order of each element's data and the crates in name order. The Process section of json-builder.md (https://github.com/51Degrees/specifications/blob/77dc1f62ac11fac1f3358f38eb67cc7ef0e5b00e/pipeline-specification/pipeline-elements/json-builder.md#process) asks for \"a top-level entry for each Element Data containing sub-entries for each Property and its value\" and names no order, and RFC 8259 section 4 (https://www.rfc-editor.org/rfc/rfc8259#section-4) says \"An object is an unordered collection of zero or more name/value pairs\". The values pipeline's cases are not listed, so their JSON must be the same text."
+  },
+  {
+    "path": "json.ip",
+    "kind": "order",
+    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
+    "data": "enterprise",
+    "reason": "The IP Intelligence properties in another order, as the json.device order entry says. Over the Lite file both sides give the ASN file's few properties in the same order."
+  },
+  {
+    "path": "evidenceAfter",
+    "kind": "value",
+    "cases": ["sequence-nul"],
+    "dotnet": {"value": [{"query.session-id": "parity-sequence-nul", "query.sequence": "6"}]},
+    "rust": {"value": [{"query.session-id": "parity-sequence-nul", "query.sequence": "1"}]},
+    "reason": "The Process section of sequence-element.md (https://github.com/51Degrees/specifications/blob/77dc1f62ac11fac1f3358f38eb67cc7ef0e5b00e/pipeline-specification/pipeline-elements/sequence-element.md#process) says \"A `query.sequence` value that is not a whole number, or a string made only of the digits 0 to 9 with no sign or spaces, from 0 up to 2,147,483,646 is not present\", so 5 followed by a NUL character is not present and the crates give 1. .NET reads the text with int.TryParse and NumberStyles.None, which skips NUL characters at the end, so it reads 5 and gives 6."
+  },
+  {
+    "path": "session",
+    "kind": "value",
+    "cases": ["sequence-nul"],
+    "dotnet": {"value": [{"id": "parity-sequence-nul", "sequence": 6}]},
+    "rust": {"value": [{"id": "parity-sequence-nul", "sequence": 1}]},
+    "reason": "The sequence after the Sequence element, as the evidenceAfter entry for this case says."
+  },
+  {
+    "path": "*sequence.sequence",
+    "kind": "value",
+    "cases": ["sequence-nul"],
+    "dotnet": {"value": [6]},
+    "rust": {"value": [1]},
+    "reason": "The Sequence element's data and the JSON hold the sequence, as the evidenceAfter entry for this case says."
+  },
+  {
+    "path": "usage*",
+    "kind": "text",
+    "cases": ["sequence-nul"],
+    "dotnet": {"pattern": ["*<Sequence>6</Sequence>*"]},
+    "rust": {"pattern": ["*<Sequence>1</Sequence>*"]},
+    "reason": "The usage records hold the sequence, as the evidenceAfter entry for this case says."
+  }
+]

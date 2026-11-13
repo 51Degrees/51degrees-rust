@@ -47,7 +47,7 @@ mod web_support;
 use web_support::{serve_css, serve_js, ASSETS_CSS_ROUTE, ASSETS_JS_ROUTE};
 
 /// The public 51Degrees cloud API base the resource script is loaded from when
-/// `51DEGREES_CLOUD_ENDPOINT` is unset. The resource script lives at
+/// `_51DEGREES_CLOUD_ENDPOINT` is unset. The resource script lives at
 /// `<base><resource-key>.js`. Mirrors the cloud request engine default.
 const DEFAULT_CLOUD_BASE: &str = "https://cloud.51degrees.com/api/v4/";
 
@@ -69,7 +69,7 @@ pub struct Options {
     /// The 51Degrees cloud resource key.
     pub resource_key: String,
     /// An optional override for the cloud endpoint, read from
-    /// `51DEGREES_CLOUD_ENDPOINT`. `None` selects the public cloud.
+    /// `_51DEGREES_CLOUD_ENDPOINT`. `None` selects the public cloud.
     pub endpoint: Option<String>,
     /// The socket address the server binds to.
     pub address: SocketAddr,
@@ -143,12 +143,13 @@ async fn home(State(state): State<PageState>) -> Html<String> {
          browser and fills the results below once it completes, with no server-side rendering.",
         web_support::CLOUD_CONTACT_BANNER,
         &client_script,
+        examples_shared::CLOUD_REPOSITORIES,
     ))
 }
 
 fn main() -> anyhow::Result<()> {
     let resource_key = examples_shared::resource_key_from_env().context(
-        "no 51Degrees cloud resource key found. Set 51DEGREES_RESOURCE_KEY to a key from \
+        "no 51Degrees cloud resource key found. Set _51DEGREES_RESOURCE_KEY to a key from \
          https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-client-only-cloud.rs&utm_term=resource-key-required and run again.",
     )?;
 
@@ -160,7 +161,7 @@ fn main() -> anyhow::Result<()> {
 
     run(Options {
         resource_key,
-        // The cloud endpoint from 51DEGREES_CLOUD_ENDPOINT, or the public cloud
+        // The cloud endpoint from _51DEGREES_CLOUD_ENDPOINT, or the public cloud
         // when unset (see cloud_base).
         endpoint: examples_shared::cloud_endpoint_from_env(),
         address,
@@ -216,6 +217,10 @@ mod tests {
             body.contains(ASSETS_JS_ROUTE),
             "the page references the shared examples JavaScript"
         );
+        assert!(
+            body.contains(examples_shared::FIND_OUT_MORE_HEADING),
+            "the page ends with the Find out more section"
+        );
 
         // The static assets serve too.
         let css = get(build_app("test-resource-key", None), ASSETS_CSS_ROUTE).await;
@@ -235,7 +240,7 @@ mod tests {
  *
  * The page loads the 51Degrees cloud resource script directly in the browser,
  * from `https://cloud.51degrees.com/api/v4/<resource-key>.js`, or from the host
- * named by `51DEGREES_CLOUD_ENDPOINT` (an on premise web server or a privately
+ * named by `_51DEGREES_CLOUD_ENDPOINT` (an on premise web server or a privately
  * hosted 51Degrees cloud, see `examples_shared::CLOUD_ENDPOINT_ENV_VAR`). That
  * script gathers evidence client-side, calls the cloud, and raises the
  * `complete` event. The shared `examples.min.js` helper subscribes to the event and renders
@@ -245,7 +250,7 @@ mod tests {
  * The page is written to the shared 51Degrees example design system (the
  * `.c-eg-*` classes) and shows the cloud `c-eg-message` contact-us banner.
  *
- * Set `51DEGREES_RESOURCE_KEY` to a key from https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-client-only-cloud.rs&utm_term=dd-web-client-only-cloud,
+ * Set `_51DEGREES_RESOURCE_KEY` to a key from https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-client-only-cloud.rs&utm_term=dd-web-client-only-cloud,
  * run the binary and open http://127.0.0.1:8082. The page renders without a key;
  * the live detection in the browser needs a real one.
  */

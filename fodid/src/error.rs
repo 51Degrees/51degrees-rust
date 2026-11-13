@@ -58,10 +58,17 @@ pub enum Error {
     /// [`ParseError::status`] names the OWID reason, for example
     /// [`ParseStatus::InvalidBase64`](crate::ParseStatus::InvalidBase64) or
     /// [`ParseStatus::ByteCountMismatch`](crate::ParseStatus::ByteCountMismatch).
+    /// An envelope whose creator domain is not ASCII is refused here too,
+    /// with
+    /// [`ParseStatus::InvalidDomainEncoding`](crate::ParseStatus::InvalidDomainEncoding),
+    /// because the 51Did layout gives the domain as ASCII text.
     Parse(ParseError),
-    /// The OWID envelope is well formed, but the payload is shorter than the
-    /// 51Did header (the flags byte and the four byte licence id), so the
-    /// identifier type cannot even be read.
+    /// The OWID envelope is well formed, but the payload is empty, or names
+    /// payload version 0 and is shorter than the 51Did header (the flags byte
+    /// and the four byte licence id), so the identifier type cannot even be
+    /// read. A short payload naming another version is
+    /// [`Error::UnsupportedPayloadVersion`] instead, because the header's
+    /// length is part of the version 0 layout.
     PayloadTooShort {
         /// The number of payload bytes the header needs, being the flags
         /// byte and the four byte licence id.
@@ -88,7 +95,9 @@ pub enum Error {
     /// A later version exists precisely because a field moved, so reading
     /// the payload under the layout this crate knows would answer with
     /// values that are wrong rather than absent, which is worse than
-    /// refusing.
+    /// refusing. The version is read before the payload's length is
+    /// checked, so a payload too short for the version 0 header still names
+    /// the version it carries.
     UnsupportedPayloadVersion {
         /// The version the payload named, being 1, 2 or 3, since 0 is the
         /// layout this crate reads.

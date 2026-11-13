@@ -24,12 +24,12 @@
 //!
 //! Device Detection web example: User-Agent Client Hints (UACH) flow.
 //!
-//! A focused, on-premise web example that drives the UA-CH high-entropy decoder
-//! ([`UachJsConversionElement`]). The browser's `getHighEntropyValues()` blob,
-//! delivered as a query or cookie parameter on the client callback, is decoded
-//! into the `sec-ch-ua*` HTTP headers the Hash engine understands. The page
-//! shows the evidence the pipeline received (including any decoded client hints)
-//! and refreshes client-side after the high-entropy round trip.
+//! A focused, on-premise web example of the User-Agent Client Hints flow. The
+//! browser's `getHighEntropyValues()` blob, delivered as a query or cookie
+//! parameter on the client callback, reaches the Hash engine as evidence, and
+//! the engine turns it into the `sec-ch-ua*` HTTP headers it matches on. The
+//! page shows the evidence the pipeline received (including the blob) and
+//! refreshes client-side after the high-entropy round trip.
 //!
 //! @snippet dd-web-uach.rs example
 
@@ -42,8 +42,7 @@ use axum::response::Html;
 use axum::routing::get;
 use axum::Router;
 use fiftyone_device_detection::{
-    DeviceDetectionOnPremiseEngineBuilder, PerformanceProfile, UachJsConversionElement,
-    DEVICE_DATA_KEY,
+    DeviceDetectionOnPremiseEngineBuilder, PerformanceProfile, DEVICE_DATA_KEY,
 };
 use fiftyone_pipeline_core::FlowElement;
 use fiftyone_pipeline_engines_fiftyone::ShareUsageElement;
@@ -68,10 +67,11 @@ pub struct Options {
 
 /// Build the UACH web application router.
 ///
-/// The pipeline is on-premise so the UA-CH high-entropy decoder
-/// ([`UachJsConversionElement`]) is wired explicitly ahead of the Hash engine.
-/// The decoder turns a `getHighEntropyValues` blob into the `sec-ch-ua*` headers
-/// the engine consumes, which is the heart of this example.
+/// The Hash engine turns a `getHighEntropyValues` blob into the `sec-ch-ua*`
+/// headers it matches on, which is the heart of this example, so the pipeline
+/// needs no element before the engine. The engine's properties, which are
+/// those its data file carries, go to the page handler so it can say which
+/// Enterprise properties the data file lacks.
 ///
 /// `share_usage` is true when the binary serves the page. The tests pass false,
 /// so a test run sends nothing to 51Degrees.
@@ -80,13 +80,11 @@ pub fn build_app(data_file: &std::path::Path, share_usage: bool) -> anyhow::Resu
         .performance_profile(PerformanceProfile::HighPerformance)
         .build()
         .with_context(|| format!("loading the Hash data file at {}", data_file.display()))?;
+    let available = Arc::new(engine.available_properties());
 
-    // The element order: usage sharing (required for a web example), the UA-CH
-    // high-entropy decoder, then the Hash engine. The decoder is the element
-    // this example exists to show: it sits before the engine so the decoded
-    // client hints are present when detection runs.
-    let mut elements: Vec<Arc<dyn FlowElement>> =
-        vec![Arc::new(UachJsConversionElement::new()), engine];
+    // The element order: usage sharing (required for a web example), then the
+    // Hash engine, which reads the high-entropy blob itself.
+    let mut elements: Vec<Arc<dyn FlowElement>> = vec![engine];
     if share_usage {
         elements.insert(0, Arc::new(ShareUsageElement::with_defaults()));
     }
@@ -96,7 +94,10 @@ pub fn build_app(data_file: &std::path::Path, share_usage: bool) -> anyhow::Resu
 
     let app = register(
         Router::new()
-            .route("/", get(home))
+            .route(
+                "/",
+                get(move |result: FiftyOneResult| home(result, Arc::clone(&available))),
+            )
             .route(ASSETS_CSS_ROUTE, get(serve_css))
             .route(ASSETS_JS_ROUTE, get(serve_js)),
         state,
@@ -138,14 +139,15 @@ pub fn run(options: Options) -> anyhow::Result<()> {
 }
 // [example]
 
-/// The home-page handler: show the evidence the pipeline received (the decoded
-/// `sec-ch-ua*` client hints become visible here after the client round trip),
-/// the detection results and the `Accept-CH` request headers.
-async fn home(result: FiftyOneResult) -> Html<String> {
+/// The home-page handler: show the evidence the pipeline received (the
+/// high-entropy blob becomes visible here after the client round trip),
+/// the detection results and the `Accept-CH` request headers. `available`
+/// holds the properties the data file carries.
+async fn home(result: FiftyOneResult, available: Arc<Vec<String>>) -> Html<String> {
     let (results_html, evidence_html, headers_html, has_accept_ch) = result.with(|flow_data| {
         let results = flow_data
             .get(DEVICE_DATA_KEY)
-            .map(|device| detection_results_table(device))
+            .map(|device| detection_results_table(device, Some(available.as_slice())))
             .unwrap_or_else(|| {
                 "<p class=\"c-eg-page__lead\">No device data was produced.</p>".to_owned()
             });
@@ -179,9 +181,9 @@ async fn home(result: FiftyOneResult) -> Html<String> {
         title: "Device Detection - User-Agent Client Hints (UACH)",
         lead: "This example drives the User-Agent Client Hints flow. The server asks the browser \
                for high-entropy client hints through the Accept-CH response header. The browser's \
-               getHighEntropyValues() blob is posted back on the client callback and decoded into \
-               sec-ch-ua* headers, which the on-premise Hash engine then uses. Watch the evidence \
-               table below grow with the decoded client hints after the callback.",
+               getHighEntropyValues() blob is posted back on the client callback, and the \
+               on-premise Hash engine turns it into the sec-ch-ua* headers it uses. Watch the \
+               evidence table below gain the blob after the callback.",
         top_alert: "",
         results_html: &results_html,
         evidence_html: &evidence_html,
@@ -189,13 +191,13 @@ async fn home(result: FiftyOneResult) -> Html<String> {
         accept_ch_alert,
         message_html: web_support::ONPREM_CONTACT_BANNER,
         client_script: web_support::SERVER_CLIENT_SCRIPT,
+        repositories: examples_shared::ON_PREMISE_REPOSITORIES,
     }))
 }
 
 fn main() -> anyhow::Result<()> {
     let data_file = examples_shared::dd_data_path().context(
-        "no on-premise Hash data file found. Set 51DEGREES_DD_PATH to a .hash data file, or \
-         check out the cxx submodule with its Lite data file.",
+        "no on-premise Hash data file found. Set _51DEGREES_DD_PATH to a .hash data file.",
     )?;
 
     let port: u16 = std::env::var("PORT")
@@ -241,8 +243,8 @@ mod tests {
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
                  (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36",
             );
-        // Add the sample UACH headers so the decoded client hints appear as
-        // evidence the pipeline accepts. The evidence keys are prefixed
+        // Add the sample UACH headers so the client hints appear as evidence
+        // the pipeline accepts. The evidence keys are prefixed
         // `header.`; strip that for the real HTTP header name.
         for (key, value) in examples_shared::evidence::uach_header_evidence() {
             let header_name = key.strip_prefix("header.").unwrap_or(key);
@@ -273,7 +275,7 @@ mod tests {
         let Some(app) = test_app() else {
             eprintln!(
                 "skipping server_starts_and_serves_page_and_client_script: no Hash data file \
-                 (set 51DEGREES_DD_PATH to enable this test)"
+                 (set _51DEGREES_DD_PATH to enable this test)"
             );
             return;
         };
@@ -296,6 +298,22 @@ mod tests {
             "the supplied client-hint evidence is shown, got: {}",
             page.body
         );
+        assert!(
+            page.body.contains(examples_shared::FIND_OUT_MORE_HEADING),
+            "the page ends with the Find out more section"
+        );
+        // The Lite file carries none of the Enterprise properties, so each says
+        // so with the contact link. _51DEGREES_DD_PATH can name another file.
+        let lite = examples_shared::dd_data_path()
+            .is_some_and(|file| file.ends_with(examples_shared::DD_LITE_RELATIVE_PATH));
+        if lite {
+            assert!(
+                page.body
+                    .contains(examples_shared::NEEDS_ENTERPRISE_DATA_FILE)
+                    && page.body.contains("utm_term=enterprise-data-file"),
+                "the Lite page says which properties need the Enterprise data file"
+            );
+        }
 
         assert_eq!(script.status, StatusCode::OK);
         assert!(
@@ -313,8 +331,7 @@ mod tests {
  *
  * This example focuses on the User-Agent Client Hints flow, the modern
  * replacement for parsing the User-Agent string. It is an on-premise web server
- * (so the UA-CH high-entropy decoder, `UachJsConversionElement`, is wired
- * explicitly ahead of the Hash engine) and shows the full handshake:
+ * and shows the full handshake:
  *
  *   1. The server asks the browser for high-entropy client hints by emitting an
  *      `Accept-CH` response header (the set-headers element). A `c-eg-alert`
@@ -322,19 +339,24 @@ mod tests {
  *      does not support client hints.
  *
  *   2. On the client callback the browser's `getHighEntropyValues()` result is
- *      posted back (as a query or cookie parameter). The high-entropy decoder
- *      turns that blob into the `sec-ch-ua*` HTTP headers the engine consumes,
- *      so detection can use precise platform, browser and (where available)
+ *      posted back (as a query or cookie parameter). The Hash engine turns
+ *      that blob into the `sec-ch-ua*` HTTP headers it matches on, so
+ *      detection can use precise platform, browser and (where available)
  *      model information.
  *
- *   3. The decoded client hints appear in the evidence table, and the refreshed
+ *   3. The blob appears in the evidence table, and the refreshed
  *      results table is appended client-side by the shared `examples.min.js`.
  *
  * The page is written to the shared 51Degrees example design system. Usage
- * sharing is enabled, as a web deployment should. Because the bundled data file
+ * sharing is enabled, as a web deployment should. Because the default data file
  * is the free Lite tier, the on-premise paid-data contact-us banner is shown.
+ * The results table also shows properties only the Enterprise data file
+ * carries, and with the Lite file each says it needs the Enterprise data file,
+ * with a link to contact 51Degrees about a copy. The page ends with a "Find out
+ * more" section.
  *
- * Resolve the data file with `51DEGREES_DD_PATH` (or the Lite
- * file in the `cxx` submodule), run the binary and open the page in a
+ * Resolve the data file with `_51DEGREES_DD_PATH` (or the Lite file in the data
+ * repository inside the `cxx` submodule, which is downloaded when it is
+ * missing), run the binary and open the page in a
  * Chromium-based browser (which supports client hints) at http://127.0.0.1:8083.
  */

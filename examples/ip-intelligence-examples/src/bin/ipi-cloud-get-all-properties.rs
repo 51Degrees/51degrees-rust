@@ -32,6 +32,13 @@ use anyhow::{Context, Result};
 use fiftyone_ip_intelligence::{IpIntelligencePipelineBuilder, IP_DATA_KEY};
 use fiftyone_pipeline_core::{ElementData, Evidence, PropertyValue};
 
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-get-all-properties.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-get-all-properties.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-get-all-properties.rs&utm_term=find-out-more"),
+];
+
 /// The evidence key under which the client IP address is supplied to the cloud
 /// pipeline.
 const CLIENT_IP_EVIDENCE_KEY: &str = "query.client-ip-51d";
@@ -105,24 +112,30 @@ pub fn run(options: Options) -> Result<()> {
 /// Render any property value for display.
 ///
 /// IP-intelligence properties are weighted, so in the dynamic bag they appear as
-/// a `KeyValueList` of `{value, weight}` records. This renders each record as
-/// `value (weighting w)` so the weighting is visible, and falls back to the
-/// shared string rendering for any non-weighted property the key might also
-/// return. Long results are truncated.
+/// a `KeyValueList` of `{rawweighting, value}` records. This renders each
+/// record as `value (weighting w)` so the weighting is visible, and falls back
+/// to the shared string rendering for any non-weighted property the key might
+/// also return. Long results are truncated.
 fn render_value(value: &PropertyValue) -> String {
     let rendered = match value {
         PropertyValue::KeyValueList(records) => {
             let parts: Vec<String> = records
                 .iter()
                 .map(|record| {
-                    // Each record carries a `value` candidate and a `weight`
-                    // multiplier (see the shared IP-intelligence data model).
+                    // Each record carries a `value` candidate and its raw
+                    // weighting, from 0 to 65,535, under `rawweighting`. The
+                    // crates up to 4.5.18 give a weighting from 0 to 1 under
+                    // `weight` instead, so that is read too.
                     let candidate = record
                         .get("value")
                         .map(examples_shared::property_value_to_string)
                         .unwrap_or_else(|| "Unknown".to_owned());
-                    match record.get("weight").and_then(PropertyValue::as_double) {
-                        Some(weight) => format!("{candidate} (weighting {weight:.3})"),
+                    let weighting = match record.get("rawweighting") {
+                        Some(raw) => raw.as_double().map(|raw| raw / f64::from(u16::MAX)),
+                        None => record.get("weight").and_then(PropertyValue::as_double),
+                    };
+                    match weighting {
+                        Some(weighting) => format!("{candidate} (weighting {weighting:.3})"),
                         None => candidate,
                     }
                 })
@@ -153,21 +166,24 @@ fn main() -> Result<()> {
 
     let Some(resource_key) = resource_key else {
         println!(
-            "No resource key available. Set the 51DEGREES_RESOURCE_KEY environment \
+            "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
              variable or pass a key as the first argument. Create a key for free at \
              https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-get-all-properties.rs&utm_term=resource-key-required."
         );
+        examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
         return Ok(());
     };
 
-    run(Options {
+    let result = run(Options {
         resource_key,
-        // The cloud endpoint from 51DEGREES_CLOUD_ENDPOINT, or the public cloud
+        // The cloud endpoint from _51DEGREES_CLOUD_ENDPOINT, or the public cloud
         // when unset. A host other than cloud.51degrees.com is an on premise web
         // server or a privately hosted 51Degrees cloud (see
         // examples_shared::CLOUD_ENDPOINT_ENV_VAR).
         endpoint: examples_shared::cloud_endpoint_from_env(),
-    })
+    });
+    examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
+    result
 }
 
 #[cfg(test)]
@@ -196,6 +212,12 @@ mod tests {
 
         let mut record = BTreeMap::new();
         record.insert("value".to_owned(), PropertyValue::String("US".to_owned()));
+        record.insert("rawweighting".to_owned(), PropertyValue::Integer(59_965));
+        let value = PropertyValue::KeyValueList(vec![record]);
+        assert_eq!(render_value(&value), "US (weighting 0.915)");
+
+        let mut record = BTreeMap::new();
+        record.insert("value".to_owned(), PropertyValue::String("US".to_owned()));
         record.insert("weight".to_owned(), PropertyValue::Double(0.915));
         let value = PropertyValue::KeyValueList(vec![record]);
         assert_eq!(render_value(&value), "US (weighting 0.915)");
@@ -221,7 +243,7 @@ mod tests {
  * IP Intelligence properties are weighted, so each property can carry several
  * candidate values, each with a weighting that says how strongly the data
  * supports it. In the dynamic bag each weighted property appears as a list of
- * value/weight records; this example renders each candidate as
+ * rawweighting/value records, and this example renders each candidate as
  * `value (weighting w)` so the distribution is visible. Long results are
  * truncated for readability.
  *
@@ -229,8 +251,8 @@ mod tests {
  * production deployment should enable usage sharing.
  *
  * To run this example, create a Resource Key for free at
- * https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-get-all-properties.rs&utm_term=ipi-cloud-get-all-properties and supply it via the 51DEGREES_RESOURCE_KEY
+ * https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-get-all-properties.rs&utm_term=ipi-cloud-get-all-properties and supply it via the _51DEGREES_RESOURCE_KEY
  * environment variable or as the first command-line argument. By default the
- * pipeline talks to the public cloud endpoint; set the 51DEGREES_CLOUD_ENDPOINT
+ * pipeline talks to the public cloud endpoint; set the _51DEGREES_CLOUD_ENDPOINT
  * environment variable to point at a self-hosted Cloud service instead.
  */

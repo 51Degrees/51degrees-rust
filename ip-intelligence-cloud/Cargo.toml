@@ -1,26 +1,36 @@
 [package]
 name = "fiftyone-ip-intelligence-cloud"
 version = "4.5.2"
-description = "IP Intelligence and IP geolocation for Rust. Finds an IP address's likely location (country, region, town, and coordinates), connection type, and network, using the 51Degrees cloud service. This cloud engine maps the cloud JSON response to IpIntelligenceData. An alternative to MaxMind and IPinfo."
-keywords = ["ip-geolocation", "geoip", "ip-intelligence", "ip-lookup", "asn"]
+description = "IP Intelligence and IP geolocation for Rust, using the 51Degrees cloud service. Finds an IP address's likely location (country, region, town, and coordinates), connection type, and network. Needs a Resource Key that says which properties to return. Built on the 51Degrees Pipeline API. An alternative to MaxMind and IPinfo."
+keywords = ["ip-geolocation", "geoip", "asn", "maxmind", "ipinfo"]
 categories = ["network-programming", "web-programming", "wasm"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage.workspace = true
+homepage = "https://51degrees.com/ip-intelligence?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-ip-intelligence-cloud-cargo.toml&utm_term=homepage"
 
 [dependencies]
-fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
 # default-features = false drops the data-update service (reqwest/notify), which
 # the cloud path never uses, so this crate builds for wasm32-wasip1.
-fiftyone-pipeline-engines = { version = "4.5.2", path = "../pipeline-engines", default-features = false }
-fiftyone-ip-intelligence-shared = { version = "4.5.2", path = "../ip-intelligence-shared" }
-fiftyone-cloud-request-engine = { version = "4.5.2", path = "../cloud-request-engine", default-features = false }
+fiftyone-pipeline-engines = { version = "=4.5.2", path = "../pipeline-engines", default-features = false }
+fiftyone-ip-intelligence-shared = { version = "=4.5.2", path = "../ip-intelligence-shared" }
+fiftyone-cloud-request-engine = { version = "=4.5.2", path = "../cloud-request-engine", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 once_cell.workspace = true
+# Logs a product the key lacks through the log facade, which does nothing
+# until the application installs a logger.
+log = "0.4"
+
+[dev-dependencies]
+# Set Headers, the JSON builder and the Sequence element the JSON builder
+# needs, so a test can check what each does with cloud data. Neither crate
+# carries reqwest by default.
+fiftyone-json-builder = { version = "4.5.2", path = "../json-builder" }
+fiftyone-pipeline-engines-fiftyone = { version = "4.5.2", path = "../pipeline-engines-fiftyone" }
 
 [features]
 # Forward the cloud request engine's built-in reqwest client. Off by default so

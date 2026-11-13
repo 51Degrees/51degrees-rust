@@ -30,10 +30,10 @@
 //! The crate holds no library code of its own. Its targets are the three benches
 //! under `benches/`, each a self-contained file wired with `harness = false`:
 //!
-//! - `dd_onprem_throughput`. On-premise Device Detection over the bundled
+//! - `dd_onprem_throughput`. On-premise Device Detection over
 //!   "20000 Evidence Records.yml" against the Lite `.hash` file, reporting
 //!   detections per second.
-//! - `ipi_onprem_throughput`. On-premise IP Intelligence lookups over the bundled
+//! - `ipi_onprem_throughput`. On-premise IP Intelligence lookups over
 //!   `evidence.yml` against the 4.5 ASN `.ipi` file, reporting lookups per second.
 //! - `javascript_builder_render`. The JavaScript-builder template render time,
 //!   with the minify path measured too when the `minify` feature is enabled.

@@ -27,30 +27,32 @@ use std::sync::Arc;
 use once_cell::sync::OnceCell;
 
 use fiftyone_cloud_request_engine::{CloudRequestEngine, LicensedProducts};
+use fiftyone_fodid_core::{
+    default_aspect_property_metadata, default_property_metadata, FodIdDataBase, FodIdEngine,
+    FODID_DATA_KEY, FODID_ELEMENT_DATA_KEY,
+};
 use fiftyone_pipeline_core::{
     Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
     PropertyValueType, Result,
 };
 use fiftyone_pipeline_engines::{
-    missing_property_reason, AspectEngine, AspectPropertyMetaData, EngineDeployment,
-    EngineMissingPropertyContext, MissingPropertyResult,
+    default_missing_property_reason, AspectEngine, AspectPropertyMetaData, EngineDeployment,
+    MissingPropertyResult,
 };
 use serde_json::Value;
 
-use crate::data::{
-    default_aspect_property_metadata, default_property_metadata, FodIdDataBase, FODID_DATA_KEY,
-    FODID_ELEMENT_DATA_KEY,
-};
 use crate::dto::map_fodid_object;
+
+/// The engine's name in log records and messages.
+const ENGINE_NAME: &str = "FodIdCloudEngine";
 
 /// The cloud 51Degrees-identifier engine.
 ///
 /// The engine consumes the JSON response stored by a [`CloudRequestEngine`]
 /// earlier in the same pipeline, slices out the `fodid` member it owns and maps
 /// it into a [`FodIdDataBase`], stored under [`FODID_DATA_KEY`]. That data
-/// carries the two probabilistic identifiers (`IdProbGlobal` and `IdProbLic`) as
-/// raw base64 OWID strings and, on demand, as parsed
-/// [`FodId`](fodid::FodId) values.
+/// carries each of the six 51Dids the response gave as a raw base64 OWID string
+/// and, on demand, as a parsed [`FodId`](fodid::FodId) value.
 ///
 /// # Where it sits
 ///
@@ -59,12 +61,12 @@ use crate::dto::map_fodid_object;
 /// stores the raw JSON under its `cloud` data key; this engine reads that JSON.
 /// It must therefore be added to the pipeline *after* the request engine.
 ///
-/// # Cloud only
+/// # The 51Did engine surface
 ///
-/// Unlike device detection and IP intelligence there is no on-premise twin: a
-/// 51Did is issued by the cloud, which alone holds the signing key. So this is
-/// the only engine that produces [`FODID_DATA_KEY`], and there is no shared
-/// crate to keep interface-compatible with.
+/// The engine implements [`FodIdEngine`] from `fiftyone-fodid-core`, so code
+/// that accepts any engine producing 51Dids accepts it. It is the only such
+/// engine in these crates, because the cloud holds the key 51Degrees signs
+/// 51Dids with.
 ///
 /// # Evidence
 ///
@@ -87,7 +89,7 @@ use crate::dto::map_fodid_object;
 /// accessible properties on first use, taking the product whose key is `fodid`
 /// compared ignoring case, as the cloud service reports it as `FODid`.
 /// Until that fetch succeeds the engine reports the shared default metadata (the
-/// two identifier properties), so a consumer always sees the documented set.
+/// six identifier properties), so a consumer always sees the documented set.
 ///
 /// # Example
 ///
@@ -161,9 +163,9 @@ impl FodIdCloudEngine {
 
     /// Derive the identifier metadata from the request engine's accessible
     /// properties, taking the product keyed by `fodid` compared ignoring case,
-    /// because the cloud service reports the product as `FODid`. Returns `None`
-    /// if the discovery fetch fails or the resource key grants no identifier
-    /// product, in which case the engine keeps reporting the shared defaults.
+    /// because the cloud service reports the product as `FODid`. Each property
+    /// keeps the category the list gives it. Returns `None` if the resource key
+    /// grants no identifier product or lists it with no properties.
     fn derive_metadata(
         products: &LicensedProducts,
     ) -> Option<(Vec<PropertyMetaData>, Vec<AspectPropertyMetaData>)> {
@@ -182,11 +184,14 @@ impl FodIdCloudEngine {
         for property in &product.properties {
             // The identifier values are base64 strings, so the published value
             // type is always a string regardless of how the cloud labels it.
-            let core_meta = PropertyMetaData::new(
+            let mut core_meta = PropertyMetaData::new(
                 &property.name,
                 FODID_ELEMENT_DATA_KEY,
                 PropertyValueType::String,
             );
+            if let Some(category) = &property.category {
+                core_meta = core_meta.with_category(category.clone());
+            }
             let mut aspect_meta = AspectPropertyMetaData::from_core(core_meta.clone());
             if let Some(tier) = &product.data_tier {
                 aspect_meta = aspect_meta.with_data_tiers([tier.clone()]);
@@ -197,29 +202,53 @@ impl FodIdCloudEngine {
         Some((core, aspect))
     }
 
-    /// Ensure the lazily derived metadata is populated, fetching the request
-    /// engine's accessible properties on first use. A discovery failure leaves
-    /// the caches empty, so the engine continues with the shared defaults,
-    /// degrading gracefully when the metadata cannot be loaded.
+    /// Set the metadata once the request engine's discovery has completed.
+    ///
+    /// Until then the caches stay empty and the engine reports the shared
+    /// defaults. When the accessible properties hold no identifier product, or
+    /// list it with no properties, the engine gets empty metadata, as the
+    /// cloud aspect engine specification says. An engine with only a license
+    /// key gets empty metadata too, because it has no accessible properties
+    /// to read, as the cloud request engine specification says. With a
+    /// resource key the call that sets the empty metadata logs a warning
+    /// naming the data key, so the missing product is logged once. The
+    /// properties are set last because a request that finds them set reads
+    /// the rest.
     fn ensure_metadata(&self) {
         if self.properties.get().is_some() {
             return;
         }
-        if let Ok(products) = self.request_engine.public_properties() {
-            if let Some((core, aspect)) = Self::derive_metadata(products) {
-                let _ = self.properties.set(core);
+        let Ok(products) = self.request_engine.public_properties() else {
+            return;
+        };
+        match Self::derive_metadata(products) {
+            Some((core, aspect)) => {
                 let _ = self.aspect_properties.set(aspect);
+                let _ = self.properties.set(core);
+            }
+            None => {
+                let _ = self.aspect_properties.set(Vec::new());
+                if self.properties.set(Vec::new()).is_ok()
+                    && self.request_engine.resource_key().is_some()
+                {
+                    log::warn!(
+                        "Aspect properties could not be loaded for {ENGINE_NAME} - \
+                         '{FODID_ELEMENT_DATA_KEY}'. The resource key does not include \
+                         access to any properties under '{FODID_ELEMENT_DATA_KEY}'."
+                    );
+                }
             }
         }
     }
 
     /// Read the upstream cloud JSON, slice out the `fodid` aspect and build the
-    /// element data from it.
+    /// element data from it, or `None` when the request engine left no
+    /// response.
     ///
-    /// Returns an [`Error::PipelineConfiguration`] when there is no cloud JSON,
-    /// which almost always means no [`CloudRequestEngine`] ran before this
-    /// engine.
-    fn build_data(&self, data: &FlowData) -> Result<FodIdDataBase> {
+    /// Returns an [`Error::PipelineConfiguration`] when there is no cloud
+    /// request data, which almost always means no [`CloudRequestEngine`] ran
+    /// before this engine.
+    fn build_data(&self, data: &FlowData) -> Result<Option<FodIdDataBase>> {
         let cloud = data.get(CloudRequestEngine::DATA_KEY).ok_or_else(|| {
             Error::configuration(
                 "No cloud request data is present. This is probably because there \
@@ -230,14 +259,11 @@ impl FodIdCloudEngine {
         })?;
 
         // An empty or absent response means the request engine failed and has
-        // already recorded its own error: produce empty identifier data rather
-        // than raising a second error.
-        let json = match cloud.json_response() {
-            Some(json) if !json.is_empty() => json,
-            _ => return Ok(FodIdDataBase::new()),
-        };
-
-        self.parse_json(json)
+        // already recorded its own error.
+        match cloud.json_response() {
+            Some(json) if !json.is_empty() => self.parse_json(json).map(Some),
+            _ => Ok(None),
+        }
     }
 
     /// Parse a full cloud response body into the element data, slicing out the
@@ -260,7 +286,19 @@ impl FodIdCloudEngine {
 
 impl FlowElement for FodIdCloudEngine {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        let element = self.build_data(data)?;
+        self.ensure_metadata();
+        let element = match self.build_data(data)? {
+            Some(element) => element,
+            None => {
+                CloudRequestEngine::record_not_processed(
+                    data,
+                    ENGINE_NAME,
+                    FODID_ELEMENT_DATA_KEY,
+                    module_path!(),
+                );
+                FodIdDataBase::new()
+            }
+        };
         data.get_or_add(FODID_DATA_KEY, || element)?;
         Ok(())
     }
@@ -279,9 +317,20 @@ impl FlowElement for FodIdCloudEngine {
             None => &self.default_properties,
         }
     }
+
+    /// Reads the cloud's property list first if discovery has completed
+    /// since the engine last looked, so the answer is current.
+    fn properties_loaded(&self) -> bool {
+        self.ensure_metadata();
+        self.has_loaded_properties()
+    }
 }
 
 impl AspectEngine for FodIdCloudEngine {
+    fn engine_type_name(&self) -> &str {
+        ENGINE_NAME
+    }
+
     fn data_source_tier(&self) -> &str {
         // Cloud engines have no on-premise data tier.
         ""
@@ -302,20 +351,21 @@ impl AspectEngine for FodIdCloudEngine {
         self.properties.get().is_some()
     }
 
+    /// The request engine asks for the property list when it is built, or is
+    /// given it, so a list it still lacks is one whose request failed.
+    fn property_list_request_failed(&self) -> bool {
+        !self.has_loaded_properties() && self.request_engine.public_properties().is_err()
+    }
+
     fn missing_property_reason(&self, property_name: &str) -> MissingPropertyResult {
-        // Trigger discovery so the reason reflects the live cloud metadata
-        // rather than the pre-discovery defaults.
+        // Read the metadata if discovery has completed, so the reason reflects
+        // the live cloud metadata rather than the pre-discovery defaults.
         self.ensure_metadata();
-        let ctx = EngineMissingPropertyContext {
-            element_data_key: self.data_key(),
-            deployment: self.deployment(),
-            data_source_tier: self.data_source_tier(),
-            properties_loaded: self.has_loaded_properties(),
-            properties: self.aspect_properties(),
-        };
-        missing_property_reason(property_name, &ctx)
+        default_missing_property_reason(self, property_name)
     }
 }
+
+impl FodIdEngine for FodIdCloudEngine {}
 
 /// A fluent builder for [`FodIdCloudEngine`] instances.
 ///
@@ -371,15 +421,15 @@ impl Default for FodIdCloudEngineBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::FodIdData;
     use fiftyone_cloud_request_engine::{
         CloudEngineState, CloudHttpClient, CloudHttpRequest, CloudHttpResponse,
     };
+    use fiftyone_fodid_core::FodIdData;
 
     /// A request engine wired to a stub HTTP client, so no network is touched.
     ///
     /// An empty state is supplied so the builder resolves without a discovery
-    /// fetch (the stub would otherwise error). The FODid engine reports its six
+    /// fetch (the stub would otherwise error). The 51Did engine reports its six
     /// fixed identifier properties regardless of the cloud metadata, so an empty
     /// accessible-properties set is fine here.
     fn request_engine() -> Arc<CloudRequestEngine> {
@@ -426,6 +476,16 @@ mod tests {
         assert_eq!(engine.data_source_tier(), "");
         // No evidence is read directly.
         assert!(!engine.evidence_key_filter().include("header.user-agent"));
+    }
+
+    #[test]
+    fn is_a_fodid_engine() {
+        // Held as the trait any engine producing 51Dids implements, the
+        // engine still answers as the cloud engine.
+        let engine: Arc<dyn FodIdEngine> = Arc::new(engine());
+        assert_eq!(engine.data_key(), FODID_ELEMENT_DATA_KEY);
+        assert_eq!(engine.deployment(), EngineDeployment::Cloud);
+        assert_eq!(engine.engine_type_name(), ENGINE_NAME);
     }
 
     #[test]

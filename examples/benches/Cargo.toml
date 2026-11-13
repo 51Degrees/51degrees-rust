@@ -34,19 +34,23 @@ fiftyone-ip-intelligence = { version = "4.5.2", default-features = false, featur
 # JavaScript-builder pipeline by hand through the core Pipeline builder.
 fiftyone-pipeline-core = { version = "4.5.2" }
 fiftyone-json-builder = { version = "4.5.2" }
+# The Sequence element gives the JSON builder its sequence number.
+fiftyone-pipeline-engines-fiftyone = { version = "4.5.2" }
 # The JavaScript builder is benched directly (it is not surfaced through either
 # detection facade). The optional `minify` feature is forwarded from this crate's
 # own `minify` feature so the minify path can be measured when it is compiled in.
 fiftyone-javascript-builder = { version = "4.5.2" }
 
-# Shared example helpers: the data-file path resolvers and find_file used to
-# locate the on-premise data and evidence files. A bench whose input is absent
-# no-ops cleanly rather than failing.
+# Shared example helpers: the data-file path resolvers, find_data_file and
+# find_file used to locate the on-premise data and evidence files, downloading
+# a missing data file. A bench whose input is absent no-ops cleanly rather than
+# failing.
 examples-shared = { version = "4.5.2", path = "../examples-shared" }
 
-# YAML reader for the bundled evidence files ("20000 Evidence Records.yml" for
-# Device Detection and evidence.yml for IP Intelligence). serde_norway is the
-# maintained fork of serde_yaml that the examples already use.
+# YAML reader for the evidence files in the data repository ("20000 Evidence
+# Records.yml" for Device Detection and evidence.yml for IP Intelligence).
+# serde_norway is the maintained fork of serde_yaml that the examples already
+# use.
 serde_norway.workspace = true
 
 [dev-dependencies]
@@ -62,7 +66,7 @@ criterion = "0.5"
 default = []
 minify = ["fiftyone-javascript-builder/minify"]
 
-# (1) On-premise Device Detection detection throughput over the bundled evidence
+# (1) On-premise Device Detection detection throughput over the evidence
 #     records against the Lite .hash file.
 [[bench]]
 name = "dd_onprem_throughput"

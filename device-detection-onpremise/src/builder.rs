@@ -30,6 +30,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use fiftyone_native::dd::{default_concurrency, HashOptions};
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{Error, Result};
 use fiftyone_pipeline_engines::{
@@ -72,8 +73,10 @@ pub struct DeviceDetectionOnPremiseEngineBuilder {
     requested_properties: Vec<String>,
     data_source_tier: Option<String>,
     auto_update: Option<AutoUpdate>,
-    concurrency: Option<u16>,
+    options: HashOptions,
     temp_dir: Option<PathBuf>,
+    temp_data_copy: bool,
+    reuse_temp_file: bool,
 }
 
 /// The optional automatic-update settings captured by the builder.
@@ -96,8 +99,10 @@ impl DeviceDetectionOnPremiseEngineBuilder {
             requested_properties: Vec::new(),
             data_source_tier: None,
             auto_update: None,
-            concurrency: None,
+            options: HashOptions::default(),
             temp_dir: None,
+            temp_data_copy: false,
+            reuse_temp_file: false,
         }
     }
 
@@ -111,23 +116,115 @@ impl DeviceDetectionOnPremiseEngineBuilder {
     /// Set the expected concurrency: the number of threads that will process
     /// through the built engine at once.
     ///
-    /// This sizes the file-handle pool the file-backed collections use under the
-    /// [`PerformanceProfile::LowMemory`] and [`PerformanceProfile::Balanced`]
-    /// profiles. The pool defaults to the number of cores; if more threads than
-    /// that will share the engine, set this to at least that many or threads
-    /// will contend on the pool. It has no effect on the in-memory profiles,
-    /// where the data set is fully resident.
+    /// This sizes the file-handle pool and the caches the file-backed
+    /// collections use under the [`PerformanceProfile::LowMemory`],
+    /// [`PerformanceProfile::Balanced`] and [`PerformanceProfile::Default`]
+    /// profiles, to at most 64. If more threads than that share the engine,
+    /// they wait for each other on the pool.
+    /// [`PerformanceProfile::HighPerformance`] holds in memory everything
+    /// detection walks, so detection never waits on the pool, and with some
+    /// properties named it reads the values of the others through the pool.
+    /// It opens one handle to the data file for each concurrent operation and
+    /// keeps them open until the data set is freed, so a refresh holds that
+    /// many for the old data set and as many again for the new one.
+    /// [`PerformanceProfile::InMemory`] opens none.
+    ///
+    /// Unset, it is the number of processors, as [`default_concurrency`]
+    /// gives, under every profile. Any value loads, because a cache with
+    /// fewer entries than the concurrency squared is split into fewer parts,
+    /// and one with fewer entries than the concurrency is grown to it.
     pub fn concurrency(mut self, concurrency: u16) -> Self {
-        self.concurrency = Some(concurrency);
+        self.options.concurrency = Some(concurrency);
+        self
+    }
+
+    /// Set the most difference in hash value a match may have. Unset, it is
+    /// the profile's own, 0.
+    pub fn difference(mut self, difference: i32) -> Self {
+        self.options.difference = Some(difference);
+        self
+    }
+
+    /// Set the most drift, in character positions, a match may have. Unset,
+    /// it is the profile's own, 0.
+    pub fn drift(mut self, drift: i32) -> Self {
+        self.options.drift = Some(drift);
+        self
+    }
+
+    /// Set whether a User-Agent that matches nothing gives each component's
+    /// default profile, so every property has a value though some may be
+    /// wrong, rather than no profile and no values. Unset, it is the
+    /// profile's own, false.
+    pub fn allow_unmatched(mut self, allow: bool) -> Self {
+        self.options.allow_unmatched = Some(allow);
+        self
+    }
+
+    /// Set whether a detection records the characters of each User-Agent it
+    /// matched, which the `UserAgents` match metric gives. Unset, it is the
+    /// profile's own, true.
+    pub fn update_matched_user_agent(mut self, update: bool) -> Self {
+        self.options.update_matched_user_agent = Some(update);
+        self
+    }
+
+    /// Set whether detection tries the performance graph, which is faster
+    /// than the predictive graph and can be less accurate. With both graphs
+    /// on, the performance graph is tried first and the predictive graph only
+    /// when it finds no match. Unset, it is the profile's own, false.
+    pub fn use_performance_graph(mut self, use_graph: bool) -> Self {
+        self.options.use_performance_graph = Some(use_graph);
+        self
+    }
+
+    /// Set whether detection tries the predictive graph. Unset, it is the
+    /// profile's own, true.
+    pub fn use_predictive_graph(mut self, use_graph: bool) -> Self {
+        self.options.use_predictive_graph = Some(use_graph);
         self
     }
 
     /// Set the folder for the engine's temporary files. With automatic updates
     /// on, every profile but [`PerformanceProfile::InMemory`] reads a copy of
-    /// the data file made there, so an update can replace the data file itself.
-    /// Defaults to the system's temporary folder, [`std::env::temp_dir`].
+    /// the data file made there, so an update can replace the data file itself,
+    /// and with [`Self::create_temp_data_copy`] every profile does. Defaults to
+    /// the system's temporary folder, [`std::env::temp_dir`].
+    ///
+    /// The engine removes each copy it reads once it no longer reads it, and
+    /// leaves any other copy of the data file in the folder, such as one a
+    /// process that stopped left behind. .NET, through the C library, removes
+    /// those after each load from a copy other than on Apple systems, and on
+    /// Linux skips any that a process has open.
     pub fn temp_dir_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.temp_dir = Some(path.into());
+        self
+    }
+
+    /// Read a copy of the data file made in the temporary folder under every
+    /// profile, as .NET's `createTempDataCopy` does, rather than only where
+    /// automatic updates need one. The copy is removed when the engine no
+    /// longer reads it. Defaults to false.
+    pub fn create_temp_data_copy(mut self, create: bool) -> Self {
+        self.temp_data_copy = create;
+        self
+    }
+
+    /// Read a copy of the data file already in the temporary folder, when the
+    /// engine reads a copy, rather than making a new one, as .NET's
+    /// `SetReuseTempFile` does. A file there is taken as the C library takes
+    /// one, when its name starts with the data file's name without its
+    /// extension and is not the data file's name, and it has the data file's
+    /// length and header. The engine removes the copy once it no longer reads
+    /// it, whether it made the copy or found it, as the C library does.
+    /// Defaults to false.
+    ///
+    /// A file in the folder that passes those checks is read as the data, and
+    /// the default folder can be one every local user writes to, as `/tmp` is
+    /// on Linux when `TMPDIR` is not set. With reuse on, name with
+    /// [`Self::temp_dir_path`] a folder only the service writes to.
+    pub fn reuse_temp_file(mut self, reuse: bool) -> Self {
+        self.reuse_temp_file = reuse;
         self
     }
 
@@ -162,13 +259,51 @@ impl DeviceDetectionOnPremiseEngineBuilder {
         self
     }
 
-    /// Override the data-source tier the engine reports, for example `Premium`.
+    /// Index the profiles holding each value of the property named `name`
+    /// when the data set loads, adding to any already named, so
+    /// [`DeviceDetectionOnPremiseEngine::profile_ids_for_property_value`]
+    /// finds them without reading every profile.
+    ///
+    /// The name is matched exactly, including case, and a name the data file
+    /// has no property of indexes nothing. A property is indexed whether or
+    /// not the engine is restricted to it, and a refresh indexes the same
+    /// properties from the new data file. Nothing is indexed unless it is
+    /// named here, whatever the performance profile, and a property that is
+    /// not indexed is looked up by reading every profile.
+    ///
+    /// To look up hardware profiles by TAC or native model name, name `TAC`
+    /// and `NativeModel`. The TAC property is only in the TAC data file, and
+    /// NativeModel is in the Enterprise and TAC data files.
+    pub fn indexed_property(mut self, name: impl Into<String>) -> Self {
+        let name = name.into();
+        if !self.options.indexed_properties.contains(&name) {
+            self.options.indexed_properties.push(name);
+        }
+        self
+    }
+
+    /// Index the profiles holding each value of the named properties, adding
+    /// to any already named. See [`Self::indexed_property`].
+    pub fn indexed_properties<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        for name in names {
+            self = self.indexed_property(name);
+        }
+        self
+    }
+
+    /// Override the data-source tier the engine reports, for example `Enterprise`.
     ///
     /// By default the engine reads the tier embedded in the data file header
     /// (`Lite`, `Enterprise`, `TAC` and so on). Set this only to override that,
     /// for example to report a more specific tier than the file records, or when
     /// the header name is absent. When neither the override nor the header name
-    /// is available the engine falls back to `Lite`, the free tier.
+    /// is available the engine falls back to `Lite`, the free tier. The reason a
+    /// property is missing is still worked out against the tier the data file
+    /// names, because that is what each property's tiers list.
     pub fn data_source_tier(mut self, tier: impl Into<String>) -> Self {
         self.data_source_tier = Some(tier.into());
         self
@@ -235,6 +370,10 @@ impl DeviceDetectionOnPremiseEngineBuilder {
             ),
         };
         data_file_config.check_license_keys()?;
+        let mut options = self.options;
+        options
+            .concurrency
+            .get_or_insert_with(|| default_concurrency(self.profile));
 
         // Open the data set with the requested property restriction, from a
         // copy of the data file when updates can replace the file while it is
@@ -244,26 +383,27 @@ impl DeviceDetectionOnPremiseEngineBuilder {
             self.temp_dir.as_deref(),
             self.profile,
             &data_file_config,
+            self.temp_data_copy,
+            self.reuse_temp_file,
         );
         let manager = open_manager(
             copy.as_ref()
                 .map_or(self.data_file_path.as_path(), OperationalCopy::path),
             self.profile,
             &self.requested_properties,
-            self.concurrency,
+            &options,
         )?;
 
         let engine = Arc::new(
             DeviceDetectionOnPremiseEngine::from_manager(
-                manager,
                 copy,
+                manager,
                 self.profile,
-                self.requested_properties,
                 data_file_config,
                 self.data_source_tier,
-                self.concurrency,
-            )
-            .with_temp_dir(self.temp_dir),
+                options,
+            )?
+            .with_temp_dir(self.temp_dir, self.temp_data_copy, self.reuse_temp_file),
         );
 
         // Register the data file with the update service if one was supplied.

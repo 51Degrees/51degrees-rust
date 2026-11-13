@@ -145,7 +145,8 @@ impl Script {
             outcome: Outcome::NoValue {
                 missing: Vec::new(),
                 message: format!(
-                    "Derived property '{}' has no value because its rules do not end in an                      Else, which format 1 does not allow.",
+                    "Derived property '{}' has no value because its rules do not end in an \
+                     Else, which format 1 does not allow.",
                     self.output.name
                 ),
             },
@@ -330,5 +331,40 @@ fn compare_numbers(left: f64, op: CompareOp, right: f64) -> bool {
         CompareOp::Lt => left < right,
         CompareOp::Le => left <= right,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Outcome;
+    use crate::{MapSource, Script};
+
+    /// Only a model changed after validation can lack the Else, and running it
+    /// says so rather than panicking.
+    #[test]
+    fn rules_without_an_else_give_no_value() {
+        let mut script = Script::compile(
+            "format: 1\n\
+             name: Demo\n\
+             version: \"1.0.0\"\n\
+             output:\n\
+             \x20 name: Demo\n\
+             \x20 description: A demonstration.\n\
+             \x20 valuetype: string\n\
+             \x20 islist: false\n\
+             rules:\n\
+             \x20 - else: only\n",
+        )
+        .expect("the script");
+        script.rules.clear();
+        assert_eq!(
+            script.evaluate(&MapSource::new()),
+            Outcome::NoValue {
+                missing: Vec::new(),
+                message: "Derived property 'Demo' has no value because its rules do not \
+                          end in an Else, which format 1 does not allow."
+                    .to_owned(),
+            }
+        );
     }
 }

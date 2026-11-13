@@ -64,7 +64,7 @@ pub struct Options {
     /// The 51Degrees cloud resource key (from <https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=resource_key>).
     pub resource_key: String,
     /// An optional override for the cloud endpoint, read from
-    /// `51DEGREES_CLOUD_ENDPOINT`. `None` leaves the choice to the cloud request
+    /// `_51DEGREES_CLOUD_ENDPOINT`. `None` leaves the choice to the cloud request
     /// engine, which reads the same variable and defaults to the public cloud.
     pub endpoint: Option<String>,
     /// The socket address the server binds to.
@@ -84,8 +84,9 @@ pub struct Options {
 /// test uses to assemble the app offline. Passing `None` lets the builder fetch
 /// the discovery from the cloud, which is the live path the binary takes.
 ///
-/// `share_usage` is true when the binary serves the page. The tests pass false,
-/// so a test run sends nothing to 51Degrees.
+/// `share_usage` is true when the binary serves the page. The tests that process
+/// requests pass false, so a test run sends nothing to 51Degrees, and the one
+/// that passes true processes no request.
 pub fn build_app(
     resource_key: &str,
     endpoint: Option<&str>,
@@ -100,22 +101,24 @@ pub fn build_app(
         .set_state_opt(state)
         .share_usage(share_usage);
     // The cloud endpoint. Unset, the cloud request engine reads
-    // 51DEGREES_CLOUD_ENDPOINT itself, and it is passed here as well so the
+    // _51DEGREES_CLOUD_ENDPOINT itself, and it is passed here as well so the
     // choice is visible. A host other than cloud.51degrees.com is an on premise
     // web server or a privately hosted 51Degrees cloud (see
     // examples_shared::CLOUD_ENDPOINT_ENV_VAR).
     if let Some(endpoint) = endpoint {
         builder = builder.endpoint(endpoint);
     }
-    let pipeline = builder
-        .build()
-        .context("building the cloud device-detection pipeline")?;
-
     // WebPipeline wants the application's own elements in order. The facade has
     // already wired them (share-usage, the cloud request engine and the cloud
     // device engine), so its flow_elements are handed straight across; the web
     // layer then adds the sequence, set-headers, JSON and JavaScript elements.
-    let elements: Vec<Arc<dyn FlowElement>> = pipeline.flow_elements().to_vec();
+    // The facade's pipeline is dropped at the end of this statement, because a
+    // usage sharing element can be in only one pipeline at a time.
+    let elements: Vec<Arc<dyn FlowElement>> = builder
+        .build()
+        .context("building the cloud device-detection pipeline")?
+        .flow_elements()
+        .to_vec();
     let web = WebPipeline::build(elements, WebIntegrationOptions::default())
         .context("assembling the web pipeline")?;
     let state = FiftyOneState::from_web_pipeline(&web);
@@ -185,7 +188,7 @@ async fn home(result: FiftyOneResult) -> Html<String> {
     let (results_html, evidence_html, headers_html, has_accept_ch) = result.with(|flow_data| {
         let results = flow_data
             .get(DEVICE_DATA_KEY)
-            .map(|device| detection_results_table(device))
+            .map(|device| detection_results_table(device, None))
             .unwrap_or_else(|| {
                 "<p class=\"c-eg-page__lead\">No device data was produced.</p>".to_owned()
             });
@@ -232,13 +235,14 @@ async fn home(result: FiftyOneResult) -> Html<String> {
         // The cloud page uses the server-mounted client script, so the client
         // bootstrap loads /51Degrees.core.js then binds the shared callback.
         client_script: web_support::SERVER_CLIENT_SCRIPT,
+        repositories: examples_shared::CLOUD_REPOSITORIES,
     }))
 }
 
 fn main() -> anyhow::Result<()> {
-    // The resource key is read from the aligned/legacy/CI environment variables.
+    // The resource key is read from `_51DEGREES_RESOURCE_KEY` or the CI names.
     let resource_key = examples_shared::resource_key_from_env().context(
-        "no 51Degrees cloud resource key found. Set 51DEGREES_RESOURCE_KEY to a key from \
+        "no 51Degrees cloud resource key found. Set _51DEGREES_RESOURCE_KEY to a key from \
          https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=resource-key-required and run again.",
     )?;
 
@@ -353,6 +357,10 @@ mod tests {
             page.body.contains("c-eg-page"),
             "the page uses the shared design system markup"
         );
+        assert!(
+            page.body.contains(examples_shared::FIND_OUT_MORE_HEADING),
+            "the page ends with the Find out more section"
+        );
         assert_eq!(script.status, StatusCode::OK);
         assert!(
             script.body.contains("fod"),
@@ -360,6 +368,19 @@ mod tests {
             script.body
         );
         // app and runtime drop here, on the plain test thread.
+    }
+
+    /// Usage sharing is on when the binary serves the page. Building sends
+    /// nothing, because no request is processed.
+    #[test]
+    fn builds_with_usage_sharing_on() {
+        let _app = build_app(
+            "resource-key-placeholder",
+            None,
+            Some(CloudEngineState::default()),
+            true,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -481,5 +502,5 @@ mod tests {
  * `c-eg-message` contact-us banner.
  *
  * Build a resource key at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=dd-web-getting-started-cloud and export it as
- * `51DEGREES_RESOURCE_KEY`, then run the binary and open http://127.0.0.1:8080.
+ * `_51DEGREES_RESOURCE_KEY`, then run the binary and open http://127.0.0.1:8080.
  */

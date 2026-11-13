@@ -1,13 +1,14 @@
 [package]
 name = "fiftyone-common-sys"
 version = "4.5.2"
-description = "Raw FFI bindings to the 51Degrees common C library: ResourceManager, Evidence, Exception, StatusCode and result buffers."
+description = "Raw FFI bindings for Rust to the 51Degrees common C library that Device Detection and IP Intelligence share, covering ResourceManager, Evidence, Exception, StatusCode and result buffers. Device Detection is a User-Agent parser and IP Intelligence gives IP geolocation. For the safe API, use fiftyone-device-detection or fiftyone-ip-intelligence. An alternative to UAParser.js, DeviceAtlas, WURFL, MaxMind, and IPinfo."
+keywords = ["device-detection", "user-agent-parser", "ip-geolocation", "uaparser", "maxmind"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage.workspace = true
+homepage = "https://51degrees.com/services?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-common-sys-cargo.toml&utm_term=homepage"
 links = "fiftyone-common-c"
 build = "build.rs"
 # The C sources under cxx are ignored by git, because

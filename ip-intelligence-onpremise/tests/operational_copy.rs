@@ -22,7 +22,11 @@
 
 //! A data update replaces the data file of a running engine under every
 //! profile, and the copy the engine reads leaves with it. The test needs the
-//! ASN file `51DEGREES_IPI_PATH` names, and skips with a note without it.
+//! ASN file `_51DEGREES_IPI_PATH` names, and skips with a note without it.
+
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -66,12 +70,12 @@ fn serve_once(body: Vec<u8>) -> (String, std::thread::JoinHandle<()>) {
 /// is left once the engine is dropped.
 #[test]
 fn an_update_replaces_the_data_file_under_every_profile() {
-    let Some(asn) = std::env::var("51DEGREES_IPI_PATH")
+    let Some(asn) = crate::deprecated_names::var("_51DEGREES_IPI_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())
     else {
-        eprintln!("skipping operational copies: set 51DEGREES_IPI_PATH to the ASN file");
+        eprintln!("skipping operational copies: set _51DEGREES_IPI_PATH to the ASN file");
         return;
     };
     for profile in [
@@ -150,12 +154,12 @@ fn an_update_replaces_the_data_file_under_every_profile() {
 /// refresh, and none is left there once the engine is dropped.
 #[test]
 fn the_copy_goes_in_the_folder_the_builder_names() {
-    let Some(asn) = std::env::var("51DEGREES_IPI_PATH")
+    let Some(asn) = crate::deprecated_names::var("_51DEGREES_IPI_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())
     else {
-        eprintln!("skipping operational copies: set 51DEGREES_IPI_PATH to the ASN file");
+        eprintln!("skipping operational copies: set _51DEGREES_IPI_PATH to the ASN file");
         return;
     };
     let dir = std::env::temp_dir().join(format!("fiftyone-ipi-named-{}", std::process::id()));
@@ -181,5 +185,72 @@ fn the_copy_goes_in_the_folder_the_builder_names() {
 
     drop(engine);
     assert_eq!(copies(), 0, "no copy outlives the engine");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Whether `engine` gives Cloudflare's ASN for 1.1.1.1.
+fn finds_cloudflare(engine: &Arc<IpIntelligenceOnPremiseEngine>) -> bool {
+    let element: Arc<dyn FlowElement> = engine.clone();
+    let pipeline = Pipeline::builder().add_element(element).build().unwrap();
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("server.client-ip", "1.1.1.1")
+            .build(),
+    );
+    data.process().unwrap();
+    let ip = data.get(IP_DATA_KEY).unwrap();
+    let asn = ip.string("Asn");
+    asn.value().is_ok_and(|value| value.as_str() == "AS13335")
+}
+
+/// With reuse on, a refresh of an unchanged data file reads the copy the
+/// engine already reads rather than making another, and none is left once
+/// the engine is dropped. The old data set's removal of the copy it shares
+/// unlinks the copy on Linux and macOS, where the new data set keeps the
+/// handles it opened, and fails on Windows while the copy is open, so the
+/// folder then holds that copy or nothing.
+#[test]
+fn a_refresh_with_reuse_reads_the_copy_already_made() {
+    let Some(asn) = crate::deprecated_names::var("_51DEGREES_IPI_PATH")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+    else {
+        eprintln!("skipping operational copies: set _51DEGREES_IPI_PATH to the ASN file");
+        return;
+    };
+    let dir =
+        std::env::temp_dir().join(format!("fiftyone-ipi-reuse-refresh-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let temp = dir.join("temp");
+    std::fs::create_dir_all(&temp).unwrap();
+    let path = dir.join("51Degrees.ipi");
+    std::fs::copy(&asn, &path).unwrap();
+    let engine = IpIntelligenceOnPremiseEngine::builder(&path)
+        .properties(["Asn"])
+        .temp_dir_path(&temp)
+        .create_temp_data_copy(true)
+        .reuse_temp_file(true)
+        .auto_update(false)
+        .file_system_watcher(false)
+        .build_shared()
+        .expect("the data file loads");
+    let copied = files_in(&temp);
+    assert_eq!(copied.len(), 1, "one copy for the data set loaded");
+
+    engine.refresh(None).expect("the data file reloads");
+    let refreshed = files_in(&temp);
+    assert!(
+        refreshed.iter().all(|name| copied.contains(name)),
+        "no new copy: {copied:?} then {refreshed:?}"
+    );
+    assert!(finds_cloudflare(&engine), "the refreshed data looks up");
+
+    drop(engine);
+    assert_eq!(
+        files_in(&temp),
+        Vec::<String>::new(),
+        "no copy outlives the engine"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

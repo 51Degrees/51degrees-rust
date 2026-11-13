@@ -42,6 +42,14 @@ use fiftyone_ip_intelligence_cloud::{IpIntelligenceCloudEngine, IpIntelligenceDa
 use fiftyone_pipeline_core::{Evidence, Pipeline};
 use fiftyone_pipeline_engines::AspectPropertyValue;
 
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-mixed-getting-started.rs&utm_term=find-out-more"),
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-mixed-getting-started.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-mixed-getting-started.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-mixed-getting-started.rs&utm_term=find-out-more"),
+];
+
 /// The evidence key under which the User-Agent is supplied. The cloud Device
 /// Detection engine reads it after the cloud request engine forwards it.
 const USER_AGENT_EVIDENCE_KEY: &str = "header.user-agent";
@@ -274,24 +282,35 @@ fn main() -> anyhow::Result<()> {
     let Some(resource_key) = resource_key else {
         writeln!(
             out,
-            "No resource key available. Set the 51DEGREES_RESOURCE_KEY environment \
+            "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
              variable or pass a key as the first argument. Create a key for free at \
              https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-mixed-getting-started.rs&utm_term=resource-key-required. \
              The key must grant both the device and IP intelligence products."
+        )?;
+        examples_shared::write_find_out_more(
+            &mut out,
+            FIND_OUT_MORE,
+            examples_shared::CLOUD_REPOSITORIES,
         )?;
         return Ok(());
     };
 
     let options = Options {
         resource_key,
-        // The cloud endpoint from 51DEGREES_CLOUD_ENDPOINT, or the public cloud
+        // The cloud endpoint from _51DEGREES_CLOUD_ENDPOINT, or the public cloud
         // when unset. A host other than cloud.51degrees.com is an on premise web
         // server or a privately hosted 51Degrees cloud (see
         // examples_shared::CLOUD_ENDPOINT_ENV_VAR).
         endpoint: examples_shared::cloud_endpoint_from_env(),
     };
 
-    run(&options, &mut out)
+    let result = run(&options, &mut out);
+    examples_shared::write_find_out_more(
+        &mut out,
+        FIND_OUT_MORE,
+        examples_shared::CLOUD_REPOSITORIES,
+    )?;
+    result
 }
 
 #[cfg(test)]
@@ -354,9 +373,9 @@ mod tests {
  * data behind these results keeps improving.
  *
  * To run this example, create a Resource Key for free at
- * https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-mixed-getting-started.rs&utm_term=ipi-cloud-mixed-getting-started and supply it via the 51DEGREES_RESOURCE_KEY
+ * https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-mixed-getting-started.rs&utm_term=ipi-cloud-mixed-getting-started and supply it via the _51DEGREES_RESOURCE_KEY
  * environment variable or as the first command-line argument. The key must grant
  * both the device and IP intelligence products. By default the pipeline talks to
- * the public cloud endpoint; set the 51DEGREES_CLOUD_ENDPOINT environment variable to
+ * the public cloud endpoint; set the _51DEGREES_CLOUD_ENDPOINT environment variable to
  * point at a self-hosted Cloud service instead.
  */

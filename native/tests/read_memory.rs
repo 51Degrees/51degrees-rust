@@ -30,6 +30,10 @@
 
 #![cfg(feature = "ipi")]
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::PathBuf;
 
 use fiftyone_native::{ipi, PerformanceProfile};
@@ -43,16 +47,16 @@ extern "C" {
     fn memory_tracking_allocated() -> usize;
 }
 
-/// The ASN data file: `51DEGREES_IPI_PATH`, or the one in the
+/// The ASN data file: `_51DEGREES_IPI_PATH`, or the one in the
 /// `cxx` submodule.
 fn asn_data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("51DEGREES_IPI_PATH") {
+    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_IPI_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);
         }
     }
-    let relative = "cxx/ip-intelligence-data/51Degrees-IPIV4AsnIpiV41.ipi";
+    let relative = "cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi";
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     loop {
         let candidate = dir.join(relative);

@@ -256,13 +256,14 @@ async fn home(
         // For the cloud deployment the contact-us banner invites on-premise.
         message_html: web_support::CLOUD_CONTACT_BANNER,
         map_script: &map_script,
+        repositories: examples_shared::CLOUD_REPOSITORIES,
     }))
 }
 
 fn main() -> anyhow::Result<()> {
-    // The resource key is read from the aligned/legacy/CI environment variables.
+    // The resource key is read from `_51DEGREES_RESOURCE_KEY` or the CI names.
     let resource_key = examples_shared::resource_key_from_env().context(
-        "no 51Degrees cloud resource key found. Set 51DEGREES_RESOURCE_KEY to a key from \
+        "no 51Degrees cloud resource key found. Set _51DEGREES_RESOURCE_KEY to a key from \
          https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-cloud.rs&utm_term=resource-key-required and run again.",
     )?;
 
@@ -275,7 +276,7 @@ fn main() -> anyhow::Result<()> {
 
     run(Options {
         resource_key,
-        // The cloud endpoint from 51DEGREES_CLOUD_ENDPOINT, or the public cloud
+        // The cloud endpoint from _51DEGREES_CLOUD_ENDPOINT, or the public cloud
         // when unset. A host other than cloud.51degrees.com is an on premise web
         // server or a privately hosted 51Degrees cloud (see
         // examples_shared::CLOUD_ENDPOINT_ENV_VAR).
@@ -360,6 +361,10 @@ mod tests {
                 page_body.contains("c-eg-form"),
                 "the page includes the IP look-up form"
             );
+            assert!(
+                page_body.contains(examples_shared::FIND_OUT_MORE_HEADING),
+                "the page ends with the Find out more section"
+            );
 
             // The server-mounted client script is served and names the fod manager.
             let script = get(app.clone(), "/51Degrees.core.js").await;
@@ -423,8 +428,9 @@ mod tests {
  * references the vendored `examples-main.min.css` and `examples.min.js` (embedded
  * in the binary and served from `/static/...`) and uses the `.c-eg-*` class
  * contract for the results table, the evidence table, the IP form, the location
- * map and the `c-eg-message` contact-us banner.
+ * map and the `c-eg-message` contact-us banner. The page ends with a "Find out
+ * more" section.
  *
  * Build a resource key at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-cloud.rs&utm_term=ipi-web-getting-started-cloud and export it as
- * `51DEGREES_RESOURCE_KEY`, then run the binary and open http://127.0.0.1:8082.
+ * `_51DEGREES_RESOURCE_KEY`, then run the binary and open http://127.0.0.1:8082.
  */

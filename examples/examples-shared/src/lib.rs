@@ -37,20 +37,29 @@
 //! - [`find_file`] / [`find_file_from`]. Walk up the directory tree to locate a
 //!   data or resource file, so it resolves whether an example runs from an IDE,
 //!   its own crate directory, or a CI checkout.
-//! - [`resource_key_from_env`] and [`is_invalid_key`]. Read a cloud resource key
-//!   from the aligned, legacy and CI-exported environment variables, and screen
-//!   out obvious placeholders.
+//! - [`resource_key_from_env`], [`license_key_from_env`] and
+//!   [`is_invalid_key`]. Read a cloud resource key from `_51DEGREES_RESOURCE_KEY`
+//!   or the CI-exported names, read a licence key, and screen out obvious
+//!   placeholders.
 //! - [`cloud_endpoint_from_env`]. Read the optional cloud endpoint from
-//!   `51DEGREES_CLOUD_ENDPOINT`, trimmed and screened for blankness, for an on
+//!   `_51DEGREES_CLOUD_ENDPOINT`, trimmed and screened for blankness, for an on
 //!   premise web server or a privately hosted 51Degrees cloud (see
 //!   [`CLOUD_ENDPOINT_ENV_VAR`]).
 //! - [`dd_data_path`] and [`ipi_data_path`]. Resolve the on-premise Device
 //!   Detection and IP Intelligence data files, the latter through the
-//!   ([`IpiTier`]) Enterprise/ASN scheme.
+//!   ([`IpiTier`]) Enterprise, ASN and Lite scheme.
+//! - [`find_data_file`] / [`find_data_file_from`]. Find a free data file in
+//!   the data repository, running the data repository's script to download it
+//!   when it is missing.
 //! - [`check_data_file`] and [`data_file_info`]. Inspect an on-premise engine's
 //!   data file and return age and Lite-tier warnings for the example to print.
 //! - [`get_property_as_string`]. Render any property from an element data bag to
 //!   a display string, handling the missing and no-value cases.
+//! - [`missing_properties`] and [`enterprise_data_file_message`]. Name the
+//!   properties an example asks for that the data file in use does not carry,
+//!   and give the example's link for asking about the Enterprise data file.
+//! - [`print_find_out_more`] and [`write_find_out_more`]. The "Find out more"
+//!   section that ends every example's output.
 //! - [`PerformanceResults`] and [`json_output_path`]. The results model the
 //!   performance examples emit for the nightly performance graphs, and the
 //!   `--json-output` argument they take the path from.
@@ -63,25 +72,39 @@ pub mod evidence;
 
 mod data_file_check;
 mod data_paths;
+#[allow(dead_code)]
+#[path = "../../../deprecated-names/environment.rs"]
+mod deprecated_names;
 mod endpoint;
+mod enterprise;
 mod find_file;
+mod find_out_more;
 mod keys;
 mod performance_results;
 mod properties;
 
 pub use data_file_check::{check_data_file, data_file_info, DATA_FILE_AGE_WARNING_DAYS};
 pub use data_paths::{
-    dd_data_path, ipi_data_path, latest_enterprise_ipi, IpiTier, DD_LITE_RELATIVE_PATH,
-    DD_PATH_ENV_VAR, IPI_ASN_RELATIVE_PATH, IPI_ENTERPRISE_FILE_NAME, IPI_ENTERPRISE_SHARE_ENV_VAR,
+    dd_data_path, find_data_file, find_data_file_from, ipi_data_path, latest_enterprise_ipi,
+    IpiTier, DATA_DOWNLOAD_SOURCE, DD_LITE_RELATIVE_PATH, DD_PATH_ENV_VAR, IPI_ASN_RELATIVE_PATH,
+    IPI_ENTERPRISE_FILE_NAME, IPI_ENTERPRISE_SHARE_ENV_VAR, IPI_LITE_RELATIVE_PATH,
     IPI_PATH_ENV_VAR,
 };
 pub use endpoint::{cloud_endpoint_from_env, CLOUD_ENDPOINT_ENV_VAR};
+pub use enterprise::{
+    enterprise_data_file_message, is_available, missing_properties, NEEDS_ENTERPRISE_DATA_FILE,
+};
 pub use find_file::{
     find_file, find_file_from, MAX_DESCENT_DEPTH, MAX_DIRECTORIES_SCANNED, MAX_PARENT_LEVELS,
 };
+pub use find_out_more::{
+    print_find_out_more, write_find_out_more, CLOUD_REPOSITORIES, FIND_OUT_MORE_HEADING,
+    ON_PREMISE_REPOSITORIES,
+};
 pub use performance_results::{json_output_path, PerformanceResults, JSON_OUTPUT_FLAG};
 pub use keys::{
-    is_invalid_key, resource_key_from_env, CI_RESOURCE_KEY_BASIC_ENV_VAR,
-    CI_RESOURCE_KEY_BESPOKE_ENV_VAR, RESOURCE_KEY_ENV_VAR, RESOURCE_KEY_ENV_VARS,
+    is_invalid_key, license_key_from_env, resource_key_from_env, CI_RESOURCE_KEY_BASIC_ENV_VAR,
+    CI_RESOURCE_KEY_BESPOKE_ENV_VAR, LICENSE_KEY_ENV_VAR, RESOURCE_KEY_ENV_VAR,
+    RESOURCE_KEY_ENV_VARS,
 };
 pub use properties::{get_property_as_string, property_value_to_string, NO_VALUE_MARKER};

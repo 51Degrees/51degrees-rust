@@ -33,7 +33,8 @@
 //! [`two_column_table`] and [`evidence_table`]) lives in the `examples-web-shared`
 //! crate and is re-exported here so the binaries import everything from one
 //! place. What remains in this module is IP-intelligence specific: the results
-//! table, the location map and the page renderer.
+//! table, the location map, the Enterprise data file notes, the "Find out
+//! more" section and the page renderer.
 //!
 //! Because the module is included into each binary separately, any given binary
 //! uses only a subset of these helpers (whether defined here or re-exported from
@@ -49,9 +50,21 @@ pub use examples_web_shared::{
 };
 use fiftyone_ip_intelligence::{AspectPropertyValue, IpIntelligenceData, WeightedValue};
 
+/// Where to ask about a copy of the Enterprise data file.
+pub const ENTERPRISE_CONTACT_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-web_support-mod.rs&utm_term=enterprise-data-file";
+
+/// The links the page's "Find out more" section starts with.
+pub const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-web_support-mod.rs&utm_term=find-out-more"),
+    ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-web_support-mod.rs&utm_term=find-out-more"),
+    ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-web_support-mod.rs&utm_term=find-out-more"),
+];
+
 /// One displayed IP-intelligence property reduced to its plain value, ready to
 /// render. A property with no value carries the engine's explanation in `value`.
 pub struct DisplayValue {
+    /// The property's name, such as `CountryCode`.
+    pub property: String,
     /// The human-readable label for the property row.
     pub label: String,
     /// The resolved value, or the no-value message.
@@ -61,19 +74,19 @@ pub struct DisplayValue {
 /// Reduce a plain [`AspectPropertyValue`] to its display value, rendering the
 /// value with the supplied closure. A no-value carries the engine's explanation.
 fn display_value<T>(
+    property: &str,
     label: &str,
-    property: &AspectPropertyValue<T>,
+    value: &AspectPropertyValue<T>,
     render: impl Fn(&T) -> String,
 ) -> DisplayValue {
-    match property.value() {
-        Ok(value) => DisplayValue {
-            label: label.to_owned(),
-            value: render(value),
-        },
-        Err(error) => DisplayValue {
-            label: label.to_owned(),
-            value: error.to_string(),
-        },
+    let value = match value.value() {
+        Ok(value) => render(value),
+        Err(error) => error.to_string(),
+    };
+    DisplayValue {
+        property: property.to_owned(),
+        label: label.to_owned(),
+        value,
     }
 }
 
@@ -81,33 +94,25 @@ fn display_value<T>(
 /// candidate as `value (weight)` ordered high weighting first and joined with
 /// commas. A no-value carries the engine's explanation.
 ///
-/// This is how the genuinely weighted properties (the country-code distributions
-/// and `Mcc`) are shown: a single IP can overlap several countries, so the value
-/// is a weighted list rather than one definite value.
+/// This is how a weighted property is shown: a single IP can overlap several
+/// countries, so the value is a weighted list rather than one definite value.
 fn display_weighted(
+    property: &str,
     label: &str,
-    property: &AspectPropertyValue<Vec<WeightedValue<String>>>,
+    value: &AspectPropertyValue<Vec<WeightedValue<String>>>,
 ) -> DisplayValue {
-    match property.value() {
-        Ok(list) => DisplayValue {
-            label: label.to_owned(),
-            value: list
-                .iter()
-                .map(|candidate| format!("{} ({:.2})", candidate.value, candidate.weighting()))
-                .collect::<Vec<_>>()
-                .join(", "),
-        },
-        Err(error) => DisplayValue {
-            label: label.to_owned(),
-            value: error.to_string(),
-        },
-    }
+    display_value(property, label, value, |list| {
+        list.iter()
+            .map(|candidate| format!("{} ({:.2})", candidate.value, candidate.weighting()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    })
 }
 
 /// Gather the displayed IP-intelligence properties from the result, read through
-/// the strongly-typed accessors. The order is network registration first, then
-/// the textual location, the coordinates and accuracy, then the network flags and
-/// the weighted country-code distributions.
+/// the strongly-typed accessors. The order is the autonomous system and network
+/// registration first, then the textual location, the coordinates and accuracy,
+/// then the network flags and the weighted country-code distributions.
 ///
 /// Plain properties (strings, the [`f32`] coordinates, the [`i32`] radii and the
 /// [`bool`] flags) resolve to a single value. The weighted properties at the end
@@ -120,46 +125,156 @@ pub fn display_values(ip: &dyn IpIntelligenceData) -> Vec<DisplayValue> {
     let bool_render = |value: &bool| if *value { "Yes" } else { "No" }.to_owned();
 
     vec![
-        display_value("Registered Name", &ip.registered_name(), string_render),
-        display_value("Registered Owner", &ip.registered_owner(), string_render),
+        display_value("Asn", "ASN", &ip.asn(), string_render),
+        display_value("AsnName", "ASN Name", &ip.asn_name(), string_render),
         display_value(
+            "RegisteredName",
+            "Registered Name",
+            &ip.registered_name(),
+            string_render,
+        ),
+        display_value(
+            "RegisteredOwner",
+            "Registered Owner",
+            &ip.registered_owner(),
+            string_render,
+        ),
+        display_value(
+            "RegisteredCountry",
             "Registered Country",
             &ip.registered_country(),
             string_render,
         ),
-        display_value("IP Range Start", &ip.ip_range_start(), string_render),
-        display_value("IP Range End", &ip.ip_range_end(), string_render),
-        display_value("Country", &ip.country(), string_render),
-        display_value("Country Code", &ip.country_code(), string_render),
-        display_value("Country Code (3)", &ip.country_code3(), string_render),
-        display_value("Region", &ip.region(), string_render),
-        display_value("State", &ip.state(), string_render),
-        display_value("Town", &ip.town(), string_render),
-        display_value("Latitude", &ip.latitude(), number_render),
-        display_value("Longitude", &ip.longitude(), number_render),
         display_value(
+            "IpRangeStart",
+            "IP Range Start",
+            &ip.ip_range_start(),
+            string_render,
+        ),
+        display_value(
+            "IpRangeEnd",
+            "IP Range End",
+            &ip.ip_range_end(),
+            string_render,
+        ),
+        display_value("Country", "Country", &ip.country(), string_render),
+        display_value(
+            "CountryCode",
+            "Country Code",
+            &ip.country_code(),
+            string_render,
+        ),
+        display_value(
+            "CountryCode3",
+            "Country Code (3)",
+            &ip.country_code3(),
+            string_render,
+        ),
+        display_value("Region", "Region", &ip.region(), string_render),
+        display_value("State", "State", &ip.state(), string_render),
+        display_value("Town", "Town", &ip.town(), string_render),
+        display_value("Latitude", "Latitude", &ip.latitude(), number_render),
+        display_value("Longitude", "Longitude", &ip.longitude(), number_render),
+        display_value(
+            "AccuracyRadiusMin",
             "Accuracy Radius Min (km)",
             &ip.accuracy_radius_min(),
             integer_render,
         ),
         display_value(
+            "TimeZoneOffset",
             "Time Zone Offset (min)",
             &ip.time_zone_offset(),
             integer_render,
         ),
-        display_value("Connection Type", &ip.connection_type(), string_render),
-        display_value("Is Hosted", &ip.is_hosted(), bool_render),
-        display_value("Is VPN", &ip.is_vpn(), bool_render),
-        display_value("Is Proxy", &ip.is_proxy(), bool_render),
-        display_value("Is Cellular", &ip.is_cellular(), bool_render),
-        display_value("Is in EU", &ip.is_eu(), bool_render),
+        display_value(
+            "ConnectionType",
+            "Connection Type",
+            &ip.connection_type(),
+            string_render,
+        ),
+        display_value("IsHosted", "Is Hosted", &ip.is_hosted(), bool_render),
+        display_value("IsVPN", "Is VPN", &ip.is_vpn(), bool_render),
+        display_value("IsProxy", "Is Proxy", &ip.is_proxy(), bool_render),
+        display_value("IsCellular", "Is Cellular", &ip.is_cellular(), bool_render),
+        display_value("IsEu", "Is in EU", &ip.is_eu(), bool_render),
         display_weighted(
+            "CountryCodesGeographical",
             "Country Codes (geographical)",
             &ip.country_codes_geographical(),
         ),
-        display_weighted("Country Codes (population)", &ip.country_codes_population()),
-        display_weighted("Mobile Country Code (MCC)", &ip.mcc()),
+        display_weighted(
+            "CountryCodesPopulation",
+            "Country Codes (population)",
+            &ip.country_codes_population(),
+        ),
+        display_weighted("Mcc", "Mobile Country Code (MCC)", &ip.mcc()),
     ]
+}
+
+/// Replace the value of each row for a property only the Enterprise data file
+/// carries, when the data file in use does not carry it, with a note saying
+/// so. `available` holds the properties the data file carries.
+pub fn mark_enterprise_only(values: &mut [DisplayValue], available: &[String]) {
+    for row in values {
+        let enterprise = ip_intelligence_examples::ENTERPRISE_PROPERTIES
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(&row.property));
+        if enterprise && !examples_shared::is_available(&row.property, available) {
+            row.value = examples_shared::NEEDS_ENTERPRISE_DATA_FILE.to_owned();
+        }
+    }
+}
+
+/// A message naming the Enterprise properties the data file does not carry,
+/// with a link to ask about a copy of the Enterprise data file. Empty when
+/// `missing` is empty.
+pub fn enterprise_message_html(missing: &[&str]) -> String {
+    if missing.is_empty() {
+        return String::new();
+    }
+    let names = match missing {
+        [only] => (*only).to_owned(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        [] => String::new(),
+    };
+    let need = if missing.len() == 1 {
+        "It needs"
+    } else {
+        "They need"
+    };
+    format!(
+        "<div class=\"c-eg-message\">\
+         <p class=\"c-eg-message__text\">The data file in use does not carry {names}. \
+         {need} the Enterprise data file. \
+         <a href=\"{url}\">Contact us</a> about getting a copy.</p>\
+         <a class=\"b-btn c-eg-message__cta\" href=\"{url}\">Contact us</a>\
+         </div>",
+        names = html_escape(&names),
+        url = ENTERPRISE_CONTACT_URL,
+    )
+}
+
+/// The "Find out more" section that ends every page, set apart by a rule. It
+/// lists [`FIND_OUT_MORE`] and then each of `repositories` as a bare address.
+pub fn find_out_more_html(repositories: &[&str]) -> String {
+    let mut items = String::new();
+    for (label, url) in FIND_OUT_MORE {
+        items.push_str(&format!(
+            "<li><a class=\"b-link\" href=\"{url}\">{}</a></li>",
+            html_escape(label)
+        ));
+    }
+    for url in repositories {
+        items.push_str(&format!(
+            "<li><a class=\"b-link\" href=\"{url}\">{url}</a></li>"
+        ));
+    }
+    format!(
+        "<hr><section class=\"c-eg-section\" id=\"find-out-more\">\
+         <h3 class=\"c-eg-page__heading\">{heading}</h3><ul>{items}</ul></section>",
+        heading = examples_shared::FIND_OUT_MORE_HEADING,
+    )
 }
 
 /// Render the server-side IP-intelligence results as a two-column `.c-eg-table`
@@ -246,7 +361,7 @@ pub const CLOUD_CONTACT_BANNER: &str = "\
 </div>";
 
 /// The contact-us banner shown on the on-premise page, describing what the free
-/// ASN IP-intelligence data covers and what a paid Enterprise file adds.
+/// IP Intelligence data files cover and what a paid Enterprise file adds.
 pub const ONPREM_CONTACT_BANNER: &str = "\
 <div class=\"c-eg-message\">\
   <p class=\"c-eg-message__text\">This example uses a free IP Intelligence data file, which resolves \
@@ -294,13 +409,16 @@ pub struct PageOptions<'a> {
     /// The pre-rendered map-initialization `<script>` (empty when no
     /// coordinates resolved).
     pub map_script: &'a str,
+    /// The repositories the "Find out more" section lists.
+    pub repositories: &'a [&'a str],
 }
 
 /// Render a full HTML document for an IP-intelligence web example page.
 ///
 /// The structure is a titled page, the client IP the result describes, a
 /// results table, the evidence used, an IP form so a visitor can look up any
-/// address, the optional location map, and the contact-us banner.
+/// address, the optional location map, the contact-us banner and the "Find out
+/// more" section.
 pub fn render_page(options: PageOptions<'_>) -> String {
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
@@ -338,6 +456,7 @@ pub fn render_page(options: PageOptions<'_>) -> String {
          {evidence_html}\
          </div>\
          {message_html}\
+         {find_out_more}\
          </div>\
          <script src=\"{js}\"></script>\
          {map_script}\
@@ -356,6 +475,7 @@ pub fn render_page(options: PageOptions<'_>) -> String {
         map_section = MAP_SECTION_ID,
         map_canvas = MAP_CANVAS_ID,
         message_html = options.message_html,
+        find_out_more = find_out_more_html(options.repositories),
         map_script = options.map_script,
     )
 }

@@ -22,15 +22,64 @@
 
 //! The builder for [`JavaScriptBuilderElement`].
 
+use std::fmt;
+use std::ops::Deref;
+use std::panic::{RefUnwindSafe, UnwindSafe};
+use std::sync::Arc;
+
 use fiftyone_cloud_request_engine::{CloudRequestEngine, LicensedProducts};
 use fiftyone_pipeline_core::constants::DEFAULT_JSON_ENDPOINT;
-use fiftyone_pipeline_core::{Error, Result};
+use fiftyone_pipeline_core::{Error, Pipeline, Result};
 
 use crate::constants::{
     BUILDER_DEFAULT_ENABLE_COOKIES, BUILDER_DEFAULT_HOST, BUILDER_DEFAULT_MINIFY,
     BUILDER_DEFAULT_OBJECT_NAME, BUILDER_DEFAULT_PROTOCOL, FODID_PRODUCT_NAME,
 };
 use crate::element::JavaScriptBuilderElement;
+use crate::mustache::Template;
+use crate::steps::{DefaultJavaScriptBuilderSteps, JavaScriptBuilderSteps, SharedSteps};
+
+/// Where an element's user prompt decision comes from.
+#[derive(Clone)]
+pub(crate) enum UserPromptSource {
+    /// Decided from the pipeline each script is built for.
+    Pipeline,
+    /// Decided when the builder was configured.
+    Decided(bool),
+    /// Decided from this request engine's licensed products once its
+    /// discovery has completed.
+    Engine(SharedEngine),
+}
+
+/// A shared cloud request engine that keeps the builder and the element
+/// `UnwindSafe` and `RefUnwindSafe`.
+///
+/// The JavaScript builder only reads the engine's licensed products, which
+/// are set once, so a panic elsewhere cannot leave a value half changed for
+/// it to read.
+#[derive(Clone)]
+pub(crate) struct SharedEngine(Arc<CloudRequestEngine>);
+
+impl UnwindSafe for SharedEngine {}
+impl RefUnwindSafe for SharedEngine {}
+
+impl Deref for SharedEngine {
+    type Target = CloudRequestEngine;
+
+    fn deref(&self) -> &CloudRequestEngine {
+        &self.0
+    }
+}
+
+impl fmt::Debug for UserPromptSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UserPromptSource::Pipeline => f.write_str("Pipeline"),
+            UserPromptSource::Decided(render) => f.debug_tuple("Decided").field(render).finish(),
+            UserPromptSource::Engine(_) => f.write_str("Engine"),
+        }
+    }
+}
 
 /// Configures and constructs a [`JavaScriptBuilderElement`].
 ///
@@ -51,13 +100,16 @@ use crate::element::JavaScriptBuilderElement;
 /// ```
 #[derive(Debug, Clone)]
 pub struct JavaScriptBuilderElementBuilder {
-    host: String,
-    endpoint: String,
-    protocol: String,
-    object_name: String,
-    enable_cookies: bool,
-    minify: bool,
-    user_prompt: bool,
+    pub(crate) host: String,
+    pub(crate) endpoint: String,
+    pub(crate) protocol: String,
+    pub(crate) object_name: String,
+    pub(crate) enable_cookies: bool,
+    pub(crate) minify: bool,
+    pub(crate) user_prompt: UserPromptSource,
+    pub(crate) steps: SharedSteps,
+    /// The template given by the caller, or `None` for the bundled one.
+    pub(crate) template: Option<Template>,
 }
 
 impl JavaScriptBuilderElementBuilder {
@@ -70,7 +122,45 @@ impl JavaScriptBuilderElementBuilder {
             object_name: BUILDER_DEFAULT_OBJECT_NAME.to_owned(),
             enable_cookies: BUILDER_DEFAULT_ENABLE_COOKIES,
             minify: BUILDER_DEFAULT_MINIFY,
-            user_prompt: false,
+            user_prompt: UserPromptSource::Pipeline,
+            steps: SharedSteps::new(DefaultJavaScriptBuilderSteps),
+            template: None,
+        }
+    }
+
+    /// Use these steps to give the parameters, session id, sequence and user
+    /// prompt decision in place of the builder's own. See
+    /// [`JavaScriptBuilderSteps`].
+    pub fn set_steps(mut self, steps: impl JavaScriptBuilderSteps + 'static) -> Self {
+        self.steps = SharedSteps::new(steps);
+        self
+    }
+
+    /// Render the script from this Mustache template in place of the bundled
+    /// one.
+    ///
+    /// The template is given the values the bundled one is given, named in
+    /// the
+    /// [javascript-builder specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/javascript-builder.md),
+    /// with `_supportsFetch` and `_userPrompt` as well. Variables
+    /// (`{{name}}`, `{{&name}}` and `{{{name}}}`) are written without HTML
+    /// escaping, and sections (`{{#name}}` and `{{^name}}`) are rendered from
+    /// the boolean values. Lists, partials, lambdas, dotted names and
+    /// comments are not supported. The specification allows a template other
+    /// than the bundled one as long as the script still does everything the
+    /// bundled one does.
+    ///
+    /// A template with a tag or a section left open, or with a section closed
+    /// under another name, is a configuration error.
+    pub fn set_template(mut self, source: &str) -> Result<Self> {
+        match Template::parse(source) {
+            Ok(template) => {
+                self.template = Some(template);
+                Ok(self)
+            }
+            Err(error) => Err(Error::configuration(format!(
+                "The JavaScript template is not valid Mustache ({error})."
+            ))),
         }
     }
 
@@ -84,14 +174,72 @@ impl JavaScriptBuilderElementBuilder {
     /// least one property. The decision is taken from the licensed products and
     /// not from the 51Did cloud engine's property list, because that engine
     /// reports its default properties when the key grants no 51Did product, so
-    /// its list is populated either way. The request engine resolves its
-    /// licensed products when it is built, so the decision is taken here once.
-    /// Without a call to this method the section is left out.
+    /// its list is populated either way.
+    ///
+    /// The element keeps the engine and settles the decision at the first
+    /// render after the engine's discovery has completed. Until then each
+    /// script leaves the section out, so a transient failure when the engine
+    /// was built leaves it out only until a request completes discovery.
+    ///
+    /// The last call to this method,
+    /// [`set_cloud_request_engine`](Self::set_cloud_request_engine) or
+    /// [`set_user_prompt`](Self::set_user_prompt) decides. Without any of the
+    /// three, the pipeline decides, as [`set_user_prompt`](Self::set_user_prompt)
+    /// describes.
+    pub fn set_shared_cloud_request_engine(mut self, engine: Arc<CloudRequestEngine>) -> Self {
+        self.user_prompt = UserPromptSource::Engine(SharedEngine(engine));
+        self
+    }
+
+    /// As
+    /// [`set_shared_cloud_request_engine`](Self::set_shared_cloud_request_engine)
+    /// for a caller holding only a reference, so the decision is taken here,
+    /// once. If the engine's discovery has not completed, which follows a
+    /// transient failure when it was built, the section is left out for the
+    /// life of the element and a warning is logged. Prefer the shared form.
     pub fn set_cloud_request_engine(mut self, engine: &CloudRequestEngine) -> Self {
-        self.user_prompt = engine
-            .public_properties()
-            .map(grants_51did)
-            .unwrap_or(false);
+        let render = match engine.public_properties() {
+            Ok(products) => grants_51did(products),
+            Err(_) => {
+                log::warn!(
+                    "The cloud request engine's licensed products are not known \
+                     yet, so the JavaScript builder leaves the user prompt \
+                     section out of every script. Pass the engine to \
+                     set_shared_cloud_request_engine to decide once they are known."
+                );
+                false
+            }
+        };
+        self.user_prompt = UserPromptSource::Decided(render);
+        self
+    }
+
+    /// Render the user prompt section in every script, or leave it out of
+    /// every script, whatever the pipeline holds. This needs no cloud request
+    /// engine.
+    ///
+    /// The last call to this method,
+    /// [`set_shared_cloud_request_engine`](Self::set_shared_cloud_request_engine)
+    /// or [`set_cloud_request_engine`](Self::set_cloud_request_engine)
+    /// decides. Without any of the three, the section is rendered when the
+    /// pipeline the script is built for has an element whose data key is
+    /// `fodid`, ignoring case, offering at least one available property, as
+    /// .NET's builder decides. An element whose properties are not loaded yet
+    /// offers nothing
+    /// ([`FlowElement::properties_loaded`](fiftyone_pipeline_core::FlowElement::properties_loaded)),
+    /// so a script built before the 51Did cloud engine's discovery completes
+    /// leaves the section out. The pipeline is read for each script and the
+    /// answer is not kept, so a script built once discovery completes has the
+    /// section.
+    ///
+    /// A cloud request engine with only a license key has no accessible
+    /// properties to read, so the 51Did cloud engine offers no available
+    /// property and the section is left out, whatever the license grants. A
+    /// pipeline on a license key that needs the section calls this method with
+    /// `true`. .NET has no answer to follow here, because its cloud request
+    /// engine refuses to build without a resource key.
+    pub fn set_user_prompt(mut self, render: bool) -> Self {
+        self.user_prompt = UserPromptSource::Decided(render);
         self
     }
 
@@ -104,7 +252,8 @@ impl JavaScriptBuilderElementBuilder {
         self
     }
 
-    /// Set the host the client JavaScript should query for updates. By default
+    /// Set the host the client JavaScript should query for updates, without
+    /// the scheme, for example `example.com` or `example.com:8080`. By default
     /// the host from the request evidence is used.
     pub fn set_host(mut self, host: impl Into<String>) -> Self {
         self.host = host.into();
@@ -137,9 +286,12 @@ impl JavaScriptBuilderElementBuilder {
     /// JavaScript.
     ///
     /// The name must be a valid JavaScript identifier (it must match
-    /// `[a-zA-Z_$][0-9a-zA-Z_$]*` in full) and must not be a reserved word,
-    /// `Infinity`, `NaN`, `undefined` or `fiftyoneDegreesManager`. An invalid
-    /// name is a configuration error. The same rule applies to a name
+    /// `[a-zA-Z_$][0-9a-zA-Z_$]*` in full) and must not be a name the
+    /// [object name rule](https://github.com/51Degrees/specifications/blob/e637d3660a5e781f4494a9b42c8e8349bb117669/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L192)
+    /// refuses. Those are the reserved words, `Infinity`, `NaN`, `undefined`,
+    /// `fiftyoneDegreesManager`, and global names a page cannot use for the
+    /// object, such as `eval`, `window`, `location` and `localStorage`. An
+    /// invalid name is a configuration error. The same rule applies to a name
     /// requested through the `query.fod-js-object-name` evidence, where an
     /// invalid name is ignored with a warning logged.
     pub fn set_object_name(mut self, object_name: impl Into<String>) -> Result<Self> {
@@ -148,10 +300,12 @@ impl JavaScriptBuilderElementBuilder {
             self.object_name = object_name;
             Ok(self)
         } else {
-            Err(Error::configuration(format!(
+            let message = format!(
                 "The JavaScript object name '{object_name}' is not valid. It must \
                  be a valid JavaScript identifier that is not a reserved word."
-            )))
+            );
+            log::error!("{message}");
+            Err(Error::configuration(message))
         }
     }
 
@@ -167,24 +321,30 @@ impl JavaScriptBuilderElementBuilder {
 
     /// Build the configured [`JavaScriptBuilderElement`].
     pub fn build(self) -> JavaScriptBuilderElement {
-        JavaScriptBuilderElement::from_parts(
-            self.host,
-            self.endpoint,
-            self.protocol,
-            self.object_name,
-            self.enable_cookies,
-            self.minify,
-            self.user_prompt,
-        )
+        JavaScriptBuilderElement::from_builder(self)
     }
 }
 
 /// True when the licensed products include the 51Did product with at least one
 /// property. The product name is compared ignoring case, because the cloud
 /// service reports it as `FODid`.
-fn grants_51did(products: &LicensedProducts) -> bool {
+pub(crate) fn grants_51did(products: &LicensedProducts) -> bool {
     products.products.iter().any(|(name, product)| {
         name.eq_ignore_ascii_case(FODID_PRODUCT_NAME) && !product.properties.is_empty()
+    })
+}
+
+/// True when the pipeline has an element whose data key is the 51Did key,
+/// ignoring case, whose properties are loaded and include at least one
+/// available property. The elements of a parallel group are included.
+pub(crate) fn offers_51did(pipeline: &Pipeline) -> bool {
+    pipeline.flow_elements().iter().any(|element| {
+        element.data_key().eq_ignore_ascii_case(FODID_PRODUCT_NAME)
+            && element.properties_loaded()
+            && element
+                .properties()
+                .iter()
+                .any(|property| property.available)
     })
 }
 
@@ -210,8 +370,28 @@ const RESERVED_WORDS: &[&str] = &[
     "Infinity", "NaN", "undefined", "fiftyoneDegreesManager",
 ];
 
+/// Global names the object cannot have, beyond [`RESERVED_WORDS`]. Strict
+/// mode code cannot declare `eval` or `arguments`, and the script's top level
+/// `var eval` would replace the page's own `eval`. `var location` sets
+/// `location.href` to the object's text, which navigates the page away. The
+/// rest are properties of the browser's window that a top level `var` cannot
+/// replace, so the object would never be created. These are the names the
+/// [object name rule](https://github.com/51Degrees/specifications/blob/e637d3660a5e781f4494a9b42c8e8349bb117669/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L192)
+/// adds to the reserved words.
+#[rustfmt::skip]
+const UNSAFE_GLOBAL_NAMES: &[&str] = &[
+    "eval", "arguments", "location",
+    "window", "document", "top", "name", "status", "history", "navigator",
+    "closed", "frameElement", "isSecureContext", "crossOriginIsolated",
+    "trustedTypes", "crypto", "indexedDB", "localStorage", "sessionStorage",
+    "caches", "cookieStore", "speechSynthesis", "styleMedia", "crashReport",
+    "credentialless", "customElements", "documentPictureInPicture", "fence",
+    "launchQueue", "originAgentCluster",
+];
+
 /// True if the string is a valid JavaScript identifier per the
-/// `[a-zA-Z_$][0-9a-zA-Z_$]*` rule and is not one of [`RESERVED_WORDS`].
+/// `[a-zA-Z_$][0-9a-zA-Z_$]*` rule and is not one of [`RESERVED_WORDS`] or
+/// [`UNSAFE_GLOBAL_NAMES`].
 ///
 /// The first character must be a letter, underscore or dollar sign, and the
 /// rest may also be digits. An empty string is invalid. The name is written
@@ -224,7 +404,9 @@ pub(crate) fn is_valid_object_name(name: &str) -> bool {
         Some(first) if is_identifier_start(first) => {}
         _ => return false,
     }
-    chars.all(is_identifier_part) && !RESERVED_WORDS.contains(&name)
+    chars.all(is_identifier_part)
+        && !RESERVED_WORDS.contains(&name)
+        && !UNSAFE_GLOBAL_NAMES.contains(&name)
 }
 
 /// True if the character may start a JavaScript identifier (letter, `_` or `$`).

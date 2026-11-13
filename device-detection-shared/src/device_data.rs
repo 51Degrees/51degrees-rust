@@ -30,7 +30,9 @@
 //! This file is produced by the 51Degrees PropertyGenerator tool from the
 //! common metadata. It defines the [`DeviceData`] trait, one accessor per
 //! documented property, and implements it for the hand-written
-//! [`DeviceDataBase`] by delegating to its by-name dynamic-bag getters.
+//! [`DeviceDataBase`] by delegating to its getters, each given the slot of
+//! the accessor's property in [`TYPED_PROPERTY_NAMES`] so that it reads
+//! by the position its reader resolved rather than by name.
 //! Each property resolves to a single typed value (or a list for the
 //! list-valued properties).
 #![allow(rustdoc::bare_urls, rustdoc::invalid_html_tags)]
@@ -903,1143 +905,1143 @@ pub trait DeviceData: AspectData {
 
 impl DeviceData for DeviceDataBase {
     fn ajax_request_type(&self) -> AspectPropertyValue<String> {
-        self.string_property("AjaxRequestType")
+        self.string_property_at(0, "AjaxRequestType")
     }
 
     fn animation_timing(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("AnimationTiming")
+        self.bool_property_at(1, "AnimationTiming")
     }
 
     fn back_camera_mega_pixels(&self) -> AspectPropertyValue<f64> {
-        self.double_property("BackCameraMegaPixels")
+        self.double_property_at(2, "BackCameraMegaPixels")
     }
 
     fn battery_capacity(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("BatteryCapacity")
+        self.integer_property_at(3, "BatteryCapacity")
     }
 
     fn bits_per_pixel(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("BitsPerPixel")
+        self.integer_property_at(4, "BitsPerPixel")
     }
 
     fn blob_builder(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("BlobBuilder")
+        self.bool_property_at(5, "BlobBuilder")
     }
 
     fn browser_audio_codecs_decode(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("BrowserAudioCodecsDecode")
+        self.string_list_property_at(6, "BrowserAudioCodecsDecode")
     }
 
     fn browser_audio_codecs_encode(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("BrowserAudioCodecsEncode")
+        self.string_list_property_at(7, "BrowserAudioCodecsEncode")
     }
 
     fn browser_discontinued_age(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("BrowserDiscontinuedAge")
+        self.integer_property_at(8, "BrowserDiscontinuedAge")
     }
 
     fn browser_discontinued_month(&self) -> AspectPropertyValue<String> {
-        self.string_property("BrowserDiscontinuedMonth")
+        self.string_property_at(9, "BrowserDiscontinuedMonth")
     }
 
     fn browser_discontinued_year(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("BrowserDiscontinuedYear")
+        self.integer_property_at(10, "BrowserDiscontinuedYear")
     }
 
     fn browser_family(&self) -> AspectPropertyValue<String> {
-        self.string_property("BrowserFamily")
+        self.string_property_at(11, "BrowserFamily")
     }
 
     fn browser_logos(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("BrowserLogos")
+        self.string_list_property_at(12, "BrowserLogos")
     }
 
     fn browser_name(&self) -> AspectPropertyValue<String> {
-        self.string_property("BrowserName")
+        self.string_property_at(13, "BrowserName")
     }
 
     fn browser_preview_age(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("BrowserPreviewAge")
+        self.integer_property_at(14, "BrowserPreviewAge")
     }
 
     fn browser_preview_month(&self) -> AspectPropertyValue<String> {
-        self.string_property("BrowserPreviewMonth")
+        self.string_property_at(15, "BrowserPreviewMonth")
     }
 
     fn browser_preview_year(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("BrowserPreviewYear")
+        self.integer_property_at(16, "BrowserPreviewYear")
     }
 
     fn browser_property_source(&self) -> AspectPropertyValue<String> {
-        self.string_property("BrowserPropertySource")
+        self.string_property_at(17, "BrowserPropertySource")
     }
 
     fn browser_rank(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("BrowserRank")
+        self.integer_property_at(18, "BrowserRank")
     }
 
     fn browser_release_age(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("BrowserReleaseAge")
+        self.integer_property_at(19, "BrowserReleaseAge")
     }
 
     fn browser_release_month(&self) -> AspectPropertyValue<String> {
-        self.string_property("BrowserReleaseMonth")
+        self.string_property_at(20, "BrowserReleaseMonth")
     }
 
     fn browser_release_year(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("BrowserReleaseYear")
+        self.integer_property_at(21, "BrowserReleaseYear")
     }
 
     fn browser_source_project(&self) -> AspectPropertyValue<String> {
-        self.string_property("BrowserSourceProject")
+        self.string_property_at(22, "BrowserSourceProject")
     }
 
     fn browser_source_project_version(&self) -> AspectPropertyValue<String> {
-        self.string_property("BrowserSourceProjectVersion")
+        self.string_property_at(23, "BrowserSourceProjectVersion")
     }
 
     fn browser_vendor(&self) -> AspectPropertyValue<String> {
-        self.string_property("BrowserVendor")
+        self.string_property_at(24, "BrowserVendor")
     }
 
     fn browser_version(&self) -> AspectPropertyValue<String> {
-        self.string_property("BrowserVersion")
+        self.string_property_at(25, "BrowserVersion")
     }
 
     fn browser_video_codecs_decode(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("BrowserVideoCodecsDecode")
+        self.string_list_property_at(26, "BrowserVideoCodecsDecode")
     }
 
     fn browser_video_codecs_encode(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("BrowserVideoCodecsEncode")
+        self.string_list_property_at(27, "BrowserVideoCodecsEncode")
     }
 
     fn camera_types(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("CameraTypes")
+        self.string_list_property_at(28, "CameraTypes")
     }
 
     fn canvas(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Canvas")
+        self.bool_property_at(29, "Canvas")
     }
 
     fn ccpp_accept(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("CcppAccept")
+        self.string_list_property_at(30, "CcppAccept")
     }
 
     fn cldc(&self) -> AspectPropertyValue<f64> {
-        self.double_property("CLDC")
+        self.double_property_at(31, "CLDC")
     }
 
     fn contrast_ratio(&self) -> AspectPropertyValue<String> {
-        self.string_property("ContrastRatio")
+        self.string_property_at(32, "ContrastRatio")
     }
 
     fn cookies_capable(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("CookiesCapable")
+        self.bool_property_at(33, "CookiesCapable")
     }
 
     fn cpu(&self) -> AspectPropertyValue<String> {
-        self.string_property("CPU")
+        self.string_property_at(34, "CPU")
     }
 
     fn cpu_cores(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("CPUCores")
+        self.integer_property_at(35, "CPUCores")
     }
 
     fn cpu_designer(&self) -> AspectPropertyValue<String> {
-        self.string_property("CPUDesigner")
+        self.string_property_at(36, "CPUDesigner")
     }
 
     fn cpu_maximum_frequency(&self) -> AspectPropertyValue<f64> {
-        self.double_property("CPUMaximumFrequency")
+        self.double_property_at(37, "CPUMaximumFrequency")
     }
 
     fn crawler_name(&self) -> AspectPropertyValue<String> {
-        self.string_property("CrawlerName")
+        self.string_property_at(38, "CrawlerName")
     }
 
     fn crawler_product_tokens(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("CrawlerProductTokens")
+        self.string_list_property_at(39, "CrawlerProductTokens")
     }
 
     fn crawler_url(&self) -> AspectPropertyValue<String> {
-        self.string_property("CrawlerUrl")
+        self.string_property_at(40, "CrawlerUrl")
     }
 
     fn crawler_usage(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("CrawlerUsage")
+        self.string_list_property_at(41, "CrawlerUsage")
     }
 
     fn css_background(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("CssBackground")
+        self.bool_property_at(42, "CssBackground")
     }
 
     fn css_border_image(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("CssBorderImage")
+        self.bool_property_at(43, "CssBorderImage")
     }
 
     fn css_canvas(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("CssCanvas")
+        self.bool_property_at(44, "CssCanvas")
     }
 
     fn css_color(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("CssColor")
+        self.bool_property_at(45, "CssColor")
     }
 
     fn css_column(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("CssColumn")
+        self.bool_property_at(46, "CssColumn")
     }
 
     fn css_flexbox(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("CssFlexbox")
+        self.bool_property_at(47, "CssFlexbox")
     }
 
     fn css_font(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("CssFont")
+        self.bool_property_at(48, "CssFont")
     }
 
     fn css_grid(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("CssGrid")
+        self.bool_property_at(49, "CssGrid")
     }
 
     fn css_images(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("CssImages")
+        self.bool_property_at(50, "CssImages")
     }
 
     fn css_media_queries(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("CssMediaQueries")
+        self.bool_property_at(51, "CssMediaQueries")
     }
 
     fn css_min_max(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("CssMinMax")
+        self.bool_property_at(52, "CssMinMax")
     }
 
     fn css_overflow(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("CssOverflow")
+        self.bool_property_at(53, "CssOverflow")
     }
 
     fn css_position(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("CssPosition")
+        self.bool_property_at(54, "CssPosition")
     }
 
     fn css_text(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("CssText")
+        self.bool_property_at(55, "CssText")
     }
 
     fn css_transforms(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("CssTransforms")
+        self.bool_property_at(56, "CssTransforms")
     }
 
     fn css_transitions(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("CssTransitions")
+        self.bool_property_at(57, "CssTransitions")
     }
 
     fn css_ui(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("CssUI")
+        self.bool_property_at(58, "CssUI")
     }
 
     fn data_set(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("DataSet")
+        self.bool_property_at(59, "DataSet")
     }
 
     fn data_url(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("DataUrl")
+        self.bool_property_at(60, "DataUrl")
     }
 
     fn default_app_stores(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("DefaultAppStores")
+        self.string_list_property_at(61, "DefaultAppStores")
     }
 
     fn device_certifications(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("DeviceCertifications")
+        self.string_list_property_at(62, "DeviceCertifications")
     }
 
     fn device_id(&self) -> AspectPropertyValue<String> {
-        self.string_property("DeviceId")
+        self.string_property_at(63, "DeviceId")
     }
 
     fn device_orientation(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("DeviceOrientation")
+        self.bool_property_at(64, "DeviceOrientation")
     }
 
     fn device_ram(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("DeviceRAM")
+        self.integer_property_at(65, "DeviceRAM")
     }
 
     fn device_ram_variants(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("DeviceRAMVariants")
+        self.string_list_property_at(66, "DeviceRAMVariants")
     }
 
     fn device_type(&self) -> AspectPropertyValue<String> {
-        self.string_property("DeviceType")
+        self.string_property_at(67, "DeviceType")
     }
 
     fn difference(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("Difference")
+        self.integer_property_at(68, "Difference")
     }
 
     fn drift(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("Drift")
+        self.integer_property_at(69, "Drift")
     }
 
     fn durability(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("Durability")
+        self.string_list_property_at(70, "Durability")
     }
 
     fn dynamic_contrast_ratio(&self) -> AspectPropertyValue<String> {
-        self.string_property("DynamicContrastRatio")
+        self.string_property_at(71, "DynamicContrastRatio")
     }
 
     fn energy_consumption_per_year(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("EnergyConsumptionPerYear")
+        self.integer_property_at(72, "EnergyConsumptionPerYear")
     }
 
     fn expansion_slot_max_size(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("ExpansionSlotMaxSize")
+        self.integer_property_at(73, "ExpansionSlotMaxSize")
     }
 
     fn expansion_slot_type(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("ExpansionSlotType")
+        self.string_list_property_at(74, "ExpansionSlotType")
     }
 
     fn fetch(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Fetch")
+        self.bool_property_at(75, "Fetch")
     }
 
     fn file_reader(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("FileReader")
+        self.bool_property_at(76, "FileReader")
     }
 
     fn file_saver(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("FileSaver")
+        self.bool_property_at(77, "FileSaver")
     }
 
     fn file_writer(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("FileWriter")
+        self.bool_property_at(78, "FileWriter")
     }
 
     fn form_data(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("FormData")
+        self.bool_property_at(79, "FormData")
     }
 
     fn frequency_bands(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("FrequencyBands")
+        self.string_list_property_at(80, "FrequencyBands")
     }
 
     fn front_camera_mega_pixels(&self) -> AspectPropertyValue<f64> {
-        self.double_property("FrontCameraMegaPixels")
+        self.double_property_at(81, "FrontCameraMegaPixels")
     }
 
     fn fullscreen(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Fullscreen")
+        self.bool_property_at(82, "Fullscreen")
     }
 
     fn geo_location(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("GeoLocation")
+        self.bool_property_at(83, "GeoLocation")
     }
 
     fn gpu(&self) -> AspectPropertyValue<String> {
-        self.string_property("GPU")
+        self.string_property_at(84, "GPU")
     }
 
     fn gpu_designer(&self) -> AspectPropertyValue<String> {
-        self.string_property("GPUDesigner")
+        self.string_property_at(85, "GPUDesigner")
     }
 
     fn hardware_audio_codecs_decode(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("HardwareAudioCodecsDecode")
+        self.string_list_property_at(86, "HardwareAudioCodecsDecode")
     }
 
     fn hardware_audio_codecs_encode(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("HardwareAudioCodecsEncode")
+        self.string_list_property_at(87, "HardwareAudioCodecsEncode")
     }
 
     fn hardware_carrier(&self) -> AspectPropertyValue<String> {
-        self.string_property("HardwareCarrier")
+        self.string_property_at(88, "HardwareCarrier")
     }
 
     fn hardware_family(&self) -> AspectPropertyValue<String> {
-        self.string_property("HardwareFamily")
+        self.string_property_at(89, "HardwareFamily")
     }
 
     fn hardware_images(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("HardwareImages")
+        self.string_list_property_at(90, "HardwareImages")
     }
 
     fn hardware_model(&self) -> AspectPropertyValue<String> {
-        self.string_property("HardwareModel")
+        self.string_property_at(91, "HardwareModel")
     }
 
     fn hardware_model_variants(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("HardwareModelVariants")
+        self.string_list_property_at(92, "HardwareModelVariants")
     }
 
     fn hardware_name(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("HardwareName")
+        self.string_list_property_at(93, "HardwareName")
     }
 
     fn hardware_name_prefix(&self) -> AspectPropertyValue<String> {
-        self.string_property("HardwareNamePrefix")
+        self.string_property_at(94, "HardwareNamePrefix")
     }
 
     fn hardware_name_version(&self) -> AspectPropertyValue<String> {
-        self.string_property("HardwareNameVersion")
+        self.string_property_at(95, "HardwareNameVersion")
     }
 
     fn hardware_profile_source(&self) -> AspectPropertyValue<String> {
-        self.string_property("HardwareProfileSource")
+        self.string_property_at(96, "HardwareProfileSource")
     }
 
     fn hardware_rank(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("HardwareRank")
+        self.integer_property_at(97, "HardwareRank")
     }
 
     fn hardware_vendor(&self) -> AspectPropertyValue<String> {
-        self.string_property("HardwareVendor")
+        self.string_property_at(98, "HardwareVendor")
     }
 
     fn hardware_video_codecs_decode(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("HardwareVideoCodecsDecode")
+        self.string_list_property_at(99, "HardwareVideoCodecsDecode")
     }
 
     fn hardware_video_codecs_encode(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("HardwareVideoCodecsEncode")
+        self.string_list_property_at(100, "HardwareVideoCodecsEncode")
     }
 
     fn has3_d_camera(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Has3DCamera")
+        self.bool_property_at(101, "Has3DCamera")
     }
 
     fn has3_d_screen(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Has3DScreen")
+        self.bool_property_at(102, "Has3DScreen")
     }
 
     fn has_camera(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("HasCamera")
+        self.bool_property_at(103, "HasCamera")
     }
 
     fn has_click_wheel(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("HasClickWheel")
+        self.bool_property_at(104, "HasClickWheel")
     }
 
     fn has_keypad(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("HasKeypad")
+        self.bool_property_at(105, "HasKeypad")
     }
 
     fn has_nfc(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("HasNFC")
+        self.bool_property_at(106, "HasNFC")
     }
 
     fn has_qwerty_pad(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("HasQwertyPad")
+        self.bool_property_at(107, "HasQwertyPad")
     }
 
     fn has_removable_battery(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("HasRemovableBattery")
+        self.bool_property_at(108, "HasRemovableBattery")
     }
 
     fn has_touch_screen(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("HasTouchScreen")
+        self.bool_property_at(109, "HasTouchScreen")
     }
 
     fn has_track_pad(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("HasTrackPad")
+        self.bool_property_at(110, "HasTrackPad")
     }
 
     fn has_virtual_qwerty(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("HasVirtualQwerty")
+        self.bool_property_at(111, "HasVirtualQwerty")
     }
 
     fn history(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("History")
+        self.bool_property_at(112, "History")
     }
 
     fn html_media_capture(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Html-Media-Capture")
+        self.bool_property_at(113, "Html-Media-Capture")
     }
 
     fn html5(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Html5")
+        self.bool_property_at(114, "Html5")
     }
 
     fn html5_audio(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("Html5Audio")
+        self.string_list_property_at(115, "Html5Audio")
     }
 
     fn html5_video(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("Html5Video")
+        self.string_list_property_at(116, "Html5Video")
     }
 
     fn html_version(&self) -> AspectPropertyValue<f64> {
-        self.double_property("HtmlVersion")
+        self.double_property_at(117, "HtmlVersion")
     }
 
     fn http2(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Http2")
+        self.bool_property_at(118, "Http2")
     }
 
     fn http_live_streaming(&self) -> AspectPropertyValue<String> {
-        self.string_property("HttpLiveStreaming")
+        self.string_property_at(119, "HttpLiveStreaming")
     }
 
     fn iframe(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Iframe")
+        self.bool_property_at(120, "Iframe")
     }
 
     fn indexed_db(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IndexedDB")
+        self.bool_property_at(121, "IndexedDB")
     }
 
     fn internal_storage_variants(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("InternalStorageVariants")
+        self.string_list_property_at(122, "InternalStorageVariants")
     }
 
     fn in_vr_mode(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("InVRMode")
+        self.bool_property_at(123, "InVRMode")
     }
 
     fn is_artificial_intelligence(&self) -> AspectPropertyValue<String> {
-        self.string_property("IsArtificialIntelligence")
+        self.string_property_at(124, "IsArtificialIntelligence")
     }
 
     fn is_console(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IsConsole")
+        self.bool_property_at(125, "IsConsole")
     }
 
     fn is_crawler(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IsCrawler")
+        self.bool_property_at(126, "IsCrawler")
     }
 
     fn is_data_minimising(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IsDataMinimising")
+        self.bool_property_at(127, "IsDataMinimising")
     }
 
     fn is_email_browser(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IsEmailBrowser")
+        self.bool_property_at(128, "IsEmailBrowser")
     }
 
     fn is_emulating_desktop(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IsEmulatingDesktop")
+        self.bool_property_at(129, "IsEmulatingDesktop")
     }
 
     fn is_emulating_device(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IsEmulatingDevice")
+        self.bool_property_at(130, "IsEmulatingDevice")
     }
 
     fn is_e_reader(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IsEReader")
+        self.bool_property_at(131, "IsEReader")
     }
 
     fn is_hardware_group(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IsHardwareGroup")
+        self.bool_property_at(132, "IsHardwareGroup")
     }
 
     fn is_media_hub(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IsMediaHub")
+        self.bool_property_at(133, "IsMediaHub")
     }
 
     fn is_mobile(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IsMobile")
+        self.bool_property_at(134, "IsMobile")
     }
 
     fn is_platform_version_frozen(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IsPlatformVersionFrozen")
+        self.bool_property_at(135, "IsPlatformVersionFrozen")
     }
 
     fn is_screen_foldable(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IsScreenFoldable")
+        self.bool_property_at(136, "IsScreenFoldable")
     }
 
     fn is_small_screen(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IsSmallScreen")
+        self.bool_property_at(137, "IsSmallScreen")
     }
 
     fn is_smart_phone(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IsSmartPhone")
+        self.bool_property_at(138, "IsSmartPhone")
     }
 
     fn is_smart_watch(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IsSmartWatch")
+        self.bool_property_at(139, "IsSmartWatch")
     }
 
     fn is_tablet(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IsTablet")
+        self.bool_property_at(140, "IsTablet")
     }
 
     fn is_tv(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IsTv")
+        self.bool_property_at(141, "IsTv")
     }
 
     fn is_web_app(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("IsWebApp")
+        self.bool_property_at(142, "IsWebApp")
     }
 
     fn iterations(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("Iterations")
+        self.integer_property_at(143, "Iterations")
     }
 
     fn javascript(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Javascript")
+        self.bool_property_at(144, "Javascript")
     }
 
     fn java_script_browser_override(&self) -> AspectPropertyValue<String> {
-        self.string_property("JavaScriptBrowserOverride")
+        self.string_property_at(145, "JavaScriptBrowserOverride")
     }
 
     fn javascript_can_manipulate_css(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("JavascriptCanManipulateCSS")
+        self.bool_property_at(146, "JavascriptCanManipulateCSS")
     }
 
     fn javascript_can_manipulate_dom(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("JavascriptCanManipulateDOM")
+        self.bool_property_at(147, "JavascriptCanManipulateDOM")
     }
 
     fn javascript_get_element_by_id(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("JavascriptGetElementById")
+        self.bool_property_at(148, "JavascriptGetElementById")
     }
 
     fn javascript_get_high_entropy_values(&self) -> AspectPropertyValue<String> {
-        self.string_property("JavascriptGetHighEntropyValues")
+        self.string_property_at(149, "JavascriptGetHighEntropyValues")
     }
 
     fn javascript_hardware_profile(&self) -> AspectPropertyValue<String> {
-        self.string_property("JavascriptHardwareProfile")
+        self.string_property_at(150, "JavascriptHardwareProfile")
     }
 
     fn javascript_image_optimiser(&self) -> AspectPropertyValue<String> {
-        self.string_property("JavascriptImageOptimiser")
+        self.string_property_at(151, "JavascriptImageOptimiser")
     }
 
     fn javascript_preferred_geo_loc_api(&self) -> AspectPropertyValue<String> {
-        self.string_property("JavascriptPreferredGeoLocApi")
+        self.string_property_at(152, "JavascriptPreferredGeoLocApi")
     }
 
     fn javascript_supports_event_listener(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("JavascriptSupportsEventListener")
+        self.bool_property_at(153, "JavascriptSupportsEventListener")
     }
 
     fn javascript_supports_events(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("JavascriptSupportsEvents")
+        self.bool_property_at(154, "JavascriptSupportsEvents")
     }
 
     fn javascript_supports_inner_html(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("JavascriptSupportsInnerHtml")
+        self.bool_property_at(155, "JavascriptSupportsInnerHtml")
     }
 
     fn javascript_version(&self) -> AspectPropertyValue<String> {
-        self.string_property("JavascriptVersion")
+        self.string_property_at(156, "JavascriptVersion")
     }
 
     fn jpeg2000(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Jpeg2000")
+        self.bool_property_at(157, "Jpeg2000")
     }
 
     fn j_query_mobile_support(&self) -> AspectPropertyValue<String> {
-        self.string_property("jQueryMobileSupport")
+        self.string_property_at(158, "jQueryMobileSupport")
     }
 
     fn json(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Json")
+        self.bool_property_at(159, "Json")
     }
 
     fn layout_engine(&self) -> AspectPropertyValue<String> {
-        self.string_property("LayoutEngine")
+        self.string_property_at(160, "LayoutEngine")
     }
 
     fn masking(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Masking")
+        self.bool_property_at(161, "Masking")
     }
 
     fn matched_nodes(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("MatchedNodes")
+        self.integer_property_at(162, "MatchedNodes")
     }
 
     fn max_internal_storage(&self) -> AspectPropertyValue<f64> {
-        self.double_property("MaxInternalStorage")
+        self.double_property_at(163, "MaxInternalStorage")
     }
 
     fn max_number_of_sim_cards(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("MaxNumberOfSIMCards")
+        self.integer_property_at(164, "MaxNumberOfSIMCards")
     }
 
     fn max_standby_time(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("MaxStandbyTime")
+        self.integer_property_at(165, "MaxStandbyTime")
     }
 
     fn max_talk_time(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("MaxTalkTime")
+        self.integer_property_at(166, "MaxTalkTime")
     }
 
     fn max_usage_time(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("MaxUsageTime")
+        self.integer_property_at(167, "MaxUsageTime")
     }
 
     fn meter(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Meter")
+        self.bool_property_at(168, "Meter")
     }
 
     fn method(&self) -> AspectPropertyValue<String> {
-        self.string_property("Method")
+        self.string_property_at(169, "Method")
     }
 
     fn midp(&self) -> AspectPropertyValue<f64> {
-        self.double_property("MIDP")
+        self.double_property_at(170, "MIDP")
     }
 
     fn native_brand(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("NativeBrand")
+        self.string_list_property_at(171, "NativeBrand")
     }
 
     fn native_device(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("NativeDevice")
+        self.string_list_property_at(172, "NativeDevice")
     }
 
     fn native_model(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("NativeModel")
+        self.string_list_property_at(173, "NativeModel")
     }
 
     fn native_name(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("NativeName")
+        self.string_list_property_at(174, "NativeName")
     }
 
     fn native_platform(&self) -> AspectPropertyValue<String> {
-        self.string_property("NativePlatform")
+        self.string_property_at(175, "NativePlatform")
     }
 
     fn number_of_screens(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("NumberOfScreens")
+        self.integer_property_at(176, "NumberOfScreens")
     }
 
     fn oem(&self) -> AspectPropertyValue<String> {
-        self.string_property("OEM")
+        self.string_property_at(177, "OEM")
     }
 
     fn on_power_consumption(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("OnPowerConsumption")
+        self.integer_property_at(178, "OnPowerConsumption")
     }
 
     fn pixel_ratio(&self) -> AspectPropertyValue<f64> {
-        self.double_property("PixelRatio")
+        self.double_property_at(179, "PixelRatio")
     }
 
     fn pixel_ratio_javascript(&self) -> AspectPropertyValue<String> {
-        self.string_property("PixelRatioJavascript")
+        self.string_property_at(180, "PixelRatioJavascript")
     }
 
     fn platform_discontinued_age(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("PlatformDiscontinuedAge")
+        self.integer_property_at(181, "PlatformDiscontinuedAge")
     }
 
     fn platform_discontinued_month(&self) -> AspectPropertyValue<String> {
-        self.string_property("PlatformDiscontinuedMonth")
+        self.string_property_at(182, "PlatformDiscontinuedMonth")
     }
 
     fn platform_discontinued_year(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("PlatformDiscontinuedYear")
+        self.integer_property_at(183, "PlatformDiscontinuedYear")
     }
 
     fn platform_logos(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("PlatformLogos")
+        self.string_list_property_at(184, "PlatformLogos")
     }
 
     fn platform_name(&self) -> AspectPropertyValue<String> {
-        self.string_property("PlatformName")
+        self.string_property_at(185, "PlatformName")
     }
 
     fn platform_preview_age(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("PlatformPreviewAge")
+        self.integer_property_at(186, "PlatformPreviewAge")
     }
 
     fn platform_preview_month(&self) -> AspectPropertyValue<String> {
-        self.string_property("PlatformPreviewMonth")
+        self.string_property_at(187, "PlatformPreviewMonth")
     }
 
     fn platform_preview_year(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("PlatformPreviewYear")
+        self.integer_property_at(188, "PlatformPreviewYear")
     }
 
     fn platform_rank(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("PlatformRank")
+        self.integer_property_at(189, "PlatformRank")
     }
 
     fn platform_release_age(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("PlatformReleaseAge")
+        self.integer_property_at(190, "PlatformReleaseAge")
     }
 
     fn platform_release_month(&self) -> AspectPropertyValue<String> {
-        self.string_property("PlatformReleaseMonth")
+        self.string_property_at(191, "PlatformReleaseMonth")
     }
 
     fn platform_release_year(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("PlatformReleaseYear")
+        self.integer_property_at(192, "PlatformReleaseYear")
     }
 
     fn platform_vendor(&self) -> AspectPropertyValue<String> {
-        self.string_property("PlatformVendor")
+        self.string_property_at(193, "PlatformVendor")
     }
 
     fn platform_version(&self) -> AspectPropertyValue<String> {
-        self.string_property("PlatformVersion")
+        self.string_property_at(194, "PlatformVersion")
     }
 
     fn popularity(&self) -> AspectPropertyValue<String> {
-        self.string_property("Popularity")
+        self.string_property_at(195, "Popularity")
     }
 
     fn post_message(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("PostMessage")
+        self.bool_property_at(196, "PostMessage")
     }
 
     fn preload(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Preload")
+        self.bool_property_at(197, "Preload")
     }
 
     fn price_band(&self) -> AspectPropertyValue<String> {
-        self.string_property("PriceBand")
+        self.string_property_at(198, "PriceBand")
     }
 
     fn profiles(&self) -> AspectPropertyValue<String> {
-        self.string_property("Profiles")
+        self.string_property_at(199, "Profiles")
     }
 
     fn progress(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Progress")
+        self.bool_property_at(200, "Progress")
     }
 
     fn promise(&self) -> AspectPropertyValue<String> {
-        self.string_property("Promise")
+        self.string_property_at(201, "Promise")
     }
 
     fn prompts(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Prompts")
+        self.bool_property_at(202, "Prompts")
     }
 
     fn refresh_rate(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("RefreshRate")
+        self.integer_property_at(203, "RefreshRate")
     }
 
     fn release_age(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("ReleaseAge")
+        self.integer_property_at(204, "ReleaseAge")
     }
 
     fn release_month(&self) -> AspectPropertyValue<String> {
-        self.string_property("ReleaseMonth")
+        self.string_property_at(205, "ReleaseMonth")
     }
 
     fn release_year(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("ReleaseYear")
+        self.integer_property_at(206, "ReleaseYear")
     }
 
     fn satellite_navigation_types(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("SatelliteNavigationTypes")
+        self.string_list_property_at(207, "SatelliteNavigationTypes")
     }
 
     fn screen_inches_diagonal(&self) -> AspectPropertyValue<f64> {
-        self.double_property("ScreenInchesDiagonal")
+        self.double_property_at(208, "ScreenInchesDiagonal")
     }
 
     fn screen_inches_diagonal_rounded(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("ScreenInchesDiagonalRounded")
+        self.integer_property_at(209, "ScreenInchesDiagonalRounded")
     }
 
     fn screen_inches_height(&self) -> AspectPropertyValue<f64> {
-        self.double_property("ScreenInchesHeight")
+        self.double_property_at(210, "ScreenInchesHeight")
     }
 
     fn screen_inches_square(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("ScreenInchesSquare")
+        self.integer_property_at(211, "ScreenInchesSquare")
     }
 
     fn screen_inches_width(&self) -> AspectPropertyValue<f64> {
-        self.double_property("ScreenInchesWidth")
+        self.double_property_at(212, "ScreenInchesWidth")
     }
 
     fn screen_mm_diagonal(&self) -> AspectPropertyValue<f64> {
-        self.double_property("ScreenMMDiagonal")
+        self.double_property_at(213, "ScreenMMDiagonal")
     }
 
     fn screen_mm_diagonal_rounded(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("ScreenMMDiagonalRounded")
+        self.integer_property_at(214, "ScreenMMDiagonalRounded")
     }
 
     fn screen_mm_height(&self) -> AspectPropertyValue<f64> {
-        self.double_property("ScreenMMHeight")
+        self.double_property_at(215, "ScreenMMHeight")
     }
 
     fn screen_mm_square(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("ScreenMMSquare")
+        self.integer_property_at(216, "ScreenMMSquare")
     }
 
     fn screen_mm_width(&self) -> AspectPropertyValue<f64> {
-        self.double_property("ScreenMMWidth")
+        self.double_property_at(217, "ScreenMMWidth")
     }
 
     fn screen_pixels_height(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("ScreenPixelsHeight")
+        self.integer_property_at(218, "ScreenPixelsHeight")
     }
 
     fn screen_pixels_height_java_script(&self) -> AspectPropertyValue<String> {
-        self.string_property("ScreenPixelsHeightJavaScript")
+        self.string_property_at(219, "ScreenPixelsHeightJavaScript")
     }
 
     fn screen_pixels_physical_height(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("ScreenPixelsPhysicalHeight")
+        self.integer_property_at(220, "ScreenPixelsPhysicalHeight")
     }
 
     fn screen_pixels_physical_width(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("ScreenPixelsPhysicalWidth")
+        self.integer_property_at(221, "ScreenPixelsPhysicalWidth")
     }
 
     fn screen_pixels_width(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("ScreenPixelsWidth")
+        self.integer_property_at(222, "ScreenPixelsWidth")
     }
 
     fn screen_pixels_width_java_script(&self) -> AspectPropertyValue<String> {
-        self.string_property("ScreenPixelsWidthJavaScript")
+        self.string_property_at(223, "ScreenPixelsWidthJavaScript")
     }
 
     fn screen_type(&self) -> AspectPropertyValue<String> {
-        self.string_property("ScreenType")
+        self.string_property_at(224, "ScreenType")
     }
 
     fn second_back_camera_mega_pixels(&self) -> AspectPropertyValue<f64> {
-        self.double_property("SecondBackCameraMegaPixels")
+        self.double_property_at(225, "SecondBackCameraMegaPixels")
     }
 
     fn second_front_camera_mega_pixels(&self) -> AspectPropertyValue<f64> {
-        self.double_property("SecondFrontCameraMegaPixels")
+        self.double_property_at(226, "SecondFrontCameraMegaPixels")
     }
 
     fn second_screen_inches_diagonal(&self) -> AspectPropertyValue<f64> {
-        self.double_property("SecondScreenInchesDiagonal")
+        self.double_property_at(227, "SecondScreenInchesDiagonal")
     }
 
     fn second_screen_inches_diagonal_rounded(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("SecondScreenInchesDiagonalRounded")
+        self.integer_property_at(228, "SecondScreenInchesDiagonalRounded")
     }
 
     fn second_screen_inches_height(&self) -> AspectPropertyValue<f64> {
-        self.double_property("SecondScreenInchesHeight")
+        self.double_property_at(229, "SecondScreenInchesHeight")
     }
 
     fn second_screen_inches_square(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("SecondScreenInchesSquare")
+        self.integer_property_at(230, "SecondScreenInchesSquare")
     }
 
     fn second_screen_inches_width(&self) -> AspectPropertyValue<f64> {
-        self.double_property("SecondScreenInchesWidth")
+        self.double_property_at(231, "SecondScreenInchesWidth")
     }
 
     fn second_screen_mm_diagonal(&self) -> AspectPropertyValue<f64> {
-        self.double_property("SecondScreenMMDiagonal")
+        self.double_property_at(232, "SecondScreenMMDiagonal")
     }
 
     fn second_screen_mm_diagonal_rounded(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("SecondScreenMMDiagonalRounded")
+        self.integer_property_at(233, "SecondScreenMMDiagonalRounded")
     }
 
     fn second_screen_mm_height(&self) -> AspectPropertyValue<f64> {
-        self.double_property("SecondScreenMMHeight")
+        self.double_property_at(234, "SecondScreenMMHeight")
     }
 
     fn second_screen_mm_square(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("SecondScreenMMSquare")
+        self.integer_property_at(235, "SecondScreenMMSquare")
     }
 
     fn second_screen_mm_width(&self) -> AspectPropertyValue<f64> {
-        self.double_property("SecondScreenMMWidth")
+        self.double_property_at(236, "SecondScreenMMWidth")
     }
 
     fn second_screen_pixels_height(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("SecondScreenPixelsHeight")
+        self.integer_property_at(237, "SecondScreenPixelsHeight")
     }
 
     fn second_screen_pixels_width(&self) -> AspectPropertyValue<i64> {
-        self.integer_property("SecondScreenPixelsWidth")
+        self.integer_property_at(238, "SecondScreenPixelsWidth")
     }
 
     fn selector(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Selector")
+        self.bool_property_at(239, "Selector")
     }
 
     fn set_header_browser_accept_ch(&self) -> AspectPropertyValue<String> {
-        self.string_property("SetHeaderBrowserAccept-CH")
+        self.string_property_at(240, "SetHeaderBrowserAccept-CH")
     }
 
     fn set_header_hardware_accept_ch(&self) -> AspectPropertyValue<String> {
-        self.string_property("SetHeaderHardwareAccept-CH")
+        self.string_property_at(241, "SetHeaderHardwareAccept-CH")
     }
 
     fn set_header_platform_accept_ch(&self) -> AspectPropertyValue<String> {
-        self.string_property("SetHeaderPlatformAccept-CH")
+        self.string_property_at(242, "SetHeaderPlatformAccept-CH")
     }
 
     fn so_c(&self) -> AspectPropertyValue<String> {
-        self.string_property("SoC")
+        self.string_property_at(243, "SoC")
     }
 
     fn so_c_designer(&self) -> AspectPropertyValue<String> {
-        self.string_property("SoCDesigner")
+        self.string_property_at(244, "SoCDesigner")
     }
 
     fn so_c_model(&self) -> AspectPropertyValue<String> {
-        self.string_property("SoCModel")
+        self.string_property_at(245, "SoCModel")
     }
 
     fn software_audio_codecs_decode(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("SoftwareAudioCodecsDecode")
+        self.string_list_property_at(246, "SoftwareAudioCodecsDecode")
     }
 
     fn software_audio_codecs_encode(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("SoftwareAudioCodecsEncode")
+        self.string_list_property_at(247, "SoftwareAudioCodecsEncode")
     }
 
     fn software_video_codecs_decode(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("SoftwareVideoCodecsDecode")
+        self.string_list_property_at(248, "SoftwareVideoCodecsDecode")
     }
 
     fn software_video_codecs_encode(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("SoftwareVideoCodecsEncode")
+        self.string_list_property_at(249, "SoftwareVideoCodecsEncode")
     }
 
     fn specific_absorbtion_rate_eu(&self) -> AspectPropertyValue<f64> {
-        self.double_property("SpecificAbsorbtionRateEU")
+        self.double_property_at(250, "SpecificAbsorbtionRateEU")
     }
 
     fn specific_absorbtion_rate_us(&self) -> AspectPropertyValue<f64> {
-        self.double_property("SpecificAbsorbtionRateUS")
+        self.double_property_at(251, "SpecificAbsorbtionRateUS")
     }
 
     fn streaming_accept(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("StreamingAccept")
+        self.string_list_property_at(252, "StreamingAccept")
     }
 
     fn suggested_image_button_height_mms(&self) -> AspectPropertyValue<f64> {
-        self.double_property("SuggestedImageButtonHeightMms")
+        self.double_property_at(253, "SuggestedImageButtonHeightMms")
     }
 
     fn suggested_image_button_height_pixels(&self) -> AspectPropertyValue<f64> {
-        self.double_property("SuggestedImageButtonHeightPixels")
+        self.double_property_at(254, "SuggestedImageButtonHeightPixels")
     }
 
     fn suggested_link_size_pixels(&self) -> AspectPropertyValue<f64> {
-        self.double_property("SuggestedLinkSizePixels")
+        self.double_property_at(255, "SuggestedLinkSizePixels")
     }
 
     fn suggested_link_size_points(&self) -> AspectPropertyValue<f64> {
-        self.double_property("SuggestedLinkSizePoints")
+        self.double_property_at(256, "SuggestedLinkSizePoints")
     }
 
     fn supported_bearers(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("SupportedBearers")
+        self.string_list_property_at(257, "SupportedBearers")
     }
 
     fn supported_bluetooth(&self) -> AspectPropertyValue<f64> {
-        self.double_property("SupportedBluetooth")
+        self.double_property_at(258, "SupportedBluetooth")
     }
 
     fn supported_bluetooth_profiles(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("SupportedBluetoothProfiles")
+        self.string_list_property_at(259, "SupportedBluetoothProfiles")
     }
 
     fn supported_bluetooth_version(&self) -> AspectPropertyValue<String> {
-        self.string_property("SupportedBluetoothVersion")
+        self.string_property_at(260, "SupportedBluetoothVersion")
     }
 
     fn supported_camera_features(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("SupportedCameraFeatures")
+        self.string_list_property_at(261, "SupportedCameraFeatures")
     }
 
     fn supported_charger_types(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("SupportedChargerTypes")
+        self.string_list_property_at(262, "SupportedChargerTypes")
     }
 
     fn supported_io(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("SupportedI/O")
+        self.string_list_property_at(263, "SupportedI/O")
     }
 
     fn supported_sensor_types(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("SupportedSensorTypes")
+        self.string_list_property_at(264, "SupportedSensorTypes")
     }
 
     fn supported_sim_card_types(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("SupportedSIMCardTypes")
+        self.string_list_property_at(265, "SupportedSIMCardTypes")
     }
 
     fn supports24p(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Supports24p")
+        self.bool_property_at(266, "Supports24p")
     }
 
     fn supports_phone_calls(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("SupportsPhoneCalls")
+        self.bool_property_at(267, "SupportsPhoneCalls")
     }
 
     fn supports_tls_ssl(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("SupportsTls/Ssl")
+        self.bool_property_at(268, "SupportsTls/Ssl")
     }
 
     fn supports_web_gl(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("SupportsWebGL")
+        self.bool_property_at(269, "SupportsWebGL")
     }
 
     fn supports_wi_di(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("SupportsWiDi")
+        self.bool_property_at(270, "SupportsWiDi")
     }
 
     fn svg(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Svg")
+        self.bool_property_at(271, "Svg")
     }
 
     fn tac(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("TAC")
+        self.string_list_property_at(272, "TAC")
     }
 
     fn third_party_cookies_enabled(&self) -> AspectPropertyValue<String> {
-        self.string_property("ThirdPartyCookiesEnabled")
+        self.string_property_at(273, "ThirdPartyCookiesEnabled")
     }
 
     fn third_party_cookies_enabled_java_script(&self) -> AspectPropertyValue<String> {
-        self.string_property("ThirdPartyCookiesEnabledJavaScript")
+        self.string_property_at(274, "ThirdPartyCookiesEnabledJavaScript")
     }
 
     fn touch_events(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("TouchEvents")
+        self.bool_property_at(275, "TouchEvents")
     }
 
     fn track(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Track")
+        self.bool_property_at(276, "Track")
     }
 
     fn user_agents(&self) -> AspectPropertyValue<Vec<String>> {
-        self.string_list_property("UserAgents")
+        self.string_list_property_at(277, "UserAgents")
     }
 
     fn video(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Video")
+        self.bool_property_at(278, "Video")
     }
 
     fn viewport(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Viewport")
+        self.bool_property_at(279, "Viewport")
     }
 
     fn web_p(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("WebP")
+        self.bool_property_at(280, "WebP")
     }
 
     fn web_workers(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("WebWorkers")
+        self.bool_property_at(281, "WebWorkers")
     }
 
     fn weight_with_battery(&self) -> AspectPropertyValue<f64> {
-        self.double_property("WeightWithBattery")
+        self.double_property_at(282, "WeightWithBattery")
     }
 
     fn weight_without_battery(&self) -> AspectPropertyValue<f64> {
-        self.double_property("WeightWithoutBattery")
+        self.double_property_at(283, "WeightWithoutBattery")
     }
 
     fn xhr2(&self) -> AspectPropertyValue<bool> {
-        self.bool_property("Xhr2")
+        self.bool_property_at(284, "Xhr2")
     }
 }
 
@@ -2346,4 +2348,296 @@ pub const GENERATED_PROPERTY_TYPES: &[(&str, PropertyValueType)] = &[
     ("WeightWithBattery", PropertyValueType::Double),
     ("WeightWithoutBattery", PropertyValueType::Double),
     ("Xhr2", PropertyValueType::Bool),
+];
+
+/// The property each [`DeviceData`] accessor reads, at the slot the accessor
+/// passes to its getter, in the order the accessors are declared. A reader
+/// resolves the position of each once when its data set loads, so a typed
+/// read looks no name up.
+pub const TYPED_PROPERTY_NAMES: &[&str] = &[
+    "AjaxRequestType",
+    "AnimationTiming",
+    "BackCameraMegaPixels",
+    "BatteryCapacity",
+    "BitsPerPixel",
+    "BlobBuilder",
+    "BrowserAudioCodecsDecode",
+    "BrowserAudioCodecsEncode",
+    "BrowserDiscontinuedAge",
+    "BrowserDiscontinuedMonth",
+    "BrowserDiscontinuedYear",
+    "BrowserFamily",
+    "BrowserLogos",
+    "BrowserName",
+    "BrowserPreviewAge",
+    "BrowserPreviewMonth",
+    "BrowserPreviewYear",
+    "BrowserPropertySource",
+    "BrowserRank",
+    "BrowserReleaseAge",
+    "BrowserReleaseMonth",
+    "BrowserReleaseYear",
+    "BrowserSourceProject",
+    "BrowserSourceProjectVersion",
+    "BrowserVendor",
+    "BrowserVersion",
+    "BrowserVideoCodecsDecode",
+    "BrowserVideoCodecsEncode",
+    "CameraTypes",
+    "Canvas",
+    "CcppAccept",
+    "CLDC",
+    "ContrastRatio",
+    "CookiesCapable",
+    "CPU",
+    "CPUCores",
+    "CPUDesigner",
+    "CPUMaximumFrequency",
+    "CrawlerName",
+    "CrawlerProductTokens",
+    "CrawlerUrl",
+    "CrawlerUsage",
+    "CssBackground",
+    "CssBorderImage",
+    "CssCanvas",
+    "CssColor",
+    "CssColumn",
+    "CssFlexbox",
+    "CssFont",
+    "CssGrid",
+    "CssImages",
+    "CssMediaQueries",
+    "CssMinMax",
+    "CssOverflow",
+    "CssPosition",
+    "CssText",
+    "CssTransforms",
+    "CssTransitions",
+    "CssUI",
+    "DataSet",
+    "DataUrl",
+    "DefaultAppStores",
+    "DeviceCertifications",
+    "DeviceId",
+    "DeviceOrientation",
+    "DeviceRAM",
+    "DeviceRAMVariants",
+    "DeviceType",
+    "Difference",
+    "Drift",
+    "Durability",
+    "DynamicContrastRatio",
+    "EnergyConsumptionPerYear",
+    "ExpansionSlotMaxSize",
+    "ExpansionSlotType",
+    "Fetch",
+    "FileReader",
+    "FileSaver",
+    "FileWriter",
+    "FormData",
+    "FrequencyBands",
+    "FrontCameraMegaPixels",
+    "Fullscreen",
+    "GeoLocation",
+    "GPU",
+    "GPUDesigner",
+    "HardwareAudioCodecsDecode",
+    "HardwareAudioCodecsEncode",
+    "HardwareCarrier",
+    "HardwareFamily",
+    "HardwareImages",
+    "HardwareModel",
+    "HardwareModelVariants",
+    "HardwareName",
+    "HardwareNamePrefix",
+    "HardwareNameVersion",
+    "HardwareProfileSource",
+    "HardwareRank",
+    "HardwareVendor",
+    "HardwareVideoCodecsDecode",
+    "HardwareVideoCodecsEncode",
+    "Has3DCamera",
+    "Has3DScreen",
+    "HasCamera",
+    "HasClickWheel",
+    "HasKeypad",
+    "HasNFC",
+    "HasQwertyPad",
+    "HasRemovableBattery",
+    "HasTouchScreen",
+    "HasTrackPad",
+    "HasVirtualQwerty",
+    "History",
+    "Html-Media-Capture",
+    "Html5",
+    "Html5Audio",
+    "Html5Video",
+    "HtmlVersion",
+    "Http2",
+    "HttpLiveStreaming",
+    "Iframe",
+    "IndexedDB",
+    "InternalStorageVariants",
+    "InVRMode",
+    "IsArtificialIntelligence",
+    "IsConsole",
+    "IsCrawler",
+    "IsDataMinimising",
+    "IsEmailBrowser",
+    "IsEmulatingDesktop",
+    "IsEmulatingDevice",
+    "IsEReader",
+    "IsHardwareGroup",
+    "IsMediaHub",
+    "IsMobile",
+    "IsPlatformVersionFrozen",
+    "IsScreenFoldable",
+    "IsSmallScreen",
+    "IsSmartPhone",
+    "IsSmartWatch",
+    "IsTablet",
+    "IsTv",
+    "IsWebApp",
+    "Iterations",
+    "Javascript",
+    "JavaScriptBrowserOverride",
+    "JavascriptCanManipulateCSS",
+    "JavascriptCanManipulateDOM",
+    "JavascriptGetElementById",
+    "JavascriptGetHighEntropyValues",
+    "JavascriptHardwareProfile",
+    "JavascriptImageOptimiser",
+    "JavascriptPreferredGeoLocApi",
+    "JavascriptSupportsEventListener",
+    "JavascriptSupportsEvents",
+    "JavascriptSupportsInnerHtml",
+    "JavascriptVersion",
+    "Jpeg2000",
+    "jQueryMobileSupport",
+    "Json",
+    "LayoutEngine",
+    "Masking",
+    "MatchedNodes",
+    "MaxInternalStorage",
+    "MaxNumberOfSIMCards",
+    "MaxStandbyTime",
+    "MaxTalkTime",
+    "MaxUsageTime",
+    "Meter",
+    "Method",
+    "MIDP",
+    "NativeBrand",
+    "NativeDevice",
+    "NativeModel",
+    "NativeName",
+    "NativePlatform",
+    "NumberOfScreens",
+    "OEM",
+    "OnPowerConsumption",
+    "PixelRatio",
+    "PixelRatioJavascript",
+    "PlatformDiscontinuedAge",
+    "PlatformDiscontinuedMonth",
+    "PlatformDiscontinuedYear",
+    "PlatformLogos",
+    "PlatformName",
+    "PlatformPreviewAge",
+    "PlatformPreviewMonth",
+    "PlatformPreviewYear",
+    "PlatformRank",
+    "PlatformReleaseAge",
+    "PlatformReleaseMonth",
+    "PlatformReleaseYear",
+    "PlatformVendor",
+    "PlatformVersion",
+    "Popularity",
+    "PostMessage",
+    "Preload",
+    "PriceBand",
+    "Profiles",
+    "Progress",
+    "Promise",
+    "Prompts",
+    "RefreshRate",
+    "ReleaseAge",
+    "ReleaseMonth",
+    "ReleaseYear",
+    "SatelliteNavigationTypes",
+    "ScreenInchesDiagonal",
+    "ScreenInchesDiagonalRounded",
+    "ScreenInchesHeight",
+    "ScreenInchesSquare",
+    "ScreenInchesWidth",
+    "ScreenMMDiagonal",
+    "ScreenMMDiagonalRounded",
+    "ScreenMMHeight",
+    "ScreenMMSquare",
+    "ScreenMMWidth",
+    "ScreenPixelsHeight",
+    "ScreenPixelsHeightJavaScript",
+    "ScreenPixelsPhysicalHeight",
+    "ScreenPixelsPhysicalWidth",
+    "ScreenPixelsWidth",
+    "ScreenPixelsWidthJavaScript",
+    "ScreenType",
+    "SecondBackCameraMegaPixels",
+    "SecondFrontCameraMegaPixels",
+    "SecondScreenInchesDiagonal",
+    "SecondScreenInchesDiagonalRounded",
+    "SecondScreenInchesHeight",
+    "SecondScreenInchesSquare",
+    "SecondScreenInchesWidth",
+    "SecondScreenMMDiagonal",
+    "SecondScreenMMDiagonalRounded",
+    "SecondScreenMMHeight",
+    "SecondScreenMMSquare",
+    "SecondScreenMMWidth",
+    "SecondScreenPixelsHeight",
+    "SecondScreenPixelsWidth",
+    "Selector",
+    "SetHeaderBrowserAccept-CH",
+    "SetHeaderHardwareAccept-CH",
+    "SetHeaderPlatformAccept-CH",
+    "SoC",
+    "SoCDesigner",
+    "SoCModel",
+    "SoftwareAudioCodecsDecode",
+    "SoftwareAudioCodecsEncode",
+    "SoftwareVideoCodecsDecode",
+    "SoftwareVideoCodecsEncode",
+    "SpecificAbsorbtionRateEU",
+    "SpecificAbsorbtionRateUS",
+    "StreamingAccept",
+    "SuggestedImageButtonHeightMms",
+    "SuggestedImageButtonHeightPixels",
+    "SuggestedLinkSizePixels",
+    "SuggestedLinkSizePoints",
+    "SupportedBearers",
+    "SupportedBluetooth",
+    "SupportedBluetoothProfiles",
+    "SupportedBluetoothVersion",
+    "SupportedCameraFeatures",
+    "SupportedChargerTypes",
+    "SupportedI/O",
+    "SupportedSensorTypes",
+    "SupportedSIMCardTypes",
+    "Supports24p",
+    "SupportsPhoneCalls",
+    "SupportsTls/Ssl",
+    "SupportsWebGL",
+    "SupportsWiDi",
+    "Svg",
+    "TAC",
+    "ThirdPartyCookiesEnabled",
+    "ThirdPartyCookiesEnabledJavaScript",
+    "TouchEvents",
+    "Track",
+    "UserAgents",
+    "Video",
+    "Viewport",
+    "WebP",
+    "WebWorkers",
+    "WeightWithBattery",
+    "WeightWithoutBattery",
+    "Xhr2",
 ];

@@ -29,14 +29,50 @@
 //! element-data key the properties are attributed to. These helpers hold that one
 //! shared mapping so the two engines stay consistent.
 
+use std::sync::{Arc, OnceLock};
+
 use fiftyone_cloud_request_engine::CloudPropertyMetaData;
 use fiftyone_cloud_request_engine::CloudRequestEngine;
+use fiftyone_device_detection_shared::DeviceDataBase;
 use fiftyone_pipeline_core::{Error, FlowData, PropertyMetaData, PropertyValueType, Result};
-use fiftyone_pipeline_engines::AspectPropertyMetaData;
+use fiftyone_pipeline_engines::{AspectPropertyMetaData, EngineDeployment, MissingPropertySource};
+
+/// The property metadata a cloud engine derives from the request engine's
+/// accessible properties, kept for the life of the engine once derived.
+#[derive(Default)]
+pub(crate) struct DiscoveredMetadata {
+    /// The core property metadata for the product.
+    pub(crate) properties: Vec<PropertyMetaData>,
+    /// The aspect view of the same metadata.
+    pub(crate) aspect_properties: Vec<AspectPropertyMetaData>,
+    /// The data tier reported for the product.
+    pub(crate) data_source_tier: String,
+    /// Why a property is missing from data of a successful request, from
+    /// the metadata above. [`None`] when the request engine has no resource
+    /// key, because the properties a license key grants are not listed.
+    pub(crate) missing: Option<Arc<MissingPropertySource>>,
+}
+
+impl DiscoveredMetadata {
+    /// Give `device`, mapped from a successful response, the reason for each
+    /// property the response did not return, so reading one gives that
+    /// reason. The read also logs a warning, as .NET's cloud data does,
+    /// unless logging is stopped, as it is for a hardware profile, or the
+    /// resource key lacks the product, which the engine has logged once.
+    pub(crate) fn add_missing_property_source(&self, device: &mut DeviceDataBase) {
+        if let Some(missing) = &self.missing {
+            device
+                .base_mut()
+                .add_missing_property_source(Arc::clone(missing));
+        }
+    }
+}
 
 /// Build the core and aspect property metadata for a set of cloud properties,
 /// attributing every property to `element_data_key` and typing it from the
-/// cloud's reported value-type name.
+/// cloud's reported value-type name. A property with item properties, such
+/// as the hardware lookup's `Profiles`, is a list of element data and keeps
+/// its item properties.
 pub(crate) fn build_metadata(
     cloud_properties: &[CloudPropertyMetaData],
     element_data_key: &str,
@@ -45,11 +81,7 @@ pub(crate) fn build_metadata(
     let mut aspect = Vec::with_capacity(cloud_properties.len());
 
     for property in cloud_properties {
-        let value_type = map_value_type(&property.value_type);
-        let mut meta = PropertyMetaData::new(&property.name, element_data_key, value_type);
-        if let Some(category) = &property.category {
-            meta = meta.with_category(category.clone());
-        }
+        let meta = core_metadata(property, element_data_key);
         core.push(meta.clone());
         aspect.push(AspectPropertyMetaData::from_core(meta));
     }
@@ -57,30 +89,89 @@ pub(crate) fn build_metadata(
     (core, aspect)
 }
 
-/// Pull a product's accessible properties from the request engine and build the
-/// core and aspect metadata, plus its data tier, for that product.
+/// The core metadata of one cloud property and its item properties.
+fn core_metadata(property: &CloudPropertyMetaData, element_data_key: &str) -> PropertyMetaData {
+    let value_type = if property.item_properties.is_empty() {
+        map_value_type(&property.value_type)
+    } else {
+        PropertyValueType::ElementDataList
+    };
+    let mut meta = PropertyMetaData::new(&property.name, element_data_key, value_type);
+    if let Some(category) = &property.category {
+        meta = meta.with_category(category.clone());
+    }
+    meta.with_item_properties(
+        property
+            .item_properties
+            .iter()
+            .map(|item| core_metadata(item, element_data_key)),
+    )
+}
+
+/// Whether an engine has no metadata because the request engine's property
+/// list request failed. The request engine asks for the list when it is built,
+/// or is given it, so a list it still lacks is one whose request failed.
+pub(crate) fn property_list_request_failed(
+    loaded: bool,
+    request_engine: &CloudRequestEngine,
+) -> bool {
+    !loaded && request_engine.public_properties().is_err()
+}
+
+/// Fill `slot` with the metadata of the product under `element_data_key`,
+/// read from the request engine's accessible properties, unless it is
+/// already filled.
 ///
-/// Both cloud engines derive their metadata identically, differing only in the
-/// `element_data_key` the product is found and attributed under. A resource key
-/// that grants no such product yields empty metadata and no tier rather than an
-/// error, matching how each engine handles an absent product. Triggers the
-/// request engine's lazy accessible-properties fetch, returning an
-/// [`Error::CloudRequest`] if it could not fetch them.
-pub(crate) fn refresh_product_metadata(
+/// Returns the request engine's [`Error::CloudRequest`] while its discovery
+/// has not completed, leaving the slot empty so a later call can fill it. A
+/// resource key that grants no such product, or lists it with no properties,
+/// fills the slot with empty metadata rather than failing, and the call that
+/// fills it logs a warning naming `engine_name` and `element_data_key`, so
+/// the missing product is logged once for the life of the engine, as the
+/// cloud aspect engine specification says. A read of one of the product's
+/// properties then logs nothing. With only a license key there are no
+/// accessible properties to read, so nothing is logged and the metadata
+/// holds no missing property source.
+pub(crate) fn fill_metadata(
+    slot: &OnceLock<DiscoveredMetadata>,
     request_engine: &CloudRequestEngine,
     element_data_key: &str,
-) -> Result<(Vec<PropertyMetaData>, Vec<AspectPropertyMetaData>, String)> {
+    engine_name: &str,
+) -> Result<()> {
+    if slot.get().is_some() {
+        return Ok(());
+    }
     let products = request_engine.public_properties()?;
-
-    Ok(match products.products.get(element_data_key) {
-        Some(product) => {
-            let (core, aspect) = build_metadata(&product.properties, element_data_key);
-            (core, aspect, product.data_tier.clone().unwrap_or_default())
+    let product = products
+        .products
+        .get(element_data_key)
+        .filter(|product| !product.properties.is_empty());
+    let mut metadata = product.map_or_else(DiscoveredMetadata::default, |product| {
+        let (properties, aspect_properties) = build_metadata(&product.properties, element_data_key);
+        DiscoveredMetadata {
+            properties,
+            aspect_properties,
+            data_source_tier: product.data_tier.clone().unwrap_or_default(),
+            missing: None,
         }
-        // The resource key grants no such product. Leave the metadata empty
-        // rather than failing.
-        None => (Vec::new(), Vec::new(), String::new()),
-    })
+    });
+    if request_engine.resource_key().is_some() {
+        metadata.missing = Some(Arc::new(MissingPropertySource::new(
+            element_data_key,
+            engine_name,
+            EngineDeployment::Cloud,
+            metadata.data_source_tier.clone(),
+            metadata.aspect_properties.clone(),
+        )));
+    }
+    if slot.set(metadata).is_ok() && product.is_none() && request_engine.resource_key().is_some() {
+        log::warn!(
+            "Aspect properties could not be loaded for {engine_name} - \
+             '{element_data_key}'. The resource key does not include access to any \
+             properties under '{element_data_key}'."
+        );
+    }
+    Ok(())
 }
 
 /// Read the cloud request engine's stored JSON for an engine to map, returning
@@ -89,8 +180,8 @@ pub(crate) fn refresh_product_metadata(
 /// Returns an [`Error::PipelineConfiguration`], naming `engine_name`, when no
 /// cloud request engine ran before the calling engine. An empty or absent JSON
 /// response means the request engine failed and already recorded its own error,
-/// which yields `Ok(None)` so the caller produces no result and raises no second
-/// error.
+/// which yields `Ok(None)`, so the caller stores empty data and records that
+/// it did not process, rather than returning a second error.
 pub(crate) fn cloud_json(data: &FlowData, engine_name: &str) -> Result<Option<String>> {
     // The request engine writes its data under the `cloud` key. If it is absent
     // or never started processing, the calling engine has been placed without a
@@ -169,5 +260,35 @@ mod tests {
         assert_eq!(core[0].value_type, PropertyValueType::Bool);
         assert_eq!(core[0].category, "Device");
         assert_eq!(aspect[1].name(), "HardwareName");
+    }
+
+    #[test]
+    fn a_property_with_item_properties_is_a_list_of_element_data() {
+        let item = |name: &str, value_type: &str| CloudPropertyMetaData {
+            name: name.to_owned(),
+            value_type: value_type.to_owned(),
+            category: Some("Hardware".to_owned()),
+            ..Default::default()
+        };
+        let cloud = vec![CloudPropertyMetaData {
+            name: "Profiles".to_owned(),
+            value_type: "Array".to_owned(),
+            item_properties: vec![
+                item("HardwareVendor", "String"),
+                item("HardwareName", "Array"),
+            ],
+            ..Default::default()
+        }];
+        let (core, aspect) = build_metadata(&cloud, "hardware");
+        assert_eq!(core.len(), 1);
+        assert_eq!(aspect[0].name(), "Profiles");
+        assert_eq!(core[0].value_type, PropertyValueType::ElementDataList);
+        let items = &core[0].item_properties;
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].name, "HardwareVendor");
+        assert_eq!(items[0].element_data_key, "hardware");
+        assert_eq!(items[0].value_type, PropertyValueType::String);
+        assert_eq!(items[0].category, "Hardware");
+        assert_eq!(items[1].value_type, PropertyValueType::StringList);
     }
 }

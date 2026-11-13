@@ -1,32 +1,37 @@
 [package]
 name = "fiftyone-ip-intelligence-onpremise"
 version = "4.5.2"
-description = "IP Intelligence and IP geolocation for Rust. Finds an IP address's likely location (country, region, town, and coordinates), connection type, and network, reading a data file on your server. This on-premise engine is built over the safe fiftyone-native wrapper. An alternative to MaxMind and IPinfo."
-keywords = ["ip-geolocation", "geoip", "ip-intelligence", "ip-lookup", "asn"]
+description = "On-premise IP Intelligence and IP geolocation engine for Rust. Reads a 51Degrees IP Intelligence data file on your server to find an IP address's likely location (country, region, town, and coordinates), connection type, and network. Built on the 51Degrees Pipeline API, over the safe fiftyone-native wrapper. An alternative to MaxMind and IPinfo."
+keywords = ["ip-geolocation", "geoip", "asn", "maxmind", "ipinfo"]
 categories = ["network-programming", "web-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage.workspace = true
+homepage = "https://51degrees.com/ip-intelligence?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-ip-intelligence-onpremise-cargo.toml&utm_term=homepage"
 
 [dependencies]
-fiftyone-pipeline-core = { version = "4.5.2", path = "../pipeline-core" }
-fiftyone-pipeline-engines = { version = "4.5.2", path = "../pipeline-engines" }
-fiftyone-ip-intelligence-shared = { version = "4.5.2", path = "../ip-intelligence-shared" }
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
+fiftyone-pipeline-engines = { version = "=4.5.2", path = "../pipeline-engines" }
+fiftyone-pipeline-engines-fiftyone = { version = "=4.5.2", path = "../pipeline-engines-fiftyone" }
+fiftyone-ip-intelligence-shared = { version = "=4.5.2", path = "../ip-intelligence-shared" }
 # Enable only the IP Intelligence product of the native wrapper. This links IP
 # Intelligence's copy of the common C library alone and never pulls in the
 # Device Detection copy, so the two ABI incompatible common C library builds
 # never collide in an IP Intelligence binary.
-fiftyone-native = { version = "4.5.2", path = "../native", default-features = false, features = ["ipi"] }
+fiftyone-native = { version = "=4.5.2", path = "../native", default-features = false, features = ["ipi"] }
 arc-swap.workspace = true
-chrono.workspace = true
+# Logs a configuration setting that has no effect through the log facade,
+# which does nothing until the application installs a logger.
+log = "0.4"
 
 [dev-dependencies]
 # Compresses a data file the way the Distributor serves it, for the update
 # tests.
 flate2.workspace = true
+# The data file date tests build and compare header dates.
+chrono.workspace = true
 
 [package.metadata.docs.rs]
 # Build the documentation on docs.rs with every feature enabled, so the

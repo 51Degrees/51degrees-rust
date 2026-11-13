@@ -14,10 +14,11 @@ name: Nightly Pipeline
 #
 # pull-request.yml still runs on every push and pull request and remains the
 # primary gate, carrying the native build on all four platforms and the wasm
-# target. The examples check is examples.yml and the template drift check is
-# mustache-drift.yml, each its own workflow and each running on every pull
-# request as well. This runs the core gate again, being format, build, test,
-# lint and documentation on all four platforms, against what main will
+# target. The examples check is examples.yml and the check that the committed
+# JavaScript template is the javascript-templates submodule is
+# javascript-templates-check.yml, each its own workflow and each running on
+# pull requests as well. This runs the core gate again, being format, build,
+# test, lint and documentation on all four platforms, against what main will
 # actually contain once the pull request is merged.
 #
 # Before that, the shared submodule update moves each submodule to the latest
@@ -61,6 +62,10 @@ jobs:
       repo-name: ${{ github.event.repository.name }}
       org-name: ${{ github.event.repository.owner.login }}
       dryrun: ${{ inputs.dryrun || false }}
+      # The data files the tests read are fetched once, through
+      # ci/fetch-assets.ps1, and kept in the Actions cache for every
+      # platform's build, rather than downloaded by each one.
+      cache-assets: true
       skip-compare-performance: true
       # The native sources are compiled from scratch on every platform,
       # because there is no cargo cache here, so allow longer than the
