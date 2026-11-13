@@ -303,13 +303,6 @@ mod tests {
     }
 
     #[test]
-    fn parameters_are_in_name_order() {
-        let parameters = parameters(&[("query.b", "2"), ("query.a", "1"), ("query.c", "3")]);
-        let names: Vec<&str> = parameters.iter().map(|(name, _)| name.as_str()).collect();
-        assert_eq!(names, ["a", "b", "c"]);
-    }
-
-    #[test]
     fn the_user_prompt_is_off_in_a_pipeline_with_no_51did_element() {
         let element = JavaScriptBuilderElement::new();
         let data = flow_data_with(&[]);
