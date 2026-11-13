@@ -167,8 +167,12 @@ key order, then as text, so a path such as `json.device.ismobile` names the
 key that differs. The JavaScript is compared as text, and the report shows
 the first line that differs. When the two scripts are the
 same once each CRLF is read as LF, the difference is of kind `lineEndings`
-instead, and each side is the number of lines it ends with CRLF. No entry
-in `allowed-differences.json` allows a `lineEndings` difference.
+instead, and each side is the number of lines it ends with CRLF. The .NET
+4.5.130 package embeds its JavaScript template with CRLF line endings, where
+the template the specification names and the crates' copy have LF, so each
+line of .NET's script that comes from the template ends with CRLF. The
+`lineEndings` entry in `allowed-differences.json` allows that and nothing
+else, because the crates' side must have no CRLF.
 
 The usage records are compared as text once the text of `DateSent`,
 `Version`, `Language`, `LanguageVersion`, `Platform` and each `FlowElement`

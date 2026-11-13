@@ -85,6 +85,12 @@
     "issue": 230
   },
   {
+    "path": "javascript",
+    "kind": "lineEndings",
+    "rust": {"value": [0]},
+    "reason": "The .NET 4.5.130 package embeds its template with CRLF line endings, so each line of its script that comes from the template ends with CRLF. The Process section of javascript-builder.md (https://github.com/51Degrees/specifications/blob/77dc1f62ac11fac1f3358f38eb67cc7ef0e5b00e/pipeline-specification/pipeline-elements/javascript-builder.md#process) names the template in javascript-templates, \"The Mustache template used by all implementations\", which ends each line with LF at 41e7561f, the commit the crates bundle, and the crates write no CRLF."
+  },
+  {
     "path": "usage*",
     "kind": "text",
     "cases": ["usage-value-replaced-and-cut"],
