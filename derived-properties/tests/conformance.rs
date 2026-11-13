@@ -8,16 +8,25 @@
  *
  * If a copy of the EUPL was not distributed with this file, You can obtain
  * one at https://opensource.org/licenses/EUPL-1.2.
+ *
+ * The 'Compatible Licences' set out in the Appendix to the EUPL (as may be
+ * amended by the European Commission) shall be deemed incompatible for
+ * the purposes of the Work and the provisions of the compatibility
+ * clause in Article 5 of the EUPL shall not apply.
+ *
+ * If using the Work as, or as part of, a network application, by
+ * including the attribution notice(s) required under Article 5 of the EUPL
+ * in the end user terms of the application under an appropriate heading,
+ * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
 //! The shared conformance cases.
 //!
-//! Every language implementation of the element runs the case files in
-//! `vendor/tests`, which are a copy of the ones every other language runs, and
-//! must give the same answer for every one. If the Rust answer differs from the
-//! answer in .NET, Node, Java, Python or PHP then this crate has failed at its
-//! only job, so these tests are the point of the crate rather than a check on
-//! it.
+//! The .NET element and this crate both run the case files in `vendor/tests`,
+//! the derived-properties submodule, and must give the same answer for every
+//! one. If the Rust answer differs from the .NET answer then this crate has
+//! failed at its only job, so these tests are the point of the crate rather
+//! than a check on it.
 //!
 //! The cases are read from disk, so they are compiled only off WebAssembly,
 //! where a test has no file system.
@@ -25,7 +34,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use fiftyone_derived_properties::{
     BuiltInScript, Lookup, MapSource, Outcome, Script, SourceValue, WeightedSourceValue,
@@ -173,31 +182,84 @@ fn the_shipped_script_is_sound() {
     assert_eq!(script.output().dependencies.len(), 10);
 }
 
-#[test]
-fn the_shared_cases_pass() {
-    let script = BuiltInScript::HumanConfidence
-        .compile()
-        .expect("the script");
-    let path = vendor().join("tests").join("HumanConfidence.cases.yaml");
-    let reached = run_cases(&script, &path);
-    // Every rule must be reached by at least one case, because nothing proves
-    // what an unreached rule does.
-    let uncovered: Vec<usize> = (0..script.rules().len())
-        .filter(|index| !reached.contains(index))
+/// The files in the folder `folder` of `vendor` whose names end with one of
+/// `endings`, in order of name.
+fn files_in(folder: &str, endings: &[&str]) -> Vec<PathBuf> {
+    let folder = vendor().join(folder);
+    let mut files: Vec<PathBuf> = fs::read_dir(&folder)
+        .unwrap_or_else(|error| panic!("{}: {error}", folder.display()))
+        .map(|entry| entry.expect("an entry").path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| endings.iter().any(|ending| name.ends_with(ending)))
+        })
         .collect();
-    assert!(
-        uncovered.is_empty(),
-        "no case reaches the rules {uncovered:?}"
-    );
+    files.sort();
+    files
+}
+
+/// The shipped script called `name`, which a file in `vendor` is for. The
+/// test fails where the crate does not ship it, because .NET ships every
+/// script in the shared repository.
+fn shipped(name: &str, file: &Path) -> BuiltInScript {
+    BuiltInScript::named(name).unwrap_or_else(|| {
+        panic!(
+            "{} is for the script {name}, which this crate does not ship",
+            file.display()
+        )
+    })
 }
 
 #[test]
-fn a_script_read_from_a_file_is_the_same_script() {
-    // The shipped script is compiled in, and this proves the embedded copy is
-    // the file it was taken from rather than something that has drifted.
-    let path = vendor().join("scripts").join("HumanConfidence.yaml");
-    let text = fs::read_to_string(&path).expect("the script file");
-    assert_eq!(text, BuiltInScript::HumanConfidence.text());
+fn every_shared_case_file_passes() {
+    let files = files_in("tests", &[".cases.yaml"]);
+    assert!(!files.is_empty(), "there are no case files to run");
+    for path in files {
+        let text = fs::read_to_string(&path).expect("the cases file");
+        let document: Value = serde_norway::from_str(&text).expect("the cases file is YAML");
+        let name = get(&document, "Script")
+            .map(text_of)
+            .expect("the cases file names its script");
+        let script = shipped(&name, &path).compile().expect("the script");
+        let reached = run_cases(&script, &path);
+        // Every rule must be reached by at least one case, because nothing
+        // proves what an unreached rule does.
+        let uncovered: Vec<usize> = (0..script.rules().len())
+            .filter(|index| !reached.contains(index))
+            .collect();
+        assert!(
+            uncovered.is_empty(),
+            "{}: no case reaches the rules {uncovered:?}",
+            path.display()
+        );
+    }
+}
+
+/// The shipped scripts are compiled in, and this proves the crate ships every
+/// script in the shared repository, as .NET does, and that each is the file it
+/// was taken from rather than something that has drifted.
+#[test]
+fn every_shared_script_is_shipped_unaltered() {
+    let files = files_in("scripts", &[".yaml", ".yml", ".json"]);
+    assert!(!files.is_empty(), "there are no scripts");
+    for path in &files {
+        let name = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .expect("a file name");
+        let text = fs::read_to_string(path).expect("the script file");
+        assert!(
+            text == shipped(name, path).text(),
+            "{} differs from the shipped script",
+            path.display()
+        );
+    }
+    assert_eq!(
+        files.len(),
+        BuiltInScript::ALL.len(),
+        "the crate ships a script the shared repository does not hold"
+    );
 }
 
 #[test]

@@ -55,15 +55,16 @@
 //! reads the result, the contract the
 //! [`fiftyone_device_detection_shared`] crate exists to keep.
 //!
-//! ## Hot-swappable data file, no results cache
+//! ## Data file reloaded in place, no results cache
 //!
-//! The loaded data set lives behind an
-//! [`ArcSwap`](arc_swap::ArcSwap), so
-//! [`refresh`](fiftyone_pipeline_engines::OnPremiseAspectEngine::refresh) can
-//! atomically replace it with a reloaded data file, and
+//! [`refresh`](fiftyone_pipeline_engines::OnPremiseAspectEngine::refresh)
+//! reloads the data set in the engine's native manager in place, through the
+//! C library's reload, from the data file, and
 //! [`refresh_from_memory`](fiftyone_pipeline_engines::OnPremiseAspectEngine::refresh_from_memory)
-//! with the whole of a data file given in memory, while in-flight detections
-//! keep using the data set they snapshotted. Each load records the dates in the
+//! from the whole of a data file given in memory, while in-flight detections
+//! keep reading the data set their results came from. What a detection reads
+//! from the data set lives behind an [`ArcSwap`](arc_swap::ArcSwap), replaced
+//! after each reload. Each load records the dates in the
 //! data file header, when the file was published and when the next is
 //! expected, for the data update service. Each result keeps its detection's
 //! native results and reads a property from them the first time it is
@@ -109,6 +110,11 @@
 
 #![warn(missing_docs)]
 
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 mod builder;
 pub mod configuration;
 mod engine;
@@ -116,4 +122,4 @@ mod operational_copy;
 mod retained;
 
 pub use builder::{DeviceDetectionOnPremiseEngineBuilder, DATA_DOWNLOAD_TYPE};
-pub use engine::DeviceDetectionOnPremiseEngine;
+pub use engine::{DeviceDetectionOnPremiseEngine, PROFILE_ID_PROPERTY_NAME};

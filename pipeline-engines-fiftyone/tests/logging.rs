@@ -97,29 +97,12 @@ fn process_sequence(raw: &str, suppress: bool) -> Result<()> {
 }
 
 #[test]
-fn a_sequence_that_does_not_parse_logs_two_errors() {
-    // The error recorded on the flow data, then the element's own record,
-    // whether or not errors are suppressed, as .NET's FlowData.AddError and
-    // Sequence element log them.
+fn a_sequence_that_cannot_be_used_logs_nothing() {
+    // It counts as absent and gives 1, with no error to record or log.
     for suppress in [false, true] {
         let _serial = start();
-        let result = process_sequence("abc", suppress);
-        assert_eq!(result.is_err(), !suppress, "suppress {suppress}");
-        let records = logged();
-        assert_eq!(records.len(), 2, "suppress {suppress}: {records:?}");
-        assert!(
-            records[0].starts_with(
-                "ERROR An error occurred in element 'sequence': pipeline error: The \
-                 value for the 'sequence' parameter is not valid."
-            ),
-            "suppress {suppress}: {records:?}"
-        );
-        assert_eq!(
-            records[1],
-            "ERROR Failed to increment the usage sequence number, because the \
-             sequence is not a 32-bit integer.",
-            "suppress {suppress}"
-        );
+        process_sequence("abc", suppress).unwrap();
+        assert_eq!(logged(), Vec::<String>::new(), "suppress {suppress}");
     }
 }
 

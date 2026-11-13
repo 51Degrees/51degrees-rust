@@ -44,8 +44,7 @@ use axum::response::Html;
 use axum::routing::get;
 use axum::Router;
 use fiftyone_device_detection::{
-    DeviceDetectionOnPremiseEngineBuilder, PerformanceProfile, UachJsConversionElement,
-    DEVICE_DATA_KEY,
+    DeviceDetectionOnPremiseEngineBuilder, PerformanceProfile, DEVICE_DATA_KEY,
 };
 use fiftyone_pipeline_core::FlowElement;
 use fiftyone_pipeline_engines_fiftyone::ShareUsageElement;
@@ -97,11 +96,10 @@ pub fn build_app(
     let available = Arc::new(engine.available_properties());
 
     // Assemble the application's own elements: usage sharing first (REQUIRED for
-    // a web example), then the UA-CH high-entropy decoder, then the Hash engine.
-    // WebPipeline wraps these with the sequence, set-headers, JSON and
-    // JavaScript elements.
-    let mut elements: Vec<Arc<dyn FlowElement>> =
-        vec![Arc::new(UachJsConversionElement::new()), engine];
+    // a web example), then the Hash engine, which reads the high-entropy client
+    // hints itself. WebPipeline wraps these with the sequence, set-headers, JSON
+    // and JavaScript elements.
+    let mut elements: Vec<Arc<dyn FlowElement>> = vec![engine];
     if share_usage {
         elements.insert(0, Arc::new(ShareUsageElement::with_defaults()));
     }
@@ -247,11 +245,11 @@ async fn home(result: FiftyOneResult, available: Arc<Vec<String>>) -> Html<Strin
 }
 
 fn main() -> anyhow::Result<()> {
-    // Resolve the on-premise data file: an explicit 51DEGREES_DD_PATH first, then
+    // Resolve the on-premise data file: an explicit _51DEGREES_DD_PATH first, then
     // the Lite Hash file in the data repository inside the cxx submodule, which
     // is downloaded when it is missing.
     let data_file = examples_shared::dd_data_path().context(
-        "no on-premise Hash data file found. Set 51DEGREES_DD_PATH to a .hash data file.",
+        "no on-premise Hash data file found. Set _51DEGREES_DD_PATH to a .hash data file.",
     )?;
 
     let port: u16 = std::env::var("PORT")
@@ -329,7 +327,7 @@ mod tests {
         let Some(app) = test_app() else {
             eprintln!(
                 "skipping server_starts_and_serves_page_and_client_script: no Hash data file \
-                 (set 51DEGREES_DD_PATH to enable this test)"
+                 (set _51DEGREES_DD_PATH to enable this test)"
             );
             return;
         };
@@ -358,7 +356,7 @@ mod tests {
             "the page ends with the Find out more section"
         );
         // The Lite file carries none of the Enterprise properties, so each says
-        // so with the contact link. 51DEGREES_DD_PATH can name another file.
+        // so with the contact link. _51DEGREES_DD_PATH can name another file.
         if lite {
             assert!(
                 page.body
@@ -413,7 +411,7 @@ mod tests {
  * once: its data-file warnings are read before it is handed to the web pipeline
  * as the application element, so no data file is opened twice.
  *
- * Resolve the data file with `51DEGREES_DD_PATH` (or rely on the Lite file in
+ * Resolve the data file with `_51DEGREES_DD_PATH` (or rely on the Lite file in
  * the data repository inside the `cxx` submodule, which is downloaded when it
  * is missing), then run the binary and open http://127.0.0.1:8081.
  */

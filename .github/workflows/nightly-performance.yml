@@ -115,8 +115,8 @@ jobs:
       - name: Configure data files
         shell: bash
         run: |
-          echo "51DEGREES_DD_PATH=${GITHUB_WORKSPACE}/51degrees-rust/cxx/data/device-detection/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
-          echo "51DEGREES_IPI_PATH=${GITHUB_WORKSPACE}/51degrees-rust/cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
+          echo "_51DEGREES_DD_PATH=${GITHUB_WORKSPACE}/51degrees-rust/cxx/data/device-detection/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
+          echo "_51DEGREES_IPI_PATH=${GITHUB_WORKSPACE}/51degrees-rust/cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
           while IFS= read -r file; do
             if [ -n "$file" ] && [ ! -f "$file" ]; then
               echo "::error::$file is missing, so the performance examples cannot run"

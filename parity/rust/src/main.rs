@@ -31,6 +31,9 @@
 //! parity-rust derived --cases <folder> --out <jsonl>
 //! parity-rust robots-txt-cases --corpus <json> --dd <hash file> --out <json>
 //! parity-rust robots-txt --corpus <json> --dd <hash file> --out <jsonl>
+//! parity-rust property-keyed-cases --corpus <json> --dd <hash file> --out <json>
+//! parity-rust property-keyed --corpus <json> --dd <hash file> --out <jsonl>
+//! parity-rust metadata --cases <json> --dd <hash file> --ipi <ipi file> --out <jsonl>
 //! ```
 //!
 //! The first form runs the evidence cases through the pipelines. The
@@ -39,14 +42,18 @@
 //! program, so nothing is sent anywhere. The next two forms are the 51Did
 //! cases, described in `fodid_cases`, the fourth builds pipelines from
 //! configuration files, described in `configuration`, the next two are the
-//! derived property cases, described in `derived`, and the last two are the
-//! robots.txt cases, described in `robots_txt`.
+//! derived property cases, described in `derived`, the next two are the
+//! robots.txt cases, described in `robots_txt`, the next two are the TAC
+//! and Native cases, described in `property_keyed`, and the last is the
+//! engines' metadata, described in `metadata`.
 
 mod agent_signature;
 mod cloud_translation;
 mod configuration;
 mod derived;
 mod fodid_cases;
+mod metadata;
+mod property_keyed;
 mod robots_txt;
 mod translation;
 mod usage;
@@ -74,9 +81,7 @@ use fiftyone_json_builder::{
     JsonBuilderElementBuilder, JSON_BUILDER_DATA_KEY, JSON_BUILDER_ELEMENT_DATA_KEY,
 };
 use fiftyone_native::PerformanceProfile;
-use fiftyone_pipeline_core::{
-    ElementData, Evidence, FlowData, FlowElement, Pipeline, PropertyValue,
-};
+use fiftyone_pipeline_core::{ElementData, Evidence, FlowData, Pipeline, PropertyValue};
 use fiftyone_pipeline_engines_fiftyone::{SequenceElement, ShareUsageElement};
 use fiftyone_pipeline_translation::{TranslationData, TranslationValue};
 
@@ -147,6 +152,9 @@ fn main() -> Result<()> {
         Some(derived::RUN) => return derived::run(&args[1..]),
         Some(robots_txt::CASES) => return robots_txt::cases(&args[1..]),
         Some(robots_txt::RUN) => return robots_txt::run(&args[1..]),
+        Some(property_keyed::CASES) => return property_keyed::cases(&args[1..]),
+        Some(property_keyed::RUN) => return property_keyed::run(&args[1..]),
+        Some(metadata::RUN) => return metadata::run(&args[1..]),
         _ => {}
     }
     let args = parse_args(&args)?;
@@ -287,14 +295,9 @@ fn build_pipeline(
 }
 
 /// Sequence, the values element and the two builders, for the cases that
-/// compare the JSON and the JavaScript byte for byte. The crates' Sequence
-/// element has data of its own, which .NET's does not, so the JSON builder
-/// here leaves that data out.
+/// compare the JSON and the JavaScript byte for byte.
 fn build_values_pipeline() -> Result<Arc<Pipeline>> {
-    let sequence = Arc::new(SequenceElement::new());
-    let json = JsonBuilderElementBuilder::new()
-        .exclude_element(sequence.data_key())
-        .build();
+    let json = JsonBuilderElementBuilder::new().build();
     let javascript = JavaScriptBuilderElementBuilder::new()
         .set_endpoint(VALUES_ENDPOINT)
         .set_object_name(VALUES_OBJECT_NAME)?
@@ -302,7 +305,7 @@ fn build_values_pipeline() -> Result<Arc<Pipeline>> {
         .set_minify(false)
         .build();
     Ok(Pipeline::builder()
-        .add_element(sequence)
+        .add_element(Arc::new(SequenceElement::new()))
         .add_element(Arc::new(ValuesElement::new()))
         .add_element(Arc::new(json))
         .add_element(Arc::new(javascript))
@@ -460,6 +463,7 @@ fn typed(value: PropertyValue) -> (&'static str, Value) {
         PropertyValue::Float(f) => ("double", json!(f64::from(f))),
         PropertyValue::StringList(list) => ("stringList", json!(list)),
         PropertyValue::JavaScript(s) => ("javascript", json!(s)),
+        PropertyValue::WktString(text) => ("wktString", json!(text.as_str())),
         PropertyValue::KeyValueList(records) => (
             "keyValueList",
             Value::Array(

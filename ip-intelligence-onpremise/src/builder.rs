@@ -38,7 +38,7 @@ use fiftyone_pipeline_engines::{
     OnPremiseAspectEngine, DISTRIBUTOR_URL,
 };
 
-use crate::engine::{record_published, IpIntelligenceOnPremiseEngine};
+use crate::engine::{record_dates, IpIntelligenceOnPremiseEngine};
 use crate::operational_copy::OperationalCopy;
 
 /// The download type the Distributor serves IP Intelligence data files as,
@@ -87,6 +87,7 @@ pub struct IpIntelligenceOnPremiseEngineBuilder {
     data_update_service: Option<Arc<DataUpdateService>>,
     temp_dir: Option<PathBuf>,
     temp_data_copy: bool,
+    reuse_temp_file: bool,
     /// The expected concurrency, or [`None`] to keep the profile's own.
     concurrency: Option<u16>,
     /// The whole data file configuration a pipeline configuration gave, used
@@ -120,6 +121,7 @@ impl IpIntelligenceOnPremiseEngineBuilder {
             data_update_service: None,
             temp_dir: None,
             temp_data_copy: false,
+            reuse_temp_file: false,
             concurrency: None,
             data_file_settings: None,
         }
@@ -137,15 +139,16 @@ impl IpIntelligenceOnPremiseEngineBuilder {
     /// Under [`PerformanceProfile::LowMemory`] and
     /// [`PerformanceProfile::Balanced`] it sizes the pool of file handles the
     /// collections left on file read through, so it is how many calls can read
-    /// the data file at once, and a call beyond that waits for a handle. Under
-    /// [`PerformanceProfile::Balanced`] it is also the number of separately
-    /// locked parts of each cache. A cache needs at least as many entries in
-    /// each part as it has parts, so a value whose square is more than the
-    /// entries of the smallest cache fails to open, with the native status
-    /// `InvalidCollectionConfig`. The in-memory profiles read nothing from the
-    /// data file once it is loaded, so it does not change how their lookups
-    /// run. Unset, the profile's own expected concurrency is kept. A refresh
-    /// opens the new data file with the same value.
+    /// the data file at once, to at most 64, and a call beyond that waits for a
+    /// handle. Under [`PerformanceProfile::Balanced`] it is also the number of
+    /// separately locked parts of each cache, or fewer for a cache with fewer
+    /// entries than the concurrency squared, and a cache with fewer entries
+    /// than the concurrency is grown to it, so any value opens. The in-memory
+    /// profiles read nothing from the data file once it is loaded, but for the
+    /// values of properties not named when `HighPerformance` names some, so it
+    /// does not change how their lookups run. Unset, the profile's own is kept,
+    /// one for each processor. A refresh opens the new data file with the same
+    /// value.
     pub fn concurrency(mut self, concurrency: u16) -> Self {
         self.concurrency = Some(concurrency);
         self
@@ -156,6 +159,12 @@ impl IpIntelligenceOnPremiseEngineBuilder {
     /// the data file made there, so an update can replace the data file itself,
     /// and with [`Self::create_temp_data_copy`] every profile does. Defaults to
     /// the system's temporary folder, [`std::env::temp_dir`].
+    ///
+    /// The engine removes each copy it reads once it no longer reads it, and
+    /// leaves any other copy of the data file in the folder, such as one a
+    /// process that stopped left behind. .NET, through the C library, removes
+    /// those after each load from a copy other than on Apple systems, and on
+    /// Linux skips any that a process has open.
     pub fn temp_dir_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.temp_dir = Some(path.into());
         self
@@ -167,6 +176,24 @@ impl IpIntelligenceOnPremiseEngineBuilder {
     /// longer reads it. Defaults to false.
     pub fn create_temp_data_copy(mut self, create: bool) -> Self {
         self.temp_data_copy = create;
+        self
+    }
+
+    /// Read a copy of the data file already in the temporary folder, when the
+    /// engine reads a copy, rather than making a new one, as .NET's
+    /// `SetReuseTempFile` does. A file there is taken as the C library takes
+    /// one, when its name starts with the data file's name without its
+    /// extension and is not the data file's name, and it has the data file's
+    /// length and header. The engine removes the copy once it no longer reads
+    /// it, whether it made the copy or found it, as the C library does.
+    /// Defaults to false.
+    ///
+    /// A file in the folder that passes those checks is read as the data, and
+    /// the default folder can be one every local user writes to, as `/tmp` is
+    /// on Linux when `TMPDIR` is not set. With reuse on, name with
+    /// [`Self::temp_dir_path`] a folder only the service writes to.
+    pub fn reuse_temp_file(mut self, reuse: bool) -> Self {
+        self.reuse_temp_file = reuse;
         self
     }
 
@@ -329,16 +356,7 @@ impl IpIntelligenceOnPremiseEngineBuilder {
         let configuration = self.data_file_configuration();
         configuration.check_license_keys()?;
 
-        let property_refs: Option<Vec<&str>> = if self.requested_properties.is_empty() {
-            None
-        } else {
-            Some(
-                self.requested_properties
-                    .iter()
-                    .map(String::as_str)
-                    .collect(),
-            )
-        };
+        let requested = self.requested_properties;
 
         // Open from a copy of the data file when updates can replace the file
         // while it is open.
@@ -348,27 +366,34 @@ impl IpIntelligenceOnPremiseEngineBuilder {
             self.profile,
             &configuration,
             self.temp_data_copy,
+            self.reuse_temp_file,
         );
-        let manager = Manager::open_with_options(
-            copy.as_ref()
-                .map_or(self.data_file_path.as_path(), OperationalCopy::path),
-            self.profile,
-            property_refs.as_deref(),
-            self.concurrency,
-        )?;
+        let manager = {
+            let property_refs: Option<Vec<&str>> = if requested.is_empty() {
+                None
+            } else {
+                Some(requested.iter().map(String::as_str).collect())
+            };
+            Manager::open_with_options(
+                copy.as_ref()
+                    .map_or(self.data_file_path.as_path(), OperationalCopy::path),
+                self.profile,
+                property_refs.as_deref(),
+                self.concurrency,
+            )?
+        };
 
         let data_file = Arc::new(AspectEngineDataFile::new(configuration));
-        record_published(&manager, &data_file);
+        record_dates(&manager, &data_file);
 
         Ok(IpIntelligenceOnPremiseEngine::from_parts(
             copy,
             manager,
             self.profile,
-            self.requested_properties,
             self.data_source_tier,
             data_file,
         )?
-        .with_temp_dir(self.temp_dir, self.temp_data_copy)
+        .with_temp_dir(self.temp_dir, self.temp_data_copy, self.reuse_temp_file)
         .with_concurrency(self.concurrency))
     }
 

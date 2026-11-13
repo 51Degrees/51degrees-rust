@@ -35,6 +35,7 @@ products        device-detection-{shared,onpremise,cloud}
   |             ip-intelligence-{shared,onpremise,cloud}
   |             fiftyone-ip-intelligence-translation
   |             fiftyone-device-detection-robots-txt
+  |             fiftyone-device-detection-property-keyed
   |
 facades         fiftyone-device-detection, fiftyone-ip-intelligence
   |
@@ -106,6 +107,12 @@ examples        examples-shared, device-detection-examples,
   on-premise Device Detection engine before it, through `fiftyone-native`,
   and then writes a robots.txt for each request from the usages the request
   allows, so it is on-premise only.
+
+  `fiftyone-device-detection-property-keyed` sits beside them as well. Its
+  TAC and Native engines look up the hardware profiles holding a TAC or a
+  native model name through the on-premise Device Detection engine before
+  them, and write the same `MultiDeviceData` under `hardware` as the cloud's
+  hardware lookup, so it is on-premise only.
 - **facades** (`fiftyone-device-detection`, `fiftyone-ip-intelligence`).
   Re-exports plus a builder that selects the cloud or on-premise deployment.
   Both populate the same data type under the same key, so swapping deployment
@@ -146,9 +153,9 @@ a single program can do DD and IPI), those two copies define the same common
 symbols and the linker sees a duplicate-symbol collision.
 
 The fix is applied entirely on the IP Intelligence side, so Device Detection is
-untouched. `fiftyone-ip-intelligence-sys` force-includes a header
-(`src/symbol_prefix.h`) into every C and C++ translation unit it compiles, via
-`/FI` on MSVC and `-include` on the GNU and Clang drivers. That header renames
+untouched. `fiftyone-ip-intelligence-sys` compiles every C translation unit
+with `FIFTYONE_DEGREES_IPI_SYMBOLS` defined, which makes each common header
+include `src/common/ipiSymbols.h` from 51degrees-cxx. That header renames
 this crate's private common symbols to an `ipi_*` namespace at preprocess
 time, so both the definitions compiled here and every call site that references
 them are renamed together. Device Detection keeps the unprefixed names. The two
@@ -156,8 +163,9 @@ copies of the common library therefore no longer collide.
 
 On the Rust side, the affected FFI declarations bind to the prefixed names with
 `#[link_name = "ipi_..."]` (for example `ipi_fiftyoneDegreesResourceManagerFree`
-and `ipi_fiftyoneDegreesExceptionGetMessage`). The header carries the full
-symbol list and the note on how to regenerate it.
+and `ipi_fiftyoneDegreesExceptionGetMessage`). 51degrees-cxx keeps the list
+complete, and `ci/check-native-symbols.ps1` fails when the two built libraries
+define the same common name.
 
 ## IP Intelligence data strategy
 
@@ -192,7 +200,7 @@ the suspicious example, whose purpose needs the Enterprise file.
 performance and update examples, whose properties do not matter to what they
 show. `ipi-onprem-getting-started` reads both free files, so it shows Asn and
 AsnName as well as the registration properties. The examples' tests read the
-ASN file. The `51DEGREES_IPI_PATH` environment variable, when set, overrides
+ASN file. The `_51DEGREES_IPI_PATH` environment variable, when set, overrides
 the tier selection and points every example at one explicit file. On-premise
 examples also print the more-than-28-days-old data-file warning through
 `examples_shared::check_data_file`.

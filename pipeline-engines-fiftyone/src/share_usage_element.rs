@@ -45,6 +45,19 @@
 //! requires. Repeated failures are logged at most once a minute, with a count
 //! of the failures since the last message.
 //!
+//! # What it shares
+//!
+//! The element accepts no evidence, so it never adds a key to the evidence a
+//! pipeline accepts, and the cache keys, ETag and `Vary` header worked out
+//! from that never depend on it. It shares instead what it finds, being every
+//! evidence value in the flow data and, when a web integration gives the web
+//! request as `server.http-request` (read with
+//! [`Evidence::http_request`]), every value of that request. A key found in
+//! both is shared once, with the evidence's value. Which of the keys it finds
+//! are shared is decided by [`ShareUsageElement::shared_evidence_filter`].
+//! The ignore filter reads every key of the evidence, but only the keys of
+//! the web request that are shared.
+//!
 //! # Transport and the `share-usage-transport` feature
 //!
 //! Actually sending anything over the network is gated behind the crate's
@@ -80,6 +93,7 @@
 //! error or a panic in the sink fails that batch alone.
 
 use std::any::Any;
+use std::borrow::Cow;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
@@ -90,7 +104,8 @@ use std::time::{Duration, Instant};
 
 use fiftyone_pipeline_core::constants::EVIDENCE_CLIENT_IP_KEY;
 use fiftyone_pipeline_core::{
-    Error, EvidenceKeyFilter, FlowData, FlowElement, Pipeline, PropertyMetaData, Result,
+    Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    Pipeline, PropertyMetaData, Result,
 };
 
 use crate::constants::{
@@ -343,9 +358,10 @@ impl ShareUsageConfigBuilder {
     }
 
     /// Set evidence key and value pairs that stop a request being shared. A
-    /// request whose evidence holds any of the keys with exactly that value is
-    /// not shared. Keys match in any case and values match exactly. Returns
-    /// `self` for chaining.
+    /// request is not shared when its evidence, or a key of its web request
+    /// that would be shared, holds any of the keys with exactly that value.
+    /// Keys match in any case and values match exactly. Returns `self` for
+    /// chaining.
     pub fn ignore_flow_data_evidence_filter<I, K, V>(mut self, entries: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
@@ -384,7 +400,7 @@ impl StaticInfo {
     fn gather() -> Self {
         StaticInfo {
             core_version: env!("CARGO_PKG_VERSION").to_owned(),
-            language_version: env!("FIFTYONE_RUSTC_VERSION").to_owned(),
+            language_version: env!("_51DEGREES_RUSTC_VERSION").to_owned(),
             server_ip: crate::host_address::host_address(),
             platform: platform(),
         }
@@ -531,6 +547,9 @@ enum Discarded {
 /// pipeline with it fails while the first is still alive, and so does adding
 /// it to one pipeline twice.
 pub struct ShareUsageElement {
+    /// The evidence the element accepts, which is none.
+    accepted: EvidenceKeyFilterWhitelist,
+    /// Which of the keys the element finds are shared.
     filter: Arc<EvidenceKeyFilterShareUsage>,
     properties: Vec<PropertyMetaData>,
     tracker: ShareUsageTracker,
@@ -650,6 +669,7 @@ impl ShareUsageElement {
         };
 
         ShareUsageElement {
+            accepted: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
             filter,
             properties: Vec::new(),
             tracker,
@@ -683,13 +703,31 @@ impl ShareUsageElement {
         &self.config
     }
 
-    /// True if the evidence matches a pair in the ignore filter, so the
-    /// request is not shared.
-    fn is_ignored(&self, data: &FlowData) -> bool {
+    /// Which of the keys the element finds are shared, as the configuration
+    /// sets it. The element itself accepts no evidence, so this is not its
+    /// [`FlowElement::evidence_key_filter`].
+    pub fn shared_evidence_filter(&self) -> &EvidenceKeyFilterShareUsage {
+        &self.filter
+    }
+
+    /// True if a pair in the ignore filter matches, so the request is not
+    /// shared. Each key is read from the evidence, and from the web request
+    /// only when the shared evidence filter includes it, so a key of the
+    /// request that is not shared and that no element accepts never stops a
+    /// request being shared. A key in both has the evidence's value.
+    fn is_ignored(&self, evidence: &Evidence) -> bool {
         self.config
             .ignore_flow_data_evidence_filter
             .iter()
-            .any(|(key, value)| data.evidence().get(key) == Some(value.as_str()))
+            .any(|(key, value)| {
+                let found = evidence.get(key).or_else(|| {
+                    evidence
+                        .http_request()
+                        .filter(|_| self.filter.include(key))
+                        .and_then(|request| request.get(key))
+                });
+                found == Some(value.as_str())
+            })
     }
 
     /// Decide whether this request is in the shared sample. Each request is
@@ -700,9 +738,10 @@ impl ShareUsageElement {
         p >= 1.0 || (p > 0.0 && fastrand::f64() < p)
     }
 
-    /// Copy what the record needs out of a request's flow data. The evidence
-    /// is read in the order it was given, with each key spelled as given.
-    fn extract(&self, data: &FlowData) -> UsageRecord {
+    /// Copy what the record needs out of a request's flow data and the
+    /// evidence the element found for it. The evidence is read in the order
+    /// it was given, with each key spelled as given.
+    fn extract(&self, data: &FlowData, evidence: &Evidence) -> UsageRecord {
         let mut record = UsageRecord::new(
             data.pipeline()
                 .flow_elements()
@@ -715,7 +754,7 @@ impl ShareUsageElement {
         // element earlier in the pipeline has already written this request's
         // session id and sequence into the evidence. A sequence that is not a
         // 32-bit integer is written as 0.
-        for entry in data.evidence().entries() {
+        for entry in evidence.entries() {
             let key = entry.key();
             if key.eq_ignore_ascii_case(EVIDENCE_CLIENT_IP_KEY) {
                 record.client_ip = entry.value().to_owned();
@@ -758,7 +797,7 @@ impl Default for ShareUsageElement {
 
 impl FlowElement for ShareUsageElement {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        if self.is_ignored(data) {
+        if self.is_ignored(data.evidence()) {
             return Ok(());
         }
 
@@ -767,13 +806,14 @@ impl FlowElement for ShareUsageElement {
             return Ok(());
         }
 
-        // Repeat-evidence deduplication: the tracker decides whether this
-        // request's evidence is new enough to share.
-        if !self.tracker.track(data) {
+        // Repeat-evidence deduplication: the tracker decides whether the
+        // evidence found for this request is new enough to share.
+        let found = found_evidence(data.evidence());
+        if !self.tracker.track_evidence(&found) {
             return Ok(());
         }
 
-        let usage = self.extract(data);
+        let usage = self.extract(data, &found);
 
         // Hand the data to the background sender, waiting up to the add
         // timeout for room. Data that does not fit is discarded, which the
@@ -790,8 +830,11 @@ impl FlowElement for ShareUsageElement {
         SHARE_USAGE_DEFAULT_ELEMENT_DATA_KEY
     }
 
+    /// Accepts no evidence, so the cache keys, ETag and `Vary` header never
+    /// depend on this element. [`ShareUsageElement::shared_evidence_filter`]
+    /// decides which of the keys it finds are shared.
     fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
-        self.filter.as_ref()
+        &self.accepted
     }
 
     fn properties(&self) -> &[PropertyMetaData] {
@@ -859,6 +902,29 @@ impl Drop for ShareUsageElement {
             let _ = handle.join();
         }
     }
+}
+
+/// The evidence usage sharing finds for a request, being the flow data's
+/// evidence and, when a web integration gave it, the web request. A key in
+/// both has the evidence's value and the web request's place and spelling,
+/// so a record lists the request's values in the order the request gave
+/// them, followed by the evidence the request does not hold. Borrowed when
+/// there is no web request.
+pub(crate) fn found_evidence(evidence: &Evidence) -> Cow<'_, Evidence> {
+    let Some(request) = evidence.http_request() else {
+        return Cow::Borrowed(evidence);
+    };
+    let mut found = Evidence::builder();
+    for entry in request.entries() {
+        let value = evidence.get(entry.key()).unwrap_or(entry.value());
+        found = found.add(entry.key_as_given(), value);
+    }
+    for entry in evidence.entries() {
+        if !request.contains_key(entry.key()) {
+            found = found.add(entry.key_as_given(), entry.value());
+        }
+    }
+    Cow::Owned(found.build())
 }
 
 /// Add a record to the queue, waiting up to `timeout` for room while it is
@@ -1281,6 +1347,25 @@ mod tests {
         }
     }
 
+    /// A sink that keeps every batch it is given in a [`Capture`] and fails
+    /// the first, as the built-in transport does for an answer other than
+    /// 200.
+    struct FailsOnce {
+        capture: Capture,
+        failed: AtomicBool,
+    }
+
+    impl UsageSink for FailsOnce {
+        fn receive(&self, batch: UsageBatch) -> std::result::Result<(), SinkError> {
+            self.capture.receive(batch)?;
+            if self.failed.swap(true, Ordering::SeqCst) {
+                Ok(())
+            } else {
+                Err("the endpoint answered 503".into())
+            }
+        }
+    }
+
     /// A sink that reports when a batch arrives, then holds it until it is
     /// released, so a test can keep the queue full.
     struct Gate {
@@ -1353,8 +1438,7 @@ mod tests {
         let kept = "a".repeat(SHARE_USAGE_MAX_EVIDENCE_LENGTH);
         assert!(
             capture.messages()[0].contains(&format!(
-                "<header Name=\"user-agent\">\
-                 <![CDATA[[TRUNCATED BY USAGE SHARING] {kept}]]></header>"
+                "<header truncated=\"true\" Name=\"user-agent\">{kept}</header>"
             )),
             "the value is cut to the maximum length and marked"
         );
@@ -1383,9 +1467,9 @@ mod tests {
         let end = "</Platform>";
         assert_eq!(
             &xml[xml.find(end).unwrap() + end.len()..],
-            "<header Name=\"User-Agent\"><![CDATA[agent]]></header>\
-             <header Name=\"Accept-Language\"><![CDATA[en]]></header>\
-             <query Name=\"51D_Test\"><![CDATA[x]]></query></Device></Devices>"
+            "<header Name=\"User-Agent\">agent</header>\
+             <header Name=\"Accept-Language\">en</header>\
+             <query Name=\"51D_Test\">x</query></Device></Devices>"
         );
     }
 
@@ -1420,7 +1504,7 @@ mod tests {
         assert!(!xml.contains("cookie-header"), "{xml}");
         assert!(!xml.contains("session-other"), "{xml}");
         assert!(
-            xml.contains("<session Name=\"51D_Seen\"><![CDATA[session-51d]]></session>"),
+            xml.contains("<session Name=\"51D_Seen\">session-51d</session>"),
             "{xml}"
         );
     }
@@ -1437,11 +1521,11 @@ mod tests {
         let xml = &capture.messages()[0];
         assert!(!xml.contains("never-shared"), "{xml}");
         assert!(
-            xml.contains("<header Name=\"Cookie\"><![CDATA[cookie-header]]></header>"),
+            xml.contains("<header Name=\"Cookie\">cookie-header</header>"),
             "{xml}"
         );
         assert!(
-            xml.contains("<Session Name=\"Other\"><![CDATA[session-other]]></Session>"),
+            xml.contains("<Session Name=\"Other\">session-other</Session>"),
             "{xml}"
         );
     }
@@ -1486,11 +1570,80 @@ mod tests {
         share(config, capture.clone(), Vec::new(), requests);
         let xml = capture.messages().concat();
         assert!(
-            !xml.contains("[CDATA[one]]"),
+            !xml.contains(">one</"),
             "the exact match is not shared: {xml}"
         );
-        assert!(xml.contains("[CDATA[two]]"), "values match exactly: {xml}");
-        assert!(xml.contains("[CDATA[three]]"), "{xml}");
+        assert!(xml.contains(">two</"), "values match exactly: {xml}");
+        assert!(xml.contains(">three</"), "{xml}");
+    }
+
+    /// The web request is shared with the evidence, a key in both having the
+    /// evidence's value and the web request's place and spelling, a key only
+    /// in the evidence coming after the web request's keys, and the ignore
+    /// filter reads it too.
+    #[test]
+    fn the_web_request_is_shared_and_the_evidence_wins() {
+        let capture = Capture::default();
+        let config = ShareUsageConfig::builder()
+            .ignore_flow_data_evidence_filter([("header.x-skip", "yes")])
+            .included_query_string_parameters(Some(["extra"]))
+            .build();
+        let request = |test: &str, skip: &str| {
+            Evidence::builder()
+                .add("header.User-Agent", "from the request")
+                .add("header.X-Skip", skip)
+                .add("header.X-Test", test)
+                .build()
+        };
+        let requests = vec![
+            Evidence::builder()
+                .add("header.user-agent", "from the evidence")
+                .add("query.extra", "added")
+                .http_request(request("one", "no"))
+                .build(),
+            Evidence::builder()
+                .http_request(request("two", "yes"))
+                .build(),
+        ];
+        share(config, capture.clone(), Vec::new(), requests);
+        let xml = capture.messages().concat();
+        assert!(
+            xml.contains(
+                "<header Name=\"User-Agent\">from the evidence</header>\
+                 <header Name=\"X-Skip\">no</header>\
+                 <header Name=\"X-Test\">one</header>\
+                 <query Name=\"extra\">added</query>"
+            ),
+            "{xml}"
+        );
+        assert!(!xml.contains("from the request"), "{xml}");
+        assert!(
+            !xml.contains(">two</"),
+            "the ignore filter reads the web request: {xml}"
+        );
+    }
+
+    /// The ignore filter reads a key of the web request only when the key is
+    /// shared, so a pair on a cookie that is not shared, found only in the
+    /// web request, does not stop the request being shared.
+    #[test]
+    fn the_ignore_filter_reads_the_web_request_only_for_shared_keys() {
+        let capture = Capture::default();
+        let config = ShareUsageConfig::builder()
+            .ignore_flow_data_evidence_filter([("cookie.internal", "1")])
+            .build();
+        let requests = vec![Evidence::builder()
+            .add("header.user-agent", "one")
+            .http_request(
+                Evidence::builder()
+                    .add("header.User-Agent", "one")
+                    .add("cookie.internal", "1")
+                    .build(),
+            )
+            .build()];
+        share(config, capture.clone(), Vec::new(), requests);
+        let xml = capture.messages().concat();
+        assert!(xml.contains(">one</"), "{xml}");
     }
 
     #[test]
@@ -1704,6 +1857,59 @@ mod tests {
         assert_eq!(element.success_count(), 0);
     }
 
+    /// The values of each record in `batch`.
+    fn values(batch: &UsageBatch) -> Vec<String> {
+        batch
+            .records()
+            .iter()
+            .flat_map(|record| record.evidence().map(|(_, _, value)| value.to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn a_batch_whose_send_failed_is_dropped() {
+        let capture = Capture::default();
+        let element = Arc::new(ShareUsageElement::with_sink(
+            ShareUsageConfig::builder()
+                .minimum_entries_per_message(1)
+                .build(),
+            FailsOnce {
+                capture: capture.clone(),
+                failed: AtomicBool::new(false),
+            },
+        ));
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        let process = |agent: &str| {
+            pipeline
+                .create_flow_data_with(user_agent(agent))
+                .process()
+                .unwrap()
+        };
+
+        // The second request is only queued once the first batch has
+        // failed, so the two are never one batch.
+        process("one");
+        wait_for(|| element.fail_count() > 0);
+        process("two");
+        wait_for(|| element.success_count() > 0);
+        assert_eq!(element.fail_count(), 1);
+        assert_eq!(element.success_count(), 1);
+        drop(pipeline);
+        drop(element);
+
+        let batches = capture.batches();
+        assert_eq!(batches.len(), 2, "nothing is sent after the second batch");
+        assert_eq!(values(&batches[0]), ["one"]);
+        assert_eq!(
+            values(&batches[1]),
+            ["two"],
+            "the failed batch is not queued again"
+        );
+    }
+
     #[test]
     fn a_sink_that_panics_loses_one_batch() {
         for in_writer in [false, true] {
@@ -1739,9 +1945,9 @@ mod tests {
             assert_eq!(element.fail_count(), 1, "in_writer {in_writer}");
             assert_eq!(element.success_count(), 1, "in_writer {in_writer}");
             let xml = capture.messages().concat();
-            assert!(!xml.contains("[CDATA[one]]"), "{xml}");
+            assert!(!xml.contains(">one</"), "{xml}");
             assert!(
-                xml.contains("[CDATA[two]]"),
+                xml.contains(">two</"),
                 "the batch after the panic is delivered, in_writer {in_writer}: {xml}"
             );
             drop(pipeline);
@@ -2048,7 +2254,7 @@ mod tests {
         };
         assert!(
             xml.ends_with(&format!(
-                "<header Name=\"User-Agent\"><![CDATA[agent]]></header>\
+                "<header Name=\"User-Agent\">agent</header>\
                  {after}</Device></Devices>"
             )),
             "{xml}"

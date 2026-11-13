@@ -201,10 +201,14 @@ impl AgentSignatureElementBuilder {
     }
 
     /// Whether evidence under the `query` prefix is trusted to describe the
-    /// request that was signed. Default false. Only a service that knows it
-    /// receives evidence forwarded by a caller's own pipeline may turn this
-    /// on, because forwarded evidence and a typed query string cannot be
-    /// told apart once they have arrived.
+    /// request that was signed. Default false. Turning it on adds to the
+    /// evidence the element accepts the eight names it reads, under
+    /// `query.`, such as `query.signature` and `query.request-path`, and no
+    /// other `query.` key. A request holding `query.signature` or
+    /// `query.signature-input` is then read wholly from the `query.` keys.
+    /// Only a service that knows it receives evidence forwarded by a
+    /// caller's own pipeline may turn this on, because forwarded evidence
+    /// and a typed query string cannot be told apart once they have arrived.
     pub fn set_trust_forwarded_evidence(mut self, trust: bool) -> Self {
         self.trust_forwarded_evidence = trust;
         self
@@ -251,6 +255,13 @@ impl AgentSignatureElementBuilder {
     ) -> Self {
         self.clock = Arc::new(clock);
         self
+    }
+
+    /// The client given and what the build says without one, so the tests
+    /// can see what a configuration starts from.
+    #[cfg(test)]
+    pub(crate) fn client_and_message(&self) -> (Option<&Arc<dyn HttpClient>>, &'static str) {
+        (self.http_client.as_ref(), self.no_client_message)
     }
 
     /// Build the element, refusing any setting out of range.

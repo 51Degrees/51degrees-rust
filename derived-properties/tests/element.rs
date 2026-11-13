@@ -8,6 +8,16 @@
  *
  * If a copy of the EUPL was not distributed with this file, You can obtain
  * one at https://opensource.org/licenses/EUPL-1.2.
+ *
+ * The 'Compatible Licences' set out in the Appendix to the EUPL (as may be
+ * amended by the European Commission) shall be deemed incompatible for
+ * the purposes of the Work and the provisions of the compatibility
+ * clause in Article 5 of the EUPL shall not apply.
+ *
+ * If using the Work as, or as part of, a network application, by
+ * including the attribution notice(s) required under Article 5 of the EUPL
+ * in the end user terms of the application under an appropriate heading,
+ * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
 //! The element in a pipeline, reading what earlier elements produced.
@@ -360,10 +370,13 @@ fn a_32_bit_float_is_read_as_a_number() {
              \x20 - Else: Below\n"
         )
     };
-    let weighted = |value: f32, weight: i64| {
+    let weighted = |value: f32, raw_weighting: i64| {
         let mut record = std::collections::BTreeMap::new();
         record.insert("value".to_owned(), PropertyValue::Float(value));
-        record.insert("weight".to_owned(), PropertyValue::Integer(weight));
+        record.insert(
+            "rawweighting".to_owned(),
+            PropertyValue::Integer(raw_weighting),
+        );
         record
     };
     let ip = StubData::default()
@@ -397,6 +410,71 @@ fn a_32_bit_float_is_read_as_a_number() {
 }
 
 #[test]
+fn a_weighted_value_is_read_by_its_raw_weighting_or_its_weight() {
+    // The IP Intelligence data gives a raw weighting from 0 to 65,535 under
+    // rawweighting. Element data written by other code may give a weight from
+    // 0 to 1 under weight instead. Either way the highest wins, here the
+    // second record.
+    let script = "Format: 1\n\
+                  Name: Highest\n\
+                  Version: \"1.0.0\"\n\
+                  Output:\n\
+                  \x20 Name: Highest\n\
+                  \x20 Description: The value with the highest weight.\n\
+                  \x20 ValueType: string\n\
+                  \x20 IsList: false\n\
+                  Rules:\n\
+                  \x20 - When: { Property: ip.Weighted, Eq: second }\n\
+                  \x20   Then: Second\n\
+                  \x20 - Else: First\n";
+    let records = |key: &str, low: PropertyValue, high: PropertyValue| {
+        PropertyValue::KeyValueList(
+            [("first", low), ("second", high)]
+                .into_iter()
+                .map(|(value, weight)| {
+                    std::collections::BTreeMap::from([
+                        ("value".to_owned(), PropertyValue::from(value)),
+                        (key.to_owned(), weight),
+                    ])
+                })
+                .collect(),
+        )
+    };
+    for weighted in [
+        records(
+            "rawweighting",
+            PropertyValue::Integer(20_000),
+            PropertyValue::Integer(45_535),
+        ),
+        records(
+            "weight",
+            PropertyValue::Double(0.25),
+            PropertyValue::Double(0.75),
+        ),
+    ] {
+        let ip = StubData::default().with("Weighted", weighted.clone());
+        let derived = DerivedPropertyElement::builder()
+            .add_script("Highest", script)
+            .build()
+            .expect("the script");
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(StubElement::new("ip", ip)))
+            .add_element(Arc::new(derived))
+            .build()
+            .unwrap();
+        let mut data = pipeline.create_flow_data();
+        data.process().unwrap();
+
+        let derived = data.get_str(DERIVED_DEFAULT_ELEMENT_DATA_KEY).unwrap();
+        assert_eq!(
+            derived.get("Highest").unwrap(),
+            PropertyValue::String("Second".to_owned()),
+            "{weighted:?}"
+        );
+    }
+}
+
+#[test]
 fn a_32_bit_float_equals_the_decimal_it_holds() {
     // A latitude given to 3 decimal places is the f32 nearest 18.543. Widened
     // to a double it is 18.542999267578125, so it would be neither equal to
@@ -417,10 +495,13 @@ fn a_32_bit_float_equals_the_decimal_it_holds() {
              \x20 - Else: No\n"
         )
     };
-    let weighted = |value: f32, weight: i64| {
+    let weighted = |value: f32, raw_weighting: i64| {
         let mut record = std::collections::BTreeMap::new();
         record.insert("value".to_owned(), PropertyValue::Float(value));
-        record.insert("weight".to_owned(), PropertyValue::Integer(weight));
+        record.insert(
+            "rawweighting".to_owned(),
+            PropertyValue::Integer(raw_weighting),
+        );
         record
     };
     let ip = StubData::default()

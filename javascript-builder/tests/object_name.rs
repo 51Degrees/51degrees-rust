@@ -183,6 +183,8 @@ fn render(
     configure: impl FnOnce(JavaScriptBuilderElementBuilder) -> JavaScriptBuilderElement,
     evidence: &[(&str, &str)],
 ) -> String {
+    // The sequence element leads, because the JSON builder needs the sequence
+    // number it writes.
     let pipeline = Pipeline::builder()
         .add_element(Arc::new(SequenceElement::new()))
         .add_element(Arc::new(ValueElement::new()))

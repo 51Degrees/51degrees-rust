@@ -8,6 +8,34 @@ This crate is part of the [51Degrees](https://51degrees.com/?utm_source=github&u
 device detection and IP intelligence, available both on-premise from a local
 data file and from the 51Degrees cloud.
 
+## Looking up profiles by a property value
+
+The engine lists the profiles in its data file that hold a value of a
+property, for example the hardware profiles of a TAC or a native model name.
+Name the properties to index when the engine is built, and the data set
+indexes their values when it loads, and again on each refresh.
+
+```rust
+let engine = DeviceDetectionOnPremiseEngineBuilder::new("TAC-HashV41.hash")
+    .indexed_properties(["TAC", "NativeModel"])
+    .build()?;
+let ids = engine.profile_ids_for_property_value("NativeModel", native_model)?;
+```
+
+A configuration names the properties in the engine's `IndexedProperties`
+setting, for example `"IndexedProperties": "TAC,NativeModel"`, which .NET's
+builder does not have.
+
+The ids are in ascending order, and the property name and value are matched
+exactly, including case. A property that is not indexed is looked up by
+reading every profile, which gives the same ids more slowly. An id given to
+the engine as `query.51D_ProfileIds` evidence gives that profile's values.
+`profiles_for_property_value` gives each profile's device data in the same
+order, with its id as text in `ProfileId`, reading the ids and the values from
+one data set so a refresh between the two cannot lose a profile. The TAC
+property is only in the TAC data file, and NativeModel is in the Enterprise
+and TAC data files.
+
 ## License
 
 Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the

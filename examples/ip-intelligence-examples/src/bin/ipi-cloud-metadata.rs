@@ -92,7 +92,8 @@ pub fn run(options: Options) -> Result<()> {
 /// The properties available depend on the resource key, not on the full cloud
 /// catalogue, so this is the list this key returns. Each line shows the property
 /// name, its category, and its value type. IP-intelligence properties are
-/// weighted, so they surface as a `KeyValueList` of value/weight records.
+/// weighted, so they surface as a `KeyValueList` of rawweighting/value
+/// records.
 fn output_properties(pipeline: &fiftyone_pipeline_core::Pipeline) {
     println!("Available properties:");
     let mut any = false;
@@ -146,7 +147,7 @@ fn main() -> Result<()> {
 
     let Some(resource_key) = resource_key else {
         println!(
-            "No resource key available. Set the 51DEGREES_RESOURCE_KEY environment \
+            "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
              variable or pass a key as the first argument. Create a key for free at \
              https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-metadata.rs&utm_term=resource-key-required."
         );
@@ -156,7 +157,7 @@ fn main() -> Result<()> {
 
     let result = run(Options {
         resource_key,
-        // The cloud endpoint from 51DEGREES_CLOUD_ENDPOINT, or the public cloud
+        // The cloud endpoint from _51DEGREES_CLOUD_ENDPOINT, or the public cloud
         // when unset. A host other than cloud.51degrees.com is an on premise web
         // server or a privately hosted 51Degrees cloud (see
         // examples_shared::CLOUD_ENDPOINT_ENV_VAR).
@@ -198,8 +199,8 @@ mod tests {
  *    resource key.
  * 2. How to list the properties the resource key exposes, with each property's
  *    category and value type. IP-intelligence properties are weighted, so they
- *    are reported as a KeyValueList of value/weight records rather than a plain
- *    scalar type.
+ *    are reported as a KeyValueList of rawweighting/value records rather than
+ *    a plain scalar type.
  * 3. How to determine which evidence keys the pipeline accepts. The pipeline
  *    evidence filter is the union of every element's filter; the cloud request
  *    engine is the element that forwards evidence to the service, so its keys
@@ -213,8 +214,8 @@ mod tests {
  * production deployment should enable usage sharing.
  *
  * To run this example, create a Resource Key for free at
- * https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-metadata.rs&utm_term=ipi-cloud-metadata and supply it via the 51DEGREES_RESOURCE_KEY
+ * https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-metadata.rs&utm_term=ipi-cloud-metadata and supply it via the _51DEGREES_RESOURCE_KEY
  * environment variable or as the first command-line argument. By default the
- * pipeline talks to the public cloud endpoint; set the 51DEGREES_CLOUD_ENDPOINT
+ * pipeline talks to the public cloud endpoint; set the _51DEGREES_CLOUD_ENDPOINT
  * environment variable to point at a self-hosted Cloud service instead.
  */

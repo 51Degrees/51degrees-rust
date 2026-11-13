@@ -121,9 +121,9 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
 
     writeln!(out, "Result before reload: {}", lookup_asn(&pipeline)?)?;
 
-    // 1. Programmatic update: reopen the data file from disk and atomically swap
-    //    it in. A concurrent lookup keeps using the previous data set until the
-    //    swap completes, so this is safe to call on a live engine. In a real
+    // 1. Programmatic update: reload the data set from the data file on disk
+    //    in place. A concurrent lookup keeps reading the data set it started
+    //    with, so this is safe to call on a live engine. In a real
     //    deployment this would run after a newer file had been downloaded into
     //    place.
     writeln!(out)?;
@@ -308,7 +308,7 @@ mod tests {
         assert!(printed.contains("Automatic updates need a licence key"));
         assert!(printed.contains(examples_shared::FIND_OUT_MORE_HEADING));
         // The ASN file carries no location properties, so the run says so.
-        // 51DEGREES_IPI_PATH can name another file.
+        // _51DEGREES_IPI_PATH can name another file.
         let asn_file = examples_shared::IPI_ASN_RELATIVE_PATH.rsplit('/').next();
         if options.data_file.file_name().and_then(|n| n.to_str()) == asn_file {
             assert!(printed.contains("Country after reload: needs the Enterprise data file"));
@@ -331,10 +331,10 @@ mod tests {
  *    URL for a newer file) and `file_system_watcher` (reload when the file on
  *    disk changes). They are reported here rather than left running so the
  *    example is self-contained.
- * 3. Trigger a *programmatic* update by calling `refresh`, which reopens the
- *    data file from disk and swaps it in atomically. Concurrent lookups keep
- *    using the previous data set until the swap completes, so this is safe on a
- *    live engine. The example confirms the engine still resolves the same IP
+ * 3. Trigger a *programmatic* update by calling `refresh`, which reloads the
+ *    data set from the data file on disk in place. Concurrent lookups keep
+ *    reading the data set they started with, so this is safe on a live
+ *    engine. The example confirms the engine still resolves the same IP
  *    after the reload.
  *
  * After the reload the example looks up `Country` and `Town`, which only the

@@ -33,6 +33,7 @@
 //!
 //! @snippet ipi-onprem-metadata.rs example
 
+use std::borrow::Cow;
 use std::io::Write;
 
 use anyhow::Context;
@@ -241,8 +242,8 @@ fn shorten(value: &str) -> String {
 }
 
 /// A short display name for a property value type.
-fn value_type_name(value_type: PropertyValueType) -> &'static str {
-    match value_type {
+fn value_type_name(value_type: PropertyValueType) -> Cow<'static, str> {
+    Cow::Borrowed(match value_type {
         PropertyValueType::String => "String",
         PropertyValueType::Bool => "Boolean",
         PropertyValueType::Integer => "Integer",
@@ -251,10 +252,11 @@ fn value_type_name(value_type: PropertyValueType) -> &'static str {
         PropertyValueType::StringList => "String[]",
         PropertyValueType::JavaScript => "JavaScript",
         PropertyValueType::KeyValueList => "KeyValue[]",
-        // PropertyValueType is non-exhaustive, so a later variant is named
-        // generically rather than failing to compile.
-        _ => "Other",
-    }
+        // PropertyValueType is non-exhaustive, so a type not named here, such
+        // as WktString for Areas, is named as Rust names it. Naming it would
+        // not build against crates without it.
+        other => return Cow::Owned(format!("{other:?}")),
+    })
 }
 
 /// Print whether the data file carries each property only the Enterprise data
@@ -369,7 +371,7 @@ mod tests {
         assert!(!printed.contains("header.user-agent"));
         assert!(printed.contains(examples_shared::FIND_OUT_MORE_HEADING));
         // The ASN file carries none of the Enterprise properties, so the run
-        // says so. 51DEGREES_IPI_PATH can name another file.
+        // says so. _51DEGREES_IPI_PATH can name another file.
         let asn_file = examples_shared::IPI_ASN_RELATIVE_PATH.rsplit('/').next();
         if options.data_file.file_name().and_then(|n| n.to_str()) == asn_file {
             // The ASN file's properties are listed under their component, the

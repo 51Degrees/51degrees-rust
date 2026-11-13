@@ -25,8 +25,12 @@
 //! 4.5.155 on pipeline 4.5.129 made from the same configuration with the
 //! free ASN data file. Each expected answer and message is the one .NET
 //! gave, apart from the differences the tests name. The tests need the ASN
-//! file `51DEGREES_IPI_PATH` names, or the one at `cxx/data/ip-intelligence`,
+//! file `_51DEGREES_IPI_PATH` names, or the one at `cxx/data/ip-intelligence`,
 //! and skip with a note without it.
+
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -50,7 +54,9 @@ const IPV6: &str = "2606:4700:4700::1111";
 const DISTRIBUTOR: &str = "https://distributor.51degrees.com/api/v2/download";
 
 fn asn_data_file() -> Option<PathBuf> {
-    let given = std::env::var("51DEGREES_IPI_PATH").ok().map(PathBuf::from);
+    let given = crate::deprecated_names::var("_51DEGREES_IPI_PATH")
+        .ok()
+        .map(PathBuf::from);
     let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi");
     given
@@ -63,7 +69,7 @@ fn asn_data_file() -> Option<PathBuf> {
 fn asn() -> Option<String> {
     let found = asn_data_file().map(|path| path.to_string_lossy().into_owned());
     if found.is_none() {
-        eprintln!("skipped: no ASN data file at 51DEGREES_IPI_PATH or cxx/data");
+        eprintln!("skipped: no ASN data file at _51DEGREES_IPI_PATH or cxx/data");
     }
     found
 }
@@ -709,6 +715,53 @@ fn a_copy_of_the_data_file_is_read_when_asked() {
     std::fs::remove_dir_all(&folder).unwrap();
 }
 
+/// `SetReuseTempFile` true reads a copy of the data file already in the
+/// temporary folder, found as the C library that .NET passes the setting to
+/// finds one, and the engine removes it as it removes a copy it made. With
+/// false a new copy is made beside it, and the copy already there stays. The
+/// files expected are read from the C library's `dataset.c` and `file.c`,
+/// not from a .NET run.
+#[test]
+fn reuse_temp_file_reads_a_copy_already_in_the_folder() {
+    let Some(asn) = asn() else { return };
+    let folder = empty_folder("reuse");
+    let temp = folder.to_string_lossy().into_owned();
+    let stem = Path::new(&asn)
+        .file_stem()
+        .expect("the data file's name")
+        .to_string_lossy()
+        .into_owned();
+    let left = format!("{stem}-left");
+    for reuse in ["true", "false"] {
+        std::fs::copy(&asn, folder.join(&left)).unwrap();
+        let pipeline = build(element(
+            BUILDER,
+            &[
+                ("DataFile", &asn),
+                ("CreateTempDataCopy", "true"),
+                ("AutoUpdate", "false"),
+                ("DataFileSystemWatcher", "false"),
+                ("TempDirPath", &temp),
+                ("ReuseTempFile", reuse),
+            ],
+        ))
+        .expect(reuse);
+        assert_eq!(look_up(&pipeline, IPV4), cloudflare(), "{reuse}");
+        let read = files_in(&folder);
+        drop(pipeline);
+        let kept = files_in(&folder);
+        if reuse == "true" {
+            assert_eq!(read, [left.as_str()], "{reuse}");
+            assert_eq!(kept, Vec::<String>::new(), "{reuse}");
+        } else {
+            assert_eq!(read.len(), 2, "{reuse}");
+            assert_eq!(kept, [left.as_str()], "{reuse}");
+            std::fs::remove_file(folder.join(&left)).unwrap();
+        }
+    }
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
 /// .NET's two build methods, and the builder's own `Build()`, which .NET
 /// calls when no build parameter is given.
 #[test]
@@ -905,6 +958,7 @@ fn values_the_settings_refuse() {
 }
 
 /// The settings that have no effect here are read, and logged.
+/// `SetReuseTempFile` has an effect, so it logs nothing.
 #[test]
 fn settings_with_no_effect_are_logged() {
     let Some(asn) = asn() else { return };
@@ -918,14 +972,7 @@ fn settings_with_no_effect_are_logged() {
         )
     };
     for (name, value, logged) in [
-        (
-            "ReuseTempFile",
-            "true",
-            vec![warning(
-                "SetReuseTempFile",
-                "as the engine makes a new copy of the data file each time it needs one",
-            )],
-        ),
+        ("ReuseTempFile", "true", vec![]),
         ("ReuseTempFile", "false", vec![]),
         (
             "DataDownloadType",

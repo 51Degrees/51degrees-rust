@@ -20,11 +20,14 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! The compiled in sources are the data repository's translation files.
+//! Every translation file of the data repository is compiled in, and nothing
+//! else is.
 //!
-//! The data repository is the `data` submodule of the `cxx` submodule. Under
-//! GitHub Actions it must be there, so a checkout without it fails rather
-//! than skipping the check. WebAssembly tests cannot read the folder.
+//! The data repository is the `data` submodule of the `cxx` submodule, and
+//! `build.rs` compiles the sources in from its `ip-intelligence/Translations`
+//! folder. Under GitHub Actions the folder must be there, so a checkout
+//! without it fails rather than skipping the check. WebAssembly tests cannot
+//! read the folder.
 
 #![cfg(not(target_family = "wasm"))]
 
@@ -70,7 +73,7 @@ fn yaml_files(folder: &Path) -> BTreeSet<String> {
 }
 
 #[test]
-fn each_source_is_the_data_repository_file_byte_for_byte() {
+fn each_file_in_the_data_repository_is_a_source() {
     let Some(folder) = data_folder() else {
         return;
     };
@@ -85,12 +88,5 @@ fn each_source_is_the_data_repository_file_byte_for_byte() {
             "the sources and the files in {}",
             subfolder.display()
         );
-        for (name, text) in sources {
-            let file = fs::read(subfolder.join(name)).unwrap();
-            assert!(
-                file == text.as_bytes(),
-                "{name} differs from the data repository's copy"
-            );
-        }
     }
 }

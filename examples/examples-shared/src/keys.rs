@@ -20,21 +20,29 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! Resolve a cloud resource key from the environment, and the
-//! obvious-placeholder check.
+//! Resolve a cloud resource key and a licence key from the environment, and
+//! the obvious-placeholder check.
 //!
 //! Cloud examples and example tests read a 51Degrees resource key from the
 //! environment rather than hard-coding it. The resolver also consults the
 //! CI-exported tiered names so the same resolver works in a local shell and on
 //! the build agents.
+//!
+//! Every name starts with an underscore because a POSIX shell cannot set a
+//! name that starts with a digit.
 
 use base64::Engine as _;
 
-/// The aligned resource-key environment variable, checked first.
+/// The resource-key environment variable, checked first.
 ///
-/// An explicit value here (set by a developer or by CI) overrides every other
-/// source.
-pub const RESOURCE_KEY_ENV_VAR: &str = "51DEGREES_RESOURCE_KEY";
+/// The leading underscore makes the name a valid shell identifier, so
+/// `export _51DEGREES_RESOURCE_KEY=...` works and every 51Degrees language
+/// reads the same name. An explicit value here (set by a developer or by CI)
+/// overrides every other source.
+pub const RESOURCE_KEY_ENV_VAR: &str = "_51DEGREES_RESOURCE_KEY";
+
+/// The licence-key environment variable.
+pub const LICENSE_KEY_ENV_VAR: &str = "_51DEGREES_LICENSE_KEY";
 
 /// The CI-exported bespoke-tier resource-key environment variable, checked second.
 ///
@@ -48,9 +56,9 @@ pub const CI_RESOURCE_KEY_BASIC_ENV_VAR: &str = "_51DEGREES_RESOURCE_KEY_BASIC";
 
 /// The order in which the resource-key environment variables are consulted.
 ///
-/// An explicit `51DEGREES_RESOURCE_KEY` wins, then the bespoke CI key (a superset of
-/// the basic one), then the basic CI key. The first variable set to a non-blank
-/// value supplies the key.
+/// An explicit `_51DEGREES_RESOURCE_KEY` wins, then the bespoke CI key (a
+/// superset of the basic one), then the basic CI key. The first variable set to
+/// a non-blank value supplies the key.
 pub const RESOURCE_KEY_ENV_VARS: [&str; 3] = [
     RESOURCE_KEY_ENV_VAR,
     CI_RESOURCE_KEY_BESPOKE_ENV_VAR,
@@ -72,10 +80,19 @@ pub fn resource_key_from_env() -> Option<String> {
     None
 }
 
+/// Read a licence key from [`LICENSE_KEY_ENV_VAR`], trimmed of surrounding
+/// whitespace. Returns `None` when the variable is unset or blank, so a value
+/// of only spaces counts as no key.
+pub fn license_key_from_env() -> Option<String> {
+    non_blank_env(LICENSE_KEY_ENV_VAR)
+}
+
 /// Read `name` from the environment, returning the trimmed value only when it is
-/// present and not blank (a null-or-whitespace value is rejected).
+/// present and not blank (a null-or-whitespace value is rejected). A renamed
+/// variable is also read under its deprecated name when `name` is unset or
+/// empty.
 fn non_blank_env(name: &str) -> Option<String> {
-    match std::env::var(name) {
+    match crate::deprecated_names::var(name) {
         Ok(value) if !value.trim().is_empty() => Some(value.trim().to_owned()),
         _ => None,
     }
@@ -138,6 +155,35 @@ mod tests {
         std::env::set_var(RESOURCE_KEY_ENV_VAR, "aligned-key");
         assert_eq!(resource_key_from_env().as_deref(), Some("aligned-key"));
         clear_all();
+    }
+
+    #[test]
+    fn a_license_key_is_read_trimmed() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var(LICENSE_KEY_ENV_VAR, "  license-key  ");
+        assert_eq!(license_key_from_env().as_deref(), Some("license-key"));
+        std::env::remove_var(LICENSE_KEY_ENV_VAR);
+    }
+
+    #[test]
+    fn a_license_key_of_only_spaces_is_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var(LICENSE_KEY_ENV_VAR, "   ");
+        assert_eq!(license_key_from_env(), None);
+        std::env::remove_var(LICENSE_KEY_ENV_VAR);
+    }
+
+    #[test]
+    fn the_name_checked_first_can_be_exported() {
+        // A POSIX shell rejects an identifier starting with a digit, so the
+        // name the examples tell a developer to export has to start with a
+        // letter or an underscore or it cannot be set on Linux or macOS.
+        let first = RESOURCE_KEY_ENV_VARS[0];
+        let start = first.chars().next().expect("a non-empty name");
+        assert!(
+            start == '_' || start.is_ascii_alphabetic(),
+            "{first} cannot be set with export"
+        );
     }
 
     #[test]

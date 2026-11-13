@@ -95,20 +95,20 @@ to run, so an exit code of 0 means it ran against a file.
 
 ### Paths and keys from the environment
 
-The examples read `51DEGREES_DD_PATH` and `51DEGREES_IPI_PATH` for a data file
-elsewhere, and the cloud examples read `51DEGREES_RESOURCE_KEY`, for which a
+The examples read `_51DEGREES_DD_PATH` and `_51DEGREES_IPI_PATH` for a data file
+elsewhere, and the cloud examples read `_51DEGREES_RESOURCE_KEY`, for which a
 key comes from the
 [Configurator](https://configure.51degrees.com/?utm_source=github&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=agents.md&utm_term=configure).
-These names start with a digit, so bash and sh refuse both `export
-51DEGREES_RESOURCE_KEY=...` and the `51DEGREES_RESOURCE_KEY=... cargo run`
-prefix. Use `env` there, and `$env:` in PowerShell.
+Every name starts with an underscore, because bash and sh refuse a name that
+starts with a digit, so `export` works in a shell and `$env:` in PowerShell.
 
 ```sh
-env 51DEGREES_RESOURCE_KEY=<key> cargo run -p device-detection-examples --bin dd-cloud-getting-started
+export _51DEGREES_RESOURCE_KEY=<key>
+cargo run -p device-detection-examples --bin dd-cloud-getting-started
 ```
 
 ```powershell
-$env:51DEGREES_RESOURCE_KEY = '<key>'
+$env:_51DEGREES_RESOURCE_KEY = '<key>'
 cargo run -p device-detection-examples --bin dd-cloud-getting-started
 ```
 
@@ -158,8 +158,26 @@ it. Nothing here reads the older `cxx/device-detection-data` and
 `cxx/ip-intelligence-data` folders. The submodule pointer
 records which C commit the crates build, and the nightly pipeline moves it
 with an update pull request when 51degrees-cxx changes. After a move, build
-and run `pwsh ./ci/check-native-symbols.ps1`, which fails when a common C
-function is missing from `ip-intelligence-sys/src/symbol_prefix.h`.
+and run `pwsh ./ci/check-native-symbols.ps1`, which fails when both C
+libraries define the same common C function, meaning 51degrees-cxx's
+`src/common/ipiSymbols.h` lacks it.
+
+Three crates compile in files from other 51Degrees repositories, as the other
+languages do. `derived-properties/vendor` is a submodule of
+[derived-properties](https://github.com/51Degrees/derived-properties), whose
+scripts the derived property element embeds and whose cases its tests run. It
+sits inside the crate's folder, so cargo packages the files the crate's
+`include` names from it. `javascript-templates` at the root is a submodule of
+[javascript-templates](https://github.com/51Degrees/javascript-templates), as
+in PHP and Go, and the JavaScript builder renders the copy of its
+`JavaScriptResource.mustache` committed in `javascript-builder/assets`, because
+cargo packages only the files inside a crate's folder.
+`ci/check-javascript-templates.ps1` fails when the copy differs from the
+submodule, so after the submodule moves, copy the template across in the same
+pull request. The IP Intelligence translation engines compile in the files of
+`cxx/data/ip-intelligence/Translations`, the data repository inside `cxx`, and
+their `build.rs` falls back to a copy inside the crate, which only a packaged
+crate has.
 
 ## Building and testing
 
@@ -189,7 +207,7 @@ CI builds with `RUSTFLAGS=-D warnings` and `RUSTDOCFLAGS=-D warnings`, so any
 warning fails the build. Match that locally before pushing.
 
 Each `-sys` `build.rs` resolves its C sources in this order: the
-`FIFTYONE_CXX_DIR` environment variable, pointing at a 51degrees-cxx checkout,
+`_51DEGREES_CXX_DIR` environment variable, pointing at a 51degrees-cxx checkout,
 then the `cxx` submodule, then the `cxx` folder inside the crate, which only a
 packaged crate has (see "Releasing to crates.io" below).
 
@@ -199,10 +217,10 @@ build and tests stay green without data. An example that cannot find its file
 runs the data repository's script for that one file, with the source
 `examples-51degrees-rust`, and fails with the command to run if it still
 cannot find it. To run them against another file,
-point the relevant variable at it: `51DEGREES_DD_PATH` for a Device Detection
-`.hash` file, `51DEGREES_IPI_PATH` for an IP Intelligence `.ipi` file. Live
+point the relevant variable at it: `_51DEGREES_DD_PATH` for a Device Detection
+`.hash` file, `_51DEGREES_IPI_PATH` for an IP Intelligence `.ipi` file. Live
 cloud tests are `#[ignore]`d and read a resource key from
-`51DEGREES_RESOURCE_KEY` (or the CI tiered names `_51DEGREES_RESOURCE_KEY_BESPOKE`
+`_51DEGREES_RESOURCE_KEY` (or the CI tiered names `_51DEGREES_RESOURCE_KEY_BESPOKE`
 then `_51DEGREES_RESOURCE_KEY_BASIC`).
 
 ## examples/
@@ -332,6 +350,18 @@ path. Each copy is ignored by git, listed in the crate manifest's `include`,
 and records the 51degrees-cxx commit in `cxx/SOURCE.txt`. A build in the
 workspace reads the submodule and never needs the copy.
 
+The IP Intelligence translation files are carried the same way.
+`ci/copy-translations.ps1` copies them from the data repository inside `cxx`
+into `ip-intelligence-translation/translations`, which is ignored by git and
+listed in the crate's `include`, and records the data commit in
+`translations/SOURCE.txt`. The derived property crate needs no copy, because
+its submodule is inside its folder, but the published crate has no git to say
+which commit its scripts came from, so
+`ci/record-derived-properties-commit.ps1` writes that commit to
+`derived-properties/SOURCE.txt`, which is ignored by git and listed in the
+crate's `include`. Its `build.rs` reads the commit from git where the
+submodule is checked out and from that file otherwise.
+
 ## CI gates
 
 - `pull-request.yml` runs fmt, build, test, clippy and doc on Windows, Linux
@@ -393,13 +423,10 @@ workspace reads the submodule and never needs the copy.
   Windows and macOS, then prints the crates a release would publish, on every
   PR into `main` or `rc`.
 - `utm-link-lint.yml` checks the UTM links described below, on every PR.
-- `mustache-drift.yml` guards the generated JavaScript resource template.
-  Push and pull request builds compare against a pinned upstream commit
-  rather than the branch, so a change upstream does not fail work here that
-  has nothing to do with it. The weekly schedule and a manual run still
-  compare against the branch, so a real drift is still reported. A refresh
-  moves the bundled asset and `UPSTREAM_PINNED_REF` to the same commit in one
-  pull request.
+- `javascript-templates-check.yml` fails when the template committed in
+  `javascript-builder/assets` differs from the `javascript-templates`
+  submodule, on every PR that touches either and on every push to `main` and
+  `rc`.
 - `dotnet-comparison.yml` runs the crates and the published .NET packages
   over the corpus in `parity/` and fails on any difference that
   `parity/allowed-differences.json` does not list with its reason. See
@@ -466,3 +493,11 @@ Compare match keys, never envelopes. The payload offsets and lengths are
 internal to the crate, so every field is read through its typed accessor,
 and the layout is specified at
 https://github.com/51Degrees/specifications/blob/main/did-specification/identifier-layout.md
+
+## Tests that fail on timing
+
+A test that fails on a time limit, a performance threshold or a timeout is
+fixed, not run again until it passes. Either the limit is set to fit the
+slowest runner the test runs on, with each runner's measurement behind it, or
+the reason it takes too long is found and fixed. A failure that comes and goes
+costs everyone who meets it the time to look into it.

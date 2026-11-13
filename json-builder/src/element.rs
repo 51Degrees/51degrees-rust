@@ -27,22 +27,29 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use fiftyone_pipeline_core::{
-    Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
-    PropertyValue, PropertyValueType, Result,
+    ElementData, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    PropertyMetaData, PropertyValue, PropertyValueType, Result,
 };
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 
 use crate::builder::JsonBuilderElementBuilder;
-use crate::constants::{JSON_BUILDER_ELEMENT_DATA_KEY, JSON_PROPERTY_KEY};
+use crate::constants::{JSON_BUILDER_ELEMENT_DATA_KEY, JSON_PROPERTY_KEY, NULL_REASON_SUFFIX};
 use crate::converter::JsonValueConverter;
 use crate::data::{JsonBuilderData, JSON_BUILDER_DATA_KEY};
 use crate::steps::{JsonBuilderContext, JsonBuilderSteps, PipelineConfig};
-use crate::value::JsonValue;
+use crate::value::{JsonObject, JsonValue};
+
+/// The key a WKT value's text is written under, being .NET's `WktString.Value`
+/// lowercased, as .NET's JSON builder writes it and the cloud service sends it.
+const WKT_VALUE_KEY: &str = "value";
 
 /// The message of the error processing gives when no Sequence element gave a
-/// sequence number. It starts with .NET's message and says where the
-/// Sequence element goes, as the specification asks.
-const SEQUENCE_NUMBER_NOT_PRESENT: &str = "The value for the 'sequence' parameter could not be found. A Sequence element needs to be placed before the JSON builder element in the pipeline. See https://51degrees.com/documentation/4.5/_services__cloud__error_messages.html?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=json-builder-src-element.rs&utm_term=sequence-number-not-present for more information.";
+/// sequence number. The
+/// [specification](https://github.com/51Degrees/specifications/blob/d72eb074/pipeline-specification/pipeline-elements/json-builder.md#sequence-number)
+/// gives this text and every language gives the same, so that the message
+/// reads the same whichever one a deployment uses.
+const SEQUENCE_NUMBER_NOT_PRESENT: &str = "The JSON Builder needs a sequence number. \
+     Place a Sequence Element before the JSON Builder in the Pipeline.";
 
 /// Serializes all element data in a flow data into a single JSON object.
 ///
@@ -101,11 +108,11 @@ const SEQUENCE_NUMBER_NOT_PRESENT: &str = "The value for the 'sequence' paramete
 /// the [`SequenceElement`], so put a Sequence element before the builder, as
 /// the web integration does. Without one, or when the Sequence element could
 /// not read the request's sequence, processing fails with
-/// [`Error::Pipeline`](fiftyone_pipeline_core::Error::Pipeline) and no JSON
-/// is written. The `query.sequence` evidence is not read, because without a
-/// Sequence element it holds the request's own text rather than a sequence
-/// number. [`json_for`](Self::json_for) writes JSON without one, taking the
-/// request as the first.
+/// [`Error::PipelineConfiguration`](fiftyone_pipeline_core::Error::PipelineConfiguration)
+/// and no JSON is written. The `query.sequence` evidence is not read,
+/// because without a Sequence element it holds the request's own text
+/// rather than a sequence number. [`json_for`](Self::json_for) writes JSON
+/// without one, taking the request as the first.
 ///
 /// # Example
 ///
@@ -227,8 +234,10 @@ impl JsonBuilderElement {
     /// builder first, in order, and then using the builder's own conversion.
     ///
     /// The builder's own conversion writes a string or JavaScript as a string,
-    /// a list of strings as an array, and a list of records as an array of
-    /// objects with lowercased keys.
+    /// a list of strings as an array, a list of records or of element data
+    /// as an array of objects with lowercased keys, where a property of
+    /// element data with no value is null with its reason, and a WKT value
+    /// as an object holding its text under `value`.
     pub fn to_json_value(&self, value: &PropertyValue) -> JsonValue {
         self.convert_by_caller(value)
             .unwrap_or_else(|| self.built_in_json_value(value))
@@ -266,10 +275,41 @@ impl JsonBuilderElement {
                     })
                     .collect(),
             ),
+            PropertyValue::WktString(text) => {
+                let mut object = JsonObject::new();
+                object.insert(WKT_VALUE_KEY, JsonValue::String(text.as_str().to_owned()));
+                JsonValue::Object(object)
+            }
+            PropertyValue::ElementDataList(items) => JsonValue::Array(
+                items
+                    .iter()
+                    .map(|item| JsonValue::Object(self.built_in_values(item)))
+                    .collect(),
+            ),
             // PropertyValue is non_exhaustive, so a variant added later is
             // written as null until it is given a form here.
             _ => JsonValue::Null,
         }
+    }
+
+    /// The values of one result in a list of element data, with each
+    /// property that has no value written as null with its reason.
+    fn built_in_values(&self, item: &dyn ElementData) -> JsonObject {
+        let mut values = JsonObject::new();
+        for name in item.keys() {
+            let name = name.to_lowercase();
+            match item.get(&name) {
+                Ok(value) => {
+                    values.insert(name, self.to_json_value(&value));
+                }
+                Err(no_value) => {
+                    let reason = format!("{name}{NULL_REASON_SUFFIX}");
+                    values.insert(name, JsonValue::Null);
+                    values.insert(reason, no_value.message);
+                }
+            }
+        }
+        values
     }
 
     /// Internal constructor used by the builder.
@@ -306,9 +346,7 @@ impl Default for JsonBuilderElement {
 impl FlowElement for JsonBuilderElement {
     fn process(&self, data: &mut FlowData) -> Result<()> {
         if Self::sequence_number(data).is_none() {
-            return Err(Error::Pipeline {
-                message: SEQUENCE_NUMBER_NOT_PRESENT.to_owned(),
-            });
+            return Err(Error::configuration(SEQUENCE_NUMBER_NOT_PRESENT));
         }
         let json = self.json_for(data);
 

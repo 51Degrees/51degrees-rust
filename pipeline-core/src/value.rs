@@ -29,6 +29,11 @@
 //! ([`crate::ElementData::get`]) self-describing and avoids reflection.
 
 use std::collections::BTreeMap;
+use std::fmt;
+use std::ops::Deref;
+use std::sync::Arc;
+
+use crate::element_data::ElementData;
 
 /// The declared type of a property's values, as carried in property metadata.
 ///
@@ -56,6 +61,11 @@ pub enum PropertyValueType {
     JavaScript,
     /// A list of key-value-pair collections.
     KeyValueList,
+    /// Text in the well-known text form of a geometry. See [`WktString`].
+    WktString,
+    /// A list of results, each read like an element's own data. The
+    /// property's item properties describe the values each one holds.
+    ElementDataList,
 }
 
 /// A weighted property value.
@@ -90,6 +100,98 @@ impl<T> WeightedValue<T> {
     }
 }
 
+/// Text in the well-known text (WKT) form of a geometry, such as
+/// `POLYGON((10 10,10 20,20 20,20 15,10 10))`, which the
+/// [value types specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/value-types.md#wkt)
+/// defines. An IP Intelligence engine gives its `Areas` property as one.
+///
+/// It reads as the text it holds, and the JSON builder writes it as an object
+/// holding the text under `value`, as .NET writes its `WktString`.
+///
+/// ```
+/// use fiftyone_pipeline_core::WktString;
+///
+/// let area = WktString::new("POINT(2 4)");
+/// assert_eq!(area, "POINT(2 4)");
+/// assert!(area.starts_with("POINT"));
+/// assert_eq!(area.to_string(), "POINT(2 4)");
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WktString(String);
+
+impl WktString {
+    /// A WKT value holding `text`, kept as it is given.
+    pub fn new(text: impl Into<String>) -> Self {
+        WktString(text.into())
+    }
+
+    /// The text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The text, taken out of the value.
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl Deref for WktString {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for WktString {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for WktString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<String> for WktString {
+    fn from(text: String) -> Self {
+        WktString(text)
+    }
+}
+
+impl From<&str> for WktString {
+    fn from(text: &str) -> Self {
+        WktString(text.to_owned())
+    }
+}
+
+impl From<WktString> for String {
+    fn from(value: WktString) -> Self {
+        value.0
+    }
+}
+
+impl PartialEq<str> for WktString {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl PartialEq<&str> for WktString {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<String> for WktString {
+    fn eq(&self, other: &String) -> bool {
+        &self.0 == other
+    }
+}
+
 /// A value populated by a flow element for one of its properties.
 ///
 /// The variants map onto the
@@ -104,8 +206,13 @@ impl<T> WeightedValue<T> {
 ///   variant (rather than a plain string) so the JSON and JavaScript builder
 ///   elements can recognize it without separate metadata.
 /// - [`PropertyValue::KeyValueList`] is the "array of key-value-pair
-///   collections" type, used where an element returns several sub-records (for
-///   example TAC lookup or hardware-profile lookup).
+///   collections" type, used where an element returns several sub-records,
+///   such as the weighted values of IP Intelligence.
+/// - [`PropertyValue::WktString`] is the WKT type, the text of a geometry such
+///   as an IP Intelligence area.
+/// - [`PropertyValue::ElementDataList`] is a list of results that are each
+///   read like an element's own data, so a value in one can be missing with
+///   a reason, such as the profiles a hardware profile lookup matched.
 ///
 /// `i64` and `f64` are used for the numeric types so that the full range of
 /// values seen in 51Degrees data files round-trips without loss.
@@ -134,14 +241,21 @@ pub enum PropertyValue {
     /// A list of key-value-pair collections, used to return multiple
     /// sub-records. Each entry is keyed and ordered by property name.
     KeyValueList(Vec<BTreeMap<String, PropertyValue>>),
+    /// Text in the well-known text form of a geometry. See [`WktString`].
+    WktString(WktString),
+    /// A list of results, each read like an element's own data, such as
+    /// the profiles a hardware profile lookup matched. The JSON builder
+    /// writes each as an object, in the way it writes an element's values.
+    ElementDataList(ElementDataList),
 }
 
 impl PropertyValue {
-    /// Borrow the value as a string slice if it is a [`PropertyValue::String`]
-    /// or [`PropertyValue::JavaScript`].
+    /// Borrow the value as a string slice if it is a [`PropertyValue::String`],
+    /// a [`PropertyValue::JavaScript`] or a [`PropertyValue::WktString`].
     pub fn as_str(&self) -> Option<&str> {
         match self {
             PropertyValue::String(s) | PropertyValue::JavaScript(s) => Some(s.as_str()),
+            PropertyValue::WktString(wkt) => Some(wkt.as_str()),
             _ => None,
         }
     }
@@ -185,6 +299,15 @@ impl PropertyValue {
             _ => None,
         }
     }
+
+    /// Borrow the value as a [`WktString`] if it is a
+    /// [`PropertyValue::WktString`].
+    pub fn as_wkt_string(&self) -> Option<&WktString> {
+        match self {
+            PropertyValue::WktString(wkt) => Some(wkt),
+            _ => None,
+        }
+    }
 }
 
 impl From<&str> for PropertyValue {
@@ -220,6 +343,95 @@ impl From<f64> for PropertyValue {
 impl From<Vec<String>> for PropertyValue {
     fn from(value: Vec<String>) -> Self {
         PropertyValue::StringList(value)
+    }
+}
+
+impl From<WktString> for PropertyValue {
+    fn from(value: WktString) -> Self {
+        PropertyValue::WktString(value)
+    }
+}
+
+impl From<ElementDataList> for PropertyValue {
+    fn from(value: ElementDataList) -> Self {
+        PropertyValue::ElementDataList(value)
+    }
+}
+
+/// The results held by [`PropertyValue::ElementDataList`], each read
+/// through [`ElementData`].
+///
+/// Two lists are equal when they hold as many results and each pair lists
+/// the same names in the same order, with the same value or the same
+/// reason for having none.
+#[derive(Clone, Default)]
+pub struct ElementDataList(Vec<Arc<dyn ElementData>>);
+
+impl ElementDataList {
+    /// Hold the results in the order given.
+    pub fn new(items: Vec<Arc<dyn ElementData>>) -> Self {
+        ElementDataList(items)
+    }
+
+    /// The results, in order.
+    pub fn iter(&self) -> impl Iterator<Item = &dyn ElementData> + '_ {
+        self.0.iter().map(|item| item.as_ref())
+    }
+
+    /// The number of results.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// True when there are no results.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+// The list is never changed once made and is read only through
+// `&dyn ElementData`, so a panic cannot leave it part changed.
+impl std::panic::UnwindSafe for ElementDataList {}
+impl std::panic::RefUnwindSafe for ElementDataList {}
+
+impl FromIterator<Arc<dyn ElementData>> for ElementDataList {
+    fn from_iter<I: IntoIterator<Item = Arc<dyn ElementData>>>(items: I) -> Self {
+        ElementDataList(items.into_iter().collect())
+    }
+}
+
+impl PartialEq for ElementDataList {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len()
+            && self
+                .iter()
+                .zip(other.iter())
+                .all(|(a, b)| same_values(a, b))
+    }
+}
+
+/// Whether two results list the same names in the same order, each with
+/// the same value or the same reason for having none.
+fn same_values(a: &dyn ElementData, b: &dyn ElementData) -> bool {
+    let names = a.keys();
+    names == b.keys() && names.iter().all(|name| a.get(name) == b.get(name))
+}
+
+impl fmt::Debug for ElementDataList {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.iter().map(Values)).finish()
+    }
+}
+
+/// One result's names and values, written by [`ElementDataList`]'s `Debug`.
+struct Values<'a>(&'a dyn ElementData);
+
+impl fmt::Debug for Values<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names = self.0.keys();
+        f.debug_map()
+            .entries(names.iter().map(|name| (name, self.0.get(name))))
+            .finish()
     }
 }
 
@@ -277,6 +489,70 @@ pub fn round_angle(value: f64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::element_data::MapElementData;
+
+    /// A result holding `name` with `value`.
+    fn result(name: &str, value: &str) -> Arc<dyn ElementData> {
+        Arc::new(MapElementData::new().set(name, value))
+    }
+
+    #[test]
+    fn element_data_lists_compare_their_values() {
+        let list = |values: &[&str]| -> ElementDataList {
+            values.iter().map(|value| result("vendor", value)).collect()
+        };
+        assert_eq!(list(&["Apple", "Samsung"]), list(&["Apple", "Samsung"]));
+        assert_ne!(list(&["Apple", "Samsung"]), list(&["Apple", "Google"]));
+        assert_ne!(list(&["Apple"]), list(&["Apple", "Samsung"]));
+        assert_ne!(
+            list(&["Apple"]),
+            ElementDataList::new(vec![result("model", "Apple")])
+        );
+        assert_eq!(ElementDataList::default(), list(&[]));
+        assert!(list(&[]).is_empty());
+        assert_eq!(list(&["Apple", "Samsung"]).len(), 2);
+    }
+
+    /// A call compiles only when `T` can be used inside
+    /// `std::panic::catch_unwind`, by value or by reference.
+    fn assert_unwind_safe<T: std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
+
+    #[test]
+    fn values_and_element_data_stay_unwind_safe() {
+        assert_unwind_safe::<ElementDataList>();
+        assert_unwind_safe::<PropertyValue>();
+        assert_unwind_safe::<MapElementData>();
+    }
+
+    #[test]
+    fn an_element_data_list_debugs_as_its_values() {
+        let value = PropertyValue::from(ElementDataList::new(vec![result("vendor", "Apple")]));
+        assert_eq!(
+            format!("{value:?}"),
+            "ElementDataList([{\"vendor\": Ok(String(\"Apple\"))}])"
+        );
+    }
+
+    #[test]
+    fn a_wkt_value_reads_as_its_text() {
+        let value = PropertyValue::from(WktString::new("POINT(2 4)"));
+        assert_eq!(value.as_str(), Some("POINT(2 4)"));
+        assert_eq!(
+            value.as_wkt_string().map(WktString::as_str),
+            Some("POINT(2 4)")
+        );
+        assert_eq!(PropertyValue::from("POINT(2 4)").as_wkt_string(), None);
+
+        let wkt = WktString::from("POINT(2 4)".to_owned());
+        let text: &str = "POINT(2 4)";
+        assert!(wkt == *text);
+        assert_eq!(wkt, text);
+        assert_eq!(wkt, text.to_owned());
+        assert_eq!(wkt.len(), 10);
+        assert_eq!(wkt.to_string(), text);
+        assert_eq!(String::from(wkt.clone()), text);
+        assert_eq!(wkt.into_string(), text);
+    }
 
     /// A stored Declination or Azimuth converted as the C library converts
     /// it, multiplying before dividing.

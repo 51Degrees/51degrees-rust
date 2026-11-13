@@ -169,9 +169,7 @@ fn web_pipeline(fail: bool) -> WebPipeline {
     .expect("web pipeline builds")
 }
 
-/// The session id the requests in these tests carry. Without one, the
-/// Sequence element the web pipeline adds creates a new id for each request,
-/// and the ETag is worked out from the evidence that id is added to.
+/// The session id the requests in these tests carry.
 const SESSION_ID: &str = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
 /// Evidence for a request from `user_agent` in the session [`SESSION_ID`].
@@ -609,27 +607,123 @@ fn etag_is_stable_and_present() {
 
     let etag_a = resp_a.header("ETag").unwrap();
     let etag_b = resp_b.header("ETag").unwrap();
-    // Same evidence => same ETag, and it is a quoted token.
+    // Same evidence => same ETag, and it is a weak entity tag holding 16 hex
+    // digits, because it stands for the evidence rather than the content
+    // (RFC 9110 section 8.8.3).
     assert_eq!(etag_a, etag_b);
-    assert!(etag_a.starts_with('"') && etag_a.ends_with('"'));
+    let digits = etag_a
+        .strip_prefix("W/\"")
+        .and_then(|rest| rest.strip_suffix('"'))
+        .unwrap_or_else(|| panic!("{etag_a} is not W/\"...\""));
+    assert_eq!(digits.len(), 16, "{etag_a}");
+    assert!(
+        digits
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        "{etag_a}"
+    );
 }
 
+/// RFC 9110 sections 8.8.3.2 and 13.1.2: `If-None-Match` takes the weak
+/// comparison, so the tag a `200` sent matches with or without `W/`, alone or
+/// in a list, as does `*`.
 #[test]
-fn a_request_without_a_session_id_gets_an_etag_of_its_own() {
-    // The Sequence element adds the session id it creates to the evidence,
-    // and the specification works the ETag out from all of the evidence the
-    // pipeline accepts, as .NET does.
+fn the_weak_etag_matches_in_every_form() {
     let web = web_pipeline(false);
     let options = EndpointOptions::new(web.vary_whitelist().clone());
-    let etag = || {
-        let evidence = Evidence::builder().add("header.user-agent", "abc").build();
-        let data = processed(web.pipeline(), evidence);
-        serve_json(&data, &TestRequest::default(), &options)
-            .header("ETag")
-            .expect("an ETag")
-            .to_owned()
+    let serve = |if_none_match: Option<&str>| {
+        let request = TestRequest {
+            headers: if_none_match
+                .map(|value| ("If-None-Match".to_owned(), value.to_owned()))
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        serve_javascript(
+            &processed(web.pipeline(), page_evidence("abc")),
+            &request,
+            &options,
+        )
     };
-    assert_ne!(etag(), etag());
+
+    let first = serve(None);
+    assert_eq!(first.status, WebResponse::STATUS_OK);
+    let etag = first
+        .header("ETag")
+        .expect("the 200 has an ETag")
+        .to_owned();
+    let strong = etag.strip_prefix("W/").expect("a weak ETag").to_owned();
+
+    for matching in [
+        etag.clone(),
+        strong.clone(),
+        format!("\"other\", {etag}"),
+        format!("W/\"other\", {strong}"),
+        "*".to_owned(),
+    ] {
+        let response = serve(Some(&matching));
+        assert_eq!(
+            response.status,
+            WebResponse::STATUS_NOT_MODIFIED,
+            "{matching}"
+        );
+        assert_eq!(response.header("ETag"), Some(etag.as_str()), "{matching}");
+    }
+    for other in ["W/\"other\"".to_owned(), format!("w/{strong}")] {
+        assert_eq!(
+            serve(Some(&other)).status,
+            WebResponse::STATUS_OK,
+            "{other}"
+        );
+    }
+}
+
+/// The Sequence element adds a new session id to the evidence of each request
+/// that has none, but the ETag is worked out from the evidence the request
+/// supplied. So two requests with the same evidence and no session id get the
+/// same tag, and the second, sending it back, gets a `304` from both
+/// endpoints.
+#[test]
+fn requests_without_a_session_id_get_the_same_etag_and_a_304() {
+    type Serve = fn(&FlowData, &dyn RequestData, &EndpointOptions) -> WebResponse;
+    let web = web_pipeline(false);
+    let options = EndpointOptions::new(web.vary_whitelist().clone());
+    let request = |if_none_match: Option<&str>| TestRequest {
+        headers: if_none_match
+            .map(|value| ("If-None-Match".to_owned(), value.to_owned()))
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    let evidence = || Evidence::builder().add("header.user-agent", "abc").build();
+    let endpoints: [(&str, Serve); 2] = [("javascript", serve_javascript), ("json", serve_json)];
+
+    for (name, serve) in endpoints {
+        let first_data = processed(web.pipeline(), evidence());
+        let second_data = processed(web.pipeline(), evidence());
+        let session_id = |data: &FlowData| {
+            data.evidence()
+                .get("query.session-id")
+                .map(str::to_owned)
+                .expect("the Sequence element added a session id")
+        };
+        assert_ne!(session_id(&first_data), session_id(&second_data), "{name}");
+
+        let first = serve(&first_data, &request(None), &options);
+        assert_eq!(first.status, WebResponse::STATUS_OK, "{name}");
+        let etag = first
+            .header("ETag")
+            .expect("the 200 has an ETag")
+            .to_owned();
+        let second = serve(&second_data, &request(Some(&etag)), &options);
+
+        assert_eq!(
+            second.status,
+            WebResponse::STATUS_NOT_MODIFIED,
+            "{name} {etag}"
+        );
+        assert_eq!(second.header("ETag"), Some(etag.as_str()), "{name}");
+    }
 }
 
 #[test]
@@ -738,6 +832,57 @@ fn non_matching_if_none_match_returns_200() {
     }
 }
 
+/// RFC 9110 section 13.1.2: a field that is neither `*` nor a list of entity
+/// tags makes the condition true, so both endpoints give `200` with the body,
+/// even when the field holds the tag. A field over two lines is read whole
+/// (section 5.3), so the tag on the second line matches, and a second line
+/// that is not a tag stops the first matching.
+#[test]
+fn an_if_none_match_that_is_not_a_list_of_tags_gets_the_body() {
+    let web = web_pipeline(false);
+    let options = EndpointOptions::new(web.vary_whitelist().clone());
+    let data = processed(web.pipeline(), page_evidence("abc"));
+    let etag = compute_etag(&data, data.evidence_key_filter());
+    let cases = [
+        (vec![format!("{etag}, other")], false),
+        (vec![format!("\"other\" {etag}")], false),
+        (vec![format!("other, {etag}")], false),
+        (vec![format!("\"oth er\", {etag}")], false),
+        (vec![format!("{etag}, *")], false),
+        (vec![format!("\"other\",\t{etag}")], true),
+        (vec!["\"other\"".to_owned(), etag.clone()], true),
+        (vec![etag.clone(), "other".to_owned()], false),
+    ];
+    for (lines, matches) in &cases {
+        for method in [None, Some("POST")] {
+            let request = TestRequest {
+                headers: lines
+                    .iter()
+                    .map(|line| ("If-None-Match".to_owned(), line.clone()))
+                    .collect(),
+                method: method.map(str::to_owned),
+                ..Default::default()
+            };
+            let status = match (matches, method) {
+                (false, _) => WebResponse::STATUS_OK,
+                (true, None) => WebResponse::STATUS_NOT_MODIFIED,
+                (true, Some(_)) => WebResponse::STATUS_PRECONDITION_FAILED,
+            };
+            for response in [
+                serve_json(&data, &request, &options),
+                serve_javascript(&data, &request, &options),
+            ] {
+                assert_eq!(response.status, status, "{lines:?} {method:?}");
+                assert_eq!(
+                    response.body.is_empty(),
+                    status != WebResponse::STATUS_OK,
+                    "{lines:?} {method:?}"
+                );
+            }
+        }
+    }
+}
+
 /// RFC 9110 section 13.1.2: a matching `If-None-Match` gets a `304` on `GET`
 /// or `HEAD` and a `412` on any other method. Method names are case-sensitive
 /// (section 9.1), so `get` is not `GET`. A request that gives no method is
@@ -839,7 +984,7 @@ fn a_412_without_the_extra_headers_carries_none() {
 
 /// Set in the environment of the second process the ETag test starts, which
 /// then prints its ETag rather than comparing.
-const ETAG_CHILD_VARIABLE: &str = "FIFTYONE_WEB_ETAG_CHILD";
+const ETAG_CHILD_VARIABLE: &str = "_51DEGREES_WEB_ETAG_CHILD";
 
 #[test]
 fn the_same_evidence_gives_the_same_etag_in_another_process() {

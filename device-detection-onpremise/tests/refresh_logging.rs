@@ -25,8 +25,12 @@
 //! the error. Kept in its own test binary because a logger is installed once
 //! for the whole process.
 //!
-//! The test needs the Lite file `51DEGREES_DD_PATH` names and skips with a
+//! The test needs the Lite file `_51DEGREES_DD_PATH` names and skips with a
 //! note when it is missing.
+
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -108,12 +112,12 @@ fn refresh_fails(engine: &Arc<DeviceDetectionOnPremiseEngine>, path: &Path, case
 /// same time.
 #[test]
 fn a_refresh_that_fails_logs_one_error_and_keeps_the_data() {
-    let Some(lite) = std::env::var("51DEGREES_DD_PATH")
+    let Some(lite) = crate::deprecated_names::var("_51DEGREES_DD_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())
     else {
-        eprintln!("skipping the refresh logging test: set 51DEGREES_DD_PATH to the Lite file");
+        eprintln!("skipping the refresh logging test: set _51DEGREES_DD_PATH to the Lite file");
         return;
     };
     let _ = log::set_logger(&LOGGER);

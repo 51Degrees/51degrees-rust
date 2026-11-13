@@ -1,8 +1,8 @@
 [package]
 name = "fiftyone-ip-intelligence-onpremise"
 version = "4.5.2"
-description = "IP Intelligence and IP geolocation for Rust. Finds an IP address's likely location (country, region, town, and coordinates), connection type, and network, reading a data file on your server. This on-premise engine is built over the safe fiftyone-native wrapper. An alternative to MaxMind and IPinfo."
-keywords = ["ip-geolocation", "geoip", "ip-intelligence", "ip-lookup", "asn"]
+description = "On-premise IP Intelligence and IP geolocation engine for Rust. Reads a 51Degrees IP Intelligence data file on your server to find an IP address's likely location (country, region, town, and coordinates), connection type, and network. Built on the 51Degrees Pipeline API, over the safe fiftyone-native wrapper. An alternative to MaxMind and IPinfo."
+keywords = ["ip-geolocation", "geoip", "asn", "maxmind", "ipinfo"]
 categories = ["network-programming", "web-programming"]
 edition.workspace = true
 rust-version.workspace = true
@@ -22,7 +22,6 @@ fiftyone-ip-intelligence-shared = { version = "=4.5.2", path = "../ip-intelligen
 # never collide in an IP Intelligence binary.
 fiftyone-native = { version = "=4.5.2", path = "../native", default-features = false, features = ["ipi"] }
 arc-swap.workspace = true
-chrono.workspace = true
 # Logs a configuration setting that has no effect through the log facade,
 # which does nothing until the application installs a logger.
 log = "0.4"
@@ -31,6 +30,8 @@ log = "0.4"
 # Compresses a data file the way the Distributor serves it, for the update
 # tests.
 flate2.workspace = true
+# The data file date tests build and compare header dates.
+chrono.workspace = true
 
 [package.metadata.docs.rs]
 # Build the documentation on docs.rs with every feature enabled, so the

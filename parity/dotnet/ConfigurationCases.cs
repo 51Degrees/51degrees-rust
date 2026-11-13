@@ -42,6 +42,7 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using FiftyOne.DeviceDetection.Hash.Engine.OnPremise.FlowElements;
+using FiftyOne.DeviceDetection.PropertyKeyed.FlowElements;
 using FiftyOne.DeviceDetection.RobotsTxt.FlowElements;
 using FiftyOne.IpIntelligence.Engine.OnPremise.FlowElements;
 using FiftyOne.IpIntelligence.Translation.FlowElements;
@@ -188,6 +189,9 @@ namespace FiftyOne.Parity
             services.AddTransient<JsonBuilderElementBuilder>();
             services.AddTransient<DeviceDetectionHashEngineBuilder>();
             services.AddTransient<RobotsTxtEngineBuilder>();
+            services.AddTransient<TacEngineBuilder>();
+            services.AddTransient<NativeEngineBuilder>();
+            services.AddTransient<PropertyKeyedDeviceEngineBuilder>();
             services.AddTransient<IpiOnPremiseEngineBuilder>();
             services.AddTransient<CountriesTranslationEngineBuilder>();
             services.AddTransient<CountryCodeTranslationEngineBuilder>();
@@ -232,12 +236,25 @@ namespace FiftyOne.Parity
             if (element is ShareUsageElement)
             {
                 result["settings"] = DescribeShareUsage(element);
-                var filter = new JsonObject();
-                foreach (var key in UsageFilterKeys)
-                {
-                    filter[key] = element.EvidenceKeyFilter.Include(key);
-                }
-                result["evidenceFilter"] = filter;
+                // The rules for what is shared, then the evidence the element
+                // accepts, which is none.
+                result["evidenceFilter"] = DescribeFilter(
+                    (FiftyOne.Pipeline.Core.Data.IEvidenceKeyFilter)Field(
+                        element, "_sharedEvidenceFilter"));
+                result["acceptedEvidence"] = DescribeFilter(
+                    element.EvidenceKeyFilter);
+            }
+            return result;
+        }
+
+        // The filter's answer for each of the keys in UsageFilterKeys.
+        private static JsonObject DescribeFilter(
+            FiftyOne.Pipeline.Core.Data.IEvidenceKeyFilter filter)
+        {
+            var result = new JsonObject();
+            foreach (var key in UsageFilterKeys)
+            {
+                result[key] = filter.Include(key);
             }
             return result;
         }

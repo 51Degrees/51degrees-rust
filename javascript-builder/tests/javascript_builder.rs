@@ -694,6 +694,9 @@ fn without_a_sequence_element_the_evidence_is_not_used() {
         .to_owned();
     assert_eq!(rendered_session_id(&js), "");
     assert!(js.contains("var sequence = 1;"));
+    // With no JSON builder data the script still has a usable object to work
+    // from.
+    assert!(js.contains("var json = {};"));
 }
 
 #[test]

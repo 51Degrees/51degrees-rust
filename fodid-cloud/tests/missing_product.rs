@@ -64,8 +64,9 @@ impl log::Log for TestLogger {
 
 static LOGGER: TestLogger = TestLogger;
 
-const MISSING_PRODUCT_ERROR: &str =
-    "ERROR Aspect properties could not be loaded for FodIdCloudEngine - 'fodid'";
+const MISSING_PRODUCT_WARNING: &str = "WARN Aspect properties could not be loaded for \
+     FodIdCloudEngine - 'fodid'. The resource key does not include access to any \
+     properties under 'fodid'.";
 
 /// Install the logger, wait for any other test to finish and clear the
 /// records it left.
@@ -135,9 +136,10 @@ fn process(pipeline: &Arc<Pipeline>) {
 }
 
 /// A resource key without the 51Did product gives empty metadata, and the
-/// error is logged once, however many requests follow.
+/// missing product is logged once as a warning, however many requests
+/// follow.
 #[test]
-fn a_resource_key_without_the_product_logs_one_error_and_gives_empty_metadata() {
+fn a_resource_key_without_the_product_logs_one_warning_and_gives_empty_metadata() {
     let _serial = start();
     let (pipeline, fodid) = pipeline(CloudRequestEngine::builder().resource_key("rk"));
     assert_eq!(take_logged(), Vec::<String>::new());
@@ -145,7 +147,7 @@ fn a_resource_key_without_the_product_logs_one_error_and_gives_empty_metadata() 
     for _ in 0..3 {
         process(&pipeline);
     }
-    assert_eq!(take_logged(), vec![MISSING_PRODUCT_ERROR]);
+    assert_eq!(take_logged(), vec![MISSING_PRODUCT_WARNING]);
     assert!(fodid.has_loaded_properties());
     assert!(fodid.properties_loaded());
     assert!(fodid.properties().is_empty());

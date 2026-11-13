@@ -119,21 +119,20 @@ impl DeviceDetectionOnPremiseEngineBuilder {
     /// This sizes the file-handle pool and the caches the file-backed
     /// collections use under the [`PerformanceProfile::LowMemory`],
     /// [`PerformanceProfile::Balanced`] and [`PerformanceProfile::Default`]
-    /// profiles. If more threads than this share the engine, they wait for
-    /// each other on the pool. [`PerformanceProfile::HighPerformance`] holds
-    /// the data set in memory, so detection never waits on the pool, but it
-    /// still opens one handle to the data file for each concurrent operation
-    /// and keeps them open until the data set is freed, so a refresh holds
-    /// that many for the old data set and as many again for the new one.
+    /// profiles, to at most 64. If more threads than that share the engine,
+    /// they wait for each other on the pool.
+    /// [`PerformanceProfile::HighPerformance`] holds in memory everything
+    /// detection walks, so detection never waits on the pool, and with some
+    /// properties named it reads the values of the others through the pool.
+    /// It opens one handle to the data file for each concurrent operation and
+    /// keeps them open until the data set is freed, so a refresh holds that
+    /// many for the old data set and as many again for the new one.
     /// [`PerformanceProfile::InMemory`] opens none.
     ///
-    /// Unset, it is the number of processors, held at the most the profile's
-    /// caches take (22 under `Balanced` and `Default`), as
-    /// [`default_concurrency`] gives, where the C library's own is 10. So
-    /// under `LowMemory` and `HighPerformance` the engine keeps a handle open
-    /// for each processor, 64 on a machine with 64 processors. A larger value
-    /// named here is passed on, and the build fails if the profile's caches
-    /// cannot take it.
+    /// Unset, it is the number of processors, as [`default_concurrency`]
+    /// gives, under every profile. Any value loads, because a cache with
+    /// fewer entries than the concurrency squared is split into fewer parts,
+    /// and one with fewer entries than the concurrency is grown to it.
     pub fn concurrency(mut self, concurrency: u16) -> Self {
         self.options.concurrency = Some(concurrency);
         self
@@ -191,6 +190,12 @@ impl DeviceDetectionOnPremiseEngineBuilder {
     /// the data file made there, so an update can replace the data file itself,
     /// and with [`Self::create_temp_data_copy`] every profile does. Defaults to
     /// the system's temporary folder, [`std::env::temp_dir`].
+    ///
+    /// The engine removes each copy it reads once it no longer reads it, and
+    /// leaves any other copy of the data file in the folder, such as one a
+    /// process that stopped left behind. .NET, through the C library, removes
+    /// those after each load from a copy other than on Apple systems, and on
+    /// Linux skips any that a process has open.
     pub fn temp_dir_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.temp_dir = Some(path.into());
         self
@@ -250,6 +255,42 @@ impl DeviceDetectionOnPremiseEngineBuilder {
     {
         for name in names {
             self = self.property(name);
+        }
+        self
+    }
+
+    /// Index the profiles holding each value of the property named `name`
+    /// when the data set loads, adding to any already named, so
+    /// [`DeviceDetectionOnPremiseEngine::profile_ids_for_property_value`]
+    /// finds them without reading every profile.
+    ///
+    /// The name is matched exactly, including case, and a name the data file
+    /// has no property of indexes nothing. A property is indexed whether or
+    /// not the engine is restricted to it, and a refresh indexes the same
+    /// properties from the new data file. Nothing is indexed unless it is
+    /// named here, whatever the performance profile, and a property that is
+    /// not indexed is looked up by reading every profile.
+    ///
+    /// To look up hardware profiles by TAC or native model name, name `TAC`
+    /// and `NativeModel`. The TAC property is only in the TAC data file, and
+    /// NativeModel is in the Enterprise and TAC data files.
+    pub fn indexed_property(mut self, name: impl Into<String>) -> Self {
+        let name = name.into();
+        if !self.options.indexed_properties.contains(&name) {
+            self.options.indexed_properties.push(name);
+        }
+        self
+    }
+
+    /// Index the profiles holding each value of the named properties, adding
+    /// to any already named. See [`Self::indexed_property`].
+    pub fn indexed_properties<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        for name in names {
+            self = self.indexed_property(name);
         }
         self
     }
@@ -358,7 +399,6 @@ impl DeviceDetectionOnPremiseEngineBuilder {
                 copy,
                 manager,
                 self.profile,
-                self.requested_properties,
                 data_file_config,
                 self.data_source_tier,
                 options,

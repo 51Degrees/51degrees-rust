@@ -31,11 +31,14 @@
 //! update service touches them from background threads while the owning engine
 //! reads them on the request path.
 
+use std::collections::hash_map::RandomState;
 use std::fmt::Debug;
+use std::hash::BuildHasher;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
+use fiftyone_pipeline_core::redact::{mask, redact_with};
 use fiftyone_pipeline_core::{Error, Result};
 
 /// The default polling interval, 30 minutes.
@@ -93,7 +96,10 @@ pub const DEFAULT_IDENTIFIER: &str = "Default";
 /// the `If-Modified-Since` header are on, update-on-startup is off, the
 /// content is assumed gzip-compressed, and a licence key is required before
 /// automatic updates or update on startup run.
-#[derive(Debug, Clone)]
+///
+/// The `Debug` form shows each licence key, in the list and in the update
+/// URL, by its last 4 characters only.
+#[derive(Clone)]
 pub struct DataFileConfiguration {
     /// Identifier used to tell apart the data files of a multi-file engine.
     /// Ignored by single-file engines.
@@ -190,6 +196,40 @@ impl DataFileConfiguration {
              Lite file.",
             wanted.join(" and ")
         )))
+    }
+}
+
+impl Debug for DataFileConfiguration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let keys = &self.data_update_license_keys;
+        let masked_keys: Vec<String> = keys.iter().map(String::as_str).map(mask).collect();
+        let masked_url = self
+            .data_update_url
+            .as_deref()
+            .map(|url| redact_with(url, keys));
+        f.debug_struct("DataFileConfiguration")
+            .field("identifier", &self.identifier)
+            .field("data_file_path", &self.data_file_path)
+            .field("data_update_url", &masked_url)
+            .field("automatic_updates_enabled", &self.automatic_updates_enabled)
+            .field(
+                "file_system_watcher_enabled",
+                &self.file_system_watcher_enabled,
+            )
+            .field("update_on_startup", &self.update_on_startup)
+            .field("polling_interval_seconds", &self.polling_interval_seconds)
+            .field("max_randomisation_seconds", &self.max_randomisation_seconds)
+            .field("decompress_content", &self.decompress_content)
+            .field("verify_md5", &self.verify_md5)
+            .field("verify_modified_since", &self.verify_modified_since)
+            .field("data_update_license_keys", &masked_keys)
+            .field("url_formatter", &self.url_formatter)
+            .field("data_download_type", &self.data_download_type)
+            .field(
+                "license_key_required_for_updates",
+                &self.license_key_required_for_updates,
+            )
+            .finish()
     }
 }
 
@@ -343,14 +383,20 @@ struct DataFileState {
     /// service can tell whether an engine recorded one during a refresh.
     #[cfg(feature = "data-update")]
     published_changes: u64,
-    /// When an updated data file is expected to be available. Polling does not
-    /// start before this time.
+    /// When an updated data file is expected to be available. The scheduled
+    /// poll after registration, and after a scheduled poll or
+    /// `check_for_update` applies an update, waits for it.
     update_available: Option<DateTime<Utc>>,
     /// The last-modified time of the file the service most recently applied,
     /// used to debounce duplicate file-system-watcher events. Only the
     /// data-update service touches it, so it is gated on that feature.
     #[cfg(feature = "data-update")]
     last_applied_modified: Option<DateTime<Utc>>,
+    /// The last-modified time of the file a file-system-watcher event last
+    /// took, so a further event for the same write is told apart from a file
+    /// that is no newer.
+    #[cfg(feature = "data-update")]
+    last_watched_modified: Option<DateTime<Utc>>,
     /// True once the file has been registered with a data update service.
     registered: bool,
 }
@@ -448,6 +494,36 @@ impl AspectEngineDataFile {
         self.lock().update_available = None;
     }
 
+    /// Record the dates a data file's header holds, each as a year, month
+    /// and day, once an engine has loaded the file, as .NET's engines do
+    /// after each load. The publish date, at midnight UTC, goes in the
+    /// update service's `If-Modified-Since` header. The next update date, at
+    /// noon UTC and a random minute as .NET gives it, is when the update
+    /// service next polls. A date the header does not hold, or that is not a
+    /// day of the calendar, is cleared, so no date of data no longer loaded
+    /// is kept.
+    pub fn record_header_dates(
+        &self,
+        published: Option<(i32, u32, u32)>,
+        next_update: Option<(i32, u32, u32)>,
+    ) {
+        let published = published.and_then(|(year, month, day)| {
+            Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).single()
+        });
+        match published {
+            Some(published) => self.set_data_published(published),
+            None => self.clear_data_published(),
+        }
+        let next = next_update.and_then(|(year, month, day)| {
+            Utc.with_ymd_and_hms(year, month, day, NEXT_UPDATE_HOUR, random_minute(), 0)
+                .single()
+        });
+        match next {
+            Some(next) => self.set_update_available_time(next),
+            None => self.clear_update_available_time(),
+        }
+    }
+
     /// True once this file has been registered with a data update service.
     pub fn is_registered(&self) -> bool {
         self.lock().registered
@@ -472,6 +548,20 @@ impl AspectEngineDataFile {
         self.lock().last_applied_modified = Some(when);
     }
 
+    /// The last-modified time of the file a file-system-watcher event last
+    /// took.
+    #[cfg(feature = "data-update")]
+    pub(crate) fn last_watched_modified(&self) -> Option<DateTime<Utc>> {
+        self.lock().last_watched_modified
+    }
+
+    /// Record the last-modified time of the file a file-system-watcher event
+    /// has just taken.
+    #[cfg(feature = "data-update")]
+    pub(crate) fn set_last_watched_modified(&self, when: DateTime<Utc>) {
+        self.lock().last_watched_modified = Some(when);
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, DataFileState> {
         // The lock guards only small `Copy` timestamps, so a poisoned lock
         // (from a panic while holding it) cannot leave inconsistent state.
@@ -480,9 +570,64 @@ impl AspectEngineDataFile {
     }
 }
 
+/// The hour, UTC, of the day the data file header gives for the next data
+/// file, at which the update service is told to expect it.
+const NEXT_UPDATE_HOUR: u32 = 12;
+
+/// The number of minutes in an hour, the range the minute of
+/// [`NEXT_UPDATE_HOUR`] is chosen from.
+const MINUTES_PER_HOUR: u64 = 60;
+
+/// A minute of the hour chosen at random, so that servers loading the same
+/// data file do not all start to poll at once.
+fn random_minute() -> u32 {
+    let random = RandomState::new().hash_one(std::time::SystemTime::now());
+    u32::try_from(random % MINUTES_PER_HOUR).unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The publish date is recorded at midnight UTC and the next update date
+    /// at noon UTC and a whole minute, as .NET's engines record them, and a
+    /// date the header lacks, or one that is not a day of the calendar,
+    /// clears the date recorded before.
+    #[test]
+    fn header_dates_are_recorded_as_dotnet_records_them() {
+        use chrono::Timelike;
+
+        let file = AspectEngineDataFile::new(DataFileConfiguration::builder("d.dat").build());
+        file.record_header_dates(Some((2001, 2, 3)), Some((2001, 2, 4)));
+        assert_eq!(
+            file.data_published(),
+            Utc.with_ymd_and_hms(2001, 2, 3, 0, 0, 0).single()
+        );
+        let next = file.update_available_time().expect("no next update date");
+        assert_eq!(
+            next.date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2001, 2, 4).unwrap()
+        );
+        assert_eq!((next.hour(), next.second(), next.nanosecond()), (12, 0, 0));
+
+        file.record_header_dates(None, Some((2001, 2, 30)));
+        assert!(file.data_published().is_none());
+        assert!(file.update_available_time().is_none());
+    }
+
+    /// The minute of the next update date is drawn at random, so servers
+    /// loading the same data file poll at different times. 200 draws from 60
+    /// minutes give about 58 different minutes.
+    #[test]
+    fn the_next_update_minute_is_drawn_at_random() {
+        let minutes: std::collections::BTreeSet<u32> = (0..200).map(|_| random_minute()).collect();
+        assert!(
+            minutes.len() > 20,
+            "{} different minutes in 200: {minutes:?}",
+            minutes.len()
+        );
+        assert!(minutes.iter().all(|minute| *minute < 60));
+    }
 
     #[test]
     fn builder_uses_documented_defaults() {
@@ -624,6 +769,41 @@ mod tests {
         );
         let none = AspectEngineDataFile::new(DataFileConfiguration::builder("d.dat").build());
         assert!(none.formatted_update_url().is_none());
+    }
+
+    /// The `Debug` form, which a log line or a panic message can carry, shows
+    /// each licence key by its last 4 characters only, in the list of keys and
+    /// in the update URL. The builder and the data file show the
+    /// configuration the same way.
+    #[test]
+    fn the_debug_form_shows_only_the_last_four_characters_of_each_key() {
+        let builder = DataFileConfiguration::builder("d.dat")
+            .data_update_url("https://example.invalid/d?LicenseKeys=QRSTUVWXYZ012345")
+            .data_update_license_keys(["ABCDEFGHIJKLMNOP"]);
+        let configuration = builder.clone().build();
+        let file = AspectEngineDataFile::new(configuration.clone());
+        for shown in [
+            format!("{builder:?}"),
+            format!("{configuration:?}"),
+            format!("{file:?}"),
+        ] {
+            assert!(
+                !shown.contains("ABCDEFGHIJKLMNOP"),
+                "a key was shown: {shown}"
+            );
+            assert!(
+                !shown.contains("QRSTUVWXYZ012345"),
+                "the key in the URL was shown: {shown}"
+            );
+            assert!(
+                shown.contains("\"************MNOP\""),
+                "the masked key was lost: {shown}"
+            );
+            assert!(
+                shown.contains("LicenseKeys=************2345"),
+                "the masked URL was lost: {shown}"
+            );
+        }
     }
 
     #[test]

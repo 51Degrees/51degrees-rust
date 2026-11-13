@@ -42,7 +42,19 @@
 //!   [`fiftyoneDegreesHashBalancedTempConfig`]).
 //! - **Manager initialization** ([`fiftyoneDegreesHashInitManagerFromFile`] and
 //!   [`fiftyoneDegreesHashInitManagerFromMemory`], plus the matching size
-//!   helpers).
+//!   helpers, and the `...WithIndexedProperties` forms of both, which index
+//!   the profiles holding each value of the properties named).
+//! - **Reload** ([`fiftyoneDegreesHashReloadManagerFromOriginalFile`],
+//!   [`fiftyoneDegreesHashReloadManagerFromFile`] and
+//!   [`fiftyoneDegreesHashReloadManagerFromMemory`], with
+//!   [`fiftyoneDegreesShimHashReloadManagerFromMemoryCopy`] reloading from a
+//!   copy the new data set frees), which replace a manager's data set in
+//!   place.
+//! - **Profiles by property value**
+//!   ([`fiftyoneDegreesHashGetProfileIdsForPropertyAndValue`], with
+//!   [`fiftyoneDegreesShimHashGetIndexedPropertyCount`] and
+//!   [`fiftyoneDegreesShimHashGetIndexedPropertyName`] reading back the
+//!   names a data set indexed).
 //! - **Results** ([`fiftyoneDegreesResultsHashCreate`], the three process
 //!   methods [`fiftyoneDegreesResultsHashFromEvidence`],
 //!   [`fiftyoneDegreesResultsHashFromUserAgent`] and
@@ -54,10 +66,11 @@
 //! - **Data set access** ([`fiftyoneDegreesDataSetHashGet`],
 //!   [`fiftyoneDegreesDataSetHashRelease`] and
 //!   [`fiftyoneDegreesResourceManagerFree`], re-exported from the common crate).
-//! - **Metadata enumeration** through the small property and evidence key
-//!   helpers ([`fiftyoneDegreesShimHashGetRequiredPropertyCount`] and friends)
+//! - **Metadata enumeration** through the small property helpers
+//!   ([`fiftyoneDegreesShimHashGetRequiredPropertyCount`] and friends)
 //!   compiled from the crate's C shim. These read fields buried in the nested
 //!   data set structures so the Rust side need not mirror those private layouts.
+//!   The evidence keys come from [`fiftyoneDegreesHashGetEvidenceKeys`].
 //!
 //! The deeply nested data set and results structures are exposed as opaque
 //! pointer types. Only [`ConfigHash`] and its base structures, which a caller
@@ -91,9 +104,9 @@ use std::os::raw::{c_char, c_int, c_void};
 // import surface. These are the exact types the Hash entry points consume.
 pub use fiftyone_common_sys::{
     fiftyoneDegreesExceptionGetMessage, fiftyoneDegreesFree, fiftyoneDegreesMemoryStandardFree,
-    fiftyoneDegreesResourceManagerFree, fiftyoneDegreesStatusGetMessage, EvidenceKeyValuePair,
-    EvidenceKeyValuePairArray, EvidencePrefix, Exception, PropertiesAvailable, PropertiesRequired,
-    ResourceHandle, ResourceManager, StatusCode,
+    fiftyoneDegreesResourceManagerFree, fiftyoneDegreesStatusGetMessage, Date,
+    EvidenceKeyValuePair, EvidenceKeyValuePairArray, EvidencePrefix, Exception,
+    PropertiesAvailable, PropertiesRequired, ResourceHandle, ResourceManager, StatusCode,
 };
 
 // ---------------------------------------------------------------------------
@@ -216,8 +229,8 @@ pub struct ConfigDeviceDetection {
     /// and in the C library's [header length limit] documentation, which
     /// also gives the memory a larger limit costs.
     ///
-    /// [the default is defined]: https://github.com/51Degrees/51degrees-cxx/blob/e866f6d3cea936587790f87967eff7863778b30e/src/dd/config-dd.h#L100-L106
-    /// [header length limit]: https://github.com/51Degrees/51degrees-cxx/blob/e866f6d3cea936587790f87967eff7863778b30e/docs/dd/README.md#header-length-limit
+    /// [the default is defined]: https://github.com/51Degrees/51degrees-cxx/blob/cfad8978827292b97ad08f306891edea09ece304/src/dd/config-dd.h#L100-L107
+    /// [header length limit]: https://github.com/51Degrees/51degrees-cxx/blob/cfad8978827292b97ad08f306891edea09ece304/docs/dd/README.md#header-length-limit
     pub max_matched_user_agent_length: usize,
     /// True if a result with no matched node should still be considered valid.
     pub allow_unmatched: bool,
@@ -264,6 +277,12 @@ pub struct ConfigHash {
     pub use_predictive_graph: bool,
     /// True if the route through each graph should be traced (debug only).
     pub trace_route: bool,
+    /// True to hold in memory, when some but not every property is
+    /// required, only the values of the required properties and the strings
+    /// those values use, and to read the other values and strings from the
+    /// data file with no cache. True in
+    /// [`fiftyoneDegreesHashHighPerformanceConfig`] only.
+    pub load_required_properties_only: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -275,8 +294,9 @@ pub struct ConfigHash {
 /// Mirrors the deeply nested `fiftyoneDegreesDataSetHash` from `hash.h`. The
 /// internal layout is intentionally hidden. The only operation defined on the
 /// pointer here is to release it with [`fiftyoneDegreesDataSetHashRelease`].
-/// Property and evidence key enumeration is provided through the shim helpers
-/// rather than by reaching into this structure from Rust.
+/// Properties are enumerated through the shim helpers, and the evidence keys
+/// through [`fiftyoneDegreesHashGetEvidenceKeys`], rather than by reaching
+/// into this structure from Rust.
 #[repr(C)]
 pub struct DataSetHash {
     _private: [u8; 0],
@@ -385,6 +405,125 @@ extern "C" {
         size: std::os::raw::c_long,
         exception: *mut Exception,
     ) -> StatusCode;
+
+    /// Initializes `manager` as [`fiftyoneDegreesHashInitManagerFromFile`]
+    /// does, and indexes the profiles holding each value of the properties
+    /// named in `indexed_properties`, so that
+    /// [`fiftyoneDegreesHashGetProfileIdsForPropertyAndValue`] finds them
+    /// without reading every profile. A property is indexed whether or not
+    /// it is required, and whatever the configuration. A reload indexes the
+    /// same names again. Names are matched exactly and copied. Null names
+    /// and repeats are ignored, and a name the data file has no property of
+    /// indexes nothing. Null, or only null names, indexes none, as the plain
+    /// function does.
+    ///
+    /// # Safety
+    /// As [`fiftyoneDegreesHashInitManagerFromFile`], and
+    /// `indexed_properties` must be null or point to
+    /// `indexed_properties_count` pointers, each null or a null terminated
+    /// string.
+    pub fn fiftyoneDegreesHashInitManagerFromFileWithIndexedProperties(
+        manager: *mut ResourceManager,
+        config: *mut ConfigHash,
+        properties: *mut PropertiesRequired,
+        file_name: *const c_char,
+        indexed_properties: *const *const c_char,
+        indexed_properties_count: c_int,
+        exception: *mut Exception,
+    ) -> StatusCode;
+
+    /// Initializes `manager` as [`fiftyoneDegreesHashInitManagerFromMemory`]
+    /// does, and indexes the properties named in `indexed_properties` as
+    /// [`fiftyoneDegreesHashInitManagerFromFileWithIndexedProperties`] does.
+    ///
+    /// # Safety
+    /// As [`fiftyoneDegreesHashInitManagerFromMemory`], and
+    /// `indexed_properties` must be null or point to
+    /// `indexed_properties_count` pointers, each null or a null terminated
+    /// string.
+    pub fn fiftyoneDegreesHashInitManagerFromMemoryWithIndexedProperties(
+        manager: *mut ResourceManager,
+        config: *mut ConfigHash,
+        properties: *mut PropertiesRequired,
+        memory: *mut c_void,
+        size: std::os::raw::c_long,
+        indexed_properties: *const *const c_char,
+        indexed_properties_count: c_int,
+        exception: *mut Exception,
+    ) -> StatusCode;
+
+    /// Reloads the data set `manager` holds from the data file it was
+    /// initialized from, with the configuration and the property names of
+    /// the data set in use, indexing the properties that data set indexed.
+    /// The data set it replaces is freed when the last reference to it is
+    /// released. Any status but success leaves the data set in use.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager that no other reload is
+    /// using at the same time. `exception` must be valid.
+    pub fn fiftyoneDegreesHashReloadManagerFromOriginalFile(
+        manager: *mut ResourceManager,
+        exception: *mut Exception,
+    ) -> StatusCode;
+
+    /// Reloads the data set `manager` holds from the data file at
+    /// `file_name`, as [`fiftyoneDegreesHashReloadManagerFromOriginalFile`]
+    /// does.
+    ///
+    /// # Safety
+    /// As [`fiftyoneDegreesHashReloadManagerFromOriginalFile`], and
+    /// `file_name` must be a valid null terminated path.
+    pub fn fiftyoneDegreesHashReloadManagerFromFile(
+        manager: *mut ResourceManager,
+        file_name: *const c_char,
+        exception: *mut Exception,
+    ) -> StatusCode;
+
+    /// Reloads the data set `manager` holds from the `length` bytes at
+    /// `source`, as [`fiftyoneDegreesHashReloadManagerFromOriginalFile`]
+    /// does. The new data set reads the bytes where they lie, and frees them
+    /// when it is freed only when the configuration of the data set in use
+    /// has [`free_data`](ConfigBase::free_data) set.
+    ///
+    /// [`fiftyoneDegreesShimHashReloadManagerFromMemoryCopy`] sets that flag
+    /// and leaves it set, and every reload copies the configuration of the
+    /// data set in use, so after a reload through the shim this function
+    /// frees the bytes it is given.
+    ///
+    /// # Safety
+    /// As [`fiftyoneDegreesHashReloadManagerFromOriginalFile`], and `source`
+    /// must point to `length` readable bytes that outlive the new data set.
+    /// The caller must not own `source` when the manager has reloaded through
+    /// [`fiftyoneDegreesShimHashReloadManagerFromMemoryCopy`].
+    pub fn fiftyoneDegreesHashReloadManagerFromMemory(
+        manager: *mut ResourceManager,
+        source: *mut c_void,
+        length: std::os::raw::c_long,
+        exception: *mut Exception,
+    ) -> StatusCode;
+
+    /// Sets the ids of the profiles that hold the value `value_name` of the
+    /// property `property_name` in `profile_ids`, at most `length` of them,
+    /// and returns how many profiles hold it. When that is more than
+    /// `length` only the first `length` are set, so a larger array is needed
+    /// for the rest. Null `profile_ids` sets none and only counts them.
+    /// Both names are matched exactly, and the ids are in the order of the
+    /// data file, which is ascending profile id. A property named to index
+    /// when the data set was initialized is found from the index, and any
+    /// other by reading every profile, with the same ids.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. `property_name` and
+    /// `value_name` must be null terminated strings. `profile_ids` must be
+    /// null or point to `length` writable ids. `exception` must be valid.
+    pub fn fiftyoneDegreesHashGetProfileIdsForPropertyAndValue(
+        manager: *mut ResourceManager,
+        property_name: *const c_char,
+        value_name: *const c_char,
+        profile_ids: *mut u32,
+        length: u32,
+        exception: *mut Exception,
+    ) -> u32;
 
     /// Allocates a results structure referencing the data set in `manager`. The
     /// returned pointer must be freed with [`fiftyoneDegreesResultsHashFree`].
@@ -506,6 +645,23 @@ extern "C" {
         exception: *mut Exception,
     ) -> usize;
 
+    /// Writes the script the client runs for `body`, a value of the
+    /// `JavascriptHardwareProfile` property, into `buffer` and returns the
+    /// number of characters the script needs, not counting the null
+    /// terminator. The script declares the `profileIds` array the body fills,
+    /// runs the body, then writes the ids to the `51D_ProfileIds` cookie. A
+    /// null buffer only finds that length, and a buffer one longer holds the
+    /// whole script. A null body is an empty one.
+    ///
+    /// # Safety
+    /// `body` must be null or a null terminated string, and `buffer` must be
+    /// null or point to `length` writable bytes.
+    pub fn fiftyoneDegreesHashGetHardwareProfileScript(
+        body: *const c_char,
+        buffer: *mut c_char,
+        length: usize,
+    ) -> usize;
+
     /// Writes a JSON document of all available property values into `buffer` and
     /// returns the number of characters available.
     ///
@@ -536,6 +692,67 @@ extern "C" {
         exception: *mut Exception,
     ) -> *mut c_char;
 
+    /// Reads the match metrics of the results, taken across every result,
+    /// into the output pointers. The results hold one result for each
+    /// component, and the walk of a component's graph sets its result's
+    /// metrics, so any graph not yet walked is walked first, which can read
+    /// the data file. `method` receives the highest method any result used,
+    /// and the difference, drift, iterations and matched-node count are each
+    /// the sum of every result's. Each is zero, and the method
+    /// [`HashMatchMethod::None`], when `results` is null, holds no result or
+    /// a walk fails, which sets `exception`. Any output pointer may be null
+    /// to skip that metric.
+    ///
+    /// # Safety
+    /// `results` must be an initialized Hash results structure or null. Each
+    /// non-null output pointer and `exception` must be writable.
+    pub fn fiftyoneDegreesResultsHashGetMatchMetrics(
+        results: *mut ResultsHash,
+        method: *mut HashMatchMethod,
+        difference: *mut i32,
+        drift: *mut i32,
+        iterations: *mut i32,
+        matched_nodes: *mut i32,
+        exception: *mut Exception,
+    );
+
+    /// Reads the match metrics of the single result at `result_index` into
+    /// the output pointers, as [`fiftyoneDegreesResultsHashGetMatchMetrics`]
+    /// does for every result, and returns true. Returns false, giving zeros
+    /// and the method [`HashMatchMethod::None`], when `results` is null, the
+    /// index is not that of a result or a walk fails, which sets `exception`.
+    ///
+    /// # Safety
+    /// As for [`fiftyoneDegreesResultsHashGetMatchMetrics`].
+    pub fn fiftyoneDegreesResultsHashGetMatchMetricsForResult(
+        results: *mut ResultsHash,
+        result_index: u32,
+        method: *mut HashMatchMethod,
+        difference: *mut i32,
+        drift: *mut i32,
+        iterations: *mut i32,
+        matched_nodes: *mut i32,
+        exception: *mut Exception,
+    ) -> bool;
+
+    /// Returns the matched User-Agent of the result at `result_index`, being
+    /// the evidence value its component was matched from with each character
+    /// the match did not use replaced by `_`. Any graph not yet walked is
+    /// walked first, which can read the data file. Null when `results` is
+    /// null, the index is not that of a result, a walk fails, which sets
+    /// `exception`, or the result records none, which it does only when the
+    /// update matched User-Agent option is on.
+    ///
+    /// # Safety
+    /// `results` must be an initialized Hash results structure or null, and
+    /// `exception` must be writable. The string stays valid until the results
+    /// are populated again or freed.
+    pub fn fiftyoneDegreesResultsHashGetMatchedUserAgent(
+        results: *mut ResultsHash,
+        result_index: u32,
+        exception: *mut Exception,
+    ) -> *const c_char;
+
     /// Returns a safe reference to the Hash data set managed by `manager`. The
     /// reference must be released with [`fiftyoneDegreesDataSetHashRelease`].
     ///
@@ -549,10 +766,35 @@ extern "C" {
     /// # Safety
     /// `data_set` must come from [`fiftyoneDegreesDataSetHashGet`].
     pub fn fiftyoneDegreesDataSetHashRelease(data_set: *mut DataSetHash);
+
+    /// Writes the evidence keys `data_set` reads into `buffer`, with
+    /// `separator` between them, and returns the number of characters the
+    /// keys and separators need, not counting the null terminator. A null
+    /// buffer only finds that length, and a buffer one longer holds them all.
+    /// The keys are each header's `header.` and `query.` keys, with `HTTP_`
+    /// before the name when the configuration's
+    /// [`uses_upper_prefixed_headers`](ConfigBase::uses_upper_prefixed_headers)
+    /// is true, then, when its
+    /// [`process_special_evidence`](ConfigDeviceDetection::process_special_evidence)
+    /// is true, a `cookie.` and a `query.` key for each property the evidence
+    /// can override and the keys of the device id, the high entropy values,
+    /// the structured User-Agent and the profile ids. A comma suits as the
+    /// separator, as no header or property name holds one.
+    ///
+    /// # Safety
+    /// `data_set` must come from [`fiftyoneDegreesDataSetHashGet`] and not yet
+    /// be released. `buffer` must be null or point to `length` writable bytes,
+    /// and `separator` must be a null terminated string.
+    pub fn fiftyoneDegreesHashGetEvidenceKeys(
+        data_set: *mut DataSetHash,
+        buffer: *mut c_char,
+        length: usize,
+        separator: *const c_char,
+    ) -> usize;
 }
 
 // ---------------------------------------------------------------------------
-// Property and evidence key enumeration shim (src/shim.c)
+// Property enumeration shim (src/shim.c)
 // ---------------------------------------------------------------------------
 
 extern "C" {
@@ -591,26 +833,46 @@ extern "C" {
         property_name: *const c_char,
     ) -> c_int;
 
-    /// Returns the number of HTTP header evidence keys in the data set managed
-    /// by `manager`, or zero if no data set is available.
+    /// Returns the required property index for `property_name` in
+    /// `data_set`, found ignoring case, or -1 when the property is not one of
+    /// the required properties. It takes no reference on the data set and
+    /// writes no shared memory.
     ///
     /// # Safety
-    /// `manager` must be an initialized Hash manager.
-    pub fn fiftyoneDegreesShimHashGetEvidenceKeyCount(manager: *mut ResourceManager) -> u32;
+    /// `data_set` must be held, by a reference from
+    /// [`fiftyoneDegreesDataSetHashGet`] not yet released or by results not
+    /// yet freed (see [`fiftyoneDegreesShimHashResultsGetDataSet`]).
+    /// `property_name` must be a valid null terminated string.
+    pub fn fiftyoneDegreesShimHashDataSetGetRequiredPropertyIndexFromName(
+        data_set: *mut DataSetHash,
+        property_name: *const c_char,
+    ) -> c_int;
 
-    /// Writes the name of the HTTP header evidence key at `header_index` into
-    /// `buffer` as a null terminated string and returns the number of
-    /// characters written, excluding the terminator.
+    /// Returns the data set `results` hold a reference to, which is released
+    /// when the results are freed. It takes no reference of its own.
     ///
     /// # Safety
-    /// `manager` must be an initialized Hash manager. `buffer` must point to
-    /// `length` writable bytes.
-    pub fn fiftyoneDegreesShimHashGetEvidenceKey(
+    /// `results` must come from [`fiftyoneDegreesResultsHashCreate`] and not
+    /// yet be freed.
+    pub fn fiftyoneDegreesShimHashResultsGetDataSet(results: *mut ResultsHash) -> *mut DataSetHash;
+
+    /// Reloads the data set `manager` holds from a copy of the `length` bytes
+    /// at `data`, as [`fiftyoneDegreesHashReloadManagerFromMemory`] does,
+    /// with the copy made by the C library's allocator and freed with the new
+    /// data set, as the C++ engine's `refreshData` makes it. The caller keeps
+    /// nothing. Any status but success leaves the data set in use. When the C
+    /// library cannot allocate the new data set itself the copy is not freed.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager that no other reload is
+    /// using at the same time. `data` must point to `length` readable bytes,
+    /// which are read only during the call. `exception` must be valid.
+    pub fn fiftyoneDegreesShimHashReloadManagerFromMemoryCopy(
         manager: *mut ResourceManager,
-        header_index: u32,
-        buffer: *mut c_char,
-        length: usize,
-    ) -> usize;
+        data: *const c_void,
+        length: std::os::raw::c_long,
+        exception: *mut Exception,
+    ) -> StatusCode;
 
     /// Writes the data set's name (its tier, for example `Lite`, `Enterprise`
     /// or `TAC`) into `buffer` as a null terminated string and returns the
@@ -626,60 +888,30 @@ extern "C" {
         length: usize,
     ) -> usize;
 
-    /// Writes the date the data file was published, from its header, into
-    /// `*year`, `*month` and `*day` and returns 1, or 0 when no data set is
-    /// available.
+    /// Sets `*date` to the date the data file was published, from its
+    /// header, and returns true when that date is valid, as
+    /// `fiftyoneDegreesDateIsValid` in `date.h` decides. Otherwise sets
+    /// `*date` to zeros and returns false.
     ///
     /// # Safety
-    /// `manager` must be an initialized Hash manager. Each output pointer must
-    /// be null or point to a writable `i32`.
-    pub fn fiftyoneDegreesShimHashGetDataSetPublished(
-        manager: *mut ResourceManager,
-        year: *mut i32,
-        month: *mut i32,
-        day: *mut i32,
-    ) -> c_int;
+    /// `manager` must be an initialized Hash manager and `date` must point to
+    /// a writable [`Date`].
+    pub fn fiftyoneDegreesHashGetPublished(manager: *mut ResourceManager, date: *mut Date) -> bool;
 
-    /// Writes the date the next data file is expected, from the data file
-    /// header, into `*year`, `*month` and `*day` and returns 1, or 0 when no
-    /// data set is available.
+    /// Sets `*date` to the date the next data file is expected, from the
+    /// data file header, and returns true when that date is valid, as
+    /// `fiftyoneDegreesDateIsValid` in `date.h` decides. Otherwise sets
+    /// `*date` to zeros and returns false.
     ///
     /// # Safety
-    /// `manager` must be an initialized Hash manager. Each output pointer must
-    /// be null or point to a writable `i32`.
-    pub fn fiftyoneDegreesShimHashGetDataSetNextUpdate(
-        manager: *mut ResourceManager,
-        year: *mut i32,
-        month: *mut i32,
-        day: *mut i32,
-    ) -> c_int;
+    /// `manager` must be an initialized Hash manager and `date` must point to
+    /// a writable [`Date`].
+    pub fn fiftyoneDegreesHashGetNextUpdate(manager: *mut ResourceManager, date: *mut Date)
+        -> bool;
 
     /// Returns the size of a Hash data file's header in bytes, being how much
     /// of a data file the C library compares to find a copy of it to reuse.
     pub fn fiftyoneDegreesShimHashGetHeaderSize() -> usize;
-
-    /// Reads the match metrics of the results into the output pointers and
-    /// returns 1, or returns 0 when `results` is null or a graph cannot be
-    /// walked. Any graph not yet walked is walked first, as the walks set the
-    /// metrics, so this can read the data file. The results hold one result
-    /// for each component, each from the header that matched it. As in the C++
-    /// results, `method` receives the highest match-method enum value of any
-    /// result (0 None, 1 Performance, 2 Combined, 3 Predictive), and the
-    /// difference, drift, iterations and matched-node count are summed across
-    /// the results. With no results every metric is zero. Any output pointer
-    /// may be null to skip that metric. See `src/shim.c`.
-    ///
-    /// # Safety
-    /// `results` must be an initialized Hash results structure. Each non-null
-    /// output pointer must be writable.
-    pub fn fiftyoneDegreesShimHashGetResultMetrics(
-        results: *mut ResultsHash,
-        method: *mut i32,
-        difference: *mut i32,
-        drift: *mut i32,
-        iterations: *mut i32,
-        matched_nodes: *mut i32,
-    ) -> c_int;
 
     /// Returns the number of results, one for each component, or zero when
     /// `results` is null. See `src/shim.c`.
@@ -688,53 +920,14 @@ extern "C" {
     /// `results` must be an initialized Hash results structure or null.
     pub fn fiftyoneDegreesShimHashGetResultCount(results: *mut ResultsHash) -> u32;
 
-    /// Reads the match metrics of the single result at `result_index` into the
-    /// output pointers and returns 1, or returns 0 when the index is out of
-    /// range or a graph cannot be walked. Any graph not yet walked is walked
-    /// first, so this can read the data file. Any output pointer may be null
-    /// to skip that metric. See `src/shim.c`.
+    /// Returns the number of components whose graph the results have still
+    /// to walk, or zero when `results` is null. With no properties named as
+    /// the data set was created, the first read of one of a component's
+    /// properties walks that component's graph. See `src/shim.c`.
     ///
     /// # Safety
-    /// `results` must be an initialized Hash results structure or null. Each
-    /// non-null output pointer must be writable.
-    pub fn fiftyoneDegreesShimHashGetResultMetricsAt(
-        results: *mut ResultsHash,
-        result_index: u32,
-        method: *mut i32,
-        difference: *mut i32,
-        drift: *mut i32,
-        iterations: *mut i32,
-        matched_nodes: *mut i32,
-    ) -> c_int;
-
-    /// Writes the matched User-Agent of the result at `result_index` into
-    /// `buffer` as a null terminated string and returns the number of
-    /// characters written, excluding the terminator. Returns zero when the
-    /// index is out of range, a graph cannot be walked or the result records
-    /// no matched User-Agent, and cuts the value short when the buffer is too
-    /// small. Any graph not yet walked is walked first, so this can read the
-    /// data file. See `src/shim.c`.
-    ///
-    /// # Safety
-    /// `results` must be an initialized Hash results structure. `buffer` must
-    /// point to `length` writable bytes.
-    pub fn fiftyoneDegreesShimHashGetMatchedUserAgent(
-        results: *mut ResultsHash,
-        result_index: u32,
-        buffer: *mut c_char,
-        length: usize,
-    ) -> usize;
-
-    /// Returns the number of handles in the file pool of the data set
-    /// managed by `manager` when any of its collections reads from the data
-    /// file after it is loaded, or zero when the whole data set is held in
-    /// memory. A read that finds every handle in use fails rather than
-    /// waiting for one, so this is how many calls can read the data file at
-    /// once. See `src/shim.c`.
-    ///
-    /// # Safety
-    /// `manager` must be an initialized Hash manager.
-    pub fn fiftyoneDegreesShimHashGetFileHandleCount(manager: *mut ResourceManager) -> u16;
+    /// `results` must be an initialized Hash results structure or null.
+    pub fn fiftyoneDegreesShimHashGetPendingGraphCount(results: *mut ResultsHash) -> u32;
 
     /// Returns the number of handles to the data file that the data set
     /// managed by `manager` opened when it loaded, which stay open until the
@@ -746,6 +939,26 @@ extern "C" {
     /// # Safety
     /// `manager` must be an initialized Hash manager.
     pub fn fiftyoneDegreesShimHashGetFilePoolSize(manager: *mut ResourceManager) -> u16;
+
+    /// Returns the size of the C `fiftyoneDegreesConfigHash`, which
+    /// [`ConfigHash`] must equal.
+    pub fn fiftyoneDegreesShimHashGetConfigSize() -> usize;
+
+    /// Sets `strings` and `values` to the C library's type names of the
+    /// strings and values collections of the data set managed by `manager`,
+    /// and returns 1, or returns 0 when there is no data set.
+    /// `CollectionMemory` holds the whole collection in memory and
+    /// `CollectionHeld` only what the required properties read. The names
+    /// are constants of the C library. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager, and `strings` and
+    /// `values` writable.
+    pub fn fiftyoneDegreesShimHashGetCollectionTypeNames(
+        manager: *mut ResourceManager,
+        strings: *mut *const c_char,
+        values: *mut *const c_char,
+    ) -> c_int;
 }
 
 // ---------------------------------------------------------------------------
@@ -786,7 +999,8 @@ pub const SHIM_VALUE_DESCRIPTION: c_int = 1;
 pub const SHIM_VALUE_URL: c_int = 2;
 
 /// Takes one string of a property value from
-/// [`fiftyoneDegreesShimHashGetDataFilePropertyValues`]. `field` is one of the
+/// [`fiftyoneDegreesShimHashGetDataFilePropertyValues`] or
+/// [`fiftyoneDegreesShimHashGetResultValues`]. `field` is one of the
 /// `SHIM_VALUE_` constants and `value` a null terminated string valid only
 /// for the call. `context` is the pointer the caller passed.
 pub type ShimValueStringCallback =
@@ -808,6 +1022,16 @@ pub const SHIM_FIND_FOUND: c_int = 1;
 /// property has no value with the name.
 pub const SHIM_FIND_NOT_FOUND: c_int = 2;
 
+/// Returned by [`fiftyoneDegreesShimHashGetResultValues`] when the values
+/// cannot be read.
+pub const SHIM_VALUES_FAILED: c_int = 0;
+/// Returned by [`fiftyoneDegreesShimHashGetResultValues`] when it gave every
+/// value the results hold for the property, of which there can be none.
+pub const SHIM_VALUES_READ: c_int = 1;
+/// Returned by [`fiftyoneDegreesShimHashGetResultValues`] when the results
+/// hold no value for the property.
+pub const SHIM_VALUES_NONE: c_int = 2;
+
 extern "C" {
     /// Returns the number of properties the data file defines, including
     /// those the data set was not created with, or zero when no data set is
@@ -819,8 +1043,9 @@ extern "C" {
 
     /// Reads the fields of the data file property at `property_index` that
     /// are not strings and returns 1, or returns 0 when the index is out of
-    /// range or the property or its name cannot be read, the name being read
-    /// to find whether the data set was created with the property.
+    /// range or the property, its name or its default value cannot be read,
+    /// the name being read to find whether the data set was created with the
+    /// property.
     /// `value_type` is the C library's property value type, `available` is 1
     /// when the data set was created with the property, `required_index` is
     /// the index the results getters take for it or -1 for none,
@@ -930,6 +1155,54 @@ extern "C" {
         context: *mut c_void,
     ) -> c_int;
 
+    /// Returns the number of properties the data set indexes the profiles of
+    /// by value, which is the number of distinct names given to
+    /// [`fiftyoneDegreesHashInitManagerFromFileWithIndexedProperties`] or
+    /// [`fiftyoneDegreesHashInitManagerFromMemoryWithIndexedProperties`],
+    /// including any the data file has no property of. Returns zero when none
+    /// were named or no data set is available. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager.
+    pub fn fiftyoneDegreesShimHashGetIndexedPropertyCount(manager: *mut ResourceManager) -> u32;
+
+    /// Writes the name at `name_index` among those the data set indexes, in
+    /// the order they were given, into `buffer`, as much as fits, and returns
+    /// its full length, or [`SHIM_STRING_FAILED`] when the index is out of
+    /// range or no data set is available. See `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized Hash manager. `buffer` must point to
+    /// `length` writable bytes.
+    pub fn fiftyoneDegreesShimHashGetIndexedPropertyName(
+        manager: *mut ResourceManager,
+        name_index: u32,
+        buffer: *mut c_char,
+        length: usize,
+    ) -> usize;
+
+    /// Calls `callback` with `context`, [`SHIM_VALUE_NAME`] and each value the
+    /// results hold for the property at `required_property_index`, in order,
+    /// and returns [`SHIM_VALUES_READ`]. These are the values the C++
+    /// `ResultsHash::getValuesInternal` in 51degrees-cxx reads, and the
+    /// matched profile can hold none. A value with no string is left out.
+    /// Returns [`SHIM_VALUES_NONE`], giving nothing, when
+    /// [`fiftyoneDegreesResultsHashGetHasValues`] finds the results hold no
+    /// value for the property, or [`SHIM_VALUES_FAILED`] when the values
+    /// cannot be read, with `exception` set when the C library set it. See
+    /// `src/shim.c`.
+    ///
+    /// # Safety
+    /// `results` must be valid and hold a detection, `exception` must be
+    /// valid, and `context` must be what `callback` expects.
+    pub fn fiftyoneDegreesShimHashGetResultValues(
+        results: *mut ResultsHash,
+        required_property_index: c_int,
+        callback: ShimValueStringCallback,
+        context: *mut c_void,
+        exception: *mut Exception,
+    ) -> c_int;
+
     /// Returns the number of components the data set lists, or zero when no
     /// data set is available. See `src/shim.c`.
     ///
@@ -996,7 +1269,7 @@ mod tests {
 
     /// Optional path to the Lite Hash data file, injected by the build script
     /// when the file has been downloaded into the checkout.
-    const LITE_DATA_FILE: Option<&str> = option_env!("51DEGREES_DD_PATH");
+    const LITE_DATA_FILE: Option<&str> = option_env!("_51DEGREES_DD_PATH");
 
     /// A representative desktop Chrome on Windows user agent.
     const DESKTOP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
@@ -1051,6 +1324,36 @@ mod tests {
                 "high performance config loads the strings collection in memory"
             );
         }
+    }
+
+    /// Only the HighPerformance configuration holds only what the required
+    /// properties read.
+    #[test]
+    fn only_high_performance_loads_the_required_properties_only() {
+        // Safety: each global is an initialized `ConfigHash` the C library
+        // defines, and reading a field of it is a plain read.
+        let flags = unsafe {
+            [
+                fiftyoneDegreesHashInMemoryConfig.load_required_properties_only,
+                fiftyoneDegreesHashHighPerformanceConfig.load_required_properties_only,
+                fiftyoneDegreesHashLowMemoryConfig.load_required_properties_only,
+                fiftyoneDegreesHashBalancedConfig.load_required_properties_only,
+                fiftyoneDegreesHashBalancedTempConfig.load_required_properties_only,
+                fiftyoneDegreesHashDefaultConfig.load_required_properties_only,
+            ]
+        };
+        assert_eq!(flags, [false, true, false, false, false, false]);
+    }
+
+    /// [`ConfigHash`] is the size of the C structure it is passed as. A C
+    /// field added in padding leaves the size as it was, which
+    /// `fiftyone-native`'s tests of the HighPerformance profile catch for
+    /// `load_required_properties_only`.
+    #[test]
+    fn config_hash_has_the_size_of_the_c_structure() {
+        // Safety: the shim reads no state and takes no arguments.
+        let size = unsafe { fiftyoneDegreesShimHashGetConfigSize() };
+        assert_eq!(std::mem::size_of::<ConfigHash>(), size);
     }
 
     /// Full smoke test: initialize a manager from the Lite data file, run one
@@ -1118,9 +1421,17 @@ mod tests {
                 property_count > 0,
                 "the Lite data set should expose properties"
             );
-            let evidence_count = fiftyoneDegreesShimHashGetEvidenceKeyCount(&mut manager);
+            let data_set = fiftyoneDegreesDataSetHashGet(&mut manager);
+            assert!(!data_set.is_null(), "the data set should be available");
+            let keys_length = fiftyoneDegreesHashGetEvidenceKeys(
+                data_set,
+                std::ptr::null_mut(),
+                0,
+                c",".as_ptr(),
+            );
+            fiftyoneDegreesDataSetHashRelease(data_set);
             assert!(
-                evidence_count > 0,
+                keys_length > 0,
                 "the Lite data set should expose evidence keys"
             );
 

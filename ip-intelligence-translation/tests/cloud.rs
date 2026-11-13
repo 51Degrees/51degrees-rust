@@ -75,8 +75,9 @@ const SIX: [(&str, PropertyValueType); 6] = [
 const IP_PRODUCT: &str = r#""ip":{"DataTier":"CloudV4","Properties":[
     {"Name":"RegisteredName","Type":"String"}]}"#;
 
-const NOT_GRANTED: &str = "ERROR Aspect properties could not be loaded for \
-     CloudCountriesTranslationEngine - 'countrynamestranslated'";
+const NOT_GRANTED: &str = "WARN Aspect properties could not be loaded for \
+     CloudCountriesTranslationEngine - 'countrynamestranslated'. The resource key does not \
+     include access to any properties under 'countrynamestranslated'.";
 
 /// Records at warning level or above from the translation crates, the cloud
 /// request engine and the aspect data, as "LEVEL message".
@@ -525,17 +526,17 @@ fn an_entry_the_metadata_does_not_list_is_kept_and_logged() {
 }
 
 /// .NET reads the section with a dictionary's indexer, so a response
-/// without it fails with that indexer's message, leaving the data empty.
+/// without it fails with that indexer's message. The cloud aspect engine
+/// specification says a response with no section for the engine's data key
+/// leaves the data without values and raises no error, so the engine here
+/// records no error.
 #[test]
-fn a_response_without_the_section_is_an_error_leaving_the_data_empty() {
+fn a_response_without_the_section_leaves_the_data_empty_with_no_error() {
     let _serial = start();
     let pipeline = granted(r#"{"ip":{"RegisteredName":"Example"}}"#);
     let data = process(&pipeline);
 
-    assert_eq!(
-        countries_errors(&data),
-        ["The given key 'countrynamestranslated' was not present in the dictionary."]
-    );
+    assert!(data.errors().is_empty(), "{:?}", data.errors());
     let translated = data.get(COUNTRY_NAMES_TRANSLATED_KEY).unwrap();
     assert_eq!(translated.keys(), Vec::<String>::new());
     assert!(!translated.country_codes_geographical_all().has_value());
@@ -633,6 +634,10 @@ fn a_failed_cloud_request_marks_the_data() {
     assert_eq!(take_logged(), Vec::<String>::new());
 }
 
+/// A key without the product gives empty metadata and is logged once, as a
+/// warning. Each response then has no section for the engine, which leaves
+/// the data empty with no error, and each read gives the product reason and
+/// logs nothing, as the cloud aspect engine specification says.
 #[test]
 fn a_key_without_the_product_has_no_properties_and_logs_once() {
     let _serial = start();
@@ -644,23 +649,44 @@ fn a_key_without_the_product_has_no_properties_and_logs_once() {
     let engine = countries_engine(&request);
     assert!(engine.has_loaded_properties());
     assert!(engine.properties().is_empty());
+    let expected = engine.missing_property_reason("CountryCodesGeographicalAll");
     assert_eq!(
-        engine
-            .missing_property_reason("CountryCodesGeographicalAll")
-            .reason,
+        expected.reason,
         MissingPropertyReason::ProductNotAccessibleWithResourceKey
     );
     assert_eq!(take_logged(), [NOT_GRANTED]);
 
-    // Processing logs nothing more.
+    // Processing and reading log nothing more and record no error.
     let pipeline = Pipeline::builder()
         .add_element(request)
         .add_element(engine)
         .suppress_process_exceptions(true)
         .build()
         .unwrap();
-    process(&pipeline);
-    assert_eq!(take_logged(), Vec::<String>::new());
+    for request in 1..=3 {
+        let data = process(&pipeline);
+        assert!(
+            data.errors().is_empty(),
+            "request {request}: {:?}",
+            data.errors()
+        );
+        let translated = data.get(COUNTRY_NAMES_TRANSLATED_KEY).unwrap();
+        assert_eq!(translated.keys(), Vec::<String>::new());
+        assert_eq!(
+            translated
+                .country_codes_geographical_all()
+                .no_value_message(),
+            Some(expected.description.as_str())
+        );
+        assert_eq!(
+            translated
+                .get("CountryCodesGeographicalAll")
+                .unwrap_err()
+                .message,
+            expected.description
+        );
+        assert_eq!(take_logged(), Vec::<String>::new(), "request {request}");
+    }
 }
 
 /// With only a license key the granted properties are not listed, so each

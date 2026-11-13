@@ -38,10 +38,10 @@ use std::sync::{Mutex, PoisonError};
 use crate::find_file::find_file_from;
 
 /// The environment variable giving an explicit Device Detection data-file path.
-pub const DD_PATH_ENV_VAR: &str = "51DEGREES_DD_PATH";
+pub const DD_PATH_ENV_VAR: &str = "_51DEGREES_DD_PATH";
 
 /// The environment variable giving an explicit IP Intelligence data-file path.
-pub const IPI_PATH_ENV_VAR: &str = "51DEGREES_IPI_PATH";
+pub const IPI_PATH_ENV_VAR: &str = "_51DEGREES_IPI_PATH";
 
 /// The Lite Device Detection data file in the data repository.
 pub const DD_LITE_RELATIVE_PATH: &str = "cxx/data/device-detection/51Degrees-LiteV4.1.hash";
@@ -67,7 +67,7 @@ pub const IPI_ENTERPRISE_FILE_NAME: &str = "51Degrees-IPIV4EnterpriseIpiV41.ipi"
 /// Intelligence share, which holds the latest data file under a `YYYY/MM/DD`
 /// subdirectory. Unset by default, so the Enterprise tier is skipped unless a
 /// deployment points this at a reachable share.
-pub const IPI_ENTERPRISE_SHARE_ENV_VAR: &str = "51DEGREES_IPI_ENTERPRISE_SHARE";
+pub const IPI_ENTERPRISE_SHARE_ENV_VAR: &str = "_51DEGREES_IPI_ENTERPRISE_SHARE";
 
 /// Which tier of IP Intelligence data file to resolve.
 ///
@@ -428,9 +428,11 @@ fn latest_dated_day_with_file(month: &std::path::Path) -> Option<PathBuf> {
 }
 
 /// Read `name` from the environment as a path, returning it only when set to a
-/// non-blank value (the value is trimmed and rejected when empty).
+/// non-blank value (the value is trimmed and rejected when empty). A renamed
+/// variable is also read under its deprecated name when `name` is unset or
+/// empty.
 fn env_path(name: &str) -> Option<PathBuf> {
-    match std::env::var(name) {
+    match crate::deprecated_names::var(name) {
         Ok(value) if !value.trim().is_empty() => Some(PathBuf::from(value.trim())),
         _ => None,
     }

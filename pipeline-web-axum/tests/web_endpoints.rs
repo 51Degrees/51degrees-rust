@@ -99,11 +99,12 @@ async fn javascript_endpoint_serves_200_with_object_name_and_etag() {
         Some("application/x-javascript")
     );
 
-    // An ETag is present (the caching validator).
+    // An ETag is present (the caching validator), and it is weak because it
+    // stands for the evidence rather than the content (RFC 9110 section 8.8.3).
     let etag = header(&response, "etag").expect("ETag header present");
     assert!(
-        etag.starts_with('"') && etag.ends_with('"'),
-        "ETag is quoted"
+        etag.starts_with("W/\"") && etag.ends_with('"'),
+        "ETag is a weak entity tag, got {etag}"
     );
 
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
@@ -122,9 +123,8 @@ async fn javascript_endpoint_serves_200_with_object_name_and_etag() {
 
 #[tokio::test]
 async fn javascript_endpoint_returns_304_for_matching_if_none_match() {
-    // Both requests carry the same session id. Without one the Sequence
-    // element creates a new id for each request, and the ETag is worked out
-    // from the evidence that id is added to.
+    // Both requests carry the same session id.
+    // `requests_without_a_session_id_get_the_same_etag` sends none.
     //
     // First request: capture the ETag.
     let first = app()
@@ -141,8 +141,8 @@ async fn javascript_endpoint_returns_304_for_matching_if_none_match() {
     assert_eq!(first.status(), StatusCode::OK);
     let etag = header(&first, "etag").expect("ETag present on first response");
 
-    // Second request: send the captured ETag as If-None-Match. The same
-    // evidence yields the same ETag, so the endpoint returns 304.
+    // Second request: send the captured ETag, which is weak, as If-None-Match.
+    // The same evidence yields the same ETag, so the endpoint returns 304.
     let second = app()
         .oneshot(
             Request::builder()
@@ -167,6 +167,80 @@ async fn javascript_endpoint_returns_304_for_matching_if_none_match() {
     // A 304 carries no body.
     let body = to_bytes(second.into_body(), usize::MAX).await.unwrap();
     assert!(body.is_empty(), "304 has an empty body");
+}
+
+/// The Sequence element gives each request with no session id a new one, but
+/// the ETag is worked out from the evidence the request supplied, so the same
+/// request sent again with the tag gets a `304` from the JavaScript endpoint
+/// and a `412` from the JSON endpoint's `POST`.
+#[tokio::test]
+async fn requests_without_a_session_id_get_the_same_etag() {
+    let get = |etag: Option<&str>| {
+        let mut builder = Request::builder()
+            .method("GET")
+            .uri("/51Degrees.core.js")
+            .header("host", "localhost");
+        if let Some(etag) = etag {
+            builder = builder.header("if-none-match", etag);
+        }
+        builder.body(Body::empty()).unwrap()
+    };
+    let post = |etag: Option<&str>| {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri("/51dpipeline/json")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .header("host", "localhost");
+        if let Some(etag) = etag {
+            builder = builder.header("if-none-match", etag);
+        }
+        builder.body(Body::empty()).unwrap()
+    };
+
+    let first = app().oneshot(get(None)).await.unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let etag = header(&first, "etag").expect("ETag present on first response");
+    let second = app().oneshot(get(Some(&etag))).await.unwrap();
+    assert_eq!(second.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(header(&second, "etag"), Some(etag));
+
+    let first = app().oneshot(post(None)).await.unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let etag = header(&first, "etag").expect("ETag present on first response");
+    let second = app().oneshot(post(Some(&etag))).await.unwrap();
+    assert_eq!(second.status(), StatusCode::PRECONDITION_FAILED);
+}
+
+/// The adapter gives every `If-None-Match` line, so the field is read whole
+/// (RFC 9110 section 5.3): the tag on a second line matches, and a field that
+/// is not a list of entity tags gets the script (section 13.1.2).
+#[tokio::test]
+async fn javascript_endpoint_reads_the_whole_if_none_match_field() {
+    let fetch = |lines: &[&str]| {
+        let mut builder = Request::builder()
+            .method("GET")
+            .uri("/51Degrees.core.js?session-id=abc")
+            .header("host", "localhost");
+        for line in lines {
+            builder = builder.header("if-none-match", *line);
+        }
+        app().oneshot(builder.body(Body::empty()).unwrap())
+    };
+
+    let first = fetch(&[]).await.unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let etag = header(&first, "etag").expect("ETag present on first response");
+
+    let two_lines = fetch(&["\"other\"", etag.as_str()]).await.unwrap();
+    assert_eq!(two_lines.status(), StatusCode::NOT_MODIFIED);
+
+    let not_a_list = format!("{etag}, other");
+    for lines in [vec![not_a_list.as_str()], vec![etag.as_str(), "other"]] {
+        let response = fetch(&lines).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{lines:?}");
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert!(!body.is_empty(), "{lines:?} gets the script");
+    }
 }
 
 #[tokio::test]

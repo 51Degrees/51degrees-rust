@@ -26,6 +26,10 @@
 //! found the tests skip cleanly with an explanatory note rather than failing, so
 //! the suite is green on a checkout without the data file.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -44,11 +48,11 @@ const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Ma
     AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 
 /// Locate the packaged Lite Hash data file, mirroring the native crate's test
-/// resolution. Resolution order: an explicit `51DEGREES_DD_PATH`
+/// resolution. Resolution order: an explicit `_51DEGREES_DD_PATH`
 /// environment variable, then the `cxx` submodule, then
 /// the wider `Workspace` tree where the other products keep their data.
 fn lite_data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("51DEGREES_DD_PATH") {
+    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);
@@ -338,7 +342,7 @@ fn metadata_is_published() {
 }
 
 /// The engine accepts every header the data file reads, as a header and as a
-/// query value, alongside the client-side `51d_` values.
+/// query value, and the `51d_` values the data set reads, and no others.
 #[test]
 fn evidence_keys_come_from_the_data_file() {
     let Some(engine) = build_engine() else {
@@ -359,7 +363,18 @@ fn evidence_keys_come_from_the_data_file() {
         );
         assert!(filter.include(key), "{key} should be accepted");
     }
-    assert!(filter.include("query.51d_screenpixelswidth"));
+    for key in [
+        "cookie.51d_javascripthardwareprofile",
+        "query.51d_profileids",
+        "cookie.51d_profileids",
+    ] {
+        assert!(
+            keys.iter().any(|k| k == key),
+            "{key} should be listed: {keys:?}"
+        );
+        assert!(filter.include(key), "{key} should be accepted");
+    }
+    assert!(!filter.include("query.51d_notaproperty"));
     assert!(!filter.include("header.referer"));
 
     engine.refresh(None).expect("refresh succeeds");
@@ -418,9 +433,98 @@ fn method_and_user_agents_are_written() {
     assert!(!user_agents.is_empty());
 }
 
+/// An iPhone gets its `JavascriptHardwareProfile` value as the script the
+/// client runs, which declares the array the stored body fills, runs the body,
+/// then writes the ids to the `51D_ProfileIds` cookie.
+#[test]
+fn an_iphone_gets_the_hardware_profile_as_the_script_the_client_runs() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the hardware profile test");
+        return;
+    };
+    let device = detect(engine, MOBILE_USER_AGENT);
+    let profile = device.javascript_hardware_profile();
+    let script = profile
+        .value()
+        .expect("an iPhone has a hardware profile script");
+    let body = script
+        .strip_prefix("var profileIds = []\n")
+        .and_then(|rest| {
+            rest.strip_suffix("\ndocument.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")")
+        })
+        .unwrap_or_else(|| panic!("not the script the client runs: {script}"));
+    assert!(!body.is_empty(), "the script holds the stored body");
+}
+
+/// A screen size the data file holds as `Unknown` is 0, and a JavaScript
+/// property the matched profile holds no value for has none, as .NET gives
+/// them for `curl/8.5.0` over the Lite file in the comparison with .NET.
+#[test]
+fn values_are_read_as_dotnet_reads_them() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the values test");
+        return;
+    };
+    if engine.data_source_tier() != "Lite" {
+        eprintln!("the values test holds the Lite file's answers; skipping");
+        return;
+    }
+    let device = detect(engine, "curl/8.5.0");
+    assert_eq!(device.screen_pixels_width().value().ok(), Some(&0));
+    assert_eq!(device.screen_pixels_height().value().ok(), Some(&0));
+    assert_eq!(device.is_mobile().value().ok(), Some(&false));
+    assert_eq!(
+        device.platform_name().value().ok().map(String::as_str),
+        Some("Unknown")
+    );
+    assert!(!device.javascript_hardware_profile().has_value());
+    assert!(!device.javascript_get_high_entropy_values().has_value());
+}
+
+/// With no evidence no data file property has a value, where an empty string
+/// would be one, as .NET gives none, and the match metrics say that nothing
+/// matched.
+#[test]
+fn with_no_evidence_no_data_file_property_has_a_value() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the no evidence test");
+        return;
+    };
+    let element: Arc<dyn FlowElement> = engine;
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("pipeline builds");
+    let mut data = pipeline.create_flow_data_with(Evidence::builder().build());
+    data.process().expect("processing succeeds");
+    let device = data.get(DEVICE_DATA_KEY).expect("device data was produced");
+    let metrics = [
+        "matchednodes",
+        "difference",
+        "drift",
+        "deviceid",
+        "useragents",
+        "iterations",
+        "method",
+    ];
+    let keys = device.keys();
+    let files: Vec<&String> = keys
+        .iter()
+        .filter(|key| !metrics.contains(&key.as_str()))
+        .collect();
+    assert!(files.len() > 1, "{keys:?}");
+    for key in files {
+        assert!(device.get(key).is_err(), "{key}: {:?}", device.get(key));
+    }
+    assert_eq!(
+        device.method().value().ok().map(String::as_str),
+        Some("NONE")
+    );
+}
+
 #[test]
 fn paid_tier_data_resolves_hardware_vendor() {
-    // Uses whatever `51DEGREES_DD_PATH` points at (or the bundled Lite file as a
+    // Uses whatever `_51DEGREES_DD_PATH` points at (or the bundled Lite file as a
     // fallback). HardwareVendor is a paid-tier property the free Lite file does
     // not carry, so this test asserts it only when a paid data file is
     // configured, and skips the paid-tier assertion otherwise.
@@ -439,7 +543,7 @@ fn paid_tier_data_resolves_hardware_vendor() {
 
     // HardwareVendor is only present in the paid Enterprise/TAC data. When the
     // configured file does not resolve it (the free Lite file does not), skip the
-    // paid-tier assertion rather than fail. Point `51DEGREES_DD_PATH` at a paid
+    // paid-tier assertion rather than fail. Point `_51DEGREES_DD_PATH` at a paid
     // data file to exercise it. For an iPhone User-Agent the vendor is Apple.
     let vendor = device.hardware_vendor();
     if !vendor.has_value() {

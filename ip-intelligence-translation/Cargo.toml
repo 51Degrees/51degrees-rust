@@ -1,13 +1,21 @@
 [package]
 name = "fiftyone-ip-intelligence-translation"
 version = "4.5.2"
-description = "Translation engines for IP Intelligence: the English names of the countries an IP address may be in, those names in the language the request asks for, and every country ordered for that language, for the 51Degrees pipeline."
+description = "Country names for IP Intelligence and IP geolocation in Rust. Translation engines give the English names of the countries an IP address may be in, those names in the language the request asks for, and every country ordered for that language, on-premise or with the cloud service. Built on the 51Degrees Pipeline API. An alternative to MaxMind and IPinfo."
+keywords = ["ip-geolocation", "geoip", "asn", "maxmind", "ipinfo"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage = "https://51degrees.com/ip-intelligence?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-ip-intelligence-translation-cargo.toml&utm_term=homepage"
+build = "build.rs"
+# The files under translations are ignored by git, because
+# ci/copy-translations.ps1 copies them from the data repository inside the cxx
+# submodule before packaging, and cargo leaves an ignored folder out of a
+# package unless the manifest lists it. A build in the workspace reads the
+# submodule instead.
+include = ["/src/**", "/tests/**", "/build.rs", "/README.md", "/translations/**"]
 
 [dependencies]
 fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }

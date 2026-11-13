@@ -37,8 +37,12 @@
 //! Every tier resolves its data file at run time and skips cleanly when the file
 //! is absent, so a checkout without the data files (and an off-network CI) stays
 //! green while a developer with the files gets real native coverage. An explicit
-//! `51DEGREES_IPI_PATH` overrides the ASN path so a single file can drive the
+//! `_51DEGREES_IPI_PATH` overrides the ASN path so a single file can drive the
 //! default tests.
+
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -83,10 +87,10 @@ fn find_up(relative: &str) -> Option<PathBuf> {
     }
 }
 
-/// Resolve the ASN data file: an explicit `51DEGREES_IPI_PATH` first, then the
+/// Resolve the ASN data file: an explicit `_51DEGREES_IPI_PATH` first, then the
 /// ASN file in the data repository inside the `cxx` submodule.
 fn asn_data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("51DEGREES_IPI_PATH") {
+    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_IPI_PATH") {
         let path = PathBuf::from(path.trim());
         if path.is_file() {
             return Some(path);
@@ -100,7 +104,12 @@ const ENTERPRISE_FILE_NAME: &str = "51Degrees-IPIV4EnterpriseIpiV41.ipi";
 
 /// The environment variable giving the root of the dated Enterprise share, laid
 /// out as `<root>/YYYY/MM/DD/<file>`. Unset off the 51Degrees network.
-const ENTERPRISE_SHARE_ENV_VAR: &str = "51DEGREES_IPI_ENTERPRISE_SHARE";
+const ENTERPRISE_SHARE_ENV_VAR: &str = "_51DEGREES_IPI_ENTERPRISE_SHARE";
+
+/// Set where `_51DEGREES_IPI_PATH` names the Enterprise file, as in the
+/// comparison with .NET, so a check that needs that file fails rather than
+/// skips.
+const REQUIRE_ENTERPRISE: &str = "_51DEGREES_REQUIRE_ENTERPRISE";
 
 /// Resolve the latest Enterprise data file on the configured share, or `None`
 /// when the variable is unset or the share is not mounted (the common off-network
@@ -128,7 +137,7 @@ fn enterprise_data_file() -> Option<PathBuf> {
         best.map(|(_, path)| path)
     }
 
-    let root = PathBuf::from(std::env::var_os(ENTERPRISE_SHARE_ENV_VAR)?);
+    let root = PathBuf::from(crate::deprecated_names::var_os(ENTERPRISE_SHARE_ENV_VAR)?);
     let year = latest_numeric_child(&root)?;
     let month = latest_numeric_child(&year)?;
     let day = latest_numeric_child(&month)?;
@@ -329,10 +338,15 @@ fn asn_refresh_round_trips() {
 ///
 /// The engine is asked for the whole generated property set so an Enterprise data
 /// file populates a wide cross-section. Skips cleanly when no data file is
-/// present; point `51DEGREES_IPI_PATH` at an Enterprise file for full coverage.
+/// present; point `_51DEGREES_IPI_PATH` at an Enterprise file for full
+/// coverage. With [`REQUIRE_ENTERPRISE`] set it fails rather than skips, and
+/// fails unless `StateGeoNameIdsGeographical`, which only the Enterprise file
+/// holds, is present for one of the addresses.
 #[test]
 fn every_present_property_unpacks_as_its_declared_type() {
+    let require_enterprise = std::env::var_os(REQUIRE_ENTERPRISE).is_some();
     let Some(file) = asn_data_file() else {
+        assert!(!require_enterprise, "no IP Intelligence data file found");
         eprintln!("no IP-intelligence data file found; skipping type-unpack check");
         return;
     };
@@ -342,6 +356,7 @@ fn every_present_property_unpacks_as_its_declared_type() {
         .collect();
     let property_refs: Vec<&str> = properties.iter().map(String::as_str).collect();
     let Some(engine) = build_engine(&file, PerformanceProfile::LowMemory, &property_refs) else {
+        assert!(!require_enterprise, "{} did not load", file.display());
         return;
     };
 
@@ -357,6 +372,7 @@ fn every_present_property_unpacks_as_its_declared_type() {
 
     let mut offenders: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut present_count = 0usize;
+    let mut present_names: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
 
     for ip in ips {
         let ip_data = lookup(engine.clone(), ip);
@@ -365,12 +381,14 @@ fn every_present_property_unpacks_as_its_declared_type() {
                 continue;
             }
             present_count += 1;
+            present_names.insert(*name);
             let unpacks = match declared {
                 PropertyValueType::Bool => ip_data.boolean(name).value().is_ok(),
                 PropertyValueType::Integer => ip_data.integer(name).value().is_ok(),
                 PropertyValueType::Float => ip_data.float(name).value().is_ok(),
                 // The weighted properties are published as a key-value list.
                 PropertyValueType::KeyValueList => ip_data.weighted_string(name).value().is_ok(),
+                PropertyValueType::WktString => ip_data.wkt_string(name).value().is_ok(),
                 _ => ip_data.string(name).value().is_ok(),
             };
             if !unpacks {
@@ -390,6 +408,13 @@ fn every_present_property_unpacks_as_its_declared_type() {
         present_count > 0,
         "expected at least some properties to resolve for the sample IPs"
     );
+    if require_enterprise {
+        assert!(
+            present_names.contains("StateGeoNameIdsGeographical"),
+            "{} is not an Enterprise file",
+            file.display()
+        );
+    }
 }
 
 /// The Enterprise tier carries the full property set, including location. This

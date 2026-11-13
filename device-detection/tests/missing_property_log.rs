@@ -29,6 +29,10 @@
 //!
 //! Each half skips when its data file is absent.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -82,7 +86,7 @@ fn take() -> Vec<String> {
 /// A data file named by `variable`, or else the first file at `relative`
 /// found from this crate's directory upwards.
 fn data_file(variable: &str, relative: &str) -> Option<PathBuf> {
-    if let Some(path) = std::env::var(variable)
+    if let Some(path) = crate::deprecated_names::var(variable)
         .ok()
         .map(|path| PathBuf::from(path.trim()))
         .filter(|path| path.is_file())
@@ -117,7 +121,7 @@ fn each_read_of_a_missing_property_logs_one_warning() {
 /// The Hash engine restricted to IsMobile.
 fn device_detection() {
     let Some(file) = data_file(
-        "51DEGREES_DD_PATH",
+        "_51DEGREES_DD_PATH",
         "cxx/data/device-detection/51Degrees-LiteV4.1.hash",
     ) else {
         eprintln!("no Lite Hash data file found; skipping Device Detection");
@@ -170,7 +174,7 @@ fn device_detection() {
 /// The IP Intelligence engine restricted to the ASN properties.
 fn ip_intelligence() {
     let Some(file) = data_file(
-        "51DEGREES_IPI_PATH",
+        "_51DEGREES_IPI_PATH",
         "cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi",
     ) else {
         eprintln!("no ASN data file found; skipping IP Intelligence");

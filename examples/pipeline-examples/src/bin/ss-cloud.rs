@@ -51,7 +51,7 @@ const DATE_OF_BIRTH_EVIDENCE: &str = "date-of-birth";
 const CLOUD_RESPONSE_DATA_KEY: &str = "cloud-response";
 
 /// The resource key the example would authenticate the cloud request with. A
-/// real deployment reads this from `51DEGREES_RESOURCE_KEY`; the example stubs
+/// real deployment reads this from `_51DEGREES_RESOURCE_KEY`; the example stubs
 /// the call, so the value is illustrative only.
 const EXAMPLE_RESOURCE_KEY: &str = "!!YOUR_RESOURCE_KEY!!";
 
@@ -380,7 +380,7 @@ mod tests {
  *
  * Configuration
  * -------------
- * A real run reads the resource key from `51DEGREES_RESOURCE_KEY` (the example's
+ * A real run reads the resource key from `_51DEGREES_RESOURCE_KEY` (the example's
  * `main` does this) and points the engine at the 51Degrees cloud endpoint. The
  * stub ignores both, but accepts them so the wiring matches production.
  *

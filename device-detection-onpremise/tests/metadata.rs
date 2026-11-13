@@ -23,9 +23,13 @@
 //! The on-premise engine's property, component and value metadata, read from
 //! the data file as the .NET engine reads it.
 //!
-//! These run against the Lite Hash data file, or the file `51DEGREES_DD_PATH`
+//! These run against the Lite Hash data file, or the file `_51DEGREES_DD_PATH`
 //! names, and skip with a note when there is none. They check what every Hash
 //! data file holds, so they pass against any tier.
+
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
 
 use std::ops::Range;
 use std::path::PathBuf;
@@ -55,10 +59,10 @@ const METRICS: [&str; 7] = [
 const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) \
     AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 
-/// The Hash data file `51DEGREES_DD_PATH` names, or the Lite file in the `cxx`
+/// The Hash data file `_51DEGREES_DD_PATH` names, or the Lite file in the `cxx`
 /// submodule.
 fn data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("51DEGREES_DD_PATH") {
+    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);
@@ -344,13 +348,14 @@ fn a_refresh_frees_the_lists_it_replaces_once_no_caller_holds_them() {
     engine.refresh(None).expect("the data file loads again");
 
     // A caller keeps the list it holds, and the engine gives the new data
-    // set's, which the same file makes equal.
+    // set's, which the same file makes equal. The data set is reloaded in
+    // the engine's manager, so the manager held is the engine's.
     assert!(!Arc::ptr_eq(
         &held_properties,
         &engine.fiftyone_properties()
     ));
     assert!(!Arc::ptr_eq(&held_components, &engine.components()));
-    assert!(!Arc::ptr_eq(&held_data_set, &engine.data_set()));
+    assert!(Arc::ptr_eq(&held_data_set, &engine.data_set()));
     assert_eq!(
         held_data_set.data_file_profiles().unwrap(),
         engine.data_set().data_file_profiles().unwrap()

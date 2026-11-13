@@ -32,7 +32,7 @@ use std::time::Duration;
 
 use fiftyone_cloud_request_engine::{
     configuration, CloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine,
-    CloudRequestEngineBuilder, HttpMethod, CLOUD_ENDPOINT_ENV_VAR, CLOUD_URI_DEFAULT,
+    CloudRequestEngineBuilder, HttpMethod, CLOUD_URI_DEFAULT,
 };
 use fiftyone_pipeline_core::configuration::{
     BuildContext, BuilderDefinition, BuilderRegistry, ElementOptions, PipelineOptions,
@@ -63,7 +63,7 @@ struct StandIn {
 impl CloudHttpClient for StandIn {
     fn send(&self, request: &CloudHttpRequest) -> std::result::Result<CloudHttpResponse, String> {
         self.requests.lock().unwrap().push(request.clone());
-        let (status, body) = if request.url.contains("resource=bad") {
+        let (status, body) = if request.url.contains("resource=refused-key-0001") {
             (400, r#"{"errors":["bad resource key"]}"#)
         } else if request.url.contains("evidencekeys") {
             (200, r#"["header.user-agent","query.user-agent"]"#)
@@ -183,9 +183,16 @@ fn refused_in_code(builder: CloudRequestEngineBuilder) -> String {
     }
 }
 
-/// The base URL an endpoint not given is made from.
+/// The base URL an endpoint not given is made from, which is the one the
+/// environment names under the new name or the deprecated one, or else the
+/// default.
+#[allow(deprecated)]
 fn default_base() -> String {
-    std::env::var(CLOUD_ENDPOINT_ENV_VAR).unwrap_or_else(|_| CLOUD_URI_DEFAULT.to_string())
+    use fiftyone_cloud_request_engine::{CLOUD_ENDPOINT_ENV_VAR, CLOUD_ENDPOINT_VARIABLE};
+    [CLOUD_ENDPOINT_VARIABLE, CLOUD_ENDPOINT_ENV_VAR]
+        .into_iter()
+        .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
+        .unwrap_or_else(|| CLOUD_URI_DEFAULT.to_string())
 }
 
 fn process(pipeline: &Arc<Pipeline>, user_agent: &str) -> FlowData {
@@ -449,13 +456,12 @@ fn an_end_point_that_is_not_an_absolute_url_is_refused() {
 /// request engine specification's accepted combinations. .NET 4.5.129
 /// refuses any configuration without a resource key, as "A resource key
 /// is required to access the 51Degrees cloud service...", and accepts
-/// properties named with a resource key, which it never sends. The
-/// specification's `RequestedProperties` with a resource key is refused
-/// as `Property` is, as the specification's table says it must not be
-/// given with one.
+/// properties named with a resource key, which it never sends. A property
+/// list with a resource key, under `Property` or `RequestedProperties`,
+/// builds, as `a_property_list_is_kept_beside_the_resource_key` shows.
 #[test]
 fn the_credentials_are_refused_as_they_are_in_code() {
-    let cases: [(Parameters, CloudRequestEngineBuilder); 6] = [
+    let cases: [(Parameters, CloudRequestEngineBuilder); 4] = [
         (&[], CloudRequestEngine::builder()),
         (
             &[("ResourceKey", "")],
@@ -469,24 +475,6 @@ fn the_credentials_are_refused_as_they_are_in_code() {
             &[("LicenseKey", LICENSE_KEY)],
             CloudRequestEngine::builder().license_key(LICENSE_KEY),
         ),
-        (
-            &[
-                ("ResourceKey", RESOURCE_KEY),
-                ("Property", "device.ismobile"),
-            ],
-            CloudRequestEngine::builder()
-                .resource_key(RESOURCE_KEY)
-                .values(["device.ismobile"]),
-        ),
-        (
-            &[
-                ("ResourceKey", RESOURCE_KEY),
-                ("RequestedProperties", "device.ismobile"),
-            ],
-            CloudRequestEngine::builder()
-                .resource_key(RESOURCE_KEY)
-                .values(["device.ismobile"]),
-        ),
     ];
     for (parameters, builder) in cases {
         assert_eq!(
@@ -494,6 +482,17 @@ fn the_credentials_are_refused_as_they_are_in_code() {
             failed(&refused_in_code(builder)),
             "{parameters:?}"
         );
+    }
+}
+
+#[test]
+fn a_property_list_is_kept_beside_the_resource_key() {
+    // The service adds the listed properties to those the resource key
+    // carries, so a configuration may name them under either parameter.
+    for name in ["Property", "RequestedProperties"] {
+        let (engine, _) = engine_with(&[(name, "device.ismobile")]);
+        assert_eq!(engine.resource_key(), Some(RESOURCE_KEY), "{name}");
+        assert_eq!(engine.values(), ["device.ismobile"], "{name}");
     }
 }
 
@@ -618,7 +617,7 @@ fn the_specifications_name_for_the_properties_is_read() {
 #[test]
 fn a_refused_discovery_request_fails_the_build() {
     let expected = match CloudRequestEngine::builder()
-        .resource_key("bad")
+        .resource_key("refused-key-0001")
         .http_client(Arc::new(StandIn::default()))
         .build()
     {
@@ -627,7 +626,7 @@ fn a_refused_discovery_request_fails_the_build() {
     };
     assert!(expected.contains("bad resource key"), "{expected}");
     assert_eq!(
-        message(build_with(&options(&[("ResourceKey", "bad")])).0),
+        message(build_with(&options(&[("ResourceKey", "refused-key-0001")])).0),
         failed(&expected)
     );
 }

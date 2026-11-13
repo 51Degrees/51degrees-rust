@@ -35,13 +35,17 @@
 //! `query.session-id` and `query.sequence`. It also holds them in its own
 //! [`SequenceData`], because the specification lists them as the element's
 //! properties.
+//!
+//! So it runs on its own, never in a parallel group, whose elements read the
+//! evidence at the same time. [`FlowElement::adds_evidence`] is `true`, and a
+//! pipeline refuses a group holding it.
 
 use std::any::Any;
 
 use fiftyone_pipeline_core::{
-    ElementData, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
-    FlowError, MapElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType,
-    Result, TypedKey,
+    ElementData, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    MapElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType, Result,
+    TypedKey,
 };
 
 use crate::constants::{
@@ -49,8 +53,9 @@ use crate::constants::{
     SEQUENCE_DEFAULT_ELEMENT_DATA_KEY,
 };
 
-/// The message of the error a sequence that is not a 32-bit integer gives.
-const SEQUENCE_NOT_VALID: &str = "The value for the 'sequence' parameter is not valid. See https://51degrees.com/documentation/4.5/_services__cloud__error_messages.html?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=pipeline-engines-fiftyone-src-sequence_element.rs&utm_term=sequence-not-valid for more information.";
+/// The largest sequence the element reads, so that adding one stays within a
+/// 32-bit integer.
+const LARGEST_SEQUENCE_READ: i32 = i32::MAX - 1;
 
 /// The element data produced by the [`SequenceElement`].
 ///
@@ -68,13 +73,11 @@ pub struct SequenceData {
 }
 
 impl SequenceData {
-    /// Build sequence data from a session id and, when the request's sequence
-    /// could be read, the new sequence number.
-    fn new(session_id: String, sequence: Option<i32>) -> Self {
-        let mut inner = MapElementData::new().set(EVIDENCE_SESSIONID_SUFFIX, session_id);
-        if let Some(sequence) = sequence {
-            inner = inner.set(EVIDENCE_SEQUENCE_SUFFIX, i64::from(sequence));
-        }
+    /// Build sequence data from a session id and the new sequence number.
+    fn new(session_id: String, sequence: i32) -> Self {
+        let inner = MapElementData::new()
+            .set(EVIDENCE_SESSIONID_SUFFIX, session_id)
+            .set(EVIDENCE_SEQUENCE_SUFFIX, i64::from(sequence));
         SequenceData { inner }
     }
 
@@ -85,8 +88,8 @@ impl SequenceData {
             .and_then(PropertyValue::as_str)
     }
 
-    /// The sequence number for this flow data, which is always a 32-bit
-    /// integer. `None` when the request's sequence is not a 32-bit integer.
+    /// The sequence number for this flow data, from 1 up to the largest
+    /// 32-bit integer. The element always sets it.
     pub fn sequence(&self) -> Option<i64> {
         self.inner
             .get_value(EVIDENCE_SEQUENCE_SUFFIX)
@@ -116,22 +119,16 @@ impl ElementData for SequenceData {
 ///
 /// On [`FlowElement::process`]:
 ///
-/// - If `query.session-id` is absent from the evidence, a new GUID is added
-///   as the session id. A session id that is present, even an empty one, is
-///   kept as it is.
-/// - If `query.sequence` is absent, a sequence of `1` is added.
-/// - If `query.sequence` is a 32-bit integer, read as .NET's `int.TryParse`
-///   reads it, one is added to it, wrapping from `2147483647` to
-///   `-2147483648`, and the result replaces it.
-/// - Otherwise the sequence is left as it was and an error is recorded on the
-///   flow data, logged at error level whether or not errors are suppressed,
-///   followed by a second error level record saying the sequence was not
-///   incremented. When errors are not suppressed, processing returns the
-///   error once every element has run.
+/// - If `query.session-id` is absent from the evidence or empty, a new GUID
+///   is added as the session id. Any other session id is kept as it is.
+/// - If `query.sequence` is a string of the digits 0 to 9 from 0 up to
+///   2,147,483,646, leading zeros allowed, one is added to it and the result
+///   replaces it.
+/// - Otherwise, including when it is absent, a sequence of `1` is added.
+///   No error is recorded.
 ///
 /// Both values are also written to a [`SequenceData`] under this element's
-/// data key, which holds no sequence when the request's could not be read.
-/// The element takes no configuration.
+/// data key. The element takes no configuration.
 pub struct SequenceElement {
     filter: EvidenceKeyFilterWhitelist,
     properties: Vec<PropertyMetaData>,
@@ -177,7 +174,11 @@ impl Default for SequenceElement {
 
 impl FlowElement for SequenceElement {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        let given_session_id = data.evidence().get(EVIDENCE_SESSIONID).map(str::to_owned);
+        let given_session_id = data
+            .evidence()
+            .get(EVIDENCE_SESSIONID)
+            .filter(|session_id| !session_id.is_empty())
+            .map(str::to_owned);
         let session_id = match given_session_id {
             Some(session_id) => session_id,
             None => {
@@ -187,28 +188,12 @@ impl FlowElement for SequenceElement {
             }
         };
 
-        let sequence = match data.evidence().get(EVIDENCE_SEQUENCE) {
-            None => Some(1),
-            Some(text) => parse_sequence(text).map(|sequence| sequence.wrapping_add(1)),
-        };
-        match sequence {
-            Some(sequence) => data.add_evidence(EVIDENCE_SEQUENCE, sequence.to_string()),
-            None => {
-                data.add_error(
-                    FlowError::new(
-                        self.data_key(),
-                        Error::Pipeline {
-                            message: SEQUENCE_NOT_VALID.to_owned(),
-                        },
-                    ),
-                    true,
-                );
-                log::error!(
-                    "Failed to increment the usage sequence number, because \
-                     the sequence is not a 32-bit integer."
-                );
-            }
-        }
+        let sequence = data
+            .evidence()
+            .get(EVIDENCE_SEQUENCE)
+            .and_then(read_sequence)
+            .map_or(1, |sequence| sequence + 1);
+        data.add_evidence(EVIDENCE_SEQUENCE, sequence.to_string());
 
         data.get_or_add(Self::KEY, || SequenceData::new(session_id, sequence))?;
         Ok(())
@@ -225,12 +210,35 @@ impl FlowElement for SequenceElement {
     fn properties(&self) -> &[PropertyMetaData] {
         &self.properties
     }
+
+    /// The session id and sequence go into the evidence, so a pipeline
+    /// refuses a parallel group holding this element.
+    fn adds_evidence(&self) -> bool {
+        true
+    }
+}
+
+/// Read the request's sequence as the specification's Process section reads
+/// it, being a string of the digits 0 to 9 with no sign or spaces, leading
+/// zeros allowed, from 0 up to [`LARGEST_SEQUENCE_READ`]. `None` for anything
+/// else, which counts as no sequence.
+fn read_sequence(text: &str) -> Option<i32> {
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    // Only digits are left, so the parse fails only for a number too large
+    // for a u64, which is too large to read anyway.
+    let sequence: u64 = text.parse().ok()?;
+    i32::try_from(sequence)
+        .ok()
+        .filter(|sequence| *sequence <= LARGEST_SEQUENCE_READ)
 }
 
 /// Read a sequence number from evidence text as .NET's `int.TryParse` reads
 /// it, being white space, an optional sign, the digits 0 to 9, white space,
 /// then any number of NUL characters. White space here is space and U+0009
-/// to U+000D. `None` when the text is not a 32-bit integer.
+/// to U+000D. `None` when the text is not a 32-bit integer. Usage sharing
+/// reads the sequence it records this way.
 pub(crate) fn parse_sequence(text: &str) -> Option<i32> {
     text.trim_end_matches('\0')
         .trim_matches(is_number_white_space)
@@ -246,6 +254,29 @@ fn is_number_white_space(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sequence_is_read_as_the_specification_reads_it() {
+        for (text, expected) in [
+            ("0", Some(0)),
+            ("3", Some(3)),
+            ("0005", Some(5)),
+            ("2147483646", Some(2147483646)),
+            ("2147483647", None),
+            ("3000000000", None),
+            ("18446744073709551616", None),
+            ("+5", None),
+            ("-2", None),
+            (" 5", None),
+            ("5 ", None),
+            ("5\0", None),
+            ("1.5", None),
+            ("\u{663}", None),
+            ("", None),
+        ] {
+            assert_eq!(read_sequence(text), expected, "{text:?}");
+        }
+    }
 
     #[test]
     fn a_sequence_is_read_as_dotnet_reads_an_integer() {

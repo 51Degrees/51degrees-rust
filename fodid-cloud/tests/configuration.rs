@@ -606,14 +606,16 @@ fn the_engine_named_twice_is_made_twice() {
     assert_eq!(stand_in.data_requests(), 2);
 }
 
-/// .NET logs the same error, naming its engine `DidCloudEngine` and its
-/// data key `FODid`, then fails the build with "Failed to load properties
-/// for 'FODid'. This usually means your resource key does not include
-/// access to any properties under 'FODid'...". The engine here lists no
-/// properties for such a key and builds, as it does in code, and logs the
-/// error once it reads the key's products.
+/// .NET logs the first sentence as an error, naming its engine
+/// `DidCloudEngine` and its data key `FODid`, then fails the build with
+/// "Failed to load properties for 'FODid'. This usually means your resource
+/// key does not include access to any properties under 'FODid'...". The
+/// cloud aspect engine specification says such an engine builds and logs the
+/// missing product once as a warning, naming its data key, so the engine
+/// here lists no properties for such a key, builds, as it does in code, and
+/// logs both sentences as one warning once it reads the key's products.
 #[test]
-fn a_key_without_the_product_logs_dotnets_error() {
+fn a_key_without_the_product_builds_and_logs_one_warning() {
     let request =
         ElementOptions::new(REQUEST_ENGINE).parameter("ResourceKey", KEY_WITHOUT_PRODUCTS);
     let (pipeline, logged) = logged_by(|| {
@@ -626,8 +628,10 @@ fn a_key_without_the_product_logs_dotnets_error() {
     assert_eq!(
         logged,
         [(
-            log::Level::Error,
-            "Aspect properties could not be loaded for FodIdCloudEngine - 'fodid'".to_string()
+            log::Level::Warn,
+            "Aspect properties could not be loaded for FodIdCloudEngine - 'fodid'. The \
+             resource key does not include access to any properties under 'fodid'."
+                .to_string()
         )]
     );
     assert!(made(&pipeline).aspect_properties().is_empty());

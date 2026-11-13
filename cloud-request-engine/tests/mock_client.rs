@@ -151,11 +151,307 @@ fn happy_path_stores_raw_json_under_cloud_key() {
     assert_eq!(client.request_count(), 3);
 }
 
-#[test]
-fn evidence_is_filtered_to_accepted_keys_and_prefixes_stripped() {
+/// The form of the one data request an engine sends for `evidence` when the
+/// service lists `evidence_keys` as its accepted evidence, sorted so a test
+/// can compare it whole.
+fn form_sent(evidence_keys: &str, evidence: Evidence) -> Vec<(String, String)> {
     let client = Arc::new(FakeClient::default());
-    // The server only accepts the user-agent header.
+    client.set_evidence_keys(FakeClient::ok(evidence_keys));
+    client.set_data(FakeClient::ok(r#"{"device":{}}"#));
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(engine_with(client.clone())))
+        .build()
+        .unwrap();
+    let mut data = pipeline.create_flow_data_with(evidence);
+    data.process().unwrap();
+
+    let requests = client.requests.lock().unwrap();
+    let mut form = requests
+        .iter()
+        .find(|r| r.method == HttpMethod::Post)
+        .expect("a POST to the data endpoint")
+        .form
+        .clone();
+    form.sort();
+    form
+}
+
+/// `expected` as owned pairs, sorted as [`form_sent`] sorts a form.
+fn sorted(expected: &[(&str, &str)]) -> Vec<(String, String)> {
+    let mut pairs: Vec<(String, String)> = expected
+        .iter()
+        .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+        .collect();
+    pairs.sort();
+    pairs
+}
+
+/// Every evidence value is sent with its prefix removed, whether or not the
+/// service lists its key, apart from the reserved names `resource`,
+/// `license`, `licence` and `values` under any prefix. The evidence matches
+/// keys in lowercase, so the letter case of a reserved name is tested on the
+/// compare itself, in `engine.rs`.
+#[test]
+fn every_evidence_value_but_the_reserved_names_is_sent() {
+    let form = form_sent(
+        r#"["query.user-agent"]"#,
+        Evidence::builder()
+            .add("header.User-Agent", "UA")
+            .add("header.accept-language", "en-GB")
+            .add("header.X-Other", "other")
+            .add("cookie.session", "abc")
+            .add("server.client-ip", "203.0.113.1")
+            .add("other.VALUES", "device.iscrawler")
+            .add("server.licence", "licence-evidence")
+            .add("query.Resource", "resource-evidence")
+            .add("header.LICENSE", "license-evidence")
+            .build(),
+    );
+    assert_eq!(
+        form,
+        sorted(&[
+            ("resource", "test-resource-key"),
+            ("User-Agent", "UA"),
+            ("accept-language", "en-GB"),
+            ("X-Other", "other"),
+            ("session", "abc"),
+            ("client-ip", "203.0.113.1"),
+        ])
+    );
+}
+
+/// Each name is sent as its key spells it, with only the prefix removed. A key
+/// added again in other letters is the same key, so it keeps its first
+/// spelling and takes the new value.
+#[test]
+fn each_name_is_sent_as_its_key_spells_it() {
+    let form = form_sent(
+        r#"["header.user-agent"]"#,
+        Evidence::builder()
+            .add("cookie.51D_Experiment", "a")
+            .add("header.Sec-CH-UA-Platform", "\"Windows\"")
+            .add("Bare-Key", "bare")
+            .add("header.Accept", "first")
+            .add("header.accept", "second")
+            .build(),
+    );
+    assert_eq!(
+        form,
+        sorted(&[
+            ("resource", "test-resource-key"),
+            ("51D_Experiment", "a"),
+            ("Sec-CH-UA-Platform", "\"Windows\""),
+            ("Bare-Key", "bare"),
+            ("Accept", "second"),
+        ])
+    );
+}
+
+/// One name under two prefixes in two letter cases is one field, sent once
+/// with the value and the spelling of the key whose prefix ranks first.
+#[test]
+fn one_name_in_two_letter_cases_is_sent_once_as_the_winning_key_spells_it() {
+    let form = form_sent(
+        r#"["header.user-agent"]"#,
+        Evidence::builder()
+            .add("header.User-Agent", "header")
+            .add("query.user-agent", "query")
+            .add("fiftyone.x-thing", "fiftyone")
+            .add("server.X-Thing", "server")
+            .add("Query.X-Q", "query")
+            .add("header.x-q", "header")
+            .build(),
+    );
+    assert_eq!(
+        form,
+        sorted(&[
+            ("resource", "test-resource-key"),
+            ("user-agent", "query"),
+            ("X-Thing", "server"),
+            ("X-Q", "query"),
+        ])
+    );
+}
+
+/// Evidence whose key has no prefix is sent under its whole key, and a
+/// reserved name with no prefix is still left out.
+#[test]
+fn evidence_with_no_prefix_is_sent_under_its_whole_key() {
+    let form = form_sent(
+        r#"["header.user-agent"]"#,
+        Evidence::builder()
+            .add("bare", "value")
+            .add("Values", "device.iscrawler")
+            .add("license", "license-evidence")
+            .add("RESOURCE", "resource-evidence")
+            .add("licence", "licence-evidence")
+            .build(),
+    );
+    assert_eq!(
+        form,
+        sorted(&[("resource", "test-resource-key"), ("bare", "value")])
+    );
+}
+
+/// When two keys share a name once their prefixes are removed, the one whose
+/// prefix ranks first is sent. A key's prefix is the part before its first
+/// separator, or the whole key when it has none, so a bare `query` ranks as
+/// query evidence and a bare `x-thing` among the other prefixes. Prefixes
+/// rank query, header, cookie, server, fiftyone and location, then any other
+/// prefix alphabetically.
+#[test]
+fn evidence_is_ranked_by_its_prefix() {
+    let form = form_sent(
+        r#"["header.user-agent"]"#,
+        Evidence::builder()
+            .add("x-thing", "bare")
+            .add("header.x-thing", "header")
+            .add("query", "bare-query")
+            .add("header.query", "header-query")
+            .add("a-b.place", "a-b")
+            .add("a.place", "a")
+            .add("aaa.where", "aaa")
+            .add("location.where", "location")
+            .add("fiftyone.where", "fiftyone")
+            .build(),
+    );
+    assert_eq!(
+        form,
+        sorted(&[
+            ("resource", "test-resource-key"),
+            ("x-thing", "header"),
+            ("query", "bare-query"),
+            ("place", "a"),
+            ("where", "fiftyone"),
+        ])
+    );
+}
+
+/// A text value under `server.http-request`, the key of the web request a
+/// web integration gives, is never sent, even when the service lists the key.
+/// The evidence matches keys in lowercase, so the letter case of the key is
+/// tested on the compare itself, in `engine.rs`.
+#[test]
+fn a_value_under_the_web_request_key_is_never_sent() {
+    let form = form_sent(
+        r#"["header.user-agent","server.http-request"]"#,
+        Evidence::builder()
+            .add("header.user-agent", "UA")
+            .add("SERVER.Http-Request", "not a value to send")
+            .build(),
+    );
+    assert_eq!(
+        form,
+        sorted(&[("resource", "test-resource-key"), ("user-agent", "UA")])
+    );
+}
+
+/// A stored response is found by the evidence the service lists, so two
+/// requests that differ only in evidence it does not list share one entry,
+/// although the first request sends that evidence.
+#[test]
+fn evidence_the_service_does_not_list_does_not_change_the_cache_key() {
+    let client = Arc::new(FakeClient::default());
     client.set_evidence_keys(FakeClient::ok(r#"["header.user-agent"]"#));
+    client.set_data(FakeClient::ok(r#"{"device":{"ismobile":true}}"#));
+    let cache = Arc::new(RecordingCache::default());
+    let engine = CloudRequestEngine::builder()
+        .resource_key("test-resource-key")
+        .endpoint("https://cloud.example.test/api/v4/")
+        .http_client(client.clone())
+        .cache(cache.clone())
+        .build()
+        .unwrap();
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(engine))
+        .build()
+        .unwrap();
+    let evidence = |platform: &str| {
+        Evidence::builder()
+            .add("header.user-agent", "UA")
+            .add("header.sec-ch-ua-platform", platform)
+            .build()
+    };
+
+    let mut first = pipeline.create_flow_data_with(evidence("Windows"));
+    first.process().unwrap();
+    let mut second = pipeline.create_flow_data_with(evidence("macOS"));
+    second.process().unwrap();
+
+    let requests = client.requests.lock().unwrap();
+    let posts: Vec<&CloudHttpRequest> = requests
+        .iter()
+        .filter(|r| r.method == HttpMethod::Post)
+        .collect();
+    assert_eq!(
+        posts.len(),
+        1,
+        "the second request is served from the cache"
+    );
+    assert!(
+        posts[0]
+            .form
+            .iter()
+            .any(|(k, v)| k == "sec-ch-ua-platform" && v == "Windows"),
+        "the first request sends the evidence the service does not list: {:?}",
+        posts[0].form
+    );
+    let cloud = second.get(CloudRequestEngine::DATA_KEY).unwrap();
+    assert!(cloud.cache_hit(), "the second request is a cache hit");
+}
+
+/// Evidence keys ignore letter case, so a stored response is found by the
+/// same evidence however its keys are spelled, although each request sends
+/// the names as its keys spell them.
+#[test]
+fn a_stored_response_is_found_whatever_the_letter_case_of_the_keys() {
+    let client = Arc::new(FakeClient::default());
+    client.set_evidence_keys(FakeClient::ok(r#"["header.user-agent"]"#));
+    client.set_data(FakeClient::ok(r#"{"device":{"ismobile":true}}"#));
+    let cache = Arc::new(RecordingCache::default());
+    let engine = CloudRequestEngine::builder()
+        .resource_key("test-resource-key")
+        .endpoint("https://cloud.example.test/api/v4/")
+        .http_client(client.clone())
+        .cache(cache.clone())
+        .build()
+        .unwrap();
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(engine))
+        .build()
+        .unwrap();
+
+    let mut first =
+        pipeline.create_flow_data_with(Evidence::builder().add("header.User-Agent", "UA").build());
+    first.process().unwrap();
+    let mut second =
+        pipeline.create_flow_data_with(Evidence::builder().add("header.user-agent", "UA").build());
+    second.process().unwrap();
+
+    let requests = client.requests.lock().unwrap();
+    let posts: Vec<&CloudHttpRequest> = requests
+        .iter()
+        .filter(|r| r.method == HttpMethod::Post)
+        .collect();
+    assert_eq!(
+        posts.len(),
+        1,
+        "the second request is served from the cache"
+    );
+    let cloud = second.get(CloudRequestEngine::DATA_KEY).unwrap();
+    assert!(cloud.cache_hit(), "the second request is a cache hit");
+}
+
+/// A web integration gives the whole web request with the evidence, under
+/// `server.http-request`. It is not one of the evidence's text values, so it
+/// is never sent to the cloud, even when the cloud lists its key, and nor is
+/// a value only the request holds.
+#[test]
+fn the_web_request_is_never_sent_to_the_cloud() {
+    let client = Arc::new(FakeClient::default());
+    client.set_evidence_keys(FakeClient::ok(
+        r#"["header.user-agent","header.x-test","server.client-ip","server.http-request"]"#,
+    ));
     client.set_data(FakeClient::ok(r#"{"device":{}}"#));
 
     let engine = engine_with(client.clone());
@@ -164,10 +460,15 @@ fn evidence_is_filtered_to_accepted_keys_and_prefixes_stripped() {
         .build()
         .unwrap();
 
+    let request = Evidence::builder()
+        .add("header.user-agent", "UA")
+        .add("header.x-test", "only in the request")
+        .add("server.client-ip", "192.0.2.1")
+        .build();
     let mut data = pipeline.create_flow_data_with(
         Evidence::builder()
             .add("header.user-agent", "UA")
-            .add("cookie.not-accepted", "should-be-dropped")
+            .http_request(request)
             .build(),
     );
     data.process().unwrap();
@@ -177,18 +478,17 @@ fn evidence_is_filtered_to_accepted_keys_and_prefixes_stripped() {
         .iter()
         .find(|r| r.method == HttpMethod::Post)
         .expect("a POST to the data endpoint");
-
-    // Resource key is present, the accepted header is stripped to `user-agent`,
-    // and the non-accepted cookie is absent.
-    assert!(data_request
-        .form
-        .iter()
-        .any(|(k, v)| k == "resource" && v == "test-resource-key"));
-    assert!(data_request
-        .form
-        .iter()
-        .any(|(k, v)| k == "user-agent" && v == "UA"));
-    assert!(!data_request.form.iter().any(|(k, _)| k == "not-accepted"));
+    let form = &data_request.form;
+    assert!(
+        form.iter().any(|(k, v)| k == "user-agent" && v == "UA"),
+        "{form:?}"
+    );
+    for field in ["http-request", "x-test", "client-ip"] {
+        assert!(!form.iter().any(|(k, _)| k == field), "{field} in {form:?}");
+    }
+    for value in ["only in the request", "192.0.2.1"] {
+        assert!(!form.iter().any(|(_, v)| v == value), "{value} in {form:?}");
+    }
 }
 
 #[test]
@@ -1011,7 +1311,7 @@ fn injected_state_skips_discovery_and_makes_no_discovery_request() {
     let mut data = pipeline.create_flow_data_with(
         Evidence::builder()
             .add("header.user-agent", "UA")
-            .add("cookie.not-accepted", "should-be-dropped")
+            .add("cookie.not-listed", "sent all the same")
             .build(),
     );
     data.process().unwrap();
@@ -1027,13 +1327,17 @@ fn injected_state_skips_discovery_and_makes_no_discovery_request() {
         .iter()
         .find(|r| r.method == HttpMethod::Post)
         .expect("a POST to the data endpoint");
-    // The injected evidence filter was applied: the accepted header is present
-    // and stripped, the non-accepted cookie is dropped.
+    // The injected evidence keys decide what the engine advertises, not what
+    // it sends, so the header and the cookie the state does not list are both
+    // sent with their prefixes removed.
     assert!(data_request
         .form
         .iter()
         .any(|(k, v)| k == "user-agent" && v == "UA"));
-    assert!(!data_request.form.iter().any(|(k, _)| k == "not-accepted"));
+    assert!(data_request
+        .form
+        .iter()
+        .any(|(k, v)| k == "not-listed" && v == "sent all the same"));
 }
 
 #[test]

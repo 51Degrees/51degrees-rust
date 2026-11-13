@@ -112,7 +112,7 @@ fn parse_boolean(text: &str) -> Option<bool> {
 /// flow data under the
 /// [`crate::JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY`] element data key. It implements
 /// the
-/// [javascript-builder specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/javascript-builder.md).
+/// [javascript-builder specification](https://github.com/51Degrees/specifications/blob/e89679e9/pipeline-specification/pipeline-elements/javascript-builder.md).
 ///
 /// # Derivation rules
 ///
@@ -120,10 +120,14 @@ fn parse_boolean(text: &str) -> Option<bool> {
 ///   evidence, else `https`.
 /// - **host**: the configured host if set, else the `header.host` evidence.
 /// - **object name**: the `query.fod-js-object-name` evidence if present and a
-///   valid JavaScript identifier that is not a reserved word, `Infinity`,
-///   `NaN`, `undefined` or `fiftyoneDegreesManager`, else the configured
-///   object name (default `fod`). An invalid requested name, the empty string
-///   included, is ignored with a warning logged through the `log` crate.
+///   valid JavaScript identifier that the
+///   [object name rule](https://github.com/51Degrees/specifications/blob/e637d3660a5e781f4494a9b42c8e8349bb117669/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L192)
+///   does not refuse, else the configured object name (default `fod`). The
+///   rule refuses the reserved words, `Infinity`, `NaN`, `undefined`,
+///   `fiftyoneDegreesManager`, and global names a page cannot use for the
+///   object, such as `eval`, `window`, `location` and `localStorage`. An
+///   invalid requested name, the empty string included, is ignored with a
+///   warning logged through the `log` crate.
 /// - **enable cookies**: the `query.fod-js-enable-cookies` evidence when it
 ///   is `true` or `false` in any case, with white space and NUL characters
 ///   around it ignored, as .NET's `bool.TryParse` reads it, else the
@@ -131,10 +135,15 @@ fn parse_boolean(text: &str) -> Option<bool> {
 /// - **callback URL**: built only when protocol, host and endpoint are all
 ///   present, normalizing the single slash between host and endpoint. A URL
 ///   that is not valid is left out and logged at error level the first time,
-///   and characters in the user information, after the host and in the
-///   endpoint that could end the string the script holds the URL in are
-///   percent-encoded. The protocol must be `http` or `https`, ignoring case.
-///   When a URL is built the background-update mechanism is enabled.
+///   and characters after the host and in the endpoint that could end the
+///   string the script holds the URL in are percent-encoded. The protocol
+///   must be `http` or `https`, ignoring case. A host holding `@` anywhere,
+///   a zone identifier, `?` or `#` is not valid, and nor is one with a `:`
+///   and no port after it, or one whose last label is a number unless it is
+///   an IPv4 address. The log shows `***` in place of anything in a refused
+///   host value before its last `@`, even after the host's first `/`, so a
+///   user name or password is never logged. When a URL is built the
+///   background-update mechanism is enabled.
 /// - **parameters**: every `query.*` evidence entry except the session id and
 ///   sequence, with the prefix stripped and the key and value encoded as
 ///   .NET's `WebUtility.UrlEncode` encodes them, in name order, serialized as
@@ -402,7 +411,8 @@ impl JavaScriptBuilderElement {
 
     /// The callback URL, or `None` when a part is missing or the URL is not
     /// valid. A URL that is not valid is logged at error level the first time
-    /// only.
+    /// only, with anything in the host value before its last `@` replaced by
+    /// `***`.
     fn build_url(&self, protocol: &str, host: &str) -> Option<String> {
         match callback_url(protocol, host, &self.endpoint) {
             CallbackUrl::Valid(url) => Some(url),
@@ -451,11 +461,17 @@ impl JavaScriptBuilderElement {
     }
 
     /// Read the JSON payload from the JSON builder's element data, or an empty
-    /// string if the JSON builder did not run.
+    /// object when the JSON builder did not run.
+    ///
+    /// The template writes this value into `var json = ...;` as bare code, so
+    /// an empty string would leave the script unparseable. A pipeline can
+    /// reach here with no JSON builder data, because the JSON builder needs a
+    /// sequence element before it and fails without one.
     fn json_object(data: &FlowData) -> String {
         data.get(JSON_BUILDER_DATA_KEY)
             .map(|json| json.json().to_owned())
-            .unwrap_or_default()
+            .filter(|json| !json.is_empty())
+            .unwrap_or_else(|| "{}".to_owned())
     }
 
     /// Render and (optionally) minify the JavaScript for this request around
@@ -703,6 +719,106 @@ mod tests {
         ] {
             let data = flow_data_with(&[("query.fod-js-object-name", name)]);
             assert_eq!(element.resolve_object_name(&data), "configured");
+        }
+    }
+
+    /// Global names a top level `var` cannot safely use as the object are
+    /// refused in code and ignored from the evidence.
+    // https://github.com/51Degrees/specifications/blob/e637d3660a5e781f4494a9b42c8e8349bb117669/pipeline-specification/pipeline-elements/javascript-builder.md#L144-L192
+    #[test]
+    fn unsafe_global_names_are_refused() {
+        let element = JavaScriptBuilderElement::builder()
+            .set_object_name("configured")
+            .unwrap()
+            .build();
+        for name in [
+            "eval",
+            "arguments",
+            "window",
+            "document",
+            "top",
+            "name",
+            "status",
+            "history",
+            "navigator",
+            "closed",
+            "location",
+            "frameElement",
+            "isSecureContext",
+            "crossOriginIsolated",
+            "trustedTypes",
+            "crypto",
+            "indexedDB",
+            "localStorage",
+            "sessionStorage",
+            "caches",
+            "cookieStore",
+            "speechSynthesis",
+            "styleMedia",
+            "crashReport",
+            "credentialless",
+            "customElements",
+            "documentPictureInPicture",
+            "fence",
+            "launchQueue",
+            "originAgentCluster",
+        ] {
+            assert!(
+                JavaScriptBuilderElement::builder()
+                    .set_object_name(name)
+                    .is_err(),
+                "'{name}' was accepted in code"
+            );
+            let data = flow_data_with(&[("query.fod-js-object-name", name)]);
+            assert_eq!(
+                element.resolve_object_name(&data),
+                "configured",
+                "'{name}' was taken from the evidence"
+            );
+        }
+    }
+
+    /// Names close to the unsafe global names, or differing only in case,
+    /// are still accepted.
+    #[test]
+    fn names_near_the_unsafe_global_names_are_accepted() {
+        for name in [
+            "windowed",
+            "names",
+            "Window",
+            "Eval",
+            "evals",
+            "argumentsList",
+            "documents",
+            "topmost",
+            "myStatus",
+            "_name",
+            "$window",
+            "history2",
+            "Navigator",
+            "closedAt",
+            "cryptoKey",
+            "Crypto",
+            "localStorageKey",
+            "cachesList",
+            "styleMediaQuery",
+            "fences",
+            "customElement",
+            "launchQueueItem",
+            "crashReports",
+            "originAgent",
+        ] {
+            assert!(is_valid_object_name(name), "'{name}' was refused");
+        }
+    }
+
+    /// The browser's `Window` properties that a top level `var` can replace,
+    /// being `[Replaceable]` or writable, are accepted, as the object is
+    /// then created.
+    #[test]
+    fn window_properties_a_var_can_replace_are_accepted() {
+        for name in ["self", "frames", "parent", "opener", "length"] {
+            assert!(is_valid_object_name(name), "'{name}' was refused");
         }
     }
 

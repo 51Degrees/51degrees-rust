@@ -144,8 +144,9 @@ struct DerivedMetadata {
 /// completed, the engine lists the six properties the on-premise engine
 /// gives, as the IP Intelligence cloud engine lists its defaults, and
 /// [`FlowElement::properties_loaded`] is `false`. A resource key without the
-/// product gives empty metadata and logs an error once, as the IP
-/// Intelligence cloud engine does.
+/// product gives empty metadata and logs a warning once, as the IP
+/// Intelligence cloud engine does, and a read of one of the product's
+/// properties logs nothing.
 ///
 /// # Processing
 ///
@@ -158,10 +159,12 @@ struct DerivedMetadata {
 /// license key alone, each value's form is read from the JSON with nothing
 /// logged.
 ///
-/// A response without the section, or a value not in the form its type
-/// says, is an error, leaving the data empty. When the cloud request engine
-/// left no response, the engine records an error that does not fail
-/// processing and marks the data, so each property read gives
+/// A response without the section, as for a key without the product, leaves
+/// the data without values and raises no error, as the cloud aspect engine
+/// specification says. A section that is not an object, or a value not in
+/// the form its type says, is an error, leaving the data empty. When the
+/// cloud request engine left no response, the engine records an error that
+/// does not fail processing and marks the data, so each property read gives
 /// [`MissingPropertyReason::CloudRequestFailed`](fiftyone_pipeline_engines::MissingPropertyReason::CloudRequestFailed).
 /// With a resource key, a property the response did not return gives the
 /// reason it is missing.
@@ -298,9 +301,11 @@ impl CloudCountriesTranslationEngine {
                 if self.properties.set(Vec::new()).is_ok()
                     && self.request_engine.resource_key().is_some()
                 {
-                    log::error!(
+                    log::warn!(
                         "Aspect properties could not be loaded for {ENGINE_NAME} - \
-                         '{COUNTRY_NAMES_TRANSLATED_KEY_NAME}'"
+                         '{COUNTRY_NAMES_TRANSLATED_KEY_NAME}'. The resource key does not \
+                         include access to any properties under \
+                         '{COUNTRY_NAMES_TRANSLATED_KEY_NAME}'."
                     );
                 }
             }
@@ -323,7 +328,8 @@ impl CloudCountriesTranslationEngine {
     }
 
     /// Each entry of the response's section, as the name the response
-    /// gives it and its value, in the response's order.
+    /// gives it and its value, in the response's order. A response without
+    /// the section has no entries.
     fn read_response(&self, json: &str) -> Result<Entries> {
         let root: Value = serde_json::from_str(json).map_err(|error| Error::Pipeline {
             message: format!("The cloud response could not be read as JSON. {error}"),
@@ -338,16 +344,7 @@ impl CloudCountriesTranslationEngine {
                     ),
                 })
             }
-            // .NET's message, as it reads the member with a dictionary's
-            // indexer.
-            None => {
-                return Err(Error::Pipeline {
-                    message: format!(
-                        "The given key '{COUNTRY_NAMES_TRANSLATED_KEY_NAME}' was not present \
-                         in the dictionary."
-                    ),
-                })
-            }
+            None => return Ok(Vec::new()),
         };
 
         let empty = HashMap::new();

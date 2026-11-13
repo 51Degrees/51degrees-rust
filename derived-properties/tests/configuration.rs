@@ -25,11 +25,10 @@
 //! configuration. Each expected answer and message is the one .NET gave,
 //! apart from the differences the tests name.
 //!
-//! .NET ships HumanConfidence and IsGdpr where the crate ships
-//! HumanConfidence alone. A pipeline naming a shipped script also names
-//! `DeviceSource` and `IpSource` after the derived property element, which
-//! supply every property the shipped scripts read, because both languages
-//! refuse a pipeline in which no element supplies one.
+//! A pipeline naming a shipped script also names `DeviceSource` and
+//! `IpSource` after the derived property element, which supply every property
+//! the shipped scripts read, because both languages refuse a pipeline in which
+//! no element supplies one.
 
 use std::sync::Arc;
 
@@ -253,14 +252,13 @@ fn a_pipeline_supplying_nothing_a_shipped_script_reads_is_refused() {
     );
 }
 
-/// .NET's list of the shipped scripts also names IsGdpr.
 #[test]
 fn a_script_name_that_is_unknown_or_empty_is_a_fault() {
     let unknown = |name: &str| {
         format!(
             "{name} (built in) at (document): there is no script called '{name}' in this \
-             package. The scripts in this package are HumanConfidence. A script from your own \
-             environment is added with ScriptFiles rather than Scripts."
+             package. The scripts in this package are HumanConfidence, IsGdpr. A script from \
+             your own environment is added with ScriptFiles rather than Scripts."
         )
     };
     assert_eq!(
@@ -334,11 +332,36 @@ fn add_script_takes_a_shipped_script_by_name_or_number() {
             "'{value}'"
         );
     }
+    for value in ["IsGdpr", "isgdpr", "1"] {
+        assert_eq!(
+            scripts(with_sources(BUILDER, vec![text("AddScript", value)])),
+            vec![("IsGdpr".to_owned(), "built in IsGdpr".to_owned())],
+            "'{value}'"
+        );
+    }
+}
+
+/// Both shipped scripts at once, run in the order given.
+#[test]
+fn scripts_names_both_shipped_scripts() {
+    assert_eq!(
+        scripts(with_sources(
+            BUILDER,
+            vec![text("Scripts", "IsGdpr,HumanConfidence")]
+        )),
+        vec![
+            ("IsGdpr".to_owned(), "built in IsGdpr".to_owned()),
+            (
+                "HumanConfidence".to_owned(),
+                "built in HumanConfidence".to_owned()
+            ),
+        ]
+    );
 }
 
 /// A value that is not a `BuiltInScript` reaches .NET's `AddScript` taking
 /// a name and a text, and a number no script has reaches the method, which
-/// refuses it. .NET's 1 is IsGdpr, and its list also names IsGdpr.
+/// refuses it.
 #[test]
 fn add_script_refuses_other_values_as_dotnet_does() {
     let two = failed(&format!(
@@ -365,14 +388,14 @@ fn add_script_refuses_other_values_as_dotnet_does() {
         ("5", "5"),
         ("-1", "-1"),
         ("+05", "5"),
-        ("1", "1"),
+        ("2", "2"),
         ("-2147483648", "-2147483648"),
     ] {
         assert_eq!(
             message(with(BUILDER, vec![text("AddScript", value)])),
             failed(&format!(
                 "'{number}' is not a script in this package. The scripts in this package are \
-                 HumanConfidence. (Parameter 'script')"
+                 HumanConfidence, IsGdpr. (Parameter 'script')"
             )),
             "'{value}'"
         );

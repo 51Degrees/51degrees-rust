@@ -30,10 +30,12 @@
 //! This file is produced by the 51Degrees PropertyGenerator tool from the
 //! common metadata. It defines the [`IpIntelligenceData`] trait, one accessor
 //! per documented property, and implements it for the hand-written
-//! [`IpIntelligenceDataBase`] by delegating to its by-name stores. Plain
-//! properties resolve to a single typed value; the weighted properties
-//! (the country-code distributions and `Mcc`) resolve to an ordered list of
-//! weighted candidates.
+//! [`IpIntelligenceDataBase`] by delegating to its getters, each given the
+//! slot of the accessor's property in [`TYPED_PROPERTY_NAMES`] so that it
+//! reads by the position its reader resolved rather than by name. Plain
+//! properties resolve to a single typed value, and the weighted properties
+//! (the country-code distributions, `Mcc` and `StateGeoNameIdsGeographical`)
+//! resolve to an ordered list of weighted candidates.
 #![allow(rustdoc::bare_urls, rustdoc::invalid_html_tags)]
 
 use crate::data::IpIntelligenceDataBase;
@@ -45,364 +47,542 @@ use fiftyone_pipeline_engines::{AspectData, AspectPropertyValue};
 /// Covers the network and location properties of an IP. Each accessor
 /// returns an [`AspectPropertyValue`] wrapping the property's value type, so
 /// an absent value carries the engine's no-value reason.
+///
+/// Each accessor has a default body that gives no value, with a reason
+/// naming the property, so an implementation outside these crates keeps
+/// compiling when a property is added. [`IpIntelligenceDataBase`] reads
+/// every property from its stores.
 pub trait IpIntelligenceData: AspectData {
     /// Radius in kilometers of the circle centred around the most probable location that encompasses the entire area. Where multiple areas are returned, this will only cover the area the most probable location is in. See Areas property. This will likely be a very large distance. It is recommend to use the AccuracyRadiusMin property.
-    fn accuracy_radius_max(&self) -> AspectPropertyValue<i32>;
+    fn accuracy_radius_max(&self) -> AspectPropertyValue<i32> {
+        not_provided("AccuracyRadiusMax")
+    }
 
     /// Radius in kilometers of the largest circle centred around the most probable location that fits within the area. Where multiple areas are returned, only the area that the most probable location falls within is considered. See Areas property.
-    fn accuracy_radius_min(&self) -> AspectPropertyValue<i32>;
+    fn accuracy_radius_min(&self) -> AspectPropertyValue<i32> {
+        not_provided("AccuracyRadiusMin")
+    }
 
     /// Any shapes associated with the location. Usually this is the area which the IP range covers. This is returned as a WKT String stored as a reduced format of WKB.
-    fn areas(&self) -> AspectPropertyValue<String>;
+    fn areas(&self) -> AspectPropertyValue<String> {
+        not_provided("Areas")
+    }
 
     /// Autonomous System Number associated with the IP address.
-    fn asn(&self) -> AspectPropertyValue<String>;
+    fn asn(&self) -> AspectPropertyValue<String> {
+        not_provided("Asn")
+    }
 
     /// The name registered to the Asn associated with the IP address.
-    fn asn_name(&self) -> AspectPropertyValue<String>;
+    fn asn_name(&self) -> AspectPropertyValue<String> {
+        not_provided("AsnName")
+    }
 
     /// Refers to the diversity of browsers observed from the IP range. An integer between 1-10, a lower value indicates a low number of browsers seen per IP address, while a higher value indicates a high number of browsers seen per IP address. A 0 value indicates that the probability is unknown.
-    fn browser_diversity(&self) -> AspectPropertyValue<i32>;
+    fn browser_diversity(&self) -> AspectPropertyValue<i32> {
+        not_provided("BrowserDiversity")
+    }
 
     /// Indicates the type of connection being used. Returns either Broadband, Cellular, or Hosting and Anonymous.
-    fn connection_type(&self) -> AspectPropertyValue<String>;
+    fn connection_type(&self) -> AspectPropertyValue<String> {
+        not_provided("ConnectionType")
+    }
 
     /// The 3-character ISO 3166-1 continent code for the supplied location.
-    fn continent_code2(&self) -> AspectPropertyValue<String>;
+    fn continent_code2(&self) -> AspectPropertyValue<String> {
+        not_provided("ContinentCode2")
+    }
+
+    /// The GeoNames identifier of the continent associated with the supplied location.
+    fn continent_geo_name_id(&self) -> AspectPropertyValue<String> {
+        not_provided("ContinentGeoNameId")
+    }
 
     /// The name of the continent the supplied location is in.
-    fn continent_name(&self) -> AspectPropertyValue<String>;
+    fn continent_name(&self) -> AspectPropertyValue<String> {
+        not_provided("ContinentName")
+    }
 
     /// The name of the country that the supplied location is in.
-    fn country(&self) -> AspectPropertyValue<String>;
+    fn country(&self) -> AspectPropertyValue<String> {
+        not_provided("Country")
+    }
 
     /// The 2-character ISO 3166-1 code of the country that the supplied location is in.
-    fn country_code(&self) -> AspectPropertyValue<String>;
+    fn country_code(&self) -> AspectPropertyValue<String> {
+        not_provided("CountryCode")
+    }
 
     /// The 3-character ISO 3166-1 alpha-3 code of the country that the supplied location is in.
-    fn country_code3(&self) -> AspectPropertyValue<String>;
+    fn country_code3(&self) -> AspectPropertyValue<String> {
+        not_provided("CountryCode3")
+    }
 
     /// A list of countries in ISO 3166-1 alpha-2 country code format that overlap with the area likely associated with the provided evidence, weighted and ordered by each country's proportion of the area. Administrative areas that cannot be cleanly resolved to the country level will not contribute to the resulting data.
-    fn country_codes_geographical(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>>;
+    fn country_codes_geographical(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
+        not_provided("CountryCodesGeographical")
+    }
 
     /// A list of countries in ISO 3166-1 alpha-2 country code format that overlap with the area likely associated with the provided evidence, weighted and ordered by each country's proportion of the total population within the area. Administrative areas that cannot be cleanly resolved to the country level will not contribute to the resulting data.
-    fn country_codes_population(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>>;
+    fn country_codes_population(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
+        not_provided("CountryCodesPopulation")
+    }
+
+    /// The GeoNames identifier of the country associated with the supplied location.
+    fn country_geo_name_id(&self) -> AspectPropertyValue<String> {
+        not_provided("CountryGeoNameId")
+    }
 
     /// The name of the county that the supplied location is in. In this case, a county is defined as an administrative sub-section of a country or state.
-    fn county(&self) -> AspectPropertyValue<String>;
+    fn county(&self) -> AspectPropertyValue<String> {
+        not_provided("County")
+    }
+
+    /// The GeoNames identifier of the county, a second-level administrative subdivision (admin2) associated with the supplied location. Unknown where the nearest subdivision lies in a different country from the location.
+    fn county_geo_name_id(&self) -> AspectPropertyValue<String> {
+        not_provided("CountyGeoNameId")
+    }
 
     /// The Alpha-3 ISO 4217 code of the currency associated with the supplied location.
-    fn currency_code(&self) -> AspectPropertyValue<String>;
+    fn currency_code(&self) -> AspectPropertyValue<String> {
+        not_provided("CurrencyCode")
+    }
 
     /// ITU international telephone numbering plan code for the country.
-    fn dial_code(&self) -> AspectPropertyValue<String>;
+    fn dial_code(&self) -> AspectPropertyValue<String> {
+        not_provided("DialCode")
+    }
 
     /// Refers to the diversity of hardware devices observed from the IP range. An integer between 1-10, a lower value indicates a low number of devices seen per IP address, while a higher value indicates a high number of devices seen per IP address. A 0 value indicates that the probability is unknown.
-    fn hardware_diversity(&self) -> AspectPropertyValue<i32>;
+    fn hardware_diversity(&self) -> AspectPropertyValue<i32> {
+        not_provided("HardwareDiversity")
+    }
 
     /// The confidence that the IP address is a human user versus associated with hosting. A 0-10 value where; 0-3: Low confidence the user is human, 4-6: Medium confidence, 7-10: High confidence. A -1 value indicates that the probability is unknown.
-    fn human_probability(&self) -> AspectPropertyValue<i32>;
+    fn human_probability(&self) -> AspectPropertyValue<i32> {
+        not_provided("HumanProbability")
+    }
 
     /// The IPv4 address of the request.
-    fn ip(&self) -> AspectPropertyValue<String>;
+    fn ip(&self) -> AspectPropertyValue<String> {
+        not_provided("Ip")
+    }
 
     /// End of the IP range to which the evidence IP belongs.
-    fn ip_range_end(&self) -> AspectPropertyValue<String>;
+    fn ip_range_end(&self) -> AspectPropertyValue<String> {
+        not_provided("IpRangeEnd")
+    }
 
     /// Start of the IP range to which the evidence IP belongs.
-    fn ip_range_start(&self) -> AspectPropertyValue<String>;
+    fn ip_range_start(&self) -> AspectPropertyValue<String> {
+        not_provided("IpRangeStart")
+    }
 
     /// The IPv6 address of the request.
-    fn ip_v6(&self) -> AspectPropertyValue<String>;
+    fn ip_v6(&self) -> AspectPropertyValue<String> {
+        not_provided("IpV6")
+    }
 
     /// Indicates whether the IP address is associated with a broadband connection. Includes DSL, Cable, Fibre, and Satellite connections.
-    fn is_broadband(&self) -> AspectPropertyValue<bool>;
+    fn is_broadband(&self) -> AspectPropertyValue<bool> {
+        not_provided("IsBroadband")
+    }
 
     /// Indicates whether the IP address is associated with a cellular network.
-    fn is_cellular(&self) -> AspectPropertyValue<bool>;
+    fn is_cellular(&self) -> AspectPropertyValue<bool> {
+        not_provided("IsCellular")
+    }
 
     /// Indicates whether the country of the supplied location is within the European Union.
-    fn is_eu(&self) -> AspectPropertyValue<bool>;
+    fn is_eu(&self) -> AspectPropertyValue<bool> {
+        not_provided("IsEu")
+    }
 
     /// Indicates whether the IP address is associated with hosting. Includes both hosting and anonymised connections such as hosting networks, hosting ASNs, VPNs, proxies, TOR networks, and unreachable IP addresses.
-    fn is_hosted(&self) -> AspectPropertyValue<bool>;
+    fn is_hosted(&self) -> AspectPropertyValue<bool> {
+        not_provided("IsHosted")
+    }
 
     /// The ISO 3166-2 code for the supplied location. This is using the 'ISO3166-2-lvl4' property from OpenStreetMap.
-    fn iso31662_lvl4(&self) -> AspectPropertyValue<String>;
+    fn iso31662_lvl4(&self) -> AspectPropertyValue<String> {
+        not_provided("Iso31662Lvl4")
+    }
 
     /// The alphanumeric code representing the subdivision from the ISO 3166-2 code of the supplied location. This is using the 'ISO3166-2-lvl4' property from OpenStreetMap.
-    fn iso31662_lvl4_subdivision_only(&self) -> AspectPropertyValue<String>;
+    fn iso31662_lvl4_subdivision_only(&self) -> AspectPropertyValue<String> {
+        not_provided("Iso31662Lvl4SubdivisionOnly")
+    }
 
     /// The ISO 3166-2 code for the supplied location. This is using the 'ISO3166-2-lvl8' property from OpenStreetMap.
-    fn iso31662_lvl8(&self) -> AspectPropertyValue<String>;
+    fn iso31662_lvl8(&self) -> AspectPropertyValue<String> {
+        not_provided("Iso31662Lvl8")
+    }
 
     /// The alphanumeric code representing the subdivision from the ISO 3166-2 code of the supplied location. This is using the 'ISO3166-2-lvl8' property from OpenStreetMap.
-    fn iso31662_lvl8_subdivision_only(&self) -> AspectPropertyValue<String>;
+    fn iso31662_lvl8_subdivision_only(&self) -> AspectPropertyValue<String> {
+        not_provided("Iso31662Lvl8SubdivisionOnly")
+    }
 
     /// Indicates whether the IP address is associated with a Proxy server.
-    fn is_proxy(&self) -> AspectPropertyValue<bool>;
+    fn is_proxy(&self) -> AspectPropertyValue<bool> {
+        not_provided("IsProxy")
+    }
 
     /// Indicates whether the IP address is associated with a public router.
-    fn is_public_router(&self) -> AspectPropertyValue<bool>;
+    fn is_public_router(&self) -> AspectPropertyValue<bool> {
+        not_provided("IsPublicRouter")
+    }
 
     /// Indicates whether the IP address is associated with a TOR server.
-    fn is_tor(&self) -> AspectPropertyValue<bool>;
+    fn is_tor(&self) -> AspectPropertyValue<bool> {
+        not_provided("IsTor")
+    }
 
     /// Indicates whether the IP address is associated with a VPN server.
-    fn is_vpn(&self) -> AspectPropertyValue<bool>;
+    fn is_vpn(&self) -> AspectPropertyValue<bool> {
+        not_provided("IsVPN")
+    }
 
     /// The Alpha-2 ISO 639 Language code associated with the supplied location.
-    fn language_code(&self) -> AspectPropertyValue<String>;
+    fn language_code(&self) -> AspectPropertyValue<String> {
+        not_provided("LanguageCode")
+    }
 
     /// Average latitude of the IP. For privacy, this is randomized within around 1 kilometer of the result. Randomized result will change only once per day.
-    fn latitude(&self) -> AspectPropertyValue<f32>;
+    fn latitude(&self) -> AspectPropertyValue<f32> {
+        not_provided("Latitude")
+    }
 
     /// The confidence in the town and country provided.
-    fn location_confidence(&self) -> AspectPropertyValue<String>;
+    fn location_confidence(&self) -> AspectPropertyValue<String> {
+        not_provided("LocationConfidence")
+    }
 
     /// Average longitude of the IP. For privacy, this is randomized within around 1 kilometer of the result. Randomized result will change only once per day.
-    fn longitude(&self) -> AspectPropertyValue<f32>;
+    fn longitude(&self) -> AspectPropertyValue<f32> {
+        not_provided("Longitude")
+    }
 
     /// The mobile country code of the network the device is connected to.
-    fn mcc(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>>;
+    fn mcc(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
+        not_provided("Mcc")
+    }
 
     /// Refers to the diversity of software observed from the IP range. An integer between 1-10, a lower value indicates a low number of software seen per IP address, while a higher value indicates a high number of software seen per IP address. A 0 value indicates that the probability is unknown.
-    fn platform_diversity(&self) -> AspectPropertyValue<i32>;
+    fn platform_diversity(&self) -> AspectPropertyValue<i32> {
+        not_provided("PlatformDiversity")
+    }
 
     /// The name of the geographical region that the supplied location is in.
-    fn region(&self) -> AspectPropertyValue<String>;
+    fn region(&self) -> AspectPropertyValue<String> {
+        not_provided("Region")
+    }
 
     /// Country code of the registered range.
-    fn registered_country(&self) -> AspectPropertyValue<String>;
+    fn registered_country(&self) -> AspectPropertyValue<String> {
+        not_provided("RegisteredCountry")
+    }
+
+    /// The GeoNames identifier of the country in which the IP address range is registered.
+    fn registered_country_geo_name_id(&self) -> AspectPropertyValue<String> {
+        not_provided("RegisteredCountryGeoNameId")
+    }
 
     /// Name of the IP range. This is usually the owner.
-    fn registered_name(&self) -> AspectPropertyValue<String>;
+    fn registered_name(&self) -> AspectPropertyValue<String> {
+        not_provided("RegisteredName")
+    }
 
     /// Registered owner of the range.
-    fn registered_owner(&self) -> AspectPropertyValue<String>;
+    fn registered_owner(&self) -> AspectPropertyValue<String> {
+        not_provided("RegisteredOwner")
+    }
 
     /// The name of the state that the supplied location is in.
-    fn state(&self) -> AspectPropertyValue<String>;
+    fn state(&self) -> AspectPropertyValue<String> {
+        not_provided("State")
+    }
+
+    /// The GeoNames database identifier for the state (first-level administrative subdivision, admin1) that the supplied location is in. Unknown where the nearest subdivision lies in a different country from the location.
+    fn state_geo_name_id(&self) -> AspectPropertyValue<String> {
+        not_provided("StateGeoNameId")
+    }
+
+    /// GeoNames identifiers of the first-level administrative subdivisions (admin1) of the location's country that overlap the area associated with the supplied evidence, weighted and ordered by each subdivision's share of that area. Subdivisions covering less than 1% of the area are omitted, at most the 20 largest are returned, and the weights of those returned are scaled to sum to 100%.
+    fn state_geo_name_ids_geographical(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
+        not_provided("StateGeoNameIdsGeographical")
+    }
 
     /// The name of the suburb that the supplied location is in.
-    fn suburb(&self) -> AspectPropertyValue<String>;
+    fn suburb(&self) -> AspectPropertyValue<String> {
+        not_provided("Suburb")
+    }
 
     /// The time zone at the supplied location in the IANA Time Zone format.
-    fn time_zone_iana(&self) -> AspectPropertyValue<String>;
+    fn time_zone_iana(&self) -> AspectPropertyValue<String> {
+        not_provided("TimeZoneIana")
+    }
 
     /// The offset from UTC in minutes in the supplied location, at the time that the value is produced.
-    fn time_zone_offset(&self) -> AspectPropertyValue<i32>;
+    fn time_zone_offset(&self) -> AspectPropertyValue<i32> {
+        not_provided("TimeZoneOffset")
+    }
 
     /// The name of the town that the supplied location is in.
-    fn town(&self) -> AspectPropertyValue<String>;
+    fn town(&self) -> AspectPropertyValue<String> {
+        not_provided("Town")
+    }
+
+    /// The GeoNames identifier of the town or populated place nearest to the supplied location. Unknown where the nearest populated place lies in a different country from the location.
+    fn town_geo_name_id(&self) -> AspectPropertyValue<String> {
+        not_provided("TownGeoNameId")
+    }
 
     /// The zip or postal code that the supplied location falls under.
-    fn zip_code(&self) -> AspectPropertyValue<String>;
+    fn zip_code(&self) -> AspectPropertyValue<String> {
+        not_provided("ZipCode")
+    }
+}
+
+/// The no-value an accessor gives when the implementation does not provide
+/// the property.
+fn not_provided<T>(name: &str) -> AspectPropertyValue<T> {
+    AspectPropertyValue::no_value(format!(
+        "Property '{name}' is not provided by this implementation of IpIntelligenceData."
+    ))
 }
 
 impl IpIntelligenceData for IpIntelligenceDataBase {
     fn accuracy_radius_max(&self) -> AspectPropertyValue<i32> {
-        self.integer("AccuracyRadiusMax")
+        self.integer_at(0, "AccuracyRadiusMax")
     }
 
     fn accuracy_radius_min(&self) -> AspectPropertyValue<i32> {
-        self.integer("AccuracyRadiusMin")
+        self.integer_at(1, "AccuracyRadiusMin")
     }
 
     fn areas(&self) -> AspectPropertyValue<String> {
-        self.string("Areas")
+        self.string_at(2, "Areas")
     }
 
     fn asn(&self) -> AspectPropertyValue<String> {
-        self.string("Asn")
+        self.string_at(3, "Asn")
     }
 
     fn asn_name(&self) -> AspectPropertyValue<String> {
-        self.string("AsnName")
+        self.string_at(4, "AsnName")
     }
 
     fn browser_diversity(&self) -> AspectPropertyValue<i32> {
-        self.integer("BrowserDiversity")
+        self.integer_at(5, "BrowserDiversity")
     }
 
     fn connection_type(&self) -> AspectPropertyValue<String> {
-        self.string("ConnectionType")
+        self.string_at(6, "ConnectionType")
     }
 
     fn continent_code2(&self) -> AspectPropertyValue<String> {
-        self.string("ContinentCode2")
+        self.string_at(7, "ContinentCode2")
+    }
+
+    fn continent_geo_name_id(&self) -> AspectPropertyValue<String> {
+        self.string_at(8, "ContinentGeoNameId")
     }
 
     fn continent_name(&self) -> AspectPropertyValue<String> {
-        self.string("ContinentName")
+        self.string_at(9, "ContinentName")
     }
 
     fn country(&self) -> AspectPropertyValue<String> {
-        self.string("Country")
+        self.string_at(10, "Country")
     }
 
     fn country_code(&self) -> AspectPropertyValue<String> {
-        self.string("CountryCode")
+        self.string_at(11, "CountryCode")
     }
 
     fn country_code3(&self) -> AspectPropertyValue<String> {
-        self.string("CountryCode3")
+        self.string_at(12, "CountryCode3")
     }
 
     fn country_codes_geographical(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
-        self.weighted_string("CountryCodesGeographical")
+        self.weighted_string_at(13, "CountryCodesGeographical")
     }
 
     fn country_codes_population(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
-        self.weighted_string("CountryCodesPopulation")
+        self.weighted_string_at(14, "CountryCodesPopulation")
+    }
+
+    fn country_geo_name_id(&self) -> AspectPropertyValue<String> {
+        self.string_at(15, "CountryGeoNameId")
     }
 
     fn county(&self) -> AspectPropertyValue<String> {
-        self.string("County")
+        self.string_at(16, "County")
+    }
+
+    fn county_geo_name_id(&self) -> AspectPropertyValue<String> {
+        self.string_at(17, "CountyGeoNameId")
     }
 
     fn currency_code(&self) -> AspectPropertyValue<String> {
-        self.string("CurrencyCode")
+        self.string_at(18, "CurrencyCode")
     }
 
     fn dial_code(&self) -> AspectPropertyValue<String> {
-        self.string("DialCode")
+        self.string_at(19, "DialCode")
     }
 
     fn hardware_diversity(&self) -> AspectPropertyValue<i32> {
-        self.integer("HardwareDiversity")
+        self.integer_at(20, "HardwareDiversity")
     }
 
     fn human_probability(&self) -> AspectPropertyValue<i32> {
-        self.integer("HumanProbability")
+        self.integer_at(21, "HumanProbability")
     }
 
     fn ip(&self) -> AspectPropertyValue<String> {
-        self.string("Ip")
+        self.string_at(22, "Ip")
     }
 
     fn ip_range_end(&self) -> AspectPropertyValue<String> {
-        self.string("IpRangeEnd")
+        self.string_at(23, "IpRangeEnd")
     }
 
     fn ip_range_start(&self) -> AspectPropertyValue<String> {
-        self.string("IpRangeStart")
+        self.string_at(24, "IpRangeStart")
     }
 
     fn ip_v6(&self) -> AspectPropertyValue<String> {
-        self.string("IpV6")
+        self.string_at(25, "IpV6")
     }
 
     fn is_broadband(&self) -> AspectPropertyValue<bool> {
-        self.boolean("IsBroadband")
+        self.boolean_at(26, "IsBroadband")
     }
 
     fn is_cellular(&self) -> AspectPropertyValue<bool> {
-        self.boolean("IsCellular")
+        self.boolean_at(27, "IsCellular")
     }
 
     fn is_eu(&self) -> AspectPropertyValue<bool> {
-        self.boolean("IsEu")
+        self.boolean_at(28, "IsEu")
     }
 
     fn is_hosted(&self) -> AspectPropertyValue<bool> {
-        self.boolean("IsHosted")
+        self.boolean_at(29, "IsHosted")
     }
 
     fn iso31662_lvl4(&self) -> AspectPropertyValue<String> {
-        self.string("Iso31662Lvl4")
+        self.string_at(30, "Iso31662Lvl4")
     }
 
     fn iso31662_lvl4_subdivision_only(&self) -> AspectPropertyValue<String> {
-        self.string("Iso31662Lvl4SubdivisionOnly")
+        self.string_at(31, "Iso31662Lvl4SubdivisionOnly")
     }
 
     fn iso31662_lvl8(&self) -> AspectPropertyValue<String> {
-        self.string("Iso31662Lvl8")
+        self.string_at(32, "Iso31662Lvl8")
     }
 
     fn iso31662_lvl8_subdivision_only(&self) -> AspectPropertyValue<String> {
-        self.string("Iso31662Lvl8SubdivisionOnly")
+        self.string_at(33, "Iso31662Lvl8SubdivisionOnly")
     }
 
     fn is_proxy(&self) -> AspectPropertyValue<bool> {
-        self.boolean("IsProxy")
+        self.boolean_at(34, "IsProxy")
     }
 
     fn is_public_router(&self) -> AspectPropertyValue<bool> {
-        self.boolean("IsPublicRouter")
+        self.boolean_at(35, "IsPublicRouter")
     }
 
     fn is_tor(&self) -> AspectPropertyValue<bool> {
-        self.boolean("IsTor")
+        self.boolean_at(36, "IsTor")
     }
 
     fn is_vpn(&self) -> AspectPropertyValue<bool> {
-        self.boolean("IsVPN")
+        self.boolean_at(37, "IsVPN")
     }
 
     fn language_code(&self) -> AspectPropertyValue<String> {
-        self.string("LanguageCode")
+        self.string_at(38, "LanguageCode")
     }
 
     fn latitude(&self) -> AspectPropertyValue<f32> {
-        self.float("Latitude")
+        self.float_at(39, "Latitude")
     }
 
     fn location_confidence(&self) -> AspectPropertyValue<String> {
-        self.string("LocationConfidence")
+        self.string_at(40, "LocationConfidence")
     }
 
     fn longitude(&self) -> AspectPropertyValue<f32> {
-        self.float("Longitude")
+        self.float_at(41, "Longitude")
     }
 
     fn mcc(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
-        self.weighted_string("Mcc")
+        self.weighted_string_at(42, "Mcc")
     }
 
     fn platform_diversity(&self) -> AspectPropertyValue<i32> {
-        self.integer("PlatformDiversity")
+        self.integer_at(43, "PlatformDiversity")
     }
 
     fn region(&self) -> AspectPropertyValue<String> {
-        self.string("Region")
+        self.string_at(44, "Region")
     }
 
     fn registered_country(&self) -> AspectPropertyValue<String> {
-        self.string("RegisteredCountry")
+        self.string_at(45, "RegisteredCountry")
+    }
+
+    fn registered_country_geo_name_id(&self) -> AspectPropertyValue<String> {
+        self.string_at(46, "RegisteredCountryGeoNameId")
     }
 
     fn registered_name(&self) -> AspectPropertyValue<String> {
-        self.string("RegisteredName")
+        self.string_at(47, "RegisteredName")
     }
 
     fn registered_owner(&self) -> AspectPropertyValue<String> {
-        self.string("RegisteredOwner")
+        self.string_at(48, "RegisteredOwner")
     }
 
     fn state(&self) -> AspectPropertyValue<String> {
-        self.string("State")
+        self.string_at(49, "State")
+    }
+
+    fn state_geo_name_id(&self) -> AspectPropertyValue<String> {
+        self.string_at(50, "StateGeoNameId")
+    }
+
+    fn state_geo_name_ids_geographical(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
+        self.weighted_string_at(51, "StateGeoNameIdsGeographical")
     }
 
     fn suburb(&self) -> AspectPropertyValue<String> {
-        self.string("Suburb")
+        self.string_at(52, "Suburb")
     }
 
     fn time_zone_iana(&self) -> AspectPropertyValue<String> {
-        self.string("TimeZoneIana")
+        self.string_at(53, "TimeZoneIana")
     }
 
     fn time_zone_offset(&self) -> AspectPropertyValue<i32> {
-        self.integer("TimeZoneOffset")
+        self.integer_at(54, "TimeZoneOffset")
     }
 
     fn town(&self) -> AspectPropertyValue<String> {
-        self.string("Town")
+        self.string_at(55, "Town")
+    }
+
+    fn town_geo_name_id(&self) -> AspectPropertyValue<String> {
+        self.string_at(56, "TownGeoNameId")
     }
 
     fn zip_code(&self) -> AspectPropertyValue<String> {
-        self.string("ZipCode")
+        self.string_at(57, "ZipCode")
     }
 }
 
@@ -411,19 +591,22 @@ impl IpIntelligenceData for IpIntelligenceDataBase {
 pub const GENERATED_PROPERTY_TYPES: &[(&str, PropertyValueType)] = &[
     ("AccuracyRadiusMax", PropertyValueType::Integer),
     ("AccuracyRadiusMin", PropertyValueType::Integer),
-    ("Areas", PropertyValueType::String),
+    ("Areas", PropertyValueType::WktString),
     ("Asn", PropertyValueType::String),
     ("AsnName", PropertyValueType::String),
     ("BrowserDiversity", PropertyValueType::Integer),
     ("ConnectionType", PropertyValueType::String),
     ("ContinentCode2", PropertyValueType::String),
+    ("ContinentGeoNameId", PropertyValueType::String),
     ("ContinentName", PropertyValueType::String),
     ("Country", PropertyValueType::String),
     ("CountryCode", PropertyValueType::String),
     ("CountryCode3", PropertyValueType::String),
     ("CountryCodesGeographical", PropertyValueType::KeyValueList),
     ("CountryCodesPopulation", PropertyValueType::KeyValueList),
+    ("CountryGeoNameId", PropertyValueType::String),
     ("County", PropertyValueType::String),
+    ("CountyGeoNameId", PropertyValueType::String),
     ("CurrencyCode", PropertyValueType::String),
     ("DialCode", PropertyValueType::String),
     ("HardwareDiversity", PropertyValueType::Integer),
@@ -452,12 +635,84 @@ pub const GENERATED_PROPERTY_TYPES: &[(&str, PropertyValueType)] = &[
     ("PlatformDiversity", PropertyValueType::Integer),
     ("Region", PropertyValueType::String),
     ("RegisteredCountry", PropertyValueType::String),
+    ("RegisteredCountryGeoNameId", PropertyValueType::String),
     ("RegisteredName", PropertyValueType::String),
     ("RegisteredOwner", PropertyValueType::String),
     ("State", PropertyValueType::String),
+    ("StateGeoNameId", PropertyValueType::String),
+    (
+        "StateGeoNameIdsGeographical",
+        PropertyValueType::KeyValueList,
+    ),
     ("Suburb", PropertyValueType::String),
     ("TimeZoneIana", PropertyValueType::String),
     ("TimeZoneOffset", PropertyValueType::Integer),
     ("Town", PropertyValueType::String),
+    ("TownGeoNameId", PropertyValueType::String),
     ("ZipCode", PropertyValueType::String),
+];
+
+/// The property each [`IpIntelligenceData`] accessor reads, at the slot the
+/// accessor passes to its getter, in the order the accessors are declared. A
+/// reader resolves the position of each once when its data set loads, so a
+/// typed read looks no name up.
+pub const TYPED_PROPERTY_NAMES: &[&str] = &[
+    "AccuracyRadiusMax",
+    "AccuracyRadiusMin",
+    "Areas",
+    "Asn",
+    "AsnName",
+    "BrowserDiversity",
+    "ConnectionType",
+    "ContinentCode2",
+    "ContinentGeoNameId",
+    "ContinentName",
+    "Country",
+    "CountryCode",
+    "CountryCode3",
+    "CountryCodesGeographical",
+    "CountryCodesPopulation",
+    "CountryGeoNameId",
+    "County",
+    "CountyGeoNameId",
+    "CurrencyCode",
+    "DialCode",
+    "HardwareDiversity",
+    "HumanProbability",
+    "Ip",
+    "IpRangeEnd",
+    "IpRangeStart",
+    "IpV6",
+    "IsBroadband",
+    "IsCellular",
+    "IsEu",
+    "IsHosted",
+    "Iso31662Lvl4",
+    "Iso31662Lvl4SubdivisionOnly",
+    "Iso31662Lvl8",
+    "Iso31662Lvl8SubdivisionOnly",
+    "IsProxy",
+    "IsPublicRouter",
+    "IsTor",
+    "IsVPN",
+    "LanguageCode",
+    "Latitude",
+    "LocationConfidence",
+    "Longitude",
+    "Mcc",
+    "PlatformDiversity",
+    "Region",
+    "RegisteredCountry",
+    "RegisteredCountryGeoNameId",
+    "RegisteredName",
+    "RegisteredOwner",
+    "State",
+    "StateGeoNameId",
+    "StateGeoNameIdsGeographical",
+    "Suburb",
+    "TimeZoneIana",
+    "TimeZoneOffset",
+    "Town",
+    "TownGeoNameId",
+    "ZipCode",
 ];

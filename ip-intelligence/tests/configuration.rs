@@ -23,8 +23,12 @@
 //! Pipelines made from a configuration with this crate's registry, compared
 //! with what .NET's FiftyOne.IpIntelligence 4.5.155 found and made with
 //! `FiftyOnePipelineBuilder` once every assembly of the package was loaded.
-//! The on-premise test needs the ASN file `51DEGREES_IPI_PATH` names, or the
+//! The on-premise test needs the ASN file `_51DEGREES_IPI_PATH` names, or the
 //! one at `cxx/data/ip-intelligence`, and skips with a note without it.
+
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
 
 use std::sync::Arc;
 
@@ -125,7 +129,7 @@ fn usage_sharing_follows_the_feature_unless_the_configuration_sets_it() {
     );
 }
 
-/// The ASN file `51DEGREES_IPI_PATH` names, or the one under `cxx/data`, or
+/// The ASN file `_51DEGREES_IPI_PATH` names, or the one under `cxx/data`, or
 /// `None` with a note that the test is skipped.
 #[cfg(feature = "on-premise")]
 fn asn_file() -> Option<String> {
@@ -133,7 +137,7 @@ fn asn_file() -> Option<String> {
 
     let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi");
-    let found = std::env::var("51DEGREES_IPI_PATH")
+    let found = crate::deprecated_names::var("_51DEGREES_IPI_PATH")
         .ok()
         .map(PathBuf::from)
         .into_iter()
@@ -141,7 +145,7 @@ fn asn_file() -> Option<String> {
         .find(|path| path.is_file())
         .map(|path| path.to_string_lossy().into_owned());
     if found.is_none() {
-        eprintln!("skipped: no ASN data file at 51DEGREES_IPI_PATH or cxx/data");
+        eprintln!("skipped: no ASN data file at _51DEGREES_IPI_PATH or cxx/data");
     }
     found
 }

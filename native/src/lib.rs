@@ -40,17 +40,19 @@
 //!   loaded data set. It is reference counted (returned inside an [`Arc`](std::sync::Arc)) and
 //!   is [`Send`] and [`Sync`], because the native resource manager is internally
 //!   reference counted and lock protected, so one loaded data set is shared
-//!   across threads cheaply. When the data set reads from its file after it is
-//!   loaded, no more calls that can read the file run at once than it has file
-//!   handles, and a call beyond them waits for one.
+//!   across threads cheaply. Its reloads replace the data set in place through
+//!   the C library's reload functions. When the data set reads from its file
+//!   after it is loaded, no more calls that can read the file run at once than
+//!   it has file handles, and a call beyond them waits for one.
 //! - A `Results` per engine ([`dd::Results`], [`ipi::Results`]) that owns a
-//!   native results structure and holds an [`Arc`](std::sync::Arc) to its manager so the data
-//!   set cannot be freed while a result still references it. It is [`Send`] but
-//!   deliberately not [`Sync`], because a native results structure is per-thread
-//!   scratch that the engine mutates in place.
-//! - Lazy property name to required-property-index resolution, computed once per
-//!   manager and cached, plus value reads into a reusable, growable per-thread
-//!   byte buffer so a fast lookup does not allocate per property.
+//!   native results structure, which holds the data set it was created from
+//!   until it is freed, and an [`Arc`](std::sync::Arc) to its manager. It is
+//!   [`Send`] but deliberately not [`Sync`], because a native results structure
+//!   is per-thread scratch that the engine mutates in place.
+//! - Property name to required-property-index resolution from a table each
+//!   manager reads from each data set it loads, which takes no lock, plus
+//!   value reads into a reusable, growable per-thread byte buffer so a fast
+//!   lookup does not allocate per property.
 //! - Evidence marshalling from the pipeline `prefix.field` model into the native
 //!   representation, reusing a thread-local pooled evidence array and value
 //!   buffers (see [`evidence`]).
@@ -106,10 +108,17 @@
 
 // The value buffer is shared machinery used by whichever product is enabled, so
 // it is only needed when at least one product feature is on.
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 #[cfg(any(feature = "dd", feature = "ipi"))]
 mod buffer;
 #[cfg(any(feature = "dd", feature = "ipi"))]
-mod file_reads;
+mod held_memory;
+#[cfg(any(feature = "dd", feature = "ipi"))]
+mod kept;
 #[cfg(any(feature = "dd", feature = "ipi"))]
 mod metadata;
 mod status;

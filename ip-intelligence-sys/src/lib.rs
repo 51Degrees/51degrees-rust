@@ -60,14 +60,13 @@
 //!   [`fiftyoneDegreesDataSetIpiRelease`] and
 //!   [`fiftyoneDegreesResourceManagerFree`], which is declared against this
 //!   crate's own common C library build).
-//! - **Property and header enumeration shim**
+//! - **Evidence keys** ([`fiftyoneDegreesIpiGetEvidenceKeys`]).
+//! - **Property enumeration shim**
 //!   ([`fiftyoneDegreesShimIpiGetRequiredPropertyCount`],
-//!   [`fiftyoneDegreesShimIpiGetRequiredPropertyName`],
-//!   [`fiftyoneDegreesShimIpiGetRequiredPropertyIndexFromName`],
-//!   [`fiftyoneDegreesShimIpiGetUniqueHeaderCount`] and
-//!   [`fiftyoneDegreesShimIpiGetUniqueHeaderName`]). These flat helpers are
-//!   compiled from this crate's own `src/shim.c` (not the upstream library) and
-//!   read the `available` property set and the `uniqueHeaders` buried deep
+//!   [`fiftyoneDegreesShimIpiGetRequiredPropertyName`] and
+//!   [`fiftyoneDegreesShimIpiGetRequiredPropertyIndexFromName`]). These flat
+//!   helpers are compiled from this crate's own `src/shim.c` (not the
+//!   upstream library) and read the `available` property set buried deep
 //!   inside the data set structures, so the Rust side does not mirror those
 //!   private C layouts. They mirror the equivalent shim in
 //!   `fiftyone-device-detection-sys`.
@@ -94,10 +93,15 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::os::raw::{c_char, c_int, c_void};
 
 pub use common::{
-    EvidenceKeyValuePair, EvidenceKeyValuePairArray, EvidencePrefix, Exception,
+    Date, EvidenceKeyValuePair, EvidenceKeyValuePairArray, EvidencePrefix, Exception,
     PropertiesAvailable, PropertiesRequired, ResourceHandle, ResourceManager, StatusCode,
 };
 
@@ -355,6 +359,21 @@ pub mod common {
         }
     }
 
+    /// A date as a data file header holds it, being the year, the month from 1
+    /// to 12 and the day of the month.
+    ///
+    /// Mirrors `fiftyoneDegreesDate` from `date.h`, which is packed.
+    #[repr(C, packed)]
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    pub struct Date {
+        /// The year.
+        pub year: i16,
+        /// The month, from 1 to 12.
+        pub month: u8,
+        /// The day of the month, from 1.
+        pub day: u8,
+    }
+
     extern "C" {
         /// Returns a newly allocated English message describing the exception.
         /// Free the returned pointer with [`fiftyoneDegreesFree`].
@@ -362,8 +381,8 @@ pub mod common {
         ///
         /// The native symbol is `ipi_`-prefixed because this crate's private
         /// copy of the common C library is compiled into its own symbol
-        /// namespace (see `src/symbol_prefix.h` and `build.rs`), so the Rust
-        /// name is bound to the prefixed definition with `link_name`.
+        /// namespace (see `build.rs`), so the Rust name is bound to the
+        /// prefixed definition with `link_name`.
         ///
         /// # Safety
         /// `exception` must point to a valid, set [`Exception`].
@@ -447,6 +466,14 @@ pub mod common {
         /// null.
         #[link_name = "ipi_fiftyoneDegreesEvidenceFree"]
         pub fn fiftyoneDegreesEvidenceFree(evidence: *mut EvidenceKeyValuePairArray);
+
+        /// Returns the number of processors, at least 1, which is the
+        /// expected concurrency a collection configured with 0 opens with.
+        ///
+        /// The native symbol is `ipi_`-prefixed for the same reason as
+        /// [`fiftyoneDegreesExceptionGetMessage`] above.
+        #[link_name = "ipi_fiftyoneDegreesThreadingGetProcessorCount"]
+        pub fn fiftyoneDegreesThreadingGetProcessorCount() -> u16;
     }
 }
 
@@ -852,14 +879,33 @@ extern "C" {
     /// `dataset` must come from [`fiftyoneDegreesDataSetIpiGet`].
     pub fn fiftyoneDegreesDataSetIpiRelease(dataset: *mut DataSetIpi);
 
+    /// Writes the evidence keys `dataset` reads into `buffer`, with
+    /// `separator` between them, and returns the number of characters the
+    /// keys and separators need, not counting the null terminator. A null
+    /// buffer only finds that length, and a buffer one longer holds them all.
+    /// The keys are a `query.` and then a `server.` key for each header the
+    /// data set reads the client IP from, in the data set's order. A comma
+    /// suits as the separator, as no header name holds one.
+    ///
+    /// # Safety
+    /// `dataset` must come from [`fiftyoneDegreesDataSetIpiGet`] and not yet
+    /// be released. `buffer` must be null or point to `length` writable
+    /// bytes, and `separator` must be a null terminated string.
+    pub fn fiftyoneDegreesIpiGetEvidenceKeys(
+        dataset: *mut DataSetIpi,
+        buffer: *mut c_char,
+        length: usize,
+        separator: *const c_char,
+    ) -> usize;
+
     /// Frees a resource manager and, once no references remain, its data set.
     /// Declared here so it links against this crate's own common C library
     /// resource layer rather than any other build of it.
     ///
     /// The native symbol is `ipi_`-prefixed because this crate's private copy of
     /// the common C library is compiled into its own symbol namespace (see
-    /// `src/symbol_prefix.h` and `build.rs`), so the Rust name is bound to the
-    /// prefixed definition with `link_name`. This is what keeps the resource
+    /// `build.rs`), so the Rust name is bound to the prefixed definition with
+    /// `link_name`. This is what keeps the resource
     /// manager freed through the matching wide-offset build rather than the
     /// Device Detection one.
     ///
@@ -942,12 +988,21 @@ extern "C" {
     ) -> StatusCode;
 
     /// Reloads the data set from contiguous memory using the original
-    /// configuration.
+    /// configuration. The new data set reads the bytes where they lie, and
+    /// frees them when it is freed only when the configuration of the data
+    /// set in use has `freeData` set.
+    ///
+    /// [`fiftyoneDegreesShimIpiReloadManagerFromMemoryCopy`] sets that flag
+    /// and leaves it set, and every reload copies the configuration of the
+    /// data set in use, so after a reload through the shim this function
+    /// frees the bytes it is given.
     ///
     /// # Safety
     /// `manager` must be initialized. `source` must point to `length` readable
     /// bytes that outlive the manager. `exception` must point to a cleared
-    /// [`Exception`].
+    /// [`Exception`]. The caller must not own `source` when the manager has
+    /// reloaded through
+    /// [`fiftyoneDegreesShimIpiReloadManagerFromMemoryCopy`].
     pub fn fiftyoneDegreesIpiReloadManagerFromMemory(
         manager: *mut ResourceManager,
         source: *mut c_void,
@@ -1214,6 +1269,48 @@ extern "C" {
         property_name: *const c_char,
     ) -> c_int;
 
+    /// Returns the required property index for `property_name` in
+    /// `data_set`, found ignoring case, or -1 when the property is not one of
+    /// the required properties. It takes no reference on the data set and
+    /// writes no shared memory.
+    ///
+    /// # Safety
+    /// `data_set` must be held, by a reference from
+    /// [`fiftyoneDegreesDataSetIpiGet`] not yet released or by results not yet
+    /// freed (see [`fiftyoneDegreesShimIpiResultsGetDataSet`]).
+    /// `property_name` must be a valid null terminated string.
+    pub fn fiftyoneDegreesShimIpiDataSetGetRequiredPropertyIndexFromName(
+        data_set: *mut DataSetIpi,
+        property_name: *const c_char,
+    ) -> c_int;
+
+    /// Returns the data set `results` hold a reference to, which is released
+    /// when the results are freed. It takes no reference of its own.
+    ///
+    /// # Safety
+    /// `results` must come from [`fiftyoneDegreesResultsIpiCreate`] and not
+    /// yet be freed.
+    pub fn fiftyoneDegreesShimIpiResultsGetDataSet(results: *mut ResultsIpi) -> *mut DataSetIpi;
+
+    /// Reloads the data set `manager` holds from a copy of the `length` bytes
+    /// at `data`, as [`fiftyoneDegreesIpiReloadManagerFromMemory`] does, with
+    /// the copy made by the C library's allocator and freed with the new data
+    /// set, as the C++ engine's `refreshData` makes it. The caller keeps
+    /// nothing. Any status but success leaves the data set in use. When the C
+    /// library cannot allocate the new data set itself the copy is not freed.
+    ///
+    /// # Safety
+    /// `manager` must be an initialized IP Intelligence manager that no other
+    /// reload is using at the same time. `data` must point to `length`
+    /// readable bytes, which are read only during the call. `exception` must
+    /// point to a cleared [`Exception`].
+    pub fn fiftyoneDegreesShimIpiReloadManagerFromMemoryCopy(
+        manager: *mut ResourceManager,
+        data: *const c_void,
+        length: FileOffset,
+        exception: *mut Exception,
+    ) -> StatusCode;
+
     /// Writes the data set's name (its tier, for example `Lite`, `Enterprise` or
     /// `TAC`) into `buffer` as a null terminated string and returns the number
     /// of characters written, excluding the terminator. Returns zero when no
@@ -1230,45 +1327,30 @@ extern "C" {
         length: usize,
     ) -> usize;
 
-    /// Writes the data set's published date into `*year`, `*month` and `*day`
-    /// and returns `1` on success or `0` when no data set is available. Any
-    /// output pointer may be null. Defined by this crate's `src/shim.c`, reading
-    /// the embedded publish date from the data set header.
+    /// Sets `*date` to the date the data file was published, from its
+    /// header, and returns true when that date is valid, as
+    /// `fiftyoneDegreesDateIsValid` in `date.h` decides. Otherwise sets
+    /// `*date` to zeros and returns false.
     ///
     /// # Safety
-    /// `manager` must be initialized. Each non-null output pointer must be
-    /// writable.
-    pub fn fiftyoneDegreesShimIpiGetDataSetPublished(
-        manager: *mut ResourceManager,
-        year: *mut c_int,
-        month: *mut c_int,
-        day: *mut c_int,
-    ) -> c_int;
+    /// `manager` must be initialized and `date` must point to
+    /// a writable [`Date`].
+    pub fn fiftyoneDegreesIpiGetPublished(manager: *mut ResourceManager, date: *mut Date) -> bool;
 
-    /// Returns the number of headers the data set reads the client IP from, or
-    /// zero when no data set is available. Defined by this crate's
-    /// `src/shim.c`, reading the data set's `uniqueHeaders`.
+    /// Sets `*date` to the date the next data file is expected, from the
+    /// data file header, and returns true when that date is valid, as
+    /// `fiftyoneDegreesDateIsValid` in `date.h` decides. Otherwise sets
+    /// `*date` to zeros and returns false.
     ///
     /// # Safety
-    /// `manager` must be initialized.
-    pub fn fiftyoneDegreesShimIpiGetUniqueHeaderCount(manager: *mut ResourceManager) -> u32;
+    /// `manager` must be initialized and `date` must point to
+    /// a writable [`Date`].
+    pub fn fiftyoneDegreesIpiGetNextUpdate(manager: *mut ResourceManager, date: *mut Date) -> bool;
 
-    /// Writes the name of the header at `header_index`, in the data set's
-    /// priority order, into `buffer` as a null terminated string and returns
-    /// the number of characters written, excluding the terminator. Returns zero
-    /// when the index is out of range or no data set is available, and cuts the
-    /// name short when the buffer is too small. Defined by this crate's
-    /// `src/shim.c`.
-    ///
-    /// # Safety
-    /// `manager` must be initialized. `buffer` must point to `length` writable
-    /// bytes.
-    pub fn fiftyoneDegreesShimIpiGetUniqueHeaderName(
-        manager: *mut ResourceManager,
-        header_index: u32,
-        buffer: *mut c_char,
-        length: usize,
-    ) -> usize;
+    /// Returns the size of an IP Intelligence data file's header in bytes,
+    /// being how much of a data file the C library compares to find a copy of
+    /// it to reuse. Defined by this crate's `src/shim.c`.
+    pub fn fiftyoneDegreesShimIpiGetHeaderSize() -> usize;
 
     /// Initializes `manager` from the data file `file_name` with a copy of
     /// `config`, setting the expected concurrency of every collection in the
@@ -1290,16 +1372,49 @@ extern "C" {
         exception: *mut Exception,
     ) -> StatusCode;
 
-    /// Returns the number of handles in the file pool of the data set
-    /// managed by `manager` when any of its collections reads from the data
-    /// file after it is loaded, or zero when the whole data set is held in
-    /// memory. A read that finds every handle in use fails rather than
-    /// waiting for one, so this is how many calls can read the data file at
-    /// once. Defined by this crate's `src/shim.c`.
+    /// Initializes `manager` from the `size` bytes at `memory`, the whole of
+    /// a data file, with a copy of `config` that neither frees the memory nor
+    /// copies it to a temporary file. The data set reads every collection
+    /// from the memory where it lies. The configuration `config` points to is
+    /// not changed. Defined by this crate's `src/shim.c`.
+    ///
+    /// # Safety
+    /// As for [`fiftyoneDegreesIpiInitManagerFromMemory`]: `memory` must point
+    /// to `size` readable bytes that outlive the manager. `config` must point
+    /// to a configuration.
+    pub fn fiftyoneDegreesShimIpiInitManagerFromMemory(
+        manager: *mut ResourceManager,
+        config: *const ConfigIpi,
+        properties: *mut PropertiesRequired,
+        memory: *mut c_void,
+        size: FileOffset,
+        exception: *mut Exception,
+    ) -> StatusCode;
+
+    /// Returns the number of handles to the data file that the data set
+    /// managed by `manager` opened when it loaded, which stay open until the
+    /// data set is freed. Every configuration that does not load the whole
+    /// file into memory opens one for each concurrent operation it expects,
+    /// to at most 64. Defined by this crate's `src/shim.c`.
     ///
     /// # Safety
     /// `manager` must be initialized.
-    pub fn fiftyoneDegreesShimIpiGetFileHandleCount(manager: *mut ResourceManager) -> u16;
+    pub fn fiftyoneDegreesShimIpiGetFilePoolSize(manager: *mut ResourceManager) -> u16;
+
+    /// Sets `strings` and `values` to the C library's type names of the
+    /// strings and values collections of the data set managed by `manager`,
+    /// and returns 1, or returns 0 when there is no data set.
+    /// `CollectionMemory` holds the whole collection in memory and
+    /// `CollectionHeld` only what the required properties read. The names
+    /// are constants of the C library. Defined by this crate's `src/shim.c`.
+    ///
+    /// # Safety
+    /// `manager` must be initialized, and `strings` and `values` writable.
+    pub fn fiftyoneDegreesShimIpiGetCollectionTypeNames(
+        manager: *mut ResourceManager,
+        strings: *mut *const c_char,
+        values: *mut *const c_char,
+    ) -> c_int;
 
     /// Returns the [`PropertyValueType`] discriminant the data file stores the
     /// values of the required property at `required_property_index` as, read
@@ -1464,14 +1579,17 @@ extern "C" {
         context: *mut c_void,
     ) -> c_int;
 
-    /// Finds the value whose text is `name`, matched exactly, among those the
-    /// data file holds for the property at `property_index`, calls `callback`
-    /// with its strings as [`fiftyoneDegreesShimIpiGetDataFilePropertyValues`]
-    /// does, and returns [`SHIM_FIND_FOUND`]. Returns [`SHIM_FIND_NOT_FOUND`]
-    /// when the property has no such value, or [`SHIM_FIND_FAILED`] when the
-    /// property index is out of range or the property, a value or a string
-    /// cannot be read. The value is found by the C library's binary search
-    /// over the property's values, which are in order. See `src/shim.c`.
+    /// Finds the value `name` names among those the data file holds for the
+    /// property at `property_index`, calls `callback` with its strings as
+    /// [`fiftyoneDegreesShimIpiGetDataFilePropertyValues`] does, and returns
+    /// [`SHIM_FIND_FOUND`]. Returns [`SHIM_FIND_NOT_FOUND`] when the property
+    /// has no such value, or [`SHIM_FIND_FAILED`] when the property index is
+    /// out of range or the property, a value or a string cannot be read. The
+    /// value is found by the C library's binary search over the property's
+    /// values, which are in order. A number is compared written to as many
+    /// places as `name` has characters plus three, at most 15, so the text
+    /// given can differ from `name`, as `0.063` is given for `0.0625`. See
+    /// `src/shim.c`.
     ///
     /// # Safety
     /// `manager` must be an initialized IP Intelligence manager, `name` a
@@ -1534,7 +1652,7 @@ mod tests {
     /// Resolve the 51degrees-cxx checkout the same way `build.rs` does so the
     /// smoke test can find the ASN data file in it.
     fn cxx_dir() -> PathBuf {
-        if let Ok(dir) = std::env::var("FIFTYONE_CXX_DIR") {
+        if let Ok(dir) = crate::deprecated_names::var("_51DEGREES_CXX_DIR") {
             return PathBuf::from(dir);
         }
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1553,9 +1671,9 @@ mod tests {
         path.is_file().then_some(path)
     }
 
-    /// The data file `51DEGREES_IPI_PATH` names, else the ASN file.
+    /// The data file `_51DEGREES_IPI_PATH` names, else the ASN file.
     fn named_or_asn_data_file() -> Option<PathBuf> {
-        std::env::var("51DEGREES_IPI_PATH")
+        crate::deprecated_names::var("_51DEGREES_IPI_PATH")
             .ok()
             .map(PathBuf::from)
             .filter(|path| path.is_file())

@@ -22,11 +22,15 @@
 
 //! The engine's property and component metadata, read from the data file as
 //! the .NET engine reads it. The tests run against the ASN file in the data
-//! repository, or the file `51DEGREES_IPI_PATH` names, and skip when neither
+//! repository, or the file `_51DEGREES_IPI_PATH` names, and skip when neither
 //! is present. A test that needs an Enterprise file skips on any other, and
-//! fails instead when `51DEGREES_REQUIRE_ENTERPRISE` is set. The failed
+//! fails instead when `_51DEGREES_REQUIRE_ENTERPRISE` is set. The failed
 //! refresh test always uses the ASN file, because it holds two copies of the
 //! file in memory and writes a third to disk.
+
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -34,6 +38,7 @@ use std::sync::Arc;
 use fiftyone_ip_intelligence_onpremise::{
     IpIntelligenceData, IpIntelligenceOnPremiseEngine, IP_DATA_KEY,
 };
+use fiftyone_ip_intelligence_shared::WEIGHTED_RECORD_VALUE_KEY;
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{ElementData, Evidence, FlowElement, Pipeline, PropertyValue};
 use fiftyone_pipeline_engines::{AspectEngine, MissingPropertyReason, OnPremiseAspectEngine};
@@ -44,7 +49,7 @@ const ADDED_PROPERTIES: [&str; 2] = ["Ip", "IpV6"];
 
 /// Set where the Enterprise file must be given, as in the comparison with
 /// .NET, so a test that needs it fails rather than skips.
-const REQUIRE_ENTERPRISE: &str = "51DEGREES_REQUIRE_ENTERPRISE";
+const REQUIRE_ENTERPRISE: &str = "_51DEGREES_REQUIRE_ENTERPRISE";
 
 /// The ASN file in the data repository.
 const ASN_FILE_NAME: &str = "51Degrees-IPIV4AsnIpiV41.ipi";
@@ -58,9 +63,9 @@ fn skip_without_enterprise(reason: &str, what: &str) {
     eprintln!("{reason}; skipping {what}");
 }
 
-/// The data file `51DEGREES_IPI_PATH` names, else [`asn_file`].
+/// The data file `_51DEGREES_IPI_PATH` names, else [`asn_file`].
 fn data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("51DEGREES_IPI_PATH") {
+    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_IPI_PATH") {
         let path = PathBuf::from(path.trim());
         if path.is_file() {
             return Some(path);
@@ -338,15 +343,16 @@ fn a_property_left_out_by_configuration_is_excluded() {
     assert_eq!(data.get("AsnName").unwrap_err().message, expected);
 }
 
-/// A property the shared model does not declare is read as the type the data
-/// file names for it, so on an Enterprise file `StateGeoNameIdsGeographical`
-/// is a weighted list and `ContinentGeoNameId` a string.
+/// On an Enterprise file each of the seven GeoNames identifiers reads through
+/// its typed accessor what the property bag holds for it, a value or the same
+/// no-value message. `StateGeoNameIdsGeographical` is a weighted list, highest
+/// weighting first, and `ContinentGeoNameId` has a value.
 #[test]
-fn a_property_the_shared_model_does_not_declare_is_read_as_the_data_file_types_it() {
+fn the_geonames_identifiers_read_through_their_typed_accessors() {
     let Some(engine) = engine(&[]) else {
         skip_without_enterprise(
             "no IP Intelligence data file found",
-            "undeclared properties",
+            "the GeoNames accessors",
         );
         return;
     };
@@ -357,7 +363,7 @@ fn a_property_the_shared_model_does_not_declare_is_read_as_the_data_file_types_i
     {
         let file = data_file().expect("the engine's data file");
         let reason = format!("{} is not an Enterprise file", file.display());
-        skip_without_enterprise(&reason, "undeclared properties");
+        skip_without_enterprise(&reason, "the GeoNames accessors");
         return;
     }
     let data = lookup(engine, "1.1.1.1");
@@ -374,6 +380,112 @@ fn a_property_the_shared_model_does_not_declare_is_read_as_the_data_file_types_i
         "{:?}",
         data.get("ContinentGeoNameId")
     );
+    let states = data.state_geo_name_ids_geographical();
+    let states = states.value().expect("the weighted state identifiers");
+    assert!(!states.is_empty());
+    let mut previous = u16::MAX;
+    for state in states {
+        assert!(state.raw_weighting <= previous, "highest weighting first");
+        previous = state.raw_weighting;
+        assert!(!state.value.is_empty());
+    }
+    let continent = data.continent_geo_name_id();
+    let continent = continent.value().expect("the continent identifier");
+    assert!(!continent.is_empty());
+    let Ok(PropertyValue::KeyValueList(records)) = data.get("StateGeoNameIdsGeographical") else {
+        unreachable!("checked above");
+    };
+    let held: Vec<_> = records
+        .iter()
+        .map(|record| record.get(WEIGHTED_RECORD_VALUE_KEY).cloned())
+        .collect();
+    let accessed: Vec<_> = states
+        .iter()
+        .map(|state| Some(PropertyValue::String(state.value.clone())))
+        .collect();
+    assert_eq!(accessed, held);
+    let plain = [
+        ("ContinentGeoNameId", data.continent_geo_name_id()),
+        ("CountryGeoNameId", data.country_geo_name_id()),
+        ("CountyGeoNameId", data.county_geo_name_id()),
+        (
+            "RegisteredCountryGeoNameId",
+            data.registered_country_geo_name_id(),
+        ),
+        ("StateGeoNameId", data.state_geo_name_id()),
+        ("TownGeoNameId", data.town_geo_name_id()),
+    ];
+    for (name, read) in plain {
+        match data.get(name) {
+            Ok(PropertyValue::String(text)) => {
+                assert_eq!(read.value().ok(), Some(&text), "{name}");
+            }
+            Ok(other) => panic!("{name} is {other:?} in the property bag"),
+            Err(error) => assert_eq!(
+                read.no_value_message(),
+                Some(error.message.as_str()),
+                "{name}"
+            ),
+        }
+    }
+}
+
+/// `areas()` gives the text of the WKT value `wkt_string("Areas")` reads from
+/// the data file, or the same reason when there is no area.
+#[test]
+fn areas_gives_the_text_of_the_wkt_value() {
+    let Some(engine) = engine(&[]) else {
+        skip_without_enterprise("no IP Intelligence data file found", "areas");
+        return;
+    };
+    if !engine
+        .populated_property_names()
+        .iter()
+        .any(|name| name == "Areas")
+    {
+        let file = data_file().expect("the engine's data file");
+        let reason = format!("{} is not an Enterprise file", file.display());
+        skip_without_enterprise(&reason, "areas");
+        return;
+    }
+    let element: Arc<dyn FlowElement> = Arc::new(engine);
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("pipeline builds");
+    let mut areas = 0;
+    for ip in [
+        "185.28.167.77",
+        "81.2.69.142",
+        "1.1.1.1",
+        "2001:4860:4860::8888",
+    ] {
+        let mut flow =
+            pipeline.create_flow_data_with(Evidence::builder().add("query.client-ip", ip).build());
+        flow.process().expect("processing succeeds");
+        let data = flow
+            .get(IP_DATA_KEY)
+            .expect("ip intelligence data was produced");
+        let wkt = data.wkt_string("Areas");
+        let text = data.areas();
+        match wkt.value() {
+            Ok(wkt) => {
+                assert_eq!(
+                    text.value().expect("areas() has a value"),
+                    wkt.as_str(),
+                    "{ip}"
+                );
+                assert_eq!(
+                    data.get("Areas").expect("the bag holds the area"),
+                    PropertyValue::WktString(wkt.clone()),
+                    "{ip}"
+                );
+                areas += 1;
+            }
+            Err(_) => assert_eq!(text.no_value_message(), wkt.no_value_message(), "{ip}"),
+        }
+    }
+    assert!(areas > 0, "no address was given an area");
 }
 
 /// A refresh reads the metadata of the data file again into new lists.
@@ -425,10 +537,10 @@ fn later_with_unreadable_metadata(file: &Path) -> Vec<u8> {
 }
 
 /// A refresh to a data file that loads but whose metadata cannot be read
-/// fails and changes nothing. The engine keeps the old file's publish date,
-/// so the update service's `If-Modified-Since` still asks for the new file.
+/// fails, and the engine keeps the old file's metadata and publish date, so
+/// the update service's `If-Modified-Since` still asks for the new file.
 /// The test needs no particular file, so it uses the small ASN file whatever
-/// `51DEGREES_IPI_PATH` names.
+/// `_51DEGREES_IPI_PATH` names.
 #[test]
 fn a_refresh_whose_metadata_cannot_be_read_changes_nothing() {
     let Some(file) = asn_file() else {

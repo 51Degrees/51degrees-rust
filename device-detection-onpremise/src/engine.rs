@@ -29,29 +29,26 @@
 //! [`DEVICE_DATA_KEY`](fiftyone_device_detection_shared::DEVICE_DATA_KEY).
 
 use std::any::Any;
-use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
-use std::ffi::CStr;
-use std::hash::BuildHasher;
 use std::ops::Range;
 use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use arc_swap::ArcSwap;
-use chrono::{TimeZone, Utc};
 
 use fiftyone_device_detection_shared::{
-    declared_property_value_type, DeviceDataBase, DevicePropertyReader, UachJsConversionElement,
-    DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY, UACH_EVIDENCE_COOKIE_KEY, UACH_EVIDENCE_QUERY_KEY,
+    declared_property_value_type, DeviceDataBase, DevicePropertyReader, DEVICE_DATA_KEY,
+    DEVICE_ELEMENT_DATA_KEY, TYPED_PROPERTY_NAMES,
 };
 use fiftyone_native::dd::{
-    DataFileComponent, DataFileProperty, DataFileValue, HashOptions, Manager, Results,
+    hardware_profile_script, DataFileComponent, DataFileProperty, DataFileValue, HashOptions,
+    Manager, MatchMetrics, Results,
 };
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{
-    constants, Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData,
-    FlowElement, PropertyMetaData, PropertyValue, PropertyValueType, Result,
+    Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    PropertyMetaData, PropertyValue, PropertyValueType, Result,
 };
 use fiftyone_pipeline_engines::{
     AspectEngine, AspectEngineDataFile, AspectPropertyMetaData, DataFileConfiguration,
@@ -64,14 +61,13 @@ use fiftyone_pipeline_engines_fiftyone::{
 use crate::operational_copy::OperationalCopy;
 use crate::retained::Retained;
 
-/// The separator used to join multiple values of a list-typed property into a
-/// single string when reading from the native results. The other ports use a
-/// vertical bar between values, which the shared device-data list accessor then
-/// splits back out if needed.
-const VALUE_SEPARATOR: &str = "|";
+mod profile_lookup;
 
-/// [`VALUE_SEPARATOR`] as the C string the native reader takes.
-const NATIVE_VALUE_SEPARATOR: &CStr = c"|";
+pub use profile_lookup::PROFILE_ID_PROPERTY_NAME;
+
+/// The separator between the values of a string or JavaScript property that
+/// holds several, as the C++ `ResultsBase` in 51degrees-cxx joins them.
+const VALUE_SEPARATOR: &str = "|";
 
 /// The data-source tier reported when the native tier could not be read from the
 /// data set. The Lite data file is the free tier, so this is the safe default
@@ -83,8 +79,8 @@ const DEFAULT_DATA_SOURCE_TIER: &str = "Lite";
 const ENGINE_TYPE_NAME: &str = "DeviceDetectionOnPremiseEngine";
 
 /// A match-metric pseudo-property, which the Hash engine gives in addition to
-/// the data file's own properties. Its value is read from each result as the
-/// detection finishes, not from the data file.
+/// the data file's own properties. Its value is read from the detection's
+/// results when it is first requested, not from the data file.
 struct MetricProperty {
     name: &'static str,
     value_type: PropertyValueType,
@@ -172,12 +168,98 @@ const METRICS_COMPONENT_NAME: &str = "Metrics";
 /// The display order of every match metric.
 const METRIC_DISPLAY_ORDER: u8 = 255;
 
+/// The message a match metric's no-value carries when the results cannot
+/// give the metrics.
+const METRICS_UNREADABLE: &str =
+    "The match metrics could not be read, because a graph could not be read from the data file.";
+
+/// The outcome of reading one property from a detection's results.
+type ReadOutcome = std::result::Result<Option<PropertyValue>, String>;
+
+/// A match metric, which a detection reads from its results rather than from
+/// the data file's values. Reading one walks every graph not yet walked.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Metric {
+    DeviceId,
+    MatchedNodes,
+    Difference,
+    Drift,
+    Iterations,
+    Method,
+    UserAgents,
+}
+
+impl Metric {
+    /// Every match metric, in the order a detection's data lists them after
+    /// the data file's properties, which is the order of
+    /// [`METRIC_PROPERTIES`] and of the .NET engine.
+    const READ_ORDER: [Metric; 7] = [
+        Metric::MatchedNodes,
+        Metric::Difference,
+        Metric::Drift,
+        Metric::DeviceId,
+        Metric::UserAgents,
+        Metric::Iterations,
+        Metric::Method,
+    ];
+
+    /// The metric's property name.
+    fn name(self) -> &'static str {
+        match self {
+            Metric::DeviceId => "DeviceId",
+            Metric::MatchedNodes => "MatchedNodes",
+            Metric::Difference => "Difference",
+            Metric::Drift => "Drift",
+            Metric::Iterations => "Iterations",
+            Metric::Method => "Method",
+            Metric::UserAgents => "UserAgents",
+        }
+    }
+
+    /// Read the metric from `results`, walking each graph not yet walked.
+    /// When a graph its read walks cannot be read from the data file the
+    /// metric fails, DeviceId with the native message and the other six with
+    /// [`METRICS_UNREADABLE`]. DeviceId also has no value when the results
+    /// give none. A graph whose walk failed is not walked again, so a metric
+    /// read after another property's walk failed walks only the graphs still
+    /// to walk and gives the metrics the results then hold, as .NET does.
+    fn read(self, results: &Results) -> ReadOutcome {
+        let value: fn(&MatchMetrics) -> PropertyValue = match self {
+            Metric::DeviceId => {
+                return results
+                    .device_id()
+                    .map(|id| id.map(PropertyValue::String))
+                    .map_err(|error| error.to_string());
+            }
+            Metric::UserAgents => {
+                return results
+                    .try_matched_user_agents()
+                    .map(|agents| Some(PropertyValue::StringList(agents)))
+                    .ok_or_else(|| METRICS_UNREADABLE.to_owned());
+            }
+            Metric::MatchedNodes => {
+                |metrics| PropertyValue::Integer(i64::from(metrics.matched_nodes))
+            }
+            Metric::Difference => |metrics| PropertyValue::Integer(i64::from(metrics.difference)),
+            Metric::Drift => |metrics| PropertyValue::Integer(i64::from(metrics.drift)),
+            Metric::Iterations => |metrics| PropertyValue::Integer(i64::from(metrics.iterations)),
+            Metric::Method => |metrics| PropertyValue::String(metrics.method_name().to_owned()),
+        };
+        results
+            .match_metrics()
+            .map(|metrics| Some(value(&metrics)))
+            .ok_or_else(|| METRICS_UNREADABLE.to_owned())
+    }
+}
+
 /// An on-premise Hash device-detection engine.
 ///
-/// Holds a loaded Hash data set (behind an [`ArcSwap`] so [`Self::refresh`] can
-/// hot-swap a reloaded data file while in-flight detections keep the old data
-/// set alive), the engine's published property and evidence-key metadata, and
-/// the [`AspectEngineDataFile`] run-time state the
+/// Holds a Hash manager, whose data set a refresh reloads in place as the C
+/// library's reload does, and what a detection reads from the data set in use
+/// (behind an [`ArcSwap`], so a refresh replaces it while in-flight
+/// detections keep what they read and their results the data set they came
+/// from), the engine's published property and evidence-key metadata, and the
+/// [`AspectEngineDataFile`] run-time state the
 /// [`fiftyone_pipeline_engines::DataUpdateService`] tracks.
 ///
 /// Build one with [`DeviceDetectionOnPremiseEngineBuilder`](crate::DeviceDetectionOnPremiseEngineBuilder).
@@ -199,19 +281,20 @@ const METRIC_DISPLAY_ORDER: u8 = 255;
 /// never caches results. Only the cloud path, whose data is plain owned values,
 /// may use a results cache.
 pub struct DeviceDetectionOnPremiseEngine {
-    /// The loaded Hash data set and the properties a detection reads from it,
-    /// swapped together atomically on refresh. In-flight
-    /// [`fiftyone_native::dd::Results`] hold their own [`Arc`] to the manager
-    /// they were created from, so a swap does not invalidate them.
+    /// The manager and the properties a detection reads from the data set it
+    /// holds, replaced together after each reload. In-flight
+    /// [`fiftyone_native::dd::Results`] hold the data set they were created
+    /// from, so a reload does not change what they read.
     loaded: ArcSwap<LoadedDataSet>,
 
-    /// The performance profile used to (re)load the data file, retained so a
-    /// refresh reloads with the same profile.
+    /// The performance profile the data file was opened with, which a reload
+    /// keeps.
     profile: PerformanceProfile,
 
-    /// The properties the engine was restricted to, or empty for all
-    /// properties. Used when reloading the data set on refresh.
-    requested_properties: Vec<String>,
+    /// The names a read looks a property up in, each at its index. Built once,
+    /// at build, from the names the manager was opened with, which every
+    /// reload keeps, so a name keeps its index.
+    names: Arc<BuildNames>,
 
     /// The property metadata and tier of the loaded data set, for
     /// [`FlowElement::properties`], [`AspectEngine::aspect_properties`] and
@@ -228,9 +311,8 @@ pub struct DeviceDetectionOnPremiseEngine {
     /// The evidence keys this engine reads, replaced on refresh.
     evidence_key_filter: HashEvidenceKeyFilter,
 
-    /// The settings the data set opens with over the profile's own, the
-    /// expected concurrency always among them. Carried so a reload opens the
-    /// data set with the same settings.
+    /// The settings the data set was opened with over the profile's own, the
+    /// expected concurrency always among them, which a reload keeps.
     options: HashOptions,
 
     /// The folder a refresh copies the data file into, or `None` for the
@@ -249,8 +331,9 @@ pub struct DeviceDetectionOnPremiseEngine {
     data_files: Vec<Arc<AspectEngineDataFile>>,
 }
 
-/// A loaded Hash data set, the properties a detection reads from it and the
-/// copy of the data file it was read from, if any.
+/// The engine's manager, the properties a detection reads from the data set
+/// it held when they were read, and the copy of the data file that data set
+/// reads, if any.
 struct LoadedDataSet {
     manager: Arc<Manager>,
     readable: Arc<ReadableProperties>,
@@ -265,8 +348,9 @@ struct LoadedDataSet {
     fiftyone_properties: Arc<[FiftyOneAspectPropertyMetaData]>,
     /// The components, each with its properties, freed in the same way.
     components: Arc<[ComponentMetaData]>,
-    /// Held only to be dropped with the data set, and declared after the
-    /// manager, so it is removed after the data set that has it open is freed.
+    /// Held only to be removed once the data set reading it has been
+    /// replaced and the last detection holding it, whose results are freed
+    /// first, has been dropped.
     _copy: Option<OperationalCopy>,
 }
 
@@ -307,6 +391,7 @@ fn describe(
     copy: Option<OperationalCopy>,
     manager: Arc<Manager>,
     tier_override: &Option<String>,
+    names: &Arc<BuildNames>,
 ) -> Result<(LoadedDataSet, LentMetadata)> {
     // An explicit builder override wins, then the tier read from the native
     // data file header (Lite, Enterprise, TAC and so on), then the safe Lite
@@ -321,7 +406,7 @@ fn describe(
         fiftyone_properties,
         components,
     } = build_metadata(&file_properties, &manager.data_file_components()?, tier);
-    let readable = Arc::new(ReadableProperties::new(&file_properties));
+    let readable = Arc::new(ReadableProperties::new(&file_properties, names));
     let file_property_places = file_properties
         .iter()
         .map(|property| {
@@ -368,13 +453,15 @@ impl DeviceDetectionOnPremiseEngine {
         copy: Option<OperationalCopy>,
         manager: Arc<Manager>,
         profile: PerformanceProfile,
-        requested_properties: Vec<String>,
         data_file_config: DataFileConfiguration,
         data_source_tier: Option<String>,
         options: HashOptions,
     ) -> Result<Self> {
-        let evidence_key_filter = HashEvidenceKeyFilter::new(named_evidence_keys(&manager));
-        let (loaded, metadata) = describe(copy, manager, &data_source_tier)?;
+        let evidence_key_filter = HashEvidenceKeyFilter::new(manager.evidence_keys());
+        // The names the manager was opened with, which every reload keeps, so
+        // each name keeps its index.
+        let names = Arc::new(BuildNames::new(manager.property_names()));
+        let (loaded, metadata) = describe(copy, manager, &data_source_tier, &names)?;
 
         let data_file = Arc::new(AspectEngineDataFile::new(data_file_config));
         record_dates(&loaded.manager, &data_file);
@@ -382,7 +469,7 @@ impl DeviceDetectionOnPremiseEngine {
         Ok(DeviceDetectionOnPremiseEngine {
             loaded: ArcSwap::from_pointee(loaded),
             profile,
-            requested_properties,
+            names,
             metadata: Retained::new(metadata),
             tier_override: data_source_tier,
             refresh_lock: Mutex::new(()),
@@ -428,17 +515,18 @@ impl DeviceDetectionOnPremiseEngine {
     /// The settings the engine opens its data file with over the profile's
     /// own. The concurrency is always set, to the one the builder named or
     /// else [`default_concurrency`](fiftyone_native::dd::default_concurrency),
-    /// and each other field is [`None`] where the builder named none.
+    /// each other setting is [`None`] where the builder named none, and
+    /// [`HashOptions::indexed_properties`] lists the properties the builder
+    /// named to index.
     pub fn hash_options(&self) -> &HashOptions {
         &self.options
     }
 
-    /// The evidence keys the engine accepts by name, lowercased, being each
-    /// header the loaded data file reads as a `header.` and a `query.` key, and
-    /// the high-entropy values keys. The engine also accepts any `query.51d_`
-    /// or `cookie.51d_` value, which the client-side JavaScript sends back.
+    /// The evidence keys the engine accepts, lowercased, being those the
+    /// loaded data set reads (see
+    /// [`Manager::evidence_keys`](fiftyone_native::dd::Manager::evidence_keys)).
     pub fn evidence_keys(&self) -> Vec<String> {
-        named_evidence_keys(&self.loaded.load().manager)
+        self.loaded.load().manager.evidence_keys()
     }
 
     /// The names of the properties the loaded data set was opened with, being
@@ -480,12 +568,16 @@ impl DeviceDetectionOnPremiseEngine {
         Arc::clone(&self.loaded.load().components)
     }
 
-    /// The native data set the engine has loaded, for an element that reads
-    /// the data file's profiles and their values, as the robots.txt engine
-    /// reads the crawlers.
+    /// The engine's native manager, for an element that reads the data file's
+    /// profiles and their values, as the robots.txt engine reads the crawlers.
     ///
-    /// The data set is the loaded one. A refresh loads a new data set and
-    /// frees this one once no caller holds it.
+    /// A refresh reloads the manager's data set in place, so this is the same
+    /// manager after it, and each call on it reads the data set in use when
+    /// the call is made. Results it creates keep reading the data set in use
+    /// when they were created. A caller that reads the data set in several
+    /// calls can check that they all read one data set with
+    /// [`Results::same_data_set`](fiftyone_native::dd::Results::same_data_set),
+    /// as the robots.txt engine does.
     pub fn data_set(&self) -> Arc<Manager> {
         Arc::clone(&self.loaded.load().manager)
     }
@@ -549,17 +641,19 @@ impl DeviceDetectionOnPremiseEngine {
     }
 
     /// The value named `value_name` among those [`Self::property_values`]
-    /// gives for the property named `property_name`, both matched exactly, as
-    /// .NET's `GetValue(valueName)` matches them, or [`None`] when the engine
-    /// lists no such property or the property has no such value. Fails when
-    /// the data file's values cannot be read.
+    /// gives for the property named `property_name`, matched as .NET's
+    /// `GetValue(valueName)` matches them, or [`None`] when the engine lists
+    /// no such property or the property has no such value. Fails when the
+    /// data file's values cannot be read.
     ///
     /// [`FiftyOneAspectPropertyMetaData::value`] finds nothing for a data file
     /// property, because its metadata lists no values. This finds the value in
     /// the loaded data file without reading the property's other values, by
     /// the C library's binary search over values in order of their names, as
     /// .NET finds it. So a value the data file holds out of that order can be
-    /// missed.
+    /// missed. The property's name is matched exactly, and a data file
+    /// property's value by the text of `value_name` before any null, so
+    /// `True\0x` finds `True`.
     pub fn property_value(
         &self,
         property_name: &str,
@@ -587,113 +681,62 @@ impl DeviceDetectionOnPremiseEngine {
 
     /// Run a detection for `data` into new device data.
     ///
-    /// Builds a native evidence set from the flow data (preferring the decoded
-    /// UACH element-data `sec-ch-ua*` values over the raw headers) and processes
-    /// it. The match metrics are stored straight away, and each data file
-    /// property is read from the results the first time it is requested.
+    /// Builds a native evidence set from the flow data and processes it. Each
+    /// property, the match metrics among them, is read from the results the
+    /// first time it is requested, as .NET's `DeviceDataHash` reads them. With
+    /// no properties named, the C library walks a component's graph on the
+    /// first read of one of its properties, so a caller reading only some
+    /// properties walks only the graphs they need.
     fn detect(&self, data: &FlowData) -> Result<DeviceDataBase> {
+        Ok(device_data(self.detection_reader(data)?))
+    }
+
+    /// Process the evidence for `data` into new results, and give the reader
+    /// that reads each property from them when it is first requested.
+    fn detection_reader(&self, data: &FlowData) -> Result<DetectionReader> {
         // Snapshot the current data set. The snapshot is an `Arc`, so an
         // in-flight detection keeps the data set alive even if `refresh` swaps a
         // new one in mid-flight.
         let loaded = self.loaded.load_full();
         let mut results = loaded.manager.create_results()?;
 
-        // Marshal the evidence the engine understands, preferring decoded UACH
-        // values, into one merged evidence set, then process it.
+        // Marshal the evidence the engine understands into one evidence set,
+        // then process it.
         let evidence = self.collect_evidence(data);
         results.process_evidence(&evidence)?;
 
-        let mut device = DeviceDataBase::new();
-        device
-            .base_mut()
-            .add_missing_property_source(Arc::clone(&loaded.missing));
-
-        // The device id is a match metric, not a data-file property, so the
-        // reader does not return it. Read it through the dedicated native
-        // getter and store it under its metric name so the shared `device_id`
-        // accessor resolves it. An absent id (no match) is simply not written.
-        if let Some(device_id) = results.device_id()? {
-            device.insert("DeviceId", PropertyValue::String(device_id));
-        }
-
-        // The numeric match metrics and the match method are also computed
-        // during detection and live on the result, not in the data file's
-        // property values, so the reader does not return them.
-        // Read them from the result and store them under their metric names so
-        // the shared accessors (difference, method, and so on) resolve them.
-        if let Some(metrics) = results.match_metrics() {
-            device.insert(
-                "MatchedNodes",
-                PropertyValue::Integer(metrics.matched_nodes as i64),
-            );
-            device.insert(
-                "Difference",
-                PropertyValue::Integer(metrics.difference as i64),
-            );
-            device.insert("Drift", PropertyValue::Integer(metrics.drift as i64));
-            device.insert(
-                "Iterations",
-                PropertyValue::Integer(metrics.iterations as i64),
-            );
-            device.insert(
-                "Method",
-                PropertyValue::String(metrics.method_name().to_owned()),
-            );
-        }
-        device.insert(
-            "UserAgents",
-            PropertyValue::StringList(results.matched_user_agents()),
-        );
-
-        Ok(device.with_reader(DetectionReader {
+        Ok(DetectionReader {
             results: Mutex::new(results),
             loaded,
-        }))
+        })
     }
 
-    /// Collect the evidence the engine reads into a single [`Evidence`] set.
+    /// Collect the evidence the engine's filter accepts into a single
+    /// [`Evidence`] set, in the order the flow data holds it.
     ///
-    /// The decoded UACH `sec-ch-ua*` values produced by
-    /// [`UachJsConversionElement`] take precedence over the raw request headers,
-    /// matching the high-entropy decoder specification: a client that supplied
-    /// the high-entropy blob gets the richer decoded hints. Raw evidence the
-    /// engine understands (the User-Agent and any header the data set reads) is
-    /// added first, then the decoded UACH values overwrite the matching headers.
+    /// The high entropy values (`51D_GetHighEntropyValues`) pass through as
+    /// they came. The C library turns them into the `sec-ch-ua*` headers it
+    /// matches on, so no decoded copy is added here. The C library converts
+    /// the first query or cookie `51d_gethighentropyvalues` or
+    /// `51d_structureduseragent` value that gives at least one header, in
+    /// this order.
     fn collect_evidence(&self, data: &FlowData) -> Evidence {
         let mut builder = Evidence::builder();
-
-        // Raw request evidence the engine's filter accepts.
         for (key, value) in data.evidence().iter() {
             if self.evidence_key_filter.include(key) {
                 builder = builder.add(key, value);
             }
         }
-
-        // Decoded UACH values, written as header evidence so they override the
-        // matching raw headers. The element stores them under its own data key.
-        if let Some(uach) = data.get_str(UachJsConversionElement::DATA_KEY.name()) {
-            for header in uach.keys() {
-                if let Ok(value) = uach.get(&header) {
-                    if let Some(text) = value.as_str() {
-                        let key = format!(
-                            "{}{}{}",
-                            constants::EVIDENCE_HTTP_HEADER_PREFIX,
-                            constants::EVIDENCE_SEPARATOR,
-                            header
-                        );
-                        builder = builder.add(key, text.to_owned());
-                    }
-                }
-            }
-        }
-
         builder.build()
     }
 
-    /// Reload the data set from the data file on disk and atomically swap it in.
+    /// Reload the data set in the engine's manager from the data file at
+    /// `path`, or from the copy of it the engine reads, and describe the new
+    /// data set. See [`Self::swap_in`].
     ///
     /// Shared by [`OnPremiseAspectEngine::refresh`] and the builder's reload
-    /// path. See [`Self::swap_in`].
+    /// path. A reload that fails leaves the data set in use and removes the
+    /// copy, which nothing then reads.
     fn reload_from_path(&self, path: &Path) -> Result<()> {
         let _refreshing = self
             .refresh_lock
@@ -709,42 +752,46 @@ impl DeviceDetectionOnPremiseEngine {
                 self.reuse_temp_file,
             )
         });
-        let manager = open_manager(
-            copy.as_ref().map_or(path, OperationalCopy::path),
-            self.profile,
-            &self.requested_properties,
-            &self.options,
-        )?;
+        let manager = Arc::clone(&self.loaded.load().manager);
+        manager.reload_from_file(copy.as_ref().map_or(path, OperationalCopy::path))?;
         self.swap_in(copy, manager)
     }
 
-    /// Reload the data set from `data`, the whole of a data file, and
-    /// atomically swap it in. See [`Self::swap_in`].
+    /// Reload the data set in the engine's manager from `data`, the whole of
+    /// a data file, which the C library copies, and describe the new data
+    /// set. See [`Self::swap_in`].
     fn reload_from_memory(&self, data: &[u8]) -> Result<()> {
         let _refreshing = self
             .refresh_lock
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        // The data set reads the data where it lies, so the manager keeps a
-        // copy for as long as the data set.
-        let manager = Manager::open_from_memory(
-            data.to_vec(),
-            self.profile,
-            requested(&self.requested_properties).as_deref(),
-            &self.options,
-        )?;
+        let manager = Arc::clone(&self.loaded.load().manager);
+        manager.reload_from_memory(data)?;
         self.swap_in(None, manager)
     }
 
-    /// Replace the live data set with `manager`'s, which reads `copy` when
-    /// there is one, together with the properties a detection reads, the
+    /// Give detections the properties of the data set `manager` holds after a
+    /// reload, which reads `copy` when there is one, together with the
     /// evidence keys, the metadata and the dates in the data file header,
     /// because a new data file can carry different properties or a different
-    /// tier. In-flight detections keep using the data set they snapshotted. A
-    /// failure changes nothing. The caller holds the refresh lock.
+    /// tier. In-flight detections keep what they read and the data set their
+    /// results came from. The caller holds the refresh lock.
+    ///
+    /// When the new data set's metadata cannot be read the error is returned
+    /// and detections go on reading the new data set by the properties of the
+    /// one before, whose names and indexes it keeps, with `copy` kept until
+    /// nothing reads it.
     fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
-        let evidence_keys = named_evidence_keys(&manager);
-        let (loaded, metadata) = describe(copy, manager, &self.tier_override)?;
+        let evidence_keys = manager.evidence_keys();
+        let (mut loaded, metadata) = match describe(None, manager, &self.tier_override, &self.names)
+        {
+            Ok(described) => described,
+            Err(error) => {
+                self.keep_copy(copy);
+                return Err(error);
+            }
+        };
+        loaded._copy = copy;
         if let Some(file) = self.data_files.first() {
             record_dates(&loaded.manager, file);
         }
@@ -752,6 +799,23 @@ impl DeviceDetectionOnPremiseEngine {
         self.loaded.store(Arc::new(loaded));
         self.metadata.replace(metadata);
         Ok(())
+    }
+
+    /// Keep `copy`, which the data set the manager now holds reads, with what
+    /// detections read from the data set before it, because the new data set's
+    /// metadata could not be read. The copy before it then goes once nothing
+    /// reads its data set, and this one once nothing reads the new data set.
+    fn keep_copy(&self, copy: Option<OperationalCopy>) {
+        let current = self.loaded.load();
+        self.loaded.store(Arc::new(LoadedDataSet {
+            manager: Arc::clone(&current.manager),
+            readable: Arc::clone(&current.readable),
+            file_properties: current.file_properties.clone(),
+            missing: Arc::clone(&current.missing),
+            fiftyone_properties: Arc::clone(&current.fiftyone_properties),
+            components: Arc::clone(&current.components),
+            _copy: copy,
+        }));
     }
 }
 
@@ -826,8 +890,8 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
     }
 
     fn refresh(&self, _data_file_identifier: Option<&str>) -> Result<()> {
-        // A single-file engine ignores the identifier. Reload from the file's
-        // configured path on disk and hot-swap it in. A reload that fails is
+        // A single-file engine ignores the identifier. Reload the data set
+        // from the file's configured path on disk. A reload that fails is
         // logged at error level, as .NET does, and returned. The message keeps
         // .NET's "If issue persists" so support can search for one phrase
         // across languages.
@@ -862,12 +926,10 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
     }
 }
 
-/// Open the Hash data set with the requested property restriction.
-///
-/// Shared by the builder's initial build and the engine's reload path so both
-/// turn the requested-property list into the native call the same way: an empty
-/// list means every property the data file supports, otherwise the data set is
-/// restricted to exactly the named properties.
+/// Open the Hash data set with the requested property restriction, for the
+/// builder. An empty list means every property the data file supports,
+/// otherwise the data set is restricted to exactly the named properties. A
+/// reload keeps them.
 pub(crate) fn open_manager(
     path: &Path,
     profile: PerformanceProfile,
@@ -892,62 +954,154 @@ fn requested(requested_properties: &[String]) -> Option<Vec<&str>> {
     }
 }
 
-/// A data file property a detection can read.
-struct ReadableProperty {
-    /// The property's name as the data file spells it.
-    name: String,
-    /// The type the property's rendered value is converted to.
-    value_type: PropertyValueType,
-    /// The index the results' value reader takes for the property.
-    index: c_int,
+/// Where a detection reads a property's value from.
+enum ReadableProperty {
+    /// A match metric, read from the results.
+    Metric(Metric),
+    /// A data file property.
+    File {
+        /// The property's name as the data file spells it.
+        name: String,
+        /// The type the property's rendered value is converted to.
+        value_type: PropertyValueType,
+        /// The index the results' value reader takes for the property.
+        index: c_int,
+    },
 }
 
-/// The data file properties a detection can read.
+impl ReadableProperty {
+    /// The property's name.
+    fn name(&self) -> &str {
+        match self {
+            ReadableProperty::Metric(metric) => metric.name(),
+            ReadableProperty::File { name, .. } => name.as_str(),
+        }
+    }
+}
+
+/// The property names the engine was built with, each with its index, which
+/// is its place in the list, and the match metrics. Built once when the
+/// engine is built and never from a data set, so a name keeps its index
+/// across every refresh.
+struct BuildNames {
+    /// The names, in the order the engine was built with them.
+    list: Vec<String>,
+    /// Where each lowercase name is read.
+    by_name: HashMap<String, NameSlot>,
+}
+
+/// Where a property named in a read is read.
+#[derive(Clone, Copy)]
+enum NameSlot {
+    /// The property at this index among the names the engine was built with.
+    Index(usize),
+    /// The match metric at this place in [`Metric::READ_ORDER`].
+    Metric(usize),
+}
+
+impl BuildNames {
+    /// The table for `list`. A name given twice keeps its first index, as
+    /// the C library gives it, and a match metric's name reads the metric.
+    fn new(list: Vec<String>) -> Self {
+        let mut by_name = HashMap::new();
+        for (index, name) in list.iter().enumerate() {
+            by_name
+                .entry(name.to_lowercase())
+                .or_insert(NameSlot::Index(index));
+        }
+        for (offset, metric) in Metric::READ_ORDER.iter().enumerate() {
+            by_name.insert(metric.name().to_lowercase(), NameSlot::Metric(offset));
+        }
+        BuildNames { list, by_name }
+    }
+}
+
+/// The properties a detection can read from one data set.
 struct ReadableProperties {
-    /// Each property a detection can read.
+    /// Each property a detection can read, in the order of the names the
+    /// engine was built with, then the match metrics.
     properties: Vec<ReadableProperty>,
     /// Each property's name in lowercase, in the same order.
     lowercase_names: Vec<String>,
-    /// The position of each property in `properties`, by lowercase name.
-    by_name: HashMap<String, usize>,
+    /// The names the engine was built with.
+    names: Arc<BuildNames>,
+    /// The place in `properties` of the property at each index, or `None`
+    /// when this data set does not have it.
+    places: Vec<Option<usize>>,
+    /// The place in `properties` of the first match metric.
+    first_metric: usize,
+    /// The place in `properties` of the property each typed accessor reads,
+    /// by the accessor's slot in [`TYPED_PROPERTY_NAMES`], resolved once
+    /// when the data set loads.
+    typed: Vec<Option<usize>>,
 }
 
 impl ReadableProperties {
-    /// Every data file property the data set was opened with and results hold
-    /// a value for, except any with a match metric's name, which the engine
-    /// reads from each result straight away.
-    fn new(file_properties: &[DataFileProperty]) -> Self {
-        let properties: Vec<ReadableProperty> = file_properties
+    /// Every property the engine was built with a name for that the data
+    /// set has and results hold a value for, except any with a match
+    /// metric's name, in the order of the names, then the match metrics, as
+    /// the .NET engine lists them. The C library gives each property the
+    /// index of its name.
+    fn new(file_properties: &[DataFileProperty], names: &Arc<BuildNames>) -> Self {
+        let count = names.list.len();
+        let mut at_index: Vec<Option<&DataFileProperty>> = vec![None; count];
+        for property in file_properties.iter().filter(|property| property.available) {
+            let Some(index) = property
+                .required_property_index
+                .and_then(|index| usize::try_from(index).ok())
+            else {
+                continue;
+            };
+            if let Some(slot) = at_index.get_mut(index).filter(|slot| slot.is_none()) {
+                *slot = Some(property);
+            }
+        }
+        let mut properties = Vec::new();
+        let mut places = vec![None; count];
+        for (index, property) in at_index.into_iter().enumerate() {
+            let Some(property) = property else {
+                continue;
+            };
+            if METRIC_PROPERTIES
+                .iter()
+                .any(|metric| metric.name.eq_ignore_ascii_case(&property.name))
+            {
+                continue;
+            }
+            places[index] = Some(properties.len());
+            properties.push(ReadableProperty::File {
+                name: property.name.clone(),
+                value_type: property.value_type,
+                index: index as c_int,
+            });
+        }
+        let first_metric = properties.len();
+        properties.extend(Metric::READ_ORDER.into_iter().map(ReadableProperty::Metric));
+        let lowercase_names = properties
             .iter()
-            .filter(|property| property.available)
-            .filter(|property| {
-                !METRIC_PROPERTIES
-                    .iter()
-                    .any(|metric| metric.name.eq_ignore_ascii_case(&property.name))
-            })
-            .filter_map(|property| {
-                property
-                    .required_property_index
-                    .map(|index| ReadableProperty {
-                        name: property.name.clone(),
-                        value_type: property.value_type,
-                        index,
-                    })
-            })
+            .map(|property| property.name().to_lowercase())
             .collect();
-        let lowercase_names: Vec<String> = properties
-            .iter()
-            .map(|property| property.name.to_lowercase())
-            .collect();
-        let by_name = lowercase_names
-            .iter()
-            .enumerate()
-            .map(|(position, name)| (name.clone(), position))
-            .collect();
-        ReadableProperties {
+        let mut readable = ReadableProperties {
             properties,
             lowercase_names,
-            by_name,
+            names: Arc::clone(names),
+            places,
+            first_metric,
+            typed: Vec::new(),
+        };
+        readable.typed = TYPED_PROPERTY_NAMES
+            .iter()
+            .map(|name| readable.position(&name.to_lowercase()))
+            .collect();
+        readable
+    }
+
+    /// The place of the property named, found in the table of the names the
+    /// engine was built with, or `None` when this data set does not have it.
+    fn position(&self, name: &str) -> Option<usize> {
+        match *self.names.by_name.get(name)? {
+            NameSlot::Index(index) => self.places.get(index).copied().flatten(),
+            NameSlot::Metric(offset) => Some(self.first_metric + offset),
         }
     }
 }
@@ -964,35 +1118,53 @@ struct DetectionReader {
     loaded: Arc<LoadedDataSet>,
 }
 
+/// New device data reading each property from `reader` when it is first
+/// requested, giving the reason a property its data set lacks is missing.
+fn device_data(reader: DetectionReader) -> DeviceDataBase {
+    let mut device = DeviceDataBase::new();
+    device
+        .base_mut()
+        .add_missing_property_source(Arc::clone(&reader.loaded.missing));
+    device.with_reader(reader)
+}
+
 impl DevicePropertyReader for DetectionReader {
     fn property_names(&self) -> &[String] {
         &self.loaded.readable.lowercase_names
     }
 
     fn position(&self, name: &str) -> Option<usize> {
-        self.loaded.readable.by_name.get(name).copied()
+        self.loaded.readable.position(name)
     }
 
-    fn read_property(&self, position: usize) -> std::result::Result<Option<PropertyValue>, String> {
-        let property = &self.loaded.readable.properties[position];
+    fn typed_positions(&self) -> Option<&[Option<usize>]> {
+        Some(&self.loaded.readable.typed)
+    }
+
+    fn read_property(&self, position: usize) -> ReadOutcome {
         let results = self.results.lock().unwrap_or_else(PoisonError::into_inner);
-        let raw = results
-            .value_as_string_by_index(property.index, NATIVE_VALUE_SEPARATOR)
+        let (name, value_type, index) = match &self.loaded.readable.properties[position] {
+            ReadableProperty::Metric(metric) => return metric.read(&results),
+            ReadableProperty::File {
+                name,
+                value_type,
+                index,
+            } => (name, *value_type, *index),
+        };
+        let values = results
+            .values_by_index(index)
             .map_err(|error| error.to_string())?;
-        Ok(raw.and_then(|raw| {
-            let raw = if property
-                .name
-                .eq_ignore_ascii_case(JAVASCRIPT_HARDWARE_PROFILE)
-            {
-                wrap_hardware_profile(raw)
-            } else {
-                raw
-            };
-            // A typed property whose value does not parse (the `Unknown` or
-            // `N/A` no-value sentinels, say) has no value, so its accessor
-            // reports a clean no-value.
-            native_value(&raw, property.value_type)
-        }))
+        let values = if name.eq_ignore_ascii_case(JAVASCRIPT_HARDWARE_PROFILE) {
+            values.map(|values| {
+                values
+                    .iter()
+                    .map(|body| hardware_profile_script(body))
+                    .collect()
+            })
+        } else {
+            values
+        };
+        Ok(native_value(values, value_type))
     }
 }
 
@@ -1120,77 +1292,137 @@ fn value_metadata(value: &DataFileValue) -> ValueMetaData {
         .with_url(&value.url)
 }
 
-/// Convert a native string value into the property value of the declared type,
-/// or [`None`] when a typed property has no real value.
+/// The value of a property from the values the results hold for it, or
+/// [`None`] when it has none, as the C++ `ResultsBase` in 51degrees-cxx gives
+/// it to the .NET engine.
 ///
-/// The native results reader returns every value as a string. A boolean comes
-/// back as the words `True` or `False`; an integer or double as its decimal
-/// form. A property with no value for this device comes back as a sentinel such
-/// as `Unknown` or `N/A`. For a boolean, integer or double property that
-/// sentinel (or any other text that does not parse as the declared type) is
-/// surfaced as a no-value by returning [`None`] (the property is then simply not
-/// written, so its strongly-typed accessor reports a clean no-value) rather than
-/// a wrong-typed string the typed accessor could not unpack. String and
-/// string-list properties take the value verbatim, so a string property that
-/// resolves to `Unknown` keeps that as its value, matching the other SDKs.
-fn native_value(raw: &str, value_type: PropertyValueType) -> Option<PropertyValue> {
-    match value_type {
-        PropertyValueType::Bool => match raw.trim().to_ascii_lowercase().as_str() {
-            "true" | "1" | "yes" => Some(PropertyValue::Bool(true)),
-            "false" | "0" | "no" => Some(PropertyValue::Bool(false)),
-            _ => None,
-        },
-        PropertyValueType::Integer => raw.trim().parse::<i64>().ok().map(PropertyValue::Integer),
-        PropertyValueType::Double => raw.trim().parse::<f64>().ok().map(PropertyValue::Double),
-        PropertyValueType::StringList => {
-            // The native reader joins list values with the separator. Split them
-            // back into a list so the list accessors see every value.
-            let parts: Vec<String> = raw
-                .split(VALUE_SEPARATOR)
-                .filter(|s| !s.is_empty())
-                .map(str::to_owned)
-                .collect();
-            Some(PropertyValue::StringList(parts))
+/// `values` is [`None`] when the results hold no value for the property, such
+/// as with no evidence, and then no type has a value. Otherwise a list is
+/// every value, an empty one included, and an empty list when the matched
+/// profile holds none. Any other type has no value when the profile holds
+/// none. A string or JavaScript property joins several values with
+/// [`VALUE_SEPARATOR`]. A boolean, integer or double has no value when there
+/// are several, and otherwise reads its one value as C does: a boolean is
+/// true only for the exact text `True`, an integer is what `atoi` reads and a
+/// double what `strtod` reads. So a value such as `Unknown` or `N/A` gives
+/// false or 0.
+fn native_value(
+    values: Option<Vec<String>>,
+    value_type: PropertyValueType,
+) -> Option<PropertyValue> {
+    let values = values?;
+    if value_type == PropertyValueType::StringList {
+        return Some(PropertyValue::StringList(values));
+    }
+    match (value_type, values.as_slice()) {
+        (_, []) => None,
+        (PropertyValueType::Bool, [value]) => Some(PropertyValue::Bool(value == "True")),
+        (PropertyValueType::Integer, [value]) => Some(PropertyValue::Integer(c_atoi(value))),
+        (PropertyValueType::Double, [value]) => Some(PropertyValue::Double(c_strtod(value))),
+        (PropertyValueType::Bool | PropertyValueType::Integer | PropertyValueType::Double, _) => {
+            None
         }
-        _ => Some(PropertyValue::String(raw.to_owned())),
+        _ => Some(PropertyValue::String(values.join(VALUE_SEPARATOR))),
+    }
+}
+
+/// True for the characters C's `isspace` finds in the C locale, which
+/// `atoi` and `strtod` skip at the start of their text.
+fn is_c_space(character: char) -> bool {
+    matches!(character, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r')
+}
+
+/// The text after any white space and sign at the start of `text`, and
+/// whether the sign was a minus.
+fn c_sign(text: &str) -> (bool, &str) {
+    let text = text.trim_start_matches(is_c_space);
+    match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text.strip_prefix('+').unwrap_or(text)),
+    }
+}
+
+/// The integer C's `atoi` reads from the start of `text`, being the decimal
+/// digits after any white space and sign, or 0 when there are none. C leaves
+/// a number too large for its type undefined, and here it stops at the
+/// largest.
+fn c_atoi(text: &str) -> i64 {
+    let (negative, rest) = c_sign(text);
+    let magnitude = rest
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .fold(0i64, |number, digit| {
+            number
+                .saturating_mul(10)
+                .saturating_add(i64::from(digit - b'0'))
+        });
+    if negative {
+        -magnitude
+    } else {
+        magnitude
+    }
+}
+
+/// The number C's `strtod` reads from the start of `text`, or 0 when it does
+/// not start with one. After any white space and sign that is `inf`,
+/// `infinity` or `nan` in any case, or decimal digits with an optional point
+/// and exponent. A hexadecimal number, which `strtod` also reads, gives 0.
+fn c_strtod(text: &str) -> f64 {
+    let (negative, rest) = c_sign(text);
+    let lower = rest.get(..8).unwrap_or(rest).to_ascii_lowercase();
+    let magnitude = if lower.starts_with("inf") {
+        f64::INFINITY
+    } else if lower.starts_with("nan") {
+        f64::NAN
+    } else {
+        let bytes = rest.as_bytes();
+        let digits = |from: usize| {
+            bytes[from..]
+                .iter()
+                .take_while(|byte| byte.is_ascii_digit())
+                .count()
+        };
+        let whole = digits(0);
+        let mut end = whole;
+        let mut fraction = 0;
+        if bytes.get(end) == Some(&b'.') {
+            fraction = digits(end + 1);
+            end += 1 + fraction;
+        }
+        if whole + fraction == 0 {
+            return 0.0;
+        }
+        if matches!(bytes.get(end), Some(b'e' | b'E')) {
+            let sign = usize::from(matches!(bytes.get(end + 1), Some(b'+' | b'-')));
+            let exponent = digits(end + 1 + sign);
+            if exponent > 0 {
+                end += 1 + sign + exponent;
+            }
+        }
+        rest[..end].parse::<f64>().unwrap_or(0.0)
+    };
+    if negative {
+        -magnitude
+    } else {
+        magnitude
     }
 }
 
 /// The property whose data file value is the body of a script that finds the
-/// Apple device model on the client.
+/// Apple device model on the client. Each value is given as the script
+/// [`hardware_profile_script`] writes around it, an empty one included, as
+/// the C++ results give it. Without the script the body fails on the array it
+/// does not declare, and the include that carries it stops running.
 const JAVASCRIPT_HARDWARE_PROFILE: &str = "JavascriptHardwareProfile";
-
-/// Turn the stored `JavascriptHardwareProfile` body into the script the client
-/// runs, as the C++ results wrapper in 51degrees-cxx does.
-///
-/// The stored body pushes the profile ids it finds onto a `profileIds` array
-/// that it does not declare, and does not send them anywhere. The wrapper
-/// declares the array first and afterwards writes the ids to the
-/// `51D_ProfileIds` cookie, which the engine reads back as evidence. Without
-/// the wrapper the script fails on the undeclared array, and the include that
-/// carries it stops running. An empty body, which a profile that needs no
-/// script has, is left empty.
-fn wrap_hardware_profile(body: String) -> String {
-    if body.is_empty() {
-        return body;
-    }
-    format!(
-        "var profileIds = []\n{body}\n\
-         document.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")"
-    )
-}
 
 /// The evidence key filter for the Hash engine.
 ///
-/// It accepts the keys [`named_evidence_keys`] lists for the loaded data set,
-/// and also any query or cookie value whose name starts with `51d_`. Those are
-/// the values the client-side JavaScript sends back, being a property override
-/// such as `query.51d_screenpixelswidth` or the `query.51d_profileids` profile
-/// ids. The native engine applies them itself, and ignores a `51d_` name it
-/// does not know, so they are passed through by prefix rather than listed one
-/// by one. Without them the screen size and other values the browser reports
-/// never reach the engine. A refresh replaces the named keys, because a new
-/// data file can read different headers.
+/// It accepts the keys [`Manager::evidence_keys`] lists for the loaded data
+/// set and no others, as an element accepts only the evidence that can change
+/// its results. Those include the values the client-side JavaScript sends
+/// back, being an override of each property the data set lets the evidence
+/// override and the profile ids. A refresh replaces the keys, because a new
+/// data file can read different headers and override different properties.
 struct HashEvidenceKeyFilter {
     named: ArcSwap<EvidenceKeyFilterWhitelist>,
 }
@@ -1206,90 +1438,27 @@ impl HashEvidenceKeyFilter {
         self.named
             .store(Arc::new(EvidenceKeyFilterWhitelist::new(keys)));
     }
-
-    /// True when the key is `query.51d_*` or `cookie.51d_*`, ignoring case.
-    fn is_client_side_value(key: &str) -> bool {
-        let Some((prefix, field)) = key.split_once(constants::EVIDENCE_SEPARATOR) else {
-            return false;
-        };
-        let known_prefix = prefix.eq_ignore_ascii_case(constants::EVIDENCE_QUERY_PREFIX)
-            || prefix.eq_ignore_ascii_case(constants::EVIDENCE_COOKIE_PREFIX);
-        known_prefix
-            && field
-                .get(..constants::FIFTYONE_COOKIE_PREFIX.len())
-                .is_some_and(|start| start.eq_ignore_ascii_case(constants::FIFTYONE_COOKIE_PREFIX))
-    }
 }
 
 impl EvidenceKeyFilter for HashEvidenceKeyFilter {
     fn include(&self, key: &str) -> bool {
-        self.named.load().include(key) || Self::is_client_side_value(key)
+        self.named.load().include(key)
     }
 
     fn order(&self, key: &str) -> Option<i32> {
-        self.named
-            .load()
-            .order(key)
-            .or_else(|| Self::is_client_side_value(key).then_some(0))
+        self.named.load().order(key)
     }
 
-    /// The named keys alone. The client-side values are accepted by pattern
-    /// and are query keys, which the list is not used for.
     fn named_keys(&self) -> Option<Vec<String>> {
         self.named.load().named_keys()
     }
 }
 
-/// The evidence keys the engine accepts by name for `manager`'s data set, being
-/// each header the data set reads as a `header.` and a `query.` key (see
-/// [`Manager::evidence_keys`]), and the high-entropy values keys the
-/// [`UachJsConversionElement`] consumes.
-fn named_evidence_keys(manager: &Manager) -> Vec<String> {
-    let mut keys = manager.evidence_keys();
-    keys.push(UACH_EVIDENCE_QUERY_KEY.to_owned());
-    keys.push(UACH_EVIDENCE_COOKIE_KEY.to_owned());
-    keys
-}
-
 /// Record on `data_file` the dates in `manager`'s data file header, as .NET
-/// does after each load. The date the file was published goes in the update
-/// service's `If-Modified-Since` header. The date the next is expected, at noon
-/// UTC and a random minute as .NET gives it, is when the service starts to
-/// poll. A date the header does not hold is cleared, so that no date of data
-/// no longer loaded is kept.
+/// does after each load, with
+/// [`AspectEngineDataFile::record_header_dates`].
 fn record_dates(manager: &Manager, data_file: &AspectEngineDataFile) {
-    let published = manager
-        .data_set_published()
-        .and_then(|(year, month, day)| Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).single());
-    match published {
-        Some(published) => data_file.set_data_published(published),
-        None => data_file.clear_data_published(),
-    }
-    let next = manager
-        .data_set_next_update()
-        .and_then(|(year, month, day)| {
-            Utc.with_ymd_and_hms(year, month, day, NEXT_UPDATE_HOUR, random_minute(), 0)
-                .single()
-        });
-    match next {
-        Some(next) => data_file.set_update_available_time(next),
-        None => data_file.clear_update_available_time(),
-    }
-}
-
-/// The hour, UTC, of the day the data file header gives for the next data
-/// file, at which the update service is told to expect it.
-const NEXT_UPDATE_HOUR: u32 = 12;
-
-/// The number of minutes in an hour, the range the minute of
-/// [`NEXT_UPDATE_HOUR`] is chosen from.
-const MINUTES_PER_HOUR: u64 = 60;
-
-/// A minute of the hour chosen at random, so that servers loading the same
-/// data file do not all start to poll at once.
-fn random_minute() -> u32 {
-    let random = RandomState::new().hash_one(std::time::SystemTime::now());
-    u32::try_from(random % MINUTES_PER_HOUR).unwrap_or(0)
+    data_file.record_header_dates(manager.data_set_published(), manager.data_set_next_update());
 }
 
 #[cfg(test)]
@@ -1302,64 +1471,152 @@ mod tests {
         assert!(full.ends_with(&format!("::{ENGINE_TYPE_NAME}")), "{full}");
     }
 
+    /// The values given, as the results would hold them.
+    fn values(values: &[&str]) -> Option<Vec<String>> {
+        Some(values.iter().map(|value| (*value).to_owned()).collect())
+    }
+
+    const EVERY_TYPE: [PropertyValueType; 6] = [
+        PropertyValueType::String,
+        PropertyValueType::Bool,
+        PropertyValueType::Integer,
+        PropertyValueType::Double,
+        PropertyValueType::StringList,
+        PropertyValueType::JavaScript,
+    ];
+
     #[test]
-    fn native_bool_words_parse_both_cases() {
-        // The native string reader renders a boolean as the word True or False.
-        assert_eq!(
-            native_value("True", PropertyValueType::Bool),
-            Some(PropertyValue::Bool(true))
-        );
-        assert_eq!(
-            native_value("false", PropertyValueType::Bool),
-            Some(PropertyValue::Bool(false))
-        );
-        // An unexpected boolean rendering (including the Unknown no-value
-        // sentinel) is a no-value, so it is not written and the typed accessor
-        // reports a clean no-value rather than failing to unpack a string.
-        assert_eq!(native_value("maybe", PropertyValueType::Bool), None);
-        assert_eq!(native_value("Unknown", PropertyValueType::Bool), None);
+    fn a_property_the_results_hold_no_value_for_has_none() {
+        for value_type in EVERY_TYPE {
+            assert_eq!(native_value(None, value_type), None, "{value_type:?}");
+        }
     }
 
     #[test]
-    fn native_numbers_parse_and_fall_back() {
-        assert_eq!(
-            native_value("1170", PropertyValueType::Integer),
-            Some(PropertyValue::Integer(1170))
-        );
-        assert_eq!(
-            native_value("71.5", PropertyValueType::Double),
-            Some(PropertyValue::Double(71.5))
-        );
-        // A non-numeric value for a numeric property is a no-value, not a string.
-        assert_eq!(native_value("n/a", PropertyValueType::Integer), None);
-        assert_eq!(native_value("Unknown", PropertyValueType::Double), None);
+    fn only_a_list_has_a_value_when_the_profile_holds_none() {
+        for value_type in EVERY_TYPE {
+            let expected = (value_type == PropertyValueType::StringList)
+                .then_some(PropertyValue::StringList(Vec::new()));
+            assert_eq!(
+                native_value(values(&[]), value_type),
+                expected,
+                "{value_type:?}"
+            );
+        }
     }
 
     #[test]
-    fn native_string_keeps_sentinel_verbatim() {
-        // A string property takes its value verbatim, including the Unknown
-        // sentinel, matching the other SDKs.
+    fn a_list_keeps_every_value() {
         assert_eq!(
-            native_value("Unknown", PropertyValueType::String),
-            Some(PropertyValue::String("Unknown".to_owned()))
-        );
-    }
-
-    #[test]
-    fn native_list_splits_on_separator() {
-        let value = native_value("iPhone|iPhone 15", PropertyValueType::StringList);
-        assert_eq!(
-            value,
+            native_value(
+                values(&["iPhone", "", "a|b"]),
+                PropertyValueType::StringList
+            ),
             Some(PropertyValue::StringList(vec![
                 "iPhone".to_owned(),
-                "iPhone 15".to_owned()
+                String::new(),
+                "a|b".to_owned()
             ]))
         );
     }
 
     #[test]
-    fn the_native_separator_is_the_value_separator() {
-        assert_eq!(NATIVE_VALUE_SEPARATOR.to_str(), Ok(VALUE_SEPARATOR));
+    fn a_string_joins_its_values_and_keeps_text_as_it_is() {
+        for value_type in [PropertyValueType::String, PropertyValueType::JavaScript] {
+            assert_eq!(
+                native_value(values(&["a", "b"]), value_type),
+                Some(PropertyValue::String("a|b".to_owned()))
+            );
+            assert_eq!(
+                native_value(values(&[""]), value_type),
+                Some(PropertyValue::String(String::new()))
+            );
+            assert_eq!(
+                native_value(values(&["Unknown"]), value_type),
+                Some(PropertyValue::String("Unknown".to_owned()))
+            );
+        }
+    }
+
+    #[test]
+    fn a_boolean_is_true_only_for_the_text_true() {
+        let read = |value: &str| native_value(values(&[value]), PropertyValueType::Bool);
+        assert_eq!(read("True"), Some(PropertyValue::Bool(true)));
+        for value in ["False", "true", "TRUE", "1", "Unknown", "N/A", "", " True"] {
+            assert_eq!(read(value), Some(PropertyValue::Bool(false)), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn a_number_or_boolean_with_several_values_has_none() {
+        for value_type in [
+            PropertyValueType::Bool,
+            PropertyValueType::Integer,
+            PropertyValueType::Double,
+        ] {
+            assert_eq!(
+                native_value(values(&["1", "1"]), value_type),
+                None,
+                "{value_type:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_integer_is_what_atoi_reads() {
+        let read = |value: &str| native_value(values(&[value]), PropertyValueType::Integer);
+        for (value, expected) in [
+            ("1170", 1170),
+            ("-7", -7),
+            ("+5", 5),
+            (" \t\x0b\x0c\r\n42", 42),
+            ("12.9", 12),
+            ("42abc", 42),
+            ("Unknown", 0),
+            ("N/A", 0),
+            ("", 0),
+            ("-", 0),
+            ("- 3", 0),
+            ("99999999999999999999", i64::MAX),
+        ] {
+            assert_eq!(
+                read(value),
+                Some(PropertyValue::Integer(expected)),
+                "{value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_double_is_what_strtod_reads() {
+        let read = |value: &str| match native_value(values(&[value]), PropertyValueType::Double) {
+            Some(PropertyValue::Double(number)) => number,
+            other => panic!("{value:?} gave {other:?}"),
+        };
+        for (value, expected) in [
+            ("71.5", 71.5),
+            ("  3.25", 3.25),
+            ("-2.5e-1", -0.25),
+            ("+.5e+1", 5.0),
+            ("5.", 5.0),
+            (".5", 0.5),
+            ("1e3x", 1000.0),
+            ("1e", 1.0),
+            ("1e+", 1.0),
+            ("2.5.1", 2.5),
+            ("Unknown", 0.0),
+            ("N/A", 0.0),
+            ("", 0.0),
+            (".", 0.0),
+            ("e5", 0.0),
+            ("inf", f64::INFINITY),
+            ("-Infinity", f64::NEG_INFINITY),
+            ("1e999", f64::INFINITY),
+        ] {
+            assert_eq!(read(value).to_bits(), expected.to_bits(), "{value:?}");
+        }
+        assert!(read("NaN").is_nan());
+        assert!(read("nan(1)").is_nan());
     }
 
     #[test]
@@ -1427,38 +1684,25 @@ mod tests {
         assert!(!filter.include("header.user-agent"));
     }
 
+    /// A `51d_` value is accepted only when the data set reads it, as an
+    /// element accepts only the evidence that can change its results.
     #[test]
-    fn hardware_profile_is_wrapped_as_the_cpp_wrapper_does() {
-        assert_eq!(
-            wrap_hardware_profile("profileIds.push(1)".to_owned()),
-            "var profileIds = []\nprofileIds.push(1)\n\
-             document.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")"
-        );
-        // A profile that needs no script keeps an empty body.
-        assert_eq!(wrap_hardware_profile(String::new()), "");
-    }
-
-    #[test]
-    fn evidence_filter_passes_client_side_values() {
-        // The values the client-side JavaScript sends back reach the engine,
-        // whether posted as query values or kept in cookies.
-        let filter = HashEvidenceKeyFilter::new(Vec::new());
-        assert!(filter.include("query.51d_screenpixelswidth"));
+    fn evidence_filter_accepts_only_the_51d_values_it_is_given() {
+        let filter = HashEvidenceKeyFilter::new(vec![
+            String::from("query.51d_profileids"),
+            String::from("cookie.51d_javascripthardwareprofile"),
+        ]);
         assert!(filter.include("query.51D_ProfileIds"));
-        assert!(filter.include("cookie.51d_screenpixelsheight"));
-        assert_eq!(filter.order("query.51d_screenpixelswidth"), Some(0));
-        // Only query and cookie values, and only with the 51d_ prefix.
-        assert!(!filter.include("header.51d_screenpixelswidth"));
-        assert!(!filter.include("query.screenpixelswidth"));
-        assert!(!filter.include("cookie.session"));
-        assert!(!filter.include("query.51d"));
-        assert_eq!(filter.order("cookie.session"), None);
+        assert!(filter.include("cookie.51d_javascripthardwareprofile"));
+        assert!(!filter.include("query.51d_screenpixelswidth"));
+        assert!(!filter.include("cookie.51d_profileids"));
+        assert_eq!(filter.order("query.51d_screenpixelswidth"), None);
     }
 
-    /// The Hash data file `51DEGREES_DD_PATH` names, or the Lite file in the
+    /// The Hash data file `_51DEGREES_DD_PATH` names, or the Lite file in the
     /// `cxx` submodule.
     fn data_file() -> Option<PathBuf> {
-        if let Ok(path) = std::env::var("51DEGREES_DD_PATH") {
+        if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
             let path = PathBuf::from(path);
             if path.is_file() {
                 return Some(path);
@@ -1473,11 +1717,14 @@ mod tests {
             .find(|path| path.is_file())
     }
 
-    /// With no concurrency named, the data set opens with the default, not
-    /// only the engine's record of it, under the two profiles with no limit,
-    /// and a refresh opens the new data set with it too. On a machine with 10
-    /// processors the default equals the C library's own, so the check there
-    /// cannot tell the two apart.
+    /// `FIFTYONE_DEGREES_FILE_POOL_MAX_HANDLES` in the C library's `file.h`,
+    /// the most handles a data set's file pool holds.
+    const FILE_POOL_MAX_HANDLES: u16 = 64;
+
+    /// With no concurrency named, the data set opens a handle to the file
+    /// for each processor, to at most [`FILE_POOL_MAX_HANDLES`], under
+    /// `LowMemory` and `HighPerformance`, and a refresh opens the new data
+    /// set with as many.
     #[test]
     fn the_default_concurrency_reaches_the_data_set() {
         let Some(path) = data_file() else {
@@ -1492,11 +1739,722 @@ mod tests {
                 .performance_profile(profile)
                 .build()
                 .expect("the data file loads");
-            let expected = fiftyone_native::dd::default_concurrency(profile);
+            let expected =
+                fiftyone_native::dd::default_concurrency(profile).min(FILE_POOL_MAX_HANDLES);
             let pool = || engine.loaded.load().manager.file_pool_size();
             assert_eq!(pool(), expected, "{}", profile.as_str());
             engine.refresh(None).expect("the data file loads again");
             assert_eq!(pool(), expected, "{} refreshed", profile.as_str());
         }
+    }
+
+    /// Every match metric listed in the metadata is read from the results,
+    /// and a detection's data lists them in the metadata's order.
+    #[test]
+    fn every_listed_metric_is_read_from_the_results() {
+        let read: Vec<&str> = Metric::READ_ORDER.iter().map(|m| m.name()).collect();
+        let listed: Vec<&str> = METRIC_PROPERTIES.iter().map(|m| m.name).collect();
+        assert_eq!(read, listed);
+        let readable = ReadableProperties::new(&[], &Arc::new(BuildNames::new(Vec::new())));
+        let lowercase: Vec<String> = listed.iter().map(|name| name.to_lowercase()).collect();
+        assert_eq!(readable.lowercase_names, lowercase);
+        for (position, name) in lowercase.iter().enumerate() {
+            assert_eq!(readable.position(name), Some(position), "{name}");
+        }
+    }
+
+    const CHROME_ON_WINDOWS: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
+        AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+    /// An engine over the data file with no properties named, and flow data
+    /// holding a User-Agent for it.
+    fn engine_and_data(path: &Path) -> (Arc<DeviceDetectionOnPremiseEngine>, FlowData) {
+        let engine = crate::DeviceDetectionOnPremiseEngineBuilder::new(path)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            .build()
+            .expect("the data file loads");
+        let element: Arc<dyn FlowElement> = engine.clone();
+        let pipeline = fiftyone_pipeline_core::Pipeline::builder()
+            .add_element(element)
+            .build()
+            .expect("the pipeline builds");
+        let data = pipeline.create_flow_data_with(
+            Evidence::builder()
+                .add("header.user-agent", CHROME_ON_WINDOWS)
+                .build(),
+        );
+        (engine, data)
+    }
+
+    /// A detection walks no graph, reading a property walks only the graph
+    /// of its component, and reading a match metric walks the rest, as
+    /// .NET's results read the metrics only when they are asked for.
+    #[test]
+    fn a_detection_walks_only_the_graphs_of_the_properties_read() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the graph walks");
+            return;
+        };
+        let (engine, data) = engine_and_data(&path);
+        for metric in Metric::READ_ORDER {
+            let reader = engine.detection_reader(&data).expect("detection succeeds");
+            let pending = || {
+                reader
+                    .results
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .pending_graphs()
+            };
+            let all = pending();
+            assert!(all > 1, "a graph for each component: {all}");
+            let position = |name: &str| reader.position(name).expect(name);
+            let is_mobile = reader.read_property(position("ismobile"));
+            assert!(
+                matches!(is_mobile, Ok(Some(PropertyValue::Bool(_)))),
+                "{is_mobile:?}"
+            );
+            assert_eq!(pending(), all - 1, "IsMobile walks one graph");
+            let name = metric.name();
+            let value = reader.read_property(position(name.to_lowercase().as_str()));
+            assert!(matches!(value, Ok(Some(_))), "{name}: {value:?}");
+            assert_eq!(pending(), 0, "{name} walks every graph");
+        }
+    }
+
+    /// Read the property `name` from `reader`.
+    fn read(reader: &DetectionReader, name: &str) -> ReadOutcome {
+        reader.read_property(reader.position(name).expect(name))
+    }
+
+    /// A name given twice keeps the index of its first place, as the C
+    /// library gives it.
+    #[test]
+    fn a_name_given_twice_keeps_its_first_index() {
+        let names = BuildNames::new(vec![
+            "IsMobile".to_owned(),
+            "PlatformName".to_owned(),
+            "ismobile".to_owned(),
+        ]);
+        assert!(matches!(
+            names.by_name.get("ismobile"),
+            Some(NameSlot::Index(0))
+        ));
+    }
+
+    /// The reader resolves each typed accessor's position once, being the
+    /// position a read by its property's name finds, and a typed read gives
+    /// what a read by name gives.
+    #[test]
+    fn each_typed_slot_reads_where_its_name_does() {
+        use fiftyone_device_detection_shared::DeviceData;
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the typed slots");
+            return;
+        };
+        let (engine, mut data) = engine_and_data(&path);
+        let reader = engine.detection_reader(&data).expect("detection succeeds");
+        let typed = &reader.loaded.readable.typed;
+        assert_eq!(typed.len(), TYPED_PROPERTY_NAMES.len());
+        let mut resolved = 0;
+        for (slot, name) in TYPED_PROPERTY_NAMES.iter().enumerate() {
+            let by_name = reader.position(&name.to_lowercase());
+            assert_eq!(typed[slot], by_name, "{name}");
+            resolved += usize::from(by_name.is_some());
+        }
+        // Every property the reader holds that has a typed accessor
+        // resolves, and no other slot does.
+        let expected = reader
+            .property_names()
+            .iter()
+            .filter(|name| {
+                TYPED_PROPERTY_NAMES
+                    .iter()
+                    .any(|typed| typed.to_lowercase() == **name)
+            })
+            .count();
+        assert_eq!(resolved, expected);
+        assert!(resolved > 10, "only {resolved} typed accessors resolved");
+        for name in ["IsMobile", "PlatformName"] {
+            let slot = TYPED_PROPERTY_NAMES
+                .iter()
+                .position(|typed| *typed == name)
+                .expect(name);
+            assert!(typed[slot].is_some(), "{name}");
+        }
+
+        data.process().expect("processing succeeds");
+        let device = data.get(DEVICE_DATA_KEY).expect("device data was produced");
+        assert_eq!(
+            format!("{:?}", device.is_mobile()),
+            format!("{:?}", device.bool_property("IsMobile"))
+        );
+        assert_eq!(
+            format!("{:?}", device.platform_name()),
+            format!("{:?}", device.string_property("PlatformName"))
+        );
+        assert_eq!(
+            format!("{:?}", device.screen_pixels_width()),
+            format!("{:?}", device.integer_property("ScreenPixelsWidth"))
+        );
+        assert_eq!(
+            format!("{:?}", device.hardware_vendor()),
+            format!("{:?}", device.string_property("HardwareVendor"))
+        );
+    }
+
+    /// Names in an order that is not the data file's.
+    const NAMES_OUT_OF_ORDER: [&str; 3] = ["PlatformName", "IsMobile", "BrowserName"];
+
+    /// An engine over the data file built with `names`.
+    fn named_engine(path: &Path, names: &[&str]) -> Arc<DeviceDetectionOnPremiseEngine> {
+        crate::DeviceDetectionOnPremiseEngineBuilder::new(path)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            .properties(names.iter().copied())
+            .build()
+            .expect("the data file loads")
+    }
+
+    /// The reader lists the data file properties in the order the engine was
+    /// built with their names, then the match metrics, because each name's
+    /// index is its place among those names.
+    #[test]
+    fn the_reader_lists_the_names_in_the_order_the_engine_was_built_with() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the order of the names");
+            return;
+        };
+        let (_, data) = engine_and_data(&path);
+        let engine = named_engine(&path, &NAMES_OUT_OF_ORDER);
+        let reader = engine.detection_reader(&data).expect("detection succeeds");
+        let expected: Vec<String> = NAMES_OUT_OF_ORDER
+            .iter()
+            .copied()
+            .chain(Metric::READ_ORDER.iter().map(|metric| metric.name()))
+            .map(str::to_lowercase)
+            .collect();
+        assert_eq!(reader.property_names(), expected.as_slice());
+    }
+
+    /// An engine built with names in an order that is not the data file's
+    /// reads each property as an engine with no names does, before and after
+    /// a refresh, and a read by name gives what the typed accessor gives.
+    #[test]
+    fn a_named_engine_reads_each_property_before_and_after_a_refresh() {
+        use fiftyone_device_detection_shared::DeviceData;
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the reads after a refresh");
+            return;
+        };
+        let (all, mut data) = engine_and_data(&path);
+        let expected = all.detection_reader(&data).expect("detection succeeds");
+        let engine = named_engine(&path, &NAMES_OUT_OF_ORDER);
+        for refreshed in [false, true] {
+            if refreshed {
+                engine.refresh(None).expect("the data file loads again");
+            }
+            let reader = engine.detection_reader(&data).expect("detection succeeds");
+            for name in NAMES_OUT_OF_ORDER {
+                let name = name.to_lowercase();
+                assert_eq!(
+                    read(&reader, &name),
+                    read(&expected, &name),
+                    "{name}, refreshed {refreshed}"
+                );
+            }
+        }
+        data.process().expect("processing succeeds");
+        let device = data.get(DEVICE_DATA_KEY).expect("device data was produced");
+        assert_eq!(
+            format!("{:?}", device.is_mobile()),
+            format!("{:?}", device.bool_property("IsMobile"))
+        );
+    }
+
+    /// An engine built with no names reads each property at the index of its
+    /// name among the data set's names at build, before and after a refresh.
+    #[test]
+    fn an_engine_with_no_names_reads_by_the_index_of_its_names_at_build() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the indexes of no names");
+            return;
+        };
+        let (engine, data) = engine_and_data(&path);
+        let names = engine.loaded.load().manager.property_names();
+        assert!(names.len() > 1, "{names:?}");
+        for refreshed in [false, true] {
+            if refreshed {
+                engine.refresh(None).expect("the data file loads again");
+            }
+            let reader = engine.detection_reader(&data).expect("detection succeeds");
+            let mut checked = 0;
+            for (index, name) in names.iter().enumerate() {
+                let Some(position) = reader.position(&name.to_lowercase()) else {
+                    continue;
+                };
+                if let ReadableProperty::File { index: at, .. } =
+                    &reader.loaded.readable.properties[position]
+                {
+                    assert_eq!(*at, index as c_int, "{name}, refreshed {refreshed}");
+                    checked += 1;
+                }
+            }
+            assert!(checked > 1, "refreshed {refreshed}");
+        }
+    }
+
+    /// An engine built with no names keeps the table of the names it was
+    /// built with across a refresh from its file and from memory, and the
+    /// new data set holds the first data set's names, in their order, rather
+    /// than the engine building its table again from each new data set.
+    #[test]
+    fn an_engine_with_no_names_keeps_its_names_across_a_refresh() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the names kept across a refresh");
+            return;
+        };
+        let (engine, _) = engine_and_data(&path);
+        let names = engine.loaded.load().manager.property_names();
+        let bytes = std::fs::read(&path).expect("the data file reads");
+        for from_memory in [false, true] {
+            if from_memory {
+                engine
+                    .refresh_from_memory(None, &bytes)
+                    .expect("the data loads again");
+            } else {
+                engine.refresh(None).expect("the data file loads again");
+            }
+            let loaded = engine.loaded.load();
+            assert!(
+                Arc::ptr_eq(&loaded.readable.names, &engine.names),
+                "the table was built again, from memory {from_memory}"
+            );
+            assert_eq!(
+                loaded.manager.property_names(),
+                names,
+                "from memory {from_memory}"
+            );
+        }
+    }
+
+    /// An engine built with no names over one data file and reloaded from
+    /// another whose properties differ keeps the first file's names, in their
+    /// order, so each index names the same property. A property both files
+    /// have reads as an engine built on the second file reads it, a property
+    /// only the first file has reads as one the data set does not have, and
+    /// a property only the second file has gets no index and is listed as
+    /// not available, until the engine is built again. Runs when the TAC file
+    /// is beside the Lite file, both ways round.
+    #[test]
+    fn an_engine_with_no_names_keeps_the_first_files_names_after_a_reload_from_another_file() {
+        let Some(lite) = data_file() else {
+            eprintln!("no Hash data file found; skipping the reload from another file");
+            return;
+        };
+        let tac = lite.with_file_name("TAC-HashV41.hash");
+        if !tac.is_file() {
+            eprintln!(
+                "no TAC file beside {}; skipping the reload from another file",
+                lite.display()
+            );
+            return;
+        }
+        for (first, second) in [(&lite, &tac), (&tac, &lite)] {
+            let context = format!("{} then {}", first.display(), second.display());
+            let (engine, data) = engine_and_data(first);
+            let names = engine.loaded.load().manager.property_names();
+            let (other, _) = engine_and_data(second);
+            let other_names = other.loaded.load().manager.property_names();
+            assert_ne!(names, other_names, "{context}");
+
+            engine
+                .reload_from_path(second)
+                .expect("the other data file loads");
+            let loaded = engine.loaded.load();
+            assert_eq!(loaded.manager.property_names(), names, "{context}");
+            assert!(
+                Arc::ptr_eq(&loaded.readable.names, &engine.names),
+                "{context}"
+            );
+
+            let reader = engine.detection_reader(&data).expect("detection succeeds");
+            let expected = other.detection_reader(&data).expect("detection succeeds");
+            let value = |reader: &DetectionReader, name: &str| {
+                reader
+                    .position(name)
+                    .map(|position| reader.read_property(position))
+            };
+            let mut read = 0;
+            for name in names.iter().map(|name| name.to_lowercase()) {
+                if other_names
+                    .iter()
+                    .any(|other| other.eq_ignore_ascii_case(&name))
+                {
+                    assert_eq!(
+                        value(&reader, &name),
+                        value(&expected, &name),
+                        "{name}, {context}"
+                    );
+                    read += 1;
+                } else {
+                    assert!(reader.position(&name).is_none(), "{name}, {context}");
+                }
+            }
+            assert!(read > 1, "{context}");
+            for name in other_names
+                .iter()
+                .filter(|other| !names.iter().any(|name| name.eq_ignore_ascii_case(other)))
+            {
+                assert_eq!(
+                    loaded.manager.required_property_index(name),
+                    None,
+                    "{name}, {context}"
+                );
+                assert!(
+                    reader.position(&name.to_lowercase()).is_none(),
+                    "{name}, {context}"
+                );
+                let listed = engine
+                    .properties()
+                    .iter()
+                    .find(|property| property.name.eq_ignore_ascii_case(name))
+                    .map(|property| property.available);
+                assert_eq!(listed, Some(false), "{name}, {context}");
+            }
+        }
+    }
+
+    /// A refresh reloads the data set into the engine's own manager, as the
+    /// C library's reload does, from the file, from memory and from another
+    /// path, so the manager [`DeviceDetectionOnPremiseEngine::data_set`]
+    /// gives is the same one after each.
+    #[test]
+    fn a_refresh_reloads_the_data_set_in_the_engines_manager() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the reload in place");
+            return;
+        };
+        let (engine, _) = engine_and_data(&path);
+        let manager = engine.data_set();
+        let bytes = std::fs::read(&path).expect("the data file reads");
+        engine.refresh(None).expect("the data file loads again");
+        assert!(Arc::ptr_eq(&manager, &engine.data_set()), "from the file");
+        engine
+            .refresh_from_memory(None, &bytes)
+            .expect("the data loads again");
+        assert!(Arc::ptr_eq(&manager, &engine.data_set()), "from memory");
+        engine
+            .reload_from_path(&path)
+            .expect("the data file loads again");
+        assert!(Arc::ptr_eq(&manager, &engine.data_set()), "from a path");
+    }
+
+    /// A reload of `engine` the tests below make, with the words its
+    /// messages name it by.
+    type Reload<'a> = (String, Box<dyn Fn() -> Result<()> + 'a>);
+
+    /// The reloads of `engine` from the file, from memory, from `bytes`, and
+    /// last from `other` when it is given.
+    fn reloads<'a>(
+        engine: &'a DeviceDetectionOnPremiseEngine,
+        bytes: &'a [u8],
+        other: Option<&'a Path>,
+    ) -> Vec<Reload<'a>> {
+        let mut reloads: Vec<Reload<'a>> = vec![
+            (
+                "from the file".to_owned(),
+                Box::new(move || engine.refresh(None)),
+            ),
+            (
+                "from memory".to_owned(),
+                Box::new(move || engine.refresh_from_memory(None, bytes)),
+            ),
+        ];
+        if let Some(other) = other {
+            reloads.push((
+                format!("from {}", other.display()),
+                Box::new(move || engine.reload_from_path(other)),
+            ));
+        }
+        reloads
+    }
+
+    /// A detection made before a reload reads every property, the match
+    /// metrics among them, as a detection on the data file it was made from
+    /// reads it, though nothing was read from it before the reload, because
+    /// its results keep the data set they came from. Each reload is from the
+    /// file, from memory, and from the TAC file when it is beside the Lite
+    /// file, under a profile that holds the data set in memory and one that
+    /// reads the data file through its file handles.
+    #[test]
+    fn a_detection_made_before_a_reload_reads_as_it_did_before_it() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the detections kept across a reload");
+            return;
+        };
+        let tac = path.with_file_name("TAC-HashV41.hash");
+        let tac = tac.is_file().then_some(tac);
+        let bytes = std::fs::read(&path).expect("the data file reads");
+        let (reference, data) = engine_and_data(&path);
+        let expected = reference
+            .detection_reader(&data)
+            .expect("detection succeeds");
+        for profile in [
+            PerformanceProfile::HighPerformance,
+            PerformanceProfile::LowMemory,
+        ] {
+            let engine = crate::DeviceDetectionOnPremiseEngineBuilder::new(&path)
+                .performance_profile(profile)
+                .build()
+                .expect("the data file loads");
+            for (reload, run) in reloads(&engine, &bytes, tac.as_deref()) {
+                let context = format!("{}, {reload}", profile.as_str());
+                let before = engine.detection_reader(&data).expect("detection succeeds");
+                run().expect("the reload succeeds");
+                assert_eq!(
+                    before.property_names(),
+                    expected.property_names(),
+                    "{context}"
+                );
+                for name in expected.property_names() {
+                    assert_eq!(
+                        read(&before, name),
+                        read(&expected, name),
+                        "{name}, {context}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// An engine built with no names over one data file and reloaded from
+    /// another whose properties differ gives each property of the new data
+    /// set the index of its name among the first file's names, and no index
+    /// to one the first file does not name, so every name keeps its position
+    /// and each typed accessor reads where its name does. Runs when the TAC
+    /// file is beside the Lite file, both ways round.
+    #[test]
+    fn an_engine_with_no_names_keeps_each_names_position_after_a_reload_from_another_file() {
+        let Some(lite) = data_file() else {
+            eprintln!("no Hash data file found; skipping the positions after a reload");
+            return;
+        };
+        let tac = lite.with_file_name("TAC-HashV41.hash");
+        if !tac.is_file() {
+            eprintln!(
+                "no TAC file beside {}; skipping the positions after a reload",
+                lite.display()
+            );
+            return;
+        }
+        for (first, second) in [(&lite, &tac), (&tac, &lite)] {
+            let context = format!("{} then {}", first.display(), second.display());
+            let (engine, data) = engine_and_data(first);
+            let names = engine.data_set().property_names();
+            engine
+                .reload_from_path(second)
+                .expect("the other data file loads");
+            let properties = engine
+                .data_set()
+                .data_file_properties()
+                .expect("the properties are read");
+            let mut kept = 0;
+            for property in &properties {
+                let place = names
+                    .iter()
+                    .position(|name| name.eq_ignore_ascii_case(&property.name));
+                assert_eq!(
+                    property.required_property_index,
+                    place.map(|place| place as c_int),
+                    "{}, {context}",
+                    property.name
+                );
+                kept += usize::from(place.is_some());
+            }
+            assert!(kept > 1, "{context}");
+            let reader = engine.detection_reader(&data).expect("detection succeeds");
+            let readable = &reader.loaded.readable;
+            for property in &readable.properties {
+                if let ReadableProperty::File { name, index, .. } = property {
+                    let at = usize::try_from(*index).expect("an index is not negative");
+                    assert!(
+                        names[at].eq_ignore_ascii_case(name),
+                        "{name} at {index}, {context}"
+                    );
+                }
+            }
+            for (slot, name) in TYPED_PROPERTY_NAMES.iter().enumerate() {
+                assert_eq!(
+                    readable.typed[slot],
+                    readable.position(&name.to_lowercase()),
+                    "{name}, {context}"
+                );
+            }
+        }
+    }
+
+    /// The handles this process has open to the file at `path`.
+    #[cfg(target_os = "linux")]
+    fn open_handles(path: &Path) -> usize {
+        let path = std::fs::canonicalize(path).expect("the file exists");
+        std::fs::read_dir("/proc/self/fd")
+            .expect("the open files are listed")
+            .flatten()
+            .filter(|entry| std::fs::read_link(entry.path()).is_ok_and(|target| target == path))
+            .count()
+    }
+
+    /// A reload leaves the data set it replaces open while a detection made
+    /// from it is held, and the data set is freed, closing its handles to the
+    /// data file, when the last detection holding it is dropped, or at once
+    /// when none holds it. The handles are counted through `/proc`, so this
+    /// runs on Linux.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_reload_frees_the_data_set_it_replaces_once_no_detection_holds_it() {
+        let Some(source) = data_file() else {
+            eprintln!("no Hash data file found; skipping the data sets freed by a reload");
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("fiftyone-dd-reload-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the folder is made");
+        let first = dir.join("first.hash");
+        let second = dir.join("second.hash");
+        std::fs::copy(&source, &first).expect("the data file copies");
+        std::fs::copy(&source, &second).expect("the data file copies");
+        let engine = crate::DeviceDetectionOnPremiseEngineBuilder::new(&first)
+            .performance_profile(PerformanceProfile::LowMemory)
+            .build()
+            .expect("the data file loads");
+        let (_, data) = engine_and_data(&source);
+        assert!(
+            open_handles(&first) > 0,
+            "the first data set reads its file"
+        );
+
+        let held = engine.detection_reader(&data).expect("detection succeeds");
+        engine
+            .reload_from_path(&second)
+            .expect("the second file loads");
+        assert!(open_handles(&second) > 0, "the new data set reads its file");
+        assert!(
+            open_handles(&first) > 0,
+            "the data set a detection holds is freed"
+        );
+        let mobile = || read(&held, "ismobile");
+        assert!(matches!(mobile(), Ok(Some(_))), "{:?}", mobile());
+        drop(held);
+        assert_eq!(
+            open_handles(&first),
+            0,
+            "the data set is kept after its last detection"
+        );
+
+        engine
+            .reload_from_path(&first)
+            .expect("the first file loads again");
+        assert!(open_handles(&first) > 0, "the new data set reads its file");
+        assert_eq!(
+            open_handles(&second),
+            0,
+            "the data set no detection holds is kept"
+        );
+        drop(engine);
+        assert_eq!(open_handles(&first), 0, "the engine's data set is kept");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Each match metric gives the same value as when it is read first when
+    /// it is read after another property, from a reader kept across a refresh
+    /// of the engine's data file, and on another thread, because each walk
+    /// sets only its own component's result and the reader keeps the data set
+    /// its results came from.
+    #[test]
+    fn a_metric_gives_the_same_value_whatever_was_read_before_it() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the metric values");
+            return;
+        };
+        let (engine, data) = engine_and_data(&path);
+        let new_reader = || engine.detection_reader(&data).expect("detection succeeds");
+        let names: Vec<String> = Metric::READ_ORDER
+            .iter()
+            .map(|metric| metric.name().to_lowercase())
+            .collect();
+        let first: Vec<ReadOutcome> = names.iter().map(|name| read(&new_reader(), name)).collect();
+        for (name, value) in names.iter().zip(&first) {
+            assert!(matches!(value, Ok(Some(_))), "{name}: {value:?}");
+        }
+
+        let after_another: Vec<ReadOutcome> = names
+            .iter()
+            .map(|name| {
+                let reader = new_reader();
+                let is_mobile = read(&reader, "ismobile");
+                assert!(matches!(is_mobile, Ok(Some(_))), "{is_mobile:?}");
+                read(&reader, name)
+            })
+            .collect();
+        assert_eq!(after_another, first, "read after IsMobile");
+
+        let kept: Vec<DetectionReader> = names.iter().map(|_| new_reader()).collect();
+        engine.refresh(None).expect("the data file loads again");
+        let after_refresh: Vec<ReadOutcome> = kept
+            .iter()
+            .zip(&names)
+            .map(|(reader, name)| read(reader, name))
+            .collect();
+        assert_eq!(after_refresh, first, "read after a refresh");
+
+        let moved: Vec<DetectionReader> = names.iter().map(|_| new_reader()).collect();
+        let moved_names = names.clone();
+        let on_thread = std::thread::spawn(move || {
+            moved
+                .iter()
+                .zip(&moved_names)
+                .map(|(reader, name)| read(reader, name))
+                .collect::<Vec<ReadOutcome>>()
+        })
+        .join()
+        .expect("the other thread reads");
+        assert_eq!(on_thread, first, "read on another thread");
+    }
+
+    /// A detection stores no value, and its data lists the data file's
+    /// properties first, then the match metrics, as the .NET engine does.
+    #[test]
+    fn a_detection_stores_nothing_until_a_property_is_read() {
+        use fiftyone_pipeline_core::ElementData;
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the stored values");
+            return;
+        };
+        let (engine, data) = engine_and_data(&path);
+        let device = engine.detect(&data).expect("detection succeeds");
+        assert!(
+            device.base().keys().is_empty(),
+            "{:?}",
+            device.base().keys()
+        );
+        let keys = device.keys();
+        let (files, metrics) = keys.split_at(keys.len() - Metric::READ_ORDER.len());
+        assert_eq!(
+            metrics,
+            [
+                "matchednodes",
+                "difference",
+                "drift",
+                "deviceid",
+                "useragents",
+                "iterations",
+                "method"
+            ]
+        );
+        assert!(files.iter().any(|key| key == "ismobile"), "{keys:?}");
+        let method = device.get("Method").expect("Method has a value");
+        assert!(
+            ["NONE", "PERFORMANCE", "COMBINED", "PREDICTIVE"].contains(&method.as_str().unwrap()),
+            "{method:?}"
+        );
     }
 }

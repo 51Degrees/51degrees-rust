@@ -1,7 +1,8 @@
 [package]
 name = "fiftyone-ip-intelligence-shared"
 version = "4.5.2"
-description = "IpIntelligenceData trait with weighted property accessors shared by the cloud and on-premise IP-intelligence engines."
+description = "IP Intelligence and IP geolocation types for Rust, shared by the cloud and on-premise engines. The IpIntelligenceData trait with weighted accessors for an IP address's likely location (country, region, town, and coordinates), connection type, and network. Built on the 51Degrees Pipeline API. An alternative to MaxMind and IPinfo."
+keywords = ["ip-geolocation", "geoip", "asn", "maxmind", "ipinfo"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

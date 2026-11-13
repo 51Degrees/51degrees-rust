@@ -40,11 +40,15 @@
 //!
 //! On [`fiftyone_pipeline_core::FlowElement::process`] the engine:
 //!
-//! 1. Filters the flow data's evidence down to the keys the server accepts (the
-//!    accepted-evidence filter was resolved at build time, see
-//!    [discovery](#discovery)) and strips each key's prefix following the evidence
-//!    precedence rules, so `query.user-agent` becomes `user-agent` and a query
-//!    value beats a header value of the same name.
+//! 1. Takes every evidence value, whether or not the server lists its key as
+//!    accepted, apart from the reserved names `resource`, `license`, `licence`
+//!    and `values` and the web request key `server.http-request`, and strips
+//!    each key's prefix following the evidence precedence rules, so
+//!    `query.user-agent` becomes `user-agent` and a query value beats a header
+//!    value of the same name in any letter case. Each name is sent as the
+//!    winning key spells it. The accepted evidence, resolved at build time
+//!    (see [discovery](#discovery)), is what the engine advertises to the
+//!    pipeline and what a stored response is found by.
 //! 2. POSTs the result as url-encoded form data (with the credential, and the
 //!    asked-for property list when there is one) to the `json` endpoint.
 //! 3. Stores the raw JSON response body in its [`CloudRequestData`] under the
@@ -67,11 +71,12 @@
 //!     .build()
 //!     .unwrap();
 //!
-//! // A license key alongside a resource key adds the products it grants to
-//! // those the resource key carries, so the answer widens.
+//! // A property list beside a resource key adds the listed properties to
+//! // those it carries, and a license key alongside grants the ones it covers.
 //! let _engine = CloudRequestEngine::builder()
 //!     .resource_key("my-resource-key")
 //!     .license_key("my-license-key")
+//!     .values(["device.hardwarevendor"])
 //!     .build()
 //!     .unwrap();
 //!
@@ -86,9 +91,9 @@
 //!
 //! A resource key is public by design, because it travels to the browser inside a
 //! script URL, so it is scoped to what a page is meant to read and it answers
-//! with everything it carries whatever the call asked for. A license key stays on
-//! the server and names what it wants per request, which is usually what a
-//! server-side caller needs.
+//! with everything it carries, plus any properties the call lists. A license
+//! key stays on the server and names what it wants per request, which is
+//! usually what a server-side caller needs.
 //!
 //! Because the combination is settled when the engine is built, a request cannot
 //! fail for this reason afterwards, so a downstream element always receives an
@@ -179,8 +184,10 @@ mod recovery;
 mod response;
 mod state;
 
+#[allow(deprecated)]
+pub use constants::CLOUD_ENDPOINT_ENV_VAR;
 pub use constants::{
-    CLOUD_ENDPOINT_ENV_VAR, CLOUD_URI_DEFAULT, ELEMENT_DATA_KEY, EVIDENCE_KEYS_FILENAME,
+    CLOUD_ENDPOINT_VARIABLE, CLOUD_URI_DEFAULT, ELEMENT_DATA_KEY, EVIDENCE_KEYS_FILENAME,
     FAILURES_TO_ENTER_RECOVERY_DEFAULT, FAILURES_WINDOW_SECONDS_DEFAULT, JSON_RESPONSE_KEY,
     ORIGIN_HEADER_NAME, PROCESS_STARTED_KEY, PROPERTIES_FILENAME, RECOVERY_SECONDS_DEFAULT,
     TIMEOUT_DEFAULT_SECONDS,

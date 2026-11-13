@@ -33,7 +33,7 @@ use std::time::Duration;
 use fiftyone_pipeline_core::configuration::{
     BuilderRegistry, ConfigValue, ElementOptions, PipelineOptions,
 };
-use fiftyone_pipeline_core::{Error, Pipeline, PipelineBuilder, Result};
+use fiftyone_pipeline_core::{Error, EvidenceKeyFilter, Pipeline, PipelineBuilder, Result};
 use fiftyone_pipeline_engines_fiftyone::constants::SHARE_USAGE_DEFAULT_URL;
 use fiftyone_pipeline_engines_fiftyone::{configuration, ShareUsageConfig, ShareUsageElement};
 
@@ -117,6 +117,18 @@ fn share_usage_configs(pipeline: &Pipeline) -> Vec<ShareUsageConfig> {
         .filter_map(|element| element.downcast::<ShareUsageElement>().ok())
         .map(|element| element.config().clone())
         .collect()
+}
+
+/// The one usage sharing element in `pipeline`.
+fn share_usage_element(pipeline: &Pipeline) -> Arc<ShareUsageElement> {
+    let mut elements: Vec<Arc<ShareUsageElement>> = pipeline
+        .flow_elements()
+        .iter()
+        .filter_map(|element| Arc::clone(element).into_any())
+        .filter_map(|element| element.downcast::<ShareUsageElement>().ok())
+        .collect();
+    assert_eq!(elements.len(), 1, "one usage sharing element");
+    elements.remove(0)
 }
 
 /// The configuration of the one usage sharing element in `pipeline`.
@@ -276,7 +288,8 @@ fn every_setting_is_read_as_dotnet_reads_it() {
     );
 
     // The element itself shares what the settings say.
-    let filter = pipeline.flow_elements()[0].evidence_key_filter();
+    let element = share_usage_element(&pipeline);
+    let filter = element.shared_evidence_filter();
     for key in [
         "query.a",
         "query.b,c",
@@ -340,7 +353,8 @@ fn sharing_all_evidence_shares_every_key() {
     let _serial = start();
     let pipeline = share_usage(&[("ShareAllEvidence", "true")]).unwrap();
     assert!(share_usage_config(&pipeline).share_all_evidence());
-    let filter = pipeline.flow_elements()[0].evidence_key_filter();
+    let element = share_usage_element(&pipeline);
+    let filter = element.shared_evidence_filter();
     for key in ["header.cookie", "cookie.session", "query.anything"] {
         assert!(filter.include(key), "{key}");
     }
@@ -1029,6 +1043,27 @@ fn an_element_in_a_parallel_group_is_not_counted() {
     );
     let config = share_usage_config(&pipeline);
     assert_eq!(config.share_percentage(), 0.25);
+}
+
+/// The Sequence element adds evidence, so a pipeline made from a
+/// configuration refuses a parallel group holding it, wherever it is in the
+/// group.
+#[test]
+fn a_parallel_group_holding_the_sequence_element_is_refused() {
+    let _serial = start();
+    let refused = "An element of a parallel group with the data key 'sequence' adds evidence, \
+                   which the other elements of the group read at the same time. Add it on its \
+                   own, before the elements that read what it adds.";
+    for (first, second) in [
+        ("SequenceElementBuilder", "SetHeadersElementBuilder"),
+        ("SetHeadersElementBuilder", "SequenceElementBuilder"),
+    ] {
+        let options = PipelineOptions::new().element(ElementOptions::group([
+            ElementOptions::new(first),
+            ElementOptions::new(second),
+        ]));
+        assert_eq!(message(build(&options)), refused, "{first}, {second}");
+    }
 }
 
 #[test]

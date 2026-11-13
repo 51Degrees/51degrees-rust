@@ -54,6 +54,12 @@
 //! Every candidate key is added **only if the supplied filter includes it**, so
 //! a pipeline never receives evidence no element can use. This keeps the cache
 //! key and the web `Vary` header tight.
+//!
+//! Every candidate key is also given, whether or not the filter includes it,
+//! in the web request the evidence carries as `server.http-request`, read
+//! with [`fiftyone_pipeline_core::Evidence::http_request`]. No element accepts
+//! that, so it changes no cache key, ETag or `Vary` header, and the usage
+//! sharing element reads it to share headers no other element accepts.
 
 use fiftyone_pipeline_core::constants::{
     EVIDENCE_CLIENT_IP_KEY, EVIDENCE_COOKIE_PREFIX, EVIDENCE_HTTP_HEADER_PREFIX,
@@ -126,17 +132,23 @@ pub trait RequestData {
             .map(|(_, value)| value)
     }
 
-    /// The value of the request `If-None-Match` header, if present.
+    /// The request's `If-None-Match` field, if present.
     ///
     /// Used by the client-side endpoints to decide whether to return `304 Not
     /// Modified` (or `412 Precondition Failed`, see [`RequestData::method`]).
-    /// The default implementation finds it among [`RequestData::headers`]
-    /// case-insensitively.
+    /// The field is a list, so a request may carry it over several lines. The
+    /// default implementation finds every line among [`RequestData::headers`]
+    /// case-insensitively and joins them in order with a comma and a space,
+    /// as [RFC 9110 section 5.3](https://www.rfc-editor.org/rfc/rfc9110#section-5.3)
+    /// allows.
     fn if_none_match(&self) -> Option<String> {
-        self.headers()
+        let lines: Vec<String> = self
+            .headers()
             .into_iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case("if-none-match"))
+            .filter(|(name, _)| name.eq_ignore_ascii_case("if-none-match"))
             .map(|(_, value)| value)
+            .collect();
+        (!lines.is_empty()).then(|| lines.join(", "))
     }
 
     /// The request method, for example `GET` or `POST`, exactly as the
@@ -173,13 +185,15 @@ fn prefixed(prefix: &str, field: &str) -> String {
 }
 
 /// Build a [`fiftyone_pipeline_core::Evidence`] from a request, including only
-/// the keys the supplied filter accepts.
+/// the keys the supplied filter accepts, and give the whole request with it.
 ///
 /// This is the framework-neutral core of the web request evidence service.
 /// The `filter` is normally the pipeline-wide filter
 /// ([`fiftyone_pipeline_core::Pipeline::evidence_key_filter`]), so the resulting
 /// evidence contains exactly the keys some element in the pipeline can use and
-/// nothing more.
+/// nothing more. Every key, whether or not the filter includes it, is also in
+/// the web request the evidence carries as `server.http-request`, read with
+/// [`Evidence::http_request`].
 ///
 /// # Ordering and conflicts
 ///
@@ -212,45 +226,46 @@ fn prefixed(prefix: &str, field: &str) -> String {
 /// let evidence = build_evidence(&Req, &filter);
 /// assert_eq!(evidence.get("header.user-agent"), Some("test"));
 /// assert_eq!(evidence.get("server.client-ip"), None);
+///
+/// // The whole request is given with it.
+/// let request = evidence.http_request().unwrap();
+/// assert_eq!(request.get("server.client-ip"), Some("1.2.3.4"));
 /// ```
 pub fn build_evidence(request: &dyn RequestData, filter: &dyn EvidenceKeyFilter) -> Evidence {
-    let mut builder = EvidenceBuilder::new();
+    let mut accepted = EvidenceBuilder::new();
+    let mut whole = EvidenceBuilder::new();
+    for (key, value) in request_entries(request) {
+        // The filter is queried with the lowercased key because evidence keys
+        // are case-insensitive. The filter implementations also fold case, so
+        // this is belt-and-braces.
+        if filter.include(&key.to_lowercase()) {
+            accepted = accepted.add(&key, value.clone());
+        }
+        whole = whole.add(key, value);
+    }
+    accepted.http_request(whole.build()).build()
+}
 
-    builder = add_prefixed(
-        builder,
-        filter,
-        EVIDENCE_HTTP_HEADER_PREFIX,
-        request.headers(),
-    );
-    builder = add_prefixed(builder, filter, EVIDENCE_COOKIE_PREFIX, request.cookies());
-    builder = add_prefixed(
-        builder,
-        filter,
-        EVIDENCE_QUERY_PREFIX,
-        request.query_params(),
-    );
+/// Every value of the request under the key it has as evidence, in the order
+/// [`build_evidence`] adds them.
+fn request_entries(request: &dyn RequestData) -> Vec<(String, String)> {
+    let mut entries = Vec::new();
+    add_prefixed(&mut entries, EVIDENCE_HTTP_HEADER_PREFIX, request.headers());
+    add_prefixed(&mut entries, EVIDENCE_COOKIE_PREFIX, request.cookies());
+    add_prefixed(&mut entries, EVIDENCE_QUERY_PREFIX, request.query_params());
     // Form fields are folded into the query prefix.
-    builder = add_prefixed(
-        builder,
-        filter,
-        EVIDENCE_QUERY_PREFIX,
-        request.form_params(),
-    );
+    add_prefixed(&mut entries, EVIDENCE_QUERY_PREFIX, request.form_params());
 
     // The client IP uses the complete server.client-ip key rather than a
     // prefix + field split, so it is added directly.
     if let Some(ip) = request.client_ip() {
-        if filter.include(EVIDENCE_CLIENT_IP_KEY) {
-            builder = builder.add(EVIDENCE_CLIENT_IP_KEY, ip);
-        }
+        entries.push((EVIDENCE_CLIENT_IP_KEY.to_owned(), ip));
     }
 
     // The protocol is exposed under the fixed header.protocol key so the
     // JavaScript builder can construct an absolute callback URL even when no
     // explicit protocol header was sent.
-    if filter.include(EVIDENCE_PROTOCOL_KEY) {
-        builder = builder.add(EVIDENCE_PROTOCOL_KEY, request.protocol());
-    }
+    entries.push((EVIDENCE_PROTOCOL_KEY.to_owned(), request.protocol()));
 
     // The request line goes in whole or not at all, with the query empty
     // where the target has none, so that a missing key always means the
@@ -258,36 +273,68 @@ pub fn build_evidence(request: &dyn RequestData, filter: &dyn EvidenceKeyFilter)
     // had no query string.
     if let (Some(method), Some(target)) = (request.method(), request.request_target()) {
         let (path, query) = target.split_once('?').unwrap_or((target.as_str(), ""));
-        for (key, value) in [
-            (EVIDENCE_REQUEST_METHOD_KEY, method.as_str()),
-            (EVIDENCE_REQUEST_PATH_KEY, path),
-            (EVIDENCE_REQUEST_QUERY_KEY, query),
-        ] {
-            if filter.include(key) {
-                builder = builder.add(key, value);
-            }
-        }
+        entries.push((EVIDENCE_REQUEST_METHOD_KEY.to_owned(), method));
+        entries.push((EVIDENCE_REQUEST_PATH_KEY.to_owned(), path.to_owned()));
+        entries.push((EVIDENCE_REQUEST_QUERY_KEY.to_owned(), query.to_owned()));
     }
 
-    builder.build()
+    entries
 }
 
-/// Add each `(field, value)` under the given prefix, skipping any key the filter
-/// rejects. Returns the builder for chaining.
-fn add_prefixed(
-    mut builder: EvidenceBuilder,
-    filter: &dyn EvidenceKeyFilter,
-    prefix: &str,
-    pairs: Vec<(String, String)>,
-) -> EvidenceBuilder {
-    for (field, value) in pairs {
-        let key = prefixed(prefix, &field);
-        // The filter is queried with the lowercased key because evidence keys
-        // are case-insensitive; the filter implementations also fold case, so
-        // this is belt-and-braces.
-        if filter.include(&key.to_lowercase()) {
-            builder = builder.add(key, value);
+/// Add each `(field, value)` under the given prefix.
+fn add_prefixed(entries: &mut Vec<(String, String)>, prefix: &str, pairs: Vec<(String, String)>) {
+    entries.extend(
+        pairs
+            .into_iter()
+            .map(|(field, value)| (prefixed(prefix, &field), value)),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A request carrying the given header lines.
+    struct Headers(Vec<(&'static str, &'static str)>);
+
+    impl RequestData for Headers {
+        fn headers(&self) -> Vec<(String, String)> {
+            self.0
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                .collect()
+        }
+        fn cookies(&self) -> Vec<(String, String)> {
+            Vec::new()
+        }
+        fn query_params(&self) -> Vec<(String, String)> {
+            Vec::new()
+        }
+        fn client_ip(&self) -> Option<String> {
+            None
+        }
+        fn is_https(&self) -> bool {
+            true
         }
     }
-    builder
+
+    /// `If-None-Match` is a list, so a request may carry it over several
+    /// lines, and the field is every line in order joined with a comma
+    /// (RFC 9110 section 5.3).
+    #[test]
+    fn if_none_match_joins_every_line_in_order() {
+        let request = Headers(vec![
+            ("If-None-Match", "\"a\""),
+            ("User-Agent", "agent"),
+            ("if-none-match", "W/\"b\", \"c\""),
+        ]);
+        assert_eq!(
+            request.if_none_match().as_deref(),
+            Some("\"a\", W/\"b\", \"c\"")
+        );
+        let one = Headers(vec![("If-None-Match", "W/\"b\"")]);
+        assert_eq!(one.if_none_match().as_deref(), Some("W/\"b\""));
+        let none = Headers(vec![("User-Agent", "agent")]);
+        assert_eq!(none.if_none_match(), None);
+    }
 }

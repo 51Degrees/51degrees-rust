@@ -77,7 +77,8 @@
 //! [missing properties specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#missing-properties)
 //! names, and logs a warning, as .NET's cloud data does. A key without the IP
 //! Intelligence product gives `ProductNotAccessibleWithResourceKey` for every
-//! property.
+//! property, and a read of one logs nothing, because the engine logs the
+//! missing product once, as a warning, when it reads the key's products.
 //! [`ElementData::has_property`](fiftyone_pipeline_core::ElementData::has_property)
 //! answers `false` for such a property, so an element that asks first, such
 //! as Set Headers, can tell it from one the response gave as null. With a
@@ -93,6 +94,11 @@
 
 #![warn(missing_docs)]
 
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 pub mod configuration;
 mod engine;
 mod parse;
@@ -105,7 +111,7 @@ pub use fiftyone_ip_intelligence_shared::{
     IpIntelligenceData, IpIntelligenceDataBase, IP_DATA_KEY, IP_DATA_KEY_NAME,
 };
 
-// Re-export the weighted-value and aspect-value types used in this engine's
-// public surface, for the same reason.
-pub use fiftyone_pipeline_core::WeightedValue;
+// Re-export the weighted-value, WKT and aspect-value types used in this
+// engine's public surface, for the same reason.
+pub use fiftyone_pipeline_core::{WeightedValue, WktString};
 pub use fiftyone_pipeline_engines::AspectPropertyValue;

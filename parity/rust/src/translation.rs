@@ -82,10 +82,10 @@ fn weighted_codes(text: &str) -> Result<Option<Vec<WeightedValue<String>>>> {
 /// Writes the country codes the evidence gives as the crates' IP
 /// Intelligence data, with a missing property source as the on-premise IP
 /// Intelligence engine adds one, so the translation engines read each code as
-/// a record of `value` and `weight` and find a property the evidence did not
-/// give missing, as in a deployment. It writes no data when neither evidence key
-/// is present. It lists no properties, so the line leaves it out and only the
-/// JSON shows its data.
+/// a record of `rawweighting` and `value` and find a property the evidence
+/// did not give missing, as in a deployment. It writes no data when neither
+/// evidence key is present. It lists no properties, so the line leaves it out
+/// and only the JSON shows its data.
 struct CountriesElement {
     filter: EvidenceKeyFilterWhitelist,
     missing: Arc<MissingPropertySource>,
@@ -151,17 +151,12 @@ impl FlowElement for CountriesElement {
 }
 
 /// Sequence, the country codes element, the two translation engines and the
-/// JSON builder, with process errors collected rather than returned. The
-/// crates' Sequence element has data of its own, which .NET's does not, so
-/// the JSON builder leaves that data out.
+/// JSON builder, with process errors collected rather than returned.
 pub fn build_pipeline() -> Result<Arc<Pipeline>> {
-    let sequence = Arc::new(SequenceElement::new());
-    let json = JsonBuilderElementBuilder::new()
-        .exclude_element(sequence.data_key())
-        .build();
+    let json = JsonBuilderElementBuilder::new().build();
     let countries = CountriesElement::new();
     Ok(Pipeline::builder()
-        .add_element(sequence)
+        .add_element(Arc::new(SequenceElement::new()))
         .add_element(Arc::new(countries))
         .add_element(Arc::new(CountryCodeTranslationEngine::builder().build()?))
         .add_element(Arc::new(CountriesTranslationEngine::builder().build()?))

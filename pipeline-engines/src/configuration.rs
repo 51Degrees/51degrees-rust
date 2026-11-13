@@ -63,6 +63,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use fiftyone_pipeline_core::configuration::{BuilderDefinition, TimeSpan};
+use fiftyone_pipeline_core::redact::{mask, redact_with};
 use fiftyone_pipeline_core::{Error, Result};
 
 use crate::{AspectEngineDataFile, DataFileConfiguration, DataUpdateUrlFormatter};
@@ -81,7 +82,10 @@ const DEFAULT_RANDOMISATION_SECONDS: i32 = 10 * 60;
 /// Distributor's URL formatter. Automatic updates and update on startup
 /// need a license key unless `SetLicenseKeyRequired` is false, as the
 /// specification says, where .NET never asks for one.
-#[derive(Debug, Clone)]
+///
+/// The `Debug` form shows each licence key, in the list and in the update
+/// URL, by its last 4 characters only.
+#[derive(Clone)]
 pub struct DataFileSettings {
     data_update_url: Option<String>,
     use_url_formatter: bool,
@@ -96,6 +100,32 @@ pub struct DataFileSettings {
     license_key_required: bool,
     update_on_startup: bool,
     temp_dir_path: Option<String>,
+}
+
+impl std::fmt::Debug for DataFileSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let keys = &self.license_keys;
+        let masked_keys: Vec<String> = keys.iter().map(String::as_str).map(mask).collect();
+        let masked_url = self
+            .data_update_url
+            .as_deref()
+            .map(|url| redact_with(url, keys));
+        f.debug_struct("DataFileSettings")
+            .field("data_update_url", &masked_url)
+            .field("use_url_formatter", &self.use_url_formatter)
+            .field("verify_md5", &self.verify_md5)
+            .field("decompress", &self.decompress)
+            .field("auto_update", &self.auto_update)
+            .field("file_system_watcher", &self.file_system_watcher)
+            .field("polling_interval_seconds", &self.polling_interval_seconds)
+            .field("randomisation_seconds", &self.randomisation_seconds)
+            .field("verify_modified_since", &self.verify_modified_since)
+            .field("license_keys", &masked_keys)
+            .field("license_key_required", &self.license_key_required)
+            .field("update_on_startup", &self.update_on_startup)
+            .field("temp_dir_path", &self.temp_dir_path)
+            .finish()
+    }
 }
 
 impl Default for DataFileSettings {
@@ -491,6 +521,33 @@ mod tests {
             .message(),
             "Update randomization timespan too large. Must be less than 2147483647 seconds but \
              is 2147483648 seconds (Parameter 'maximumDeviation')"
+        );
+    }
+
+    /// The `Debug` form of the settings shows each licence key by its last 4
+    /// characters only, in the list of keys and in the update URL.
+    #[test]
+    fn the_debug_form_shows_only_the_last_four_characters_of_each_key() {
+        let mut settings = DataFileSettings::new();
+        settings.license_keys.push("ABCDEFGHIJKLMNOP".to_owned());
+        settings.data_update_url =
+            Some("https://example.invalid/d?LicenseKeys=QRSTUVWXYZ012345".to_owned());
+        let shown = format!("{settings:?}");
+        assert!(
+            !shown.contains("ABCDEFGHIJKLMNOP"),
+            "a key was shown: {shown}"
+        );
+        assert!(
+            !shown.contains("QRSTUVWXYZ012345"),
+            "the key in the URL was shown: {shown}"
+        );
+        assert!(
+            shown.contains("\"************MNOP\""),
+            "the masked key was lost: {shown}"
+        );
+        assert!(
+            shown.contains("LicenseKeys=************2345"),
+            "the masked URL was lost: {shown}"
         );
     }
 

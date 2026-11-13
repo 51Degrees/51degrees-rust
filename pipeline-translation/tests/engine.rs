@@ -34,8 +34,8 @@ use fiftyone_pipeline_core::{
 };
 use fiftyone_pipeline_engines::{AspectDataBase, AspectPropertyValue};
 use fiftyone_pipeline_translation::{
-    Languages, MissingTranslationBehavior, TranslationEngine, TranslationValue, BASE_LANGUAGE,
-    LANGUAGE_EVIDENCE_KEYS, TRANSLATION_KEY,
+    Languages, MissingTranslationBehavior, TranslationEngine, TranslationProperty,
+    TranslationValue, BASE_LANGUAGE, LANGUAGE_EVIDENCE_KEYS, TRANSLATION_KEY,
 };
 
 const SOURCE_KEY: &str = "evidencecopy";
@@ -123,7 +123,7 @@ fn french_animals(behavior: MissingTranslationBehavior, extra: &str) -> Translat
     TranslationEngine::builder()
         .set_source_element_data_key(SOURCE_KEY)
         .set_missing_translation_behavior(behavior)
-        .add_source_text("animals.fr_FR.yml", format!("{FRENCH_ANIMALS}{extra}"))
+        .add_source_content("animals.fr_FR.yml", format!("{FRENCH_ANIMALS}{extra}"))
         .add_translation("Animal", "AnimalTranslated")
         .build()
         .unwrap()
@@ -242,15 +242,15 @@ fn building_needs_sources_translations_and_a_source_key() {
         .set_source_element_data_key("somekey")
         .build();
     let no_translations = TranslationEngine::builder()
-        .add_source_text("animals.fr_FR.yml", FRENCH_ANIMALS)
+        .add_source_content("animals.fr_FR.yml", FRENCH_ANIMALS)
         .set_source_element_data_key("somekey")
         .build();
     let no_source_key = TranslationEngine::builder()
-        .add_source_text("animals.fr_FR.yml", FRENCH_ANIMALS)
+        .add_source_content("animals.fr_FR.yml", FRENCH_ANIMALS)
         .add_translation("Animal", "AnimalTranslated")
         .build();
     let blank_source_key = TranslationEngine::builder()
-        .add_source_text("animals.fr_FR.yml", FRENCH_ANIMALS)
+        .add_source_content("animals.fr_FR.yml", FRENCH_ANIMALS)
         .add_translation("Animal", "AnimalTranslated")
         .set_source_element_data_key(" ")
         .build();
@@ -281,7 +281,7 @@ fn building_needs_sources_translations_and_a_source_key() {
 fn a_source_name_with_no_locale_fails_the_build() {
     let error = TranslationEngine::builder()
         .set_source_element_data_key(SOURCE_KEY)
-        .add_source_text("animals.mmm_kp.yml", FRENCH_ANIMALS)
+        .add_source_content("animals.mmm_kp.yml", FRENCH_ANIMALS)
         .add_translation("Animal", "AnimalTranslated")
         .build()
         .err()
@@ -296,8 +296,8 @@ fn a_source_name_with_no_locale_fails_the_build() {
 fn a_source_named_twice_fails_the_build() {
     let error = TranslationEngine::builder()
         .set_source_element_data_key(SOURCE_KEY)
-        .add_source_text("animals.fr_FR.yml", FRENCH_ANIMALS)
-        .add_source_text("animals.fr_FR.yml", FRENCH_ANIMALS)
+        .add_source_content("animals.fr_FR.yml", FRENCH_ANIMALS)
+        .add_source_content("animals.fr_FR.yml", FRENCH_ANIMALS)
         .add_translation("Animal", "AnimalTranslated")
         .build()
         .err()
@@ -360,8 +360,8 @@ fn a_weighted_list_keeps_its_weightings() {
     );
 }
 
-/// The IP Intelligence data gives each weighting as a weight from 0 to 1,
-/// which is turned back into the exact raw weighting.
+/// Element data written by other code may give each weighting as a weight
+/// from 0 to 1, which is turned back into the exact raw weighting.
 #[test]
 fn a_weight_from_zero_to_one_gives_the_raw_weighting() {
     let engine = french_animals(MissingTranslationBehavior::Original, "");
@@ -484,7 +484,7 @@ fn a_source_value_with_no_value_keeps_its_reason() {
 fn a_fixed_language_needs_no_evidence() {
     let engine = TranslationEngine::builder()
         .set_source_element_data_key(SOURCE_KEY)
-        .add_source_text("animals.fr_FR.yml", FRENCH_ANIMALS)
+        .add_source_content("animals.fr_FR.yml", FRENCH_ANIMALS)
         .set_fixed_language("fr_FR")
         .add_translation("Animal", "AnimalTranslated")
         .build()
@@ -498,7 +498,7 @@ fn a_fixed_language_needs_no_evidence() {
 fn a_fixed_language_with_no_locale_leaves_the_language_to_the_evidence() {
     let engine = TranslationEngine::builder()
         .set_source_element_data_key(SOURCE_KEY)
-        .add_source_text("animals.fr_FR.yml", FRENCH_ANIMALS)
+        .add_source_content("animals.fr_FR.yml", FRENCH_ANIMALS)
         .set_fixed_language("French")
         .add_translation("Animal", "AnimalTranslated")
         .build()
@@ -514,14 +514,14 @@ fn a_fixed_language_with_no_locale_leaves_the_language_to_the_evidence() {
 fn two_engines_can_be_chained() {
     let codes = TranslationEngine::builder()
         .set_source_element_data_key(SOURCE_KEY)
-        .add_source_text("codes.en_GB.yml", "GB: United Kingdom\n")
+        .add_source_content("codes.en_GB.yml", "GB: United Kingdom\n")
         .set_fixed_language("en_GB")
         .add_translation("CountryCode", "Country")
         .build()
         .unwrap();
     let countries = TranslationEngine::builder()
         .set_source_element_data_key(codes.data_key())
-        .add_source_text("countries.fr_FR.yml", "United Kingdom: Royaume-Uni\n")
+        .add_source_content("countries.fr_FR.yml", "United Kingdom: Royaume-Uni\n")
         .add_translation("Country", "CountryTranslated")
         .build()
         .unwrap();
@@ -586,8 +586,8 @@ fn a_locale_is_resolved_against_those_available() {
 fn the_translator_found_gives_its_locale() {
     let engine = TranslationEngine::builder()
         .set_source_element_data_key(SOURCE_KEY)
-        .add_source_text("animals.fr_FR.yml", "cat: chat\n")
-        .add_source_text("animals.de_DE.yml", "cat: Katze\n")
+        .add_source_content("animals.fr_FR.yml", "cat: chat\n")
+        .add_source_content("animals.de_DE.yml", "cat: Katze\n")
         .add_translation("Animal", "AnimalTranslated")
         .build()
         .unwrap();
@@ -609,13 +609,67 @@ fn the_translator_found_gives_its_locale() {
 }
 
 #[test]
+fn the_engine_gives_each_option_under_the_specifications_name() {
+    let engine = TranslationEngine::builder()
+        .set_source_element_data_key(SOURCE_KEY)
+        .set_fixed_language("fr_FR")
+        .set_missing_translation_behavior(MissingTranslationBehavior::EmptyString)
+        .add_source_content("animals.fr_FR.yml", FRENCH_ANIMALS)
+        .add_translation("Animal", "AnimalTranslated")
+        .build()
+        .unwrap();
+    assert_eq!(engine.source_element_data_key(), SOURCE_KEY);
+    assert_eq!(engine.fixed_language(), Some("fr_FR"));
+    assert_eq!(
+        engine.missing_translation_behavior(),
+        MissingTranslationBehavior::EmptyString
+    );
+    assert_eq!(
+        engine.translations(),
+        [TranslationProperty {
+            source_property: "Animal".to_owned(),
+            destination_property: "AnimalTranslated".to_owned(),
+        }]
+    );
+    let (_, french) = engine
+        .languages()
+        .try_get_translator("fr")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        french.missing_translation_behavior(),
+        MissingTranslationBehavior::EmptyString
+    );
+}
+
+#[test]
+fn a_source_given_as_content_is_translated() {
+    let engine = TranslationEngine::builder()
+        .set_source_element_data_key(SOURCE_KEY)
+        .add_source_content("animals.fr_FR.yml", FRENCH_ANIMALS)
+        .add_translation("Animal", "AnimalTranslated")
+        .build()
+        .unwrap();
+    let (locale, french) = engine
+        .languages()
+        .try_get_translator("fr")
+        .unwrap()
+        .unwrap();
+    assert_eq!(locale, "fr_FR");
+    assert_eq!(
+        french.translate("dog", &mut Vec::new()).as_deref(),
+        Some("chien")
+    );
+}
+
+#[test]
 fn the_language_comes_from_the_first_evidence_with_a_value() {
     let engine = || {
         TranslationEngine::builder()
             .set_source_element_data_key(SOURCE_KEY)
-            .add_source_text("animals.fr_FR.yml", "cat: chat\n")
-            .add_source_text("animals.de_DE.yml", "cat: Katze\n")
-            .add_source_text("animals.es_ES.yml", "cat: gato\n")
+            .add_source_content("animals.fr_FR.yml", "cat: chat\n")
+            .add_source_content("animals.de_DE.yml", "cat: Katze\n")
+            .add_source_content("animals.es_ES.yml", "cat: gato\n")
             .add_translation("Animal", "AnimalTranslated")
             .build()
             .unwrap()
@@ -701,7 +755,7 @@ fn missing_source_data_is_an_error() {
 fn a_value_that_cannot_be_translated_stops_the_rest() {
     let engine = TranslationEngine::builder()
         .set_source_element_data_key(SOURCE_KEY)
-        .add_source_text("animals.fr_FR.yml", FRENCH_ANIMALS)
+        .add_source_content("animals.fr_FR.yml", FRENCH_ANIMALS)
         .add_translation("Animal", "AnimalTranslated")
         .add_translation("Legs", "LegsTranslated")
         .add_translation("Other", "OtherTranslated")
@@ -724,7 +778,7 @@ fn a_value_that_cannot_be_translated_stops_the_rest() {
 fn the_engine_lists_each_destination_once() {
     let engine = TranslationEngine::builder()
         .set_source_element_data_key(SOURCE_KEY)
-        .add_source_text("animals.fr_FR.yml", FRENCH_ANIMALS)
+        .add_source_content("animals.fr_FR.yml", FRENCH_ANIMALS)
         .add_translation("Animal", "AnimalTranslated")
         .add_translation("Other", "animaltranslated")
         .add_translation_of_type("Names", "NamesTranslated", PropertyValueType::KeyValueList)

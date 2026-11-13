@@ -20,21 +20,19 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! The User-Agent Client Hints high-entropy decoder element.
+//! The high entropy values evidence keys, and the deprecated User-Agent
+//! Client Hints high-entropy decoder element.
 //!
 //! [`UachJsConversionElement`] implements the
 //! [UA-CH high-entropy decoder specification](https://github.com/51Degrees/specifications/blob/main/device-detection-specification/pipeline-elements/uach-high-entropy-decoder.md).
 //! The UA-CH JavaScript API (`navigator.userAgentData.getHighEntropyValues`)
 //! returns client-hint data in a different shape from the UA-CH HTTP headers,
-//! base-64 encoded. The device-detection engines only understand the HTTP-header
-//! shape, so this element decodes that evidence and emits the equivalent
-//! `sec-ch-ua*` header values.
+//! base-64 encoded. The element decodes that evidence and writes the
+//! equivalent `sec-ch-ua*` header values into its own element data.
 //!
-//! This element writes the converted values into its own element data rather
-//! than back into evidence, as the specification's Element Data section and
-//! its "Adding Evidence values" section suggest. The device-detection engines
-//! prefer these element-data values and fall back to raw evidence when they
-//! are absent.
+//! No engine reads that data. The on-premise Hash engine passes the high
+//! entropy values to the C library, which turns them into the `sec-ch-ua*`
+//! headers before it matches, so a pipeline needs no decoder element.
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
@@ -49,8 +47,11 @@ use fiftyone_pipeline_core::{
 /// under, `51d_gethighentropyvalues`.
 pub const UACH_HIGH_ENTROPY_EVIDENCE_SUFFIX: &str = "51d_gethighentropyvalues";
 
-/// The query-prefixed evidence key, `query.51d_gethighentropyvalues`. Takes
-/// precedence over the cookie key when both are present.
+/// The query-prefixed evidence key, `query.51d_gethighentropyvalues`. The
+/// specification gives it precedence over the cookie key when both are
+/// present. The on-premise engine uses whichever of the two it can read comes
+/// first in the evidence, and neither when a `51d_structureduseragent` value
+/// it can read comes before them.
 pub const UACH_EVIDENCE_QUERY_KEY: &str = "query.51d_gethighentropyvalues";
 
 /// The cookie-prefixed evidence key, `cookie.51d_gethighentropyvalues`.
@@ -74,8 +75,7 @@ const SEC_CH_UA_PLATFORM_VERSION: &str = "sec-ch-ua-platform-version";
 /// A flat property bag holding whichever of the six `sec-ch-ua*` values the
 /// decoder could derive from the high-entropy blob. Read a value through the
 /// inherited [`ElementData::get`] by header name, for example
-/// `uach.get("sec-ch-ua-mobile")`. The device-detection engines read these in
-/// preference to the raw evidence headers.
+/// `uach.get("sec-ch-ua-mobile")`. No engine reads them.
 #[derive(Debug, Clone, Default)]
 pub struct UachData {
     values: MapElementData,
@@ -126,12 +126,15 @@ impl ElementData for UachData {
 /// equivalent `sec-ch-ua*` values into a `UachData` under
 /// `UACH_ELEMENT_DATA_KEY`.
 ///
-/// The element has no configuration. Place it before the device-detection
-/// engine in a pipeline so the engine can prefer its output over raw evidence.
+/// The element has no configuration. No engine reads its data, so a pipeline
+/// does not need it. The on-premise Hash engine passes the high entropy
+/// values to the C library, which makes the same conversion before it
+/// matches.
 ///
 /// # Example
 ///
 /// ```
+/// # #![allow(deprecated)]
 /// use base64::{engine::general_purpose::STANDARD, Engine as _};
 /// use fiftyone_pipeline_core::{ElementData, Evidence, Pipeline};
 /// use fiftyone_device_detection_shared::UachJsConversionElement;
@@ -156,11 +159,15 @@ impl ElementData for UachData {
 /// assert_eq!(uach.get("sec-ch-ua-mobile").unwrap().as_str(), Some("?0"));
 /// assert_eq!(uach.get("sec-ch-ua-platform").unwrap().as_str(), Some("\"macOS\""));
 /// ```
+#[deprecated(
+    note = "no engine reads its data, as the Hash engine reads high entropy values itself"
+)]
 pub struct UachJsConversionElement {
     evidence_key_filter: EvidenceKeyFilterWhitelist,
     properties: Vec<PropertyMetaData>,
 }
 
+#[allow(deprecated)]
 impl UachJsConversionElement {
     /// The typed key for this element's `UachData`.
     pub const DATA_KEY: TypedKey<UachData> = TypedKey::new(UACH_ELEMENT_DATA_KEY);
@@ -205,12 +212,14 @@ impl UachJsConversionElement {
     }
 }
 
+#[allow(deprecated)]
 impl Default for UachJsConversionElement {
     fn default() -> Self {
         UachJsConversionElement::new()
     }
 }
 
+#[allow(deprecated)]
 impl FlowElement for UachJsConversionElement {
     fn process(&self, data: &mut FlowData) -> Result<()> {
         // Convert outside the get_or_add closure so the immutable evidence
@@ -321,6 +330,7 @@ fn quote(value: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use fiftyone_pipeline_core::{constants, Evidence, Pipeline};

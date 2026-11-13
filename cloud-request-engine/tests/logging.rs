@@ -283,6 +283,42 @@ fn query_evidence_replacing_header_evidence_logs_nothing() {
     assert_eq!(take_logged(), Vec::<String>::new());
 }
 
+/// A key with no prefix ranks and logs as a key whose prefix is the whole
+/// key, so header evidence replacing a bare `x-thing` logs a warning, and a
+/// bare `query` replacing header evidence logs nothing, as query evidence
+/// replacing it logs nothing. None of the four keys is one the service lists.
+#[test]
+fn evidence_with_no_prefix_logs_as_a_key_whose_prefix_is_the_whole_key() {
+    let _serial = start();
+    let pipeline = pipeline(FakeCloud::default(), false);
+    process(
+        &pipeline,
+        &[
+            ("x-thing", "bare"),
+            ("header.x-thing", "header"),
+            ("query", "bare-query"),
+            ("header.query", "header-query"),
+        ],
+    );
+    assert_eq!(
+        take_logged(),
+        vec!["WARN 'header.x-thing=header' evidence conflicts with 'x-thing=bare'"]
+    );
+}
+
+/// Prefixes are compared without regard to letter case, so query evidence
+/// spelled `Query` replaces header evidence with no warning.
+#[test]
+fn query_evidence_in_another_letter_case_replacing_header_evidence_logs_nothing() {
+    let _serial = start();
+    let pipeline = pipeline(FakeCloud::default(), false);
+    process(
+        &pipeline,
+        &[("Query.User-Agent", "A"), ("header.User-Agent", "B")],
+    );
+    assert_eq!(take_logged(), Vec::<String>::new());
+}
+
 #[test]
 fn two_other_prefixes_sharing_a_name_log_a_warning() {
     let _serial = start();

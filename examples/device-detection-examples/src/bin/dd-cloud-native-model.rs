@@ -65,7 +65,7 @@ impl ExampleOptions {
         ExampleOptions {
             resource_key,
             // The cloud endpoint. Unset, the cloud request engine reads
-            // 51DEGREES_CLOUD_ENDPOINT itself, and it is passed here as well so the
+            // _51DEGREES_CLOUD_ENDPOINT itself, and it is passed here as well so the
             // choice is visible. A host other than cloud.51degrees.com is an on
             // premise web server or a privately hosted 51Degrees cloud (see
             // examples_shared::CLOUD_ENDPOINT_ENV_VAR).
@@ -155,7 +155,7 @@ fn main() -> Result<()> {
 
     let Some(resource_key) = resource_key else {
         eprintln!(
-            "No resource key available. Set the 51DEGREES_RESOURCE_KEY environment \
+            "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
              variable (or pass the key as the first argument). Native model lookup \
              requires a paid subscription; see https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-native-model.rs&utm_term=resource-key-required and \
              create a key with the required properties at \
@@ -233,6 +233,6 @@ mod tests {
  * default, so 51Degrees receives evidence that improves detection.
  *
  * The resource key is read from the first command-line argument or the
- * `51DEGREES_RESOURCE_KEY` environment variable. See https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-native-model.rs&utm_term=dd-cloud-native-model
+ * `_51DEGREES_RESOURCE_KEY` environment variable. See https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-native-model.rs&utm_term=dd-cloud-native-model
  * for a paid subscription and https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-native-model.rs&utm_term=dd-cloud-native-model to create a key.
  */

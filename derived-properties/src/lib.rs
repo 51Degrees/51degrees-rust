@@ -30,12 +30,12 @@
 //! one request and the next, and reads no evidence from the request.
 //!
 //! How a property is computed is written in a **script**, which is one YAML or
-//! JSON file describing one output property. The script format is shared
-//! between every 51Degrees language implementation, at
+//! JSON file describing one output property. The script format and the scripts
+//! 51Degrees ships are kept in
 //! [51Degrees/derived-properties](https://github.com/51Degrees/derived-properties),
-//! so one script gives the same answer in every language. This crate reads
-//! format 1 and is tested against the same conformance cases as the other
-//! languages.
+//! which the .NET derived property element and this crate both take as a
+//! submodule, so one script gives the same answer in .NET and Rust. This crate
+//! reads format 1 and is tested against the same conformance cases as .NET.
 //!
 //! ## The one rule
 //!

@@ -2,7 +2,7 @@ name: Cloud 51Did Tests
 
 # Runs the two live cloud 51Did integration tests once for every
 # _51DEGREES_RESOURCE_KEY* key passed in below. Each run sets the single
-# 51DEGREES_RESOURCE_KEY both tests read first.
+# _51DEGREES_RESOURCE_KEY both tests read first.
 #
 # The secrets are named one by one rather than passed as toJSON(secrets).
 # GitHub marks a workflow that hands every secret to a step as possibly
@@ -77,7 +77,7 @@ jobs:
           _51DEGREES_LICENSE_KEY_51DID: ${{ secrets._51DEGREES_LICENSE_KEY_51DID }}
         run: |
           # The client test reads the suffixed license names before
-          # 51DEGREES_LICENSE_KEY, so they are taken out of the environment
+          # _51DEGREES_LICENSE_KEY, so they are taken out of the environment
           # here and each pass sets only the general name to its match.
           $licenses = @{}
           Get-ChildItem env: |
@@ -95,16 +95,16 @@ jobs:
           $failed = $false
           foreach ($k in $keys) {
             Write-Host "::group::51Did cloud tests with $($k.Name)"
-            # Both tests read 51DEGREES_RESOURCE_KEY before the tiered names,
+            # Both tests read _51DEGREES_RESOURCE_KEY before the tiered names,
             # so the loop sets that one. Setting a name the tests read later
             # would leave every iteration on the first tiered name they find.
-            Set-Item -Path 'Env:51DEGREES_RESOURCE_KEY' -Value $k.Value
+            Set-Item -Path 'Env:_51DEGREES_RESOURCE_KEY' -Value $k.Value
             $licenseName = $k.Name -replace '^_51DEGREES_RESOURCE_KEY', '_51DEGREES_LICENSE_KEY'
             if ($licenses[$licenseName]) {
-              Set-Item -Path 'Env:51DEGREES_LICENSE_KEY' -Value $licenses[$licenseName]
+              Set-Item -Path 'Env:_51DEGREES_LICENSE_KEY' -Value $licenses[$licenseName]
               Write-Host "License key: $licenseName"
             } else {
-              Remove-Item -Path 'Env:51DEGREES_LICENSE_KEY' -ErrorAction SilentlyContinue
+              Remove-Item -Path 'Env:_51DEGREES_LICENSE_KEY' -ErrorAction SilentlyContinue
               Write-Host 'License key: none'
             }
             cargo test -p fodid --test cloud_51did -- --include-ignored

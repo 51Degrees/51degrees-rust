@@ -23,8 +23,12 @@
 //! The builder's matching settings and expected concurrency reach the data
 //! set, and a refresh keeps them.
 //!
-//! These run against the Lite Hash data file, or the file `51DEGREES_DD_PATH`
+//! These run against the Lite Hash data file, or the file `_51DEGREES_DD_PATH`
 //! names, and skip with a note when neither is found.
+
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -46,14 +50,10 @@ const DESKTOP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
 /// a difference of 10.
 const NOTHING_TO_MATCH: &str = "nothing to match";
 
-/// The most expected concurrency the `Balanced` profile loads with, set by
-/// its values cache of 500 entries.
-const BALANCED_MOST_CONCURRENCY: u16 = 22;
-
-/// The Hash data file `51DEGREES_DD_PATH` names, or the Lite file in the
+/// The Hash data file `_51DEGREES_DD_PATH` names, or the Lite file in the
 /// `cxx` submodule.
 fn data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("51DEGREES_DD_PATH") {
+    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);
@@ -238,7 +238,7 @@ fn matched_user_agents_are_recorded_unless_turned_off() {
 }
 
 #[test]
-fn the_concurrency_is_the_processors_unless_the_profile_takes_fewer() {
+fn the_concurrency_is_the_processors() {
     let Some(path) = data_file() else {
         eprintln!("no Hash data file found; skipping concurrency");
         return;
@@ -246,14 +246,8 @@ fn the_concurrency_is_the_processors_unless_the_profile_takes_fewer() {
     for (profile, expected) in [
         (PerformanceProfile::LowMemory, processors()),
         (PerformanceProfile::HighPerformance, processors()),
-        (
-            PerformanceProfile::Balanced,
-            processors().min(BALANCED_MOST_CONCURRENCY),
-        ),
-        (
-            PerformanceProfile::Default,
-            processors().min(BALANCED_MOST_CONCURRENCY),
-        ),
+        (PerformanceProfile::Balanced, processors()),
+        (PerformanceProfile::Default, processors()),
     ] {
         let engine = DeviceDetectionOnPremiseEngineBuilder::new(&path)
             .performance_profile(profile)
@@ -277,19 +271,19 @@ fn the_concurrency_is_the_processors_unless_the_profile_takes_fewer() {
 }
 
 #[test]
-fn a_named_concurrency_beyond_the_profile_is_refused() {
+fn a_named_concurrency_beyond_the_values_cache_loads() {
     let Some(path) = data_file() else {
-        eprintln!("no Hash data file found; skipping the concurrency limit");
+        eprintln!("no Hash data file found; skipping the concurrency");
         return;
     };
-    let balanced = |concurrency| {
-        DeviceDetectionOnPremiseEngineBuilder::new(&path)
-            .performance_profile(PerformanceProfile::Balanced)
-            .concurrency(concurrency)
-            .build()
-    };
-    assert!(balanced(BALANCED_MOST_CONCURRENCY).is_ok());
-    assert!(balanced(BALANCED_MOST_CONCURRENCY + 1).is_err());
+    // More than the whole square root, 22, of the Balanced values cache's
+    // 500 entries.
+    let engine = DeviceDetectionOnPremiseEngineBuilder::new(&path)
+        .performance_profile(PerformanceProfile::Balanced)
+        .concurrency(500)
+        .build()
+        .unwrap();
+    assert_eq!(engine.concurrency(), 500);
 }
 
 #[test]

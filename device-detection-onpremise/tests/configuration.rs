@@ -25,8 +25,12 @@
 //! 4.5.180 on pipeline 4.5.129 made from the same configuration with the
 //! Lite data file. Each expected answer and message is the one .NET gave,
 //! apart from the differences the tests name. The tests need the Lite file
-//! `51DEGREES_DD_PATH` names, or the one at `cxx/data/device-detection`, and
+//! `_51DEGREES_DD_PATH` names, or the one at `cxx/data/device-detection`, and
 //! skip with a note without it.
+
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -51,7 +55,9 @@ const MOBILE: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) \
 const DISTRIBUTOR: &str = "https://distributor.51degrees.com/api/v2/download";
 
 fn lite_data_file() -> Option<PathBuf> {
-    let given = std::env::var("51DEGREES_DD_PATH").ok().map(PathBuf::from);
+    let given = crate::deprecated_names::var("_51DEGREES_DD_PATH")
+        .ok()
+        .map(PathBuf::from);
     let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../cxx/data/device-detection/51Degrees-LiteV4.1.hash");
     given
@@ -64,7 +70,7 @@ fn lite_data_file() -> Option<PathBuf> {
 fn lite() -> Option<String> {
     let found = lite_data_file().map(|path| path.to_string_lossy().into_owned());
     if found.is_none() {
-        eprintln!("skipped: no Lite Hash data file at 51DEGREES_DD_PATH or cxx/data");
+        eprintln!("skipped: no Lite Hash data file at _51DEGREES_DD_PATH or cxx/data");
     }
     found
 }
@@ -743,6 +749,38 @@ fn properties_restrict_the_engine() {
     );
 }
 
+/// `IndexedProperties`, which .NET's builder lacks, names the properties the
+/// data set indexes, kept in the order given with one the data file lacks
+/// among them. The engine still gives every property, and the lookup gives
+/// the ids it gives with nothing indexed, which is the default.
+#[test]
+fn indexed_properties_reach_the_engine() {
+    let Some(lite) = lite() else { return };
+    let unindexed = build(base(&lite, &[])).unwrap();
+    assert!(engine(&unindexed).indexed_properties().is_empty());
+    let expected = engine(&unindexed)
+        .profile_ids_for_property_value("IsMobile", "True")
+        .unwrap();
+    assert!(!expected.is_empty());
+    for element in [
+        base(&lite, &[("IndexedProperties", "IsMobile,Bogus")]),
+        base(&lite, &[("SetIndexedProperties", "IsMobile,Bogus")]),
+        base(&lite, &[("indexedproperties", "IsMobile,Bogus")]),
+        base(&lite, &[]).parameter("IndexedProperties", vec!["IsMobile", "Bogus"]),
+    ] {
+        let pipeline = build(element).unwrap();
+        let engine = engine(&pipeline);
+        assert_eq!(engine.indexed_properties(), ["IsMobile", "Bogus"]);
+        assert_eq!(
+            engine
+                .profile_ids_for_property_value("IsMobile", "True")
+                .unwrap(),
+            expected
+        );
+        assert_eq!(detect(&pipeline, MOBILE), (Ok(true), Ok("iOS".to_string())));
+    }
+}
+
 /// .NET read a copy of the data file made in the temporary folder when
 /// `CreateTempDataCopy` was true, under every profile, and removed it with
 /// the engine. It made none with an empty temporary folder, or for
@@ -899,7 +937,8 @@ fn the_build_methods_are_dotnets() {
 /// .NET lists every setting and build method of the builder, giving
 /// `RuntimeParameterInfo` as each type, where the crates give the type. The
 /// crates leave out .NET's `Build (Stream)`, which is a build method. The
-/// crates also list `SetLicenseKeyRequired`, which .NET's builder lacks.
+/// crates also list `SetLicenseKeyRequired` and `SetIndexedProperties`,
+/// which .NET's builder lacks.
 #[test]
 fn an_unknown_setting_lists_the_settings_and_build_methods() {
     let Some(lite) = lite() else { return };
@@ -942,6 +981,7 @@ fn an_unknown_setting_lists_the_settings_and_build_methods() {
         "SetCacheHitOrMiss (Boolean)",
         "SetProperties (List`1)",
         "SetProperty (String)",
+        "SetIndexedProperties (List`1)",
     ]
     .iter()
     .map(|s| format!("{s}\n"))

@@ -30,6 +30,10 @@
 //! The data files are found as the coexistence tests find them, and each test
 //! skips when one is absent.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
@@ -83,7 +87,7 @@ fn find_up(relative: &str) -> Option<PathBuf> {
 
 /// The file named by `variable`, or else the one found at `relative`.
 fn data_file(variable: &str, relative: &str) -> Option<PathBuf> {
-    std::env::var(variable)
+    crate::deprecated_names::var(variable)
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())
@@ -94,7 +98,7 @@ fn data_file(variable: &str, relative: &str) -> Option<PathBuf> {
 /// so the test sends nothing and needs no licence key.
 fn device_detection() -> Option<Vec<Arc<dyn FlowElement>>> {
     let Some(file) = data_file(
-        "51DEGREES_DD_PATH",
+        "_51DEGREES_DD_PATH",
         "cxx/data/device-detection/51Degrees-LiteV4.1.hash",
     ) else {
         eprintln!("skipping: no Device Detection Hash data file found");
@@ -113,7 +117,7 @@ fn device_detection() -> Option<Vec<Arc<dyn FlowElement>>> {
 /// its own.
 fn ip_intelligence() -> Option<Vec<Arc<dyn FlowElement>>> {
     let Some(file) = data_file(
-        "51DEGREES_IPI_PATH",
+        "_51DEGREES_IPI_PATH",
         "cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi",
     ) else {
         eprintln!("skipping: no IP Intelligence data file found");

@@ -12,12 +12,12 @@ data file and from the 51Degrees cloud.
 ## What it does
 
 How a property is computed is written in a **script**, which is one YAML or
-JSON file describing one output property. The script format is shared between
-every 51Degrees language implementation, at
+JSON file describing one output property. The script format and the scripts
+51Degrees ships are kept in
 [51Degrees/derived-properties](https://github.com/51Degrees/derived-properties),
-so one script gives the same answer in .NET, Node, Java, Python, PHP and Rust.
-This crate reads format 1 in full and runs the same conformance cases as the
-other languages.
+which the .NET derived property element and this crate both take as a
+submodule, so one script gives the same answer in .NET and Rust. This crate
+reads format 1 in full and runs the same conformance cases as .NET.
 
 The element holds no data file, sends no request over the network, keeps
 nothing between one request and the next, and reads no evidence from the
@@ -37,8 +37,9 @@ source element said about each one. There is no third state.
 The scripts 51Degrees ships are embedded at build time rather than read from a
 file, so an element carrying one runs where there is no file system and where
 fetching a file over the network would defeat the purpose, such as in a
-WebAssembly host or at an edge runtime. `HumanConfidence` is the one shipped
-today, and its own comment header says what each of its thresholds rests on.
+WebAssembly host or at an edge runtime. The crate ships every script in the
+shared repository, as .NET does, which today is `HumanConfidence` and
+`IsGdpr`. Each script's own comment header says what it rests on.
 
 ## Using it
 
@@ -128,11 +129,15 @@ see that value.
 
 ## Where the shared files are
 
-`vendor/` holds a copy of the shared repository's script and its conformance
-cases, taken unaltered. `cargo test` runs the cases in `vendor/tests` and
-checks that every script in `vendor/tests/invalid` is refused for the reason
-its file name gives, which is what proves this crate agrees with the other
-languages.
+`vendor` is a submodule of the shared repository, as
+`pipeline/DerivedProperty/Scripts` is in .NET, and the crate packages the
+scripts and their conformance cases from it. A clone made without
+`--recurse-submodules` needs `git submodule update --init` before it builds.
+`cargo test` runs the cases in `vendor/tests` and checks that every script in
+`vendor/tests/invalid` is refused for the reason its file name gives, which is
+what proves this crate agrees with .NET. The element logs the commit the
+scripts came from, which the build reads from git, or from `SOURCE.txt` in a
+crate from crates.io.
 
 ## License
 
