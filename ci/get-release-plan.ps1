@@ -10,9 +10,9 @@ ci/packages.json names in its ExtraPaths (the workspace Cargo.toml, and a
 submodule it is built from with the script that copies it in), and with it
 every crate that depends on it, because the requirement on it moves. A crate
 with no tag starts at its FirstVersion. common-ci's ignore list and
-ci/release-plan-filter.ps1 decide which files count, once the common-ci in
-use calls them. Only the patch number moves. The rules are common-ci's
-steps/release-plan.ps1, read from ci/packages.json.
+ci/release-plan-filter.ps1 decide which files count. Only the patch number
+moves. The rules are common-ci's steps/release-plan.ps1, read from
+ci/packages.json.
 
 Nothing is changed, so this is the dry run of a publish as well as its first
 step. The plan is read before anything is tagged, because the tags a publish

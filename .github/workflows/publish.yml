@@ -6,10 +6,9 @@ name: Publish
 # ci/packages.json names in its ExtraPaths (the workspace Cargo.toml, and a
 # submodule it is built from with the script that copies it in), and with it
 # every crate that depends on it. common-ci's ignore list and
-# ci/release-plan-filter.ps1 decide which files count, once the common-ci
-# branch this reads calls them. Only the patch number moves, and every other
-# crate keeps the version it last released. The rules are common-ci's
-# steps/release-plan.ps1, read from ci/packages.json, and
+# ci/release-plan-filter.ps1 decide which files count. Only the patch number
+# moves, and every other crate keeps the version it last released. The rules
+# are common-ci's steps/release-plan.ps1, read from ci/packages.json, and
 # ci/get-release-plan.ps1 prints the plan.
 #
 # Authentication uses crates.io Trusted Publishing: the
@@ -77,7 +76,8 @@ jobs:
       # step after reads it from the file, because the tags this run makes
       # change what the plan would say. A crate with neither a tag of its own
       # nor a FirstVersion stops the run here, as there is nothing for its
-      # version to count from.
+      # version to count from, and so does a repository tag above a crate's
+      # own tags, as they would not mark what it last published.
       - name: Work out which crates to release
         id: plan
         shell: pwsh

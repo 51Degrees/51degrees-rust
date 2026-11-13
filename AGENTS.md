@@ -263,19 +263,15 @@ released at its last tag plus one patch when a file that counts changed since
 that tag, under its folder or a path named in its `ExtraPaths`, and every
 crate that depends on it is released with it. `ExtraPaths` names the
 workspace `Cargo.toml` for every crate, and for a crate built from a
-submodule, the submodule and the script in `ci/` that copies it in.
-Only [common-ci#310](https://github.com/51Degrees/common-ci/pull/310) makes
-common-ci's plan call `ci/release-plan-filter.ps1` and leave out common-ci's
-ignore list. Once the common-ci branch a workflow reads holds it, the filter
-leaves out a change to a crate's `Cargo.toml` only in the keys that describe
-it on crates.io, and a change to the workspace `Cargo.toml` outside
-`[workspace.package]` and `[workspace.dependencies]` or only in their
-descriptive keys, and the ignore list leaves out a change only to Markdown,
-`docs`, `tests`, `test`, `examples` or LICENSE files. Until then every change
-under a crate's paths counts, so a change only to the workspace
-`Cargo.toml`'s members, a profile or a comment releases all 26 crates, and a
-change to a crate's README or tests releases that crate. A change only to CI
-files other than the copy scripts releases nothing.
+submodule, the submodule and the script in `ci/` that copies it in, or, for
+`fiftyone-derived-properties`, the script that records its submodule's
+commit. common-ci's plan leaves out its ignore list, being a change only to
+Markdown, `docs`, `tests`, `test`, `examples` or LICENSE files, and calls
+`ci/release-plan-filter.ps1`, which leaves out a change to a crate's
+`Cargo.toml` only in the keys that describe it on crates.io, and a change to
+the workspace `Cargo.toml` outside `[workspace.package]` and
+`[workspace.dependencies]` or only in their descriptive keys. A change only
+to CI files other than those scripts releases nothing.
 `ci/set-crate-versions.ps1` then writes each
 planned crate's version, and the version every other crate last released,
 into the manifests and the requirements between them on the build machine.
@@ -305,7 +301,10 @@ the file disagrees with the manifests and the copy scripts, so a dependency
 added to a manifest is added there too. A crate with no tag of its own and no
 `FirstVersion` stops the publish, and `ci/start-crate-tags.ps1` is the script
 a person runs once to tag every crate at the release it was last published
-from.
+from. A repository tag such as `4.5.19` above a crate's own tags also stops
+the publish, because the crate was released under that tag after its tags
+were made, so its tags do not mark the commit its version on crates.io came
+from. `ci/start-crate-tags.ps1 -Push` then tags every crate at that release.
 
 The crates require each other exactly, as in
 `fiftyone-common-sys = { version = "=4.5.2", path = "../common-sys" }`, so a
