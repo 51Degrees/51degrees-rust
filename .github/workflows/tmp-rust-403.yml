@@ -1,0 +1,15 @@
+name: tmp 403 remote refresh tests
+on:
+  push:
+    branches: ['tmp/rust-403-*']
+jobs:
+  test:
+    name: remote_refresh (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test -p fiftyone-pipeline-engines --test remote_refresh -- --test-threads 1
