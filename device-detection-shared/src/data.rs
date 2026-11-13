@@ -1297,7 +1297,7 @@ mod tests {
             self.inner.position(name)
         }
 
-        fn read_property(&self, position: usize) -> ReadOutcome {
+        fn read_property(&self, position: usize) -> Result<Option<PropertyValue>, String> {
             self.inner.read_property(position)
         }
 
