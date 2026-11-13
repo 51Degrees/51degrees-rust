@@ -256,18 +256,12 @@ async fn home(State(demo): State<Demo>, headers: HeaderMap) -> Response {
     } else {
         "absent"
     };
+    let _ = (fingerprints, WebIntegrationOptions::default(), CONTACT_URL);
     Html(
         page_with_find_out_more()
             .replace("__RESOURCE__", demo.client.resource_key())
             .replace("__CHALLENGE__", &challenge)
-            .replace("__API__", demo.client.endpoint())
-            .replace(
-                "__PROXY_SCRIPT__",
-                &WebIntegrationOptions::default().javascript_endpoint,
-            )
-            .replace("__FINGERPRINTS__", fingerprints)
-            .replace("__PROXY__", if demo.proxy { "on" } else { "off" })
-            .replace("__CONTACT__", &CONTACT_URL.replace('&', "&amp;")),
+            .replace("__API__", demo.client.endpoint()),
     )
     .into_response()
 }

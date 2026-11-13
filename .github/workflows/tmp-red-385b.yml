@@ -1,0 +1,20 @@
+name: Throwaway red run of the 51Did demo page tests without the four new substitutions
+on:
+  push:
+    branches: [tmp/rust-385-red2]
+jobs:
+  red:
+    name: fodid-examples tests, head less the four new substitutions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Copy the OWID source into fodid
+        shell: pwsh
+        run: ./ci/copy-owid-source.ps1
+      - name: Run the test against this tree
+        shell: pwsh
+        run: ./ci/test-examples-against-source.ps1 -Command { cargo test --config source.toml -p fodid-examples --no-fail-fast }
