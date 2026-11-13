@@ -1,0 +1,19 @@
+name: Throwaway red run of the 51Did demo page test
+on:
+  push:
+    branches: [tmp/rust-385-red]
+jobs:
+  red:
+    name: fodid-examples fingerprint test on rc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Copy the OWID source into fodid
+        shell: pwsh
+        run: ./ci/copy-owid-source.ps1
+      - name: Run the test against this tree
+        shell: pwsh
+        run: ./ci/test-examples-against-source.ps1 -Command { cargo test --config source.toml -p fodid-examples the_page_reports_a_fingerprint }

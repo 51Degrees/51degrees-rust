@@ -705,6 +705,33 @@ mod tests {
             Some(&HeaderValue::from_static("text/css"))
         );
     }
+
+    #[tokio::test]
+    async fn the_page_reports_a_fingerprint_only_when_a_header_carries_one() {
+        let app = app_over(FakeCloud {
+            public_key_pem: String::new(),
+            redeem_status: 500,
+            redeem_body: "",
+        });
+
+        let page = body_string(get(&app, "/").await).await;
+        assert!(page.contains("var FINGERPRINTS = \"absent\""));
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/")
+                    .header("ja4", "t13d1516h2_8daaf6152771_b186095e22b6")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let page = body_string(response).await;
+        assert!(page.contains("var FINGERPRINTS = \"present\""));
+    }
 }
 
 /*
