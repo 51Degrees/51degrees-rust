@@ -61,10 +61,9 @@ evidence and with no value when that is absent. The element also adds two
 errors and a warning. With no engine in the pipeline, nothing the engines
 give differently reaches the JSON or the JavaScript, so their text can be
 the same on both sides, and the comparison then checks both byte for byte,
-apart from the JavaScript's line endings (see "The comparison"). The crates'
-JSON builder leaves the crates' Sequence element's data out there, because
-.NET's Sequence element has none. The crates' has the session id and
-sequence the specification's Element Data gives.
+apart from the JavaScript's line endings (see "The comparison"). Both
+Sequence elements have the session id and sequence the specification's
+Element Data gives, so the JSON holds them on both sides.
 
 The JavaScript builder in the values pipeline calls back to the endpoint
 `json`, names its object `fod`, has cookies and minification off, and takes
@@ -101,9 +100,8 @@ codes as they read an IP Intelligence engine's. In the crates that is
 `IpIntelligenceDataBase` with a missing property source, as both IP
 Intelligence engines write it, so a weighted record is a `rawweighting` and a
 `value`, as in .NET's JSON, and a property the evidence did not give is
-missing. It lists no properties, so only the JSON shows its data. The JSON
-builder leaves the crates' Sequence element's data out, as in the values
-pipeline. The countries engine sorts every country by
+missing. It lists no properties, so only the JSON shows its data. The
+countries engine sorts every country by
 the collation of the language asked for, being the ICU on the runner in .NET
 and ICU4X's compiled data in the crates, so any difference in how the two sort
 shows in the lists of every country.
@@ -170,7 +168,7 @@ key that differs. The JavaScript is compared as text, and the report shows
 the first line that differs. When the two scripts are the
 same once each CRLF is read as LF, the difference is of kind `lineEndings`
 instead, and each side is the number of lines it ends with CRLF. The .NET
-4.5.129 package embeds its JavaScript template with CRLF line endings, where
+4.5.130 package embeds its JavaScript template with CRLF line endings, where
 the template the specification names and the crates' copy have LF, so each
 line of .NET's script that comes from the template ends with CRLF. The
 `lineEndings` entry in `allowed-differences.json` allows that and nothing
@@ -363,10 +361,15 @@ Each element has its `dataKey`. An on-premise engine also has `dataFile`,
 its data file's settings with the path given as its placeholder. The usage
 sharing element also has `settings`, read from the element itself on
 both sides, the crates through `ShareUsageElement::config` and .NET from
-fields of `ShareUsageBase` read by reflection, and `evidenceFilter`, the
-element's evidence filter's answer for each of a list of keys, which shows
-the blocked headers, the query string parameters shared and whether all
-evidence is shared, because .NET holds those settings only in that filter.
+fields of `ShareUsageBase` read by reflection. It also has
+`evidenceFilter`, the answer of the element's rules for what is shared for
+each of a list of keys, which shows the blocked headers, the query string
+parameters shared and whether all evidence is shared, read through
+`ShareUsageElement::shared_evidence_filter` in the crates and from the
+field `_sharedEvidenceFilter` in .NET, because .NET holds those settings
+only in that filter. Last comes `acceptedEvidence`, the answer of the
+element's evidence key filter for the same keys, which is false for each on
+both sides, because the usage sharing element accepts no evidence.
 `CreateTempDataCopy` is a build parameter that the crates do not read back, and
 `a_copy_of_the_data_file_is_read_when_asked` in each on-premise engine's
 `tests/configuration.rs` checks it against what .NET did.
@@ -488,17 +491,11 @@ line that differs. Texts that are the same byte for byte read the same under
 an [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309.html) reader, and the
 crate's own tests check what such a reader reads from them.
 
-Four entries in `allowed-differences.json` allow robots.txt differences,
-each by a `pattern` for the first line that differs. Over the Enterprise
-file, two allow the crawlers with no usable product token, which the
-Device Detection release the comparison runs still writes and the crate
-leaves out, as .NET does since
-[51degrees-dotnet#78](https://github.com/51Degrees/51degrees-dotnet/pull/78).
-They come out when the comparison runs a .NET release with that change.
-Over the Lite file, two allow how a Terms Document Locator entry is
-written, where the crate follows RFC 3986 and keeps its own text. Over the
-Enterprise file those two cases first differ at a crawler the first two
-entries allow.
+One entry in `allowed-differences.json` allows a robots.txt difference, by
+a `pattern` for the first line that differs. It allows how a Terms Document
+Locator entry with its scheme and host in capitals is written, where the
+crate writes them in lower case, as RFC 3986 asks of a program that writes
+a URI, and .NET writes the entry as it was given.
 
 Over the Enterprise file, one step of that job checks that each side read the
 usages and wrote a group for at least one crawler, so the comparison cannot
@@ -649,11 +646,11 @@ checks that each change fails the comparison.
 
 Both sides build the same C code. The crates build their native code from
 the [51degrees-cxx](https://github.com/51Degrees/51degrees-cxx) commit the
-`cxx` submodule records, 4.5.103. The .NET packages named in
+`cxx` submodule records, 4.5.105. The .NET packages named in
 `dotnet/Parity.csproj` are the
 [51degrees-dotnet](https://github.com/51Degrees/51degrees-dotnet) release
 whose own `cxx` submodule records the same commit, being Device Detection
-4.5.180, IP Intelligence 4.5.155 and Pipeline 4.5.129. So an engine answer
+4.5.181, IP Intelligence 4.5.156 and Pipeline 4.5.130. So an engine answer
 that differs comes from what each side does with the same C code, including
 which of its functions each side calls, and never from the two sides
 building different versions of it. Latitude and longitude are an example,

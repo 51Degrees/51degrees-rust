@@ -811,17 +811,15 @@ jobs:
 
       # Each side must read the signed 51Dids of both lists and verify each
       # signature, or the two could agree by both failing. Of the 31 signed
-      # cases, 19 are meant to read and verify in .NET and 18 in the crates.
-      # The rest are the tampered case, nine whose payload a reader refuses
-      # and two with bytes after the envelope. The crates also refuse
-      # encoding-url-spaced, whose text has white space inside it, a
-      # difference allowed-differences.json records. A new signed case that
-      # reads changes the numbers.
+      # cases, 18 are meant to read and verify on each side. The rest are the
+      # tampered case, nine whose payload a reader refuses, two with bytes
+      # after the envelope and encoding-url-spaced, whose text has white space
+      # inside it. A new signed case that reads changes the numbers.
       - name: Check every signed 51Did verifies
         if: matrix.data == 'lite'
         working-directory: parity
         run: |
-          declare -A want=([dotnet]=19 [rust]=18)
+          declare -A want=([dotnet]=18 [rust]=18)
           for side in dotnet rust; do
             for list in rust dotnet; do
               # One row per signed case, its id, whether it was tampered,

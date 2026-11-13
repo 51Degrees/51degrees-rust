@@ -71,6 +71,10 @@
 
 #![cfg(feature = "reqwest-client")]
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use fodid::FodId;
 use fodid_client::{ContextOutcome, DidClient, SignatureCheck, SignatureOutcome};
 
@@ -136,7 +140,7 @@ fn license_key() -> Option<String> {
 /// The trimmed value of an environment variable, or `None` when it is unset
 /// or holds nothing but whitespace.
 fn non_blank_variable(name: &str) -> Option<String> {
-    std::env::var(name)
+    crate::deprecated_names::var(name)
         .ok()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
@@ -152,7 +156,11 @@ const LEAST_KEY_TAIL: usize = 12;
 
 /// The endpoint the test and the client both use.
 fn endpoint() -> String {
-    non_blank_variable("_51DEGREES_CLOUD_ENDPOINT").unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned())
+    crate::deprecated_names::var_with_old("_51DEGREES_CLOUD_ENDPOINT", "FOD_CLOUD_API_URL")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned())
 }
 
 /// Percent-encode a query string value, leaving only the characters that

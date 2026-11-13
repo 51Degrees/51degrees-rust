@@ -1949,7 +1949,7 @@ mod tests {
     /// against this source revision and is the convenient default. Point
     /// `_51DEGREES_IPI_PATH` at another data file to run the lookups against it.
     fn ipi_data_file() -> Option<PathBuf> {
-        if let Ok(path) = std::env::var("_51DEGREES_IPI_PATH") {
+        if let Ok(path) = crate::deprecated_names::var("_51DEGREES_IPI_PATH") {
             let path = PathBuf::from(path);
             if path.is_file() {
                 return Some(path);

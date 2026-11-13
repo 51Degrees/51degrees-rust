@@ -40,6 +40,10 @@
 //! `_51DEGREES_IPI_PATH` names that file, or when it is in the data repository
 //! inside the `cxx` submodule, and skip otherwise.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -75,7 +79,7 @@ const DATA_HINT: &str = "Has the data file gained a new lowest key?";
 /// that file, then the file in the data repository inside the `cxx`
 /// submodule.
 fn asn_data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("_51DEGREES_IPI_PATH") {
+    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_IPI_PATH") {
         let path = PathBuf::from(path.trim());
         if path.file_name().is_some_and(|name| name == ASN_FILE_NAME) && path.is_file() {
             return Some(path);

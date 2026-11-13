@@ -42,6 +42,10 @@
 //! machine without the data files. When a file is present they load it for real
 //! and assert on the result.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 #[cfg(any(feature = "dd", feature = "ipi"))]
 use std::path::PathBuf;
 
@@ -60,7 +64,7 @@ fn find_data_file(
     file_name: &str,
 ) -> Option<PathBuf> {
     // 1. An explicit path from the environment wins.
-    if let Ok(path) = std::env::var(env_var) {
+    if let Ok(path) = crate::deprecated_names::var(env_var) {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);

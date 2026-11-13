@@ -24,6 +24,10 @@
 //! profile, and the copy the engine reads leaves with it. The test needs the
 //! ASN file `_51DEGREES_IPI_PATH` names, and skips with a note without it.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -66,7 +70,7 @@ fn serve_once(body: Vec<u8>) -> (String, std::thread::JoinHandle<()>) {
 /// is left once the engine is dropped.
 #[test]
 fn an_update_replaces_the_data_file_under_every_profile() {
-    let Some(asn) = std::env::var("_51DEGREES_IPI_PATH")
+    let Some(asn) = crate::deprecated_names::var("_51DEGREES_IPI_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())
@@ -150,7 +154,7 @@ fn an_update_replaces_the_data_file_under_every_profile() {
 /// refresh, and none is left there once the engine is dropped.
 #[test]
 fn the_copy_goes_in_the_folder_the_builder_names() {
-    let Some(asn) = std::env::var("_51DEGREES_IPI_PATH")
+    let Some(asn) = crate::deprecated_names::var("_51DEGREES_IPI_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())
@@ -207,7 +211,7 @@ fn finds_cloudflare(engine: &Arc<IpIntelligenceOnPremiseEngine>) -> bool {
 /// folder then holds that copy or nothing.
 #[test]
 fn a_refresh_with_reuse_reads_the_copy_already_made() {
-    let Some(asn) = std::env::var("_51DEGREES_IPI_PATH")
+    let Some(asn) = crate::deprecated_names::var("_51DEGREES_IPI_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())

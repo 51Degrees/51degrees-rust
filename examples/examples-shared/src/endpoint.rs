@@ -41,7 +41,8 @@ pub const CLOUD_ENDPOINT_ENV_VAR: &str = "_51DEGREES_CLOUD_ENDPOINT";
 /// Read the optional cloud endpoint from [`CLOUD_ENDPOINT_ENV_VAR`].
 ///
 /// Returns the trimmed value when the variable is set to a non-blank string, or
-/// [`None`] to use the library default. Surrounding whitespace is stripped (a
+/// [`None`] to use the library default. The variable's deprecated name is read
+/// when [`CLOUD_ENDPOINT_ENV_VAR`] is unset or empty. Surrounding whitespace is stripped (a
 /// stray space or newline from a shell or `.env` file is a common slip), so the
 /// value passed to the builder is clean.
 ///
@@ -50,7 +51,7 @@ pub const CLOUD_ENDPOINT_ENV_VAR: &str = "_51DEGREES_CLOUD_ENDPOINT";
 /// it builds, so a malformed value surfaces as a clear configuration error rather
 /// than a confusing request failure.
 pub fn cloud_endpoint_from_env() -> Option<String> {
-    match std::env::var(CLOUD_ENDPOINT_ENV_VAR) {
+    match crate::deprecated_names::var(CLOUD_ENDPOINT_ENV_VAR) {
         Ok(value) if !value.trim().is_empty() => Some(value.trim().to_owned()),
         _ => None,
     }

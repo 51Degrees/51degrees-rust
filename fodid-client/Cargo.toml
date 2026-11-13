@@ -25,6 +25,9 @@ fodid = { path = "../fodid", version = "=4.5.5" }
 chrono.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+# The warning for a deprecated environment variable name goes through the log
+# facade, which does nothing until the application installs a logger.
+log = "0.4"
 # Asynchronous HTTP client for the built-in transport. rustls avoids a system
 # OpenSSL dependency on Windows, and the form feature carries the url-encoded
 # redeem body. Optional and gated behind the `reqwest-client` feature, because

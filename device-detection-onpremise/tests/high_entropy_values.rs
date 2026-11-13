@@ -35,6 +35,10 @@
 // The decoder element is deprecated, and these tests use it on purpose.
 #![allow(deprecated)]
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -189,7 +193,7 @@ fn cases() -> Vec<Case> {
 /// The Lite Hash data file `_51DEGREES_DD_PATH` names, or else the one in the
 /// `cxx` submodule found from this crate's directory upwards.
 fn lite_data_file() -> Option<PathBuf> {
-    if let Some(path) = std::env::var("_51DEGREES_DD_PATH")
+    if let Some(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())

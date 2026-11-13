@@ -16,9 +16,9 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <IsPackable>false</IsPackable>
-    <DeviceDetectionVersion>4.5.180</DeviceDetectionVersion>
-    <IpIntelligenceVersion>4.5.155</IpIntelligenceVersion>
-    <PipelineVersion>4.5.129</PipelineVersion>
+    <DeviceDetectionVersion>4.5.181</DeviceDetectionVersion>
+    <IpIntelligenceVersion>4.5.156</IpIntelligenceVersion>
+    <PipelineVersion>4.5.130</PipelineVersion>
   </PropertyGroup>
 
   <ItemGroup>

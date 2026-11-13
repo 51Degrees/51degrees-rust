@@ -117,6 +117,11 @@
 // Re-exports: the shared result model, present in every configuration.
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 #[allow(deprecated)]
 pub use fiftyone_device_detection_shared::UachJsConversionElement;
 pub use fiftyone_device_detection_shared::{
@@ -910,7 +915,7 @@ mod tests {
         use std::path::PathBuf;
 
         // 1. Explicit override.
-        if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
+        if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
             let path = PathBuf::from(path);
             if path.is_file() {
                 return Some(path);

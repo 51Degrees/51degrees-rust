@@ -30,6 +30,10 @@
 
 #![cfg(feature = "ipi")]
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::PathBuf;
 
 use fiftyone_native::{ipi, PerformanceProfile};
@@ -46,7 +50,7 @@ extern "C" {
 /// The ASN data file: `_51DEGREES_IPI_PATH`, or the one in the
 /// `cxx` submodule.
 fn asn_data_file() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("_51DEGREES_IPI_PATH") {
+    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_IPI_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);

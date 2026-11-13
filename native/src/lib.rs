@@ -108,6 +108,11 @@
 
 // The value buffer is shared machinery used by whichever product is enabled, so
 // it is only needed when at least one product feature is on.
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 #[cfg(any(feature = "dd", feature = "ipi"))]
 mod buffer;
 #[cfg(any(feature = "dd", feature = "ipi"))]

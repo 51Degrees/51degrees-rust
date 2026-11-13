@@ -34,6 +34,10 @@
 
 #![cfg(feature = "dd")]
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -66,7 +70,7 @@ const TAC_FULL_READ_EVERY: usize = 500;
 /// The Hash data file `_51DEGREES_DD_PATH` names, or the Lite file in the
 /// `cxx` submodule.
 fn data_file() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("_51DEGREES_DD_PATH") {
+    if let Some(path) = crate::deprecated_names::var_os("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);

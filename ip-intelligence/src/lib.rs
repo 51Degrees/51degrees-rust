@@ -102,6 +102,11 @@
 
 // The shared element-data model. These are the types an application reads its
 // results through, regardless of which engine produced them.
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 pub use fiftyone_ip_intelligence_shared::{
     IpIntelligenceData, IpIntelligenceDataBase, WeightedStore, IP_DATA_KEY, IP_DATA_KEY_NAME,
 };

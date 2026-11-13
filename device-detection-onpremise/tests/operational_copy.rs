@@ -25,6 +25,10 @@
 //! a data file that fails to load. The tests need the Lite file
 //! `_51DEGREES_DD_PATH` names, and skip with a note without it.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -45,7 +49,7 @@ const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Ma
     AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 
 fn lite_data_file() -> Option<PathBuf> {
-    std::env::var("_51DEGREES_DD_PATH")
+    crate::deprecated_names::var("_51DEGREES_DD_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())
