@@ -8,6 +8,73 @@ This crate is part of the [51Degrees](https://51degrees.com/?utm_source=github&u
 device detection and IP intelligence, available both on-premise from a local
 data file and from the 51Degrees cloud.
 
+## From a configuration file
+
+A pipeline can also be made from a configuration file written for the .NET
+package [FiftyOne.DeviceDetection](https://www.nuget.org/packages/FiftyOne.DeviceDetection),
+so one file serves both languages. `configuration::registry()` finds each
+builder and setting by its .NET name, and adds a Sequence element first and,
+with the default `share-usage` feature, usage sharing last, as .NET's
+`FiftyOnePipelineBuilder` does. The file may hold comments, as .NET's reader
+allows. This one makes a pipeline with the on-premise engine reading the free
+Lite data file.
+
+```jsonc
+{
+  "PipelineOptions": {
+    "Elements": [
+      {
+        "BuilderName": "DeviceDetectionHashEngineBuilder",
+        "BuildParameters": {
+          "DataFile": "51Degrees-LiteV4.1.hash",
+          "PerformanceProfile": "LowMemory",
+          "CreateTempDataCopy": false,
+          // Off because the free Lite file has no licence key for updates.
+          "AutoUpdate": false,
+          "DataFileSystemWatcher": false
+        }
+      }
+    ]
+  }
+}
+```
+
+```rust,no_run
+use fiftyone_device_detection::configuration::{self, PipelineOptions};
+use fiftyone_device_detection::{DeviceData, Evidence, PipelineBuilder, DEVICE_DATA_KEY};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let options = PipelineOptions::from_json(&std::fs::read_to_string("appsettings.json")?)?;
+    let pipeline =
+        PipelineBuilder::new().build_from_configuration(&configuration::registry(), &options)?;
+
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder().add("header.user-agent", "Mozilla/5.0 ...").build(),
+    );
+    data.process()?;
+    if let Some(device) = data.get(DEVICE_DATA_KEY) {
+        println!("IsMobile: {:?}", device.is_mobile().value());
+    }
+    Ok(())
+}
+```
+
+The cloud engines are `CloudRequestEngineBuilder`, given the resource key as
+`ResourceKey`, and then `DeviceDetectionCloudEngineBuilder`. They send their
+requests through a client of your own, given as
+`PipelineBuilder::new().add_resource(Arc::new(client))` where `client` is an
+`Arc<dyn CloudHttpClient>`, or through the built-in client of the
+`reqwest-client` feature, which is off by default. A client given in any other
+form, such as `add_resource(Arc::new(MyClient))`, is not found, so the build
+uses the built-in client, or fails without the feature. `SetShareUsage` set
+to false in the pipeline's own `BuildParameters` turns
+usage sharing off, as does `ShareUsage` in `PipelineBuilderParameters`, the
+older name .NET still reads. A builder this crate does not have, such as
+.NET's `AppleProfileEngineBuilder`, fails the build with the message .NET
+gives for a builder it cannot find. The
+[pipeline configuration specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/pipeline-configuration.md)
+describes the file.
+
 ## License
 
 Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the

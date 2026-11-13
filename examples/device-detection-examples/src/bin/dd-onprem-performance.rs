@@ -348,7 +348,7 @@ fn main() -> Result<()> {
 
     let (Some(data_file), Some(user_agents_file)) = (data_file, user_agents_file) else {
         anyhow::bail!(
-            "Missing the data file or the User-Agent file. Set 51DEGREES_DD_PATH, or \
+            "Missing the data file or the User-Agent file. Set _51DEGREES_DD_PATH, or \
              pass the data-file and User-Agent-file paths as the first two arguments."
         );
     };
@@ -394,7 +394,7 @@ mod tests {
     #[test]
     fn runs_against_the_lite_data_file() {
         let Some(data_file) = examples_shared::dd_data_path() else {
-            eprintln!("skipping: no on-premise data file found (set 51DEGREES_DD_PATH)");
+            eprintln!("skipping: no on-premise data file found (set _51DEGREES_DD_PATH)");
             return;
         };
         let Some(user_agents_file) = default_user_agents_file() else {
@@ -414,7 +414,7 @@ mod tests {
         .expect("the on-premise performance example should complete");
 
         // The Lite file carries none of the Enterprise properties, so the run
-        // names them all with the contact link. 51DEGREES_DD_PATH can name
+        // names them all with the contact link. _51DEGREES_DD_PATH can name
         // another file.
         if data_file.ends_with(examples_shared::DD_LITE_RELATIVE_PATH) {
             let available = device_detection_examples::data_file_properties(&data_file)
@@ -431,7 +431,7 @@ mod tests {
     #[test]
     fn writes_the_results_json_when_asked() {
         let Some(data_file) = examples_shared::dd_data_path() else {
-            eprintln!("skipping: no on-premise data file found (set 51DEGREES_DD_PATH)");
+            eprintln!("skipping: no on-premise data file found (set _51DEGREES_DD_PATH)");
             return;
         };
         let Some(user_agents_file) = default_user_agents_file() else {
@@ -507,7 +507,8 @@ mod tests {
  * swapped in to compare:
  *
  * - InMemory        - loads the file fully into memory, fastest detections.
- * - HighPerformance - everything in memory, connection to the file dropped.
+ * - HighPerformance - what detection walks and the requested properties'
+ *                     values in memory, the file kept open for the rest.
  * - Balanced        - a balance of speed and memory.
  * - Default         - the engine's default balance.
  * - LowMemory       - streams data from disk on demand, least memory, slower.
@@ -530,7 +531,7 @@ mod tests {
  * link to contact 51Degrees about a copy, then a "Find out more" section.
  *
  * The data and User-Agent files are read from the first two command-line
- * arguments, the `51DEGREES_DD_PATH` environment variable, or the files in the
+ * arguments, the `_51DEGREES_DD_PATH` environment variable, or the files in the
  * data repository inside the cxx submodule, which the example downloads when
  * they are missing. For more on adjusting performance see
  * https://51degrees.com/documentation/_device_detection__features__performance_options.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-performance.rs&utm_term=dd-onprem-performance

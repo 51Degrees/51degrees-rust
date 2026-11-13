@@ -27,14 +27,13 @@
 //!
 //! @snippet dd-onprem-metadata.rs example
 
-use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
 use fiftyone_device_detection::{
-    DeviceDetectionOnPremiseEngineBuilder, FlowElement, PerformanceProfile,
+    DeviceDetectionOnPremiseEngine, DeviceDetectionOnPremiseEngineBuilder, PerformanceProfile,
 };
 use fiftyone_pipeline_core::PropertyValueType;
 use fiftyone_pipeline_engines::{AspectEngine, OnPremiseAspectEngine};
@@ -63,11 +62,12 @@ pub struct ExampleOptions {
 /// Run the on-premise metadata example.
 ///
 /// Builds a Hash engine directly (no full pipeline is needed to read metadata),
-/// then enumerates the properties grouped by category/component, the property
-/// value types and descriptions, the accepted evidence keys, and the data file's
-/// publish date and tier. It then says which of the Enterprise properties the
-/// data file carries, and ends with where to ask about a copy of the Enterprise
-/// data file and the "Find out more" links.
+/// then enumerates the components and their properties, each property's
+/// category, value type, description and possible values, the accepted
+/// evidence keys, and the data file's publish date and tier. It then says
+/// which of the Enterprise properties the data file carries, and ends with
+/// where to ask about a copy of the Enterprise data file and the "Find out
+/// more" links.
 pub fn run(options: ExampleOptions) -> Result<()> {
     // A full pipeline is not required to read metadata. Building the engine
     // directly is enough, and is also how you would obtain the metadata if you
@@ -79,7 +79,7 @@ pub fn run(options: ExampleOptions) -> Result<()> {
         .context("failed to build the on-premise Hash engine")?;
 
     output_data_file_details(engine.as_ref());
-    output_properties_by_component(engine.as_ref());
+    output_components(engine.as_ref());
     output_evidence_keys(&engine.evidence_keys());
 
     // The engine's properties are those its data file carries.
@@ -122,67 +122,82 @@ fn output_data_file_details(engine: &impl OnPremiseAspectEngine) {
     print!("{message}");
 }
 
-/// Print the available properties grouped by component (their category), with the
-/// value type and description of each.
-///
-/// The device-detection data model groups properties by component: Hardware,
-/// Software Platform (OS), Browser and Crawler, plus the engine's own match
-/// metrics. The Rust engine carries each property's category on its metadata, so
-/// the example groups on that. Match-metric pseudo-properties carry the category
-/// `Device Metrics`; data-file properties whose category the native reader does
-/// not surface fall under `Other`. The number of properties available depends on
-/// the data tier: the free Lite tier contains fewer than 20 of the 200-plus
-/// properties in the full data file.
-fn output_properties_by_component(engine: &impl AspectEngine) {
-    // Group property metadata by category, keeping a stable alphabetical order so
-    // the output is reproducible.
-    let mut by_component: BTreeMap<
-        String,
-        Vec<&fiftyone_pipeline_engines::AspectPropertyMetaData>,
-    > = BTreeMap::new();
-    for property in engine.aspect_properties() {
-        let component = if property.core().category.is_empty() {
-            "Other".to_owned()
-        } else {
-            property.core().category.clone()
-        };
-        by_component.entry(component).or_default().push(property);
-    }
+/// The number of a property's values the example prints.
+const SHOWN_VALUES: usize = 20;
 
+/// Print each component with its properties, and each property's category,
+/// value type, description, data tiers and first few possible values.
+///
+/// The device-detection data model groups properties into components, being
+/// the hardware, the software platform (the operating system), the browser and
+/// the crawler, with the engine's match metrics in a `Metrics` component of
+/// their own. The engine reads a property's values from the data file when
+/// they are asked for, because a data file can hold hundreds of thousands. The
+/// number of properties depends on the data tier: the free Lite tier contains
+/// fewer than 20 of the 200-plus properties in the full data file.
+fn output_components(engine: &DeviceDetectionOnPremiseEngine) {
     println!();
     println!(
-        "--- Available properties by component ({} in total) ---",
+        "--- Components and their properties ({} properties in total) ---",
         engine.aspect_properties().len()
     );
-    for (component, properties) in &by_component {
+    for component in engine.components().iter() {
         let mut message = String::new();
         let _ = writeln!(
             message,
-            "Component - {component} ({} properties)",
-            properties.len()
+            "Component - {} ({} properties)",
+            component.name,
+            component.properties().len()
         );
-        for property in properties {
-            let type_name = value_type_name(property.core().value_type);
-            let description = if property.description().is_empty() {
-                "(no description in this data tier)"
-            } else {
-                property.description()
-            };
+        for property in component.properties() {
             let _ = writeln!(
                 message,
-                "\t{:<22} ({type_name}) - {description}",
-                property.name()
+                "\tProperty - {} [Category: {}] ({}) - {}",
+                property.name(),
+                property.core().category,
+                value_type_name(property.core().value_type),
+                property.aspect().description()
             );
             // The data tiers a property is present in help explain a missing
             // value: a property listed only under higher tiers needs a data-file
             // upgrade rather than a configuration change.
-            if !property.data_tiers_where_present().is_empty() {
-                let _ = writeln!(
-                    message,
-                    "\t{:<22}   tiers: {}",
-                    "",
-                    property.data_tiers_where_present().join(", ")
-                );
+            let _ = writeln!(
+                message,
+                "\t\tData tiers: {}",
+                property.aspect().data_tiers_where_present().join(", ")
+            );
+            // Most match metrics have no defined values, so they are left out.
+            if property.core().category != "Device Metrics" {
+                // A property can have over a hundred thousand values, so only
+                // those shown are read, and the rest are counted.
+                let values = match engine.property_value_range(property.name(), 0..SHOWN_VALUES) {
+                    Ok(values) => values.unwrap_or_default(),
+                    Err(error) => {
+                        println!("\t\tValues could not be read: {error}");
+                        Vec::new()
+                    }
+                };
+                let count = engine
+                    .property_value_count(property.name())
+                    .unwrap_or_default();
+                let shown: Vec<String> = values
+                    .iter()
+                    .map(|value| {
+                        // A script's value runs to many lines, so only its first
+                        // is shown.
+                        let name = value.name.lines().next().unwrap_or_default();
+                        if value.description.is_empty() {
+                            name.to_owned()
+                        } else {
+                            format!("{name} ({})", value.description)
+                        }
+                    })
+                    .collect();
+                let mut line = format!("\t\tPossible values: {}", shown.join(", "));
+                if count > SHOWN_VALUES {
+                    let _ = write!(line, " + {} more ...", count - SHOWN_VALUES);
+                }
+                let _ = writeln!(message, "{line}");
             }
         }
         print!("{message}");
@@ -200,10 +215,6 @@ fn output_evidence_keys(keys: &[String]) {
     for key in keys {
         println!("\t{key}");
     }
-    println!(
-        "\tand any query or cookie value named 51d_..., which the client-side \
-         JavaScript sends back"
-    );
 }
 
 /// Print whether the data file carries each property only the Enterprise data
@@ -247,7 +258,7 @@ fn main() -> Result<()> {
 
     let Some(data_file) = data_file else {
         anyhow::bail!(
-            "No device-detection data file found. Set 51DEGREES_DD_PATH, or pass \
+            "No device-detection data file found. Set _51DEGREES_DD_PATH, or pass \
              the path as the first argument."
         );
     };
@@ -266,7 +277,7 @@ mod tests {
     #[test]
     fn runs_against_the_lite_data_file() {
         let Some(data_file) = examples_shared::dd_data_path() else {
-            eprintln!("skipping: no on-premise data file found (set 51DEGREES_DD_PATH)");
+            eprintln!("skipping: no on-premise data file found (set _51DEGREES_DD_PATH)");
             return;
         };
         run(ExampleOptions {
@@ -276,7 +287,7 @@ mod tests {
         .expect("the on-premise metadata example should complete");
 
         // The Lite file carries none of the Enterprise properties, so the run
-        // names them all with the contact link. 51DEGREES_DD_PATH can name
+        // names them all with the contact link. _51DEGREES_DD_PATH can name
         // another file.
         if data_file.ends_with(examples_shared::DD_LITE_RELATIVE_PATH) {
             let available = device_detection_examples::data_file_properties(&data_file)
@@ -316,16 +327,17 @@ mod tests {
  * - The data file's data tier and publish date, which is how you tell a free Lite
  *   file apart from a paid Premium or Enterprise file and learn whether the data
  *   is recent.
- * - Every available property grouped by component (its category), with the
- *   property's value type, description and the data tiers in which it is present.
- *   The number of properties depends on the tier: the Lite tier contains fewer
- *   than 20 of the 200-plus properties available in the full data file, so the
- *   description and tier information is sparse for Lite.
+ * - Every component with its properties, and each property's category, value
+ *   type, description, the data tiers in which it is present and up to 20 of
+ *   the values it can have. The match metrics are in a `Metrics` component of
+ *   their own. The number of properties depends on the tier: the Lite tier
+ *   contains fewer than 20 of the 200-plus properties available in the full
+ *   data file.
  * - The evidence keys device detection accepts. These are the keys that, when
  *   added to a flow data's evidence, could affect the result. Each header the
  *   data file reads is accepted as a header and as a query value, alongside the
- *   high-entropy values keys and the `51d_` values the client-side JavaScript
- *   sends back.
+ *   `51d_` values the client-side JavaScript sends back for the properties the
+ *   data file lets it override, the high-entropy values and the profile ids.
  *
  * The example then lists the properties only the Enterprise data file carries
  * (HardwareVendor, HardwareModel, DeviceType, PriceBand and
@@ -338,7 +350,7 @@ mod tests {
  * contact 51Degrees about a copy, and ends with a "Find out more" section.
  *
  * The data file is read from the first command-line argument, the
- * `51DEGREES_DD_PATH` environment variable, or the Lite Hash file in the data
+ * `_51DEGREES_DD_PATH` environment variable, or the Lite Hash file in the data
  * repository inside the cxx submodule, which the example downloads when it is
  * missing.
  */

@@ -2,7 +2,7 @@
 
 # 51Degrees Cloud Request Engine
 
-Cloud HTTP engine with lazy evidence-keys and accessible-properties discovery and recovery mode for the 51Degrees pipeline.
+Cloud HTTP engine that resolves the accepted evidence keys and accessible properties at build time, retrying on first use after a transient failure, with recovery mode, for the 51Degrees pipeline.
 
 This crate is part of the [51Degrees](https://51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=fiftyone-cloud-request-engine-readme.md&utm_term=introduction) Rust solution for high-performance
 device detection and IP intelligence, available both on-premise from a local

@@ -20,7 +20,7 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! End-to-end tests for the cloud 51Degrees-identifier (51Did / FODid) engine.
+//! End-to-end tests for the cloud 51Did engine.
 //!
 //! These drive a real pipeline (cloud request engine followed by the identifier
 //! cloud engine) against a fake HTTP transport, so no network is touched. A
@@ -29,6 +29,10 @@
 //! parsed [`FodId`]. The global identifier in the fixture is a genuinely signed
 //! OWID envelope, created here with the `owid` library, so the parsed path is
 //! exercised against real bytes rather than a hand-rolled string.
+
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
 
 use std::sync::{Arc, Mutex};
 
@@ -290,6 +294,70 @@ fn response_without_fodid_block_yields_empty_data() {
     assert!(!fodid.id_prob_lic().has_value());
 }
 
+/// A transport whose data endpoint fails, as in a cloud outage.
+struct DataDownCloud;
+
+impl CloudHttpClient for DataDownCloud {
+    fn send(&self, request: &CloudHttpRequest) -> Result<CloudHttpResponse, String> {
+        let (status, body) = if request.url.contains("accessibleproperties") {
+            (200, ACCESSIBLE_PROPERTIES.to_owned())
+        } else if request.url.contains("evidencekeys") {
+            (200, EVIDENCE_KEYS.to_owned())
+        } else {
+            (500, r#"{"errors":["the service failed"]}"#.to_owned())
+        };
+        Ok(CloudHttpResponse {
+            status,
+            body,
+            retry_after: None,
+        })
+    }
+}
+
+/// When the cloud request fails, the 51Did engine records that it did not
+/// process, without failing processing, as .NET's cloud aspect engines do,
+/// and still gives empty identifier data.
+#[test]
+fn a_failed_request_records_that_the_51did_engine_did_not_process() {
+    let request_engine = Arc::new(
+        CloudRequestEngine::builder()
+            .resource_key("test-resource-key")
+            .http_client(Arc::new(DataDownCloud))
+            .build()
+            .expect("request engine builds"),
+    );
+    let fodid_engine = FodIdCloudEngine::builder()
+        .cloud_request_engine(request_engine.clone())
+        .build()
+        .expect("identifier engine builds");
+    let pipeline = Pipeline::builder()
+        .add_element(request_engine)
+        .add_element(Arc::new(fodid_engine))
+        .suppress_process_exceptions(true)
+        .build()
+        .expect("pipeline builds");
+    let mut data = pipeline.create_flow_data_with(sample_evidence());
+    data.process().expect("errors are suppressed");
+
+    let recorded: Vec<(&str, bool)> = data
+        .errors()
+        .iter()
+        .map(|error| (error.element_data_key.as_str(), error.should_throw))
+        .collect();
+    assert_eq!(recorded, vec![("cloud-response", true), ("fodid", false)]);
+    assert_eq!(
+        data.errors()[1].source.to_string(),
+        "pipeline error: The 'FodIdCloudEngine' did not process because the JSON \
+         response from the CloudRequestEngine was null or empty. This indicates \
+         that the cloud request failed."
+    );
+    let fodid = data
+        .get(FODID_DATA_KEY)
+        .expect("identifier data is present after a failed request");
+    assert!(!fodid.id_prob_global().has_value());
+    assert!(!fodid.base().cloud_request_failed());
+}
+
 /// The flags byte of a random 51Did created for non-marketing use. Bits 6 and
 /// 7 select the random type and bit 0 grants non-marketing.
 const RANDOM_FLAGS: u8 = 0b0100_0001;
@@ -485,19 +553,19 @@ fn requests_that_ask_for_no_51did_are_still_served_from_the_cache() {
 /// names, so the live test runs from an explicit key or the keys CI exports.
 fn live_resource_key() -> Option<String> {
     [
-        "51DEGREES_RESOURCE_KEY",
+        "_51DEGREES_RESOURCE_KEY",
         "_51DEGREES_RESOURCE_KEY_BESPOKE",
         "_51DEGREES_RESOURCE_KEY_BASIC",
     ]
     .into_iter()
-    .find_map(|name| match std::env::var(name) {
+    .find_map(|name| match crate::deprecated_names::var(name) {
         Ok(value) if !value.trim().is_empty() => Some(value.trim().to_owned()),
         _ => None,
     })
 }
 
 #[test]
-#[ignore = "requires network and a resource key (51DEGREES_RESOURCE_KEY or the _51DEGREES_RESOURCE_KEY_BESPOKE/_BASIC tiered names)"]
+#[ignore = "requires network and a resource key (_51DEGREES_RESOURCE_KEY or the _51DEGREES_RESOURCE_KEY_BESPOKE/_BASIC tiered names)"]
 fn live_cloud_returns_a_parseable_identifier() {
     let Some(resource_key) = live_resource_key() else {
         eprintln!("no resource key in the environment; skipping live cloud test");

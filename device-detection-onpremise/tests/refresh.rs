@@ -20,12 +20,18 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! A refresh to a data file with other properties or another tier leaves the
-//! engine as an engine built on that file would be.
+//! A refresh, from the file or from memory, to a data file with other
+//! properties or another tier leaves an engine built with no names as an
+//! engine built on that file with the first file's names would be, because
+//! the engine keeps the names of the first data file it loads.
 //!
-//! The test needs the Lite file `51DEGREES_DD_PATH` names and a data file
+//! The test needs the Lite file `_51DEGREES_DD_PATH` names and a data file
 //! with more properties beside it, `Enterprise-HashV41.hash` or
 //! `TAC-HashV41.hash`, and skips with a note when either is missing.
+
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -47,7 +53,7 @@ const RICHER_PROPERTY: &str = "HardwareModel";
 
 /// The Lite file and a file with more properties beside it.
 fn data_files() -> Option<(PathBuf, PathBuf)> {
-    let lite = PathBuf::from(std::env::var("51DEGREES_DD_PATH").ok()?);
+    let lite = PathBuf::from(crate::deprecated_names::var("_51DEGREES_DD_PATH").ok()?);
     let folder = lite.parent()?;
     let richer = ["Enterprise-HashV41.hash", "TAC-HashV41.hash"]
         .into_iter()
@@ -61,6 +67,15 @@ fn data_files() -> Option<(PathBuf, PathBuf)> {
 fn engine(path: &PathBuf) -> Arc<DeviceDetectionOnPremiseEngine> {
     DeviceDetectionOnPremiseEngineBuilder::new(path)
         .performance_profile(PerformanceProfile::InMemory)
+        .build()
+        .expect("the data file loads")
+}
+
+/// [`engine`] built with `names`.
+fn named_engine(path: &PathBuf, names: &[String]) -> Arc<DeviceDetectionOnPremiseEngine> {
+    DeviceDetectionOnPremiseEngineBuilder::new(path)
+        .performance_profile(PerformanceProfile::InMemory)
+        .properties(names.iter().cloned())
         .build()
         .expect("the data file loads")
 }
@@ -87,7 +102,7 @@ fn richer_value(engine: &Arc<DeviceDetectionOnPremiseEngine>) -> Result<String, 
 fn a_refresh_reads_and_reports_the_properties_of_the_new_data_file() {
     let Some((lite, richer)) = data_files() else {
         eprintln!(
-            "skipping the refresh test: set 51DEGREES_DD_PATH to the Lite file, with \
+            "skipping the refresh test: set _51DEGREES_DD_PATH to the Lite file, with \
              Enterprise-HashV41.hash or TAC-HashV41.hash beside it"
         );
         return;
@@ -103,9 +118,10 @@ fn a_refresh_reads_and_reports_the_properties_of_the_new_data_file() {
         richer_value(&refreshed).is_err(),
         "the Lite file carries {RICHER_PROPERTY}"
     );
+    let names = refreshed.data_set().property_names();
     std::fs::copy(&richer, &path).unwrap();
     refreshed.refresh(None).expect("the richer file loads");
-    let built = engine(&path);
+    let built = named_engine(&path, &names);
 
     assert_eq!(refreshed.data_source_tier(), built.data_source_tier());
     assert_eq!(
@@ -113,10 +129,12 @@ fn a_refresh_reads_and_reports_the_properties_of_the_new_data_file() {
         built.available_properties()
     );
     assert_eq!(refreshed.properties(), built.properties());
+    assert_eq!(refreshed.fiftyone_properties(), built.fiftyone_properties());
+    assert_eq!(refreshed.components(), built.components());
     assert_eq!(refreshed.aspect_properties(), built.aspect_properties());
     let value = richer_value(&refreshed);
     assert!(
-        value.is_ok(),
+        value.is_err(),
         "{RICHER_PROPERTY} after the refresh: {value:?}"
     );
     assert_eq!(value, richer_value(&built));
@@ -124,4 +142,58 @@ fn a_refresh_reads_and_reports_the_properties_of_the_new_data_file() {
     drop(refreshed);
     drop(built);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A refresh from memory leaves the engine as an engine built on the file
+/// holding that data with the first file's names would be, with the date that
+/// data was published.
+#[test]
+fn a_refresh_from_memory_reads_and_reports_the_properties_of_the_new_data() {
+    let Some((lite, richer)) = data_files() else {
+        eprintln!(
+            "skipping the refresh from memory test: set _51DEGREES_DD_PATH to the Lite \
+             file, with Enterprise-HashV41.hash or TAC-HashV41.hash beside it"
+        );
+        return;
+    };
+    let refreshed = engine(&lite);
+    assert!(
+        richer_value(&refreshed).is_err(),
+        "the Lite file carries {RICHER_PROPERTY}"
+    );
+    let names = refreshed.data_set().property_names();
+    let data = std::fs::read(&richer).unwrap();
+    refreshed
+        .refresh_from_memory(None, &data)
+        .expect("the richer data loads");
+    drop(data);
+    let built = named_engine(&richer, &names);
+
+    assert_eq!(refreshed.data_source_tier(), built.data_source_tier());
+    assert_eq!(
+        refreshed.available_properties(),
+        built.available_properties()
+    );
+    assert_eq!(refreshed.properties(), built.properties());
+    assert_eq!(refreshed.fiftyone_properties(), built.fiftyone_properties());
+    assert_eq!(refreshed.components(), built.components());
+    assert_eq!(refreshed.aspect_properties(), built.aspect_properties());
+    let value = richer_value(&refreshed);
+    assert!(
+        value.is_err(),
+        "{RICHER_PROPERTY} after the refresh: {value:?}"
+    );
+    assert_eq!(value, richer_value(&built));
+    assert_eq!(
+        refreshed.data_files()[0].data_published(),
+        built.data_files()[0].data_published()
+    );
+    assert_eq!(
+        refreshed.data_files()[0]
+            .update_available_time()
+            .map(|time| time.date_naive()),
+        built.data_files()[0]
+            .update_available_time()
+            .map(|time| time.date_naive())
+    );
 }

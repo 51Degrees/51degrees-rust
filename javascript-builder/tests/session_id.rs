@@ -36,14 +36,53 @@ use std::sync::Arc;
 
 use fiftyone_javascript_builder::{JavaScriptBuilderElement, JAVASCRIPT_BUILDER_DATA_KEY};
 use fiftyone_json_builder::JsonBuilderElement;
-use fiftyone_pipeline_core::{Evidence, Pipeline};
+use fiftyone_pipeline_core::{Evidence, Pipeline, PipelineBuilder};
+use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 
-/// Render the script for the supplied evidence. The pipeline is the JSON
-/// builder and the JavaScript builder, with a host so the callback URL and
-/// the sections that use it are rendered.
+/// Render the script for the supplied evidence. The pipeline is the Sequence
+/// element, the JSON builder and the JavaScript builder, with a host so the
+/// callback URL and the sections that use it are rendered. The Sequence
+/// element keeps a `query.session-id` that is not empty as it is given and
+/// adds one to a `query.sequence` it can read, and the JavaScript builder
+/// reads both from its data.
 fn render(evidence: &[(&str, &str)]) -> String {
-    let pipeline = Pipeline::builder()
-        .add_element(Arc::new(JsonBuilderElement::new()))
+    render_on(
+        Pipeline::builder().add_element(Arc::new(SequenceElement::new())),
+        evidence,
+    )
+}
+
+/// Render the script for the supplied evidence with errors suppressed, so a
+/// sequence the Sequence element cannot read still gives a script.
+fn render_suppressed(evidence: &[(&str, &str)]) -> String {
+    render_on(
+        Pipeline::builder()
+            .suppress_process_exceptions(true)
+            .add_element(Arc::new(SequenceElement::new())),
+        evidence,
+    )
+}
+
+/// Render the script for the supplied evidence with no Sequence element. The
+/// JSON builder fails without one, so errors are suppressed, as these tests
+/// look only at the JavaScript builder's script.
+fn render_without_sequence(evidence: &[(&str, &str)]) -> String {
+    render_on(
+        Pipeline::builder().suppress_process_exceptions(true),
+        evidence,
+    )
+}
+
+/// Render on the supplied start of a pipeline. The JSON builder leaves the
+/// Sequence element's data out, so the session id reaches the script only
+/// through the JavaScript builder.
+fn render_on(builder: PipelineBuilder, evidence: &[(&str, &str)]) -> String {
+    let pipeline = builder
+        .add_element(Arc::new(
+            JsonBuilderElement::builder()
+                .exclude_element(SequenceElement::DEFAULT_ELEMENT_DATA_KEY)
+                .build(),
+        ))
         .add_element(Arc::new(
             JavaScriptBuilderElement::builder()
                 .set_minify(false)
@@ -56,7 +95,7 @@ fn render(evidence: &[(&str, &str)]) -> String {
         ev = ev.add(*key, *value);
     }
     let mut data = pipeline.create_flow_data_with(ev.build());
-    data.process().expect("processing succeeds");
+    data.process().expect("the pipeline processes");
     data.get(JAVASCRIPT_BUILDER_DATA_KEY)
         .expect("javascript builder data present")
         .javascript()
@@ -137,12 +176,11 @@ fn longest_session_id_is_rendered() {
 fn unsafe_session_id_is_rendered_empty() {
     // The template's own text holds "a b" and "ab", so for those two only the
     // rendered session id is read.
-    let cases: [(&str, bool); 7] = [
+    let cases: [(&str, bool); 6] = [
         ("a\"b", true),
         ("a\\b", true),
         ("</script>", true),
         ("caf\u{e9}", true),
-        ("", false),
         ("a b", false),
         ("ab\n", false),
     ];
@@ -155,7 +193,7 @@ fn unsafe_session_id_is_rendered_empty() {
             ["var sessionId = \"\";"],
             "{value:?} reached the script"
         );
-        if check_text && !value.is_empty() {
+        if check_text {
             assert!(!script.contains(value), "{value:?} reached the script");
         }
         assert_parses(&script);
@@ -164,7 +202,19 @@ fn unsafe_session_id_is_rendered_empty() {
 
 #[test]
 fn no_session_id_is_rendered_empty() {
-    let script = render(&[]);
+    let script = render_without_sequence(&[]);
+
+    assert_eq!(lines(&script, "sessionId"), ["var sessionId = \"\";"]);
+    assert_eq!(lines(&script, "sequence"), ["var sequence = 1;"]);
+    assert_parses(&script);
+}
+
+#[test]
+fn without_a_sequence_element_the_evidence_is_not_rendered() {
+    // The specification renders an empty session id and a sequence of 1
+    // when there is no Sequence element, whatever the evidence holds.
+    let script =
+        render_without_sequence(&[("query.session-id", "abc-123"), ("query.sequence", "4")]);
 
     assert_eq!(lines(&script, "sessionId"), ["var sessionId = \"\";"]);
     assert_eq!(lines(&script, "sequence"), ["var sequence = 1;"]);
@@ -173,17 +223,22 @@ fn no_session_id_is_rendered_empty() {
 
 #[test]
 fn unusable_sequence_is_rendered_as_one() {
+    // The Sequence element reads only the digits 0 to 9 from 0 up to
+    // 2,147,483,646, and gives 1 for anything else, as it does for "0".
     for value in [
-        "abc",
         "-1",
-        "0",
+        "-5",
+        "2147483647",
         "99999999999",
+        "abc",
+        "0",
         "",
         "1;b",
         "1.5",
         "2147483648",
+        " 7 ",
     ] {
-        let script = render(&[("query.session-id", "abc"), ("query.sequence", value)]);
+        let script = render_suppressed(&[("query.session-id", "abc"), ("query.sequence", value)]);
 
         assert_eq!(
             lines(&script, "sequence"),
@@ -196,7 +251,8 @@ fn unusable_sequence_is_rendered_as_one() {
 
 #[test]
 fn usable_sequence_is_rendered() {
-    for (value, expected) in [("7", 7), (" 7 ", 7), ("2147483647", 2147483647)] {
+    // The Sequence element adds one to the sequence the request carried.
+    for (value, expected) in [("7", 8), ("2147483646", 2147483647)] {
         let script = render(&[("query.session-id", "abc"), ("query.sequence", value)]);
 
         assert_eq!(

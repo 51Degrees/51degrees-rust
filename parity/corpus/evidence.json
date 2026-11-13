@@ -1,0 +1,1544 @@
+[
+  {
+    "id": "no-evidence",
+    "about": "No evidence at all, so the session id is generated.",
+    "evidence": {}
+  },
+  {
+    "id": "ua-chrome-windows",
+    "about": "Chrome on Windows.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "query.session-id": "parity-ua-chrome-windows"
+    }
+  },
+  {
+    "id": "ua-safari-macos",
+    "about": "Safari on macOS.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15",
+      "query.session-id": "parity-ua-safari-macos"
+    }
+  },
+  {
+    "id": "ua-firefox-linux",
+    "about": "Firefox on Linux.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0",
+      "query.session-id": "parity-ua-firefox-linux"
+    }
+  },
+  {
+    "id": "ua-edge-windows",
+    "about": "Edge on Windows.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
+      "query.session-id": "parity-ua-edge-windows"
+    }
+  },
+  {
+    "id": "ua-iphone",
+    "about": "Safari on an iPhone.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.session-id": "parity-ua-iphone"
+    }
+  },
+  {
+    "id": "ua-ipad",
+    "about": "Safari on an iPad.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPad; CPU OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.session-id": "parity-ua-ipad"
+    }
+  },
+  {
+    "id": "ua-android-reduced",
+    "about": "Chrome on Android with the reduced User-Agent.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+      "query.session-id": "parity-ua-android-reduced"
+    }
+  },
+  {
+    "id": "ua-samsung",
+    "about": "Samsung Internet on a Galaxy S23.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
+      "query.session-id": "parity-ua-samsung"
+    }
+  },
+  {
+    "id": "ua-googlebot",
+    "about": "A crawler.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+      "query.session-id": "parity-ua-googlebot"
+    }
+  },
+  {
+    "id": "ua-curl",
+    "about": "A command line client.",
+    "evidence": {
+      "header.user-agent": "curl/8.5.0",
+      "query.session-id": "parity-ua-curl"
+    }
+  },
+  {
+    "id": "ua-empty",
+    "about": "An empty User-Agent.",
+    "evidence": {
+      "header.user-agent": "",
+      "query.session-id": "parity-ua-empty"
+    }
+  },
+  {
+    "id": "ua-not-a-user-agent",
+    "about": "Text that is not a User-Agent.",
+    "evidence": {
+      "header.user-agent": "not a user agent",
+      "query.session-id": "parity-ua-not-a-user-agent"
+    }
+  },
+  {
+    "id": "ua-non-ascii",
+    "about": "A User-Agent holding characters outside ASCII.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0) éà 中文",
+      "query.session-id": "parity-ua-non-ascii"
+    }
+  },
+  {
+    "id": "ua-long",
+    "about": "A User-Agent of 2,000 characters.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "query.session-id": "parity-ua-long"
+    }
+  },
+  {
+    "id": "ua-query",
+    "about": "The User-Agent in the query string.",
+    "evidence": {
+      "query.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.session-id": "parity-ua-query"
+    }
+  },
+  {
+    "id": "ua-header-case",
+    "about": "The header name in mixed case.",
+    "evidence": {
+      "header.User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.session-id": "parity-ua-header-case"
+    }
+  },
+  {
+    "id": "ua-header-and-query",
+    "about": "Different User-Agents in the header and the query string.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "query.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.session-id": "parity-ua-header-and-query"
+    }
+  },
+  {
+    "id": "uach-windows-header",
+    "about": "Chrome on Windows with every client hint as headers.",
+    "evidence": {
+      "header.sec-ch-ua": "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+      "header.sec-ch-ua-mobile": "?0",
+      "header.sec-ch-ua-platform": "\"Windows\"",
+      "header.sec-ch-ua-platform-version": "\"15.0.0\"",
+      "header.sec-ch-ua-full-version-list": "\"Google Chrome\";v=\"131.0.6778.86\", \"Chromium\";v=\"131.0.6778.86\", \"Not_A Brand\";v=\"24.0.0.0\"",
+      "header.sec-ch-ua-arch": "\"x86\"",
+      "header.sec-ch-ua-bitness": "\"64\"",
+      "header.sec-ch-ua-model": "\"\"",
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "query.session-id": "parity-uach-windows-header"
+    }
+  },
+  {
+    "id": "uach-windows-query",
+    "about": "Chrome on Windows with every client hint in the query string.",
+    "evidence": {
+      "query.sec-ch-ua": "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+      "query.sec-ch-ua-mobile": "?0",
+      "query.sec-ch-ua-platform": "\"Windows\"",
+      "query.sec-ch-ua-platform-version": "\"15.0.0\"",
+      "query.sec-ch-ua-full-version-list": "\"Google Chrome\";v=\"131.0.6778.86\", \"Chromium\";v=\"131.0.6778.86\", \"Not_A Brand\";v=\"24.0.0.0\"",
+      "query.sec-ch-ua-arch": "\"x86\"",
+      "query.sec-ch-ua-bitness": "\"64\"",
+      "query.sec-ch-ua-model": "\"\"",
+      "query.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "query.session-id": "parity-uach-windows-query"
+    }
+  },
+  {
+    "id": "uach-android-header",
+    "about": "Chrome on Android with the model as headers.",
+    "evidence": {
+      "header.sec-ch-ua": "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+      "header.sec-ch-ua-mobile": "?1",
+      "header.sec-ch-ua-platform": "\"Android\"",
+      "header.sec-ch-ua-platform-version": "\"13.0.0\"",
+      "header.sec-ch-ua-full-version-list": "\"Google Chrome\";v=\"131.0.6778.81\", \"Chromium\";v=\"131.0.6778.81\", \"Not_A Brand\";v=\"24.0.0.0\"",
+      "header.sec-ch-ua-model": "\"SM-S911B\"",
+      "header.user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+      "query.session-id": "parity-uach-android-header"
+    }
+  },
+  {
+    "id": "uach-android-query",
+    "about": "Chrome on Android with the model in the query string.",
+    "evidence": {
+      "query.sec-ch-ua": "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+      "query.sec-ch-ua-mobile": "?1",
+      "query.sec-ch-ua-platform": "\"Android\"",
+      "query.sec-ch-ua-platform-version": "\"13.0.0\"",
+      "query.sec-ch-ua-full-version-list": "\"Google Chrome\";v=\"131.0.6778.81\", \"Chromium\";v=\"131.0.6778.81\", \"Not_A Brand\";v=\"24.0.0.0\"",
+      "query.sec-ch-ua-model": "\"SM-S911B\"",
+      "query.user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+      "query.session-id": "parity-uach-android-query"
+    }
+  },
+  {
+    "id": "uach-android-no-ua",
+    "about": "Client hints with no User-Agent.",
+    "evidence": {
+      "header.sec-ch-ua": "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+      "header.sec-ch-ua-mobile": "?1",
+      "header.sec-ch-ua-platform": "\"Android\"",
+      "header.sec-ch-ua-platform-version": "\"13.0.0\"",
+      "header.sec-ch-ua-full-version-list": "\"Google Chrome\";v=\"131.0.6778.81\", \"Chromium\";v=\"131.0.6778.81\", \"Not_A Brand\";v=\"24.0.0.0\"",
+      "header.sec-ch-ua-model": "\"SM-S911B\"",
+      "query.session-id": "parity-uach-android-no-ua"
+    }
+  },
+  {
+    "id": "uach-mixed",
+    "about": "The low entropy hints as headers and the high entropy ones in the query.",
+    "evidence": {
+      "header.sec-ch-ua": "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+      "header.sec-ch-ua-mobile": "?1",
+      "header.sec-ch-ua-platform": "\"Android\"",
+      "header.user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+      "query.sec-ch-ua-platform-version": "\"13.0.0\"",
+      "query.sec-ch-ua-full-version-list": "\"Google Chrome\";v=\"131.0.6778.81\", \"Chromium\";v=\"131.0.6778.81\", \"Not_A Brand\";v=\"24.0.0.0\"",
+      "query.sec-ch-ua-model": "\"SM-S911B\"",
+      "query.session-id": "parity-uach-mixed"
+    }
+  },
+  {
+    "id": "uach-ghev-query",
+    "about": "The high entropy values of Chrome on macOS as a base 64 query value, with the User-Agent as a header.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "query.51D_GetHighEntropyValues": "eyJhcmNoaXRlY3R1cmUiOiJhcm0iLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMxIn0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lvbkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJDaHJvbWl1bSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJOb3RfQSBCcmFuZCIsInZlcnNpb24iOiIyNC4wLjAuMCJ9XSwibW9iaWxlIjpmYWxzZSwibW9kZWwiOiIiLCJwbGF0Zm9ybSI6Im1hY09TIiwicGxhdGZvcm1WZXJzaW9uIjoiMTUuMS4xIn0=",
+      "query.session-id": "parity-uach-ghev-query"
+    }
+  },
+  {
+    "id": "uach-ghev-cookie",
+    "about": "The high entropy values of Chrome on macOS as a base 64 cookie, with the User-Agent as a header.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "cookie.51D_GetHighEntropyValues": "eyJhcmNoaXRlY3R1cmUiOiJhcm0iLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMxIn0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lvbkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJDaHJvbWl1bSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJOb3RfQSBCcmFuZCIsInZlcnNpb24iOiIyNC4wLjAuMCJ9XSwibW9iaWxlIjpmYWxzZSwibW9kZWwiOiIiLCJwbGF0Zm9ybSI6Im1hY09TIiwicGxhdGZvcm1WZXJzaW9uIjoiMTUuMS4xIn0=",
+      "query.session-id": "parity-uach-ghev-cookie"
+    }
+  },
+  {
+    "id": "uach-ghev-query-then-cookie",
+    "about": "The macOS values in the query string, then the Android values in a cookie, with no User-Agent.",
+    "evidence": {
+      "query.51D_GetHighEntropyValues": "eyJhcmNoaXRlY3R1cmUiOiJhcm0iLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMxIn0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lvbkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJDaHJvbWl1bSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJOb3RfQSBCcmFuZCIsInZlcnNpb24iOiIyNC4wLjAuMCJ9XSwibW9iaWxlIjpmYWxzZSwibW9kZWwiOiIiLCJwbGF0Zm9ybSI6Im1hY09TIiwicGxhdGZvcm1WZXJzaW9uIjoiMTUuMS4xIn0=",
+      "cookie.51D_GetHighEntropyValues": "eyJhcmNoaXRlY3R1cmUiOiIiLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMxIn0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lvbkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjgxIn0seyJicmFuZCI6IkNocm9taXVtIiwidmVyc2lvbiI6IjEzMS4wLjY3NzguODEifSx7ImJyYW5kIjoiTm90X0EgQnJhbmQiLCJ2ZXJzaW9uIjoiMjQuMC4wLjAifV0sIm1vYmlsZSI6dHJ1ZSwibW9kZWwiOiJTTS1TOTExQiIsInBsYXRmb3JtIjoiQW5kcm9pZCIsInBsYXRmb3JtVmVyc2lvbiI6IjEzLjAuMCJ9",
+      "query.session-id": "parity-uach-ghev-query-then-cookie"
+    }
+  },
+  {
+    "id": "uach-ghev-cookie-then-query",
+    "about": "The Android values in a cookie, then the macOS values in the query string, with no User-Agent.",
+    "evidence": {
+      "cookie.51D_GetHighEntropyValues": "eyJhcmNoaXRlY3R1cmUiOiIiLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMxIn0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lvbkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjgxIn0seyJicmFuZCI6IkNocm9taXVtIiwidmVyc2lvbiI6IjEzMS4wLjY3NzguODEifSx7ImJyYW5kIjoiTm90X0EgQnJhbmQiLCJ2ZXJzaW9uIjoiMjQuMC4wLjAifV0sIm1vYmlsZSI6dHJ1ZSwibW9kZWwiOiJTTS1TOTExQiIsInBsYXRmb3JtIjoiQW5kcm9pZCIsInBsYXRmb3JtVmVyc2lvbiI6IjEzLjAuMCJ9",
+      "query.51D_GetHighEntropyValues": "eyJhcmNoaXRlY3R1cmUiOiJhcm0iLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMxIn0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lvbkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJDaHJvbWl1bSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJOb3RfQSBCcmFuZCIsInZlcnNpb24iOiIyNC4wLjAuMCJ9XSwibW9iaWxlIjpmYWxzZSwibW9kZWwiOiIiLCJwbGF0Zm9ybSI6Im1hY09TIiwicGxhdGZvcm1WZXJzaW9uIjoiMTUuMS4xIn0=",
+      "query.session-id": "parity-uach-ghev-cookie-then-query"
+    }
+  },
+  {
+    "id": "uach-ghev-over-headers",
+    "about": "Chrome on Windows with every client hint as headers, and the Android values as a base 64 query value.",
+    "evidence": {
+      "header.sec-ch-ua": "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+      "header.sec-ch-ua-mobile": "?0",
+      "header.sec-ch-ua-platform": "\"Windows\"",
+      "header.sec-ch-ua-platform-version": "\"15.0.0\"",
+      "header.sec-ch-ua-full-version-list": "\"Google Chrome\";v=\"131.0.6778.86\", \"Chromium\";v=\"131.0.6778.86\", \"Not_A Brand\";v=\"24.0.0.0\"",
+      "header.sec-ch-ua-arch": "\"x86\"",
+      "header.sec-ch-ua-bitness": "\"64\"",
+      "header.sec-ch-ua-model": "\"\"",
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "query.51D_GetHighEntropyValues": "eyJhcmNoaXRlY3R1cmUiOiIiLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMxIn0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lvbkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjgxIn0seyJicmFuZCI6IkNocm9taXVtIiwidmVyc2lvbiI6IjEzMS4wLjY3NzguODEifSx7ImJyYW5kIjoiTm90X0EgQnJhbmQiLCJ2ZXJzaW9uIjoiMjQuMC4wLjAifV0sIm1vYmlsZSI6dHJ1ZSwibW9kZWwiOiJTTS1TOTExQiIsInBsYXRmb3JtIjoiQW5kcm9pZCIsInBsYXRmb3JtVmVyc2lvbiI6IjEzLjAuMCJ9",
+      "query.session-id": "parity-uach-ghev-over-headers"
+    }
+  },
+  {
+    "id": "uach-ghev-query-ua",
+    "about": "The User-Agent and the macOS values both in the query string.",
+    "evidence": {
+      "query.user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "query.51D_GetHighEntropyValues": "eyJhcmNoaXRlY3R1cmUiOiJhcm0iLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMxIn0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lvbkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJDaHJvbWl1bSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjE0MCJ9LHsiYnJhbmQiOiJOb3RfQSBCcmFuZCIsInZlcnNpb24iOiIyNC4wLjAuMCJ9XSwibW9iaWxlIjpmYWxzZSwibW9kZWwiOiIiLCJwbGF0Zm9ybSI6Im1hY09TIiwicGxhdGZvcm1WZXJzaW9uIjoiMTUuMS4xIn0=",
+      "query.session-id": "parity-uach-ghev-query-ua"
+    }
+  },
+  {
+    "id": "uach-ghev-no-ua",
+    "about": "The Android values as a base 64 query value, with no User-Agent.",
+    "evidence": {
+      "query.51D_GetHighEntropyValues": "eyJhcmNoaXRlY3R1cmUiOiIiLCJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEifSx7ImJyYW5kIjoiQ2hyb21pdW0iLCJ2ZXJzaW9uIjoiMTMxIn0seyJicmFuZCI6Ik5vdF9BIEJyYW5kIiwidmVyc2lvbiI6IjI0In1dLCJmdWxsVmVyc2lvbkxpc3QiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24iOiIxMzEuMC42Nzc4LjgxIn0seyJicmFuZCI6IkNocm9taXVtIiwidmVyc2lvbiI6IjEzMS4wLjY3NzguODEifSx7ImJyYW5kIjoiTm90X0EgQnJhbmQiLCJ2ZXJzaW9uIjoiMjQuMC4wLjAifV0sIm1vYmlsZSI6dHJ1ZSwibW9kZWwiOiJTTS1TOTExQiIsInBsYXRmb3JtIjoiQW5kcm9pZCIsInBsYXRmb3JtVmVyc2lvbiI6IjEzLjAuMCJ9",
+      "query.session-id": "parity-uach-ghev-no-ua"
+    }
+  },
+  {
+    "id": "uach-ghev-invalid",
+    "about": "A high entropy values query value that is not base 64, with the User-Agent as a header.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "query.51D_GetHighEntropyValues": "This is not base 64!",
+      "query.session-id": "parity-uach-ghev-invalid"
+    }
+  },
+  {
+    "id": "screen-pixels-width",
+    "about": "An iPhone with the screen width from the client.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.51D_ScreenPixelsWidth": "1170",
+      "query.session-id": "parity-screen-pixels-width"
+    }
+  },
+  {
+    "id": "ip-v4-gb",
+    "about": "An IPv4 address in Great Britain.",
+    "evidence": {
+      "server.client-ip": "185.28.167.77",
+      "query.session-id": "parity-ip-v4-gb"
+    }
+  },
+  {
+    "id": "ip-v4-81",
+    "about": "An IPv4 address in Great Britain.",
+    "evidence": {
+      "server.client-ip": "81.2.69.142",
+      "query.session-id": "parity-ip-v4-81"
+    }
+  },
+  {
+    "id": "ip-v4-ng",
+    "about": "An IPv4 address in Nigeria.",
+    "evidence": {
+      "server.client-ip": "102.89.32.1",
+      "query.session-id": "parity-ip-v4-ng"
+    }
+  },
+  {
+    "id": "ip-v4-1111",
+    "about": "A public resolver.",
+    "evidence": {
+      "server.client-ip": "1.1.1.1",
+      "query.session-id": "parity-ip-v4-1111"
+    }
+  },
+  {
+    "id": "ip-v4-8888",
+    "about": "A public resolver.",
+    "evidence": {
+      "server.client-ip": "8.8.8.8",
+      "query.session-id": "parity-ip-v4-8888"
+    }
+  },
+  {
+    "id": "ip-v6-gb",
+    "about": "An IPv6 address in Great Britain.",
+    "evidence": {
+      "server.client-ip": "2a00:23c5:a1a6:a01::1",
+      "query.session-id": "parity-ip-v6-gb"
+    }
+  },
+  {
+    "id": "ip-v6-resolver",
+    "about": "A public resolver.",
+    "evidence": {
+      "server.client-ip": "2001:4860:4860::8888",
+      "query.session-id": "parity-ip-v6-resolver"
+    }
+  },
+  {
+    "id": "ip-v6-mapped",
+    "about": "An IPv4 address mapped into IPv6.",
+    "evidence": {
+      "server.client-ip": "::ffff:1.1.1.1",
+      "query.session-id": "parity-ip-v6-mapped"
+    }
+  },
+  {
+    "id": "ip-v6-bracketed",
+    "about": "An IPv6 address in brackets.",
+    "evidence": {
+      "server.client-ip": "[2a00:23c5:a1a6:a01::1]",
+      "query.session-id": "parity-ip-v6-bracketed"
+    }
+  },
+  {
+    "id": "ip-v6-compatible",
+    "about": "An IPv4-compatible IPv6 address, which .NET writes with the IPv4 address in dotted form.",
+    "evidence": {
+      "server.client-ip": "::8.8.8.8",
+      "query.session-id": "parity-ip-v6-compatible"
+    }
+  },
+  {
+    "id": "ip-v6-translated",
+    "about": "An IPv4-translated IPv6 address, which .NET writes with the IPv4 address in dotted form.",
+    "evidence": {
+      "server.client-ip": "::ffff:0:8.8.8.8",
+      "query.session-id": "parity-ip-v6-translated"
+    }
+  },
+  {
+    "id": "ip-v6-isatap",
+    "about": "An ISATAP IPv6 address, which .NET writes with the IPv4 address in dotted form.",
+    "evidence": {
+      "server.client-ip": "fe80::5efe:808:808",
+      "query.session-id": "parity-ip-v6-isatap"
+    }
+  },
+  {
+    "id": "ip-v4-loopback",
+    "about": "The IPv4 loopback address.",
+    "evidence": {
+      "server.client-ip": "127.0.0.1",
+      "query.session-id": "parity-ip-v4-loopback"
+    }
+  },
+  {
+    "id": "ip-v6-loopback",
+    "about": "The IPv6 loopback address.",
+    "evidence": {
+      "server.client-ip": "::1",
+      "query.session-id": "parity-ip-v6-loopback"
+    }
+  },
+  {
+    "id": "ip-v4-private-10",
+    "about": "A private IPv4 address.",
+    "evidence": {
+      "server.client-ip": "10.0.0.1",
+      "query.session-id": "parity-ip-v4-private-10"
+    }
+  },
+  {
+    "id": "ip-v4-private-192",
+    "about": "A private IPv4 address.",
+    "evidence": {
+      "server.client-ip": "192.168.1.1",
+      "query.session-id": "parity-ip-v4-private-192"
+    }
+  },
+  {
+    "id": "ip-v4-zero",
+    "about": "The unspecified IPv4 address.",
+    "evidence": {
+      "server.client-ip": "0.0.0.0",
+      "query.session-id": "parity-ip-v4-zero"
+    }
+  },
+  {
+    "id": "ip-v4-broadcast",
+    "about": "The IPv4 broadcast address.",
+    "evidence": {
+      "server.client-ip": "255.255.255.255",
+      "query.session-id": "parity-ip-v4-broadcast"
+    }
+  },
+  {
+    "id": "ip-not-an-address",
+    "about": "Text that is not an address.",
+    "evidence": {
+      "server.client-ip": "not-an-ip",
+      "query.session-id": "parity-ip-not-an-address"
+    }
+  },
+  {
+    "id": "ip-empty",
+    "about": "An empty address.",
+    "evidence": {
+      "server.client-ip": "",
+      "query.session-id": "parity-ip-empty"
+    }
+  },
+  {
+    "id": "ip-query",
+    "about": "The address in the query string.",
+    "evidence": {
+      "query.client-ip-51d": "81.2.69.142",
+      "query.session-id": "parity-ip-query"
+    }
+  },
+  {
+    "id": "ip-query-and-server",
+    "about": "Different addresses in the query string and the connection.",
+    "evidence": {
+      "server.client-ip": "1.1.1.1",
+      "query.client-ip-51d": "81.2.69.142",
+      "query.session-id": "parity-ip-query-and-server"
+    }
+  },
+  {
+    "id": "ip-blank",
+    "about": "A blank address, which counts as no address supplied.",
+    "evidence": {
+      "server.client-ip": " ",
+      "query.session-id": "parity-ip-blank"
+    }
+  },
+  {
+    "id": "ip-query-not-an-address",
+    "about": "Text that is not an address in the query string, with an address from the connection.",
+    "evidence": {
+      "server.client-ip": "1.1.1.1",
+      "query.client-ip-51d": "not-an-ip",
+      "query.session-id": "parity-ip-query-not-an-address"
+    }
+  },
+  {
+    "id": "ip-query-v6-and-server-v4",
+    "about": "An IPv6 address in the query string and an IPv4 address from the connection.",
+    "evidence": {
+      "server.client-ip": "1.1.1.1",
+      "query.client-ip-51d": "2a00:23c5:a1a6:a01::1",
+      "query.session-id": "parity-ip-query-v6-and-server-v4"
+    }
+  },
+  {
+    "id": "ip-v4-port",
+    "about": "An IPv4 address with a port.",
+    "evidence": {
+      "server.client-ip": "1.1.1.1:443",
+      "query.session-id": "parity-ip-v4-port"
+    }
+  },
+  {
+    "id": "ip-v6-bracketed-port",
+    "about": "An IPv6 address in brackets with a port.",
+    "evidence": {
+      "server.client-ip": "[2606:4700:4700::1111]:443",
+      "query.session-id": "parity-ip-v6-bracketed-port"
+    }
+  },
+  {
+    "id": "ip-forwarded-list",
+    "about": "A forwarded list, which is not one address, so no part of it is read.",
+    "evidence": {
+      "server.client-ip": "1.1.1.1, 10.0.0.1",
+      "query.session-id": "parity-ip-forwarded-list"
+    }
+  },
+  {
+    "id": "ip-v6-well-known-prefix",
+    "about": "An IPv6 address holding an IPv4 address under the RFC 6052 prefix 64:ff9b::/96, which is looked up as IPv6 and written in hexadecimal.",
+    "evidence": {
+      "server.client-ip": "64:ff9b::8.8.8.8",
+      "query.session-id": "parity-ip-v6-well-known-prefix"
+    }
+  },
+  {
+    "id": "ip-v6-zone",
+    "about": "An IPv6 address with a zone index, which is not read.",
+    "evidence": {
+      "server.client-ip": "fe80::1%1",
+      "query.session-id": "parity-ip-v6-zone"
+    }
+  },
+  {
+    "id": "ip-v4-number",
+    "about": "An IPv4 address written as one number, which is not read as an address.",
+    "evidence": {
+      "server.client-ip": "3232235521",
+      "query.session-id": "parity-ip-v4-number"
+    }
+  },
+  {
+    "id": "ip-v4-three-parts",
+    "about": "An IPv4 address with three parts, which is not read as an address.",
+    "evidence": {
+      "server.client-ip": "1.2.3",
+      "query.session-id": "parity-ip-v4-three-parts"
+    }
+  },
+  {
+    "id": "ip-v4-leading-zero",
+    "about": "An IPv4 address with a leading zero in one part, which is not read as an address.",
+    "evidence": {
+      "server.client-ip": "012.1.2.3",
+      "query.session-id": "parity-ip-v4-leading-zero"
+    }
+  },
+  {
+    "id": "ua-and-ip",
+    "about": "A User-Agent and an address together.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
+      "server.client-ip": "102.89.32.1",
+      "query.session-id": "parity-ua-and-ip"
+    }
+  },
+  {
+    "id": "sequence-absent",
+    "about": "A session id with no sequence.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.session-id": "parity-sequence-absent"
+    }
+  },
+  {
+    "id": "sequence-5",
+    "about": "Sequence 5.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "5",
+      "query.session-id": "parity-sequence-5"
+    }
+  },
+  {
+    "id": "sequence-9",
+    "about": "Sequence 9, the last that still runs JavaScript properties.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "9",
+      "query.session-id": "parity-sequence-9"
+    }
+  },
+  {
+    "id": "sequence-10",
+    "about": "Sequence 10, where JavaScript properties stop.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "10",
+      "query.session-id": "parity-sequence-10"
+    }
+  },
+  {
+    "id": "sequence-int-max",
+    "about": "The largest 32-bit integer.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "2147483647",
+      "query.session-id": "parity-sequence-int-max"
+    }
+  },
+  {
+    "id": "sequence-over-int",
+    "about": "Larger than a 32-bit integer.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "3000000000",
+      "query.session-id": "parity-sequence-over-int"
+    }
+  },
+  {
+    "id": "sequence-text",
+    "about": "Not a number.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "abc",
+      "query.session-id": "parity-sequence-text"
+    }
+  },
+  {
+    "id": "sequence-space",
+    "about": "A number after a space.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": " 5",
+      "query.session-id": "parity-sequence-space"
+    }
+  },
+  {
+    "id": "sequence-plus",
+    "about": "A number with a plus sign.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "+5",
+      "query.session-id": "parity-sequence-plus"
+    }
+  },
+  {
+    "id": "sequence-nul",
+    "about": "A number followed by a NUL character.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "5\u0000",
+      "query.session-id": "parity-sequence-nul"
+    }
+  },
+  {
+    "id": "sequence-int-min",
+    "about": "The smallest 32-bit integer.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "-2147483648",
+      "query.session-id": "parity-sequence-int-min"
+    }
+  },
+  {
+    "id": "sequence-empty",
+    "about": "An empty sequence.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "",
+      "query.session-id": "parity-sequence-empty"
+    }
+  },
+  {
+    "id": "sequence-decimal",
+    "about": "A number with a decimal point.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.sequence": "1.5",
+      "query.session-id": "parity-sequence-decimal"
+    }
+  },
+  {
+    "id": "session-generated",
+    "about": "A User-Agent with no session id, so one is generated.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1"
+    }
+  },
+  {
+    "id": "javascript-host",
+    "about": "A host and protocol for the callback URL.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.session-id": "abc-123",
+      "query.sequence": "1",
+      "header.host": "example.com",
+      "header.protocol": "https"
+    }
+  },
+  {
+    "id": "javascript-object-name",
+    "about": "An object name the builder accepts.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.fod-js-object-name": "myObject",
+      "query.session-id": "parity-javascript-object-name"
+    }
+  },
+  {
+    "id": "javascript-object-name-unsafe",
+    "about": "An object name that is not a safe identifier.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.fod-js-object-name": "bad name;alert(1)",
+      "query.session-id": "parity-javascript-object-name-unsafe"
+    }
+  },
+  {
+    "id": "javascript-cookies-on",
+    "about": "Cookies turned on for one request.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "query.fod-js-enable-cookies": "true",
+      "query.session-id": "parity-javascript-cookies-on"
+    }
+  },
+  {
+    "id": "usage-evidence",
+    "about": "Headers in mixed case, a blocked header, a 51D_ cookie and another cookie, query parameters on and off the shared list, and no session id, so the record carries a generated one.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "header.Accept-Language": "en-GB,en;q=0.9",
+      "header.Referer": "https://example.com/page",
+      "cookie.51D_ProfileIds": "12280-17779-17470-18092",
+      "cookie.other": "value",
+      "query.51D_ScreenPixelsWidth": "1920",
+      "query.utm_source": "parity",
+      "query.utm_medium": "corpus",
+      "server.client-ip": "81.2.69.142"
+    }
+  },
+  {
+    "id": "usage-value-replaced-and-cut",
+    "about": "A header value of 10,001 characters holding characters to escape, one to replace and a CDATA end. The crates cut it at 10,000 code points and mark the entry escaped and truncated, as the Processing section of the usage sharing specification asks, where .NET puts a prefix before the value and adds BadSchema to the record.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "header.X-Long": "é中\u0001<&]]>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "server.client-ip": "81.2.69.142",
+      "query.session-id": "parity-usage-value-replaced-and-cut"
+    }
+  },
+  {
+    "id": "usage-health-check",
+    "about": "The pair usage sharing ignores, with the key in another case, so no record is written.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "header.X-Health-Check": "true",
+      "server.client-ip": "81.2.69.142",
+      "query.session-id": "parity-usage-health-check"
+    }
+  },
+  {
+    "id": "usage-health-check-other-value",
+    "about": "The key usage sharing ignores with its value in another case, which is shared, because values must match exactly.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "header.X-Health-Check": "TRUE",
+      "server.client-ip": "81.2.69.142",
+      "query.session-id": "parity-usage-health-check-other-value"
+    }
+  },
+  {
+    "id": "usage-never-shared",
+    "about": "The keys usage sharing never shares, in mixed case, as the whole key and after a prefix, a session value starting 51D_, which is shared, one that does not, which is not, and a header whose name ends in .Email, which is shared because only id.email after a dot is never shared.",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "Server.Request-Path": "/articles/never-shared",
+      "server.REQUEST-QUERY": "a=1&b=2",
+      "query.ID.Email": "someone@example.com",
+      "Id.Salt": "salt",
+      "request-path": "/bare",
+      "session.51D_Seen": "1",
+      "session.other": "value",
+      "header.X-Valid.Email": "shared",
+      "server.client-ip": "81.2.69.142",
+      "query.session-id": "parity-usage-never-shared"
+    }
+  },
+  {
+    "id": "json-values-sequence-8",
+    "about": "The values pipeline with sequence 8, so the JSON builder sees 9, the last sequence that lists JavaScript properties.",
+    "pipeline": "values",
+    "evidence": {
+      "query.session-id": "parity-json-values-sequence-8",
+      "query.sequence": "8"
+    }
+  },
+  {
+    "id": "json-values-sequence-9",
+    "about": "The values pipeline with sequence 9, so the JSON builder sees 10, where JavaScript properties stop.",
+    "pipeline": "values",
+    "evidence": {
+      "query.session-id": "parity-json-values-sequence-9",
+      "query.sequence": "9"
+    }
+  },
+  {
+    "id": "json-values-sequence-10",
+    "about": "The values pipeline with sequence 10, so the JSON builder sees 11.",
+    "pipeline": "values",
+    "evidence": {
+      "query.session-id": "parity-json-values-sequence-10",
+      "query.sequence": "10"
+    }
+  },
+  {
+    "id": "json-values-sequence-absent",
+    "about": "The values pipeline with no sequence, so the JSON builder sees 1.",
+    "pipeline": "values",
+    "evidence": {
+      "query.session-id": "parity-json-values-sequence-absent"
+    }
+  },
+  {
+    "id": "values-promise-full",
+    "about": "The values pipeline with session id abc-123, sequence 2, host example.com, https and Promise Full, so promises are on.",
+    "pipeline": "values",
+    "evidence": {
+      "query.session-id": "abc-123",
+      "query.sequence": "1",
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "header.values-promise": "Full"
+    }
+  },
+  {
+    "id": "values-promise-none",
+    "about": "The values pipeline straight after values-promise-full with the same evidence apart from Promise, which has no value, so promises are off.",
+    "pipeline": "values",
+    "evidence": {
+      "query.session-id": "abc-123",
+      "query.sequence": "1",
+      "header.host": "example.com",
+      "header.protocol": "https"
+    }
+  },
+  {
+    "id": "values-promise-full-again",
+    "about": "The values pipeline straight after values-promise-none with Promise Full again, so promises are on again, the builder having decided for each request.",
+    "pipeline": "values",
+    "evidence": {
+      "query.session-id": "abc-123",
+      "query.sequence": "1",
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "header.values-promise": "Full"
+    }
+  },
+  {
+    "id": "agent-signature-absent",
+    "about": "A request with no signature, which is the ordinary case.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "query.session-id": "parity-agent-signature-absent"
+    }
+  },
+  {
+    "id": "agent-signature-verified",
+    "about": "A request signed with the Ed25519 test key of RFC 9421 Appendix B.1.4, covering the authority, the method, the path and the agent, with the agent's key directory served by the program.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "header.signature": "sig1=:6WV6JpQFIPB6zZW6i2Yoy5NZINQhNgpuFOa2Idlj9BRtGEMQtHVizYFwFAajsevaparNygnl5XVQ8KxOQjkjAA==:",
+      "header.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\" \"signature-agent\";key=\"agent1\");created=1735689600;expires=4889289600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "header.signature-agent": "agent1=\"https://agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-verified"
+    }
+  },
+  {
+    "id": "agent-signature-changed-path",
+    "about": "The signed request of agent-signature-verified arriving at a different path.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/other",
+      "server.request-query": "",
+      "header.signature": "sig1=:6WV6JpQFIPB6zZW6i2Yoy5NZINQhNgpuFOa2Idlj9BRtGEMQtHVizYFwFAajsevaparNygnl5XVQ8KxOQjkjAA==:",
+      "header.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\" \"signature-agent\";key=\"agent1\");created=1735689600;expires=4889289600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "header.signature-agent": "agent1=\"https://agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-changed-path"
+    }
+  },
+  {
+    "id": "agent-signature-timeout",
+    "about": "A signed request from an agent whose key directory answers after the wait budget.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "header.signature": "sig1=:0X3CnYtIk/r4g5q8dG8auK6lF1ni5sjXBYrnKgMKoFH22ViwD7pAn5ccsxxfa8ydx+a/1saW+7Le7dQNlrcXCQ==:",
+      "header.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\" \"signature-agent\";key=\"agent1\");created=1735689600;expires=4889289600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "header.signature-agent": "agent1=\"https://slow-agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-timeout"
+    }
+  },
+  {
+    "id": "agent-signature-malformed",
+    "about": "A Signature header with no Signature-Input header.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "header.signature": "sig1=:6WV6JpQFIPB6zZW6i2Yoy5NZINQhNgpuFOa2Idlj9BRtGEMQtHVizYFwFAajsevaparNygnl5XVQ8KxOQjkjAA==:",
+      "query.session-id": "parity-agent-signature-malformed"
+    }
+  },
+  {
+    "id": "agent-signature-tag-mismatch",
+    "about": "A signature made under a tag other than web-bot-auth.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "header.signature": "sig1=:AwdwJoh9YJ2W0ygMBKQVqCVDIvDZ8kFOZaIYLzg2IaYL7i/6tAxhu2qvJ3PFv+QGbWslC0MSxDo9lIPvo+YZCg==:",
+      "header.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\" \"signature-agent\";key=\"agent1\");created=1735689600;expires=4889289600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"other\"",
+      "header.signature-agent": "agent1=\"https://agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-tag-mismatch"
+    }
+  },
+  {
+    "id": "agent-signature-no-agent",
+    "about": "A signature that does not cover the Signature-Agent header the request carries.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "header.signature": "sig1=:k5igXl7gkkB8k0ktzyefj7x/jydP0JO+N64iiyvLtGIJWg/3ZszeMl4i0bmifYdHRHwyMaeWVy4DHMZSjU3XDA==:",
+      "header.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\");created=1735689600;expires=4889289600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "header.signature-agent": "agent1=\"https://agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-no-agent"
+    }
+  },
+  {
+    "id": "agent-signature-unbound",
+    "about": "A signature covering the agent but neither the authority nor the target address.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "header.signature": "sig1=:OhwCQehxVHdJmZhpbqYpVkI31OEwIfD+X5MJSfhSrw4GHYkXxzpNFxO81yeCBTeyu3Kq1gtDXUVKEgP6xmNPDQ==:",
+      "header.signature-input": "sig1=(\"signature-agent\";key=\"agent1\");created=1735689600;expires=4889289600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "header.signature-agent": "agent1=\"https://agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-unbound"
+    }
+  },
+  {
+    "id": "agent-signature-unknown-key",
+    "about": "A signature naming a key the agent's directory does not hold.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "header.signature": "sig1=:ly6YWDfNS5NV8rlBdCNuK+imnRizxjlbtt6KmrBocVCTV3poURmpbfYcuiSfMLn5/jZbH54Hj+HIBFAM+rxBDg==:",
+      "header.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\" \"signature-agent\";key=\"agent1\");created=1735689600;expires=4889289600;keyid=\"withdrawn\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "header.signature-agent": "agent1=\"https://agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-unknown-key"
+    }
+  },
+  {
+    "id": "agent-signature-component-unavailable",
+    "about": "A signature covering the query, with no request line in the evidence.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "header.signature": "sig1=:7rUhRsdKgXCJJINcShy9i4HxQ2PjPkJuUbNZZnJBV3LKTCErqFAbBu8XivXROxF9D3i1w4cj7pf64iPefHnmBA==:",
+      "header.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\" \"@query\" \"signature-agent\";key=\"agent1\");created=1735689600;expires=4889289600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "header.signature-agent": "agent1=\"https://agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-component-unavailable"
+    }
+  },
+  {
+    "id": "agent-signature-expired",
+    "about": "A signature that expired in November 2023.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "header.signature": "sig1=:ZuHzBhvNN8Qa6ED0AGsKifIq/6b4alx9BKHOkdfyQWMQVtFyKnRMi+pjlhZSwS6Tl2TUzY9T3eN1RTTR4fSZAQ==:",
+      "header.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\" \"signature-agent\";key=\"agent1\");created=1700000000;expires=1700000600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "header.signature-agent": "agent1=\"https://agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-expired"
+    }
+  },
+  {
+    "id": "agent-signature-inline-directory",
+    "about": "An agent carrying its key set inline in a data: URI, which the element refuses by default.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "header.signature": "sig1=:A+nUCqdAu24nyfRJeW2K3bkaChQcHAoK3u8HTiiWbX+3KmnHpvfOWtmZprFU2zGb40UvlEh6izqCbAkQgG6ECQ==:",
+      "header.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\" \"signature-agent\";key=\"agent1\");created=1735689600;expires=4889289600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "header.signature-agent": "agent1=\"data:application/http-message-signatures-directory+json;base64,eyJrZXlzIjpbeyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IkpyUUxqNVBfODlpWEVTOS12RmdySXkyOWNsRjlDQ19vUFBzdzNjNUQwYnMifV19\"",
+      "query.session-id": "parity-agent-signature-inline-directory"
+    }
+  },
+  {
+    "id": "agent-signature-query-string",
+    "about": "The signed request of agent-signature-verified put in the query string, which the element does not trust by default.",
+    "pipeline": "agent-signature",
+    "evidence": {
+      "header.host": "example.com",
+      "header.protocol": "https",
+      "server.request-method": "GET",
+      "server.request-path": "/articles/rust",
+      "server.request-query": "",
+      "query.signature": "sig1=:6WV6JpQFIPB6zZW6i2Yoy5NZINQhNgpuFOa2Idlj9BRtGEMQtHVizYFwFAajsevaparNygnl5XVQ8KxOQjkjAA==:",
+      "query.signature-input": "sig1=(\"@authority\" \"@method\" \"@path\" \"signature-agent\";key=\"agent1\");created=1735689600;expires=4889289600;keyid=\"poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U\";alg=\"ed25519\";nonce=\"parity-nonce\";tag=\"web-bot-auth\"",
+      "query.signature-agent": "agent1=\"https://agent.parity.test\"",
+      "query.session-id": "parity-agent-signature-query-string"
+    }
+  },
+  {
+    "id": "translation-header-fr",
+    "about": "The translation pipeline with GB then FR, asking for French in the Accept-Language header.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-fr",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "fr-FR"
+    }
+  },
+  {
+    "id": "translation-query-de",
+    "about": "The translation pipeline asking for German in the translation query parameter.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-query-de",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "query.translation": "de_DE"
+    }
+  },
+  {
+    "id": "translation-query-accept-language-es",
+    "about": "The translation pipeline asking for Spanish by its two letter code in the accept-language query parameter.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-query-accept-language-es",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "query.accept-language": "es"
+    }
+  },
+  {
+    "id": "translation-no-language",
+    "about": "The translation pipeline with no language asked for, so the names stay in English and every other country is sorted ignoring case.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-no-language",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535"
+    }
+  },
+  {
+    "id": "translation-header-cs-cz",
+    "about": "The translation pipeline asking for Czech, so every country is sorted as Czech sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-cs-cz",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "cs-CZ"
+    }
+  },
+  {
+    "id": "translation-header-hu-hu",
+    "about": "The translation pipeline asking for Hungarian, so every country is sorted as Hungarian sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-hu-hu",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "hu-HU"
+    }
+  },
+  {
+    "id": "translation-header-it-it",
+    "about": "The translation pipeline asking for Italian, so every country is sorted as Italian sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-it-it",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "it-IT"
+    }
+  },
+  {
+    "id": "translation-header-ja-jp",
+    "about": "The translation pipeline asking for Japanese, so every country is sorted as Japanese sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-ja-jp",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "ja-JP"
+    }
+  },
+  {
+    "id": "translation-header-nl-nl",
+    "about": "The translation pipeline asking for Dutch, so every country is sorted as Dutch sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-nl-nl",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "nl-NL"
+    }
+  },
+  {
+    "id": "translation-header-pl-pl",
+    "about": "The translation pipeline asking for Polish, so every country is sorted as Polish sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-pl-pl",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "pl-PL"
+    }
+  },
+  {
+    "id": "translation-header-pt-pt",
+    "about": "The translation pipeline asking for Portuguese, so every country is sorted as Portuguese sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-pt-pt",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "pt-PT"
+    }
+  },
+  {
+    "id": "translation-header-ro-ro",
+    "about": "The translation pipeline asking for Romanian, so every country is sorted as Romanian sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-ro-ro",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "ro-RO"
+    }
+  },
+  {
+    "id": "translation-header-sk-sk",
+    "about": "The translation pipeline asking for Slovak, so every country is sorted as Slovak sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-sk-sk",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "sk-SK"
+    }
+  },
+  {
+    "id": "translation-header-sv-se",
+    "about": "The translation pipeline asking for Swedish, so every country is sorted as Swedish sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-sv-se",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "sv-SE"
+    }
+  },
+  {
+    "id": "translation-header-tr-tr",
+    "about": "The translation pipeline asking for Turkish, so every country is sorted as Turkish sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-tr-tr",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "tr-TR"
+    }
+  },
+  {
+    "id": "translation-header-uk-ua",
+    "about": "The translation pipeline asking for Ukrainian, so every country is sorted as Ukrainian sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-uk-ua",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "uk-UA"
+    }
+  },
+  {
+    "id": "translation-header-vi-vn",
+    "about": "The translation pipeline asking for Vietnamese, so every country is sorted as Vietnamese sorts.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-header-vi-vn",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "vi-VN"
+    }
+  },
+  {
+    "id": "translation-english-first",
+    "about": "English is most preferred, so no other language is tried and the names stay in English.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-english-first",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "en-GB, fr"
+    }
+  },
+  {
+    "id": "translation-english",
+    "about": "English alone.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-english",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "en"
+    }
+  },
+  {
+    "id": "translation-unknown-language",
+    "about": "A language the engines hold no translation for.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-unknown-language",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "xx-XX"
+    }
+  },
+  {
+    "id": "translation-bad-item",
+    "about": "An Accept-Language item whose quality is over 1, which cannot be read.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-bad-item",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "fr;q=2"
+    }
+  },
+  {
+    "id": "translation-quality-order",
+    "about": "Two languages whose quality puts the second first.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-quality-order",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "de;q=0.5, fr;q=0.8"
+    }
+  },
+  {
+    "id": "translation-region-then-two-letters",
+    "about": "A region the engines do not hold, then a language of two letters they do.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-region-then-two-letters",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "fr-CA, de"
+    }
+  },
+  {
+    "id": "translation-case",
+    "about": "A language given in the opposite case to the locale it matches.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-case",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "FR-fr"
+    }
+  },
+  {
+    "id": "translation-query-before-header",
+    "about": "The translation query parameter and the Accept-Language header name different languages, and the query parameter is used.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-query-before-header",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "query.translation": "it_IT",
+      "header.accept-language": "fr-FR"
+    }
+  },
+  {
+    "id": "translation-query-unresolved",
+    "about": "The translation query parameter names a language the engines do not hold, so the names are not translated, and the Accept-Language header still decides how every country is sorted.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-query-unresolved",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "query.translation": "xx_XX",
+      "header.accept-language": "fr-FR"
+    }
+  },
+  {
+    "id": "translation-unknown-code",
+    "about": "The code IP Intelligence gives when it has no country, which is given as it is and left out of the lists of every country.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-unknown-code",
+      "query.parity-geographical": "Unknown:65535",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "fr-FR"
+    }
+  },
+  {
+    "id": "translation-equal-weights",
+    "about": "Countries of equal weight, which the lists of every country order by their French names.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-equal-weights",
+      "query.parity-geographical": "FR:32767,DE:32767,GB:1",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "fr-FR"
+    }
+  },
+  {
+    "id": "translation-no-ip-data",
+    "about": "No country codes at all, so there is no IP Intelligence data.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-no-ip-data",
+      "header.accept-language": "fr-FR"
+    }
+  },
+  {
+    "id": "translation-one-property",
+    "about": "Codes for the geographical list only, so the population list is not in the IP Intelligence data.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-one-property",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "header.accept-language": "fr-FR"
+    }
+  },
+  {
+    "id": "translation-no-value",
+    "about": "The geographical list has no value, and its reason is kept.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-no-value",
+      "query.parity-geographical": "",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "fr-FR"
+    }
+  },
+  {
+    "id": "translation-lower-case-code",
+    "about": "A weighted country code in lower case, which the lists of every country keep first and list again in upper case, giving 251 countries.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-lower-case-code",
+      "query.parity-geographical": "gb:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "header.accept-language": "fr-FR"
+    }
+  },
+  {
+    "id": "translation-unreadable-after-unresolved",
+    "about": "The translation query parameter names a language that is not held and the Accept-Language header that follows cannot be read, so the weighted names are written and the lists of every country are not.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-unreadable-after-unresolved",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "query.translation": "xx_XX",
+      "header.accept-language": "fr;q=2"
+    }
+  },
+  {
+    "id": "translation-query-accept-language-before-header",
+    "about": "The accept-language query parameter and the Accept-Language header name different languages, and the query parameter is used.",
+    "pipeline": "translation",
+    "evidence": {
+      "query.session-id": "parity-translation-query-accept-language-before-header",
+      "query.parity-geographical": "GB:35535,FR:30000",
+      "query.parity-population": "FR:40000,GB:25535",
+      "query.accept-language": "es",
+      "header.accept-language": "fr-FR"
+    }
+  },
+  {
+    "id": "cloud-translation-full",
+    "about": "The cloud translation pipeline with every property the stand-in cloud grants, and SortingCultureUsed, which its metadata does not list.",
+    "pipeline": "cloud-translation",
+    "evidence": {
+      "query.session-id": "parity-cloud-translation-full",
+      "query.parity-cloud-response": "{\"countrynamestranslated\":{\"CountryNamesGeographicalTranslated\":[{\"Value\":\"Vereinigtes Königreich\",\"RawWeighting\":35535},{\"Value\":\"Frankreich\",\"RawWeighting\":30000}],\"CountryNamesPopulationTranslated\":[{\"Value\":\"Frankreich\",\"RawWeighting\":40000},{\"Value\":\"Vereinigtes Königreich\",\"RawWeighting\":25535}],\"CountryNamesGeographicalAllTranslated\":[\"Vereinigtes Königreich\",\"Frankreich\",\"Deutschland\"],\"CountryNamesPopulationAllTranslated\":[\"Frankreich\",\"Vereinigtes Königreich\",\"Deutschland\"],\"CountryCodesGeographicalAll\":[\"GB\",\"FR\",\"DE\"],\"CountryCodesPopulationAll\":[\"FR\",\"GB\",\"DE\"],\"SortingCultureUsed\":\"de-DE\"}}"
+    }
+  },
+  {
+    "id": "cloud-translation-any-case",
+    "about": "Property names and weighted item fields in capitals and in lower case, and raw weightings with a half, which round to the even number.",
+    "pipeline": "cloud-translation",
+    "evidence": {
+      "query.session-id": "parity-cloud-translation-any-case",
+      "query.parity-cloud-response": "{\"countrynamestranslated\":{\"COUNTRYNAMESGEOGRAPHICALTRANSLATED\":[{\"rawweighting\":30000.5,\"value\":\"Deutschland\"},{\"rawweighting\":25535.5,\"value\":\"Frankreich\"}],\"countrynamespopulationtranslated\":[{\"VALUE\":\"Deutschland\",\"RAWWEIGHTING\":65535}],\"countrycodesgeographicalall\":[\"DE\",\"FR\"],\"sortingcultureused\":\"de-DE\"}}"
+    }
+  },
+  {
+    "id": "cloud-translation-nulls",
+    "about": "Null values with a reason, without one, and with a reason whose name differs in case, which is not found, beside a property the response does not give.",
+    "pipeline": "cloud-translation",
+    "evidence": {
+      "query.session-id": "parity-cloud-translation-nulls",
+      "query.parity-cloud-response": "{\"countrynamestranslated\":{\"CountryNamesGeographicalTranslated\":null,\"CountryNamesGeographicalTranslatednullreason\":\"No country is known for this address.\",\"CountryNamesPopulationTranslated\":null,\"CountryNamesGeographicalAllTranslated\":null,\"CountryNamesGeographicalAllTranslatedNullReason\":\"This reason is not found, as its name differs in case.\",\"CountryCodesGeographicalAll\":[\"GB\"]}}"
+    }
+  },
+  {
+    "id": "cloud-translation-section-absent",
+    "about": "A response without the countrynamestranslated section, which leaves the data without values.",
+    "pipeline": "cloud-translation",
+    "evidence": {
+      "query.session-id": "parity-cloud-translation-section-absent",
+      "query.parity-cloud-response": "{\"ip\":{\"RegisteredName\":\"Parity\"}}"
+    }
+  },
+  {
+    "id": "cloud-translation-section-in-capitals",
+    "about": "A response whose section name is in capitals, which is not found.",
+    "pipeline": "cloud-translation",
+    "evidence": {
+      "query.session-id": "parity-cloud-translation-section-in-capitals",
+      "query.parity-cloud-response": "{\"COUNTRYNAMESTRANSLATED\":{\"CountryCodesGeographicalAll\":[\"GB\"]}}"
+    }
+  },
+  {
+    "id": "cloud-translation-section-empty",
+    "about": "An empty countrynamestranslated section, so every property is one the response does not give.",
+    "pipeline": "cloud-translation",
+    "evidence": {
+      "query.session-id": "parity-cloud-translation-section-empty",
+      "query.parity-cloud-response": "{\"countrynamestranslated\":{}}"
+    }
+  },
+  {
+    "id": "cloud-translation-request-failed",
+    "about": "The cloud answers with status 500 and an error, so the request fails and the engine has no response to read.",
+    "pipeline": "cloud-translation",
+    "evidence": {
+      "query.session-id": "parity-cloud-translation-request-failed",
+      "query.parity-cloud-response": "{\"errors\":[\"The cloud service is not available.\"]}",
+      "query.parity-cloud-status": "500"
+    }
+  },
+  {
+    "id": "cloud-translation-recorded",
+    "about": "Cut down from the cloud service's response for 185.28.167.78 with the language de-DE, keeping its shape. Property names and weighted item fields are in lower case, members are in alphabetical order and there is no SortingCultureUsed. Each list of every country keeps the first six of its 250 entries.",
+    "pipeline": "cloud-translation",
+    "evidence": {
+      "query.session-id": "parity-cloud-translation-recorded",
+      "query.parity-cloud-response": "{\"countrynamestranslated\":{\"countrycodesgeographicalall\":[\"GB\",\"IE\",\"IM\",\"AF\",\"EG\",\"AX\"],\"countrycodespopulationall\":[\"GB\",\"IE\",\"IM\",\"AF\",\"EG\",\"AX\"],\"countrynamesgeographicalalltranslated\":[\"Vereinigtes Königreich\",\"Irland\",\"Isle of Man\",\"Afghanistan\",\"Ägypten\",\"Ålandinseln\"],\"countrynamesgeographicaltranslated\":[{\"rawweighting\":59967,\"value\":\"Vereinigtes Königreich\"},{\"rawweighting\":5412,\"value\":\"Irland\"},{\"rawweighting\":156,\"value\":\"Isle of Man\"}],\"countrynamespopulationalltranslated\":[\"Vereinigtes Königreich\",\"Irland\",\"Isle of Man\",\"Afghanistan\",\"Ägypten\",\"Ålandinseln\"],\"countrynamespopulationtranslated\":[{\"rawweighting\":62781,\"value\":\"Vereinigtes Königreich\"},{\"rawweighting\":2678,\"value\":\"Irland\"},{\"rawweighting\":76,\"value\":\"Isle of Man\"}]}}"
+    }
+  },
+  {
+    "id": "cloud-translation-recorded-unknown",
+    "about": "Cut down from the cloud service's response for 10.0.0.1 with the language de-DE, where each weighted list holds Unknown with the raw weighting 65535 rather than null. Each list of every country keeps the first six of its 250 entries.",
+    "pipeline": "cloud-translation",
+    "evidence": {
+      "query.session-id": "parity-cloud-translation-recorded-unknown",
+      "query.parity-cloud-response": "{\"countrynamestranslated\":{\"countrycodesgeographicalall\":[\"AF\",\"EG\",\"AX\",\"AL\",\"DZ\",\"AS\"],\"countrycodespopulationall\":[\"AF\",\"EG\",\"AX\",\"AL\",\"DZ\",\"AS\"],\"countrynamesgeographicalalltranslated\":[\"Afghanistan\",\"Ägypten\",\"Ålandinseln\",\"Albanien\",\"Algerien\",\"Amerikanisch-Samoa\"],\"countrynamesgeographicaltranslated\":[{\"rawweighting\":65535,\"value\":\"Unknown\"}],\"countrynamespopulationalltranslated\":[\"Afghanistan\",\"Ägypten\",\"Ålandinseln\",\"Albanien\",\"Algerien\",\"Amerikanisch-Samoa\"],\"countrynamespopulationtranslated\":[{\"rawweighting\":65535,\"value\":\"Unknown\"}]}}"
+    }
+  }
+]

@@ -21,7 +21,7 @@
  * ********************************************************************* */
 
 //! Engine-level tests driven against an in-process fake HTTP client, so the
-//! full process flow (lazy discovery, form building, response parsing, recovery)
+//! full process flow (discovery, form building, response parsing, recovery)
 //! is exercised without touching the network.
 
 use std::collections::HashMap;
@@ -31,7 +31,7 @@ use fiftyone_cloud_request_engine::{
     Cache, CloudEngineState, CloudHttpClient, CloudHttpRequest, CloudHttpResponse,
     CloudRequestEngine, EvidenceKeyEntry, HttpMethod, LicensedProducts, PutCache,
 };
-use fiftyone_pipeline_core::{Error, Evidence, Pipeline};
+use fiftyone_pipeline_core::{Error, Evidence, FlowElement, Pipeline};
 use fiftyone_pipeline_engines::AspectData;
 
 /// A scripted fake transport. Each endpoint is matched by a substring of the
@@ -151,11 +151,307 @@ fn happy_path_stores_raw_json_under_cloud_key() {
     assert_eq!(client.request_count(), 3);
 }
 
-#[test]
-fn evidence_is_filtered_to_accepted_keys_and_prefixes_stripped() {
+/// The form of the one data request an engine sends for `evidence` when the
+/// service lists `evidence_keys` as its accepted evidence, sorted so a test
+/// can compare it whole.
+fn form_sent(evidence_keys: &str, evidence: Evidence) -> Vec<(String, String)> {
     let client = Arc::new(FakeClient::default());
-    // The server only accepts the user-agent header.
+    client.set_evidence_keys(FakeClient::ok(evidence_keys));
+    client.set_data(FakeClient::ok(r#"{"device":{}}"#));
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(engine_with(client.clone())))
+        .build()
+        .unwrap();
+    let mut data = pipeline.create_flow_data_with(evidence);
+    data.process().unwrap();
+
+    let requests = client.requests.lock().unwrap();
+    let mut form = requests
+        .iter()
+        .find(|r| r.method == HttpMethod::Post)
+        .expect("a POST to the data endpoint")
+        .form
+        .clone();
+    form.sort();
+    form
+}
+
+/// `expected` as owned pairs, sorted as [`form_sent`] sorts a form.
+fn sorted(expected: &[(&str, &str)]) -> Vec<(String, String)> {
+    let mut pairs: Vec<(String, String)> = expected
+        .iter()
+        .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+        .collect();
+    pairs.sort();
+    pairs
+}
+
+/// Every evidence value is sent with its prefix removed, whether or not the
+/// service lists its key, apart from the reserved names `resource`,
+/// `license`, `licence` and `values` under any prefix. The evidence matches
+/// keys in lowercase, so the letter case of a reserved name is tested on the
+/// compare itself, in `engine.rs`.
+#[test]
+fn every_evidence_value_but_the_reserved_names_is_sent() {
+    let form = form_sent(
+        r#"["query.user-agent"]"#,
+        Evidence::builder()
+            .add("header.User-Agent", "UA")
+            .add("header.accept-language", "en-GB")
+            .add("header.X-Other", "other")
+            .add("cookie.session", "abc")
+            .add("server.client-ip", "203.0.113.1")
+            .add("other.VALUES", "device.iscrawler")
+            .add("server.licence", "licence-evidence")
+            .add("query.Resource", "resource-evidence")
+            .add("header.LICENSE", "license-evidence")
+            .build(),
+    );
+    assert_eq!(
+        form,
+        sorted(&[
+            ("resource", "test-resource-key"),
+            ("User-Agent", "UA"),
+            ("accept-language", "en-GB"),
+            ("X-Other", "other"),
+            ("session", "abc"),
+            ("client-ip", "203.0.113.1"),
+        ])
+    );
+}
+
+/// Each name is sent as its key spells it, with only the prefix removed. A key
+/// added again in other letters is the same key, so it keeps its first
+/// spelling and takes the new value.
+#[test]
+fn each_name_is_sent_as_its_key_spells_it() {
+    let form = form_sent(
+        r#"["header.user-agent"]"#,
+        Evidence::builder()
+            .add("cookie.51D_Experiment", "a")
+            .add("header.Sec-CH-UA-Platform", "\"Windows\"")
+            .add("Bare-Key", "bare")
+            .add("header.Accept", "first")
+            .add("header.accept", "second")
+            .build(),
+    );
+    assert_eq!(
+        form,
+        sorted(&[
+            ("resource", "test-resource-key"),
+            ("51D_Experiment", "a"),
+            ("Sec-CH-UA-Platform", "\"Windows\""),
+            ("Bare-Key", "bare"),
+            ("Accept", "second"),
+        ])
+    );
+}
+
+/// One name under two prefixes in two letter cases is one field, sent once
+/// with the value and the spelling of the key whose prefix ranks first.
+#[test]
+fn one_name_in_two_letter_cases_is_sent_once_as_the_winning_key_spells_it() {
+    let form = form_sent(
+        r#"["header.user-agent"]"#,
+        Evidence::builder()
+            .add("header.User-Agent", "header")
+            .add("query.user-agent", "query")
+            .add("fiftyone.x-thing", "fiftyone")
+            .add("server.X-Thing", "server")
+            .add("Query.X-Q", "query")
+            .add("header.x-q", "header")
+            .build(),
+    );
+    assert_eq!(
+        form,
+        sorted(&[
+            ("resource", "test-resource-key"),
+            ("user-agent", "query"),
+            ("X-Thing", "server"),
+            ("X-Q", "query"),
+        ])
+    );
+}
+
+/// Evidence whose key has no prefix is sent under its whole key, and a
+/// reserved name with no prefix is still left out.
+#[test]
+fn evidence_with_no_prefix_is_sent_under_its_whole_key() {
+    let form = form_sent(
+        r#"["header.user-agent"]"#,
+        Evidence::builder()
+            .add("bare", "value")
+            .add("Values", "device.iscrawler")
+            .add("license", "license-evidence")
+            .add("RESOURCE", "resource-evidence")
+            .add("licence", "licence-evidence")
+            .build(),
+    );
+    assert_eq!(
+        form,
+        sorted(&[("resource", "test-resource-key"), ("bare", "value")])
+    );
+}
+
+/// When two keys share a name once their prefixes are removed, the one whose
+/// prefix ranks first is sent. A key's prefix is the part before its first
+/// separator, or the whole key when it has none, so a bare `query` ranks as
+/// query evidence and a bare `x-thing` among the other prefixes. Prefixes
+/// rank query, header, cookie, server, fiftyone and location, then any other
+/// prefix alphabetically.
+#[test]
+fn evidence_is_ranked_by_its_prefix() {
+    let form = form_sent(
+        r#"["header.user-agent"]"#,
+        Evidence::builder()
+            .add("x-thing", "bare")
+            .add("header.x-thing", "header")
+            .add("query", "bare-query")
+            .add("header.query", "header-query")
+            .add("a-b.place", "a-b")
+            .add("a.place", "a")
+            .add("aaa.where", "aaa")
+            .add("location.where", "location")
+            .add("fiftyone.where", "fiftyone")
+            .build(),
+    );
+    assert_eq!(
+        form,
+        sorted(&[
+            ("resource", "test-resource-key"),
+            ("x-thing", "header"),
+            ("query", "bare-query"),
+            ("place", "a"),
+            ("where", "fiftyone"),
+        ])
+    );
+}
+
+/// A text value under `server.http-request`, the key of the web request a
+/// web integration gives, is never sent, even when the service lists the key.
+/// The evidence matches keys in lowercase, so the letter case of the key is
+/// tested on the compare itself, in `engine.rs`.
+#[test]
+fn a_value_under_the_web_request_key_is_never_sent() {
+    let form = form_sent(
+        r#"["header.user-agent","server.http-request"]"#,
+        Evidence::builder()
+            .add("header.user-agent", "UA")
+            .add("SERVER.Http-Request", "not a value to send")
+            .build(),
+    );
+    assert_eq!(
+        form,
+        sorted(&[("resource", "test-resource-key"), ("user-agent", "UA")])
+    );
+}
+
+/// A stored response is found by the evidence the service lists, so two
+/// requests that differ only in evidence it does not list share one entry,
+/// although the first request sends that evidence.
+#[test]
+fn evidence_the_service_does_not_list_does_not_change_the_cache_key() {
+    let client = Arc::new(FakeClient::default());
     client.set_evidence_keys(FakeClient::ok(r#"["header.user-agent"]"#));
+    client.set_data(FakeClient::ok(r#"{"device":{"ismobile":true}}"#));
+    let cache = Arc::new(RecordingCache::default());
+    let engine = CloudRequestEngine::builder()
+        .resource_key("test-resource-key")
+        .endpoint("https://cloud.example.test/api/v4/")
+        .http_client(client.clone())
+        .cache(cache.clone())
+        .build()
+        .unwrap();
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(engine))
+        .build()
+        .unwrap();
+    let evidence = |platform: &str| {
+        Evidence::builder()
+            .add("header.user-agent", "UA")
+            .add("header.sec-ch-ua-platform", platform)
+            .build()
+    };
+
+    let mut first = pipeline.create_flow_data_with(evidence("Windows"));
+    first.process().unwrap();
+    let mut second = pipeline.create_flow_data_with(evidence("macOS"));
+    second.process().unwrap();
+
+    let requests = client.requests.lock().unwrap();
+    let posts: Vec<&CloudHttpRequest> = requests
+        .iter()
+        .filter(|r| r.method == HttpMethod::Post)
+        .collect();
+    assert_eq!(
+        posts.len(),
+        1,
+        "the second request is served from the cache"
+    );
+    assert!(
+        posts[0]
+            .form
+            .iter()
+            .any(|(k, v)| k == "sec-ch-ua-platform" && v == "Windows"),
+        "the first request sends the evidence the service does not list: {:?}",
+        posts[0].form
+    );
+    let cloud = second.get(CloudRequestEngine::DATA_KEY).unwrap();
+    assert!(cloud.cache_hit(), "the second request is a cache hit");
+}
+
+/// Evidence keys ignore letter case, so a stored response is found by the
+/// same evidence however its keys are spelled, although each request sends
+/// the names as its keys spell them.
+#[test]
+fn a_stored_response_is_found_whatever_the_letter_case_of_the_keys() {
+    let client = Arc::new(FakeClient::default());
+    client.set_evidence_keys(FakeClient::ok(r#"["header.user-agent"]"#));
+    client.set_data(FakeClient::ok(r#"{"device":{"ismobile":true}}"#));
+    let cache = Arc::new(RecordingCache::default());
+    let engine = CloudRequestEngine::builder()
+        .resource_key("test-resource-key")
+        .endpoint("https://cloud.example.test/api/v4/")
+        .http_client(client.clone())
+        .cache(cache.clone())
+        .build()
+        .unwrap();
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(engine))
+        .build()
+        .unwrap();
+
+    let mut first =
+        pipeline.create_flow_data_with(Evidence::builder().add("header.User-Agent", "UA").build());
+    first.process().unwrap();
+    let mut second =
+        pipeline.create_flow_data_with(Evidence::builder().add("header.user-agent", "UA").build());
+    second.process().unwrap();
+
+    let requests = client.requests.lock().unwrap();
+    let posts: Vec<&CloudHttpRequest> = requests
+        .iter()
+        .filter(|r| r.method == HttpMethod::Post)
+        .collect();
+    assert_eq!(
+        posts.len(),
+        1,
+        "the second request is served from the cache"
+    );
+    let cloud = second.get(CloudRequestEngine::DATA_KEY).unwrap();
+    assert!(cloud.cache_hit(), "the second request is a cache hit");
+}
+
+/// A web integration gives the whole web request with the evidence, under
+/// `server.http-request`. It is not one of the evidence's text values, so it
+/// is never sent to the cloud, even when the cloud lists its key, and nor is
+/// a value only the request holds.
+#[test]
+fn the_web_request_is_never_sent_to_the_cloud() {
+    let client = Arc::new(FakeClient::default());
+    client.set_evidence_keys(FakeClient::ok(
+        r#"["header.user-agent","header.x-test","server.client-ip","server.http-request"]"#,
+    ));
     client.set_data(FakeClient::ok(r#"{"device":{}}"#));
 
     let engine = engine_with(client.clone());
@@ -164,10 +460,15 @@ fn evidence_is_filtered_to_accepted_keys_and_prefixes_stripped() {
         .build()
         .unwrap();
 
+    let request = Evidence::builder()
+        .add("header.user-agent", "UA")
+        .add("header.x-test", "only in the request")
+        .add("server.client-ip", "192.0.2.1")
+        .build();
     let mut data = pipeline.create_flow_data_with(
         Evidence::builder()
             .add("header.user-agent", "UA")
-            .add("cookie.not-accepted", "should-be-dropped")
+            .http_request(request)
             .build(),
     );
     data.process().unwrap();
@@ -177,18 +478,17 @@ fn evidence_is_filtered_to_accepted_keys_and_prefixes_stripped() {
         .iter()
         .find(|r| r.method == HttpMethod::Post)
         .expect("a POST to the data endpoint");
-
-    // Resource key is present, the accepted header is stripped to `user-agent`,
-    // and the non-accepted cookie is absent.
-    assert!(data_request
-        .form
-        .iter()
-        .any(|(k, v)| k == "resource" && v == "test-resource-key"));
-    assert!(data_request
-        .form
-        .iter()
-        .any(|(k, v)| k == "user-agent" && v == "UA"));
-    assert!(!data_request.form.iter().any(|(k, _)| k == "not-accepted"));
+    let form = &data_request.form;
+    assert!(
+        form.iter().any(|(k, v)| k == "user-agent" && v == "UA"),
+        "{form:?}"
+    );
+    for field in ["http-request", "x-test", "client-ip"] {
+        assert!(!form.iter().any(|(k, _)| k == field), "{field} in {form:?}");
+    }
+    for value in ["only in the request", "192.0.2.1"] {
+        assert!(!form.iter().any(|(_, v)| v == value), "{value} in {form:?}");
+    }
 }
 
 #[test]
@@ -303,24 +603,168 @@ fn cloud_error_response_raises_cloud_request_error_when_not_suppressed() {
     }
 }
 
-#[test]
-fn discovery_failure_fails_the_build() {
-    let client = Arc::new(FakeClient::default());
-    // The evidencekeys discovery fails: the cloud is unavailable. Because the
-    // builder fetches discovery as it builds the engine, the build itself fails
-    // rather than deferring the error to process time.
-    client.set_evidence_keys(Err("connection refused".to_owned()));
+/// How many requests `client` received whose URL contains `endpoint`.
+fn requests_to(client: &FakeClient, endpoint: &str) -> usize {
+    client
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|request| request.url.contains(endpoint))
+        .count()
+}
 
-    let result = CloudRequestEngine::builder()
+/// Process one flow data carrying a user agent through `pipeline`, returning
+/// the errors it recorded.
+fn errors_processing(pipeline: &Arc<Pipeline>) -> Vec<String> {
+    let mut data =
+        pipeline.create_flow_data_with(Evidence::builder().add("header.user-agent", "UA").build());
+    data.process().unwrap();
+    data.errors()
+        .iter()
+        .map(|error| error.source.to_string())
+        .collect()
+}
+
+/// A discovery answer refused with `status`.
+fn refused(status: u16) -> Result<CloudHttpResponse, String> {
+    FakeClient::with_status(status, r#"{"errors":["refused"]}"#)
+}
+
+#[test]
+fn a_4xx_answer_to_either_discovery_request_fails_the_build() {
+    let cases = [
+        ("evidence keys 403", Some(refused(403)), None, 403),
+        ("properties 401", None, Some(refused(401)), 401),
+        // A 429 at start-up fails the build like any other 4xx, although it
+        // also counts towards a recovery period.
+        ("evidence keys 429", Some(refused(429)), None, 429),
+        ("properties 429", None, Some(refused(429)), 429),
+        (
+            "evidence keys 500 and properties 403",
+            Some(FakeClient::with_status(500, "fault")),
+            Some(refused(403)),
+            403,
+        ),
+        (
+            "evidence keys unreachable and properties 404",
+            Some(Err("connection refused".to_owned())),
+            Some(refused(404)),
+            404,
+        ),
+    ];
+    for (case, evidence_keys, properties, expected) in cases {
+        let client = Arc::new(FakeClient::default());
+        if let Some(answer) = evidence_keys {
+            client.set_evidence_keys(answer);
+        }
+        if let Some(answer) = properties {
+            client.set_properties(answer);
+        }
+        let result = CloudRequestEngine::builder()
+            .resource_key("test-resource-key")
+            .endpoint("https://cloud.example.test/api/v4/")
+            .http_client(client)
+            .build();
+        match result {
+            Err(Error::CloudRequest { status_code, .. }) => {
+                assert_eq!(status_code, expected, "{case}")
+            }
+            Ok(_) => panic!("{case}: expected the build to fail"),
+            Err(other) => panic!("{case}: unexpected error {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn evidence_keys_that_cannot_be_reached_are_fetched_on_first_use() {
+    let client = Arc::new(FakeClient::default());
+    client.set_evidence_keys(Err("connection refused".to_owned()));
+    client.set_data(FakeClient::ok(r#"{"device":{"ismobile":true}}"#));
+    let mut builder = CloudRequestEngine::builder()
         .resource_key("test-resource-key")
         .endpoint("https://cloud.example.test/api/v4/")
-        .http_client(client)
-        .build();
-    match result {
-        Err(Error::CloudRequest { .. }) => {}
-        Ok(_) => panic!("expected the build to fail when discovery cannot reach the cloud"),
-        Err(other) => panic!("unexpected error {other:?}"),
-    }
+        .http_client(client.clone());
+    let engine = builder
+        .build()
+        .expect("an unreachable cloud does not fail the build");
+
+    assert!(!engine.has_loaded_metadata());
+    assert!(engine.accepted_evidence_keys().is_err());
+    assert!(
+        engine.public_properties().is_ok(),
+        "the other request worked"
+    );
+    assert!(!engine.evidence_key_filter().include("header.user-agent"));
+    assert!(!engine.is_evidence_key_filter_complete());
+    assert!(builder.export_state().is_none());
+
+    let engine = Arc::new(engine);
+    let pipeline = Pipeline::builder()
+        .add_element(engine.clone())
+        .suppress_process_exceptions(true)
+        .build()
+        .unwrap();
+
+    // Still unreachable, so the request fails before any data request.
+    assert_eq!(errors_processing(&pipeline).len(), 1);
+    assert_eq!(requests_to(&client, "/json"), 0);
+
+    // Reachable again, so the next request fetches the evidence keys and is
+    // answered, sending the evidence they accept.
+    client.set_evidence_keys(FakeClient::ok(r#"["header.user-agent"]"#));
+    assert_eq!(errors_processing(&pipeline), Vec::<String>::new());
+    assert!(engine.has_loaded_metadata());
+    assert!(engine.evidence_key_filter().include("header.user-agent"));
+    assert!(engine.is_evidence_key_filter_complete());
+    let sent = client.requests.lock().unwrap().last().cloned().unwrap();
+    assert!(
+        sent.form
+            .iter()
+            .any(|(name, value)| name == "user-agent" && value == "UA"),
+        "the data request carried the user agent: {:?}",
+        sent.form
+    );
+
+    // Once known, the keys are not asked for again, and the properties that
+    // arrived at build time were never asked for again.
+    assert_eq!(errors_processing(&pipeline), Vec::<String>::new());
+    assert_eq!(requests_to(&client, "evidencekeys"), 3);
+    assert_eq!(requests_to(&client, "accessibleproperties"), 1);
+}
+
+#[test]
+fn properties_answered_5xx_are_fetched_on_first_use() {
+    let client = Arc::new(FakeClient::default());
+    client.set_properties(FakeClient::with_status(503, "Service Unavailable"));
+    client.set_data(FakeClient::ok(r#"{"device":{"ismobile":true}}"#));
+    let engine = Arc::new(engine_with(client.clone()));
+    assert!(engine.public_properties().is_err());
+    assert!(
+        engine.accepted_evidence_keys().is_ok(),
+        "the other request worked"
+    );
+    assert!(
+        engine.is_evidence_key_filter_complete(),
+        "the evidence keys arrived at build"
+    );
+
+    let pipeline = Pipeline::builder()
+        .add_element(engine.clone())
+        .suppress_process_exceptions(true)
+        .build()
+        .unwrap();
+    assert_eq!(errors_processing(&pipeline).len(), 1);
+
+    client.set_properties(FakeClient::ok(
+        r#"{"Products":{"device":{"DataTier":"CloudV4","Properties":[]}}}"#,
+    ));
+    assert_eq!(errors_processing(&pipeline), Vec::<String>::new());
+    assert!(engine.has_loaded_metadata());
+    let products = engine.public_properties().unwrap();
+    assert!(products.products.contains_key("device"));
+    assert_eq!(requests_to(&client, "evidencekeys"), 1);
+    assert_eq!(requests_to(&client, "accessibleproperties"), 3);
 }
 
 #[test]
@@ -867,7 +1311,7 @@ fn injected_state_skips_discovery_and_makes_no_discovery_request() {
     let mut data = pipeline.create_flow_data_with(
         Evidence::builder()
             .add("header.user-agent", "UA")
-            .add("cookie.not-accepted", "should-be-dropped")
+            .add("cookie.not-listed", "sent all the same")
             .build(),
     );
     data.process().unwrap();
@@ -883,13 +1327,17 @@ fn injected_state_skips_discovery_and_makes_no_discovery_request() {
         .iter()
         .find(|r| r.method == HttpMethod::Post)
         .expect("a POST to the data endpoint");
-    // The injected evidence filter was applied: the accepted header is present
-    // and stripped, the non-accepted cookie is dropped.
+    // The injected evidence keys decide what the engine advertises, not what
+    // it sends, so the header and the cookie the state does not list are both
+    // sent with their prefixes removed.
     assert!(data_request
         .form
         .iter()
         .any(|(k, v)| k == "user-agent" && v == "UA"));
-    assert!(!data_request.form.iter().any(|(k, _)| k == "not-accepted"));
+    assert!(data_request
+        .form
+        .iter()
+        .any(|(k, v)| k == "not-listed" && v == "sent all the same"));
 }
 
 #[test]
@@ -1053,31 +1501,47 @@ fn accessible_properties_are_asked_for_without_a_blank_license_key() {
 #[test]
 fn accessible_properties_failure_names_neither_key() {
     // The keys travel in the query string of this request, so a failure must
-    // name the endpoint without them.
-    let client = Arc::new(FakeClient::default());
-    client.set_properties(FakeClient::with_status(500, "{}"));
-    let result = CloudRequestEngine::builder()
-        .resource_key("test-resource-key")
-        .license_key("secret-license-key")
-        .endpoint("https://cloud.example.test/api/v4/")
-        .http_client(client)
-        .build();
-    let message = match result {
-        Err(error) => error.to_string(),
-        Ok(_) => panic!("expected the build to fail on a 500 from the cloud"),
-    };
-    assert!(
-        message.contains("https://cloud.example.test/api/v4/accessibleproperties"),
-        "the endpoint is named: {message}"
-    );
-    assert!(
-        !message.contains("secret-license-key"),
-        "the license key is not in the message: {message}"
-    );
-    assert!(
-        !message.contains("test-resource-key"),
-        "the resource key is not in the message: {message}"
-    );
+    // name the endpoint without them, whether the build returns it (a 4xx) or
+    // a request does after the retry on first use (a 5xx).
+    for status in [403, 500] {
+        let client = Arc::new(FakeClient::default());
+        client.set_properties(FakeClient::with_status(status, "{}"));
+        let result = CloudRequestEngine::builder()
+            .resource_key("test-resource-key")
+            .license_key("secret-license-key")
+            .endpoint("https://cloud.example.test/api/v4/")
+            .http_client(client)
+            .build();
+        let message = match (status, result) {
+            (403, Err(error)) => error.to_string(),
+            (500, Ok(engine)) => {
+                let pipeline = Pipeline::builder()
+                    .add_element(Arc::new(engine))
+                    .suppress_process_exceptions(true)
+                    .build()
+                    .unwrap();
+                let errors = errors_processing(&pipeline);
+                assert_eq!(errors.len(), 1, "{errors:?}");
+                errors[0].clone()
+            }
+            (status, Ok(_)) => panic!("expected the build to fail on a {status}"),
+            (status, Err(error)) => {
+                panic!("expected the build to work on a {status}: {error}")
+            }
+        };
+        assert!(
+            message.contains("https://cloud.example.test/api/v4/accessibleproperties"),
+            "{status}, the endpoint is named: {message}"
+        );
+        assert!(
+            !message.contains("secret-license-key"),
+            "{status}, the license key is not in the message: {message}"
+        );
+        assert!(
+            !message.contains("test-resource-key"),
+            "{status}, the resource key is not in the message: {message}"
+        );
+    }
 }
 
 /// Build an engine that authenticates with a license key alone and asks for the

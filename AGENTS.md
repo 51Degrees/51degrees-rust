@@ -95,20 +95,20 @@ to run, so an exit code of 0 means it ran against a file.
 
 ### Paths and keys from the environment
 
-The examples read `51DEGREES_DD_PATH` and `51DEGREES_IPI_PATH` for a data file
-elsewhere, and the cloud examples read `51DEGREES_RESOURCE_KEY`, for which a
+The examples read `_51DEGREES_DD_PATH` and `_51DEGREES_IPI_PATH` for a data file
+elsewhere, and the cloud examples read `_51DEGREES_RESOURCE_KEY`, for which a
 key comes from the
 [Configurator](https://configure.51degrees.com/?utm_source=github&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=agents.md&utm_term=configure).
-These names start with a digit, so bash and sh refuse both `export
-51DEGREES_RESOURCE_KEY=...` and the `51DEGREES_RESOURCE_KEY=... cargo run`
-prefix. Use `env` there, and `$env:` in PowerShell.
+Every name starts with an underscore, because bash and sh refuse a name that
+starts with a digit, so `export` works in a shell and `$env:` in PowerShell.
 
 ```sh
-env 51DEGREES_RESOURCE_KEY=<key> cargo run -p device-detection-examples --bin dd-cloud-getting-started
+export _51DEGREES_RESOURCE_KEY=<key>
+cargo run -p device-detection-examples --bin dd-cloud-getting-started
 ```
 
 ```powershell
-$env:51DEGREES_RESOURCE_KEY = '<key>'
+$env:_51DEGREES_RESOURCE_KEY = '<key>'
 cargo run -p device-detection-examples --bin dd-cloud-getting-started
 ```
 
@@ -136,9 +136,11 @@ workspace of runnable examples.
 
 - **Library workspace** (repository root): the pipeline core and engines,
   Device Detection and IP Intelligence (cloud and on-premise), the cloud
-  request engine, the JSON and JavaScript builders, the axum web integration,
-  and the `fodid` 51Did reader. Each concern is its own crate so a consumer
-  depends only on what it uses.
+  request engine, the translation engine and the IP Intelligence country
+  translation engines, the JSON and JavaScript builders, the axum web
+  integration, the `fodid` 51Did reader and the 51Did data model and cloud
+  engine. Each concern is its own crate so a consumer depends only on what it
+  uses.
 - **Example workspace** (`examples/`): excluded from the root workspace
   (`exclude = ["examples"]`). It depends on the **published** crates from
   crates.io by default, so a fresh checkout of `examples/` builds the way a
@@ -156,8 +158,26 @@ it. Nothing here reads the older `cxx/device-detection-data` and
 `cxx/ip-intelligence-data` folders. The submodule pointer
 records which C commit the crates build, and the nightly pipeline moves it
 with an update pull request when 51degrees-cxx changes. After a move, build
-and run `pwsh ./ci/check-native-symbols.ps1`, which fails when a common C
-function is missing from `ip-intelligence-sys/src/symbol_prefix.h`.
+and run `pwsh ./ci/check-native-symbols.ps1`, which fails when both C
+libraries define the same common C function, meaning 51degrees-cxx's
+`src/common/ipiSymbols.h` lacks it.
+
+Three crates compile in files from other 51Degrees repositories, as the other
+languages do. `derived-properties/vendor` is a submodule of
+[derived-properties](https://github.com/51Degrees/derived-properties), whose
+scripts the derived property element embeds and whose cases its tests run. It
+sits inside the crate's folder, so cargo packages the files the crate's
+`include` names from it. `javascript-templates` at the root is a submodule of
+[javascript-templates](https://github.com/51Degrees/javascript-templates), as
+in PHP and Go, and the JavaScript builder renders the copy of its
+`JavaScriptResource.mustache` committed in `javascript-builder/assets`, because
+cargo packages only the files inside a crate's folder.
+`ci/check-javascript-templates.ps1` fails when the copy differs from the
+submodule, so after the submodule moves, copy the template across in the same
+pull request. The IP Intelligence translation engines compile in the files of
+`cxx/data/ip-intelligence/Translations`, the data repository inside `cxx`, and
+their `build.rs` falls back to a copy inside the crate, which only a packaged
+crate has.
 
 ## Building and testing
 
@@ -187,7 +207,7 @@ CI builds with `RUSTFLAGS=-D warnings` and `RUSTDOCFLAGS=-D warnings`, so any
 warning fails the build. Match that locally before pushing.
 
 Each `-sys` `build.rs` resolves its C sources in this order: the
-`FIFTYONE_CXX_DIR` environment variable, pointing at a 51degrees-cxx checkout,
+`_51DEGREES_CXX_DIR` environment variable, pointing at a 51degrees-cxx checkout,
 then the `cxx` submodule, then the `cxx` folder inside the crate, which only a
 packaged crate has (see "Releasing to crates.io" below).
 
@@ -197,10 +217,10 @@ build and tests stay green without data. An example that cannot find its file
 runs the data repository's script for that one file, with the source
 `examples-51degrees-rust`, and fails with the command to run if it still
 cannot find it. To run them against another file,
-point the relevant variable at it: `51DEGREES_DD_PATH` for a Device Detection
-`.hash` file, `51DEGREES_IPI_PATH` for an IP Intelligence `.ipi` file. Live
+point the relevant variable at it: `_51DEGREES_DD_PATH` for a Device Detection
+`.hash` file, `_51DEGREES_IPI_PATH` for an IP Intelligence `.ipi` file. Live
 cloud tests are `#[ignore]`d and read a resource key from
-`51DEGREES_RESOURCE_KEY` (or the CI tiered names `_51DEGREES_RESOURCE_KEY_BESPOKE`
+`_51DEGREES_RESOURCE_KEY` (or the CI tiered names `_51DEGREES_RESOURCE_KEY_BESPOKE`
 then `_51DEGREES_RESOURCE_KEY_BASIC`).
 
 ## examples/
@@ -244,6 +264,26 @@ examples against the crates at that version, publishes each crate to crates.io
 in dependency order with `ci/publish-crates.sh`, skipping any version already
 published, and tags the commit.
 
+The crates require each other exactly, as in
+`fiftyone-common-sys = { version = "=4.5.2", path = "../common-sys" }`, so a
+crate of one release builds only with the crates of that release beneath it
+and the C sources they carry. A plain version is a caret requirement, which
+would let a fresh build of an older crate take newer `-sys` crates.
+Dev-dependencies are the exception and take the plain version, because they
+never reach a project's build and an exact one would force a new release of a
+crate whenever a crate its tests use is released. `set-crate-versions.ps1`
+writes the release's version into each requirement in that form, and
+`ci/check-crate-requirements.ps1`, which it runs before and after writing,
+fails on a requirement in the other form, on a published crate that requires
+one `ci/crates.txt` does not publish, on a `ci/crates.txt` order that
+publishes a crate before one it requires, and on finding nothing to check.
+
+Cargo will not take two crates that share a crate beneath them from different
+releases. It takes both from one release, even if that means an older version
+of one, or stops with an error when the project's requirements allow none.
+Crates that share nothing beneath them, such as `fodid` and
+`fiftyone-device-detection`, can still come from different releases.
+
 Authentication uses crates.io **Trusted Publishing**, where the publish workflow
 exchanges the run's GitHub OIDC identity for a short-lived token, so no API
 token is stored. Each crate has this repository and `publish.yml` registered as
@@ -266,16 +306,32 @@ path. Each copy is ignored by git, listed in the crate manifest's `include`,
 and records the 51degrees-cxx commit in `cxx/SOURCE.txt`. A build in the
 workspace reads the submodule and never needs the copy.
 
+The IP Intelligence translation files are carried the same way.
+`ci/copy-translations.ps1` copies them from the data repository inside `cxx`
+into `ip-intelligence-translation/translations`, which is ignored by git and
+listed in the crate's `include`, and records the data commit in
+`translations/SOURCE.txt`. The derived property crate needs no copy, because
+its submodule is inside its folder, but the published crate has no git to say
+which commit its scripts came from, so
+`ci/record-derived-properties-commit.ps1` writes that commit to
+`derived-properties/SOURCE.txt`, which is ignored by git and listed in the
+crate's `include`. Its `build.rs` reads the commit from git where the
+submodule is checked out and from that file otherwise.
+
 ## CI gates
 
 - `pull-request.yml` runs fmt, build, test, clippy and doc on Windows, Linux
-  (two LTS) and macOS (Apple Silicon), plus a wasm32-wasip1 job for the cloud
-  crates, on pushes to `main` and on PRs into `main`, `rc` and `release/**`.
-  It builds the C sources and restores the data files into `cxx/data` from
-  the entry `data-files.yml` keeps in the Actions cache, downloading with the
-  data repository's script only a file it lacks. It also runs
+  (two LTS) and macOS (Apple Silicon), plus a wasm32-wasip1 job, on pushes to
+  `main` and on PRs into `main`, `rc` and `release/**`. It builds the C
+  sources and restores the data files into `cxx/data` from the entry
+  `data-files.yml` keeps in the Actions cache, downloading with the data
+  repository's script only a file it lacks. It also runs
   `ci/check-native-symbols.ps1` and the property lookup scaling test in
-  release.
+  release. The wasm job builds the crates in its build list and runs the
+  tests of those in its test list under wasmtime, with crates for the cloud,
+  51Did, derived properties and translation among them. It then runs
+  `ci/measure-wasm-size.sh` over the separate `ci/wasm-size` workspace, which
+  gives the module size in `ip-intelligence-translation/README.md`.
 - `data-files.yml` runs each day on `main` and keeps the free data files in
   one Actions cache entry. It restores the newest entry, asks the Distributor
   only whether each file has changed (`-Update`), and saves the files under a
@@ -311,19 +367,22 @@ workspace reads the submodule and never needs the copy.
   tests the crate on wasm32-wasip2 under wasmtime. Same triggers, and it
   reads no secrets.
 - `examples.yml` builds and tests `examples/` against local source
-  (`source.toml`) before a release, on every PR.
+  (`source.toml`) before a release. Its contract job builds the two device
+  detection web examples the same way, through
+  `ci/test-examples-against-source.ps1`, and runs the browser contract
+  against them. Runs on every PR.
 - `publish.yml` publishes on push to `main`, then a `verify-published` job
   builds and tests `examples/` against the just-released crates.io packages.
 - `utm-link-lint.yml` checks the UTM links described below, on every PR.
-- `mustache-drift.yml` guards the generated JavaScript resource template.
-  Push and pull request builds compare against a pinned upstream commit
-  rather than the branch, because the canonical template is being changed by
-  the create last programme in the cloud service, so comparing against the
-  branch would fail work here that has nothing to do with that programme.
-  The weekly schedule and a manual run still compare against the branch, so
-  a real drift is still reported. 51Degrees/51degrees-rust#52 lifts the pin, by moving
-  the bundled asset and `UPSTREAM_PINNED_REF` to the same commit in one pull
-  request.
+- `javascript-templates-check.yml` fails when the template committed in
+  `javascript-builder/assets` differs from the `javascript-templates`
+  submodule, on every PR that touches either and on every push to `main` and
+  `rc`.
+- `dotnet-comparison.yml` runs the crates and the published .NET packages
+  over the corpus in `parity/` and fails on any difference that
+  `parity/allowed-differences.json` does not list with its reason. See
+  [parity/README.md](parity/README.md). It runs on pushes to `main` and on
+  pull requests into `main` and `release/**`.
 - `nightly-performance.yml` is the nightly (and on-demand) on-premise
   throughput run that feeds the documentation performance graphs. Its adapter,
   `ci/run-performance-tests.ps1`, runs the performance examples against this
@@ -385,3 +444,11 @@ Compare match keys, never envelopes. The payload offsets and lengths are
 internal to the crate, so every field is read through its typed accessor,
 and the layout is specified at
 https://github.com/51Degrees/specifications/blob/main/did-specification/identifier-layout.md
+
+## Tests that fail on timing
+
+A test that fails on a time limit, a performance threshold or a timeout is
+fixed, not run again until it passes. Either the limit is set to fit the
+slowest runner the test runs on, with each runner's measurement behind it, or
+the reason it takes too long is found and fixed. A failure that comes and goes
+costs everyone who meets it the time to look into it.

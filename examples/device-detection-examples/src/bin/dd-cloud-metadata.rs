@@ -69,9 +69,10 @@ pub fn run(options: ExampleOptions) -> Result<()> {
             .context("failed to build the cloud request engine")?,
     );
 
-    // Build the device engine and eagerly refresh its property metadata, which
-    // triggers the request engine's lazy accessible-properties fetch (one cloud
-    // request) and fills in the device product's property list.
+    // Build the device engine, which reads the device product's property list
+    // from the accessible properties the request engine fetched when it was
+    // built. `refresh_properties` returns how many there are, or an error when
+    // the cloud could not be reached then.
     let mut device_engine = DeviceDetectionCloudEngine::builder()
         .cloud_request_engine(request_engine.clone())
         .try_build()
@@ -152,7 +153,7 @@ fn main() -> Result<()> {
 
     let Some(resource_key) = resource_key else {
         eprintln!(
-            "No resource key available. Set the 51DEGREES_RESOURCE_KEY environment \
+            "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
              variable (or pass the key as the first argument). Create a free key at \
              https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-metadata.rs&utm_term=resource-key-required."
         );
@@ -163,7 +164,7 @@ fn main() -> Result<()> {
     let result = run(ExampleOptions {
         resource_key,
         // The cloud endpoint. Unset, the cloud request engine reads
-        // 51DEGREES_CLOUD_ENDPOINT itself, and it is passed here as well so the
+        // _51DEGREES_CLOUD_ENDPOINT itself, and it is passed here as well so the
         // choice is visible. A host other than cloud.51degrees.com is an on
         // premise web server or a privately hosted 51Degrees cloud (see
         // examples_shared::CLOUD_ENDPOINT_ENV_VAR).
@@ -178,7 +179,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "requires a live cloud resource key (set 51DEGREES_RESOURCE_KEY)"]
+    #[ignore = "requires a live cloud resource key (set _51DEGREES_RESOURCE_KEY)"]
     fn runs_against_the_cloud() {
         let Some(resource_key) = examples_shared::resource_key_from_env() else {
             eprintln!("skipping: no resource key set");
@@ -203,11 +204,11 @@ mod tests {
  * each from the right place:
  *
  * - The list of device properties comes from the `DeviceDetectionCloudEngine`.
- *   That list is not known until the cloud has been asked for the resource key's
- *   accessible properties, which happens lazily on first use. The example forces
- *   that discovery up front by calling `refresh_properties`, which makes one
- *   cloud request and returns the number of properties found. Each property is
- *   then printed with its category and core value type.
+ *   That list comes from the resource key's accessible properties, which the
+ *   request engine asks the cloud for when it is built. `refresh_properties`
+ *   returns the number of properties found, or an error when the cloud could
+ *   not be reached then. Each property is then printed with its category and
+ *   core value type.
  *
  * - The list of accepted evidence keys comes from the `CloudRequestEngine`, not
  *   the device engine. The device engine consumes no raw evidence of its own. It
@@ -221,6 +222,6 @@ mod tests {
  * production web deployment should enable usage sharing.
  *
  * The resource key is read from the first command-line argument or the
- * `51DEGREES_RESOURCE_KEY` environment variable. Create a free key, or a paid key
+ * `_51DEGREES_RESOURCE_KEY` environment variable. Create a free key, or a paid key
  * with the full property set, at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-metadata.rs&utm_term=dd-cloud-metadata.
  */

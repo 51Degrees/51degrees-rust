@@ -17,6 +17,8 @@ cargo add fiftyone-ip-intelligence
 
 The crates below list the others. To build from source, see [Building](#building).
 
+The crates of one release require each other at exactly that release's version, so each crate builds with the 51Degrees crates and the C library of its own release, and `cargo update` moves them together. Where two of a project's 51Degrees crates share a crate beneath them, Cargo takes both from one release, even if that means an older version of one, and stops with an error only when the project's requirements allow no single release, such as two crates pinned with `=` to different releases. Running `cargo update` with one crate named leaves that crate at the release of the crates locked beside it. Pinning a crate with `=` therefore also pins the crates beneath it, and the C library they build.
+
 Try the [User-Agent tester](https://51degrees.com/developers/user-agent-tester?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install) and [IP tester](https://51degrees.com/developers/ip-tester?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install). For cloud use, [create a Resource Key](https://configure.51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install).
 
 This repository was renamed from `rust` and continues that work.
@@ -32,8 +34,11 @@ use fiftyone_ip_intelligence::{
 
 // Use an on-premise IP Intelligence data file. The free ASN file from the data
 // repository suits quick tests. An Enterprise file has the full property set.
+// LowMemory reads the file from disk, so even the Enterprise file, which is
+// over 6 GB, needs little memory. HighPerformance holds the whole file in
+// memory for faster lookups, where there is memory for it.
 let pipeline = IpIntelligencePipelineBuilder::on_premise("51Degrees-IPIV4AsnIpiV41.ipi")
-    .performance_profile(PerformanceProfile::HighPerformance)
+    .performance_profile(PerformanceProfile::LowMemory)
     // Off because the free ASN file has no licence key for updates.
     .auto_update(false)
     .build()?;
@@ -56,8 +61,8 @@ minification opt-in.
 
 ## Crates
 
-The workspace has 29 members, arranged in dependency order from the
-pure-Rust core up to the runnable examples.
+The library workspace has 30 members and the examples workspace 7, listed
+below in dependency order from the pure-Rust core up to the runnable examples.
 
 ### Core
 
@@ -75,6 +80,9 @@ pure-Rust core up to the runnable examples.
 | [`fiftyone-cloud-request-engine`](cloud-request-engine) | Cloud HTTP engine that resolves the accepted evidence keys and accessible properties at build time (with a persistable state for short-lived hosts) and recovery mode. |
 | [`fiftyone-json-builder`](json-builder) | JSON serialization element. |
 | [`fiftyone-javascript-builder`](javascript-builder) | JavaScript snippet builder element with the bundled Mustache asset. Minification is an opt-in feature (see below). |
+| [`fiftyone-agent-signature`](agent-signature) | Agent Signature element, which checks the HTTP Message Signature an automated agent sends under the IETF Web Bot Auth protocol. |
+| [`fiftyone-derived-properties`](derived-properties) | Derived property element, which computes a property from properties earlier elements have already produced, using the script format and scripts of the derived-properties repository, which .NET uses too. |
+| [`fiftyone-pipeline-translation`](pipeline-translation) | Translation engine, which translates the values another element produced into the language the request asks for, from YAML sources of `value: translation` lines. |
 
 ### Native FFI
 
@@ -92,8 +100,10 @@ path, so cloud-only users and most of CI build without a C compiler.
 
 | Crate | Responsibility | Deployment |
 |-------|----------------|------------|
-| [`fiftyone-device-detection-shared`](device-detection-shared) | DeviceData trait with typed accessors, the property model and the UACH high-entropy decoder element. | both |
+| [`fiftyone-device-detection-shared`](device-detection-shared) | DeviceData trait with typed accessors, the property model and the UACH high-entropy evidence keys. | both |
 | [`fiftyone-device-detection-onpremise`](device-detection-onpremise) | On-premise Hash engine over the safe fiftyone-native wrapper. | on-premise |
+| [`fiftyone-device-detection-robots-txt`](device-detection-robots-txt) | robots.txt engine, which allows or refuses each crawler the Hash data file describes by what it uses pages for. | on-premise |
+| [`fiftyone-device-detection-property-keyed`](device-detection-property-keyed) | TAC and Native engines, which give every hardware profile in the Hash data file holding a TAC or a native model name. | on-premise |
 | [`fiftyone-device-detection-cloud`](device-detection-cloud) | Cloud engine that maps the cloud JSON response to DeviceData. | cloud |
 | [`fiftyone-device-detection`](device-detection) | Facade: re-exports plus a builder that selects cloud or on-premise. `cloud` and `on-premise` are both default-on features. | both |
 
@@ -105,6 +115,7 @@ path, so cloud-only users and most of CI build without a C compiler.
 | [`fiftyone-ip-intelligence-onpremise`](ip-intelligence-onpremise) | On-premise Ipi engine over the safe fiftyone-native wrapper. | on-premise |
 | [`fiftyone-ip-intelligence-cloud`](ip-intelligence-cloud) | Cloud engine that maps the cloud JSON response to IpIntelligenceData. | cloud |
 | [`fiftyone-ip-intelligence`](ip-intelligence) | Facade: re-exports plus a builder that selects cloud or on-premise. `cloud` and `on-premise` are both default-on features. | both |
+| [`fiftyone-ip-intelligence-translation`](ip-intelligence-translation) | Country translation engines: the English names of the countries IP Intelligence gives, those names in the language the request asks for, and every country in that language's order. | both |
 
 ### Web
 
@@ -118,12 +129,15 @@ path, so cloud-only users and most of CI build without a C compiler.
 | Crate | Responsibility |
 |-------|----------------|
 | [`examples-shared`](examples/examples-shared) | Shared example helpers: file-finder, resource-key-from-env, the DD/IPI data-path resolvers, the data-file-age warning, property-as-string and the sample evidence. |
+| [`examples-web-shared`](examples/examples-web-shared) | Shared HTML and static-asset helpers for the web examples: the vendored design-system assets, asset-serving handlers, HTML escaping and the common table helpers. |
 | [`device-detection-examples`](examples/device-detection-examples) | Runnable device-detection examples (cloud, on-premise and web). |
 | [`ip-intelligence-examples`](examples/ip-intelligence-examples) | Runnable IP-intelligence examples (cloud, on-premise and web). |
 | [`pipeline-examples`](examples/pipeline-examples) | Runnable pipeline examples: custom flow elements, caching, usage sharing and the combined-pipeline server-side examples. |
 | [`fodid-examples`](examples/fodid-examples) | Runnable 51Did examples: the creator context web demo, which verifies a 51Did from the browser and redeems the encrypted verdict on the server. |
 | [`examples-benches`](examples/benches) | Criterion micro-benchmarks guarding the DD, IPI and JavaScript-builder throughput budgets. |
 | [`fodid`](fodid) | Standalone reader for the 51Did (51Degrees Identifier) returned by the cloud, described in the [identifiers documentation](https://51degrees.com/documentation/_identifiers__index.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=51did). It parses the OWID envelope and is independent of the pipeline stack. |
+| [`fiftyone-fodid-core`](fodid-core) | The 51Did element data, property names, metadata and engine trait that any engine producing 51Dids is built on. It does not depend on the cloud request engine. |
+| [`fiftyone-fodid-cloud`](fodid-cloud) | Cloud engine that maps the cloud response's `fodid` member to the 51Did element data, and re-exports `fiftyone-fodid-core`. |
 | [`fodid-client`](fodid-client) | The server side of the 51Did two-step verification: fetches and caches the signing keys, verifies a signature offline or through the cloud, and redeems the sealed creator context result a browser relays, with the typed outcomes the other 51Did packages report. Builds without a network stack by default. The `reqwest-client` feature turns on the built-in transport. |
 
 ## Feature notes
@@ -156,7 +170,15 @@ path, so cloud-only users and most of CI build without a C compiler.
   watcher together, as the specification's master switch does.
   `.file_system_watcher(false)` turns only the watcher off, and
   `pipeline.resource::<DataUpdateService>()` reaches the service for a check
-  on demand.
+  on demand. `DataUpdateService::on_update_complete` adds a callback that is
+  told how each check ended, with a refresh that fails or panics reported as
+  `RefreshFailed` while the engine keeps the data it had, a change to a
+  watched file that is no newer reported as `NotNeeded`, and a further event
+  for a write already applied reported as `InProgress`. An update from memory
+  is not reported, and gives its result to the caller alone.
+  `DataUpdateService::on_update_started` adds one told when each check
+  starts. A callback added to a service given to the builder with
+  `.data_update_service(..)` also hears the update on start-up.
 - JavaScript minification in `fiftyone-javascript-builder` is opt-in behind the
   `minify` feature and off by default. See ARCHITECTURE.md for why.
 
@@ -246,8 +268,11 @@ use fiftyone_ip_intelligence::{
 
 // Use an on-premise IP Intelligence data file. The free ASN file from the data
 // repository suits quick tests. An Enterprise file has the full property set.
+// LowMemory reads the file from disk, so even the Enterprise file, which is
+// over 6 GB, needs little memory. HighPerformance holds the whole file in
+// memory for faster lookups, where there is memory for it.
 let pipeline = IpIntelligencePipelineBuilder::on_premise("51Degrees-IPIV4AsnIpiV41.ipi")
-    .performance_profile(PerformanceProfile::HighPerformance)
+    .performance_profile(PerformanceProfile::LowMemory)
     // Off because the free ASN file has no licence key for updates.
     .auto_update(false)
     .build()?;
@@ -266,14 +291,23 @@ use std::sync::Arc;
 
 # async fn run() -> anyhow::Result<()> {
 // Usage sharing is on by default, and is set here so the choice is visible.
-// It helps improve 51Degrees data.
-let pipeline = DeviceDetectionPipelineBuilder::cloud("YOUR_RESOURCE_KEY")
-    .share_usage(true)
-    .build()?;
+// It helps improve 51Degrees data. The facade's pipeline is only used for its
+// elements and is dropped at the end of this statement, because a usage
+// sharing element can be in only one pipeline at a time. An on-premise
+// facade's pipeline also runs its data file updates, so for on-premise data
+// build the facade with .share_usage(false), keep its pipeline, and add a
+// ShareUsageElement to the elements given to WebPipeline::build. The
+// on-premise web example adds its ShareUsageElement to those elements in the
+// same way, beside a Hash engine it builds without the facade.
+let elements: Vec<Arc<dyn FlowElement>> =
+    DeviceDetectionPipelineBuilder::cloud("YOUR_RESOURCE_KEY")
+        .share_usage(true)
+        .build()?
+        .flow_elements()
+        .to_vec();
 
 // Hand the facade's elements to the web pipeline, which adds the sequence,
 // set-headers, JSON and JavaScript elements on top.
-let elements: Vec<Arc<dyn FlowElement>> = pipeline.flow_elements().to_vec();
 let web = WebPipeline::build(elements, WebIntegrationOptions::default())?;
 let state = FiftyOneState::from_web_pipeline(&web);
 
@@ -354,12 +388,12 @@ git clone --recurse-submodules https://github.com/51Degrees/51degrees-rust.git
 cd 51degrees-rust/examples
 
 # On-premise examples run with no settings. Each reads the free data files in
-# cxx/data, downloading one that is missing, unless 51DEGREES_DD_PATH or
-# 51DEGREES_IPI_PATH names another file.
+# cxx/data, downloading one that is missing, unless _51DEGREES_DD_PATH or
+# _51DEGREES_IPI_PATH names another file.
 cargo run -p device-detection-examples --bin dd-onprem-getting-started
 cargo run -p ip-intelligence-examples --bin ipi-onprem-getting-started
 
-# Cloud examples read 51DEGREES_RESOURCE_KEY from the environment.
+# Cloud examples read _51DEGREES_RESOURCE_KEY from the environment.
 cargo run -p device-detection-examples --bin dd-cloud-getting-started
 cargo run -p ip-intelligence-examples --bin ipi-cloud-getting-started
 
@@ -382,7 +416,7 @@ reads both, the ASN file for Asn and AsnName. Every example ends with a "Find
 out more" section.
 
 Every cloud example calls the public 51Degrees cloud at
-`https://cloud.51degrees.com/api/v4/` unless `51DEGREES_CLOUD_ENDPOINT` names
+`https://cloud.51degrees.com/api/v4/` unless `_51DEGREES_CLOUD_ENDPOINT` names
 another host. A host other than cloud.51degrees.com would be used to (a) use an
 on premise web server, or (b) use a privately hosted version of the 51Degrees
 cloud for performance reasons. This is the private hosting option of the
@@ -392,7 +426,7 @@ reads, so setting it once points every example at the same place, and the
 value is the API base including the `/api/v4/` segment.
 
 ```sh
-51DEGREES_CLOUD_ENDPOINT=http://localhost:8080/api/v4/ cargo run -p ip-intelligence-examples --bin ipi-cloud-getting-started
+_51DEGREES_CLOUD_ENDPOINT=http://localhost:8080/api/v4/ cargo run -p ip-intelligence-examples --bin ipi-cloud-getting-started
 ```
 
 #### Browser (Selenium) tests
@@ -406,9 +440,10 @@ evidence flows back, and that the server renders a real detection result.
 
 CI runs it here in the `contract` job of the Examples workflow
 (`.github/workflows/examples.yml`), through `ci/run-browser-contract.ps1`,
-against both Device Detection web examples built from this checkout. The
-cloud example (`dd-web-getting-started-cloud`) talks to the public cloud with
-the bespoke Resource Key. The on-premise example
+against both Device Detection web examples built from this checkout's crates
+through `ci/test-examples-against-source.ps1`. The cloud example
+(`dd-web-getting-started-cloud`) talks to the public cloud with the bespoke
+Resource Key. The on-premise example
 (`dd-web-getting-started-onprem`) loads the TAC data file, because the Lite
 file has neither `DeviceType` nor the screen size JavaScript properties the
 contract checks. A test that fails, or that the suite skips as inconclusive,

@@ -43,8 +43,10 @@ pub enum PerformanceProfile {
     /// not held open after initialization. This is the fastest to query but uses
     /// the most memory.
     InMemory,
-    /// Load everything into memory and drop the connection to the source file.
-    /// The highest sustained query performance.
+    /// Load into memory everything a lookup walks, and keep the data file
+    /// open. With some properties named, only their values and the strings
+    /// those use are loaded, and the values of the others are read from the
+    /// file when asked for. The highest sustained query performance.
     HighPerformance,
     /// Keep a connection to the data file and use no caching, for the smallest
     /// memory footprint at the cost of query speed.

@@ -687,6 +687,7 @@ dependencies = [
  "fiftyone-javascript-builder",
  "fiftyone-json-builder",
  "fiftyone-pipeline-core",
+ "fiftyone-pipeline-engines-fiftyone",
  "serde_norway",
 ]
 

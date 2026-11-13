@@ -1,0 +1,55 @@
+[package]
+name = "fiftyone-device-detection-robots-txt"
+version = "4.5.2"
+description = "robots.txt generator for Rust, from 51Degrees Device Detection. RobotsTxtEngine writes a robots.txt that allows or refuses each known crawler by what it uses pages for, from the crawlers in a Device Detection data file on your server. Built on the 51Degrees Pipeline API. An alternative to UAParser.js, DeviceAtlas, and WURFL."
+keywords = ["robots-txt", "crawler", "user-agent", "device-detection", "uaparser"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage = "https://51degrees.com/device-detection?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-device-detection-robots-txt-cargo.toml&utm_term=homepage"
+
+[dependencies]
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
+# AspectEngine, AspectDataBase and AspectPropertyValue. default-features =
+# false leaves out the data-update service, which this engine never uses.
+fiftyone-pipeline-engines = { version = "=4.5.2", path = "../pipeline-engines", default-features = false }
+# The on-premise Device Detection engine, whose data set holds the crawlers.
+fiftyone-device-detection-onpremise = { version = "=4.5.2", path = "../device-detection-onpremise" }
+# The data set's profiles and values.
+fiftyone-native = { version = "=4.5.2", path = "../native", default-features = false, features = ["dd"] }
+# Logs a crawler left out of the model and a failed TDL source lookup through
+# the log facade, which does nothing until the application installs a logger.
+log = "0.4"
+# Reads the TDL source list.
+serde_json.workspace = true
+# Reads the TDL entries and crawler addresses as absolute URIs.
+url = "2"
+# A TDL source names its versioned files with a regular expression.
+regex = "1"
+# Sorts the crawlers by name in the root locale's order, with the Unicode
+# collation data compiled in.
+icu_collator = "2.2"
+# The built-in blocking HTTP client the TDL source list is read from GitHub
+# with. Optional and gated behind the `reqwest-client` feature, as in the
+# other crates. rustls avoids a system OpenSSL dependency.
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"], optional = true }
+
+[features]
+# Compile the built-in reqwest HTTP client and make the GitHub TDL source
+# resolver the builder's default. Off by default, as in the other crates.
+# Without it, the builder resolves no TDL source ids unless it is given a
+# resolver.
+reqwest-client = ["dep:reqwest"]
+
+[dev-dependencies]
+# Depend on this crate itself with reqwest-client enabled, so the tests of the
+# built-in client compile. Dev-dependencies never reach the published graph.
+fiftyone-device-detection-robots-txt = { path = ".", features = ["reqwest-client"] }
+# A port of Google's robots.txt parser, the reference reader for RFC 9309, to
+# check what a crawler reads from the text the engine writes.
+robotstxt = "0.3"
+
+[package.metadata.docs.rs]
+all-features = true

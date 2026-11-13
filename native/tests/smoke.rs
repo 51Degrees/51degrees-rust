@@ -42,6 +42,10 @@
 //! machine without the data files. When a file is present they load it for real
 //! and assert on the result.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 #[cfg(any(feature = "dd", feature = "ipi"))]
 use std::path::PathBuf;
 
@@ -49,7 +53,7 @@ use std::path::PathBuf;
 /// optional name fragment, returning the first that exists.
 ///
 /// Resolution order, all relative to the Rust workspace root:
-/// the matching `FIFTYONE_*` environment variable, then the
+/// the matching `_51DEGREES_*` environment variable, then the
 /// `cxx` submodule, then the parent
 /// `Workspace` tree where the other 51Degrees products keep their data.
 #[cfg(any(feature = "dd", feature = "ipi"))]
@@ -60,7 +64,7 @@ fn find_data_file(
     file_name: &str,
 ) -> Option<PathBuf> {
     // 1. An explicit path from the environment wins.
-    if let Ok(path) = std::env::var(env_var) {
+    if let Ok(path) = crate::deprecated_names::var(env_var) {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);
@@ -98,7 +102,7 @@ fn find_data_file(
 #[cfg(feature = "dd")]
 fn dd_lite_data_file() -> Option<PathBuf> {
     find_data_file(
-        "51DEGREES_DD_PATH",
+        "_51DEGREES_DD_PATH",
         "cxx",
         "data/device-detection",
         "51Degrees-LiteV4.1.hash",
@@ -112,7 +116,7 @@ fn dd_lite_data_file() -> Option<PathBuf> {
 #[cfg(feature = "ipi")]
 fn ipi_data_file() -> Option<PathBuf> {
     find_data_file(
-        "51DEGREES_IPI_PATH",
+        "_51DEGREES_IPI_PATH",
         "cxx",
         "data/ip-intelligence",
         "51Degrees-IPIV4AsnIpiV41.ipi",
@@ -724,10 +728,10 @@ mod ip_intelligence {
             .expect("reading a property should not error");
     }
 
-    /// Looking up evidence with no client IP returns a native input error rather
-    /// than panicking.
+    /// Looking up evidence with no client IP gives results with no values, as
+    /// .NET gives, rather than an error.
     #[test]
-    fn evidence_without_ip_errors() {
+    fn evidence_without_ip_gives_no_values() {
         let Some(data_file) = ipi_data_file() else {
             eprintln!("no IP Intelligence data file found; skipping no-IP test");
             return;
@@ -735,10 +739,15 @@ mod ip_intelligence {
         let manager = open_loaded(&data_file);
         let mut results = manager.create_results().expect("results should allocate");
         let evidence = Evidence::builder().add("header.user-agent", "x").build();
-        assert!(
-            results.process_evidence(&evidence).is_err(),
-            "evidence with no client IP should be an error"
-        );
+        results
+            .process_evidence(&evidence)
+            .expect("evidence with no client IP should be looked up");
+        let index = manager
+            .required_property_index("Asn")
+            .expect("the ASN data set has Asn");
+        assert!(!results
+            .has_values_by_index(index)
+            .expect("asking for values should not error"));
     }
 
     /// An IPv4-mapped IPv6 address gives the answers of its IPv4 address, in

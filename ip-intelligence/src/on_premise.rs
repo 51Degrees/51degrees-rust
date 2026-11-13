@@ -62,6 +62,7 @@ pub struct OnPremiseIpIntelligencePipelineBuilder {
     data_update_service: Option<Arc<DataUpdateService>>,
     suppress_process_exceptions: bool,
     share_usage: bool,
+    concurrency: Option<u16>,
 }
 
 impl OnPremiseIpIntelligencePipelineBuilder {
@@ -83,6 +84,7 @@ impl OnPremiseIpIntelligencePipelineBuilder {
             data_update_service: None,
             suppress_process_exceptions: false,
             share_usage: cfg!(feature = "share-usage"),
+            concurrency: None,
         }
     }
 
@@ -93,11 +95,19 @@ impl OnPremiseIpIntelligencePipelineBuilder {
         self
     }
 
+    /// Set the expected concurrency, which is the number of threads that will
+    /// look up through the pipeline at once. Mirrors the engine builder's
+    /// `concurrency`, which says what it sizes under each profile. Unset, the
+    /// profile's own expected concurrency is kept.
+    pub fn concurrency(mut self, concurrency: u16) -> Self {
+        self.concurrency = Some(concurrency);
+        self
+    }
+
     /// Restrict the engine to a single named property, adding to any already
     /// requested. With no properties requested the engine populates every
-    /// property the shared model surfaces. Requesting a non-typed property a
-    /// specialised data file carries (for example `Asn` or `AsnName` in an ASN
-    /// data file) makes the engine surface it too.
+    /// property the data file defines. A name is matched ignoring case, and
+    /// one the data file lacks is neither populated nor listed.
     pub fn property(mut self, property: impl Into<String>) -> Self {
         self.requested_properties.push(property.into());
         self
@@ -239,6 +249,9 @@ impl OnPremiseIpIntelligencePipelineBuilder {
         if let Some(tier) = self.data_source_tier {
             engine_builder = engine_builder.data_source_tier(tier);
         }
+        if let Some(concurrency) = self.concurrency {
+            engine_builder = engine_builder.concurrency(concurrency);
+        }
         if let Some(url) = self.data_update_url {
             engine_builder = engine_builder.data_update_url(url);
         }
@@ -290,11 +303,11 @@ mod tests {
     /// Resolve the ASN IP-intelligence data file at run time.
     ///
     /// The default test/CI data file is the ASN file from the data repository
-    /// (small, current and loads reliably). Set `51DEGREES_IPI_PATH`
+    /// (small, current and loads reliably). Set `_51DEGREES_IPI_PATH`
     /// to override the path. Returns [`None`] when no data file is present, so
     /// the test skips cleanly on a machine without it.
     fn asn_data_file() -> Option<PathBuf> {
-        if let Ok(path) = std::env::var("51DEGREES_IPI_PATH") {
+        if let Ok(path) = crate::deprecated_names::var("_51DEGREES_IPI_PATH") {
             let path = PathBuf::from(path);
             if path.is_file() {
                 return Some(path);
@@ -360,6 +373,30 @@ mod tests {
             .build()
             .expect("the quiet pipeline should build");
         assert!(quiet.resource::<DataUpdateService>().is_none());
+    }
+
+    /// The pipeline opens with more expected concurrency than the square
+    /// root of the Balanced profiles cache of 20,000 entries, 141. The
+    /// engine's own tests show the value reaching the data set.
+    #[test]
+    fn on_premise_builder_opens_with_any_concurrency() {
+        let Some(data_file) = asn_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping concurrency");
+            return;
+        };
+        let pipeline = IpIntelligencePipelineBuilder::on_premise(&data_file)
+            .performance_profile(PerformanceProfile::Balanced)
+            .concurrency(500)
+            // Off so the test sends nothing to 51Degrees.
+            .share_usage(false)
+            // Off so the build needs no licence key.
+            .auto_update(false)
+            .file_system_watcher(false)
+            .build();
+        assert!(
+            pipeline.is_ok(),
+            "more than the profiles cache's square root opens"
+        );
     }
 
     #[test]

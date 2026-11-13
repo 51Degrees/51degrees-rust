@@ -255,7 +255,7 @@ fn output_enterprise<T: Display>(
 }
 
 /// Resolve the data file then run the example. The data file is taken from the
-/// first command-line argument, the `51DEGREES_DD_PATH` environment variable, or
+/// first command-line argument, the `_51DEGREES_DD_PATH` environment variable, or
 /// the Lite Hash file in the data repository inside the `cxx` submodule, which
 /// is downloaded when it is missing. With none of those present the example
 /// fails, after the resolver has printed the command that gets the file.
@@ -267,7 +267,7 @@ fn main() -> Result<()> {
 
     let Some(data_file) = data_file else {
         anyhow::bail!(
-            "No device-detection data file found. Set 51DEGREES_DD_PATH, or pass \
+            "No device-detection data file found. Set _51DEGREES_DD_PATH, or pass \
              the path as the first argument."
         );
     };
@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn runs_against_the_lite_data_file() {
         let Some(data_file) = examples_shared::dd_data_path() else {
-            eprintln!("skipping: no on-premise data file found (set 51DEGREES_DD_PATH)");
+            eprintln!("skipping: no on-premise data file found (set _51DEGREES_DD_PATH)");
             return;
         };
         run(ExampleOptions {
@@ -310,9 +310,8 @@ mod tests {
  * simplest end-to-end use of the native Hash engine for device detection.
  *
  * The example builds an on-premise pipeline from a Hash data file with the
- * convenience `DeviceDetectionPipelineBuilder::on_premise(data_file)`. The builder
- * places an optional UA-CH high-entropy decoder before the native Hash engine,
- * with usage sharing turned off. The pipeline is built once and reused as a factory for
+ * convenience `DeviceDetectionPipelineBuilder::on_premise(data_file)`, with
+ * usage sharing turned off. The pipeline is built once and reused as a factory for
  * many `FlowData` instances, which is the recommended lifecycle: one long-lived
  * pipeline (often a process-wide singleton) and a short-lived flow data per
  * request.
@@ -353,7 +352,7 @@ mod tests {
  * default, so 51Degrees receives evidence that improves detection.
  *
  * The data file is read from the first command-line argument, the
- * `51DEGREES_DD_PATH` environment variable, or the Lite Hash file in the data
+ * `_51DEGREES_DD_PATH` environment variable, or the Lite Hash file in the data
  * repository inside the cxx submodule, which the example downloads when it is
  * missing. The Lite file is free; the Enterprise file with
  * the full property set is described at https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-getting-started.rs&utm_term=dd-onprem-getting-started.
