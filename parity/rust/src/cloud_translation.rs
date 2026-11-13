@@ -38,7 +38,7 @@ use fiftyone_cloud_request_engine::{
 };
 use fiftyone_ip_intelligence_translation::CloudCountriesTranslationEngine;
 use fiftyone_json_builder::JsonBuilderElementBuilder;
-use fiftyone_pipeline_core::{FlowElement, Pipeline};
+use fiftyone_pipeline_core::Pipeline;
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 
 /// The `pipeline` of a case that runs through this pipeline.
@@ -101,8 +101,7 @@ impl CloudHttpClient for StandInCloud {
 
 /// Sequence, the cloud request engine on the stand-in, the cloud countries
 /// translation engine and the JSON builder, with process errors collected
-/// rather than returned. The crates' Sequence element has data of its own,
-/// which .NET's does not, so the JSON builder leaves that data out.
+/// rather than returned.
 pub fn build_pipeline() -> Result<Arc<Pipeline>> {
     let request = Arc::new(
         CloudRequestEngine::builder()
@@ -114,12 +113,9 @@ pub fn build_pipeline() -> Result<Arc<Pipeline>> {
     let countries = CloudCountriesTranslationEngine::builder()
         .cloud_request_engine(Arc::clone(&request))
         .build()?;
-    let sequence = Arc::new(SequenceElement::new());
-    let json = JsonBuilderElementBuilder::new()
-        .exclude_element(sequence.data_key())
-        .build();
+    let json = JsonBuilderElementBuilder::new().build();
     Ok(Pipeline::builder()
-        .add_element(sequence)
+        .add_element(Arc::new(SequenceElement::new()))
         .add_element(request)
         .add_element(Arc::new(countries))
         .add_element(Arc::new(json))

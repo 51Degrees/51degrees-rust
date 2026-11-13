@@ -151,17 +151,12 @@ impl FlowElement for CountriesElement {
 }
 
 /// Sequence, the country codes element, the two translation engines and the
-/// JSON builder, with process errors collected rather than returned. The
-/// crates' Sequence element has data of its own, which .NET's does not, so
-/// the JSON builder leaves that data out.
+/// JSON builder, with process errors collected rather than returned.
 pub fn build_pipeline() -> Result<Arc<Pipeline>> {
-    let sequence = Arc::new(SequenceElement::new());
-    let json = JsonBuilderElementBuilder::new()
-        .exclude_element(sequence.data_key())
-        .build();
+    let json = JsonBuilderElementBuilder::new().build();
     let countries = CountriesElement::new();
     Ok(Pipeline::builder()
-        .add_element(sequence)
+        .add_element(Arc::new(SequenceElement::new()))
         .add_element(Arc::new(countries))
         .add_element(Arc::new(CountryCodeTranslationEngine::builder().build()?))
         .add_element(Arc::new(CountriesTranslationEngine::builder().build()?))
