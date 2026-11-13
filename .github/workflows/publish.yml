@@ -39,12 +39,15 @@ concurrency:
 jobs:
   publish:
     name: publish to crates.io
+    # A dispatch can name any branch, and the tags a publish makes are what
+    # every later release counts from, so only main publishes.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       # write, because a successful publish writes the tag each crate's next
       # release counts from and creates its GitHub release.
       contents: write
-      # Required to mint the OIDC token Trusted Publishing exchanges for a
+      # Required to create the OIDC token Trusted Publishing exchanges for a
       # short-lived crates.io token.
       id-token: write
     outputs:

@@ -28,12 +28,11 @@
 # ci/copy-cxx-sources.ps1, which the publish workflow also runs first.
 set -euo pipefail
 
-# Publishing needs a crates.io token. When it is absent (for example a normal
-# push before the secret is configured) skip cleanly rather than fail, so the
-# workflow only acts once a token is in place.
+# Publishing needs a crates.io token. Without one this fails, because the
+# publish job tags each crate it asked for as released once this returns.
 if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
-  echo "CARGO_REGISTRY_TOKEN is not set; skipping crates.io publish."
-  exit 0
+  echo "CARGO_REGISTRY_TOKEN is not set, so nothing can be published to crates.io." >&2
+  exit 1
 fi
 
 # The crates that may be published, read from the single list both this
