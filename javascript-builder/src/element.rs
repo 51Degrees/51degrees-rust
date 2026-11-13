@@ -656,7 +656,8 @@ mod tests {
         ]);
         let context = JavaScriptBuilderContext::new(&element, &data);
         let parameters = crate::default_steps::get_parameters(&context);
-        assert_eq!(parameters_json(&parameters), r#"{"a":"1","b":"2+3"}"#);
+        // In the order the evidence was added, as .NET gives them.
+        assert_eq!(parameters_json(&parameters), r#"{"b":"2+3","a":"1"}"#);
     }
 
     #[test]

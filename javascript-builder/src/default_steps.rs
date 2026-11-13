@@ -252,6 +252,24 @@ mod tests {
     }
 
     #[test]
+    fn parameters_keep_the_evidence_order_and_the_key_as_given() {
+        let parameters = parameters(&[
+            ("query.Zebra", "1"),
+            ("query.session-id", "abc"),
+            ("query.apple", "2"),
+            ("query.Mango Tree", "3"),
+        ]);
+        assert_eq!(
+            parameters,
+            vec![
+                ("Zebra".to_owned(), "1".to_owned()),
+                ("apple".to_owned(), "2".to_owned()),
+                ("Mango+Tree".to_owned(), "3".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
     fn parameter_names_and_values_are_encoded_as_dotnet_encodes_them() {
         // Each pair is the text and what .NET's WebUtility.UrlEncode gives
         // for it.
