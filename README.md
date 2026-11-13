@@ -403,7 +403,7 @@ cargo run -p fodid-examples --bin fodid-web-creator-context
 ```
 
 Every environment variable name that the packages, tests, examples and CI
-scripts read is in [common-ci's list of environment variable names](https://github.com/51Degrees/common-ci/blob/d8a9c596eabf69dd5581a08e9360cdd1c9b3d9e8/environment-variables.md),
+scripts read is in [common-ci's list of environment variable names](https://github.com/51Degrees/common-ci/blob/6cf9d642deaa60bf5c701a114511b0cda29c825b/environment-variables.md),
 which decides.
 
 The free data files carry a small set of properties. Each on-premise example
