@@ -118,6 +118,20 @@ mod tests {
     }
 
     #[test]
+    fn renders_a_float_with_its_own_digits() {
+        // 51.352 widened to f64 is 51.35200119018555, which is not what the
+        // data holds.
+        assert_eq!(
+            property_value_to_string(&PropertyValue::Float(51.352)),
+            "51.352"
+        );
+        assert_eq!(
+            property_value_to_string(&PropertyValue::Float(-0.063)),
+            "-0.063"
+        );
+    }
+
+    #[test]
     fn is_case_insensitive() {
         let data = bag();
         assert_eq!(get_property_as_string(&data, "ismobile"), "true");

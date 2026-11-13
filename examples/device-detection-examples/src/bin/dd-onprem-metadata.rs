@@ -273,6 +273,12 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn names_the_float_type() {
+        assert_eq!(value_type_name(PropertyValueType::Float), "Float");
+        assert_eq!(value_type_name(PropertyValueType::Double), "Double");
+    }
+
     /// Run the example against the Lite Hash file, skipping when none is present.
     #[test]
     fn runs_against_the_lite_data_file() {
