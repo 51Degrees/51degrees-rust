@@ -964,6 +964,39 @@ Describe 'ci/publish-planned-crates.ps1' {
         $result.Output | Should -BeLike '*git submodule update --init owid-rust*./ci/set-crate-versions.ps1*./ci/copy-owid-source.ps1*cargo publish -p fodid --allow-dirty*'
     }
 
+    It 'refuses on a first attempt a planned version crates.io already has' {
+        $saved = @($env:GITHUB_RUN_ATTEMPT, $env:CARGO_REGISTRY_TOKEN)
+        $env:GITHUB_RUN_ATTEMPT = '1'
+        $env:CARGO_REGISTRY_TOKEN = $null
+        try {
+            $registry = New-Registry '4.5.19'
+            $result = Invoke-Publish (Write-PublishPlan @('fiftyone-caching')) $registry
+            $result.Failure | Should -BeLike ('*crates.io already has fiftyone-caching ' +
+                '4.5.19*Rerun the run that failed*')
+
+            $dry = Invoke-Publish (Write-PublishPlan @('fiftyone-caching')) $registry -DryRun
+            $dry.Failure | Should -BeNullOrEmpty
+            $dry.Output | Should -BeLike ('*A first attempt of a publish would refuse ' +
+                'this plan*fiftyone-caching 4.5.19*')
+        } finally {
+            $env:GITHUB_RUN_ATTEMPT, $env:CARGO_REGISTRY_TOKEN = $saved
+        }
+    }
+
+    It 'goes on in a rerun when crates.io already has a planned version' {
+        $saved = $env:GITHUB_RUN_ATTEMPT
+        $env:GITHUB_RUN_ATTEMPT = '2'
+        try {
+            $result = Invoke-Publish (Write-PublishPlan @('fiftyone-caching')) `
+                (New-Registry '4.5.19') -DryRun
+            $result.Failure | Should -BeNullOrEmpty
+            $result.Output | Should -BeLike '*would publish 1 crate(s) with ci/publish-crates.sh: fiftyone-caching*'
+            $result.Output | Should -Not -BeLike '*would refuse*'
+        } finally {
+            $env:GITHUB_RUN_ATTEMPT = $saved
+        }
+    }
+
     It 'publishes every crate of the plan when crates.io has them all' {
         $registry = New-Registry
         $registry['fiftyone-fodid-core'] = New-CrateRecord '4.5.19'
