@@ -20,8 +20,10 @@ Every other file counts.
 
 Each manifest is read as TOML statements, so a value written over several
 lines is one statement, and a bracket, quote or '#' inside a string is part
-of the string. Statements are compared as written, case included, because
-Cargo reads keys and values with case.
+of the string. A dotted key belongs to the table it reaches, as in TOML, so
+package.rust-version under [workspace] is a key of [workspace.package].
+Statements are compared as written, case included, because Cargo reads keys
+and values with case.
 
 .PARAMETER RepoPath
 The repository.
@@ -31,6 +33,11 @@ The crate's entry from ci/packages.json.
 
 .PARAMETER From
 The crate's last tag, which the files changed since.
+
+.PARAMETER To
+The commit the files changed up to. ci/tag-crate-releases.ps1 passes one
+commit and its parent here, to leave out of the release notes a commit that
+changed nothing that counts.
 
 .PARAMETER Files
 The changed files left after the plan's ignore lists, from the repository
@@ -43,6 +50,7 @@ param (
     $Package,
     [Parameter(Mandatory = $true)]
     [string]$From,
+    [string]$To = 'HEAD',
     [string[]]$Files = @()
 )
 $ErrorActionPreference = "Stop"
@@ -181,11 +189,17 @@ function Get-Statements([string[]]$Lines) {
             continue
         }
         $equals = Find-Equals $text
+        $parts = @()
         $key = $null
         if ($equals -gt 0) {
-            $key = ($text.Substring(0, $equals) -split '\.')[0].Trim().Trim('"', "'")
+            $parts = @($text.Substring(0, $equals) -split '\.' |
+                ForEach-Object { $_.Trim().Trim('"', "'") })
+            $key = $parts[0]
         }
-        $current = [pscustomobject]@{ Kind = 'value'; Table = $table; Key = $key; Text = $text }
+        $current = [pscustomobject]@{
+            Kind = 'value'; Table = $table; Key = $key; KeyParts = $parts
+            Text = $text
+        }
         $state = [pscustomobject]@{ Depth = 0; String = $null }
         if ($equals -ge 0) {
             Step-Value $state $text.Substring($equals + 1)
@@ -218,19 +232,34 @@ function Get-CrateText([string[]]$Lines) {
 }
 
 # The text of the workspace manifest that counts, being the keys of
-# [workspace.package] that do not only describe a crate, and every key of
-# [workspace.dependencies] and its sub-tables, each after its table.
+# [workspace.package] that do not only describe a crate, any table under it,
+# and every key of [workspace.dependencies] and its sub-tables, each after its
+# table. A key's table is the header it sits under joined with every part of
+# its dotted key but the last, and an inline table holding [workspace.package]
+# or [workspace] whole counts whole.
 function Get-WorkspaceText([string[]]$Lines) {
     $counted = foreach ($statement in (Get-Statements $Lines)) {
         if ($statement.Kind -cne 'value') {
             continue
         }
-        $table = $statement.Table
-        $packageKey = $table -ceq 'workspace.package' -and
-            (Test-Descriptive $statement) -eq $false
-        $dependency = $table -ceq 'workspace.dependencies' -or
-            $table.StartsWith('workspace.dependencies.', [StringComparison]::Ordinal)
-        if ($packageKey -or $dependency) {
+        $header = @($statement.Table | Where-Object { $_ })
+        $parts = @($statement.KeyParts)
+        if ($parts.Count -eq 0) {
+            $table = $statement.Table
+            $full = $table
+            $leaf = $null
+        } else {
+            $table = (@($header) + @($parts | Select-Object -SkipLast 1)) -join '.'
+            $full = (@($header) + $parts) -join '.'
+            $leaf = $parts[-1]
+        }
+        $packageKey = ($table -ceq 'workspace.package' -and
+            $DescriptiveKeys -cnotcontains $leaf) -or
+            $table.StartsWith('workspace.package.', [StringComparison]::Ordinal)
+        $dependency = $full -ceq 'workspace.dependencies' -or
+            $full.StartsWith('workspace.dependencies.', [StringComparison]::Ordinal)
+        $whole = $full -ceq 'workspace' -or $full -ceq 'workspace.package'
+        if ($packageKey -or $dependency -or $whole) {
             "[$table] $($statement.Text)"
         }
     }
@@ -251,7 +280,7 @@ function Get-ManifestLines([string]$Ref, [string]$Path) {
 # True when the manifest changed in what counts, or is missing on one side.
 function Test-ManifestChanged([string]$Path, [scriptblock]$Read) {
     $before = Get-ManifestLines $From $Path
-    $after = Get-ManifestLines 'HEAD' $Path
+    $after = Get-ManifestLines $To $Path
     if ($null -eq $before -or $null -eq $after) {
         return $true
     }

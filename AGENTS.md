@@ -270,7 +270,8 @@ Markdown, `docs`, `tests`, `test`, `examples` or LICENSE files, and calls
 `ci/release-plan-filter.ps1`, which leaves out a change to a crate's
 `Cargo.toml` only in the keys that describe it on crates.io, and a change to
 the workspace `Cargo.toml` outside `[workspace.package]` and
-`[workspace.dependencies]` or only in their descriptive keys. A change only
+`[workspace.dependencies]` or only in their descriptive keys, a dotted key
+counting in the table it reaches as TOML reads it. A change only
 to CI files other than those scripts releases nothing.
 `ci/set-crate-versions.ps1` then writes each
 planned crate's version, and the version every other crate last released,
@@ -282,7 +283,9 @@ unless a person dispatches it with `allow-version-bump`, tests the
 examples against this tree, publishes the planned crates in the order of
 `ci/crates.txt` with `ci/publish-planned-crates.ps1` and
 `ci/publish-crates.sh`, skipping any version already published, and tags
-each crate and gives it a GitHub release with `ci/tag-crate-releases.ps1`.
+each crate and gives it a GitHub release with `ci/tag-crate-releases.ps1`,
+whose notes list the commits since the crate's last tag that changed a file
+of it that counts, merges left out.
 `release-plan.yml` prints the same plan on every pull request and publishes
 nothing.
 
@@ -419,7 +422,9 @@ submodule is checked out and from that file otherwise.
   against them. Runs on every PR.
 - `publish.yml` publishes the crates that changed on push to `main`, then a
   `verify-published` job builds and tests `examples/` against the
-  just-released crates.io packages.
+  just-released crates.io packages. That job runs whenever a crate is tagged
+  at the commit, so a rerun whose plan is empty, after a GitHub release
+  failed, still checks the release.
 - `release-plan.yml` checks `ci/packages.json` against the manifests and runs
   the Pester tests of the release scripts (`ci/packages.Tests.ps1`) on Linux,
   Windows and macOS, then prints the crates a release would publish, on every

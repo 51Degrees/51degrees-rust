@@ -51,7 +51,7 @@ jobs:
       # short-lived crates.io token.
       id-token: write
     outputs:
-      released: ${{ steps.plan.outputs.count }}
+      tagged: ${{ steps.tags.outputs.tagged }}
     steps:
       # The owid-rust submodule holds the OWID source that ci/copy-owid-source.ps1
       # compiles into fodid, the cxx submodule holds the C sources that
@@ -156,8 +156,10 @@ jobs:
       # release is created from the tag with notes for that crate. This runs
       # even when the plan is empty, because a rerun after the tags were
       # pushed plans nothing, and still has to create any release a failed
-      # run left undone.
+      # run left undone. It gives the number of crates tagged at this commit
+      # as its output "tagged".
       - name: Tag and release each crate published
+        id: tags
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -168,11 +170,13 @@ jobs:
 
   # AFTER publish: prove the just-released packages work by building and testing
   # the examples against crates.io (no source.toml patch). The pre-publish check
-  # against local source lives in examples.yml.
+  # against local source lives in examples.yml. It runs whenever a crate is
+  # tagged at this commit, so a rerun whose plan is empty because the tags
+  # were pushed, after a GitHub release failed, still checks the release.
   verify-published:
     name: examples vs published crates
     needs: publish
-    if: needs.publish.outputs.released != '0'
+    if: needs.publish.outputs.tagged != '0'
     runs-on: ubuntu-latest
     defaults:
       run:

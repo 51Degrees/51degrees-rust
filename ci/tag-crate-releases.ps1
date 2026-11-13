@@ -11,9 +11,15 @@ leaving a crate untagged while a crate depending on it is tagged.
 
 Every crate tag on HEAD then gets a GitHub release if it has none, so a rerun
 finishes the releases a failed run left undone, even though the plan of a
-rerun is empty once the tags are pushed. The notes list the commits that
-changed the crate's folders since its previous tag, or, for a crate released
-only because a crate it depends on was, those crates and their versions.
+rerun is empty once the tags are pushed. The notes list the commits since the
+crate's previous tag that changed a file of it that counts, as the release
+plan decides, leaving out merges, which repeat the commits they bring in. For
+a crate released only because a crate it depends on was, they name those
+crates and their versions.
+
+When GITHUB_OUTPUT is set, the number of crates tagged at HEAD is written to
+it as 'tagged', which is what the check of the published examples runs on, so
+a rerun whose plan is empty still checks the release.
 
 .PARAMETER RepoName
 The directory the repository is checked out into.
@@ -40,6 +46,32 @@ $PSNativeCommandUseErrorActionPreference = $true
 $packages = @(Get-Packages $RepoName | Where-Object Publish -eq $true)
 $plan = Read-ReleasePlan $PlanFile
 $head = git -C $RepoName rev-parse HEAD
+
+# The commits from $From to HEAD, newest first, that changed a file of the
+# package that counts: one outside the plan's ignore lists that
+# ci/release-plan-filter.ps1, when the repository has it, keeps for that
+# commit alone. Merges are left out.
+function Get-CountedCommits($Package, [string]$From) {
+    $pathspecs = @(Get-PackagePaths $Package) + @(Get-PackageExcludes $Package)
+    $filter = Join-Path $RepoName 'ci/release-plan-filter.ps1'
+    $hasFilter = Test-Path $filter -PathType Leaf
+    if ($hasFilter) {
+        $filter = (Resolve-Path $filter).ProviderPath
+    }
+    $commits = @(git -C $RepoName log --no-merges --format='%H' "$From..$head" `
+        -- $pathspecs)
+    foreach ($commit in $commits) {
+        $files = @(git -C $RepoName -c core.quotePath=false diff-tree `
+            --no-commit-id --name-only -r $commit -- $pathspecs)
+        if ($files.Count -gt 0 -and $hasFilter) {
+            $files = @(& $filter -RepoPath $RepoName -Package $Package `
+                -From "$commit^" -To $commit -Files $files | Where-Object { $_ })
+        }
+        if ($files.Count -gt 0) {
+            git -C $RepoName log -1 --format='- %s (%h)' $commit
+        }
+    }
+}
 
 # 1. A tag for each crate of the plan, made here unless a rerun made it.
 $tags = @()
@@ -74,6 +106,9 @@ foreach ($package in $packages) {
 if ($onHead.Count -eq 0) {
     Write-Output "No crate is tagged at $head, so there is nothing to release."
 }
+if ($env:GITHUB_OUTPUT) {
+    "tagged=$($onHead.Count)" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+}
 foreach ($package in $packages) {
     if (-not $onHead.ContainsKey($package.Name)) {
         continue
@@ -98,10 +133,9 @@ foreach ($package in $packages) {
     $earlier = @(Get-ReleasedVersions $RepoName $package.Name |
         Where-Object { $_ -lt [version]$version })
     $notes = @()
-    $paths = Get-PackagePaths $package
     if ($earlier.Count -gt 0) {
         $previous = "$($package.Name)/$($earlier[-1])"
-        $commits = @(git -C $RepoName log --format='- %s (%h)' "$previous..$head" -- $paths)
+        $commits = @(Get-CountedCommits $package $previous)
         if ($commits.Count -gt 0) {
             $notes += "Changes since $($earlier[-1]):"
             $notes += ""
