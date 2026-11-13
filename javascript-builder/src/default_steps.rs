@@ -210,11 +210,11 @@ mod tests {
         let element = JavaScriptBuilderElement::new();
         let data =
             flow_data_after_sequence(&[("query.session-id", "a\"b"), ("query.sequence", "-2")]);
-        // The Sequence element keeps the session id as given, which is not
-        // safe for the script, and reads -2 as no sequence, giving 1.
+        // The Sequence element keeps the session id as given and adds one to
+        // the sequence, so neither value it holds is safe for the script.
         let sequence = data.get(SequenceElement::KEY).expect("sequence data");
         assert_eq!(sequence.session_id(), Some("a\"b"));
-        assert_eq!(sequence.sequence(), Some(1));
+        assert_eq!(sequence.sequence(), Some(-1));
         let context = JavaScriptBuilderContext::new(&element, &data);
         assert_eq!(get_session_id(&context), "");
         assert_eq!(get_sequence(&context), 1);
