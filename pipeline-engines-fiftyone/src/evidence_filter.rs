@@ -280,7 +280,6 @@ mod tests {
     #[test]
     fn share_all_includes_every_key_but_those_never_shared() {
         let filter = EvidenceKeyFilterShareUsage::share_all();
-        assert!(filter.include("header.cookie"));
         assert!(filter.include("cookie.sessionid"));
         assert!(filter.include("query.other"));
     }
@@ -296,6 +295,7 @@ mod tests {
         "query.id.email",
         "query.id.salt",
         "header.request-path",
+        "header.cookie",
     ];
 
     /// `key` as given, in upper case, and with each letter after a `.` or
@@ -376,12 +376,11 @@ mod tests {
     }
 
     #[test]
-    fn the_cookie_header_is_shared_only_when_sharing_all() {
-        let rule_based = EvidenceKeyFilterShareUsage::new(Vec::<&str>::new(), None::<Vec<&str>>);
-        let share_all = EvidenceKeyFilterShareUsage::share_all();
-        for key in spellings("header.cookie") {
-            assert!(!rule_based.include(&key), "{key} shared");
-            assert!(share_all.include(&key), "{key} not shared when sharing all");
+    fn the_cookie_header_is_never_shared() {
+        for (name, filter) in both_filters() {
+            for key in spellings("header.cookie") {
+                assert!(!filter.include(&key), "{name}: {key} shared");
+            }
         }
     }
 
