@@ -55,7 +55,8 @@ BeforeAll {
         $to = New-TempFolder
         foreach ($file in @('Cargo.toml', '.gitmodules', 'ci/crates.txt',
                 'ci/packages.json', 'ci/copy-cxx-sources.ps1',
-                'ci/copy-owid-source.ps1')) {
+                'ci/copy-owid-source.ps1',
+                'ci/record-derived-properties-commit.ps1')) {
             Copy-RepoFile $to $file
         }
         foreach ($folder in (Get-MemberFolders)) {
@@ -151,7 +152,8 @@ BeforeAll {
         $files = @($script:Packages | ForEach-Object { "$($_.Path)/src/lib.rs" }) +
             @('ci/publish-crates.sh', '.github/workflows/publish.yml',
               'docs/README.md', 'examples/Cargo.toml', 'README.md',
-              'AGENTS.md', 'ci/copy-cxx-sources.ps1', 'ci/copy-owid-source.ps1')
+              'AGENTS.md', 'ci/copy-cxx-sources.ps1', 'ci/copy-owid-source.ps1',
+              'ci/record-derived-properties-commit.ps1')
         foreach ($file in $files) {
             $full = Join-Path $repo $file
             $null = New-Item -ItemType Directory -Force (Split-Path $full)
@@ -270,6 +272,20 @@ Describe 'ci/check-packages.ps1' {
         }
         (Invoke-Check $copy).Output | Should -BeLike ('*fodid has ExtraPaths*but it is ' +
             'built from Cargo.toml, ci/copy-owid-source.ps1, owid-rust,*')
+    }
+
+    It 'refuses the derived property crate without its submodule and the script that records its commit' {
+        $copy = Copy-Workspace
+        Edit-Packages $copy {
+            param($packages)
+            ($packages | Where-Object Name -eq 'fiftyone-derived-properties').ExtraPaths =
+                @('Cargo.toml')
+        }
+        $result = Invoke-Check $copy
+        $result.Failed | Should -BeTrue
+        $result.Output | Should -BeLike ('*fiftyone-derived-properties has ExtraPaths ' +
+            'Cargo.toml, but it is built from Cargo.toml, ' +
+            'ci/record-derived-properties-commit.ps1, derived-properties/vendor,*')
     }
 
     It 'refuses a crate that does not list the workspace Cargo.toml' {
@@ -392,6 +408,36 @@ Describe 'The release plan of the crates' {
         Add-Change $script:Repo @('ci/copy-owid-source.ps1')
         (Get-Plan $script:Repo).Name | Should -Be @('fodid', 'fodid-client',
             'fiftyone-fodid-core', 'fiftyone-fodid-cloud')
+    }
+
+    It 'plans the derived property crate when its scripts move or the script that records their commit changes' {
+        Move-Submodule $script:Repo 'derived-properties/vendor'
+        (Get-Plan $script:Repo).Name | Should -Be @('fiftyone-derived-properties')
+
+        git -C $script:Repo reset --quiet --hard $script:Start
+        Add-Change $script:Repo @('ci/record-derived-properties-commit.ps1')
+        (Get-Plan $script:Repo).Name | Should -Be @('fiftyone-derived-properties')
+    }
+
+    It 'stops with what to do when a repository tag is above the crate tags' {
+        Add-Commit $script:Repo 'Released under a repository tag'
+        git -C $script:Repo tag '4.5.19'
+        try {
+            { Get-Plan $script:Repo } | Should -Throw ('*repository tag 4.5.19 is ' +
+                'above*of 26 crate(s)*ci/start-crate-tags.ps1 -Push*')
+        } finally {
+            git -C $script:Repo tag -d '4.5.19'
+        }
+    }
+
+    It 'plans as usual when the crate tags are at the last repository tag' {
+        git -C $script:Repo tag '4.5.18' $script:Start
+        try {
+            Add-Change $script:Repo @('derived-properties/src/lib.rs')
+            (Get-Plan $script:Repo).Name | Should -Be @('fiftyone-derived-properties')
+        } finally {
+            git -C $script:Repo tag -d '4.5.18'
+        }
     }
 
     It 'plans every crate when the workspace Cargo.toml changes what the crates inherit' {
@@ -812,6 +858,38 @@ Describe 'ci/start-crate-tags.ps1' {
             ForEach-Object { $output.Add("$_") } } | Should -Throw '*Nothing is tagged*'
         $output -join "`n" | Should -BeLike '*fodid is at 4.5.19 on crates.io, above 4.5.18*'
         Get-CrateTags $repo | Should -BeNullOrEmpty
+    }
+
+    It 'tags every crate again at a later release when its own tags are all below it' {
+        $repo = New-PlanRepo
+        Add-Commit $repo 'Released under a repository tag'
+        git -C $repo tag '4.5.19'
+        (Get-CratesBehindRelease $repo).Crates.Count | Should -Be $script:Names.Count
+        $registry = New-Registry '4.5.19'
+        $registry['fiftyone-fodid-core'] = New-CrateRecord '4.5.19'
+        $null = & $script:Script -RepoPath $repo -Registry $registry
+
+        $tags = Get-CrateTags $repo
+        $tags.Count | Should -Be ($script:Names.Count * 2)
+        $tags | Should -Contain 'fodid/4.5.18'
+        $tags | Should -Contain 'fiftyone-fodid-core/4.5.19'
+        git -C $repo rev-parse 'refs/tags/fodid/4.5.19^{commit}' |
+            Should -Be (git -C $repo rev-parse 'refs/tags/4.5.19^{commit}')
+        (Get-CratesBehindRelease $repo).Crates | Should -BeNullOrEmpty
+    }
+
+    It 'tags nothing when a crate has a tag of its own at or above the release' {
+        $repo = New-PlanRepo
+        Add-Commit $repo 'Released under a repository tag'
+        git -C $repo tag '4.5.19'
+        git -C $repo tag 'fodid/4.5.20'
+        $registry = New-Registry '4.5.19'
+        $registry['fiftyone-fodid-core'] = New-CrateRecord '4.5.19'
+        $output = [Collections.Generic.List[string]]::new()
+        { & $script:Script -RepoPath $repo -Registry $registry |
+            ForEach-Object { $output.Add("$_") } } | Should -Throw '*Nothing is tagged*'
+        $output -join "`n" | Should -BeLike '*fodid already has tags of its own (fodid/4.5.20)*'
+        Get-CrateTags $repo | Should -Not -Contain 'fiftyone-caching/4.5.19'
     }
 }
 
