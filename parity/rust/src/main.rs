@@ -81,9 +81,7 @@ use fiftyone_json_builder::{
     JsonBuilderElementBuilder, JSON_BUILDER_DATA_KEY, JSON_BUILDER_ELEMENT_DATA_KEY,
 };
 use fiftyone_native::PerformanceProfile;
-use fiftyone_pipeline_core::{
-    ElementData, Evidence, FlowData, FlowElement, Pipeline, PropertyValue,
-};
+use fiftyone_pipeline_core::{ElementData, Evidence, FlowData, Pipeline, PropertyValue};
 use fiftyone_pipeline_engines_fiftyone::{SequenceElement, ShareUsageElement};
 use fiftyone_pipeline_translation::{TranslationData, TranslationValue};
 
@@ -297,14 +295,9 @@ fn build_pipeline(
 }
 
 /// Sequence, the values element and the two builders, for the cases that
-/// compare the JSON and the JavaScript byte for byte. The crates' Sequence
-/// element has data of its own, which .NET's does not, so the JSON builder
-/// here leaves that data out.
+/// compare the JSON and the JavaScript byte for byte.
 fn build_values_pipeline() -> Result<Arc<Pipeline>> {
-    let sequence = Arc::new(SequenceElement::new());
-    let json = JsonBuilderElementBuilder::new()
-        .exclude_element(sequence.data_key())
-        .build();
+    let json = JsonBuilderElementBuilder::new().build();
     let javascript = JavaScriptBuilderElementBuilder::new()
         .set_endpoint(VALUES_ENDPOINT)
         .set_object_name(VALUES_OBJECT_NAME)?
@@ -312,7 +305,7 @@ fn build_values_pipeline() -> Result<Arc<Pipeline>> {
         .set_minify(false)
         .build();
     Ok(Pipeline::builder()
-        .add_element(sequence)
+        .add_element(Arc::new(SequenceElement::new()))
         .add_element(Arc::new(ValuesElement::new()))
         .add_element(Arc::new(json))
         .add_element(Arc::new(javascript))

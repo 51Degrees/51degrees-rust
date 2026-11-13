@@ -457,3 +457,11 @@ Compare match keys, never envelopes. The payload offsets and lengths are
 internal to the crate, so every field is read through its typed accessor,
 and the layout is specified at
 https://github.com/51Degrees/specifications/blob/main/did-specification/identifier-layout.md
+
+## Tests that fail on timing
+
+A test that fails on a time limit, a performance threshold or a timeout is
+fixed, not run again until it passes. Either the limit is set to fit the
+slowest runner the test runs on, with each runner's measurement behind it, or
+the reason it takes too long is found and fixed. A failure that comes and goes
+costs everyone who meets it the time to look into it.

@@ -32,9 +32,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use fiftyone_pipeline_core::{
-    ElementData, Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData,
-    FlowElement, MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue,
-    PropertyValueType, Result, TypedKey,
+    ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    MapElementData, NoValueError, Pipeline, PropertyMetaData, PropertyValue, PropertyValueType,
+    Result, TypedKey,
 };
 use fiftyone_pipeline_engines_fiftyone::{
     SequenceElement, SetHeadersElement, ShareUsageConfig, ShareUsageElement,
@@ -104,14 +104,20 @@ fn sequence_preserves_supplied_session_and_increments() {
 }
 
 #[test]
-fn an_empty_session_id_is_kept() {
-    // A session id is added only when the evidence has none.
+fn an_empty_session_id_counts_as_absent() {
+    // The specification's Process section says a session id that is not a
+    // non-empty string is not present, so a new one is added.
     let (data, result) = sequence_run(&[("query.session-id", "")], false);
     result.unwrap();
 
-    assert_eq!(data.evidence().get("query.session-id"), Some(""));
+    let session_id = data
+        .evidence()
+        .get("query.session-id")
+        .expect("a session id is in the evidence");
+    assert!(is_dotnet_guid(session_id), "{session_id:?}");
     let sequence = data.get(SequenceElement::KEY).unwrap();
-    assert_eq!(sequence.session_id(), Some(""));
+    assert_eq!(sequence.session_id(), Some(session_id));
+    assert!(data.errors().is_empty());
 }
 
 #[test]
@@ -153,25 +159,34 @@ fn the_values_keep_the_callers_spelling_and_place() {
 }
 
 #[test]
-fn sequences_give_the_evidence_and_errors_dotnet_gives() {
-    // The sequence sent, the evidence after, the sequence the element's data
-    // holds and whether an error is recorded. The first five are the cases
-    // the issue names.
-    let cases: [(Option<&str>, &str, Option<i64>, bool); 11] = [
-        (None, "1", Some(1), false),
-        (Some("5"), "6", Some(6), false),
-        (Some("2147483647"), "-2147483648", Some(-2147483648), false),
-        (Some("3000000000"), "3000000000", None, true),
-        (Some("abc"), "abc", None, true),
-        (Some(" 5"), "6", Some(6), false),
-        (Some("+5"), "6", Some(6), false),
-        (Some("5\0"), "6", Some(6), false),
-        (Some("-2147483648"), "-2147483647", Some(-2147483647), false),
-        (Some(""), "", None, true),
-        (Some("1.5"), "1.5", None, true),
+fn sequences_follow_the_specification() {
+    // The sequence sent and the sequence after. Only a string of the digits
+    // 0 to 9 from 0 up to 2,147,483,646 is read, and anything else counts as
+    // absent, giving 1 with no error.
+    let cases: [(Option<&str>, i64); 20] = [
+        (None, 1),
+        (Some("5"), 6),
+        (Some("0"), 1),
+        (Some("0005"), 6),
+        (Some("2147483646"), 2147483647),
+        (Some("2147483647"), 1),
+        (Some("3000000000"), 1),
+        (Some("99999999999999999999999"), 1),
+        (Some("abc"), 1),
+        (Some(" 5"), 1),
+        (Some("5 "), 1),
+        (Some("+5"), 1),
+        (Some("-2"), 1),
+        (Some("5\0"), 1),
+        (Some("-2147483648"), 1),
+        (Some(""), 1),
+        (Some("1.5"), 1),
+        (Some("\u{663}"), 1),
+        (Some("\u{a0}5"), 1),
+        (Some("5e2"), 1),
     ];
     for suppress in [false, true] {
-        for (sent, after, sequence, error) in cases {
+        for (sent, sequence) in cases {
             let evidence: Vec<(&str, &str)> = sent
                 .map(|sent| ("query.sequence", sent))
                 .into_iter()
@@ -179,43 +194,19 @@ fn sequences_give_the_evidence_and_errors_dotnet_gives() {
             let (data, result) = sequence_run(&evidence, suppress);
             let case = format!("{sent:?} with suppress {suppress}");
 
+            result.unwrap_or_else(|e| panic!("{case}: {e}"));
+            assert!(data.errors().is_empty(), "{case}");
             let session_id = data.evidence().get("query.session-id").unwrap_or_default();
             assert!(is_dotnet_guid(session_id), "{case}: {session_id}");
-            assert_eq!(data.evidence().get("query.sequence"), Some(after), "{case}");
+            let after = sequence.to_string();
+            assert_eq!(
+                data.evidence().get("query.sequence"),
+                Some(after.as_str()),
+                "{case}"
+            );
             let held = data.get(SequenceElement::KEY).expect("sequence data");
             assert_eq!(held.session_id(), Some(session_id), "{case}");
-            assert_eq!(held.sequence(), sequence, "{case}");
-
-            if !error {
-                assert!(data.errors().is_empty(), "{case}");
-                result.unwrap_or_else(|e| panic!("{case}: {e}"));
-                continue;
-            }
-            let errors = data.errors();
-            assert_eq!(errors.len(), 1, "{case}");
-            assert_eq!(errors[0].element_data_key, "sequence", "{case}");
-            assert!(errors[0].should_throw, "{case}");
-            let message = errors[0].source.message();
-            assert!(
-                message.starts_with(
-                    "The value for the 'sequence' parameter is not valid. See \
-                     https://51degrees.com/"
-                ),
-                "{case}: {message}"
-            );
-            assert!(
-                message.ends_with(" for more information."),
-                "{case}: {message}"
-            );
-            match result {
-                Ok(()) => assert!(suppress, "{case}: processing gave no error"),
-                Err(Error::Aggregate(thrown)) => {
-                    assert!(!suppress, "{case}");
-                    assert_eq!(thrown.len(), 1, "{case}");
-                    assert_eq!(thrown[0].element_data_key, "sequence", "{case}");
-                }
-                Err(other) => panic!("{case}: {other}"),
-            }
+            assert_eq!(held.sequence(), Some(sequence), "{case}");
         }
     }
 }
