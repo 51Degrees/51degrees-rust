@@ -373,7 +373,13 @@ pub fn compare_case(case: &Case, dotnet: &Value, rust: &Value) -> Vec<Difference
         case: &case.id,
         differences: Vec::new(),
     };
-    for field in ["processError", "session", "evidenceAfter", "errors"] {
+    for field in [
+        "processError",
+        "thrown",
+        "session",
+        "evidenceAfter",
+        "errors",
+    ] {
         out.values(field, field_of(&dotnet, field), field_of(&rust, field));
     }
     out.properties(
