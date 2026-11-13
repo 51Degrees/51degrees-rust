@@ -37,9 +37,10 @@ fodid-client = { version = "4.5.8", features = ["reqwest-client"] }
 # engine's built-in transport, which the running demo sends through.
 fiftyone-cloud-request-engine = { version = "4.5.2", features = ["reqwest-client"] }
 fiftyone-fodid-cloud = "4.5.3"
-# The shipped HumanConfidence script, so the proxy route answers with the same
-# property the service returns when the browser calls it directly, and the two
-# engines whose properties the script reads.
+# The derived property element and its built-in HumanConfidence script, so the
+# proxy route answers with the same property the service returns when the
+# browser calls it directly, and the two cloud engines the element comes after,
+# as the fiftyone-derived-properties README asks.
 fiftyone-derived-properties = "4.5.2"
 fiftyone-device-detection-cloud = "4.5.2"
 fiftyone-ip-intelligence-cloud = "4.5.2"

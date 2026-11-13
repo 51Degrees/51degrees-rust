@@ -173,8 +173,9 @@ fn proxy_router(resource_key: &str, endpoint: &str) -> anyhow::Result<Router> {
         .cloud_request_engine(request_engine.clone())
         .build()
         .context("building the 51Did engine")?;
-    // The device and address properties the HumanConfidence script reads, which
-    // is the only reason these two engines are here.
+    // The derived property element comes after the elements that supply the
+    // properties its scripts name, as the fiftyone-derived-properties README
+    // says, which is the only reason these two engines are here.
     let devices = DeviceDetectionCloudEngine::builder()
         .cloud_request_engine(request_engine.clone())
         .build();
