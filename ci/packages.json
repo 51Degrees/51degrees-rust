@@ -92,7 +92,7 @@
   {
     "Name": "fiftyone-derived-properties",
     "Path": "derived-properties",
-    "ExtraPaths": ["Cargo.toml"],
+    "ExtraPaths": ["derived-properties/vendor", "ci/record-derived-properties-commit.ps1", "Cargo.toml"],
     "DependsOn": ["fiftyone-pipeline-core"],
     "Publish": true
   },

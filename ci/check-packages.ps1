@@ -17,8 +17,10 @@ against the files it describes.
 4. Each ExtraPaths is the workspace Cargo.toml, whose package keys and
    dependencies every crate inherits, and each submodule the crate takes
    files from at build time with the script that copies them, read from
-   ci/copy-cxx-sources.ps1 and ci/copy-owid-source.ps1. A change to any of
-   these can change what the crate is built from, so it releases the crate.
+   ci/copy-cxx-sources.ps1 and ci/copy-owid-source.ps1, or whose commit
+   ci/record-derived-properties-commit.ps1 writes into the crate. A change to
+   any of these can change what the crate is built from, so it releases the
+   crate.
    ci/release-plan-filter.ps1 decides which changes to the workspace
    Cargo.toml count.
 5. ci/crates.txt lists each crate after every crate it requires by path,
@@ -155,10 +157,11 @@ function Get-WorkspaceCrates([string]$Root) {
     }
 }
 
-# The script that copies each submodule's files into crates.
+# The script that copies each submodule's files, or its commit, into crates.
 $CopyScripts = @{
     'cxx' = 'ci/copy-cxx-sources.ps1'
     'owid-rust' = 'ci/copy-owid-source.ps1'
+    'derived-properties/vendor' = 'ci/record-derived-properties-commit.ps1'
 }
 
 # The workspace manifest, which every crate inherits from.
@@ -174,13 +177,21 @@ function Get-SubmoduleCopies([string]$Root) {
     $owid = @([regex]::Matches($owidScript,
         '(?m)^\$target\s*=\s*Join-Path\s+\$RepoRoot\s+"([^"/]+)/') |
         ForEach-Object { $_.Groups[1].Value })
+    $recordScript = Get-Content -Raw (Join-Path $Root $CopyScripts['derived-properties/vendor'])
+    $record = @([regex]::Matches($recordScript,
+        '(?m)^\$crate\s*=\s*Join-Path\s+\$RepoRoot\s+"([^"/]+)"') |
+        ForEach-Object { $_.Groups[1].Value })
     if ($cxx.Count -eq 0) {
         throw "Could not read the crates ci/copy-cxx-sources.ps1 copies into"
     }
     if ($owid.Count -eq 0) {
         throw "Could not read the crate ci/copy-owid-source.ps1 copies into"
     }
-    return @{ 'cxx' = $cxx; 'owid-rust' = $owid }
+    if ($record.Count -eq 0) {
+        throw "Could not read the crate ci/record-derived-properties-commit.ps1 writes into"
+    }
+    return @{ 'cxx' = $cxx; 'owid-rust' = $owid;
+        'derived-properties/vendor' = $record }
 }
 
 function Format-List([string[]]$Names) {
