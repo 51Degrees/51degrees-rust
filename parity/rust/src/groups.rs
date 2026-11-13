@@ -43,7 +43,7 @@ pub const IN_SEQUENCE_UNSUPPRESSED: &str = "in-sequence-unsuppressed";
 const FAILING_DATA_KEY: &str = "failing";
 
 /// The message of the error the failing element returns.
-const FAILURE: &str = "The failing element always fails.";
+const FAILURE: &str = "The failing element fails differently.";
 
 /// An element that reads no evidence, lists no properties and returns an
 /// error from every call.
