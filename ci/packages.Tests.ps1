@@ -1164,6 +1164,81 @@ Describe 'ci/tag-crate-releases.ps1 -DryRun' {
         $output | Should -BeLike '*release fiftyone-common-sys/4.5.19*Changes since 4.5.18*Fix the common C library*'
         $output | Should -BeLike '*release fiftyone-device-detection-sys/4.5.19*Requires these crates*fiftyone-common-sys 4.5.19*'
     }
+
+    It 'writes how many crates are tagged at HEAD, on a rerun that plans nothing too' {
+        $repo = New-PlanRepo
+        Add-Change $repo @('common-sys/src/lib.rs')
+        $plan = Join-Path (New-TempFolder) 'plan.json'
+        $null = & (Join-Path $script:Root 'ci/get-release-plan.ps1') `
+            -RepoPath $repo -OutFile $plan
+        $planned = @((Read-ReleasePlan $plan).Releases).Count
+        $planned | Should -BeGreaterThan 1
+
+        # The run that tags, then a rerun of it, whose plan is empty because
+        # every crate it released is tagged at HEAD.
+        $first = Join-Path (New-TempFolder) 'output.txt'
+        $env:GITHUB_OUTPUT = $first
+        try {
+            $null = & (Join-Path $script:Root 'ci/tag-crate-releases.ps1') `
+                -RepoName $repo -Repository 'example/none' -PlanFile $plan -DryRun
+        } finally {
+            $env:GITHUB_OUTPUT = $null
+        }
+        $rerunPlan = Join-Path (New-TempFolder) 'rerun.json'
+        $null = & (Join-Path $script:Root 'ci/get-release-plan.ps1') `
+            -RepoPath $repo -OutFile $rerunPlan
+        @((Read-ReleasePlan $rerunPlan).Releases).Count | Should -Be 0
+        $rerun = Join-Path (New-TempFolder) 'output.txt'
+        $env:GITHUB_OUTPUT = $rerun
+        try {
+            $null = & (Join-Path $script:Root 'ci/tag-crate-releases.ps1') `
+                -RepoName $repo -Repository 'example/none' -PlanFile $rerunPlan -DryRun
+        } finally {
+            $env:GITHUB_OUTPUT = $null
+        }
+
+        foreach ($file in @($first, $rerun)) {
+            $file | Should -Exist
+            @(Get-Content $file) | Should -Contain "tagged=$planned"
+        }
+    }
+
+    It 'lists in the notes only the commits that changed a file that counts, and no merges' {
+        $repo = New-PlanRepo
+        $manifest = Join-Path $repo 'common-sys/Cargo.toml'
+        Set-Content -Path $manifest -Value @('[package]',
+            'name = "fiftyone-common-sys"', 'description = "One"')
+        Add-Commit $repo 'Add the common C manifest'
+        Set-Content -Path (Join-Path $repo 'common-sys/README.md') -Value 'Words'
+        Add-Commit $repo 'Reword the common C readme'
+        Set-Content -Path $manifest -Value @('[package]',
+            'name = "fiftyone-common-sys"', 'description = "Two"')
+        Add-Commit $repo 'Describe the common C crate'
+        git -C $repo checkout --quiet -b side
+        Set-Content -Path (Join-Path $repo 'common-sys/src/side.rs') -Value 'side'
+        Add-Commit $repo 'Add a side file to the common C crate'
+        git -C $repo checkout --quiet -
+        Add-Content -Path (Join-Path $repo 'common-sys/src/lib.rs') -Value 'fix'
+        Add-Commit $repo 'Fix the common C library'
+        git -C $repo -c user.name=test -c user.email=test@example.com `
+            merge --quiet --no-ff side -m 'Merge the side branch'
+        $plan = Join-Path (New-TempFolder) 'plan.json'
+        $null = & (Join-Path $script:Root 'ci/get-release-plan.ps1') `
+            -RepoPath $repo -OutFile $plan
+        $output = (& (Join-Path $script:Root 'ci/tag-crate-releases.ps1') `
+            -RepoName $repo -Repository 'example/none' -PlanFile $plan `
+            -DryRun) -join "`n"
+
+        $notes = @($output -split 'would create release ' |
+            Where-Object { $_.StartsWith('fiftyone-common-sys/') })
+        $notes | Should -HaveCount 1
+        $notes[0] | Should -BeLike '*Add the common C manifest*'
+        $notes[0] | Should -BeLike '*Add a side file to the common C crate*'
+        $notes[0] | Should -BeLike '*Fix the common C library*'
+        $notes[0] | Should -Not -BeLike '*Reword the common C readme*'
+        $notes[0] | Should -Not -BeLike '*Describe the common C crate*'
+        $notes[0] | Should -Not -BeLike '*Merge the side branch*'
+    }
 }
 
 Describe 'ci/publish-crates.sh' {
@@ -1370,5 +1445,28 @@ Describe 'ci/release-plan-filter.ps1 with the workspace Cargo.toml' {
         Get-KeptWorkspace $script:Workspace $after | Should -Be @('fodid-client/src/lib.rs')
         $after = Edit-Workspace '^# Shared third-party dependencies' '# Changed comment.'
         Get-KeptWorkspace $script:Workspace $after | Should -Be @('fodid-client/src/lib.rs')
+    }
+
+    It 'reads a dotted key as the table it reaches, as TOML does' {
+        $before = @('[workspace]', 'members = ["fodid-client"]',
+            'package.rust-version = "1.95"',
+            'package.repository = "https://example.com/a"',
+            'dependencies.serde = "1"')
+        $after = $before -replace '^package\.rust-version = .*', 'package.rust-version = "1.96"'
+        Get-KeptWorkspace $before $after |
+            Should -Be @('Cargo.toml', 'fodid-client/src/lib.rs')
+        $after = $before -replace '^dependencies\.serde = .*', 'dependencies.serde = "1.1"'
+        Get-KeptWorkspace $before $after |
+            Should -Be @('Cargo.toml', 'fodid-client/src/lib.rs')
+        $after = $before -replace '^package\.repository = .*', 'package.repository = "https://example.com/b"'
+        Get-KeptWorkspace $before $after | Should -Be @('fodid-client/src/lib.rs')
+
+        $root = @('workspace.members = ["fodid-client"]',
+            'workspace.package.edition = "2021"')
+        $after = $root -replace '"2021"', '"2024"'
+        Get-KeptWorkspace $root $after |
+            Should -Be @('Cargo.toml', 'fodid-client/src/lib.rs')
+        $after = $root -replace '\["fodid-client"\]', '["fodid-client", "other"]'
+        Get-KeptWorkspace $root $after | Should -Be @('fodid-client/src/lib.rs')
     }
 }
