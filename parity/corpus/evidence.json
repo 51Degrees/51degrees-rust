@@ -593,6 +593,46 @@
     }
   },
   {
+    "id": "ua-and-ip-group",
+    "about": "A User-Agent and an address, through Device Detection, IP Intelligence and an element that always fails, run as a parallel group, with process errors collected.",
+    "pipeline": "group",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
+      "server.client-ip": "102.89.32.1",
+      "query.session-id": "parity-ua-and-ip-group"
+    }
+  },
+  {
+    "id": "ua-and-ip-group-unsuppressed",
+    "about": "The same as ua-and-ip-group, with process errors thrown.",
+    "pipeline": "group-unsuppressed",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
+      "server.client-ip": "102.89.32.1",
+      "query.session-id": "parity-ua-and-ip-group-unsuppressed"
+    }
+  },
+  {
+    "id": "ua-and-ip-in-sequence",
+    "about": "The same as ua-and-ip-group, with the three elements run in sequence.",
+    "pipeline": "in-sequence",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
+      "server.client-ip": "102.89.32.1",
+      "query.session-id": "parity-ua-and-ip-in-sequence"
+    }
+  },
+  {
+    "id": "ua-and-ip-in-sequence-unsuppressed",
+    "about": "The same as ua-and-ip-in-sequence, with process errors thrown.",
+    "pipeline": "in-sequence-unsuppressed",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
+      "server.client-ip": "102.89.32.1",
+      "query.session-id": "parity-ua-and-ip-in-sequence-unsuppressed"
+    }
+  },
+  {
     "id": "sequence-absent",
     "about": "A session id with no sequence.",
     "evidence": {
