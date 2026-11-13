@@ -81,8 +81,7 @@
     "path": "javascript",
     "kind": "text",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "reason": "The JavaScript holds the JSON, so every JSON difference in the engines' pipeline shows here too, being the reasons a property has no value (json.device.*nullreason) and the order of the properties (json.device order). The values pipeline's cases are not listed, so their JavaScript must be the same.",
-    "issue": 223
+    "reason": "The JavaScript holds the JSON, so every difference the json.device entries allow in the engines' pipeline shows here too, and each of those names its own reason. The values pipeline's cases are not listed, so their JavaScript must be the same."
   },
   {
     "path": "javascript",
