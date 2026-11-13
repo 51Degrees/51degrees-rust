@@ -1133,6 +1133,31 @@ Describe 'ci/tag-crate-releases.ps1 -DryRun' {
     }
 }
 
+Describe 'ci/publish-crates.sh' {
+    It 'fails rather than skipping when there is no crates.io token' {
+        # Git Bash on Windows, where the bash on the path can start WSL.
+        $bash = 'bash'
+        if ($IsWindows) {
+            $gitBash = Join-Path $env:ProgramFiles 'Git' 'bin' 'bash.exe'
+            if (Test-Path $gitBash) {
+                $bash = $gitBash
+            }
+        }
+        $saved = $env:CARGO_REGISTRY_TOKEN
+        $env:CARGO_REGISTRY_TOKEN = $null
+        try {
+            $output = & $bash (Join-Path $script:Root 'ci/publish-crates.sh') `
+                'fiftyone-caching' 2>&1
+            $code = $LASTEXITCODE
+        } finally {
+            $env:CARGO_REGISTRY_TOKEN = $saved
+            $global:LASTEXITCODE = 0
+        }
+        $code | Should -Not -Be 0
+        ($output -join "`n") | Should -BeLike '*CARGO_REGISTRY_TOKEN is not set*'
+    }
+}
+
 Describe 'ci/release-plan-filter.ps1' {
     BeforeAll {
         $script:Filter = Join-Path $script:Root 'ci/release-plan-filter.ps1'
