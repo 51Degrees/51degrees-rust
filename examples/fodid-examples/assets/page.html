@@ -1,8 +1,9 @@
 <!DOCTYPE html>
 <!-- 51Did creator context demo page.
      Served by the small server beside this file, which injects the
-     placeholders and holds the licence key server side. This page is
-     identical in every language folder.
+     placeholders and holds the licence key server side. Every language's
+     demo is meant to serve this same page, and until each takes it, the
+     other languages' folders hold the earlier page.
 
      Styling follows the 51Degrees example pattern. The built
      examples-main.min.css is vendored beside this page, exactly as the
@@ -46,7 +47,7 @@
           <input class="c-eg-choice__input" type="radio" name="mode"
             value="direct">
           Straight to the service as a third party</label>
-        <label class="c-eg-choice__option">
+        <label id="mode-proxy" class="c-eg-choice__option">
           <input class="c-eg-choice__input" type="radio" name="mode"
             value="proxy">
           Through this demo's own server</label>
@@ -234,6 +235,9 @@
   // The route this server mounts the client script on, used when the
   // browser is asked to reach the service through the server.
   var PROXY_SCRIPT = "__PROXY_SCRIPT__";
+  // "on" when this server mounted that route at start, and "off" when it
+  // could not, in which case only the direct route is offered.
+  var PROXY = "__PROXY__";
   // Whether a JA4 or H2 fingerprint reached this server from whatever
   // terminates the connection in front of it.
   var FINGERPRINTS = "__FINGERPRINTS__";
@@ -248,7 +252,11 @@
   // deterministic identifier, so it is kept.
   var email = query.get("email");
   if (email === null) { email = DEFAULT_EMAIL; }
-  var mode = query.get("mode") === "proxy" ? "proxy" : "direct";
+  var mode = query.get("mode") === "proxy" && PROXY === "on"
+    ? "proxy" : "direct";
+  if (PROXY !== "on") {
+    document.getElementById("mode-proxy").style.display = "none";
+  }
 
   document.getElementById("email").value = email;
   var radios = document.getElementsByName("mode");
@@ -520,10 +528,16 @@
     });
   }
 
-  // Human confidence is read straight off the same payload. How the
-  // service reaches the value is the service's concern, so the page
-  // shows what came back and nothing more.
+  // Human confidence is read straight off the same payload, and only when
+  // the browser calls the service directly, as the service gives the
+  // value and this server has nothing to add to it. The page shows what
+  // came back and nothing more.
   function showHumanConfidence(data) {
+    if (mode === "proxy") {
+      show("s-human", "shown when the browser calls the service directly",
+        NONE);
+      return;
+    }
     var derived = data.derived || {};
     var value = derived.humanconfidence;
     if (value === undefined || value === null) {

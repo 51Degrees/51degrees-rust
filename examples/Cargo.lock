@@ -765,17 +765,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fiftyone-derived-properties"
-version = "4.5.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c436c2d5f81934bf11e897a6a7235b3e6da93df33fd9d13a4dcf057889e9ed27"
-dependencies = [
- "fiftyone-pipeline-core",
- "serde_norway",
- "thiserror",
-]
-
-[[package]]
 name = "fiftyone-device-detection"
 version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -845,16 +834,30 @@ dependencies = [
 
 [[package]]
 name = "fiftyone-fodid-cloud"
-version = "4.5.8"
+version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60ff6c23dd056d38220821b827a1249af2aa19836676409e4ed9e21db990f82b"
+checksum = "9910918b23ae59e7ae36c9f02a3ec00e8909c187e482582453b810974a050f3c"
 dependencies = [
  "fiftyone-cloud-request-engine",
+ "fiftyone-fodid-core",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
  "fodid",
+ "log",
  "once_cell",
  "serde_json",
+]
+
+[[package]]
+name = "fiftyone-fodid-core"
+version = "4.5.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fff2bea523f5ffc87a8fe793bbb86b4c8836339e89dba2ee5578ed8424d9a97b"
+dependencies = [
+ "fiftyone-pipeline-core",
+ "fiftyone-pipeline-engines",
+ "fiftyone-pipeline-engines-fiftyone",
+ "fodid",
 ]
 
 [[package]]
@@ -1104,10 +1107,7 @@ dependencies = [
  "examples-shared",
  "examples-web-shared",
  "fiftyone-cloud-request-engine",
- "fiftyone-derived-properties",
- "fiftyone-device-detection-cloud",
  "fiftyone-fodid-cloud",
- "fiftyone-ip-intelligence-cloud",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines-fiftyone",
  "fiftyone-pipeline-web",

@@ -82,10 +82,7 @@ use axum::routing::{get, post};
 use axum::Router;
 use examples_web_shared::serve_css;
 use fiftyone_cloud_request_engine::CloudRequestEngine;
-use fiftyone_derived_properties::{BuiltInScript, DerivedPropertyElement};
-use fiftyone_device_detection_cloud::DeviceDetectionCloudEngine;
 use fiftyone_fodid_cloud::FodIdCloudEngine;
-use fiftyone_ip_intelligence_cloud::IpIntelligenceCloudEngine;
 use fiftyone_pipeline_core::FlowElement;
 use fiftyone_pipeline_engines_fiftyone::ShareUsageElement;
 use fiftyone_pipeline_web::{WebIntegrationOptions, WebPipeline};
@@ -136,6 +133,9 @@ pub struct Options {
 #[derive(Clone)]
 struct Demo {
     client: Arc<DidClient>,
+    /// Whether the route through this server was built, so the page offers
+    /// it only when it works.
+    proxy: bool,
 }
 
 /// Build the demo router, ready to serve.
@@ -143,14 +143,32 @@ struct Demo {
 /// It is returned rather than served so the test can drive it in process with
 /// `tower::ServiceExt::oneshot` while [`run`] serves it over TCP. The test
 /// builds the client over an injected transport, so no cloud is called.
-pub fn build_app(client: DidClient) -> Router {
+/// `proxy` says whether the route through this server is mounted beside it.
+pub fn build_app(client: DidClient, proxy: bool) -> Router {
     Router::new()
         .route("/", get(home))
         .route(PAGE_CSS_ROUTE, get(serve_css))
         .route("/redeem", get(redeem))
         .with_state(Demo {
             client: Arc::new(client),
+            proxy,
         })
+}
+
+/// The demo router with the route through this server when it was built. When
+/// it was not, the direct route still works on its own, so the demo says why
+/// and serves the page without offering the other route.
+pub fn app_with_proxy(client: DidClient, proxy: anyhow::Result<Router>) -> Router {
+    match proxy {
+        Ok(proxy) => build_app(client, true).merge(proxy),
+        Err(error) => {
+            eprintln!(
+                "The route through this server is off, so the page offers only the \
+                 direct route: {error:#}"
+            );
+            build_app(client, false)
+        }
+    }
 }
 
 /// The two routes the browser uses when it reaches the service through this
@@ -173,32 +191,12 @@ fn proxy_router(resource_key: &str, endpoint: &str) -> anyhow::Result<Router> {
         .cloud_request_engine(request_engine.clone())
         .build()
         .context("building the 51Did engine")?;
-    // The derived property element comes after the elements that supply the
-    // properties its scripts name, as the fiftyone-derived-properties README
-    // says, which is the only reason these two engines are here.
-    let devices = DeviceDetectionCloudEngine::builder()
-        .cloud_request_engine(request_engine.clone())
-        .build();
-    let addresses = IpIntelligenceCloudEngine::builder()
-        .cloud_request_engine(request_engine.clone())
-        .build()
-        .context("building the IP intelligence engine")?;
-    // The service works HumanConfidence out for itself when the browser calls
-    // it directly, so the same property is added here and the page reads the
-    // answer either way without knowing which route produced it.
-    let derived = DerivedPropertyElement::builder()
-        .add_built_in(BuiltInScript::HumanConfidence)
-        .build()
-        .map_err(|faults| anyhow::anyhow!("building the derived properties: {faults:?}"))?;
     // Usage sharing is required for a web example, because it lets 51Degrees
     // improve detection.
     let elements: Vec<Arc<dyn FlowElement>> = vec![
         Arc::new(ShareUsageElement::with_defaults()),
         request_engine,
-        Arc::new(devices),
-        Arc::new(addresses),
         Arc::new(identifiers),
-        Arc::new(derived),
     ];
     let options = WebIntegrationOptions::default();
     let javascript_route = options.javascript_endpoint.clone();
@@ -221,8 +219,8 @@ pub async fn run(options: Options) -> anyhow::Result<()> {
     let endpoint = options.client.endpoint().to_owned();
     let proxy = tokio::task::spawn_blocking(move || proxy_router(&resource_key, &endpoint))
         .await
-        .context("building the proxy routes")??;
-    let app = build_app(options.client).merge(proxy);
+        .context("building the proxy routes")?;
+    let app = app_with_proxy(options.client, proxy);
     let listener = tokio::net::TcpListener::bind(options.address)
         .await
         .with_context(|| format!("binding {}", options.address))?;
@@ -268,6 +266,7 @@ async fn home(State(demo): State<Demo>, headers: HeaderMap) -> Response {
                 &WebIntegrationOptions::default().javascript_endpoint,
             )
             .replace("__FINGERPRINTS__", fingerprints)
+            .replace("__PROXY__", if demo.proxy { "on" } else { "off" })
             .replace("__CONTACT__", &CONTACT_URL.replace('&', "&amp;")),
     )
     .into_response()
@@ -593,6 +592,7 @@ mod tests {
                 .http_client(Arc::new(cloud))
                 .build()
                 .expect("the client builds"),
+            true,
         )
     }
 
@@ -692,6 +692,7 @@ mod tests {
                 }))
                 .build()
                 .expect("the client builds"),
+            true,
         );
 
         let response = get(&app, "/").await;
@@ -703,6 +704,7 @@ mod tests {
             "__CHALLENGE__",
             "__PROXY_SCRIPT__",
             "__FINGERPRINTS__",
+            "__PROXY__",
             "__CONTACT__",
         ] {
             assert!(
@@ -727,6 +729,27 @@ mod tests {
             .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
         let second = challenge_of(&body_string(get(&app, "/").await).await);
         assert_ne!(first, second);
+    }
+
+    /// The route through this server is optional. When it cannot be built the
+    /// demo still serves the page, which then offers the direct route only.
+    #[tokio::test]
+    async fn the_page_offers_the_route_through_this_server_only_when_it_was_built() {
+        let client = || {
+            DidClient::builder(RESOURCE_KEY)
+                .endpoint("http://cloud.example/api/v4/")
+                .build()
+                .expect("the client builds")
+        };
+        let without = app_with_proxy(client(), Err(anyhow::anyhow!("no route")));
+        let response = get(&without, "/").await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(body_string(response).await.contains("var PROXY = \"off\""));
+
+        let with = app_with_proxy(client(), Ok(Router::new()));
+        assert!(body_string(get(&with, "/").await)
+            .await
+            .contains("var PROXY = \"on\""));
     }
 
     #[tokio::test]
@@ -816,6 +839,7 @@ mod tests {
                 .endpoint("http://127.0.0.1:9/api/v4/")
                 .build()
                 .expect("the client builds"),
+            true,
         );
         let response = get(&app, &redeem_uri(&fod_id)).await;
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
