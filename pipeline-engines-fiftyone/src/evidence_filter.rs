@@ -67,8 +67,16 @@ use crate::constants::{
 /// string, so sharing it would undo the rules for query string parameters.
 /// `request-path` would make each page a visitor opens look like a new
 /// session to the repeat evidence tracker, and is the part of a URL most
-/// likely to carry a name or an identifier.
-const NEVER_SHARED: [&str; 4] = ["id.email", "id.salt", "request-query", "request-path"];
+/// likely to carry a name or an identifier. `header.cookie` is the Cookie
+/// header, which carries every cookie. The `51D_` cookies are shared under
+/// their own `cookie.` keys instead.
+const NEVER_SHARED: [&str; 5] = [
+    "id.email",
+    "id.salt",
+    "request-query",
+    "request-path",
+    "header.cookie",
+];
 
 /// True if the lowercase `key` is one of [`NEVER_SHARED`], or ends with a `.`
 /// and one of them.
