@@ -14,8 +14,13 @@ with the same version.
 The version is checked against crates.io first. Each crate must have that
 version published and not yanked, and nothing higher, so a tag never claims a
 version the crate does not have or hides a later one. Nothing is tagged
-unless every crate passes, and a crate that already has a tag of its own
-stops the run, as this is only for a start.
+unless every crate passes, and a crate with a tag of its own at or above the
+release stops the run, as this is only for a start.
+
+A crate whose own tags are all below the release was released again under
+the repository tag after its tags were started, so it is tagged at the
+release too, and its older tags stay. The release plan stops until that is
+done (see Get-CratesBehindRelease in ci/packages.ps1).
 
 A crate that crates.io does not have is passed over when ci/packages.json
 gives it a FirstVersion, because its first release is planned at that
@@ -79,14 +84,20 @@ foreach ($package in $packages) {
     $name = $package.Name
     $own = @(git -C $RepoPath for-each-ref '--format=%(refname:strip=2)' "refs/tags/$name/")
     $tag = "$name/$Release"
-    if ($own.Count -gt 0) {
-        if ($own.Count -eq 1 -and $own[0] -eq $tag -and
-            (git -C $RepoPath rev-parse "refs/tags/$tag^{commit}") -eq $commit) {
-            Write-Output "  $tag is already here."
-            $tags += $tag
-            continue
-        }
-        $problems += "$name already has tags of its own ($($own -join ', '))"
+    if ($own -contains $tag -and
+        (git -C $RepoPath rev-parse "refs/tags/$tag^{commit}") -eq $commit) {
+        Write-Output "  $tag is already here."
+        $tags += $tag
+        continue
+    }
+    # Only tags below the release may stay. One at or above it, or one that
+    # is not a version, is not a start this script can make.
+    $blocking = @($own | Where-Object {
+        $version = $_.Substring($name.Length + 1)
+        $version -notmatch '^\d+\.\d+\.\d+$' -or [version]$version -ge [version]$Release
+    })
+    if ($blocking.Count -gt 0) {
+        $problems += "$name already has tags of its own ($($blocking -join ', '))"
         continue
     }
 

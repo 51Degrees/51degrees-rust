@@ -31,13 +31,50 @@ function Get-PublishOrder([string]$RepoPath) {
         Where-Object { $_ -and -not $_.StartsWith('#') })
 }
 
+# The highest repository tag, such as 4.5.19, and the published crates whose
+# own tags are all below it. Repository tags were made by the publish that
+# released every crate at one version, and none is made now. A crate whose
+# tags are below the last one was released again under it after its tags were
+# started, so its tags no longer mark the commit crates.io's highest version
+# came from. Crates with no tag of their own are left out.
+function Get-CratesBehindRelease([string]$RepoPath, $Packages = $null) {
+    if ($null -eq $Packages) {
+        $Packages = Get-Packages $RepoPath
+    }
+    $release = @(git -C $RepoPath tag --list |
+        Where-Object { $_ -match '^\d+\.\d+\.\d+$' } |
+        Sort-Object { [version]$_ }) | Select-Object -Last 1
+    $behind = @()
+    if ($null -ne $release) {
+        foreach ($package in ($Packages | Where-Object Publish -eq $true)) {
+            $released = @(Get-ReleasedVersions $RepoPath $package.Name)
+            if ($released.Count -gt 0 -and $released[-1] -lt [version]$release) {
+                $behind += $package.Name
+            }
+        }
+    }
+    return [pscustomobject]@{ Release = $release; Crates = $behind }
+}
+
 # The plan for HEAD, from common-ci's Get-ReleasePlan, in the order the crates
 # are published. Every published crate needs a tag of its own to count from,
 # so a crate with none and no FirstVersion stops the plan here with what to
-# do, rather than with the shared step's general message.
+# do, rather than with the shared step's general message. So does a crate
+# whose tags are behind the last repository tag, because its next version
+# would repeat one crates.io already has and be tagged on the wrong commit.
 function Get-CrateReleasePlan([string]$RepoPath, $Packages = $null) {
     if ($null -eq $Packages) {
         $Packages = Get-Packages $RepoPath
+    }
+    $stale = Get-CratesBehindRelease $RepoPath $Packages
+    if ($stale.Crates.Count -gt 0) {
+        throw "The repository tag $($stale.Release) is above every " +
+            "'<crate>/<version>' tag of $($stale.Crates.Count) crate(s): " +
+            "$($stale.Crates -join ', '). They were released at " +
+            "$($stale.Release) after their tags were made, so their tags do " +
+            "not mark what they last published. Tag every crate at " +
+            "$($stale.Release) with ci/start-crate-tags.ps1 -Push, then run " +
+            "this again."
     }
     $tags = @(git -C $RepoPath tag --list)
     $untagged = @()
