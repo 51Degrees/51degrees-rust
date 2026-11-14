@@ -43,13 +43,13 @@ pub enum AutoUpdateStatus {
     /// file was applied, and then had nothing left to do.
     InProgress,
     /// The HTTPS request to the update URL failed (connection or transport
-    /// error).
+    /// error), or its response ended before the whole file arrived.
     HttpsError,
     /// The server responded `429 Too Many Requests`.
     TooManyRequests,
     /// The server responded `403 Forbidden` (for example, a revoked key).
     Forbidden,
-    /// Reading from or writing to a stream or file failed.
+    /// Writing the download to a file, or decompressing it, failed.
     StreamError,
     /// The downloaded content failed MD5 verification.
     Md5ValidationFailed,

@@ -27,9 +27,12 @@ when the license keys are available to the run, over the Enterprise files.
 
 ## The pipelines
 
-Both programs build the same five pipelines, with process errors collected
-rather than thrown. A case runs through the first unless its `pipeline` is
-`values`, `agent-signature`, `translation` or `cloud-translation`.
+Both programs build the same nine pipelines, with process errors collected
+rather than thrown in all but two. A case runs through the first, whose
+elements are listed below, unless its `pipeline` is `values`,
+`agent-signature`, `translation`, `cloud-translation` or one of the four
+group pipelines, `group`, `group-unsuppressed`, `in-sequence` and
+`in-sequence-unsuppressed`.
 
 1. The Sequence element.
 2. Usage sharing, twice, with the same settings on both sides. The first
@@ -126,6 +129,19 @@ two reasons differ only in the configurator link's campaign tags, so
 `allowed-differences.json` allows that difference and a workflow step
 compares the reasons with the tags removed.
 
+The four group pipelines hold the first pipeline's Device Detection and IP
+Intelligence engines and an element that always fails, whose data key is
+`failing` and whose error reads "The failing element always fails."
+([#219](https://github.com/51Degrees/51degrees-rust/issues/219)). `group`
+runs the three as a parallel group, made by `AddFlowElementsParallel` in
+.NET and `add_parallel_elements` in the crates, and `in-sequence` runs them
+one after another, both with process errors collected.
+`group-unsuppressed` and `in-sequence-unsuppressed` are the same with
+process errors thrown, so their lines hold the errors in `thrown`. The
+`ua-and-ip-` cases give each the same evidence, so the comparison checks
+the values and the errors of a group, and of the same elements in
+sequence, against .NET's.
+
 ## The line
 
 Each program writes one JSON object per case.
@@ -134,6 +150,7 @@ Each program writes one JSON object per case.
 | --- | --- |
 | `id` | The case id. |
 | `processError` | The error processing gave, or null. |
+| `thrown` | The message of each error processing returned as one of the sub-errors of a single error, or null. The specification's exception handling asks a pipeline whose process errors are not suppressed to return them that way, and .NET throws them as the inner exceptions of an `AggregateException`. The wording of the error around them is each language's own, so `processError` is null then. |
 | `properties` | For each element that lists properties, apart from the two builders and the cloud request engine, whose data is the case's own response, every property it lists, with the match metrics for `device` and `SortingCultureUsed`, which the engine writes without listing, for `countrynamestranslated`. Each is keyed by its lowercase name and holds its `name` with either a `type` and `value`, a `noValue` reason, or a `missing` message when reading it failed. |
 | `session` | `query.session-id` and `query.sequence` from the evidence after processing, the sequence as a number, or null when it is not a 64-bit integer. |
 | `evidenceAfter` | `query.session-id` and `query.sequence` as the evidence holds them after processing. |

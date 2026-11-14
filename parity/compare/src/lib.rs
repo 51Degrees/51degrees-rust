@@ -373,7 +373,13 @@ pub fn compare_case(case: &Case, dotnet: &Value, rust: &Value) -> Vec<Difference
         case: &case.id,
         differences: Vec::new(),
     };
-    for field in ["processError", "session", "evidenceAfter", "errors"] {
+    for field in [
+        "processError",
+        "thrown",
+        "session",
+        "evidenceAfter",
+        "errors",
+    ] {
         out.values(field, field_of(&dotnet, field), field_of(&rust, field));
     }
     out.properties(
@@ -1109,6 +1115,20 @@ mod tests {
     #[test]
     fn same_lines_have_no_difference() {
         assert!(compare_case(&case("a", true), &line(true), &line(true)).is_empty());
+    }
+
+    /// The errors a pipeline returns as the sub-errors of one error are
+    /// compared, as a pipeline whose errors are not suppressed returns them.
+    #[test]
+    fn errors_returned_as_sub_errors_are_compared() {
+        let mut dotnet = line(true);
+        dotnet["thrown"] = json!(["The failing element always fails."]);
+        let mut rust = line(true);
+        rust["thrown"] = json!([]);
+        let differences = compare_case(&case("a", true), &dotnet, &rust);
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].path, "thrown");
+        assert_eq!(differences[0].kind, Kind::Value);
     }
 
     #[test]

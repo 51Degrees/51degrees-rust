@@ -40,18 +40,32 @@ use anyhow::{Context, Result};
 
 use fiftyone_ip_intelligence::{IpIntelligenceOnPremiseEngine, PerformanceProfile};
 
-/// Properties the Enterprise data file carries and neither free file does.
-/// The on-premise examples ask for these alongside the free properties, and
-/// say where to ask about the Enterprise data file when the file in use does
-/// not carry them.
+/// Properties the Enterprise data file carries and neither free file does,
+/// in the order the examples show them. The on-premise examples ask for
+/// these alongside the free properties, and say where to ask about the
+/// Enterprise data file when the file in use does not carry them.
 pub const ENTERPRISE_PROPERTIES: &[&str] = &[
+    "IpRangeStart",
+    "IpRangeEnd",
     "Country",
     "CountryCode",
+    "CountryCode3",
+    "Region",
+    "State",
     "Town",
     "Latitude",
     "Longitude",
+    "AccuracyRadiusMin",
+    "TimeZoneOffset",
+    "ConnectionType",
     "IsHosted",
     "IsVPN",
+    "IsProxy",
+    "IsCellular",
+    "IsEu",
+    "CountryCodesGeographical",
+    "CountryCodesPopulation",
+    "Mcc",
 ];
 
 /// The names of the properties the data file at `data_file` carries.

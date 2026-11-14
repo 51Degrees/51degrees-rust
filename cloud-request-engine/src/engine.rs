@@ -1071,7 +1071,7 @@ impl CloudRequestEngineBuilder {
     /// authenticates the request and specifies which properties are returned,
     /// and a property list given with [`CloudRequestEngineBuilder::values`] adds
     /// to them. Create one for free at
-    /// <https://configure.51degrees.com?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=cloud-request-engine-src-engine.rs&utm_term=resource_key>.
+    /// <https://51degrees.com/configure?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=cloud-request-engine-src-engine.rs&utm_term=resource_key>.
     ///
     /// A resource key is public by design, since it travels to the browser inside
     /// a script URL, so it is scoped to what a page is meant to read. A caller
@@ -1480,7 +1480,7 @@ impl CloudRequestEngineBuilder {
                 "a CloudRequestEngine needs a credential and this one was given \
                  none. Either set a resource key with resource_key(..), which \
                  you can create for free at \
-                 https://configure.51degrees.com?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=cloud-request-engine-src-engine.rs&utm_term=credential-required, \
+                 https://51degrees.com/configure?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=cloud-request-engine-src-engine.rs&utm_term=credential-required, \
                  or set a license key with license_key(..) and name the \
                  properties you want with values(..).",
             )),

@@ -110,6 +110,15 @@ namespace FiftyOne.Parity
         // pipeline.
         private const string CloudTranslationPipeline = "cloud-translation";
 
+        // The pipeline of a case that runs through Device Detection, IP
+        // Intelligence and the failing element, as a parallel group or in
+        // sequence, with process errors collected or thrown.
+        private const string GroupPipeline = "group";
+        private const string GroupUnsuppressedPipeline = "group-unsuppressed";
+        private const string InSequencePipeline = "in-sequence";
+        private const string InSequenceUnsuppressedPipeline =
+            "in-sequence-unsuppressed";
+
         // Long enough that the first fetch of a directory the handler serves
         // at once never runs out, and shorter than the slow agent's delay.
         private static readonly TimeSpan AgentSignatureWaitBudget =
@@ -237,6 +246,33 @@ namespace FiftyOne.Parity
                 .AddFlowElement(new JsonBuilderElementBuilder(loggerFactory).Build())
                 .SetSuppressProcessExceptions(true)
                 .Build();
+            // Device Detection, IP Intelligence and the failing element, as
+            // a parallel group and in sequence, each with process errors
+            // collected and with them thrown.
+            var failing = new FailingElement();
+            var groups = new Dictionary<string, IPipeline>
+            {
+                [GroupPipeline] = new PipelineBuilder(loggerFactory)
+                    .AddFlowElementsParallel(device, ip, failing)
+                    .SetSuppressProcessExceptions(true)
+                    .Build(),
+                [GroupUnsuppressedPipeline] = new PipelineBuilder(loggerFactory)
+                    .AddFlowElementsParallel(device, ip, failing)
+                    .SetSuppressProcessExceptions(false)
+                    .Build(),
+                [InSequencePipeline] = new PipelineBuilder(loggerFactory)
+                    .AddFlowElement(device)
+                    .AddFlowElement(ip)
+                    .AddFlowElement(failing)
+                    .SetSuppressProcessExceptions(true)
+                    .Build(),
+                [InSequenceUnsuppressedPipeline] = new PipelineBuilder(loggerFactory)
+                    .AddFlowElement(device)
+                    .AddFlowElement(ip)
+                    .AddFlowElement(failing)
+                    .SetSuppressProcessExceptions(false)
+                    .Build()
+            };
             // The builders' whole output is recorded instead, and the cloud
             // request engine's data is the case's own response.
             var skipped = new HashSet<string>
@@ -259,6 +295,7 @@ namespace FiftyOne.Parity
                     AgentSignaturePipeline => agentSignature,
                     TranslationPipeline => translation,
                     CloudTranslationPipeline => cloudTranslation,
+                    var other when groups.ContainsKey(other) => groups[other],
                     var other => throw new ArgumentException(
                         $"{item["id"]}: unknown pipeline {other}")
                 };
@@ -302,6 +339,10 @@ namespace FiftyOne.Parity
                 $"{lines.Count} cases written to {args.Out}, " +
                 $"{records.Count} usage records and " +
                 $"{customRecords.Count} custom usage records captured");
+            foreach (var group in groups.Values)
+            {
+                group.Dispose();
+            }
             cloudTranslation.Dispose();
             translation.Dispose();
             agentSignature.Dispose();
@@ -321,9 +362,19 @@ namespace FiftyOne.Parity
                 data.AddEvidence(pair.Key, pair.Value.GetValue<string>());
             }
             string processError = null;
+            JsonArray thrown = null;
             try
             {
                 data.Process();
+            }
+            catch (AggregateException e)
+            {
+                // The errors the pipeline throws as sub-errors, as the
+                // specification's exception handling asks. The wording of
+                // the exception around them is each language's own.
+                thrown = new JsonArray(e.InnerExceptions
+                    .Select(inner => (JsonNode)JsonValue.Create(inner.Message))
+                    .ToArray());
             }
             catch (Exception e)
             {
@@ -344,6 +395,7 @@ namespace FiftyOne.Parity
             {
                 ["id"] = item["id"].GetValue<string>(),
                 ["processError"] = processError,
+                ["thrown"] = thrown,
                 ["properties"] = Properties(pipeline, data, skipped),
                 ["session"] = new JsonObject
                 {
@@ -706,6 +758,43 @@ namespace FiftyOne.Parity
             : base(NullLogger<ElementDataBase>.Instance, pipeline)
         {
         }
+    }
+
+    // An element that reads no evidence, lists no properties and throws
+    // from every call. The Rust producer's failing element gives the same
+    // message under the same data key.
+    internal sealed class FailingElement :
+        FlowElementBase<IElementData, IElementPropertyMetaData>
+    {
+        private const string Key = "failing";
+
+        private const string Failure = "The failing element always fails.";
+
+        private readonly IEvidenceKeyFilter _filter =
+            new EvidenceKeyFilterWhitelist(new List<string>());
+
+        private readonly IList<IElementPropertyMetaData> _properties =
+            new List<IElementPropertyMetaData>();
+
+        public FailingElement() : base(
+            NullLogger<FlowElementBase<IElementData, IElementPropertyMetaData>>
+                .Instance)
+        {
+        }
+
+        public override string ElementDataKey => Key;
+
+        public override IEvidenceKeyFilter EvidenceKeyFilter => _filter;
+
+        public override IList<IElementPropertyMetaData> Properties =>
+            _properties;
+
+        protected override void ProcessInternal(IFlowData data) =>
+            throw new PipelineException(Failure);
+
+        protected override void ManagedResourcesCleanup() { }
+
+        protected override void UnmanagedResourcesCleanup() { }
     }
 
     // Writes the IP Intelligence country codes the case's evidence gives,
