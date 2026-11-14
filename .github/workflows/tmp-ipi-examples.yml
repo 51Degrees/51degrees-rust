@@ -1,0 +1,28 @@
+name: tmp ipi examples tests
+on:
+  push:
+    branches: ['tmp/rust-ipi-examples-*']
+jobs:
+  test:
+    name: the two examples' tests on the ASN file
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Copy the OWID source into fodid
+        shell: pwsh
+        run: ./ci/copy-owid-source.ps1
+      - name: Restore the data files
+        uses: ./.github/actions/restore-data-files
+      - name: Download any data file not restored
+        shell: pwsh
+        run: ./cxx/data/get-data-files.ps1 51Degrees-IPIV4AsnIpiV41.ipi
+      - name: Test the two examples against this tree's crates
+        shell: pwsh
+        run: >-
+          ./ci/test-examples-against-source.ps1 -Command {
+          cargo test --config source.toml -p ip-intelligence-examples
+          --bin ipi-onprem-getting-started --bin ipi-web-getting-started-onprem }
