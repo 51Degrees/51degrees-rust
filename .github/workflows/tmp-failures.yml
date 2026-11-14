@@ -1,0 +1,20 @@
+name: tmp failed send logging tests
+on:
+  push:
+    branches: ['tmp/rust-failures-*']
+jobs:
+  test:
+    name: logging tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: logging tests
+        if: always()
+        run: cargo test -p fiftyone-pipeline-engines-fiftyone --test logging
+      - name: element tests
+        if: always()
+        run: cargo test -p fiftyone-pipeline-engines-fiftyone --lib share_usage_element
