@@ -19,33 +19,27 @@
  * in the end user terms of the application under an appropriate heading,
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
-
 //! `PerformanceProfile::Default` selects each C library's own default
 //! configuration global, and is documented as the balanced configuration
-//! with no temporary copy of the data file. These check that each default
-//! global holds the same configuration as the balanced one.
+//! with no temporary copy of the data file. This checks that the Device
+//! Detection default global holds the same configuration as the balanced
+//! one. The IP Intelligence configuration is opaque to Rust, so its size is
+//! not known here and it is not compared.
 
-#[cfg(any(feature = "dd", feature = "ipi"))]
+#![cfg(feature = "dd")]
+
+use fiftyone_device_detection_sys as sys;
+
 fn bytes_of<T>(value: *const T) -> Vec<u8> {
     // SAFETY: the configuration globals are statics of plain C structs,
     // read here without any other code in this test binary writing them.
     unsafe { std::slice::from_raw_parts(value.cast::<u8>(), std::mem::size_of::<T>()) }.to_vec()
 }
 
-#[cfg(feature = "dd")]
 #[test]
 fn the_device_detection_default_configuration_is_the_balanced_one() {
-    use fiftyone_device_detection_sys as sys;
     let default = bytes_of(std::ptr::addr_of!(sys::fiftyoneDegreesHashDefaultConfig));
     let balanced = bytes_of(std::ptr::addr_of!(sys::fiftyoneDegreesHashBalancedConfig));
-    assert_eq!(default, balanced);
-}
-
-#[cfg(feature = "ipi")]
-#[test]
-fn the_ip_intelligence_default_configuration_is_the_balanced_one() {
-    use fiftyone_ip_intelligence_sys as sys;
-    let default = bytes_of(std::ptr::addr_of!(sys::fiftyoneDegreesIpiDefaultConfig));
-    let balanced = bytes_of(std::ptr::addr_of!(sys::fiftyoneDegreesIpiBalancedConfig));
+    assert!(!default.is_empty());
     assert_eq!(default, balanced);
 }
