@@ -352,7 +352,7 @@ impl UsageSink for Refusing {
 /// sends within 100 seconds pause sending for 2 seconds. Each failed send
 /// gives a warning of its own before it.
 #[test]
-fn a_pause_after_failed_sends_logs_one_warning() {
+fn a_pause_after_failed_sends_logs_each_failure_then_one_pause_warning() {
     let _serial = start();
     let refused = Arc::new(AtomicUsize::new(0));
     let share = Arc::new(ShareUsageElement::with_sink(
