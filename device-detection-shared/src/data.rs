@@ -96,6 +96,17 @@ pub trait DevicePropertyReader: Send + Sync {
     /// `Err` with a message when the read fails.
     fn read_property(&self, position: usize) -> Result<Option<PropertyValue>, String>;
 
+    /// Read the property at `position` as [`Self::read_property`] does, with
+    /// the reason it has no value. `Ok(Err(reason))` when it has none, where
+    /// `reason` is [`None`] when the reader gives none and the data then
+    /// gives its own. The data reads each property through this.
+    fn read_property_with_reason(
+        &self,
+        position: usize,
+    ) -> Result<Result<PropertyValue, Option<String>>, String> {
+        self.read_property(position).map(|value| value.ok_or(None))
+    }
+
     /// The position of the property each typed accessor reads, by the
     /// accessor's slot in [`TYPED_PROPERTY_NAMES`](crate::TYPED_PROPERTY_NAMES),
     /// resolved once when the reader's data set loaded, with `None` for a
@@ -106,8 +117,9 @@ pub trait DevicePropertyReader: Send + Sync {
     }
 }
 
-/// The outcome of reading one property.
-type ReadOutcome = Result<Option<PropertyValue>, String>;
+/// The outcome of reading one property, as
+/// [`DevicePropertyReader::read_property_with_reason`] gives it.
+type ReadOutcome = Result<Result<PropertyValue, Option<String>>, String>;
 
 /// The values a [`DevicePropertyReader`] has read, so each property is read at
 /// most once.
@@ -139,7 +151,7 @@ impl DeferredValues {
         if read.is_empty() {
             read.resize(self.reader.property_names().len(), None);
         }
-        read[position].get_or_insert_with(|| self.reader.read_property(position))
+        read[position].get_or_insert_with(|| self.reader.read_property_with_reason(position))
     }
 
     /// The position of a property the reader can read, or `None` when it
@@ -203,7 +215,8 @@ enum Lookup {
     Found(PropertyValue),
     /// No value, with the bag's explanation.
     Absent(NoValueError),
-    /// Held with no value, with the message set for it.
+    /// Held with no value, with the message set for it or the reason the
+    /// reader gave.
     NoValue(String),
     /// The data does not hold the property, with the reason it is missing.
     Missing(String),
@@ -234,7 +247,8 @@ enum Lookup {
 ///
 /// An on-premise engine also attaches a [`DevicePropertyReader`] through
 /// [`DeviceDataBase::with_reader`], and a property not in the bag is then read
-/// from the native results the first time it is requested.
+/// from the native results the first time it is requested. A property the
+/// results hold no value for carries the reason the reader gives.
 ///
 /// A cloud engine holds a property the response gives as null through
 /// [`DeviceDataBase::insert_no_value`], so the property has no value and
@@ -329,15 +343,24 @@ impl DeviceDataBase {
             .as_ref()
             .and_then(|deferred| deferred.get(name))
         {
-            Some(Ok(Some(value))) => Lookup::Found(value),
-            Some(Err(message)) => Lookup::Failed(message),
-            // The reader holds the property, with no value for this detection.
-            Some(Ok(None)) => self.absent(name),
+            Some(outcome) => self.lookup_outcome(outcome, name),
             // Neither the bag nor the reader holds the property.
             None => match self.base.missing_property(name, DATA_TYPE_NAME) {
                 Some(missing) => Lookup::Missing(missing.description),
                 None => self.absent(name),
             },
+        }
+    }
+
+    /// What a read through the reader gave. A property the reader holds with
+    /// no value for this detection carries the reader's reason, or the bag's
+    /// own explanation when the reader gives none.
+    fn lookup_outcome(&self, outcome: ReadOutcome, name: &str) -> Lookup {
+        match outcome {
+            Ok(Ok(value)) => Lookup::Found(value),
+            Ok(Err(Some(reason))) => Lookup::NoValue(reason),
+            Ok(Err(None)) => self.absent(name),
+            Err(message) => Lookup::Failed(message),
         }
     }
 
@@ -353,11 +376,7 @@ impl DeviceDataBase {
                 .as_ref()
                 .and_then(|deferred| deferred.get_at(slot))
             {
-                return match outcome {
-                    Ok(Some(value)) => Lookup::Found(value),
-                    Err(message) => Lookup::Failed(message),
-                    Ok(None) => self.absent(name),
-                };
+                return self.lookup_outcome(outcome, name);
             }
         }
         self.lookup(name)
@@ -957,6 +976,57 @@ mod tests {
         );
     }
 
+    /// A reader over the counting reader's outcomes that gives a reason for
+    /// each property with no value.
+    struct ReasonReader(CountingReader);
+
+    impl DevicePropertyReader for ReasonReader {
+        fn property_names(&self) -> &[String] {
+            self.0.property_names()
+        }
+
+        fn position(&self, name: &str) -> Option<usize> {
+            self.0.position(name)
+        }
+
+        fn read_property(&self, position: usize) -> Result<Option<PropertyValue>, String> {
+            self.0.read_property(position)
+        }
+
+        fn read_property_with_reason(
+            &self,
+            position: usize,
+        ) -> Result<Result<PropertyValue, Option<String>>, String> {
+            let reason = format!("no {}", self.0.names[position]);
+            self.0
+                .read_property(position)
+                .map(|value| value.ok_or(Some(reason)))
+        }
+    }
+
+    /// A property the reader holds with no value carries the reason the
+    /// reader gives, by name and through its typed accessor, and is read
+    /// once. A failed read keeps its own message.
+    #[test]
+    fn a_property_with_no_value_carries_the_readers_reason() {
+        let (reader, reads) = CountingReader::new();
+        let device = DeviceDataBase::new().with_reader(ReasonReader(reader));
+        assert_eq!(
+            device.browser_name().no_value_message(),
+            Some("no browsername")
+        );
+        assert_eq!(
+            device.get("BrowserName").unwrap_err().message,
+            "no browsername"
+        );
+        assert_eq!(reads_of(&reads, "browsername"), 1);
+        assert_eq!(
+            device.hardware_vendor().no_value_message(),
+            Some("the native read failed")
+        );
+        assert!(*device.is_mobile().value().unwrap());
+    }
+
     /// The details of an engine whose metadata lists the reader's properties.
     fn missing_property_source() -> Arc<MissingPropertySource> {
         let properties = ["IsMobile", "PlatformName", "BrowserName", "HardwareVendor"]
@@ -1227,7 +1297,7 @@ mod tests {
             self.inner.position(name)
         }
 
-        fn read_property(&self, position: usize) -> ReadOutcome {
+        fn read_property(&self, position: usize) -> Result<Option<PropertyValue>, String> {
             self.inner.read_property(position)
         }
 

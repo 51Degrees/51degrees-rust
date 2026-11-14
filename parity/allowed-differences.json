@@ -59,30 +59,10 @@
     "reason": "The Lite file lacks HardwareVendor, HardwareModel and HardwareName, which the Device Detection engine defines, and both sides give the reason for data tiers that are not known, word for word apart from the pricing link's campaign tags, which name each repository and the file the message is in. The Missing Properties section of properties.md (https://github.com/51Degrees/specifications/blob/77dc1f62ac11fac1f3358f38eb67cc7ef0e5b00e/pipeline-specification/features/properties.md#missing-properties) says \"An implementation SHOULD give the same text, and MAY add to each link the campaign parameters its own repository requires.\" The text before the link is pinned on both sides."
   },
   {
-    "path": "properties.device.*",
-    "kind": "noValueMessage",
-    "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "reason": "Every Device Detection property with no value gives the same sentence, where .NET gives the reason for each.",
-    "issue": 223
-  },
-  {
-    "path": "properties.device.*javascript*",
-    "kind": "type",
-    "reason": "The crates read the JavaScript type from the data file (data_file_value_type in native/src/dd.rs), but native_value in device-detection-onpremise gives every type other than true or false, a number or a list as a string, so the JavaScript properties are strings where .NET gives its JavaScript type.",
-    "issue": 223
-  },
-  {
-    "path": "json.device.*nullreason",
-    "kind": "value",
-    "reason": "The crates give every Device Detection property with no value the reason No value for property and its name, where .NET says why it has none, such as that the evidence it needs was not supplied (properties.device.* noValueMessage).",
-    "issue": 223
-  },
-  {
     "path": "javascript",
     "kind": "text",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "reason": "The JavaScript holds the JSON, so every JSON difference in the engines' pipeline shows here too. The crates also write the request's parameters in name order with lower case names, because their evidence has no order and lowercases its keys. The values pipeline's cases are not listed, so their JavaScript must be the same.",
-    "issue": 230
+    "reason": "The JavaScript holds the JSON, so every difference the json entries, json.device and json.ip, allow in the engines' pipeline shows here too, and each of those names its own reason. The values pipeline's cases are not listed, so their JavaScript must be the same."
   },
   {
     "path": "javascript",

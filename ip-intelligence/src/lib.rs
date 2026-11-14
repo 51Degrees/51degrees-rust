@@ -66,10 +66,11 @@
 //! `.data_update_license_keys(..)`, so a build with polling on and no key
 //! fails with an error that says so, as it does in .NET, and a deployment
 //! without a key turns automatic updates off with `.auto_update(false)`, which
-//! stops the polling and the file watcher together, as the specification's
-//! master switch does. `.file_system_watcher(false)` turns only the watcher
-//! off, and `pipeline.resource::<DataUpdateService>()` reaches the service for
-//! a check on demand.
+//! stops the polling. The file watcher runs on its own setting and needs no
+//! key, so a new data file put in place still refreshes the engine, and
+//! `.file_system_watcher(false)` turns it off.
+//! `pipeline.resource::<DataUpdateService>()` reaches the service for a check
+//! on demand.
 //!
 //! # From a configuration file
 //!
@@ -177,7 +178,7 @@ impl IpIntelligencePipelineBuilder {
     /// Intelligence.
     ///
     /// `resource_key` authenticates the request and selects which properties are
-    /// returned. Create one for free at <https://configure.51degrees.com?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=ip-intelligence-src-lib.rs&utm_term=cloud>.
+    /// returned. Create one for free at <https://51degrees.com/configure?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=ip-intelligence-src-lib.rs&utm_term=cloud>.
     ///
     /// Returns a [`CloudIpIntelligencePipelineBuilder`] to configure (endpoint,
     /// origin, timeout) and [`build`](CloudIpIntelligencePipelineBuilder::build)
