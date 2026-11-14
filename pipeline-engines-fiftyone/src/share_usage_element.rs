@@ -161,6 +161,7 @@ pub struct ShareUsageConfig {
     included_query_string_parameters: Option<Vec<String>>,
     share_all_evidence: bool,
     ignore_flow_data_evidence_filter: Vec<(String, String)>,
+    session_cookie_name: Option<String>,
 }
 
 impl ShareUsageConfig {
@@ -231,6 +232,12 @@ impl ShareUsageConfig {
     pub fn share_all_evidence(&self) -> bool {
         self.share_all_evidence
     }
+
+    /// The name of the session cookie when track session is on, or `None`
+    /// when it is off. See [`ShareUsageConfigBuilder::track_session`].
+    pub fn session_cookie_name(&self) -> Option<&str> {
+        self.session_cookie_name.as_deref()
+    }
 }
 
 impl Default for ShareUsageConfig {
@@ -263,6 +270,7 @@ impl ShareUsageConfigBuilder {
                 included_query_string_parameters: Some(Vec::new()),
                 share_all_evidence: false,
                 ignore_flow_data_evidence_filter: Vec::new(),
+                session_cookie_name: None,
             },
         }
     }
@@ -354,6 +362,20 @@ impl ShareUsageConfigBuilder {
     /// [`EvidenceKeyFilterShareUsage`]). Returns `self` for chaining.
     pub fn share_all_evidence(mut self, share_all: bool) -> Self {
         self.config.share_all_evidence = share_all;
+        self
+    }
+
+    /// Turn track session on, naming the cookie that holds the session id.
+    ///
+    /// The cookie's value is then compared along with the evidence, so the
+    /// same evidence from a new session is shared again while a repeat
+    /// within one session is not. The cookie itself is not shared unless all
+    /// evidence is shared, and then track session has no effect, as every
+    /// cookie is shared and compared. A name that is empty or only white
+    /// space leaves track session off. Returns `self` for chaining.
+    pub fn track_session(mut self, cookie_name: impl Into<String>) -> Self {
+        let name = cookie_name.into().trim().to_owned();
+        self.config.session_cookie_name = (!name.is_empty()).then_some(name);
         self
     }
 
@@ -612,29 +634,45 @@ impl ShareUsageElement {
     }
 
     fn with_boxed_sink(config: ShareUsageConfig, sink: Box<dyn UsageSink>) -> Self {
+        // With all evidence shared every cookie is shared and compared, so
+        // track session has no effect.
+        let session_cookie = config
+            .session_cookie_name
+            .as_deref()
+            .filter(|_| !config.share_all_evidence);
+
         // Build the evidence filter from the configured settings. Used for both
         // the element filter and the tracker filter so the two cannot diverge.
         let make_filter = || {
-            if config.share_all_evidence {
+            let filter = if config.share_all_evidence {
                 EvidenceKeyFilterShareUsage::share_all()
             } else {
                 EvidenceKeyFilterShareUsage::new(
                     config.blocked_http_headers.clone(),
                     config.included_query_string_parameters.clone(),
                 )
+            };
+            match session_cookie {
+                Some(name) => filter.without_session_cookie(name),
+                None => filter,
             }
         };
 
         let filter = Arc::new(make_filter());
 
         // The tracker filter is built from the same settings but excludes the
-        // session id and sequence so they cannot defeat deduplication.
+        // session id and sequence so they cannot defeat deduplication, and
+        // compares the session cookie when track session is on.
+        let mut tracker_filter = EvidenceKeyFilterShareUsageTracker::new(make_filter());
+        if let Some(name) = session_cookie {
+            tracker_filter = tracker_filter.with_session_cookie(name);
+        }
         let tracker = ShareUsageTracker::new(
             config.repeat_evidence_interval,
             config
                 .maximum_queue_size
                 .max(SHARE_USAGE_DEFAULT_MAX_QUEUE_SIZE),
-            Box::new(EvidenceKeyFilterShareUsageTracker::new(make_filter())),
+            Box::new(tracker_filter),
         );
 
         let (tx, rx) = sync_channel::<UsageRecord>(config.maximum_queue_size);
@@ -2151,6 +2189,74 @@ mod tests {
             }
             assert!(records[0].contains(">1080</query>"), "{xml}");
             assert!(records[1].contains(">1440</query>"), "{xml}");
+        }
+    }
+
+    /// Process one request for each of the given values of the cookie
+    /// `cookie`, all with the same User-Agent and a `51D_Other` cookie, and
+    /// return the usage sharing message.
+    fn shared_for_sessions(config: ShareUsageConfig, cookie: &str, sessions: &[&str]) -> String {
+        let capture = Capture::default();
+        let element = Arc::new(ShareUsageElement::with_sink(config, capture.clone()));
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        for session in sessions {
+            let mut data = pipeline.create_flow_data_with(
+                Evidence::builder()
+                    .add("header.user-agent", "agent")
+                    .add(format!("cookie.{cookie}"), *session)
+                    .add("cookie.51D_Other", "other")
+                    .build(),
+            );
+            data.process().unwrap();
+        }
+        drop(pipeline);
+        drop(element);
+        capture.messages().concat()
+    }
+
+    /// With track session on, the session cookie is compared with the
+    /// evidence, so the same evidence from a new session is shared again
+    /// while a repeat within one session is not. With it off, the session
+    /// makes no difference.
+    #[test]
+    fn a_new_session_is_shared_again_only_with_track_session_on() {
+        let off = shared_for_sessions(ShareUsageConfig::default(), "sid", &["a", "a", "b"]);
+        assert_eq!(off.matches("<Device>").count(), 1, "{off}");
+
+        let on = shared_for_sessions(
+            ShareUsageConfig::builder().track_session("sid").build(),
+            "sid",
+            &["a", "a", "b"],
+        );
+        assert_eq!(on.matches("<Device>").count(), 2, "{on}");
+        assert!(!on.contains("Name=\"sid\""), "{on}");
+    }
+
+    /// The session cookie is not shared unless all evidence is shared, even
+    /// when its name starts with `51D_`, while the other `51D_` cookies are.
+    #[test]
+    fn the_session_cookie_is_shared_only_when_all_evidence_is_shared() {
+        for share_all in [false, true] {
+            let xml = shared_for_sessions(
+                ShareUsageConfig::builder()
+                    .share_all_evidence(share_all)
+                    .track_session("51D_Session")
+                    .build(),
+                "51D_Session",
+                &["a"],
+            );
+            assert!(
+                xml.contains("<cookie Name=\"51D_Other\">other</cookie>"),
+                "share all {share_all}: {xml}"
+            );
+            assert_eq!(
+                xml.contains("<cookie Name=\"51D_Session\">a</cookie>"),
+                share_all,
+                "share all {share_all}: {xml}"
+            );
         }
     }
 

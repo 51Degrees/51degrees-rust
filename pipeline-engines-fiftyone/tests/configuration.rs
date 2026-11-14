@@ -286,6 +286,7 @@ fn every_setting_is_read_as_dotnet_reads_it() {
         config.repeat_evidence_interval(),
         Duration::from_secs(30 * MINUTE_SECONDS)
     );
+    assert_eq!(config.session_cookie_name(), Some("MySession"));
 
     // The element itself shares what the settings say.
     let element = share_usage_element(&pipeline);
@@ -314,8 +315,6 @@ fn every_setting_is_read_as_dotnet_reads_it() {
         [
             "WARN Configuration for 'IgnoreFlowDataEvidenceFilter' is invalid.bad".to_string(),
             "WARN Configuration for 'IgnoreFlowDataEvidenceFilter' is invalid.".to_string(),
-            ignored("SetAspSessionCookieName"),
-            ignored("SetTrackSession"),
             ignored("SetFailuresToEnterRecovery"),
             ignored("SetFailuresWindowSeconds"),
             ignored("SetInitialRecoveryDelaySeconds"),
@@ -758,6 +757,7 @@ fn a_json_file_written_for_dotnet_makes_the_same_elements() {
                   // Written out of order, as a person might.
                   "TrackSession": true,
                   "SetShareAllQueryStringParameters": true,
+                  "AspSessionCookieName": "ASP.NET_SessionId",
                   "IncludedQueryStringParameter": "x",
                   "SharePercentage": 0.25,
                   "MinimumEntriesPerMessage": 200,
@@ -792,7 +792,37 @@ fn a_json_file_written_for_dotnet_makes_the_same_elements() {
     assert_eq!(config.share_percentage(), 0.25);
     assert_eq!(config.minimum_entries_per_message(), 200);
     assert_eq!(config.maximum_queue_size(), 2000);
-    assert_eq!(logged(), [ignored("SetTrackSession")]);
+    assert_eq!(config.session_cookie_name(), Some("ASP.NET_SessionId"));
+    assert_eq!(logged(), Vec::<String>::new());
+}
+
+/// Track session compares the session cookie, so with no cookie named there
+/// is no session to compare, and that is refused rather than ignored.
+#[test]
+fn track_session_with_no_session_cookie_name_is_refused() {
+    let _serial = start();
+    assert_eq!(
+        message(share_usage(&[("TrackSession", "true")])),
+        failed(
+            "ShareUsage",
+            "Usage sharing's 'SetTrackSession' is on but 'SetAspSessionCookieName' names no \
+             session cookie, so there is no session to compare. Set \
+             'SetAspSessionCookieName' to the name of the cookie that holds the session id, \
+             or turn 'SetTrackSession' off."
+        )
+    );
+
+    // A session cookie name has no effect unless track session is on.
+    let named_only = config(share_usage(&[("AspSessionCookieName", "sid")]));
+    assert_eq!(named_only.session_cookie_name(), None);
+
+    // With all evidence shared, track session has no effect and needs no name.
+    let share_all = config(share_usage(&[
+        ("TrackSession", "true"),
+        ("ShareAllEvidence", "true"),
+    ]));
+    assert_eq!(share_all.session_cookie_name(), None);
+    assert_eq!(logged(), Vec::<String>::new());
 }
 
 // The pipeline .NET's `FiftyOnePipelineBuilder` makes from a configuration.
