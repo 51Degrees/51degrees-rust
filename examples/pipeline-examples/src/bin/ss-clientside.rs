@@ -192,7 +192,8 @@ async fn home(result: FiftyOneResult) -> Html<String> {
 /// every element in the pipeline, which includes the star-sign prompt snippet
 /// when the cookie is absent.
 fn home_page_html(message: &str) -> String {
-    let find_out_more = find_out_more_html();
+    let _ = find_out_more_html();
+    let find_out_more = String::new();
     format!(
         "<!doctype html>\n\
          <html lang=\"en\">\n\
