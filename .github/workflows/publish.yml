@@ -182,10 +182,47 @@ jobs:
       run:
         working-directory: examples
     steps:
+      # The data repository inside cxx lists the free data files, which the
+      # on-premise examples' tests skip without.
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
+      - name: Restore the data files
+        id: data
+        uses: ./.github/actions/restore-data-files
+      - name: Download any data file not restored
+        continue-on-error: true
+        shell: pwsh
+        working-directory: .
+        env:
+          DATA_FILES: ${{ steps.data.outputs.paths }}
+        run: |
+          $names = $env:DATA_FILES.Trim() -split '\r?\n' |
+            ForEach-Object { Split-Path -Leaf $_.Trim() }
+          ./cxx/data/get-data-files.ps1 @names
+      - name: Check the data files
+        shell: bash
+        working-directory: .
+        env:
+          DATA_FILES: ${{ steps.data.outputs.paths }}
+        run: |
+          while IFS= read -r file; do
+            if [ -n "$file" ] && [ ! -f "$file" ]; then
+              echo "::error::$file is missing, so the on-premise examples' tests would skip"
+              exit 1
+            fi
+          done <<< "$DATA_FILES"
+      # A fresh clone builds the examples with the lock this commit holds,
+      # which names the crates of an earlier release until the nightly
+      # package update moves it.
+      - name: Test the examples with the committed lock, as a fresh clone does
+        run: cargo test --locked
       # Give the crates.io index a moment to serve the just-published versions,
       # then resolve them and run the examples' tests against the real packages.
-      - run: sleep 90
-      - run: cargo update
-      - run: cargo test
+      - name: Test the examples with the crates just published
+        if: ${{ !cancelled() }}
+        run: |
+          sleep 90
+          cargo update
+          cargo test

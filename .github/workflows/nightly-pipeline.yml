@@ -29,7 +29,10 @@ name: Nightly Pipeline
 # branch of SWAN-community/owid-rust also arrives this way and is compiled
 # into fodid. The update pull request then goes through the same checks as
 # any other, in this run when it is eligible, and merging it releases the
-# crates.
+# crates. The package update does the same for the examples' lock, moving
+# this repository's crates in it to their latest versions on crates.io
+# through ci/update-packages.ps1, so a
+# fresh clone builds the examples with the crates last released.
 
 on:
   workflow_dispatch:
@@ -51,11 +54,25 @@ jobs:
     secrets:
       token: ${{ secrets.ACCESS_TOKEN }}
 
+  # Moves this repository's crates in the examples' lock to their latest
+  # versions on crates.io with
+  # ci/update-packages.ps1, in a pull request when it changed, as the other
+  # languages move their examples to the packages they last released.
+  PackageUpdate:
+    name: Nightly Package Update
+    uses: 51Degrees/common-ci/.github/workflows/nightly-package-update.yml@main
+    with:
+      repo-name: ${{ github.event.repository.name }}
+      org-name: ${{ github.event.repository.owner.login }}
+      dryrun: ${{ inputs.dryrun || false }}
+    secrets:
+      token: ${{ secrets.ACCESS_TOKEN }}
+
   PullRequests:
-    # Runs even when the submodule update failed, so one failure does not
+    # Runs even when an update failed, so one failure does not
     # hold back every other pull request.
     if: ${{ !cancelled() }}
-    needs: SubmoduleUpdate
+    needs: [SubmoduleUpdate, PackageUpdate]
     name: Nightly Pull Requests
     uses: 51Degrees/common-ci/.github/workflows/nightly-pull-requests.yml@main
     with:
