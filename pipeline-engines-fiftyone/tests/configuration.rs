@@ -357,10 +357,14 @@ fn sharing_all_evidence_shares_every_key_but_those_never_shared() {
     assert!(share_usage_config(&pipeline).share_all_evidence());
     let element = share_usage_element(&pipeline);
     let filter = element.shared_evidence_filter();
-    for key in ["cookie.session", "query.anything"] {
+    for key in ["cookie.51d_session", "query.anything", "session.anything"] {
         assert!(filter.include(key), "{key}");
     }
-    assert!(!filter.include("header.cookie"));
+    // usage-sharing-element.md: no cookie but a 51D_ one is shared, even
+    // when all evidence is shared.
+    for key in ["header.cookie", "cookie.session"] {
+        assert!(!filter.include(key), "{key}");
+    }
 }
 
 #[test]
