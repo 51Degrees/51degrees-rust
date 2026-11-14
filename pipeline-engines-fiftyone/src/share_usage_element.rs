@@ -42,8 +42,10 @@
 //! offline endpoint) is logged through the [`log`] facade and never disrupts
 //! the rest of the pipeline, as the
 //! [error-handling section](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/usage-sharing-element.md#error-handling)
-//! requires. Repeated failures are logged at most once a minute, with a count
-//! of the failures since the last message.
+//! requires. Each failed send is logged with what the endpoint answered, as
+//! the specification's request detail requires, and the back-off below
+//! bounds how many there can be. A full queue is logged at most once a
+//! minute, with a count of the records discarded since the last message.
 //!
 //! # Back-off after failed sends
 //!
@@ -814,7 +816,6 @@ impl ShareUsageElement {
             static_info: OnceLock::new(),
             success_count: Arc::clone(&success_count),
             fail_count: Arc::clone(&fail_count),
-            send_failures: LogThrottle::new(),
             closing: Arc::clone(&closing),
         };
         // Without a background thread nothing can be sent. The receiver is
@@ -1247,7 +1248,6 @@ struct Worker {
     static_info: OnceLock<StaticInfo>,
     success_count: Arc<AtomicU64>,
     fail_count: Arc<AtomicU64>,
-    send_failures: LogThrottle,
     closing: Arc<Closing>,
 }
 
@@ -1333,14 +1333,10 @@ impl Worker {
             }
             Err(detail) => {
                 // Expendable: a failure is counted and logged, never
-                // propagated.
+                // propagated. Each failure is logged with what the endpoint
+                // answered, and the back-off bounds how many there can be.
                 self.fail_count.fetch_add(1, Ordering::Relaxed);
-                if let Some(failures) = self.send_failures.record() {
-                    log::warn!(
-                        "Usage sharing failed to deliver a message. {detail}. \
-                         Messages failed since the last report: {failures}."
-                    );
-                }
+                log::warn!("Usage sharing failed to deliver a message. {detail}.");
                 false
             }
         }

@@ -349,9 +349,8 @@ impl UsageSink for Refusing {
 
 /// usage-sharing-element.md, "Back-off after failed sends", item 6: when
 /// sending pauses, a warning gives the delay. With the defaults, ten failed
-/// sends within 100 seconds pause sending for 2 seconds. The failed sends
-/// themselves give one warning, as a refused send is logged at most once a
-/// minute.
+/// sends within 100 seconds pause sending for 2 seconds. Each failed send
+/// gives a warning of its own before it.
 #[test]
 fn a_pause_after_failed_sends_logs_one_warning() {
     let _serial = start();
@@ -391,13 +390,15 @@ fn a_pause_after_failed_sends_logs_one_warning() {
 
     assert_eq!(refused.load(Ordering::SeqCst), 10);
     let records = logged();
-    assert_eq!(records.len(), 2, "{records:?}");
-    assert!(
-        records[0].starts_with("WARN Usage sharing failed"),
-        "{records:?}"
-    );
+    assert_eq!(records.len(), 11, "{records:?}");
+    for record in &records[..10] {
+        assert!(
+            record.starts_with("WARN Usage sharing failed"),
+            "{records:?}"
+        );
+    }
     assert_eq!(
-        records[1],
+        records[10],
         "WARN Usage sharing paused for 2 seconds after failed sends. Usage data is \
          still queued, up to the maximum queue size, and sending starts again when the \
          pause ends."
