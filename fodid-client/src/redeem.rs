@@ -394,6 +394,32 @@ mod tests {
     }
 
     #[test]
+    fn a_factor_word_is_read_whatever_its_letter_case() {
+        let result = RedeemResult::from_response(
+            200,
+            r#"{"context":"mismatch",
+                "factors":{"transport":"Verified","device":"NotRecorded",
+                           "browserip":"MISCONFIGURED","asn":"Mismatch",
+                           "platformname":"Unknown"}}"#,
+        );
+        let factors = result.factors().expect("factors are present");
+        assert_eq!(factors["transport"], FactorOutcome::Verified);
+        assert_eq!(
+            factors["device"],
+            FactorOutcome::NotRecorded,
+            "a factor the creating service did not record must not read as \
+             a mismatch because of its letter case"
+        );
+        assert_eq!(factors["browserip"], FactorOutcome::Misconfigured);
+        assert_eq!(factors["asn"], FactorOutcome::Mismatch);
+        assert_eq!(
+            factors["platformname"],
+            FactorOutcome::Mismatch,
+            "a word this client does not know is still a mismatch"
+        );
+    }
+
+    #[test]
     fn every_factor_outcome_reports_the_clouds_own_word() {
         for (outcome, word) in [
             (FactorOutcome::Verified, "verified"),
