@@ -107,6 +107,9 @@ jobs:
             echo "RUN=false" >> "$GITHUB_ENV"
           fi
 
+      # The day's entry is saved by data-files.yml on the default branch,
+      # with the same inputs, so that this step restores the files and
+      # downloads them only when that entry is missing.
       - name: Fetch the Enterprise data files
         if: matrix.data == 'enterprise' && env.RUN == 'true'
         uses: 51Degrees/common-ci/actions/fetch-assets@main
