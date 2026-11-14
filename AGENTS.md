@@ -439,7 +439,11 @@ submodule is checked out and from that file otherwise.
   tests the crate on wasm32-wasip2 under wasmtime. Same triggers, and it
   reads no secrets.
 - `examples.yml` builds and tests `examples/` against local source
-  (`source.toml`) before a release. Its contract job builds the two device
+  (`source.toml`) before a release. It then runs every example that needs no
+  key as a fresh clone would, with no settings, through
+  `ci/run-examples-on-free-data.ps1`, which lists them. The `usage-sharing`
+  example is not in that list, because it sends to the usage sharing service
+  when it ends. Its contract job builds the two device
   detection web examples the same way, through
   `ci/test-examples-against-source.ps1`, and runs the browser contract
   against them. Runs on every PR.

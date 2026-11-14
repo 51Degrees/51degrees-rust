@@ -118,11 +118,12 @@ jobs:
         shell: pwsh
         working-directory: .
         run: ./ci/test-examples-against-source.ps1
-      # The on-premise examples as someone who has just cloned the repository
-      # runs them, with no settings, so each finds the free data files in
-      # cxx/data itself. Each must run, give the link for asking about the
-      # Enterprise data file, and end with its "Find out more" section. It
-      # runs even when a test failed, so the log shows both.
+      # The examples that need no key as someone who has just cloned the
+      # repository runs them, with no settings, so each finds the free data
+      # files in cxx/data itself. Each must run and end with its "Find out
+      # more" section, and one that reads a 51Degrees data file must give the
+      # link for asking about the Enterprise data file. It runs even when a
+      # test failed, so the log shows both.
       # Every on-premise IP Intelligence example but performance and update
       # reads the Lite IP Intelligence file, a download of about 455 MB that
       # the daily entry does not hold, so the file has an entry of its own for
@@ -147,7 +148,7 @@ jobs:
         with:
           path: cxx/data/ip-intelligence/51Degrees-LiteV41.ipi
           key: ipi-lite-v41-${{ runner.os }}-${{ steps.week.outputs.week }}
-      - name: Run the on-premise examples on the free data files
+      - name: Run the examples that need no key on the free data files
         if: ${{ !cancelled() }}
         shell: pwsh
         working-directory: .
