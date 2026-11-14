@@ -15,8 +15,10 @@
           // The low-memory profile streams data from disk on demand, which
           // is enough for a console example.
           "PerformanceProfile": "LowMemory",
-          // Automatic updates and the file system watcher need a licence key
-          // for the Enterprise data file, so they are off here.
+          // Automatic updates need a licence key for the Enterprise data
+          // file, so they are off here. The file system watcher needs none,
+          // and is off only because the example ends before a new file
+          // could be put in place.
           "AutoUpdate": "false",
           "DataFileSystemWatcher": "false"
         }
