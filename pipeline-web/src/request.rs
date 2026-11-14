@@ -39,7 +39,8 @@
 //! Each piece of request data becomes a prefixed evidence key, following the
 //! [evidence specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/evidence.md):
 //!
-//! - every header `name: value` becomes `header.<name>`,
+//! - every header `name: value` becomes `header.<name>`, and a header sent on
+//!   several lines becomes one value holding every line in order,
 //! - every cookie `name=value` becomes `cookie.<name>`,
 //! - every query-string parameter `name=value` becomes `query.<name>`,
 //! - every form (POST body) parameter becomes `query.<name>` as well, folding
@@ -80,9 +81,11 @@ use fiftyone_pipeline_core::{Evidence, EvidenceBuilder, EvidenceKeyFilter};
 /// lowercases keys when it builds the [`Evidence`], so an implementation need
 /// not normalize case itself.
 pub trait RequestData {
-    /// The request headers as `(name, value)` pairs. A header that appears more
-    /// than once may be returned either as repeated pairs or as a single joined
-    /// value; the last value for a given name wins when building evidence.
+    /// The request headers as `(name, value)` pairs, in the order the request
+    /// carried them. A header that appears more than once may be returned
+    /// either as one pair for each line or as a single joined value.
+    /// [`build_evidence`] makes the pairs of one name, ignoring case, into
+    /// one value of every line in order.
     fn headers(&self) -> Vec<(String, String)>;
 
     /// The request cookies as `(name, value)` pairs. Empty if there are none.
@@ -197,6 +200,13 @@ fn prefixed(prefix: &str, field: &str) -> String {
 ///
 /// # Ordering and conflicts
 ///
+/// A header the request carries on several lines is one value, being every
+/// line in order separated by a comma and a space, which is the field value
+/// [RFC 9110 section 5.2](https://www.rfc-editor.org/rfc/rfc9110#section-5.2)
+/// defines. `Cookie` lines are separated by a semicolon and a space instead,
+/// as [RFC 9113 section 8.2.3](https://www.rfc-editor.org/rfc/rfc9113#section-8.2.3)
+/// requires. The key keeps the spelling of the first line.
+///
 /// Sources are added in the order headers, cookies, query parameters, form
 /// parameters, then the client IP, the protocol and the request line. Because
 /// form parameters share the `query.` prefix with query-string parameters, a
@@ -250,7 +260,11 @@ pub fn build_evidence(request: &dyn RequestData, filter: &dyn EvidenceKeyFilter)
 /// [`build_evidence`] adds them.
 fn request_entries(request: &dyn RequestData) -> Vec<(String, String)> {
     let mut entries = Vec::new();
-    add_prefixed(&mut entries, EVIDENCE_HTTP_HEADER_PREFIX, request.headers());
+    add_prefixed(
+        &mut entries,
+        EVIDENCE_HTTP_HEADER_PREFIX,
+        combined_headers(request.headers()),
+    );
     add_prefixed(&mut entries, EVIDENCE_COOKIE_PREFIX, request.cookies());
     add_prefixed(&mut entries, EVIDENCE_QUERY_PREFIX, request.query_params());
     // Form fields are folded into the query prefix.
@@ -279,6 +293,40 @@ fn request_entries(request: &dyn RequestData) -> Vec<(String, String)> {
     }
 
     entries
+}
+
+/// The header whose lines are joined with [`COOKIE_LINE_SEPARATOR`].
+const COOKIE_HEADER: &str = "cookie";
+
+/// What separates the lines of a header sent on several lines.
+const LINE_SEPARATOR: &str = ", ";
+
+/// What separates the lines of the `Cookie` header, which is not a list of
+/// comma-separated values.
+const COOKIE_LINE_SEPARATOR: &str = "; ";
+
+/// One `(name, value)` for each header name, ignoring case, in the order the
+/// names first appear and spelled as first given. The value of a name given
+/// on several lines is every line in order.
+fn combined_headers(lines: Vec<(String, String)>) -> Vec<(String, String)> {
+    let mut combined: Vec<(String, String)> = Vec::with_capacity(lines.len());
+    for (name, value) in lines {
+        let held = combined
+            .iter_mut()
+            .find(|(held, _)| held.eq_ignore_ascii_case(&name));
+        match held {
+            Some((held, joined)) => {
+                joined.push_str(if held.eq_ignore_ascii_case(COOKIE_HEADER) {
+                    COOKIE_LINE_SEPARATOR
+                } else {
+                    LINE_SEPARATOR
+                });
+                joined.push_str(&value);
+            }
+            None => combined.push((name, value)),
+        }
+    }
+    combined
 }
 
 /// Add each `(field, value)` under the given prefix.
@@ -316,6 +364,69 @@ mod tests {
         fn is_https(&self) -> bool {
             true
         }
+    }
+
+    /// The pairs [`request_entries`] gives for the headers, which are its
+    /// first entries.
+    fn header_entries(request: &Headers) -> Vec<(String, String)> {
+        request_entries(request)
+            .into_iter()
+            .filter(|(key, _)| key.starts_with("header.") && key != EVIDENCE_PROTOCOL_KEY)
+            .collect()
+    }
+
+    /// A header sent on several lines has one value, being every line in
+    /// order separated by a comma and a space, whatever the case of each
+    /// line's name. That is the field value RFC 9110 section 5.2 defines.
+    #[test]
+    fn a_header_on_several_lines_is_one_value_of_every_line_in_order() {
+        let request = Headers(vec![
+            ("Accept-Language", "en-GB"),
+            ("User-Agent", "agent"),
+            ("accept-language", "fr;q=0.8"),
+            ("ACCEPT-LANGUAGE", "de;q=0.5"),
+        ]);
+        let filter = fiftyone_pipeline_core::EvidenceKeyFilterWhitelist::new([
+            "header.accept-language",
+            "header.user-agent",
+        ]);
+        let evidence = build_evidence(&request, &filter);
+        let every_line = Some("en-GB, fr;q=0.8, de;q=0.5");
+        assert_eq!(evidence.get("header.accept-language"), every_line);
+        assert_eq!(evidence.get("header.user-agent"), Some("agent"));
+        // The whole request usage sharing reads holds the same value.
+        let whole = evidence.http_request().expect("the request is given");
+        assert_eq!(whole.get("header.accept-language"), every_line);
+    }
+
+    /// The one value keeps the place and the spelling of the header's first
+    /// line, and a header sent once is as it was sent.
+    #[test]
+    fn a_combined_header_keeps_the_place_and_spelling_of_its_first_line() {
+        let request = Headers(vec![
+            ("X-First", "1"),
+            ("User-Agent", "agent"),
+            ("x-first", "2"),
+        ]);
+        assert_eq!(
+            header_entries(&request),
+            [
+                ("header.X-First".to_owned(), "1, 2".to_owned()),
+                ("header.User-Agent".to_owned(), "agent".to_owned()),
+            ]
+        );
+    }
+
+    /// Cookie lines are joined with a semicolon and a space, which is how
+    /// RFC 9113 section 8.2.3 has the lines HTTP/2 allows made into the one
+    /// Cookie header the rest of HTTP has.
+    #[test]
+    fn cookie_lines_are_joined_with_a_semicolon() {
+        let request = Headers(vec![("Cookie", "a=1"), ("cookie", "b=2; c=3")]);
+        assert_eq!(
+            header_entries(&request),
+            [("header.Cookie".to_owned(), "a=1; b=2; c=3".to_owned())]
+        );
     }
 
     /// `If-None-Match` is a list, so a request may carry it over several
