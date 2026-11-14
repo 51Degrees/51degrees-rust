@@ -1,0 +1,11 @@
+name: tmp 221 comparer tests
+on:
+  push:
+    branches: ['tmp/rust-221-red']
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test -p parity-compare
+        working-directory: parity
