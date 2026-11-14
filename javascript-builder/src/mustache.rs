@@ -133,7 +133,7 @@ pub enum ParseError {
     UnsupportedTag {
         /// The tag as written, braces included.
         tag: String,
-        /// What the tag is, and why it is refused.
+        /// What the tag is, why it is refused and what to write instead.
         kind: &'static str,
     },
 }
@@ -282,9 +282,18 @@ fn classify_tag(body: &str, triple: bool) -> Result<Token, ParseError> {
         Some('/') => Ok(Token::Close(chars.as_str().trim().to_owned())),
         Some('&') => Ok(Token::Var(chars.as_str().trim().to_owned())),
         Some('!') => Ok(Token::Comment),
-        Some('>') => unsupported("a partial, which needs a template of its own"),
-        Some('=') => unsupported("a set delimiter tag, which the renderer does not follow"),
-        Some('<' | '$') => unsupported("an inheritance tag, which the renderer does not follow"),
+        Some('>') => unsupported(
+            "a partial, which needs a template of its own, so write the partial's text \
+             into the template in its place",
+        ),
+        Some('=') => unsupported(
+            "a set delimiter tag, which the renderer does not follow, so keep the \
+             standard delimiters, {{ and }}",
+        ),
+        Some('<' | '$') => unsupported(
+            "an inheritance tag, which the renderer does not follow, so write the \
+             parent template's text into the template with each block filled in",
+        ),
         _ => Ok(Token::Var(trimmed.trim().to_owned())),
     }
 }

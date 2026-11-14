@@ -154,7 +154,8 @@ impl JavaScriptBuilderElementBuilder {
     /// under another name, or with a partial, a set delimiter tag or an
     /// inheritance tag, is a configuration error that names the tag. This
     /// renderer is given one template and keeps the standard delimiters, so
-    /// it cannot follow those tags.
+    /// it cannot follow those tags, and the error says what to write in the
+    /// tag's place.
     pub fn set_template(mut self, source: &str) -> Result<Self> {
         match Template::parse(source) {
             Ok(template) => {
