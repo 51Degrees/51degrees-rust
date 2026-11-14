@@ -2734,7 +2734,7 @@ mod tests {
 
     /// Process ten requests, waiting for each to be sent, so that ten sends
     /// fail within the default window of 100 seconds.
-    fn fail_ten_sends(pipeline: &Pipeline, capture: &Capture) {
+    fn fail_ten_sends(pipeline: &Arc<Pipeline>, capture: &Capture) {
         for n in 0..10 {
             pipeline
                 .create_flow_data_with(user_agent(&format!("failing-{n}")))
