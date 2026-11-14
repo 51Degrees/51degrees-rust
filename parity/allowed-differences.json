@@ -65,12 +65,6 @@
     "reason": "The JavaScript holds the JSON, so every difference the json entries, json.device and json.ip, allow in the engines' pipeline shows here too, and each of those names its own reason. The values pipeline's cases are not listed, so their JavaScript must be the same."
   },
   {
-    "path": "javascript",
-    "kind": "lineEndings",
-    "rust": {"value": [0]},
-    "reason": "The .NET 4.5.130 package embeds its template with CRLF line endings, so each line of its script that comes from the template ends with CRLF. The Process section of javascript-builder.md (https://github.com/51Degrees/specifications/blob/77dc1f62ac11fac1f3358f38eb67cc7ef0e5b00e/pipeline-specification/pipeline-elements/javascript-builder.md#process) names the template in javascript-templates, \"The Mustache template used by all implementations\", which ends each line with LF at 41e7561f, the commit the crates bundle, and the crates write no CRLF."
-  },
-  {
     "path": "usage*",
     "kind": "text",
     "cases": ["usage-value-replaced-and-cut"],
@@ -197,14 +191,6 @@
     "reason": "A property the cloud's response does not give is missing on both sides, with the same reason word for word apart from the configurator link's campaign tags, which name each repository and the file the message is in. An entry cannot pin a missing property's reason, so the workflow step that checks the cloud translation cases compares the two reasons with the link's tags removed. The same kind covers the reason for a null value, which that step compares exactly."
   },
   {
-    "path": "*Text",
-    "kind": "text",
-    "cases": ["robots-txt-tdl-written-form"],
-    "dotnet": {"pattern": ["line *: # Terms HTTPS://Example.COM/Terms%20Of%20Use/1.txt?v=1#top"]},
-    "rust": {"pattern": ["line *: # Terms https://example.com/Terms%20Of%20Use/1.txt?v=1#top"]},
-    "reason": "A Terms Document Locator is written as a URI, and the crate writes its scheme and host in lower case, as RFC 3986 asks of a program that writes a URI, in section 3.1 (https://www.rfc-editor.org/rfc/rfc3986#section-3.1), \"An implementation should accept uppercase letters as equivalent to lowercase in scheme names ... but should only produce lowercase scheme names for consistency\", and section 3.2.2 (https://www.rfc-editor.org/rfc/rfc3986#section-3.2.2), \"producers and normalizers should use lowercase for registered names\". .NET writes the entry as it was given. Both keep the escapes. The specifications repository has no section for the robots.txt engine."
-  },
-  {
     "path": "propertyKeyedEngines[*].properties[*].type",
     "kind": "value",
     "dotnet": {"value": ["dotnet:IReadOnlyList`1"]},
@@ -294,37 +280,5 @@
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
     "data": "enterprise",
     "reason": "The IP Intelligence properties in another order, as the json.device order entry says. Over the Lite file both sides give the ASN file's few properties in the same order."
-  },
-  {
-    "path": "evidenceAfter",
-    "kind": "value",
-    "cases": ["sequence-nul"],
-    "dotnet": {"value": [{"query.session-id": "parity-sequence-nul", "query.sequence": "6"}]},
-    "rust": {"value": [{"query.session-id": "parity-sequence-nul", "query.sequence": "1"}]},
-    "reason": "The Process section of sequence-element.md (https://github.com/51Degrees/specifications/blob/77dc1f62ac11fac1f3358f38eb67cc7ef0e5b00e/pipeline-specification/pipeline-elements/sequence-element.md#process) says \"A `query.sequence` value that is not a whole number, or a string made only of the digits 0 to 9 with no sign or spaces, from 0 up to 2,147,483,646 is not present\", so 5 followed by a NUL character is not present and the crates give 1. .NET reads the text with int.TryParse and NumberStyles.None, which skips NUL characters at the end, so it reads 5 and gives 6."
-  },
-  {
-    "path": "session",
-    "kind": "value",
-    "cases": ["sequence-nul"],
-    "dotnet": {"value": [{"id": "parity-sequence-nul", "sequence": 6}]},
-    "rust": {"value": [{"id": "parity-sequence-nul", "sequence": 1}]},
-    "reason": "The sequence after the Sequence element, as the evidenceAfter entry for this case says."
-  },
-  {
-    "path": "*sequence.sequence",
-    "kind": "value",
-    "cases": ["sequence-nul"],
-    "dotnet": {"value": [6]},
-    "rust": {"value": [1]},
-    "reason": "The Sequence element's data and the JSON hold the sequence, as the evidenceAfter entry for this case says."
-  },
-  {
-    "path": "usage*",
-    "kind": "text",
-    "cases": ["sequence-nul"],
-    "dotnet": {"pattern": ["*<Sequence>6</Sequence>*"]},
-    "rust": {"pattern": ["*<Sequence>1</Sequence>*"]},
-    "reason": "The usage records hold the sequence, as the evidenceAfter entry for this case says."
   }
 ]

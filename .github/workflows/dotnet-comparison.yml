@@ -551,9 +551,8 @@ jobs:
             fi
           done
 
-      # The values cases compare the JavaScript byte for byte apart from
-      # .NET's CRLF line endings, so a Rust script with promises left off, or
-      # with CRLF line endings of its own, must fail.
+      # The values cases compare the JavaScript byte for byte, so a Rust
+      # script with promises left off, or with CRLF line endings, must fail.
       - name: Check that a changed JavaScript text fails
         if: matrix.data == 'lite'
         working-directory: parity
