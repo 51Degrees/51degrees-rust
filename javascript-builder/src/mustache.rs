@@ -567,6 +567,64 @@ mod tests {
         }
     }
 
+    /// Every case in the Mustache specification's comments file, where a
+    /// comment writes nothing and a line holding only comments and
+    /// whitespace is removed with its line break.
+    #[test]
+    fn the_specification_comment_cases() {
+        let cases = [
+            ("12345{{! Comment Block! }}67890", "1234567890"),
+            (
+                "12345{{!\n  This is a\n  multi-line comment...\n}}67890\n",
+                "1234567890\n",
+            ),
+            ("Begin.\n{{! Comment Block! }}\nEnd.\n", "Begin.\nEnd.\n"),
+            (
+                "Begin.\n  {{! Indented Comment Block! }}\nEnd.\n",
+                "Begin.\nEnd.\n",
+            ),
+            ("|\r\n{{! Standalone Comment }}\r\n|", "|\r\n|"),
+            ("  {{! I'm Still Standalone }}\n!", "!"),
+            ("!\n  {{! I'm Still Standalone }}", "!\n"),
+            (
+                "Begin.\n{{!\nSomething's going on here...\n}}\nEnd.\n",
+                "Begin.\nEnd.\n",
+            ),
+            (
+                "Begin.\n  {{!\n    Something's going on here...\n  }}\nEnd.\n",
+                "Begin.\nEnd.\n",
+            ),
+            ("  12 {{! 34 }}\n", "  12 \n"),
+            ("12345 {{! Comment Block! }} 67890", "12345  67890"),
+            (
+                "comments never show: >{{! comment }}<",
+                "comments never show: ><",
+            ),
+        ];
+        for (template, expected) in cases {
+            assert_eq!(render(template), expected, "{template:?}");
+        }
+    }
+
+    /// A partial, a set delimiter tag and the inheritance tags are refused,
+    /// each named as written.
+    #[test]
+    fn tags_the_renderer_cannot_follow_are_refused() {
+        for (source, tag) in [
+            ("a{{> header}}b", "{{> header}}"),
+            ("{{=<% %>=}}", "{{=<% %>=}}"),
+            ("{{<parent}}{{/parent}}", "{{<parent}}"),
+            ("{{$block}}x{{/block}}", "{{$block}}"),
+        ] {
+            match Template::parse(source) {
+                Err(error) => {
+                    assert!(error.to_string().starts_with(tag), "{source:?}: {error}")
+                }
+                Ok(_) => panic!("{source:?} was accepted"),
+            }
+        }
+    }
+
     #[test]
     fn unclosed_tag_errors() {
         assert_eq!(
