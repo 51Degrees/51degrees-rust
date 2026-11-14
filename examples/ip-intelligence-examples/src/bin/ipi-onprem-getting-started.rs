@@ -504,6 +504,56 @@ mod tests {
             assert!(printed.contains("utm_term=enterprise-data-file"));
         }
     }
+
+    /// The properties this example asks for that only the Enterprise data
+    /// file carries, in the order the closing message names them.
+    const PAID: &[&str] = &[
+        "IpRangeStart",
+        "IpRangeEnd",
+        "Country",
+        "CountryCode",
+        "State",
+        "Town",
+        "Latitude",
+        "Longitude",
+        "AccuracyRadiusMin",
+        "TimeZoneOffset",
+        "IsHosted",
+        "IsVPN",
+        "CountryCodesGeographical",
+        "CountryCodesPopulation",
+        "Mcc",
+    ];
+
+    /// On a free file, each property only the Enterprise data file carries
+    /// says so on its line, and the closing message names exactly those.
+    #[test]
+    fn each_paid_property_says_it_needs_the_enterprise_data_file() {
+        let Some(options) = ExampleOptions::for_tier(examples_shared::IpiTier::Asn) else {
+            eprintln!("no usable IP Intelligence data file; skipping getting-started run");
+            return;
+        };
+        // _51DEGREES_IPI_PATH can name another file, which may carry them.
+        let asn_file = examples_shared::IPI_ASN_RELATIVE_PATH.rsplit('/').next();
+        if options.data_files[0].file_name().and_then(|n| n.to_str()) != asn_file {
+            return;
+        }
+
+        let mut buffer = Vec::new();
+        run(&options, &mut buffer).expect("the getting-started example should run");
+        let printed = String::from_utf8(buffer).expect("output should be valid UTF-8");
+
+        for name in PAID {
+            let line = format!(
+                "\t{name}: {}\n",
+                examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+            );
+            assert!(printed.contains(&line), "{name} in:\n{printed}");
+        }
+        let message = examples_shared::enterprise_data_file_message(PAID, CONTACT_US_URL)
+            .expect("there are paid properties to name");
+        assert!(printed.contains(&message), "{message}\nnot in:\n{printed}");
+    }
 }
 
 /*

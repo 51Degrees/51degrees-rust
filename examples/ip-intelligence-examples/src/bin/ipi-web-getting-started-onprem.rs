@@ -395,6 +395,19 @@ mod tests {
             {
                 assert!(page_body.contains("needs the Enterprise data file"));
                 assert!(page_body.contains("utm_term=enterprise-data-file"));
+                // The table has 26 rows, and the free files carry five of
+                // them between them. The other 21 are properties only the
+                // Enterprise data file has, so each row says so and the
+                // message names them all.
+                let cell = format!(
+                    "<td class=\"c-eg-table__cell\">{}",
+                    examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+                );
+                assert_eq!(page_body.matches(&cell).count(), 21, "{page_body}");
+                assert!(
+                    page_body.contains(&enterprise_message_html(ENTERPRISE_PROPERTIES)),
+                    "{page_body}"
+                );
             }
 
             let script = get(app.clone(), "/51Degrees.core.js").await;
