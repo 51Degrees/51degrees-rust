@@ -145,13 +145,17 @@ impl JavaScriptBuilderElementBuilder {
     /// with `_supportsFetch` and `_userPrompt` as well. Variables
     /// (`{{name}}`, `{{&name}}` and `{{{name}}}`) are written without HTML
     /// escaping, and sections (`{{#name}}` and `{{^name}}`) are rendered from
-    /// the boolean values. Lists, partials, lambdas, dotted names and
-    /// comments are not supported. The specification allows a template other
-    /// than the bundled one as long as the script still does everything the
-    /// bundled one does.
+    /// the boolean values, and comments (`{{! comment}}`) write nothing.
+    /// Lists, lambdas and dotted names are not supported. The specification
+    /// allows a template other than the bundled one as long as the script
+    /// still does everything the bundled one does.
     ///
-    /// A template with a tag or a section left open, or with a section closed
-    /// under another name, is a configuration error.
+    /// A template with a tag or a section left open, with a section closed
+    /// under another name, or with a partial, a set delimiter tag or an
+    /// inheritance tag, is a configuration error that names the tag. This
+    /// renderer is given one template and keeps the standard delimiters, so
+    /// it cannot follow those tags, and the error says what to write in the
+    /// tag's place.
     pub fn set_template(mut self, source: &str) -> Result<Self> {
         match Template::parse(source) {
             Ok(template) => {
@@ -159,7 +163,7 @@ impl JavaScriptBuilderElementBuilder {
                 Ok(self)
             }
             Err(error) => Err(Error::configuration(format!(
-                "The JavaScript template is not valid Mustache ({error})."
+                "The JavaScript template cannot be rendered ({error})."
             ))),
         }
     }
