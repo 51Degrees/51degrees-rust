@@ -99,8 +99,8 @@ pub(crate) fn sent_uri(extensions: &Extensions, uri: Uri) -> Uri {
 /// blocking thread pool and return the processed [`FlowData`].
 ///
 /// [`CapturedRequest`] holds no method, so the evidence built here has no
-/// request line. The middleware and the endpoint handlers attach the method,
-/// so they give it.
+/// request line. [`process_request_with_method`] gives it, as the middleware
+/// and the endpoint handlers do.
 ///
 /// The pipeline is configured to suppress process exceptions in the web
 /// integration, so a per-element failure is recorded on the flow data rather
@@ -111,6 +111,17 @@ pub async fn process_request(
     captured: CapturedRequest,
 ) -> Result<FlowData, tokio::task::JoinError> {
     process_then(state, captured, None, |flow_data, _| flow_data).await
+}
+
+/// As [`process_request`], with the request's method, so the evidence carries
+/// the request line: `server.request-method`, `server.request-path` and
+/// `server.request-query`, the last two read from the captured URI.
+pub async fn process_request_with_method(
+    state: &FiftyOneState,
+    captured: CapturedRequest,
+    method: Method,
+) -> Result<FlowData, tokio::task::JoinError> {
+    process_then(state, captured, Some(method), |flow_data, _| flow_data).await
 }
 
 /// As [`process_request`], then pass the processed [`FlowData`] and the

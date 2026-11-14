@@ -411,9 +411,9 @@ mod tests {
  *    accepted as a query value and as a server value, and every query value
  *    is tried before any server value.
  *
- * It then lists the properties only the Enterprise data file carries
- * (`Country`, `CountryCode`, `Town`, `Latitude`, `Longitude`, `IsHosted` and
- * `IsVPN`) and whether the data file in use has each, judged from the data
+ * It then lists the properties the examples ask for that only the Enterprise
+ * data file carries (such as `Country`, `Town`, `Latitude`, `Longitude`,
+ * `IsHosted` and `IsVPN`) and whether the data file in use has each, judged from the data
  * file's own list of properties. With a free file each says "needs the
  * Enterprise data file", and the run names them with a link to contact
  * 51Degrees about a copy of the Enterprise data file.

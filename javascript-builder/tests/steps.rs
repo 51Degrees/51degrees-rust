@@ -198,6 +198,28 @@ fn a_template_the_caller_gives_is_rendered() {
     assert_eq!(js, "var fod = 5; prompt");
 }
 
+/// A partial, a set delimiter tag and the inheritance tags need more than
+/// the one template `set_template` is given, so a template holding one is a
+/// configuration error that names the tag, rather than a script with nothing
+/// in its place.
+#[test]
+fn a_template_with_a_tag_the_renderer_cannot_follow_is_a_configuration_error() {
+    for (source, tag) in [
+        ("a{{> header}}b", "{{> header}}"),
+        ("{{=<% %>=}}", "{{=<% %>=}}"),
+        ("{{<parent}}{{/parent}}", "{{<parent}}"),
+        ("{{$block}}x{{/block}}", "{{$block}}"),
+    ] {
+        match JavaScriptBuilderElement::builder().set_template(source) {
+            Err(error @ Error::PipelineConfiguration { .. }) => {
+                assert!(error.to_string().contains(tag), "{source:?}: {error}")
+            }
+            Err(error) => panic!("{source:?}: {error}"),
+            Ok(_) => panic!("{source:?} was accepted"),
+        }
+    }
+}
+
 #[test]
 fn a_template_that_does_not_parse_is_a_configuration_error() {
     for source in ["{{#a}}", "{{a", "{{#a}}{{/b}}", "{{/a}}"] {

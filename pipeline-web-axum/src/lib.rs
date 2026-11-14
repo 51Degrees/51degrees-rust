@@ -114,7 +114,7 @@ mod state;
 
 pub use handlers::{javascript_handler, json_handler};
 pub use middleware::fiftyone_middleware;
-pub use process::{process_request, CapturedRequest};
+pub use process::{process_request, process_request_with_method, CapturedRequest};
 pub use request::AxumRequestData;
 pub use response::into_axum_response;
 pub use result::FiftyOneResult;

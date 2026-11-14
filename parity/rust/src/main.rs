@@ -52,6 +52,7 @@ mod cloud_translation;
 mod configuration;
 mod derived;
 mod fodid_cases;
+mod groups;
 mod metadata;
 mod property_keyed;
 mod robots_txt;
@@ -81,7 +82,9 @@ use fiftyone_json_builder::{
     JsonBuilderElementBuilder, JSON_BUILDER_DATA_KEY, JSON_BUILDER_ELEMENT_DATA_KEY,
 };
 use fiftyone_native::PerformanceProfile;
-use fiftyone_pipeline_core::{ElementData, Evidence, FlowData, Pipeline, PropertyValue};
+use fiftyone_pipeline_core::{
+    ElementData, Error, Evidence, FlowData, FlowElement, Pipeline, PropertyValue,
+};
 use fiftyone_pipeline_engines_fiftyone::{SequenceElement, ShareUsageElement};
 use fiftyone_pipeline_translation::{TranslationData, TranslationValue};
 
@@ -163,11 +166,13 @@ fn main() -> Result<()> {
     let cases: Vec<Case> = serde_json::from_str(&text).context("parsing the corpus")?;
     let capture = Arc::new(UsageCapture::default());
     let custom_capture = Arc::new(CustomUsageCapture::default());
-    let pipeline = build_pipeline(&args, &capture, &custom_capture)?;
+    let (device, ip) = build_engines(&args)?;
+    let pipeline = build_pipeline(&device, &ip, &capture, &custom_capture)?;
     let values = build_values_pipeline()?;
     let signatures = agent_signature::build_pipeline()?;
     let translation = translation::build_pipeline()?;
     let cloud_translation = cloud_translation::build_pipeline()?;
+    let groups = groups::build_pipelines(&device, &ip)?;
 
     let mut lines = Vec::with_capacity(cases.len());
     // The lines whose case ran through usage sharing. A values case may give
@@ -181,7 +186,10 @@ fn main() -> Result<()> {
             Some(agent_signature::PIPELINE) => &signatures,
             Some(translation::PIPELINE) => &translation,
             Some(cloud_translation::PIPELINE) => &cloud_translation,
-            Some(other) => bail!("{}: unknown pipeline {other}", case.id),
+            Some(other) => match groups.iter().find(|(name, _)| *name == other) {
+                Some((_, group)) => group,
+                None => bail!("{}: unknown pipeline {other}", case.id),
+            },
         };
         if Arc::ptr_eq(chosen, &pipeline) {
             shared.push(lines.len());
@@ -258,25 +266,32 @@ fn parse_args(args: &[String]) -> Result<Args> {
     })
 }
 
-/// Sequence, usage sharing into each capture, Device Detection, IP
-/// Intelligence, then the JSON and JavaScript builders, with process errors
-/// collected rather than returned, as the .NET producer builds it.
-fn build_pipeline(
-    args: &Args,
-    capture: &Arc<UsageCapture>,
-    custom_capture: &Arc<CustomUsageCapture>,
-) -> Result<Arc<Pipeline>> {
-    let device = DeviceDetectionOnPremiseEngineBuilder::new(&args.dd)
+/// The on-premise Device Detection and IP Intelligence engines, which the
+/// engines' pipeline and the group pipelines share.
+fn build_engines(args: &Args) -> Result<(Arc<dyn FlowElement>, Arc<dyn FlowElement>)> {
+    let device: Arc<dyn FlowElement> = DeviceDetectionOnPremiseEngineBuilder::new(&args.dd)
         .performance_profile(PerformanceProfile::HighPerformance)
         .build()
         .context("building the Device Detection engine")?;
-    let ip = IpIntelligenceOnPremiseEngineBuilder::new(&args.ipi)
+    let ip: Arc<dyn FlowElement> = IpIntelligenceOnPremiseEngineBuilder::new(&args.ipi)
         .performance_profile(PerformanceProfile::LowMemory)
         .auto_update(false)
         .file_system_watcher(false)
         .update_on_startup(false)
         .build_shared()
         .context("building the IP Intelligence engine")?;
+    Ok((device, ip))
+}
+
+/// Sequence, usage sharing into each capture, Device Detection, IP
+/// Intelligence, then the JSON and JavaScript builders, with process errors
+/// collected rather than returned, as the .NET producer builds it.
+fn build_pipeline(
+    device: &Arc<dyn FlowElement>,
+    ip: &Arc<dyn FlowElement>,
+    capture: &Arc<UsageCapture>,
+    custom_capture: &Arc<CustomUsageCapture>,
+) -> Result<Arc<Pipeline>> {
     let javascript = JavaScriptBuilderElementBuilder::new()
         .set_minify(false)
         .build();
@@ -286,8 +301,8 @@ fn build_pipeline(
         .add_element(Arc::new(SequenceElement::new()))
         .add_element(Arc::new(shared))
         .add_element(Arc::new(custom))
-        .add_element(device)
-        .add_element(ip)
+        .add_element(Arc::clone(device))
+        .add_element(Arc::clone(ip))
         .add_element(Arc::new(JsonBuilderElementBuilder::new().build()))
         .add_element(Arc::new(javascript))
         .suppress_process_exceptions(true)
@@ -325,7 +340,21 @@ fn run_case(pipeline: &Arc<Pipeline>, case: &Case, missing_fails: bool) -> Resul
         evidence = evidence.add(key, value);
     }
     let mut data = pipeline.create_flow_data_with(evidence.build());
-    let process_error = data.process().err().map(|error| error.to_string());
+    // The errors the pipeline returns as the sub-errors of one error, which
+    // the specification's exception handling asks for and .NET throws as
+    // the inner exceptions of an AggregateException, go in `thrown`. The
+    // wording of the error around them is each language's own.
+    let (process_error, thrown) = match data.process() {
+        Ok(()) => (None, None),
+        Err(Error::Aggregate(errors)) => {
+            let messages: Vec<String> = errors
+                .iter()
+                .map(|error| error.source.message().into_owned())
+                .collect();
+            (None, Some(messages))
+        }
+        Err(error) => (Some(error.to_string()), None),
+    };
 
     let evidence_after = data.evidence();
     let errors: Vec<Value> = data
@@ -341,6 +370,7 @@ fn run_case(pipeline: &Arc<Pipeline>, case: &Case, missing_fails: bool) -> Resul
     Ok(json!({
         "id": case.id,
         "processError": process_error,
+        "thrown": thrown,
         "properties": properties(&data, missing_fails),
         "session": {
             "id": evidence_after.get(SESSION_ID_KEY),

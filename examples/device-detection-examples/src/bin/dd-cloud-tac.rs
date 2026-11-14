@@ -147,7 +147,7 @@ fn main() -> Result<()> {
             "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
              variable (or pass the key as the first argument). TAC lookup requires a \
              paid subscription; see https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-tac.rs&utm_term=resource-key-required and create a key \
-             with the required properties at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-tac.rs&utm_term=resource-key-required."
+             with the required properties at https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-tac.rs&utm_term=resource-key-required."
         );
         examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
         return Ok(());
@@ -224,5 +224,5 @@ mod tests {
  *
  * The resource key is read from the first command-line argument or the
  * `_51DEGREES_RESOURCE_KEY` environment variable. See https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-tac.rs&utm_term=dd-cloud-tac
- * for a paid subscription and https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-tac.rs&utm_term=dd-cloud-tac to create a key.
+ * for a paid subscription and https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-tac.rs&utm_term=dd-cloud-tac to create a key.
  */
