@@ -634,29 +634,45 @@ impl ShareUsageElement {
     }
 
     fn with_boxed_sink(config: ShareUsageConfig, sink: Box<dyn UsageSink>) -> Self {
+        // With all evidence shared every cookie is shared and compared, so
+        // track session has no effect.
+        let session_cookie = config
+            .session_cookie_name
+            .as_deref()
+            .filter(|_| !config.share_all_evidence);
+
         // Build the evidence filter from the configured settings. Used for both
         // the element filter and the tracker filter so the two cannot diverge.
         let make_filter = || {
-            if config.share_all_evidence {
+            let filter = if config.share_all_evidence {
                 EvidenceKeyFilterShareUsage::share_all()
             } else {
                 EvidenceKeyFilterShareUsage::new(
                     config.blocked_http_headers.clone(),
                     config.included_query_string_parameters.clone(),
                 )
+            };
+            match session_cookie {
+                Some(name) => filter.without_session_cookie(name),
+                None => filter,
             }
         };
 
         let filter = Arc::new(make_filter());
 
         // The tracker filter is built from the same settings but excludes the
-        // session id and sequence so they cannot defeat deduplication.
+        // session id and sequence so they cannot defeat deduplication, and
+        // compares the session cookie when track session is on.
+        let mut tracker_filter = EvidenceKeyFilterShareUsageTracker::new(make_filter());
+        if let Some(name) = session_cookie {
+            tracker_filter = tracker_filter.with_session_cookie(name);
+        }
         let tracker = ShareUsageTracker::new(
             config.repeat_evidence_interval,
             config
                 .maximum_queue_size
                 .max(SHARE_USAGE_DEFAULT_MAX_QUEUE_SIZE),
-            Box::new(EvidenceKeyFilterShareUsageTracker::new(make_filter())),
+            Box::new(tracker_filter),
         );
 
         let (tx, rx) = sync_channel::<UsageRecord>(config.maximum_queue_size);

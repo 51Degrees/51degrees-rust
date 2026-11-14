@@ -112,6 +112,9 @@ pub struct EvidenceKeyFilterShareUsage {
     /// Lower-cased query parameter names to share. `None` means share all
     /// query parameters.
     included_query_string_params: Option<HashSet<String>>,
+    /// The lower-cased name of the session cookie, which is not shared
+    /// unless every key is.
+    session_cookie: Option<String>,
 }
 
 impl EvidenceKeyFilterShareUsage {
@@ -144,6 +147,7 @@ impl EvidenceKeyFilterShareUsage {
             share_all: false,
             blocked_http_headers: blocked,
             included_query_string_params: included,
+            session_cookie: None,
         }
     }
 
@@ -153,7 +157,16 @@ impl EvidenceKeyFilterShareUsage {
             share_all: true,
             blocked_http_headers: HashSet::new(),
             included_query_string_params: None,
+            session_cookie: None,
         }
+    }
+
+    /// Leave out the cookie with this name, in any case, unless every key is
+    /// shared, even when the name starts with `51D_`. It is the session
+    /// cookie that track session compares. Returns `self` for chaining.
+    pub fn without_session_cookie(mut self, name: &str) -> Self {
+        self.session_cookie = Some(name.to_lowercase());
+        self
     }
 
     /// The core rule, shared by this filter and the tracker filter.
@@ -176,6 +189,9 @@ impl EvidenceKeyFilterShareUsage {
 
         if prefix == EVIDENCE_HTTP_HEADER_PREFIX {
             !self.blocked_http_headers.contains(field)
+        } else if prefix == EVIDENCE_COOKIE_PREFIX && self.session_cookie.as_deref() == Some(field)
+        {
+            false
         } else if prefix == EVIDENCE_COOKIE_PREFIX || prefix == EVIDENCE_SESSION_PREFIX {
             field.starts_with(FIFTYONE_PREFIX)
         } else if prefix == EVIDENCE_QUERY_PREFIX {
@@ -209,16 +225,37 @@ impl EvidenceKeyFilter for EvidenceKeyFilterShareUsage {
 /// and sequence evidence. Those values are unique per request (the sequence
 /// element makes the session id unique and increments the sequence), so
 /// including them in the dedup key would make every request look unique and
-/// defeat the repeat-evidence suppression.
+/// defeat the repeat-evidence suppression. With track session on it also
+/// includes the session cookie, which the wrapped filter does not share.
 #[derive(Debug, Clone)]
 pub struct EvidenceKeyFilterShareUsageTracker {
     inner: EvidenceKeyFilterShareUsage,
+    /// The lower-cased key of the session cookie track session compares.
+    session_cookie_key: Option<String>,
 }
 
 impl EvidenceKeyFilterShareUsageTracker {
     /// Wrap a share-usage filter for tracker use.
     pub fn new(inner: EvidenceKeyFilterShareUsage) -> Self {
-        EvidenceKeyFilterShareUsageTracker { inner }
+        EvidenceKeyFilterShareUsageTracker {
+            inner,
+            session_cookie_key: None,
+        }
+    }
+
+    /// Include the cookie with this name, in any case, as track session
+    /// compares it. Returns `self` for chaining.
+    pub fn with_session_cookie(mut self, name: &str) -> Self {
+        self.session_cookie_key = Some(format!(
+            "{EVIDENCE_COOKIE_PREFIX}{EVIDENCE_SEPARATOR}{}",
+            name.to_lowercase()
+        ));
+        self
+    }
+
+    /// True for the session cookie track session compares.
+    fn is_session_cookie(&self, key: &str) -> bool {
+        self.session_cookie_key.as_deref() == Some(lowercase(key).as_ref())
     }
 }
 
@@ -227,10 +264,13 @@ impl EvidenceKeyFilter for EvidenceKeyFilterShareUsageTracker {
         if key == EVIDENCE_SESSIONID || key == EVIDENCE_SEQUENCE {
             return false;
         }
-        self.inner.include(key)
+        self.is_session_cookie(key) || self.inner.include(key)
     }
 
     fn order(&self, key: &str) -> Option<i32> {
+        if self.is_session_cookie(key) {
+            return Some(100);
+        }
         if key == EVIDENCE_SESSIONID || key == EVIDENCE_SEQUENCE {
             return None;
         }
