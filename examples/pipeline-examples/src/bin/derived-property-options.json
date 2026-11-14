@@ -1,0 +1,37 @@
+{
+  "PipelineOptions": {
+    "Elements": [
+      {
+        // The element that supplies the source properties. A real
+        // pipeline puts Device Detection or IP Intelligence here, and
+        // this example has a small element of its own so that it needs
+        // no resource key, no data file and no network connection.
+        "BuilderName": "SessionElement"
+      },
+      {
+        "BuilderName": "DerivedPropertyElement",
+        "BuildParameters": {
+          // Both build parameters take a list written as one string,
+          // with a comma between entries, which is how the pipeline
+          // reads a list of names out of a configuration file.
+
+          // Scripts names the scripts built into the
+          // fiftyone-derived-properties crate, which come from the
+          // 51Degrees derived-properties repository. The line below
+          // shows the shape to copy, and stays commented out so that
+          // this example does not depend on the content of another
+          // repository.
+          //
+          // "Scripts": "HumanConfidence",
+
+          // ScriptFiles names scripts of your own. A file name may hold
+          // a wildcard, so "scripts/*.yaml" adds every script in a
+          // folder. The path below is relative to the working
+          // directory, which the example moves to the folder this file
+          // is in.
+          "ScriptFiles": "ReaderEngagement.yaml"
+        }
+      }
+    ]
+  }
+}

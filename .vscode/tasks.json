@@ -41,6 +41,7 @@
         "ipi-web-getting-started-cloud",
         "ipi-web-getting-started-onprem",
         "caching",
+        "derived-property",
         "ss-clientside",
         "ss-cloud",
         "ss-onprem",
