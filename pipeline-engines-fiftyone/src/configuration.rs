@@ -43,12 +43,14 @@
 //!   minimum entries per message, whichever is larger.
 //! - `SetAddTimeout` and `SetTakeTimeout` in milliseconds, where -1 waits
 //!   with no limit.
-//! - `SetAspSessionCookieName`, `SetTrackSession`,
-//!   `SetFailuresToEnterRecovery`, `SetFailuresWindowSeconds`,
-//!   `SetInitialRecoveryDelaySeconds`, `SetMaxRecoveryDelaySeconds` and
-//!   `SetRecoveryMultiplier` are read and have no effect, with a warning
-//!   logged. The usage sharing element here shares no ASP.NET session
-//!   cookie, and has no recovery settings.
+//! - `SetFailuresToEnterRecovery` (1 to 100), `SetFailuresWindowSeconds`
+//!   (1 or more), `SetInitialRecoveryDelaySeconds` and
+//!   `SetMaxRecoveryDelaySeconds` (more than 0) and `SetRecoveryMultiplier`
+//!   (1 or more) set the pause after failed sends, and a value outside its
+//!   range is refused with .NET's message.
+//! - `SetAspSessionCookieName` and `SetTrackSession` are read and have no
+//!   effect, with a warning logged. The usage sharing element here shares no
+//!   ASP.NET session cookie.
 //!
 //! The pipeline holds the usage sharing element as a resource, so what a
 //! configuration set can be read back with [`ShareUsageElement::config`].
@@ -102,11 +104,16 @@ use fiftyone_pipeline_core::configuration::{
 use fiftyone_pipeline_core::{Error, FlowElement, Result};
 
 use crate::constants::{
-    SHARE_USAGE_DEFAULT_ADD_TIMEOUT_MS, SHARE_USAGE_DEFAULT_MAX_QUEUE_SIZE,
-    SHARE_USAGE_DEFAULT_MIN_ENTRIES_PER_MESSAGE,
-    SHARE_USAGE_DEFAULT_REPEAT_EVIDENCE_INTERVAL_MINUTES, SHARE_USAGE_DEFAULT_SHARE_PERCENTAGE,
-    SHARE_USAGE_DEFAULT_TAKE_TIMEOUT_MS, SHARE_USAGE_DEFAULT_URL,
+    SHARE_USAGE_DEFAULT_ADD_TIMEOUT_MS, SHARE_USAGE_DEFAULT_FAILURES_TO_ENTER_RECOVERY,
+    SHARE_USAGE_DEFAULT_FAILURES_WINDOW_SECONDS,
+    SHARE_USAGE_DEFAULT_INITIAL_RECOVERY_DELAY_SECONDS, SHARE_USAGE_DEFAULT_MAX_QUEUE_SIZE,
+    SHARE_USAGE_DEFAULT_MAX_RECOVERY_DELAY_SECONDS, SHARE_USAGE_DEFAULT_MIN_ENTRIES_PER_MESSAGE,
+    SHARE_USAGE_DEFAULT_RECOVERY_MULTIPLIER, SHARE_USAGE_DEFAULT_REPEAT_EVIDENCE_INTERVAL_MINUTES,
+    SHARE_USAGE_DEFAULT_SHARE_PERCENTAGE, SHARE_USAGE_DEFAULT_TAKE_TIMEOUT_MS,
+    SHARE_USAGE_DEFAULT_URL, SHARE_USAGE_FAILURES_WINDOW_SECONDS_MIN,
+    SHARE_USAGE_RECOVERY_MULTIPLIER_MIN,
 };
+use crate::share_usage_element::{out_of_range, recovery_delay_from_seconds, ONE_OR_MORE};
 use crate::{SequenceElement, SetHeadersElement, ShareUsageConfig, ShareUsageElement};
 
 /// The timeout in milliseconds that waits with no limit, as .NET's
@@ -267,6 +274,11 @@ struct ShareUsageBuilder {
     take_timeout: Duration,
     share_usage_url: String,
     repeat_evidence_interval: Duration,
+    failures_to_enter_recovery: u32,
+    failures_window: Duration,
+    initial_recovery_delay: Duration,
+    max_recovery_delay: Duration,
+    recovery_multiplier: f64,
 }
 
 impl ShareUsageBuilder {
@@ -285,6 +297,15 @@ impl ShareUsageBuilder {
             repeat_evidence_interval: Duration::from_secs(
                 SHARE_USAGE_DEFAULT_REPEAT_EVIDENCE_INTERVAL_MINUTES * SECONDS_PER_MINUTE,
             ),
+            failures_to_enter_recovery: SHARE_USAGE_DEFAULT_FAILURES_TO_ENTER_RECOVERY,
+            failures_window: Duration::from_secs(SHARE_USAGE_DEFAULT_FAILURES_WINDOW_SECONDS),
+            initial_recovery_delay: Duration::from_secs_f64(
+                SHARE_USAGE_DEFAULT_INITIAL_RECOVERY_DELAY_SECONDS,
+            ),
+            max_recovery_delay: Duration::from_secs_f64(
+                SHARE_USAGE_DEFAULT_MAX_RECOVERY_DELAY_SECONDS,
+            ),
+            recovery_multiplier: SHARE_USAGE_DEFAULT_RECOVERY_MULTIPLIER,
         }
     }
 
@@ -332,6 +353,11 @@ impl ShareUsageBuilder {
             .take_timeout(self.take_timeout)
             .share_usage_url(self.share_usage_url)
             .repeat_evidence_interval(self.repeat_evidence_interval)
+            .failures_to_enter_recovery(self.failures_to_enter_recovery)?
+            .failures_window(self.failures_window)?
+            .initial_recovery_delay(self.initial_recovery_delay)?
+            .max_recovery_delay(self.max_recovery_delay)?
+            .recovery_multiplier(self.recovery_multiplier)?
             .build())
     }
 }
@@ -534,46 +560,56 @@ fn share_usage_builder() -> BuilderDefinition<ShareUsageBuilder> {
     })
     .try_setting(
         "SetFailuresToEnterRecovery",
-        |builder: ShareUsageBuilder, failures: i32| {
-            if !(FAILURES_TO_ENTER_RECOVERY_MIN..=FAILURES_TO_ENTER_RECOVERY_MAX)
-                .contains(&failures)
-            {
+        |mut builder: ShareUsageBuilder, failures: i32| {
+            let in_range = (FAILURES_TO_ENTER_RECOVERY_MIN..=FAILURES_TO_ENTER_RECOVERY_MAX)
+                .contains(&failures);
+            let (true, Ok(failures)) = (in_range, u32::try_from(failures)) else {
                 return Err(Error::configuration(format!(
                     "failuresToEnterRecovery must be within {FAILURES_TO_ENTER_RECOVERY_MIN} and \
                      {FAILURES_TO_ENTER_RECOVERY_MAX} (both inclusive). Received: {failures}. \
                      (Parameter 'failuresToEnterRecovery')"
                 )));
-            }
-            ignored("SetFailuresToEnterRecovery");
+            };
+            builder.failures_to_enter_recovery = failures;
             Ok(builder)
         },
     )
-    .setting(
+    .try_setting(
         "SetFailuresWindowSeconds",
-        |builder: ShareUsageBuilder, _: i32| {
-            ignored("SetFailuresWindowSeconds");
-            builder
+        |mut builder: ShareUsageBuilder, seconds: i32| {
+            let Some(seconds) = u64::try_from(seconds)
+                .ok()
+                .filter(|seconds| *seconds >= SHARE_USAGE_FAILURES_WINDOW_SECONDS_MIN)
+            else {
+                return Err(out_of_range("failuresWindowSeconds", ONE_OR_MORE, seconds));
+            };
+            builder.failures_window = Duration::from_secs(seconds);
+            Ok(builder)
         },
     )
-    .setting(
+    .try_setting(
         "SetInitialRecoveryDelaySeconds",
-        |builder: ShareUsageBuilder, _: f64| {
-            ignored("SetInitialRecoveryDelaySeconds");
-            builder
+        |mut builder: ShareUsageBuilder, seconds: f64| {
+            builder.initial_recovery_delay =
+                recovery_delay_from_seconds("initialDelaySeconds", seconds)?;
+            Ok(builder)
         },
     )
-    .setting(
+    .try_setting(
         "SetMaxRecoveryDelaySeconds",
-        |builder: ShareUsageBuilder, _: f64| {
-            ignored("SetMaxRecoveryDelaySeconds");
-            builder
+        |mut builder: ShareUsageBuilder, seconds: f64| {
+            builder.max_recovery_delay = recovery_delay_from_seconds("maxDelaySeconds", seconds)?;
+            Ok(builder)
         },
     )
-    .setting(
+    .try_setting(
         "SetRecoveryMultiplier",
-        |builder: ShareUsageBuilder, _: f64| {
-            ignored("SetRecoveryMultiplier");
-            builder
+        |mut builder: ShareUsageBuilder, multiplier: f64| {
+            if multiplier.is_nan() || multiplier < SHARE_USAGE_RECOVERY_MULTIPLIER_MIN {
+                return Err(out_of_range("multiplier", ONE_OR_MORE, multiplier));
+            }
+            builder.recovery_multiplier = multiplier;
+            Ok(builder)
         },
     )
     .build_method(Vec::new(), |_, _| Ok(ShareUsageBuilder::new()))
