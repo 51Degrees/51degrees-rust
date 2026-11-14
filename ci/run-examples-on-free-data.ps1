@@ -60,6 +60,7 @@ $Console = @(
     @{ Package = "ip-intelligence-examples"; Bin = "ipi-onprem-suspicious" },
     @{ Package = "ip-intelligence-examples"; Bin = "ipi-onprem-update-data-file" },
     @{ Package = "pipeline-examples"; Bin = "caching"; NoDataFile = $true },
+    @{ Package = "pipeline-examples"; Bin = "derived-property"; NoDataFile = $true },
     @{ Package = "pipeline-examples"; Bin = "ss-simple"; NoDataFile = $true },
     @{ Package = "pipeline-examples"; Bin = "ss-onprem"; NoDataFile = $true },
     @{ Package = "pipeline-examples"; Bin = "ss-cloud"; NoDataFile = $true }
