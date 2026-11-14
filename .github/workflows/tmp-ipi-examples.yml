@@ -24,5 +24,5 @@ jobs:
         shell: pwsh
         run: >-
           ./ci/test-examples-against-source.ps1 -Command {
-          cargo test --config source.toml -p ip-intelligence-examples
+          cargo test --no-fail-fast --config source.toml -p ip-intelligence-examples
           --bin ipi-onprem-getting-started --bin ipi-web-getting-started-onprem }
