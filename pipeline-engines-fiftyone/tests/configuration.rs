@@ -349,15 +349,16 @@ fn the_pipeline_holds_the_usage_sharing_element_it_runs() {
 }
 
 #[test]
-fn sharing_all_evidence_shares_every_key() {
+fn sharing_all_evidence_shares_every_key_but_those_never_shared() {
     let _serial = start();
     let pipeline = share_usage(&[("ShareAllEvidence", "true")]).unwrap();
     assert!(share_usage_config(&pipeline).share_all_evidence());
     let element = share_usage_element(&pipeline);
     let filter = element.shared_evidence_filter();
-    for key in ["header.cookie", "cookie.session", "query.anything"] {
+    for key in ["cookie.session", "query.anything"] {
         assert!(filter.include(key), "{key}");
     }
+    assert!(!filter.include("header.cookie"));
 }
 
 #[test]
