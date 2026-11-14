@@ -53,6 +53,7 @@ pub fn response_headers(data: &FlowData) -> Value {
             set_headers
                 .response_headers()
                 .iter()
+                .filter(|(name, _)| !name.eq_ignore_ascii_case("accept-ch"))
                 .map(|(name, value)| (name.clone(), Value::String(value.clone())))
                 .collect::<Map<String, Value>>(),
         ),
