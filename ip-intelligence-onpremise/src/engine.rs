@@ -1846,9 +1846,12 @@ mod tests {
         let second = dir.join("second.ipi");
         std::fs::copy(&source, &first).expect("the data file copies");
         std::fs::copy(&source, &second).expect("the data file copies");
+        // With updates and the watcher off, each data set reads its file
+        // rather than a copy, so the handles to that file can be counted.
         let engine = IpIntelligenceOnPremiseEngine::builder(&first)
             .performance_profile(PerformanceProfile::LowMemory)
             .auto_update(false)
+            .file_system_watcher(false)
             .build()
             .expect("the IP Intelligence data file should build an engine");
         assert!(

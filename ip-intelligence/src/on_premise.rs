@@ -139,16 +139,16 @@ impl OnPremiseIpIntelligencePipelineBuilder {
     /// licence key, so [`Self::build`] refuses with this on and no key set, as
     /// .NET does, and a deployment without one turns this off or sets
     /// [`Self::data_update_license_keys`]. This is the master switch for
-    /// automatic updates, so with it off the file-system watcher does not run
-    /// either.
+    /// polling, and the file-system watcher runs on its own setting whether
+    /// this is on or off.
     pub fn auto_update(mut self, enabled: bool) -> Self {
         self.auto_update = enabled;
         self
     }
 
     /// Enable or disable the file-system watcher, which refreshes the engine
-    /// when the data file changes on disk. On by default, and it runs only
-    /// while [`Self::auto_update`] is on.
+    /// when the data file changes on disk. On by default, and it runs whether
+    /// [`Self::auto_update`] is on or off and needs no licence key.
     pub fn file_system_watcher(mut self, enabled: bool) -> Self {
         self.file_system_watcher = enabled;
         self

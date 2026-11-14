@@ -169,7 +169,13 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
         carried.extend(available);
     }
 
-    let missing = examples_shared::missing_properties(ENTERPRISE_PROPERTIES, &carried);
+    // The Enterprise properties this example asks for.
+    let asked: Vec<&str> = ENTERPRISE_PROPERTIES
+        .iter()
+        .copied()
+        .filter(|name| DISPLAYED_PROPERTIES.contains(name))
+        .collect();
+    let missing = examples_shared::missing_properties(&asked, &carried);
     if let Some(message) = examples_shared::enterprise_data_file_message(&missing, CONTACT_US_URL) {
         writeln!(out)?;
         writeln!(out, "{message}")?;
@@ -504,6 +510,56 @@ mod tests {
             assert!(printed.contains("utm_term=enterprise-data-file"));
         }
     }
+
+    /// The properties this example asks for that only the Enterprise data
+    /// file carries, in the order the closing message names them.
+    const PAID: &[&str] = &[
+        "IpRangeStart",
+        "IpRangeEnd",
+        "Country",
+        "CountryCode",
+        "State",
+        "Town",
+        "Latitude",
+        "Longitude",
+        "AccuracyRadiusMin",
+        "TimeZoneOffset",
+        "IsHosted",
+        "IsVPN",
+        "CountryCodesGeographical",
+        "CountryCodesPopulation",
+        "Mcc",
+    ];
+
+    /// On a free file, each property only the Enterprise data file carries
+    /// says so on its line, and the closing message names exactly those.
+    #[test]
+    fn each_paid_property_says_it_needs_the_enterprise_data_file() {
+        let Some(options) = ExampleOptions::for_tier(examples_shared::IpiTier::Asn) else {
+            eprintln!("no usable IP Intelligence data file; skipping getting-started run");
+            return;
+        };
+        // _51DEGREES_IPI_PATH can name another file, which may carry them.
+        let asn_file = examples_shared::IPI_ASN_RELATIVE_PATH.rsplit('/').next();
+        if options.data_files[0].file_name().and_then(|n| n.to_str()) != asn_file {
+            return;
+        }
+
+        let mut buffer = Vec::new();
+        run(&options, &mut buffer).expect("the getting-started example should run");
+        let printed = String::from_utf8(buffer).expect("output should be valid UTF-8");
+
+        for name in PAID {
+            let line = format!(
+                "\t{name}: {}\n",
+                examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+            );
+            assert!(printed.contains(&line), "{name} in:\n{printed}");
+        }
+        let message = examples_shared::enterprise_data_file_message(PAID, CONTACT_US_URL)
+            .expect("there are paid properties to name");
+        assert!(printed.contains(&message), "{message}\nnot in:\n{printed}");
+    }
 }
 
 /*
@@ -531,9 +587,9 @@ mod tests {
  *
  * With no file named, the example reads both free files from the data
  * repository in turn, the ASN file for `Asn` and `AsnName` and the Lite file
- * for `RegisteredName`, `RegisteredOwner` and `RegisteredCountry`. It also asks
- * for `Country`, `CountryCode`, `Town`, `Latitude`, `Longitude`, `IsHosted`
- * and `IsVPN`, which only the Enterprise data file carries. Each data file's
+ * for `RegisteredName`, `RegisteredOwner` and `RegisteredCountry`. Every other
+ * property it asks for, such as `Country`, `Town`, `Latitude`, `Longitude`,
+ * `IsHosted` and `IsVPN`, only the Enterprise data file carries. Each data file's
  * own list of properties says which it carries, so with a free file each of
  * those prints "needs the Enterprise data file", and the run ends by naming
  * them with a link to contact 51Degrees about a copy of the Enterprise data

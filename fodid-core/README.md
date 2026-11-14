@@ -35,6 +35,6 @@ Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the
 - API documentation: [docs.rs/fiftyone-fodid-core](https://docs.rs/fiftyone-fodid-core)
 - 51Did: [51degrees.com/developers/51did](https://51degrees.com/developers/51did?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-fodid-core-readme.md&utm_term=51did)
 - 51Did documentation: [51degrees.com/documentation](https://51degrees.com/documentation/_identifiers__index.html?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-fodid-core-readme.md&utm_term=documentation)
-- Get a resource key: [configure.51degrees.com](https://configure.51degrees.com/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-fodid-core-readme.md&utm_term=configure)
+- Get a resource key: [51degrees.com/configure](https://51degrees.com/configure/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-fodid-core-readme.md&utm_term=configure)
 - About 51Degrees: [51degrees.com](https://51degrees.com/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-fodid-core-readme.md&utm_term=about)
 - Data files and pricing: [51degrees.com/pricing](https://51degrees.com/pricing?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-fodid-core-readme.md&utm_term=pricing)
