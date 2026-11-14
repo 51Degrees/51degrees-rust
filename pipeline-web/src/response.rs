@@ -77,8 +77,9 @@ impl WebResponse {
 
     /// Create a `304 Not Modified` response with no body and no headers.
     ///
-    /// The client-side endpoints add to it the caching and CORS headers the
-    /// `200` would have carried (see [`crate::serve_json`]).
+    /// The client-side endpoints add to it the caching and CORS headers a
+    /// `200` carries when processing records no errors (see
+    /// [`crate::serve_if_none_match`]).
     pub fn not_modified() -> Self {
         WebResponse {
             status: Self::STATUS_NOT_MODIFIED,

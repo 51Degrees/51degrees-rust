@@ -29,9 +29,11 @@
 //! the runtime's worker thread, so [`process_request`] hands the work to
 //! [`tokio::task::spawn_blocking`], which runs it on the blocking thread pool and
 //! returns the processed [`FlowData`]. The endpoint handlers use
-//! [`process_then`] instead, which also serves the endpoint in that task,
-//! because when a builder left no data, serving builds the body again, which
-//! for the script means rendering and minifying it.
+//! [`process_unless_then`] instead, which first answers a request whose
+//! `If-None-Match` matches without processing it, and otherwise also serves
+//! the endpoint in that task, because when a builder left no data, serving
+//! builds the body again, which for the script means rendering and minifying
+//! it.
 //!
 //! The captured request parts (header map, URI, buffered body, peer address) are
 //! moved into the blocking closure so it owns everything it reads. [`FlowData`]
@@ -138,6 +140,26 @@ where
     F: FnOnce(FlowData, &AxumRequestData<'_>) -> T + Send + 'static,
     T: Send + 'static,
 {
+    process_unless_then(state, captured, method, |_, _| None, then).await
+}
+
+/// As [`process_then`], except that `unless` is first given the flow data,
+/// holding the evidence and not yet processed, and the request view. When it
+/// returns a value, that is returned and the flow data is not processed. The
+/// endpoint handlers use it to answer a matching `If-None-Match` without
+/// processing.
+pub(crate) async fn process_unless_then<T, U, F>(
+    state: &FiftyOneState,
+    captured: CapturedRequest,
+    method: Option<Method>,
+    unless: U,
+    then: F,
+) -> Result<T, tokio::task::JoinError>
+where
+    U: FnOnce(&FlowData, &AxumRequestData<'_>) -> Option<T> + Send + 'static,
+    F: FnOnce(FlowData, &AxumRequestData<'_>) -> T + Send + 'static,
+    T: Send + 'static,
+{
     let pipeline = std::sync::Arc::clone(state.pipeline());
 
     tokio::task::spawn_blocking(move || {
@@ -149,6 +171,9 @@ where
         }
         let evidence = build_evidence(&request, pipeline.evidence_key_filter());
         let mut flow_data = pipeline.create_flow_data_with(evidence);
+        if let Some(answer) = unless(&flow_data, &request) {
+            return answer;
+        }
         // Errors are suppressed onto the flow data by the web pipeline, so this
         // returns Ok; the result is read from flow_data.errors() downstream.
         let _ = flow_data.process();

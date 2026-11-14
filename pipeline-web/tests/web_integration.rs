@@ -36,9 +36,9 @@ use fiftyone_pipeline_core::{
 };
 use fiftyone_pipeline_engines_fiftyone::SetHeadersElement;
 use fiftyone_pipeline_web::{
-    apply_set_headers, build_evidence, compute_etag, response_headers, serve_javascript,
-    serve_json, vary_header, EndpointOptions, RequestData, WebEndpoint, WebIntegrationOptions,
-    WebPipeline, WebResponse,
+    apply_set_headers, build_evidence, compute_etag, response_headers, serve_if_none_match,
+    serve_javascript, serve_json, vary_header, EndpointOptions, RequestData, WebEndpoint,
+    WebIntegrationOptions, WebPipeline, WebResponse,
 };
 
 // ----------------------------------------------------------------------------
@@ -1528,4 +1528,54 @@ fn a_304_while_processing_is_failing_carries_the_fields_of_a_good_200() {
 fn endpoint_options_keep_their_auto_traits() {
     fn has_auto_traits<T: Send + Sync + std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
     has_auto_traits::<EndpointOptions>();
+}
+
+/// `serve_if_none_match` answers a request whose `If-None-Match` matches
+/// from a flow data that was never processed, with the headers of a good
+/// `200`, and leaves the flow data unprocessed. A request with no
+/// `If-None-Match`, or one that does not match, gets `None`.
+#[test]
+fn a_matching_request_is_answered_before_processing() {
+    let web = web_pipeline(false);
+    let options = web.endpoint_options();
+    let request = |if_none_match: Option<&str>, method: Option<&str>| TestRequest {
+        headers: if_none_match
+            .map(|tag| vec![("If-None-Match".to_owned(), tag.to_owned())])
+            .unwrap_or_default(),
+        method: method.map(str::to_owned),
+        ..Default::default()
+    };
+    let good = serve_javascript(
+        &processed(web.pipeline(), page_evidence("abc")),
+        &request(None, None),
+        &options,
+    );
+    let etag = good.header("ETag").expect("a good response has an ETag");
+    assert!(good.header("Vary").is_some());
+
+    let mut unprocessed = web.pipeline().create_flow_data_with(page_evidence("abc"));
+    assert!(serve_if_none_match(&unprocessed, &request(None, None), &options).is_none());
+    assert!(serve_if_none_match(&unprocessed, &request(Some("W/\"0\""), None), &options).is_none());
+
+    for method in [None, Some("GET"), Some("HEAD")] {
+        let answer = serve_if_none_match(&unprocessed, &request(Some(etag), method), &options)
+            .expect("a matching request is answered");
+        assert_eq!(
+            answer.status,
+            WebResponse::STATUS_NOT_MODIFIED,
+            "{method:?}"
+        );
+        assert!(answer.body.is_empty(), "{method:?}");
+        for name in ["Cache-Control", "Vary", "ETag"] {
+            assert_eq!(answer.header(name), good.header(name), "{name} {method:?}");
+        }
+    }
+    let post = serve_if_none_match(&unprocessed, &request(Some(etag), Some("POST")), &options)
+        .expect("a matching POST is answered");
+    assert_eq!(post.status, WebResponse::STATUS_PRECONDITION_FAILED);
+    assert!(post.headers.is_empty(), "no Origin, so no header");
+
+    unprocessed
+        .process()
+        .expect("the flow data was not processed before");
 }
