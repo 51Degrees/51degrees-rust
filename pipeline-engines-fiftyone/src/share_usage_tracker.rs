@@ -25,12 +25,14 @@
 //! A user browsing a site generates many requests with identical usage data.
 //! That duplicate data is discarded as early as possible, per the
 //! [session-tracking section](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/usage-sharing-element.md#session-tracking).
-//! The tracker remembers recently seen evidence in a bounded, sharded LRU
-//! cache. A request whose evidence matches a recent entry is not shared. The
-//! matching entry's time is refreshed, so the suppression window slides while
-//! a session stays active. Once an entry is older than the configured interval
-//! it is treated as new again. When the cache is full the least recently seen
-//! entry is evicted.
+//! The tracker remembers recently shared evidence in a bounded, sharded LRU
+//! cache, each entry holding the time it was last shared. Evidence that
+//! matches an entry shared less than the interval ago is not shared and
+//! leaves the entry's time as it is, so evidence seen continuously is still
+//! shared once in each interval. Evidence that matches no entry, or an entry
+//! shared the interval or more ago, is shared and the entry takes the time
+//! of that share. When the cache is full the least recently seen entry is
+//! evicted.
 //!
 //! Session id and sequence are excluded from the dedup key (by the
 //! [`crate::EvidenceKeyFilterShareUsageTracker`]) so they cannot make every
@@ -63,7 +65,8 @@ pub struct ShareUsageTracker {
 impl ShareUsageTracker {
     /// Create a tracker.
     ///
-    /// `interval` is the sliding-window length (the repeat-evidence interval).
+    /// `interval` is the repeat-evidence interval, measured from the time
+    /// matching evidence was last shared.
     /// `max_size` bounds the number of tracked keys, beyond which the least
     /// recently seen key is evicted. `filter` selects which evidence forms the
     /// dedup key.
@@ -77,10 +80,10 @@ impl ShareUsageTracker {
 
     /// Decide whether the given flow data should be shared.
     ///
-    /// Returns `true` if the evidence has not been seen within the interval (and
-    /// records it), or `false` if it matches a recent entry (refreshing that
-    /// entry's time so the window slides). The evidence is the flow data's
-    /// with the web request, when a web integration gave one.
+    /// Returns `true`, and records the time, if the evidence was not shared
+    /// within the interval, or `false`, leaving the time of the last share
+    /// as it is, if it was. The evidence is the flow data's with the web
+    /// request, when a web integration gave one.
     pub fn track(&self, data: &FlowData) -> bool {
         self.track_evidence(&found_evidence(data.evidence()))
     }
@@ -102,10 +105,12 @@ impl ShareUsageTracker {
         }
 
         let share = match self.entries.get(&key) {
-            Some(last_seen) => now.duration_since(last_seen) >= self.interval,
+            Some(shared) => now.duration_since(shared) >= self.interval,
             None => true,
         };
-        self.entries.put(key, now);
+        if share {
+            self.entries.put(key, now);
+        }
         share
     }
 
