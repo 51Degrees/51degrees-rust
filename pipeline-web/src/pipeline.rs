@@ -138,7 +138,9 @@ pub struct WebIntegrationOptions {
     pub javascript_endpoint: String,
 
     /// The path the JSON endpoint is served from. Defaults to
-    /// [`fiftyone_pipeline_core::constants::DEFAULT_JSON_ENDPOINT`].
+    /// [`fiftyone_pipeline_core::constants::DEFAULT_JSON_ENDPOINT`]. A
+    /// JavaScript builder the web pipeline adds calls back to this path. One
+    /// the application gives calls back to its own endpoint.
     pub json_endpoint: String,
 }
 
@@ -306,12 +308,18 @@ fn order_elements(
     }
 
     // A builder is added only when the client-side endpoints are in use and
-    // the application gives none of its kind.
+    // the application gives none of its kind. An added JavaScript builder
+    // calls back to the JSON endpoint this pipeline serves.
     let client_side = options.client_side_evidence_enabled;
     let mut json =
         (client_side && given_json.is_none()).then(|| Arc::new(JsonBuilderElement::new()));
-    let javascript = (client_side && given_javascript.is_none())
-        .then(|| Arc::new(JavaScriptBuilderElement::new()));
+    let javascript = (client_side && given_javascript.is_none()).then(|| {
+        Arc::new(
+            JavaScriptBuilderElement::builder()
+                .set_endpoint(options.json_endpoint.clone())
+                .build(),
+        )
+    });
 
     // 2. The application's own elements, in their given order, with an added
     // JSON builder immediately before a JavaScript builder the application

@@ -48,9 +48,10 @@
 //!   `SetMaxRecoveryDelaySeconds` (more than 0) and `SetRecoveryMultiplier`
 //!   (1 or more) set the pause after failed sends, and a value outside its
 //!   range is refused with .NET's message.
-//! - `SetAspSessionCookieName` and `SetTrackSession` are read and have no
-//!   effect, with a warning logged. The usage sharing element here shares no
-//!   ASP.NET session cookie.
+//! - `SetTrackSession` compares the session cookie that
+//!   `SetAspSessionCookieName` names, which has no effect unless track
+//!   session is on. Track session with no name is refused unless all
+//!   evidence is shared, as there is no session cookie to default to.
 //!
 //! The pipeline holds the usage sharing element as a resource, so what a
 //! configuration set can be read back with [`ShareUsageElement::config`].
@@ -279,6 +280,8 @@ struct ShareUsageBuilder {
     initial_recovery_delay: Duration,
     max_recovery_delay: Duration,
     recovery_multiplier: f64,
+    track_session: bool,
+    session_cookie_name: String,
 }
 
 impl ShareUsageBuilder {
@@ -306,6 +309,8 @@ impl ShareUsageBuilder {
                 SHARE_USAGE_DEFAULT_MAX_RECOVERY_DELAY_SECONDS,
             ),
             recovery_multiplier: SHARE_USAGE_DEFAULT_RECOVERY_MULTIPLIER,
+            track_session: false,
+            session_cookie_name: String::new(),
         }
     }
 
@@ -319,8 +324,24 @@ impl ShareUsageBuilder {
     }
 
     /// The configuration for the element, with the queue size .NET gives
-    /// and refusing the sizes .NET's element refuses.
+    /// and refusing the sizes .NET's element refuses. Track session with no
+    /// session cookie named is refused too, unless all evidence is shared,
+    /// as there is then no session to compare.
     fn config(self) -> Result<ShareUsageConfig> {
+        let session_cookie_name = self.session_cookie_name.trim();
+        if self.track_session && session_cookie_name.is_empty() && !self.share_all_evidence {
+            return Err(Error::configuration(
+                "Usage sharing's 'SetTrackSession' is on but 'SetAspSessionCookieName' names no \
+                 session cookie, so there is no session to compare. Set \
+                 'SetAspSessionCookieName' to the name of the cookie that holds the session id, \
+                 or turn 'SetTrackSession' off.",
+            ));
+        }
+        let session_cookie_name = if self.track_session {
+            session_cookie_name.to_owned()
+        } else {
+            String::new()
+        };
         let minimum = self.minimum_entries_per_message;
         let maximum = if self.maximum_queue_size == QUEUE_SIZE_NOT_SET {
             // .NET multiplies in 32 bits without checking, so a large
@@ -358,6 +379,7 @@ impl ShareUsageBuilder {
             .initial_recovery_delay(self.initial_recovery_delay)?
             .max_recovery_delay(self.max_recovery_delay)?
             .recovery_multiplier(self.recovery_multiplier)?
+            .track_session(session_cookie_name)
             .build())
     }
 }
@@ -415,10 +437,6 @@ fn ignore_filter_entries(text: &str) -> Vec<(String, String)> {
             }
         })
         .collect()
-}
-
-fn ignored(setting: &str) {
-    log::warn!("The usage sharing setting '{setting}' has no effect here and is ignored.");
 }
 
 /// The usage sharing element `builder` describes, given to the pipeline as
@@ -536,8 +554,8 @@ fn share_usage_builder() -> BuilderDefinition<ShareUsageBuilder> {
     )
     .setting(
         "SetAspSessionCookieName",
-        |builder: ShareUsageBuilder, _: String| {
-            ignored("SetAspSessionCookieName");
+        |mut builder: ShareUsageBuilder, name: String| {
+            builder.session_cookie_name = name;
             builder
         },
     )
@@ -554,10 +572,13 @@ fn share_usage_builder() -> BuilderDefinition<ShareUsageBuilder> {
             Ok(builder)
         },
     )
-    .setting("SetTrackSession", |builder: ShareUsageBuilder, _: bool| {
-        ignored("SetTrackSession");
-        builder
-    })
+    .setting(
+        "SetTrackSession",
+        |mut builder: ShareUsageBuilder, track: bool| {
+            builder.track_session = track;
+            builder
+        },
+    )
     .try_setting(
         "SetFailuresToEnterRecovery",
         |mut builder: ShareUsageBuilder, failures: i32| {
