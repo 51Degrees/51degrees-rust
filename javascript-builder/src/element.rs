@@ -145,9 +145,10 @@ fn parse_boolean(text: &str) -> Option<bool> {
 ///   user name or password is never logged. When a URL is built the
 ///   background-update mechanism is enabled.
 /// - **parameters**: every `query.*` evidence entry except the session id and
-///   sequence, with the prefix stripped and the key and value encoded as
-///   .NET's `WebUtility.UrlEncode` encodes them, in name order, serialized as
-///   a JSON object as Newtonsoft.Json writes one.
+///   sequence, with the prefix stripped from the key as it was given and the
+///   key and value encoded as .NET's `WebUtility.UrlEncode` encodes them, in
+///   the order the evidence was added, serialized as a JSON object as
+///   Newtonsoft.Json writes one.
 /// - **session id**: the session id from the Sequence element's data when it
 ///   is 1 to 64 ASCII letters, digits and hyphens, else an empty string,
 ///   because the template writes it inside quotes without any escaping. An
@@ -656,7 +657,8 @@ mod tests {
         ]);
         let context = JavaScriptBuilderContext::new(&element, &data);
         let parameters = crate::default_steps::get_parameters(&context);
-        assert_eq!(parameters_json(&parameters), r#"{"a":"1","b":"2+3"}"#);
+        // In the order the evidence was added, as .NET gives them.
+        assert_eq!(parameters_json(&parameters), r#"{"b":"2+3","a":"1"}"#);
     }
 
     #[test]
