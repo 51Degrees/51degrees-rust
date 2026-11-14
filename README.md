@@ -402,6 +402,10 @@ cargo run -p device-detection-examples --bin dd-web-getting-started-cloud
 cargo run -p fodid-examples --bin fodid-web-creator-context
 ```
 
+Every environment variable name that the packages, tests, examples and CI
+scripts read is in [common-ci's list of environment variable names](https://github.com/51Degrees/common-ci/blob/6cf9d642deaa60bf5c701a114511b0cda29c825b/environment-variables.md),
+which decides.
+
 The free data files carry a small set of properties. Each on-premise example
 also asks for properties only the Enterprise data file carries, such as
 HardwareVendor, DeviceType and PriceBand for Device Detection, and Country,

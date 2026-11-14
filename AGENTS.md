@@ -129,6 +129,19 @@ says.
 The command runs in `examples/`, and with no `-Command` the script runs the
 examples' tests instead. It puts the manifests and the lock back when it ends.
 
+## Environment variable names
+
+[common-ci's list of environment variable names](https://github.com/51Degrees/common-ci/blob/6cf9d642deaa60bf5c701a114511b0cda29c825b/environment-variables.md)
+holds every environment variable name that the packages, tests, examples and
+CI scripts of every language read, with what each name holds and the
+deprecated names each replaced. The list decides. Use the names it gives, and
+when a change needs a new name, or reads an old name again, change
+[`environment-variables.json`](https://github.com/51Degrees/common-ci/blob/6cf9d642deaa60bf5c701a114511b0cda29c825b/environment-variables.json)
+in common-ci in the same piece of work. This repository's own name
+check, [`examples/examples-shared/tests/environment_variable_names.rs`](examples/examples-shared/tests/environment_variable_names.rs), still keeps a
+list of its own. Where the two differ, common-ci's list is the one to
+follow.
+
 ## What this is
 
 The 51Degrees Rust SDK is a single Cargo workspace of libraries plus a separate
