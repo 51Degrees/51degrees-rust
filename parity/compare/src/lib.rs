@@ -377,6 +377,8 @@ pub fn compare_case(case: &Case, dotnet: &Value, rust: &Value) -> Vec<Difference
         "processError",
         "thrown",
         "responseHeaders",
+        "usageDocument",
+        "usageCustomDocument",
         "session",
         "evidenceAfter",
         "errors",

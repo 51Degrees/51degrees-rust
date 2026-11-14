@@ -117,6 +117,26 @@ impl UsageCapture {
     }
 }
 
+impl UsageCapture {
+    /// The text of the first document before its first record and after
+    /// its last, as `before` and `after`, or null when usage sharing
+    /// delivered no document. A document holding no record is all `before`.
+    pub fn first_document_frame(&self) -> serde_json::Value {
+        let documents = self
+            .documents
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let Some(document) = documents.first() else {
+            return serde_json::Value::Null;
+        };
+        let (before, after) = match (document.find(RECORD_START), document.rfind(RECORD_END)) {
+            (Some(first), Some(last)) => (&document[..first], &document[last + RECORD_END.len()..]),
+            _ => (document.as_str(), ""),
+        };
+        serde_json::json!({"before": before, "after": after})
+    }
+}
+
 impl UsageSink for UsageCapture {
     fn receive(&self, batch: UsageBatch) -> Result<(), Box<dyn Error + Send + Sync>> {
         self.documents
@@ -138,6 +158,11 @@ impl CustomUsageCapture {
     /// As [`UsageCapture::records_by_session`].
     pub fn records_by_session(&self) -> HashMap<String, String> {
         self.capture.records_by_session()
+    }
+
+    /// As [`UsageCapture::first_document_frame`].
+    pub fn first_document_frame(&self) -> serde_json::Value {
+        self.capture.first_document_frame()
     }
 }
 
