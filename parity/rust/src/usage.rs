@@ -133,7 +133,7 @@ impl UsageCapture {
             (Some(first), Some(last)) => (&document[..first], &document[last + RECORD_END.len()..]),
             _ => (document.as_str(), ""),
         };
-        serde_json::json!({"before": before, "after": after})
+        serde_json::json!({"before": before, "after": after.trim_end_matches('>')})
     }
 }
 
