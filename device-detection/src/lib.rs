@@ -252,7 +252,7 @@ impl DeviceDetectionPipelineBuilder {
     /// `resource_key`.
     ///
     /// Obtain a resource key from
-    /// <https://configure.51degrees.com?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=device-detection-src-lib.rs&utm_term=cloud>.
+    /// <https://51degrees.com/configure?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=device-detection-src-lib.rs&utm_term=cloud>.
     /// The returned [`DeviceDetectionCloudPipelineBuilder`] assembles a
     /// [`CloudRequestEngine`] followed by a [`DeviceDetectionCloudEngine`], with
     /// share usage on.

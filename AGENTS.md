@@ -98,7 +98,7 @@ to run, so an exit code of 0 means it ran against a file.
 The examples read `_51DEGREES_DD_PATH` and `_51DEGREES_IPI_PATH` for a data file
 elsewhere, and the cloud examples read `_51DEGREES_RESOURCE_KEY`, for which a
 key comes from the
-[Configurator](https://configure.51degrees.com/?utm_source=github&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=agents.md&utm_term=configure).
+[configuration page](https://51degrees.com/configure/?utm_source=github&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=agents.md&utm_term=configure).
 Every name starts with an underscore, because bash and sh refuse a name that
 starts with a digit, so `export` works in a shell and `$env:` in PowerShell.
 
@@ -128,6 +128,19 @@ says.
 
 The command runs in `examples/`, and with no `-Command` the script runs the
 examples' tests instead. It puts the manifests and the lock back when it ends.
+
+## Environment variable names
+
+[common-ci's list of environment variable names](https://github.com/51Degrees/common-ci/blob/6cf9d642deaa60bf5c701a114511b0cda29c825b/environment-variables.md)
+holds every environment variable name that the packages, tests, examples and
+CI scripts of every language read, with what each name holds and the
+deprecated names each replaced. The list decides. Use the names it gives, and
+when a change needs a new name, or reads an old name again, change
+[`environment-variables.json`](https://github.com/51Degrees/common-ci/blob/6cf9d642deaa60bf5c701a114511b0cda29c825b/environment-variables.json)
+in common-ci in the same piece of work. This repository's own name
+check, [`examples/examples-shared/tests/environment_variable_names.rs`](examples/examples-shared/tests/environment_variable_names.rs), still keeps a
+list of its own. Where the two differ, common-ci's list is the one to
+follow.
 
 ## What this is
 

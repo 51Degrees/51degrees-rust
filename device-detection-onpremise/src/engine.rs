@@ -43,7 +43,7 @@ use fiftyone_device_detection_shared::{
 };
 use fiftyone_native::dd::{
     hardware_profile_script, DataFileComponent, DataFileProperty, DataFileValue, HashOptions,
-    Manager, MatchMetrics, Results,
+    Manager, MatchMetrics, NoValueReason, Results,
 };
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{
@@ -175,6 +175,11 @@ const METRICS_UNREADABLE: &str =
 
 /// The outcome of reading one property from a detection's results.
 type ReadOutcome = std::result::Result<Option<PropertyValue>, String>;
+
+/// The outcome of reading one property from a detection's results, with the
+/// reason it has no value.
+type ReasonedOutcome =
+    std::result::Result<std::result::Result<PropertyValue, Option<String>>, String>;
 
 /// A match metric, which a detection reads from its results rather than from
 /// the data file's values. Reading one walks every graph not yet walked.
@@ -1142,9 +1147,20 @@ impl DevicePropertyReader for DetectionReader {
     }
 
     fn read_property(&self, position: usize) -> ReadOutcome {
+        self.read_property_with_reason(position)
+            .map(|value| value.ok())
+    }
+
+    /// A data file property with no value gives the reason the C++
+    /// `ResultsBase` in 51degrees-cxx gives the .NET engine. Where the
+    /// results hold no value that is the reason the C library decides, and
+    /// otherwise the reason `no_value_reason` gives.
+    fn read_property_with_reason(&self, position: usize) -> ReasonedOutcome {
         let results = self.results.lock().unwrap_or_else(PoisonError::into_inner);
         let (name, value_type, index) = match &self.loaded.readable.properties[position] {
-            ReadableProperty::Metric(metric) => return metric.read(&results),
+            ReadableProperty::Metric(metric) => {
+                return metric.read(&results).map(|value| value.ok_or(None));
+            }
             ReadableProperty::File {
                 name,
                 value_type,
@@ -1154,17 +1170,34 @@ impl DevicePropertyReader for DetectionReader {
         let values = results
             .values_by_index(index)
             .map_err(|error| error.to_string())?;
+        let Some(values) = values else {
+            return results
+                .no_value_reason_by_index(index)
+                .map(|reason| Err(Some(reason.message())))
+                .map_err(|error| error.to_string());
+        };
         let values = if name.eq_ignore_ascii_case(JAVASCRIPT_HARDWARE_PROFILE) {
-            values.map(|values| {
-                values
-                    .iter()
-                    .map(|body| hardware_profile_script(body))
-                    .collect()
-            })
+            values
+                .iter()
+                .map(|body| hardware_profile_script(body))
+                .collect()
         } else {
             values
         };
-        Ok(native_value(values, value_type))
+        let reason = no_value_reason(&values);
+        Ok(native_value(Some(values), value_type).ok_or_else(|| Some(reason.message())))
+    }
+}
+
+/// Why [`native_value`] gives no value for the values the results hold, as
+/// the C++ `ResultsBase` in 51degrees-cxx says it. With none, the matched
+/// profile holds no value. With several, a boolean, integer or double can
+/// only give one.
+fn no_value_reason(values: &[String]) -> NoValueReason {
+    if values.is_empty() {
+        NoValueReason::NO_RESULT_FOR_PROPERTY
+    } else {
+        NoValueReason::TOO_MANY_VALUES
     }
 }
 
@@ -1301,11 +1334,12 @@ fn value_metadata(value: &DataFileValue) -> ValueMetaData {
 /// every value, an empty one included, and an empty list when the matched
 /// profile holds none. Any other type has no value when the profile holds
 /// none. A string or JavaScript property joins several values with
-/// [`VALUE_SEPARATOR`]. A boolean, integer or double has no value when there
-/// are several, and otherwise reads its one value as C does: a boolean is
-/// true only for the exact text `True`, an integer is what `atoi` reads and a
-/// double what `strtod` reads. So a value such as `Unknown` or `N/A` gives
-/// false or 0.
+/// [`VALUE_SEPARATOR`], and a JavaScript property is JavaScript, as .NET's
+/// `DeviceDataHash` gives it. A boolean, integer or double has no value when
+/// there are several, and otherwise reads its one value as C does: a boolean
+/// is true only for the exact text `True`, an integer is what `atoi` reads
+/// and a double what `strtod` reads. So a value such as `Unknown` or `N/A`
+/// gives false or 0.
 fn native_value(
     values: Option<Vec<String>>,
     value_type: PropertyValueType,
@@ -1321,6 +1355,9 @@ fn native_value(
         (PropertyValueType::Double, [value]) => Some(PropertyValue::Double(c_strtod(value))),
         (PropertyValueType::Bool | PropertyValueType::Integer | PropertyValueType::Double, _) => {
             None
+        }
+        (PropertyValueType::JavaScript, _) => {
+            Some(PropertyValue::JavaScript(values.join(VALUE_SEPARATOR)))
         }
         _ => Some(PropertyValue::String(values.join(VALUE_SEPARATOR))),
     }
@@ -1522,20 +1559,32 @@ mod tests {
 
     #[test]
     fn a_string_joins_its_values_and_keeps_text_as_it_is() {
-        for value_type in [PropertyValueType::String, PropertyValueType::JavaScript] {
-            assert_eq!(
-                native_value(values(&["a", "b"]), value_type),
-                Some(PropertyValue::String("a|b".to_owned()))
-            );
-            assert_eq!(
-                native_value(values(&[""]), value_type),
-                Some(PropertyValue::String(String::new()))
-            );
-            assert_eq!(
-                native_value(values(&["Unknown"]), value_type),
-                Some(PropertyValue::String("Unknown".to_owned()))
-            );
-        }
+        let read = |list: &[&str]| native_value(values(list), PropertyValueType::String);
+        assert_eq!(
+            read(&["a", "b"]),
+            Some(PropertyValue::String("a|b".to_owned()))
+        );
+        assert_eq!(read(&[""]), Some(PropertyValue::String(String::new())));
+        assert_eq!(
+            read(&["Unknown"]),
+            Some(PropertyValue::String("Unknown".to_owned()))
+        );
+    }
+
+    /// A JavaScript property is JavaScript, as .NET's `DeviceDataHash` gives
+    /// it, joining its values as a string property does.
+    #[test]
+    fn a_javascript_property_is_javascript() {
+        let read = |list: &[&str]| native_value(values(list), PropertyValueType::JavaScript);
+        assert_eq!(
+            read(&["a", "b"]),
+            Some(PropertyValue::JavaScript("a|b".to_owned()))
+        );
+        assert_eq!(read(&[""]), Some(PropertyValue::JavaScript(String::new())));
+        assert_eq!(
+            read(&["Unknown"]),
+            Some(PropertyValue::JavaScript("Unknown".to_owned()))
+        );
     }
 
     #[test]
@@ -1560,6 +1609,16 @@ mod tests {
                 "{value_type:?}"
             );
         }
+    }
+
+    /// Where the results hold values and a property still has none, the
+    /// reason is the one the C++ `ResultsBase` gives, that the profile holds
+    /// none or that there are too many to give one.
+    #[test]
+    fn values_that_give_no_value_give_the_reason_dotnet_gives() {
+        assert_eq!(no_value_reason(&[]), NoValueReason::NO_RESULT_FOR_PROPERTY);
+        let several = values(&["1", "1"]).unwrap();
+        assert_eq!(no_value_reason(&several), NoValueReason::TOO_MANY_VALUES);
     }
 
     #[test]

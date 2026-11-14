@@ -88,6 +88,6 @@ Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the
 - API documentation: [docs.rs/fiftyone-ip-intelligence](https://docs.rs/fiftyone-ip-intelligence)
 - IP intelligence: [51degrees.com/ip-intelligence](https://51degrees.com/ip-intelligence?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-ip-intelligence-readme.md&utm_term=ip-intelligence)
 - IP intelligence documentation: [51degrees.com/documentation](https://51degrees.com/documentation/_ip_intelligence__quickstart.html?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-ip-intelligence-readme.md&utm_term=documentation)
-- Get a resource key: [configure.51degrees.com](https://configure.51degrees.com/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-ip-intelligence-readme.md&utm_term=configure)
+- Get a resource key: [51degrees.com/configure](https://51degrees.com/configure/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-ip-intelligence-readme.md&utm_term=configure)
 - About 51Degrees: [51degrees.com](https://51degrees.com/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-ip-intelligence-readme.md&utm_term=about)
 - Data files and pricing: [51degrees.com/pricing](https://51degrees.com/pricing?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-ip-intelligence-readme.md&utm_term=pricing)

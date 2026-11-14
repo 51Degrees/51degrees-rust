@@ -1520,10 +1520,7 @@ mod tests {
         );
         let xml = &capture.messages()[0];
         assert!(!xml.contains("never-shared"), "{xml}");
-        assert!(
-            xml.contains("<header Name=\"Cookie\">cookie-header</header>"),
-            "{xml}"
-        );
+        assert!(!xml.contains("cookie-header"), "{xml}");
         assert!(
             xml.contains("<Session Name=\"Other\">session-other</Session>"),
             "{xml}"
