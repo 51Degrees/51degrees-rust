@@ -42,6 +42,7 @@ $Console = @(
     @{ Package = "device-detection-examples"; Bin = "dd-onprem-match-metrics" },
     @{ Package = "device-detection-examples"; Bin = "dd-onprem-metadata" },
     @{ Package = "device-detection-examples"; Bin = "dd-onprem-offline-processing" },
+    @{ Package = "device-detection-examples"; Bin = "dd-onprem-options-file" },
     @{ Package = "device-detection-examples"; Bin = "dd-onprem-performance" },
     @{ Package = "device-detection-examples"; Bin = "dd-onprem-update-data-file" },
     @{ Package = "ip-intelligence-examples"; Bin = "ipi-onprem-getting-started" },

@@ -1,0 +1,27 @@
+{
+  // The options file the dd-cloud-options-file example builds its pipeline
+  // from. It has the shape of the PipelineOptions section of a .NET
+  // appsettings.json file, so the same file configures either language.
+  "PipelineOptions": {
+    "Elements": [
+      {
+        "BuilderName": "CloudRequestEngineBuilder",
+        "BuildParameters": {
+          // The example replaces this with the resource key it is given, as
+          // its first argument or _51DEGREES_RESOURCE_KEY. A key can be
+          // created at https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-options-dd-cloud-options.json&utm_term=resource-key
+          "ResourceKey": "!!ENTER_YOUR_RESOURCE_KEY_HERE!!"
+        }
+      },
+      {
+        "BuilderName": "DeviceDetectionCloudEngineBuilder"
+      }
+    ],
+    "BuildParameters": {
+      // Usage sharing is off because this is a console example. In normal
+      // operation leave it on, so 51Degrees receives evidence that improves
+      // detection.
+      "SetShareUsage": false
+    }
+  }
+}
