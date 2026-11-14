@@ -384,7 +384,13 @@ submodule is checked out and from that file otherwise.
 
 - `pull-request.yml` runs fmt, build, test, clippy and doc on Windows, Linux
   (two LTS) and macOS (Apple Silicon), plus a wasm32-wasip1 job, on pushes to
-  `main` and on PRs into `main`, `rc` and `release/**`. It builds the C
+  `main` and on PRs into `main`, `rc` and `release/**`. Its plan job runs
+  `ci/plan-pull-request-build.ps1`, which leaves macOS out of a PR into `rc`
+  or a release branch and builds only the workspace members the PR changes
+  and the members that depend on them, dev-dependencies included, or nothing
+  when the PR changes only files no build step reads. A PR into `main`, a
+  push to `main` and a run by hand build the whole workspace, on macOS too
+  unless a run by hand turns it off. It builds the C
   sources and restores the data files into `cxx/data` from the entry
   `data-files.yml` keeps in the Actions cache, downloading with the data
   repository's script only a file it lacks. It also runs

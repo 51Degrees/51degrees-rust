@@ -166,11 +166,11 @@ path, so cloud-only users and most of CI build without a C compiler.
   file changes on disk. The data download service serves nothing without a License Key,
   so a build with polling on and no key fails with an error that says so, as
   it does in .NET, and a deployment of the free Lite file turns automatic
-  updates off with `.auto_update(false)`, which stops the polling and the file
-  watcher together, as the specification's master switch does.
-  `.file_system_watcher(false)` turns only the watcher off, and
-  `pipeline.resource::<DataUpdateService>()` reaches the service for a check
-  on demand. `DataUpdateService::on_update_complete` adds a callback that is
+  updates off with `.auto_update(false)`, which stops the polling. The file
+  watcher runs on its own setting and needs no License Key, so a new data file
+  put in place still refreshes the engine, and `.file_system_watcher(false)`
+  turns it off. `pipeline.resource::<DataUpdateService>()` reaches the service
+  for a check on demand. `DataUpdateService::on_update_complete` adds a callback that is
   told how each check ended, with a refresh that fails or panics reported as
   `RefreshFailed` while the engine keeps the data it had, a change to a
   watched file that is no newer reported as `NotNeeded`, and a further event

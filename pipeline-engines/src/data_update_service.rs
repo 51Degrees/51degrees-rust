@@ -37,9 +37,9 @@
 //!   applies an update, waits instead for the next update date the data gives
 //!   while that date is ahead.
 //! - **Automatic update from file.** A [`notify`] file-system watcher refreshes
-//!   the engine when the data file changes on disk. Like polling, it runs only
-//!   while automatic updates are on, which the specification makes the master
-//!   switch for both.
+//!   the engine when the data file changes on disk. It runs on its own
+//!   setting, whether automatic updates are on or off, and needs no licence
+//!   key, because watching a file downloads nothing.
 //! - **Programmatic update.** [`DataUpdateService::check_for_update`] triggers an
 //!   immediate check on demand.
 //!
@@ -456,10 +456,9 @@ impl DataUpdateService {
     /// - If the configuration sets `update_on_startup`, a synchronous remote
     ///   poll runs now and its result is returned. A failed startup update is
     ///   returned as an error so the caller can decide whether to proceed.
-    /// - If `automatic_updates_enabled` and `file_system_watcher_enabled` are
-    ///   both on and the file has a path, a watcher is installed. Automatic
-    ///   updates are the master switch for the watcher, as the specification
-    ///   says.
+    /// - If `file_system_watcher_enabled` is on and the file has a path, a
+    ///   watcher is installed, whether `automatic_updates_enabled` is on or
+    ///   off, as the specification says.
     /// - The file is added to the scheduler's list so it is polled on its
     ///   interval (when `automatic_updates_enabled`).
     ///
@@ -535,12 +534,9 @@ impl DataUpdateService {
             );
         }
 
-        // Install the file-system watcher if requested and automatic updates,
-        // its master switch, are on.
-        if config.automatic_updates_enabled
-            && config.file_system_watcher_enabled
-            && data_file.data_file_path().is_some()
-        {
+        // Install the file-system watcher if requested. It runs on its own
+        // setting, whatever automatic updates are.
+        if config.file_system_watcher_enabled && data_file.data_file_path().is_some() {
             self.install_watcher(&registration);
         }
 

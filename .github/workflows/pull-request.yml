@@ -1,8 +1,15 @@
 name: Pull Request
 
 # Native build, test, lint, format and doc check for the Rust workspace, run on
-# Windows, Linux and macOS (Intel and Apple Silicon). This is the primary gate
-# for every pull request and every push to main. It replaces the earlier ci.yml.
+# Windows and Linux, and on macOS for a release. This is the primary gate for
+# every pull request and every push to main. It replaces the earlier ci.yml.
+#
+# The plan job decides what each run builds, with
+# ci/plan-pull-request-build.ps1. A pull request into rc or a release branch
+# leaves macOS out and builds only the members it changes and the members
+# that depend on them. A pull request into main, a push to main and a run
+# started by hand build everything, on macOS as well unless a run by hand
+# leaves it out.
 #
 # The workspace links the 51Degrees C sources through three -sys crates
 # (common-sys, device-detection-sys, ip-intelligence-sys), whose build scripts
@@ -16,6 +23,11 @@ on:
   pull_request:
     branches: [main, rc, 'release/**']
   workflow_dispatch:
+    inputs:
+      macos:
+        description: 'Build on macOS as well.'
+        type: boolean
+        default: true
 
 # A newer push to the same ref cancels an in-flight run so the queue stays short.
 concurrency:
@@ -29,8 +41,49 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-24.04
+    outputs:
+      os: ${{ steps.plan.outputs.os }}
+      packages: ${{ steps.plan.outputs.packages }}
+      native: ${{ steps.plan.outputs.native }}
+      fodid: ${{ steps.plan.outputs.fodid }}
+    steps:
+      # A pull request is checked out as its merge into the base branch, so
+      # the merge's first parent is the base and the two differ by exactly
+      # the files the pull request changes.
+      - name: Checkout workspace
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Plan the build
+        id: plan
+        shell: pwsh
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          MACOS: ${{ inputs.macos }}
+        run: |
+          cargo metadata --no-deps --format-version 1 > metadata.json
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $changed = @()
+          if ($env:EVENT -eq 'pull_request') {
+            $changed = @(git diff --name-only HEAD^1 HEAD)
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+          ./ci/plan-pull-request-build.ps1 -Event $env:EVENT `
+            -BaseRef $env:BASE_REF -MacOS ($env:MACOS -ne 'false') `
+            -ChangedFiles $changed -MetadataFile metadata.json
+
   build:
     name: build (${{ matrix.os }})
+    needs: plan
+    if: needs.plan.outputs.packages != ''
     runs-on: ${{ matrix.os }}
     strategy:
       # Run every platform to completion even if one fails, so a platform-specific
@@ -40,12 +93,14 @@ jobs:
       # ubuntu-22.04 (the lowest LTS the toolchain supports; 20.04 runners are
       # retired) and ubuntu-24.04. Windows Server runners are all LTSC, so
       # windows-latest (Server 2022) is used. macOS has no LTS, so macos-latest
-      # (Apple Silicon, arm64) is covered. The Intel runner macos-13 is omitted
-      # for the moment because the hosted macos-13 queue has been unavailable and
-      # leaves runs hanging; restore it here once capacity returns.
+      # (Apple Silicon, arm64) is covered in a release build, and the plan job
+      # leaves it out of a pull request into rc. The Intel runner macos-13 is
+      # omitted for the moment because the hosted macos-13 queue has been
+      # unavailable and leaves runs hanging; restore it here once capacity
+      # returns.
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-22.04, ubuntu-24.04, macos-latest]
+        os: ${{ fromJSON(needs.plan.outputs.os) }}
 
     env:
       # The data files the tests read, one per line. The download and the
@@ -154,38 +209,42 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: cargo build
-        run: cargo build --workspace --all-targets
+        run: cargo build ${{ needs.plan.outputs.packages }} --all-targets
 
       # Device Detection and IP Intelligence each compile a copy of the common C
       # library. A common C library function the IP Intelligence renaming header
       # misses would be defined by both libraries and bound to one of them.
       - name: Check the two common C library copies share no symbol
+        if: needs.plan.outputs.native == 'true'
         shell: pwsh
         run: ./ci/check-native-symbols.ps1
 
       - name: cargo test
-        run: cargo test --workspace
+        run: cargo test ${{ needs.plan.outputs.packages }}
 
       # Property name lookups must add up across threads. The test only tells
       # a shared lock apart from none in an optimised build, so it runs here
       # on its own and skips in the debug run above.
       - name: cargo test (property lookup scaling, release)
+        if: needs.plan.outputs.native == 'true'
         run: cargo test --release -p fiftyone-native --test lookup_scaling -- --nocapture
 
       - name: cargo clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy ${{ needs.plan.outputs.packages }} --all-targets -- -D warnings
 
       # The fodid crate's cloud client sits behind its opt-in `cloud`
       # feature, which the workspace commands above leave off, so the crate
       # is tested and linted again here with every feature on.
       - name: cargo test (fodid, all features)
+        if: needs.plan.outputs.fodid == 'true'
         run: cargo test -p fodid --all-features
 
       - name: cargo clippy (fodid, all features)
+        if: needs.plan.outputs.fodid == 'true'
         run: cargo clippy -p fodid --all-targets --all-features -- -D warnings
 
       - name: cargo doc
-        run: cargo doc --workspace --no-deps
+        run: cargo doc ${{ needs.plan.outputs.packages }} --no-deps
 
       # 8. Live cloud tests. These are #[ignore]d so the steps above stay green
       #    offline; here they run with a real resource key when one is available.
@@ -200,6 +259,8 @@ jobs:
         env:
           _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
           _51DEGREES_RESOURCE_KEY_BASIC: ${{ secrets._51DEGREES_RESOURCE_KEY_BASIC }}
+          PACKAGES: ${{ needs.plan.outputs.packages }}
+          FODID: ${{ needs.plan.outputs.fodid }}
         run: |
           # Resolve a single key in the examples-shared resolver order.
           $key = ${env:_51DEGREES_RESOURCE_KEY}
@@ -217,7 +278,7 @@ jobs:
             exit 0
           }
           ${env:_51DEGREES_RESOURCE_KEY} = $key
-          # Run ONLY the ignored tests across the workspace: the live cloud tests
+          # Run ONLY the ignored tests of the members built: the live cloud tests
           # that make real calls to the 51Degrees cloud, so a failure here is a
           # real regression. Deliberately --ignored, not --include-ignored: the
           # normal tests (including the memory-heavy native Hash detection tests)
@@ -225,9 +286,12 @@ jobs:
           # alongside the live cloud tests piled enough concurrent memory onto the
           # shared macOS runner to get the process OS-killed (SIGKILL). Running the
           # cloud tests alone keeps the coverage without the pileup.
-          cargo test --workspace -- --ignored --nocapture
+          cargo test @($env:PACKAGES -split ' ') -- --ignored --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # The cloud client's live tests need its opt-in feature.
-          cargo test -p fodid --all-features -- --ignored --nocapture
+          if ($env:FODID -eq 'true') {
+            cargo test -p fodid --all-features -- --ignored --nocapture
+          }
 
   # The cloud crates must keep compiling for WebAssembly (wasm32-wasip1) so a
   # wasm consumer (for example a trusted-server deployment) can link them and
@@ -253,6 +317,8 @@ jobs:
   # compiled in, read from disk, so they are native only as well.
   wasm:
     name: wasm (wasm32-wasip1)
+    needs: plan
+    if: needs.plan.outputs.packages != ''
     # Cross-compile to wasm is host-neutral; pin to a current LTS for consistency.
     runs-on: ubuntu-24.04
     steps:
@@ -383,6 +449,8 @@ jobs:
   # no git and no submodule, as crates.io and docs.rs build it.
   package:
     name: package (shared files)
+    needs: plan
+    if: needs.plan.outputs.packages != ''
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout workspace
