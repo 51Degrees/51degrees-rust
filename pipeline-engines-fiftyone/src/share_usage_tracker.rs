@@ -88,6 +88,12 @@ impl ShareUsageTracker {
     /// [`ShareUsageTracker::track`] for the evidence the usage sharing
     /// element has already found, so it is not found twice.
     pub(crate) fn track_evidence(&self, evidence: &Evidence) -> bool {
+        self.track_evidence_at(evidence, Instant::now())
+    }
+
+    /// [`ShareUsageTracker::track_evidence`] at a given time, so tests can
+    /// step through the interval without waiting.
+    fn track_evidence_at(&self, evidence: &Evidence, now: Instant) -> bool {
         let key = evidence.generate_key(self.filter.as_ref());
         // Evidence that produces an empty key (nothing matched the filter) is
         // always shared; there is nothing meaningful to deduplicate on.
@@ -95,7 +101,6 @@ impl ShareUsageTracker {
             return true;
         }
 
-        let now = Instant::now();
         let share = match self.entries.get(&key) {
             Some(last_seen) => now.duration_since(last_seen) >= self.interval,
             None => true,
@@ -188,6 +193,43 @@ mod tests {
         let tracker = tracker(Duration::ZERO, 100);
         assert!(tracker.track(&flow_data(&pipeline, "a")));
         assert!(tracker.track(&flow_data(&pipeline, "a")));
+    }
+
+    #[test]
+    fn the_interval_runs_from_the_last_share_not_the_last_sighting() {
+        let tracker = tracker(Duration::from_secs(60), 100);
+        let evidence = Evidence::builder().add("header.user-agent", "a").build();
+        let start = Instant::now();
+        let at = |seconds| start + Duration::from_secs(seconds);
+        let shared: Vec<bool> = [0, 40, 80, 100, 139, 140]
+            .into_iter()
+            .map(|seconds| tracker.track_evidence_at(&evidence, at(seconds)))
+            .collect();
+        assert_eq!(
+            shared,
+            [true, false, true, false, false, true],
+            "shared at 0, seen at 40 inside the interval, so 80 is 80 seconds \
+             after the share and is shared, then 100 and 139 are inside the \
+             interval from 80 and 140 is exactly the interval after it"
+        );
+    }
+
+    #[test]
+    fn evidence_seen_more_often_than_the_interval_is_still_shared_each_interval() {
+        let tracker = tracker(Duration::from_secs(60), 100);
+        let evidence = Evidence::builder().add("header.user-agent", "a").build();
+        let start = Instant::now();
+        let shares = (0..=300)
+            .step_by(10)
+            .filter(|seconds| {
+                tracker.track_evidence_at(&evidence, start + Duration::from_secs(*seconds))
+            })
+            .collect::<Vec<u64>>();
+        assert_eq!(
+            shares,
+            [0, 60, 120, 180, 240, 300],
+            "seen every 10 seconds, the evidence is shared once each interval"
+        );
     }
 
     #[test]
