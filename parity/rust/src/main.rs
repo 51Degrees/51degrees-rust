@@ -56,6 +56,7 @@ mod groups;
 mod metadata;
 mod property_keyed;
 mod robots_txt;
+mod set_headers;
 mod translation;
 mod usage;
 mod values;
@@ -85,7 +86,7 @@ use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{
     ElementData, Error, Evidence, FlowData, FlowElement, Pipeline, PropertyValue,
 };
-use fiftyone_pipeline_engines_fiftyone::{SequenceElement, ShareUsageElement};
+use fiftyone_pipeline_engines_fiftyone::{SequenceElement, SetHeadersElement, ShareUsageElement};
 use fiftyone_pipeline_translation::{TranslationData, TranslationValue};
 
 use usage::{CustomUsageCapture, UsageCapture};
@@ -115,6 +116,7 @@ const SKIPPED_ELEMENTS: &[&str] = &[
     JSON_BUILDER_ELEMENT_DATA_KEY,
     JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY,
     CLOUD_REQUEST_DATA_KEY,
+    SetHeadersElement::DEFAULT_ELEMENT_DATA_KEY,
 ];
 
 /// The evidence the Sequence element reads and writes back.
@@ -173,6 +175,7 @@ fn main() -> Result<()> {
     let translation = translation::build_pipeline()?;
     let cloud_translation = cloud_translation::build_pipeline()?;
     let groups = groups::build_pipelines(&device, &ip)?;
+    let headers = set_headers::build_pipeline(&device)?;
 
     let mut lines = Vec::with_capacity(cases.len());
     // The lines whose case ran through usage sharing. A values case may give
@@ -186,6 +189,7 @@ fn main() -> Result<()> {
             Some(agent_signature::PIPELINE) => &signatures,
             Some(translation::PIPELINE) => &translation,
             Some(cloud_translation::PIPELINE) => &cloud_translation,
+            Some(set_headers::PIPELINE) => &headers,
             Some(other) => match groups.iter().find(|(name, _)| *name == other) {
                 Some((_, group)) => group,
                 None => bail!("{}: unknown pipeline {other}", case.id),
@@ -371,6 +375,7 @@ fn run_case(pipeline: &Arc<Pipeline>, case: &Case, missing_fails: bool) -> Resul
         "id": case.id,
         "processError": process_error,
         "thrown": thrown,
+        "responseHeaders": set_headers::response_headers(&data),
         "properties": properties(&data, missing_fails),
         "session": {
             "id": evidence_after.get(SESSION_ID_KEY),
