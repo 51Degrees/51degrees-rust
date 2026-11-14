@@ -148,10 +148,20 @@ async fn home(State(state): State<PageState>) -> Html<String> {
 }
 
 fn main() -> anyhow::Result<()> {
-    let resource_key = examples_shared::resource_key_from_env().context(
-        "no 51Degrees cloud resource key found. Set _51DEGREES_RESOURCE_KEY to a key from \
-         https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-client-only-cloud.rs&utm_term=resource-key-required and run again.",
-    )?;
+    // Without a resource key, say how to get one and end without starting the
+    // server.
+    let Some(resource_key) = examples_shared::resource_key_from_env() else {
+        eprintln!(
+            "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
+             variable to run this web example. The 51Degrees cloud service is accessed \
+             using a resource key, which you can create for free at https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-client-only-cloud.rs&utm_term=resource-key-required."
+        );
+        examples_shared::print_find_out_more(
+            web_support::FIND_OUT_MORE,
+            examples_shared::CLOUD_REPOSITORIES,
+        );
+        return Ok(());
+    };
 
     let port: u16 = std::env::var("PORT")
         .ok()

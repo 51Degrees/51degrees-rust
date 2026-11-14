@@ -55,7 +55,7 @@ use fiftyone_pipeline_core::ElementData;
 pub const ENTERPRISE_CONTACT_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=enterprise-data-file";
 
 /// The 51degrees.com links every page's "Find out more" section lists.
-const FIND_OUT_MORE: &[(&str, &str)] = &[
+pub const FIND_OUT_MORE: &[(&str, &str)] = &[
     ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=find-out-more"),
     ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=find-out-more"),
     ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=find-out-more"),
