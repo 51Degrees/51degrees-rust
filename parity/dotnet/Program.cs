@@ -119,6 +119,10 @@ namespace FiftyOne.Parity
         private const string InSequenceUnsuppressedPipeline =
             "in-sequence-unsuppressed";
 
+        // The pipeline of a case that runs through Device Detection and
+        // then the Set Headers element.
+        private const string SetHeadersPipeline = "set-headers";
+
         // Long enough that the first fetch of a directory the handler serves
         // at once never runs out, and shorter than the slow agent's delay.
         private static readonly TimeSpan AgentSignatureWaitBudget =
@@ -273,12 +277,22 @@ namespace FiftyOne.Parity
                     .SetSuppressProcessExceptions(false)
                     .Build()
             };
-            // The builders' whole output is recorded instead, and the cloud
-            // request engine's data is the case's own response.
+            // Device Detection and then the Set Headers element, so the
+            // response headers Device Detection asks for are compared.
+            var setHeadersElement =
+                new SetHeadersElementBuilder(loggerFactory).Build();
+            var setHeaders = new PipelineBuilder(loggerFactory)
+                .AddFlowElement(device)
+                .AddFlowElement(setHeadersElement)
+                .SetSuppressProcessExceptions(true)
+                .Build();
+            // The builders' whole output is recorded instead, as are the
+            // response headers, and the cloud request engine's data is the
+            // case's own response.
             var skipped = new HashSet<string>
             {
                 json.ElementDataKey, javascript.ElementDataKey,
-                cloudRequest.ElementDataKey
+                cloudRequest.ElementDataKey, setHeadersElement.ElementDataKey
             };
 
             var lines = new List<JsonObject>();
@@ -295,6 +309,7 @@ namespace FiftyOne.Parity
                     AgentSignaturePipeline => agentSignature,
                     TranslationPipeline => translation,
                     CloudTranslationPipeline => cloudTranslation,
+                    SetHeadersPipeline => setHeaders,
                     var other when groups.ContainsKey(other) => groups[other],
                     var other => throw new ArgumentException(
                         $"{item["id"]}: unknown pipeline {other}")
@@ -339,6 +354,7 @@ namespace FiftyOne.Parity
                 $"{lines.Count} cases written to {args.Out}, " +
                 $"{records.Count} usage records and " +
                 $"{customRecords.Count} custom usage records captured");
+            setHeaders.Dispose();
             foreach (var group in groups.Values)
             {
                 group.Dispose();
@@ -396,6 +412,7 @@ namespace FiftyOne.Parity
                 ["id"] = item["id"].GetValue<string>(),
                 ["processError"] = processError,
                 ["thrown"] = thrown,
+                ["responseHeaders"] = ResponseHeaders(data),
                 ["properties"] = Properties(pipeline, data, skipped),
                 ["session"] = new JsonObject
                 {
@@ -459,6 +476,27 @@ namespace FiftyOne.Parity
             {
                 return null;
             }
+        }
+
+        // Each response header the Set Headers element gave with its value,
+        // or null when the flow data holds no Set Headers data.
+        private static JsonObject ResponseHeaders(IFlowData data)
+        {
+            var found = data.ElementDataAsDictionary().Values
+                .OfType<global::FiftyOne.Pipeline.Engines.FiftyOne.Data
+                    .ISetHeadersData>()
+                .FirstOrDefault();
+            if (found?.ResponseHeaderDictionary == null)
+            {
+                return null;
+            }
+            var headers = new JsonObject();
+            foreach (var header in found.ResponseHeaderDictionary
+                .OrderBy(h => h.Key, StringComparer.Ordinal))
+            {
+                headers[header.Key] = header.Value;
+            }
+            return headers;
         }
 
         // Every property of every element that lists properties, keyed by
