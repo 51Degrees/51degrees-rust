@@ -833,6 +833,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "fiftyone-fodid-cloud"
+version = "4.5.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9910918b23ae59e7ae36c9f02a3ec00e8909c187e482582453b810974a050f3c"
+dependencies = [
+ "fiftyone-cloud-request-engine",
+ "fiftyone-fodid-core",
+ "fiftyone-pipeline-core",
+ "fiftyone-pipeline-engines",
+ "fodid",
+ "log",
+ "once_cell",
+ "serde_json",
+]
+
+[[package]]
+name = "fiftyone-fodid-core"
+version = "4.5.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fff2bea523f5ffc87a8fe793bbb86b4c8836339e89dba2ee5578ed8424d9a97b"
+dependencies = [
+ "fiftyone-pipeline-core",
+ "fiftyone-pipeline-engines",
+ "fiftyone-pipeline-engines-fiftyone",
+ "fodid",
+]
+
+[[package]]
 name = "fiftyone-ip-intelligence"
 version = "4.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1078,6 +1106,12 @@ dependencies = [
  "axum",
  "examples-shared",
  "examples-web-shared",
+ "fiftyone-cloud-request-engine",
+ "fiftyone-fodid-cloud",
+ "fiftyone-pipeline-core",
+ "fiftyone-pipeline-engines-fiftyone",
+ "fiftyone-pipeline-web",
+ "fiftyone-pipeline-web-axum",
  "fodid",
  "fodid-client",
  "getrandom 0.3.4",
