@@ -19,6 +19,7 @@
  * in the end user terms of the application under an appropriate heading,
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
+
 //! `PerformanceProfile::Default` selects each C library's own default
 //! configuration global, and is documented as the balanced configuration
 //! with no temporary copy of the data file. This checks that the Device
