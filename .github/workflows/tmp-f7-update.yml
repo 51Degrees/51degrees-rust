@@ -1,0 +1,17 @@
+name: Throwaway run of ci/update-packages.ps1
+on:
+  push:
+    branches: [tmp/rust-f7-update]
+jobs:
+  update:
+    name: update-packages.ps1 on this branch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run the script as common-ci runs it, from the folder above
+        shell: pwsh
+        working-directory: ..
+        run: ./51degrees-rust/ci/update-packages.ps1 -RepoName 51degrees-rust -OrgName 51Degrees -DryRun $true
+      - name: Show what moved
+        run: git diff --stat examples/Cargo.lock && git diff examples/Cargo.lock | grep -E '^[-+](name|version) = ' | head -80
