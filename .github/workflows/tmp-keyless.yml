@@ -1,0 +1,34 @@
+name: tmp keyless examples
+on:
+  push:
+    branches: ['tmp/rust-keyless-*']
+jobs:
+  run:
+    name: free data run with a deprecated name set
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Copy the OWID source into fodid
+        shell: pwsh
+        run: ./ci/copy-owid-source.ps1
+      - name: Restore the data files
+        uses: ./.github/actions/restore-data-files
+      - name: Name the week for the Lite IP Intelligence file
+        id: week
+        shell: bash
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - name: Restore the Lite IP Intelligence file
+        uses: actions/cache/restore@v4
+        with:
+          path: cxx/data/ip-intelligence/51Degrees-LiteV41.ipi
+          key: ipi-lite-v41-${{ runner.os }}-${{ steps.week.outputs.week }}
+      - name: Run the examples with 51DEGREES_DD_PATH naming a file that is not there
+        shell: pwsh
+        run: |
+          [Environment]::SetEnvironmentVariable(
+            '51DEGREES_DD_PATH', (Join-Path $PWD 'no-such-file.hash'))
+          ./ci/run-examples-on-free-data.ps1

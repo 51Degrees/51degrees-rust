@@ -172,7 +172,7 @@ fn main() -> Result<()> {
         options.date_of_birth = date;
     }
     let result = run(&options);
-    examples_shared::print_find_out_more(FIND_OUT_MORE, pipeline_examples::REPOSITORIES);
+    // closing section removed
     result
 }
 
