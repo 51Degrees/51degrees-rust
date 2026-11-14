@@ -66,8 +66,8 @@ $Console = @(
 )
 
 # The web examples that need no key, each started, asked for its page and
-# stopped. One takes its port from PORT, and ss-clientside takes the address
-# to listen on as its argument.
+# stopped. Each reads its port from PORT, except ss-clientside, which takes
+# the address to listen on as its argument.
 $Web = @(
     @{ Package = "device-detection-examples"; Bin = "dd-web-getting-started-onprem"; Port = 5301 },
     @{ Package = "ip-intelligence-examples"; Bin = "ipi-web-getting-started-onprem"; Port = 5302 },
