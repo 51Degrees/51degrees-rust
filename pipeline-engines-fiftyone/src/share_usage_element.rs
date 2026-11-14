@@ -919,11 +919,6 @@ pub(crate) fn found_evidence(evidence: &Evidence) -> Cow<'_, Evidence> {
         let value = evidence.get(entry.key()).unwrap_or(entry.value());
         found = found.add(entry.key_as_given(), value);
     }
-    for entry in evidence.entries() {
-        if !request.contains_key(entry.key()) {
-            found = found.add(entry.key_as_given(), entry.value());
-        }
-    }
     Cow::Owned(found.build())
 }
 
