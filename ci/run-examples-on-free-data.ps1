@@ -2,7 +2,7 @@
 .SYNOPSIS
 Runs every example that needs no key as someone who has just cloned the
 repository would, on the free data files with no settings, and fails when one
-fails. Runs the cloud console examples the same way, with no key.
+fails. Runs every cloud example the same way, with no key.
 
 .DESCRIPTION
 Each example runs from examples/ with every _51DEGREES_ variable removed,
@@ -24,11 +24,11 @@ is stopped with every process it started, so a download it began cannot keep
 a file open for the next one. The web examples are started, and their page is
 held to the same rules.
 
-A cloud console example given no resource key must say so, give the link
-to create one, end with the "Find out more" section and exit 0. No resource
-key is set for any of them here, so none sends a request to the cloud
-service. The cloud web examples are not run, because they stop with an error
-when no key is set.
+A cloud example given no resource key must say so, give the link to create
+one, end with the "Find out more" section and exit 0. The cloud web examples
+and the 51Did creator context demo do that without starting their server, so
+they run here as the console examples do. No resource key is set for any of
+them here, so none sends a request to the cloud service.
 
 The usage-sharing example is not run, because it sends what it holds to the
 usage sharing service when it ends.
@@ -72,14 +72,17 @@ $Console = @(
     @{ Package = "pipeline-examples"; Bin = "ss-cloud"; NoDataFile = $true }
 )
 
-# The cloud console examples, each run once with no arguments and no key.
+# The cloud examples, each run once with no arguments and no key. The web
+# examples among them end without starting their server.
 $Cloud = @(
     "dd-cloud-configurator",
     "dd-cloud-get-all-properties",
     "dd-cloud-getting-started",
     "dd-cloud-metadata",
     "dd-cloud-native-model",
-    "dd-cloud-tac"
+    "dd-cloud-tac",
+    "dd-web-client-only-cloud",
+    "dd-web-getting-started-cloud"
 ) | ForEach-Object {
     @{ Package = "device-detection-examples"; Bin = $_; NoDataFile = $true; NoKey = $true }
 }
@@ -87,9 +90,13 @@ $Cloud += @(
     "ipi-cloud-get-all-properties",
     "ipi-cloud-getting-started",
     "ipi-cloud-metadata",
-    "ipi-cloud-mixed-getting-started"
+    "ipi-cloud-mixed-getting-started",
+    "ipi-web-getting-started-cloud"
 ) | ForEach-Object {
     @{ Package = "ip-intelligence-examples"; Bin = $_; NoDataFile = $true; NoKey = $true }
+}
+$Cloud += @{
+    Package = "fodid-examples"; Bin = "fodid-web-creator-context"; NoDataFile = $true; NoKey = $true
 }
 
 # The web examples that need no key, each started, asked for its page and
@@ -378,4 +385,4 @@ if ($failures.Count -gt 0) {
     exit 1
 }
 Write-Host ("Every example that needs no key ran on the free data files, and " +
-    "every cloud console example said how to get a key.")
+    "every cloud example said how to get a key.")

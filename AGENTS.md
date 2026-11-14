@@ -442,8 +442,9 @@ submodule is checked out and from that file otherwise.
   (`source.toml`) before a release. It then runs every example that needs no
   key as a fresh clone would, with no settings, through
   `ci/run-examples-on-free-data.ps1`, which lists them. The same script
-  runs the cloud console examples with no key, where each must give the link
-  to create one and exit 0, and a step before it runs the cloud examples'
+  runs every cloud example with no key, the web examples and the 51Did demo
+  included, where each must give the link to create one and exit 0 without
+  starting a server, and a step before it runs the cloud examples'
   ignored tests against the cloud service with the workflow's resource key.
   The `usage-sharing`
   example is not in that list, because it sends to the usage sharing service
