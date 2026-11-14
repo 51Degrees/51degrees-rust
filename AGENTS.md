@@ -382,7 +382,9 @@ submodule is checked out and from that file otherwise.
 - `examples.yml` builds and tests `examples/` against local source
   (`source.toml`) before a release. It then runs every example that needs no
   key as a fresh clone would, with no settings, through
-  `ci/run-examples-on-free-data.ps1`, which lists them. The `usage-sharing`
+  `ci/run-examples-on-free-data.ps1`, which lists them. The same script
+  runs the cloud console examples with no key, where each must give the link
+  to create one and exit 0. The `usage-sharing`
   example is not in that list, because it sends to the usage sharing service
   when it ends. Its contract job builds the two device
   detection web examples the same way, through

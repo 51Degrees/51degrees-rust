@@ -2,7 +2,7 @@
 .SYNOPSIS
 Runs every example that needs no key as someone who has just cloned the
 repository would, on the free data files with no settings, and fails when one
-fails.
+fails. Runs the cloud console examples the same way, with no key.
 
 .DESCRIPTION
 Each example runs from examples/ with every _51DEGREES_ variable removed,
@@ -23,6 +23,12 @@ example could not download fails the step too. An example that runs too long
 is stopped with every process it started, so a download it began cannot keep
 a file open for the next one. The web examples are started, and their page is
 held to the same rules.
+
+A cloud console example given no resource key must say so, give the link
+to create one, end with the "Find out more" section and exit 0. No resource
+key is set for any of them here, so none sends a request to the cloud
+service. The cloud web examples are not run, because they stop with an error
+when no key is set.
 
 The usage-sharing example is not run, because it sends what it holds to the
 usage sharing service when it ends.
@@ -66,6 +72,26 @@ $Console = @(
     @{ Package = "pipeline-examples"; Bin = "ss-cloud"; NoDataFile = $true }
 )
 
+# The cloud console examples, each run once with no arguments and no key.
+$Cloud = @(
+    "dd-cloud-configurator",
+    "dd-cloud-get-all-properties",
+    "dd-cloud-getting-started",
+    "dd-cloud-metadata",
+    "dd-cloud-native-model",
+    "dd-cloud-tac"
+) | ForEach-Object {
+    @{ Package = "device-detection-examples"; Bin = $_; NoDataFile = $true; NoKey = $true }
+}
+$Cloud += @(
+    "ipi-cloud-get-all-properties",
+    "ipi-cloud-getting-started",
+    "ipi-cloud-metadata",
+    "ipi-cloud-mixed-getting-started"
+) | ForEach-Object {
+    @{ Package = "ip-intelligence-examples"; Bin = $_; NoDataFile = $true; NoKey = $true }
+}
+
 # The web examples that need no key, each started, asked for its page and
 # stopped. One takes its port from PORT, and ss-clientside takes the address
 # to listen on as its argument.
@@ -84,6 +110,10 @@ $Web = @(
 $ContactUs = "51degrees.com/contact-us?utm_source=code"
 $EnterpriseTerm = "utm_term=enterprise-data-file"
 $FindOutMore = "Find out more"
+
+# What a cloud example given no resource key must print, on either stream,
+# being the campaign term of its link to create one.
+$KeyLinkTerm = "utm_term=resource-key-required"
 
 # How long one console example, or one web example's start, may take.
 $TimeoutSeconds = 600
@@ -224,21 +254,28 @@ function Show-Output([string]$Bin, [string]$Text) {
     }
     Write-Host "::endgroup::"
     $Text -split '\r?\n|(?=<)' |
-        Where-Object { $_ -match 'Enterprise data file|contact-us|Find out more' } |
+        Where-Object {
+            $_ -match 'Enterprise data file|contact-us|Find out more|resource key'
+        } |
         Select-Object -First 14 |
         ForEach-Object { Write-Host "  $Bin | $($_.Trim())" }
     $errors -split '\r?\n' |
-        Where-Object { $_ -match 'downloaded|get-data-files' } |
+        Where-Object { $_ -match 'downloaded|get-data-files|resource key' } |
         ForEach-Object { Write-Host "  $Bin | $($_.Trim())" }
 }
 
-# Check that `Text` carries the section, and for an example that reads a
-# 51Degrees data file the contact-us link before it.
+# Check that `Text` carries the section, for an example that reads a
+# 51Degrees data file the contact-us link before it, and for a cloud example
+# run with no key the link to create one, in `Text` or in its standard error.
 function Test-Output($Example, [string]$Text) {
     $bin = $Example.Bin
     $section = $Text.LastIndexOf($FindOutMore)
     if ($section -lt 0) {
         $failures.Add("$bin has no '$FindOutMore' section")
+    }
+    if ($Example.NoKey -and
+        -not ($Text + (Get-Errors $bin)).Contains($KeyLinkTerm)) {
+        $failures.Add("$bin gave no link to create a resource key")
     }
     if ($Example.NoDataFile) { return }
     $link = $Text.IndexOf($EnterpriseTerm)
@@ -317,15 +354,16 @@ function Invoke-Web($Example) {
 }
 
 $run = {
-    $packages = ($Console + $Web) | ForEach-Object { $_.Package } | Select-Object -Unique
-    $bins = ($Console + $Web) | ForEach-Object { "--bin"; $_.Bin }
+    $all = $Console + $Cloud + $Web
+    $packages = $all | ForEach-Object { $_.Package } | Select-Object -Unique
+    $bins = $all | ForEach-Object { "--bin"; $_.Bin }
     $selection = $packages | ForEach-Object { "-p"; $_ }
     Write-Host "::group::Build the examples"
     cargo build --config source.toml @selection @bins
     Write-Host "::endgroup::"
 
     $null = New-Item -ItemType Directory -Force -Path $Logs
-    foreach ($example in $Console) { Invoke-Console $example }
+    foreach ($example in $Console + $Cloud) { Invoke-Console $example }
     foreach ($example in $Web) { Invoke-Web $example }
 }
 
@@ -339,4 +377,5 @@ if ($failures.Count -gt 0) {
     foreach ($failure in $failures) { Write-Host "::error::$failure" }
     exit 1
 }
-Write-Host "Every example that needs no key ran on the free data files."
+Write-Host ("Every example that needs no key ran on the free data files, and " +
+    "every cloud console example said how to get a key.")
