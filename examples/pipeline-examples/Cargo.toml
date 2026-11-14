@@ -33,6 +33,10 @@ fiftyone-caching = { version = "4.5.2" }
 # wasm-buildable).
 fiftyone-pipeline-engines-fiftyone = { version = "4.5.2", features = ["share-usage-transport"] }
 
+# The Derived Property Element, which the derived-property example builds
+# from a configuration file and from code.
+fiftyone-derived-properties = { version = "4.5.2" }
+
 # Shared example helpers: resource-key-from-env, data-file path resolvers, the
 # data-file-age warning, property-as-string and the sample evidence values.
 examples-shared = { version = "4.5.2", path = "../examples-shared" }

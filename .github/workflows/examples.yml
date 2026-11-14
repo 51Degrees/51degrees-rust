@@ -112,12 +112,38 @@ jobs:
       # the crates the next patch above the latest release, so Cargo takes them
       # through source.toml in place of the published ones, and fails if any
       # example still takes one from crates.io. The on-premise examples' tests
-      # read the data files downloaded above. The tests that need a resource
-      # key or an Enterprise file skip, because the job has neither.
+      # read the data files downloaded above. The tests that need an
+      # Enterprise file skip, because the job has none, and the tests that
+      # need a resource key are ignored here and run in the next step.
       - name: Test the examples against this tree's crates
         shell: pwsh
         working-directory: .
         run: ./ci/test-examples-against-source.ps1
+      # The cloud examples' own tests, which run each example against the
+      # cloud service and are ignored without a key. A pull request from a
+      # fork has no secrets, so the step is skipped there. Anywhere else a
+      # missing key is an error, because a run that skips has checked
+      # nothing.
+      - name: Test the cloud examples against the cloud service
+        shell: pwsh
+        working-directory: .
+        env:
+          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
+        run: |
+          if (-not $env:_51DEGREES_RESOURCE_KEY) {
+            if ($env:FROM_FORK -eq 'true') {
+              Write-Host ("::warning title=No secrets::A fork has no " +
+                "_51DEGREES_RESOURCE_KEY_BESPOKE, so the cloud examples' tests are skipped.")
+              exit 0
+            }
+            Write-Host ("::error title=Missing secrets::" +
+              "_51DEGREES_RESOURCE_KEY_BESPOKE not available to this workflow.")
+            exit 1
+          }
+          ./ci/test-examples-against-source.ps1 -Command {
+            cargo test --config source.toml -p device-detection-examples -p ip-intelligence-examples -- --ignored
+          }
       # The examples that need no key as someone who has just cloned the
       # repository runs them, with no settings, so each finds the free data
       # files in cxx/data itself. Each must run and end with its "Find out

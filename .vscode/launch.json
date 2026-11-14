@@ -17,11 +17,13 @@
         "dd-cloud-getting-started",
         "dd-cloud-metadata",
         "dd-cloud-native-model",
+        "dd-cloud-options-file",
         "dd-cloud-tac",
         "dd-onprem-getting-started",
         "dd-onprem-match-metrics",
         "dd-onprem-metadata",
         "dd-onprem-offline-processing",
+        "dd-onprem-options-file",
         "dd-onprem-performance",
         "dd-onprem-update-data-file",
         "dd-web-client-only-cloud",
@@ -43,6 +45,7 @@
         "ipi-web-getting-started-cloud",
         "ipi-web-getting-started-onprem",
         "caching",
+        "derived-property",
         "ss-clientside",
         "ss-cloud",
         "ss-onprem",
@@ -652,6 +655,21 @@
         ],
         "filter": {
           "name": "caching",
+          "kind": "bin"
+        }
+      },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: derived-property",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=derived-property",
+          "--package=pipeline-examples"
+        ],
+        "filter": {
+          "name": "derived-property",
           "kind": "bin"
         }
       },

@@ -592,9 +592,10 @@ fn a_held_builder_that_is_not_the_element_gives_an_empty_body() {
 
 /// A request whose `If-None-Match` matches gets a `304` before any body is
 /// built, so a builder that left no data is neither logged nor built again,
-/// as .NET checks the tag first. The `304` still carries the caching fields
-/// the `200` would, so missing data alone gives it `private, no-cache` and no
-/// `ETag`.
+/// as .NET checks the tag first. The web integration specification answers
+/// a matching request without processing it, so the `304` carries the
+/// caching fields of a `200` whose processing records no errors, being
+/// `private, max-age=1800` and the `ETag`, whatever the builders left.
 #[test]
 fn a_matching_if_none_match_is_answered_before_the_body_is_built() {
     let clashed = web_pipeline(
@@ -608,29 +609,28 @@ fn a_matching_if_none_match_is_answered_before_the_body_is_built() {
     // Builders that failed, builders that left no data with no error recorded
     // (unprocessed flow data), and builders that left their data.
     let cases = [
-        (&clashed, processed(clashed.pipeline()), false),
-        (&unclashed, unclashed.pipeline().create_flow_data(), false),
-        (&unclashed, processed(unclashed.pipeline()), true),
+        (&clashed, processed(clashed.pipeline())),
+        (&unclashed, unclashed.pipeline().create_flow_data()),
+        (&unclashed, processed(unclashed.pipeline())),
     ];
 
-    for (web, data, cacheable) in &cases {
-        let request = ConditionalRequest(compute_etag(data, data.evidence_key_filter()), None);
+    for (web, data) in &cases {
+        let etag = compute_etag(data, data.evidence_key_filter());
+        let request = ConditionalRequest(etag.clone(), None);
         let from = mark();
 
         let json = serve_json(data, &request, &options(web));
         let javascript = serve_javascript(data, &request, &options(web));
 
         assert_eq!(records_since(from), Vec::new());
-        let cache_control = if *cacheable {
-            CACHE_CONTROL_CACHEABLE
-        } else {
-            CACHE_CONTROL_NO_CACHE
-        };
         for response in [&json, &javascript] {
             assert_eq!(response.status, WebResponse::STATUS_NOT_MODIFIED);
             assert!(response.body.is_empty());
-            assert_eq!(header(response, "Cache-Control"), Some(cache_control));
-            assert_eq!(header(response, "ETag").is_some(), *cacheable);
+            assert_eq!(
+                header(response, "Cache-Control"),
+                Some(CACHE_CONTROL_CACHEABLE)
+            );
+            assert_eq!(header(response, "ETag"), Some(etag.as_str()));
         }
     }
 }

@@ -466,17 +466,17 @@ fn json_response(status: StatusCode, body: serde_json::Value) -> Response {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // The resource key is read from `_51DEGREES_RESOURCE_KEY` or the CI
-    // names. Without one there is nothing to demonstrate, so say which
-    // variables were looked at and stop.
+    // names. Without one there is nothing to demonstrate, so say how to get
+    // a key and end without starting the server.
     let Some(resource_key) = examples_shared::resource_key_from_env() else {
         eprintln!(
-            "Set _51DEGREES_RESOURCE_KEY (or _51DEGREES_RESOURCE_KEY_BESPOKE or \
-             _51DEGREES_RESOURCE_KEY_BASIC) to a resource key from \
-             https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=resource-key-required \
-             and run again."
+            "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
+             variable to a resource key that includes 51Did to run this demo. The \
+             51Degrees cloud service is accessed using a resource key, which you can \
+             create for free at https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=resource-key-required."
         );
         examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
-        std::process::exit(1);
+        return Ok(());
     };
 
     // A value of only spaces counts as no licence key.

@@ -403,9 +403,12 @@ submodule is checked out and from that file otherwise.
 - `data-files.yml` runs each day on `main` and keeps the free data files in
   one Actions cache entry. It restores the newest entry, asks the Distributor
   only whether each file has changed (`-Update`), and saves the files under a
-  new dated key. `pull-request.yml`, `examples.yml` and
-  `nightly-performance.yml` restore that entry through
-  `.github/actions/restore-data-files`. They leave the daily entry to
+  new dated key. `pull-request.yml`, `examples.yml`,
+  `nightly-performance.yml`, `dotnet-comparison.yml` and both jobs of
+  `publish.yml` restore that entry through
+  `.github/actions/restore-data-files`, and download only a file the entry
+  lacks, so no job downloads the free data files while the entry holds them.
+  They leave the daily entry to
   `data-files.yml`, because an entry saved by a pull request run can only be
   restored by that pull request. Until a daily entry
   exists, the action falls back to an entry keyed by the ref, the workflow
@@ -449,12 +452,20 @@ submodule is checked out and from that file otherwise.
 - `examples.yml` builds and tests `examples/` against local source
   (`source.toml`) before a release. It then runs every example that needs no
   key as a fresh clone would, with no settings, through
-  `ci/run-examples-on-free-data.ps1`, which lists them. The `usage-sharing`
+  `ci/run-examples-on-free-data.ps1`, which lists them. The same script
+  runs every cloud example with no key, the web examples and the 51Did demo
+  included, where each must give the link to create one and exit 0 without
+  starting a server, and a step before it runs the cloud examples'
+  ignored tests against the cloud service with the workflow's resource key.
+  The `usage-sharing`
   example is not in that list, because it sends to the usage sharing service
   when it ends. Its contract job builds the two device
   detection web examples the same way, through
   `ci/test-examples-against-source.ps1`, and runs the browser contract
-  against them. Runs on every PR.
+  against them. Before the tests, `ci/start-browsers-once.ps1` starts one
+  session in Chrome and one in Firefox through the drivers the suite uses,
+  because the first session of a browser on a fresh runner can take longer
+  than the suite allows one WebDriver command. Runs on every PR.
 - `publish.yml` publishes the crates that changed on push to `main`, then a
   `verify-published` job builds and tests `examples/` against the
   just-released crates.io packages. That job runs whenever a crate is tagged
