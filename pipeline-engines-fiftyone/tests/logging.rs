@@ -403,3 +403,50 @@ fn a_pause_after_failed_sends_logs_one_warning() {
          pause ends."
     );
 }
+
+/// usage-sharing-element.md, "Request detail": "When failures occur, the
+/// status code and content of the response MUST be logged to aid
+/// troubleshooting." So each refused send gives a warning with the status
+/// and the content, not only the first in a minute. Three failures are fewer
+/// than the ten that pause sending by default.
+#[test]
+fn every_refused_send_logs_its_status_and_content() {
+    let _serial = start();
+    let (url, requests) = start_refusing_server();
+    let share = Arc::new(ShareUsageElement::new(
+        ShareUsageConfig::builder()
+            .share_usage_url(url.clone())
+            .minimum_entries_per_message(1)
+            .take_timeout(Duration::ZERO)
+            .build(),
+    ));
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::clone(&share) as Arc<dyn FlowElement>)
+        .build()
+        .unwrap();
+
+    const SEND_DEADLINE_SECONDS: u64 = 10;
+    const POLL_INTERVAL_MILLISECONDS: u64 = 25;
+    for n in 1..=3 {
+        let evidence = Evidence::builder()
+            .add("header.user-agent", format!("refused-agent-{n}"))
+            .build();
+        pipeline.create_flow_data_with(evidence).process().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(SEND_DEADLINE_SECONDS);
+        while share.fail_count() < n && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(POLL_INTERVAL_MILLISECONDS));
+        }
+    }
+    drop(pipeline);
+    drop(share);
+
+    assert_eq!(requests.load(Ordering::SeqCst), 3);
+    let records = logged();
+    assert_eq!(records.len(), 3, "{records:?}");
+    for record in &records {
+        assert!(record.starts_with("WARN "), "{records:?}");
+        assert!(record.contains(&url), "{records:?}");
+        assert!(record.contains("403"), "{records:?}");
+        assert!(record.contains("refused"), "{records:?}");
+    }
+}
