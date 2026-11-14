@@ -190,7 +190,8 @@ impl ShareUsageConfig {
         &self.share_usage_url
     }
 
-    /// The repeat-evidence interval (the dedup sliding-window length).
+    /// The repeat-evidence interval, measured from the last share of
+    /// matching evidence.
     pub fn repeat_evidence_interval(&self) -> Duration {
         self.repeat_evidence_interval
     }

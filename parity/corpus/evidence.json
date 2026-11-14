@@ -633,6 +633,71 @@
     }
   },
   {
+    "id": "set-headers-chrome-desktop",
+    "about": "Chrome on Windows through Device Detection and then the Set Headers element, for the response headers Device Detection asks for.",
+    "pipeline": "set-headers",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    }
+  },
+  {
+    "id": "set-headers-chrome-android",
+    "about": "The same as set-headers-chrome-desktop, for Chrome on Android.",
+    "pipeline": "set-headers",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+    }
+  },
+  {
+    "id": "set-headers-edge",
+    "about": "The same as set-headers-chrome-desktop, for Edge on Windows.",
+    "pipeline": "set-headers",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
+    }
+  },
+  {
+    "id": "set-headers-safari-mac",
+    "about": "The same as set-headers-chrome-desktop, for Safari on a Mac, which sends no User-Agent Client Hints.",
+    "pipeline": "set-headers",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
+    }
+  },
+  {
+    "id": "set-headers-safari-iphone",
+    "about": "The same as set-headers-chrome-desktop, for Safari on an iPhone.",
+    "pipeline": "set-headers",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1"
+    }
+  },
+  {
+    "id": "set-headers-firefox",
+    "about": "The same as set-headers-chrome-desktop, for Firefox on Linux.",
+    "pipeline": "set-headers",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0"
+    }
+  },
+  {
+    "id": "set-headers-chrome-with-hints",
+    "about": "Chrome on Windows with the User-Agent Client Hints it sends once asked, through the Set Headers pipeline.",
+    "pipeline": "set-headers",
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "header.sec-ch-ua": "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+      "header.sec-ch-ua-mobile": "?0",
+      "header.sec-ch-ua-platform": "\"Windows\""
+    }
+  },
+  {
+    "id": "set-headers-no-evidence",
+    "about": "No evidence at all through the Set Headers pipeline.",
+    "pipeline": "set-headers",
+    "evidence": {}
+  },
+  {
     "id": "sequence-absent",
     "about": "A session id with no sequence.",
     "evidence": {
