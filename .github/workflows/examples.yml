@@ -168,7 +168,10 @@ jobs:
   # hand on a branch before one: gh workflow run Examples --ref <branch>. It
   # builds the examples against the crates on crates.io, so an example that
   # needs a change not yet released fails here until the release, which is
-  # why it does not run on pull requests.
+  # why it does not run on pull requests. The examples are tested first with
+  # the lock this commit holds, as a fresh clone builds them, then with the
+  # latest crates crates.io has. The data repository inside cxx lists the free
+  # data files, which the on-premise examples' tests skip without.
   published:
     name: examples vs published crates
     if: github.event_name == 'workflow_dispatch'
@@ -178,9 +181,41 @@ jobs:
         working-directory: examples
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo update
-      - run: cargo test
+      - name: Restore the data files
+        id: data
+        uses: ./.github/actions/restore-data-files
+      - name: Download any data file not restored
+        continue-on-error: true
+        shell: pwsh
+        working-directory: .
+        env:
+          DATA_FILES: ${{ steps.data.outputs.paths }}
+        run: |
+          $names = $env:DATA_FILES.Trim() -split '\r?\n' |
+            ForEach-Object { Split-Path -Leaf $_.Trim() }
+          ./cxx/data/get-data-files.ps1 @names
+      - name: Check the data files
+        shell: bash
+        working-directory: .
+        env:
+          DATA_FILES: ${{ steps.data.outputs.paths }}
+        run: |
+          while IFS= read -r file; do
+            if [ -n "$file" ] && [ ! -f "$file" ]; then
+              echo "::error::$file is missing, so the on-premise examples' tests would skip"
+              exit 1
+            fi
+          done <<< "$DATA_FILES"
+      - name: Test the examples with the committed lock, as a fresh clone does
+        run: cargo test --locked
+      - name: Test the examples with the latest published crates
+        if: ${{ !cancelled() }}
+        run: |
+          cargo update
+          cargo test
 
   # The Contract category of the shared selenium-api-tests suite
   # (https://github.com/51Degrees/selenium-api-tests), run against both device

@@ -356,7 +356,14 @@ submodule is checked out and from that file otherwise.
   `ci/fetch-assets.ps1` once before the builds and keeps the Lite and ASN
   files it fetches in the Actions cache. Each build runs the script again,
   which takes the files from that cache through common-ci's
-  `steps/fetch-assets.ps1` and copies them into `cxx/data`.
+  `steps/fetch-assets.ps1` and copies them into `cxx/data`. Beside the
+  submodule update, common-ci's package update runs `ci/update-packages.ps1`,
+  which moves the examples' lock to the latest versions on crates.io, and
+  raises a pull request into `rc` when it moved, so a fresh clone builds the
+  examples with the crates last released. The check of the examples against
+  the published crates, run by hand in `examples.yml` and after each release
+  in `publish.yml`, tests them first with the committed lock, as a fresh
+  clone does, then with the latest crates, and reads the free data files.
 - `caching-wasm.yml` lints and tests `fiftyone-caching`, the loading cache
   included, on wasm32-wasip1 under wasmtime and, with default features off,
   on wasm32-unknown-unknown under Node through `ci/run-wasm-unknown.mjs`.
