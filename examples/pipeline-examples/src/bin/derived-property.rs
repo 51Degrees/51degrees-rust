@@ -282,7 +282,7 @@ fn run_from_configuration(out: &mut dyn Write) -> Result<()> {
         out,
         &pipeline,
         "Request 2, one source property absent.",
-        None,
+        Some(true),
         &properties,
     )?;
     writeln!(
@@ -343,7 +343,7 @@ fn run_from_code(out: &mut dyn Write) -> Result<()> {
         out,
         &pipeline,
         "Request 2, one source property absent.",
-        None,
+        Some(true),
         &properties,
     )?;
     writeln!(
