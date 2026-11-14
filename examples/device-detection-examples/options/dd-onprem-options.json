@@ -1,0 +1,32 @@
+{
+  // The options file the dd-onprem-options-file example builds its pipeline
+  // from. It has the shape of the PipelineOptions section of a .NET
+  // appsettings.json file, so the same file configures either language.
+  "PipelineOptions": {
+    "Elements": [
+      {
+        "BuilderName": "DeviceDetectionHashEngineBuilder",
+        "BuildParameters": {
+          // The example replaces this with the path of the data file it
+          // finds, being its first argument, _51DEGREES_DD_PATH or the free
+          // Lite file, which it downloads when it is missing.
+          "DataFile": "51Degrees-LiteV4.1.hash",
+          "CreateTempDataCopy": "false",
+          // The low-memory profile streams data from disk on demand, which
+          // is enough for a console example.
+          "PerformanceProfile": "LowMemory",
+          // Automatic updates and the file system watcher need a licence key
+          // for the Enterprise data file, so they are off here.
+          "AutoUpdate": "false",
+          "DataFileSystemWatcher": "false"
+        }
+      }
+    ],
+    "BuildParameters": {
+      // Usage sharing is off because this is a console example. In normal
+      // operation leave it on, so 51Degrees receives evidence that improves
+      // detection.
+      "SetShareUsage": false
+    }
+  }
+}
