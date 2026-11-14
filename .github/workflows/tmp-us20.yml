@@ -1,0 +1,15 @@
+name: tmp discard logging test
+on:
+  push:
+    branches: ['tmp/rust-us20-*']
+jobs:
+  test:
+    name: discard logging (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test -p fiftyone-pipeline-engines-fiftyone --test discard_logging

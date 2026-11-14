@@ -771,9 +771,7 @@ impl ShareUsageElement {
 
     /// Log a discarded record, at most once a minute.
     fn log_discarded(&self, reason: Discarded) {
-        let Some(count) = self.discarded.record() else {
-            return;
-        };
+        let count = self.discarded.record().unwrap_or(1);
         match reason {
             Discarded::QueueFull => log::warn!(
                 "Usage sharing discarded a record because its queue of {} was \
