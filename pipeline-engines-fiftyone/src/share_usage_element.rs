@@ -2194,8 +2194,14 @@ mod tests {
 
     /// Process one request for each of the given values of the cookie
     /// `cookie`, all with the same User-Agent and a `51D_Other` cookie, and
-    /// return the usage sharing message.
-    fn shared_for_sessions(config: ShareUsageConfig, cookie: &str, sessions: &[&str]) -> String {
+    /// return the usage sharing message. The values are the flow data's
+    /// evidence, or with `in_request` only the web request's.
+    fn shared_for_sessions(
+        config: ShareUsageConfig,
+        cookie: &str,
+        sessions: &[&str],
+        in_request: bool,
+    ) -> String {
         let capture = Capture::default();
         let element = Arc::new(ShareUsageElement::with_sink(config, capture.clone()));
         let pipeline = Pipeline::builder()
@@ -2203,13 +2209,17 @@ mod tests {
             .build()
             .unwrap();
         for session in sessions {
-            let mut data = pipeline.create_flow_data_with(
-                Evidence::builder()
-                    .add("header.user-agent", "agent")
-                    .add(format!("cookie.{cookie}"), *session)
-                    .add("cookie.51D_Other", "other")
-                    .build(),
-            );
+            let values = Evidence::builder()
+                .add("header.user-agent", "agent")
+                .add(format!("cookie.{cookie}"), *session)
+                .add("cookie.51D_Other", "other")
+                .build();
+            let evidence = if in_request {
+                Evidence::builder().http_request(values).build()
+            } else {
+                values
+            };
+            let mut data = pipeline.create_flow_data_with(evidence);
             data.process().unwrap();
         }
         drop(pipeline);
@@ -2223,16 +2233,44 @@ mod tests {
     /// makes no difference.
     #[test]
     fn a_new_session_is_shared_again_only_with_track_session_on() {
-        let off = shared_for_sessions(ShareUsageConfig::default(), "sid", &["a", "a", "b"]);
+        let off = shared_for_sessions(ShareUsageConfig::default(), "sid", &["a", "a", "b"], false);
         assert_eq!(off.matches("<Device>").count(), 1, "{off}");
 
         let on = shared_for_sessions(
             ShareUsageConfig::builder().track_session("sid").build(),
             "sid",
             &["a", "a", "b"],
+            false,
         );
         assert_eq!(on.matches("<Device>").count(), 2, "{on}");
         assert!(!on.contains("Name=\"sid\""), "{on}");
+    }
+
+    /// The session cookie is read from the web request as well as from the
+    /// evidence, and its name matches in any letter case.
+    #[test]
+    fn the_session_cookie_is_read_from_the_web_request_in_any_case() {
+        for in_request in [false, true] {
+            let xml = shared_for_sessions(
+                ShareUsageConfig::builder().track_session("SID").build(),
+                "sid",
+                &["a", "a", "b"],
+                in_request,
+            );
+            assert_eq!(
+                xml.matches("<Device>").count(),
+                2,
+                "in the web request {in_request}: {xml}"
+            );
+            assert!(
+                !xml.to_lowercase().contains("name=\"sid\""),
+                "in the web request {in_request}: {xml}"
+            );
+            assert!(
+                xml.contains("<cookie Name=\"51D_Other\">other</cookie>"),
+                "in the web request {in_request}: {xml}"
+            );
+        }
     }
 
     /// The session cookie is not shared unless all evidence is shared, even
@@ -2247,6 +2285,7 @@ mod tests {
                     .build(),
                 "51D_Session",
                 &["a"],
+                false,
             );
             assert!(
                 xml.contains("<cookie Name=\"51D_Other\">other</cookie>"),
