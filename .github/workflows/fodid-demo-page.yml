@@ -1,0 +1,99 @@
+name: 51Did demo page
+
+# Opens the 51Did creator context demo's page in headless Chrome, on the
+# direct route and on the route through the demo's server, and checks that it
+# creates an identifier whose signature and creator context verify, with
+# ci/check-51did-demo-page.ps1. The page does all of this in JavaScript, so
+# only a browser can check it. The demo is built from this checkout's crates,
+# as the examples workflow builds the examples, and runs against the public
+# cloud with a resource key and a licence key that carry 51Did. It runs on
+# pull requests that change the demo or the check, and by hand on any branch:
+# gh workflow run "51Did demo page" --ref <branch>
+on:
+  pull_request:
+    paths:
+      - 'examples/fodid-examples/**'
+      - 'ci/check-51did-demo-page.ps1'
+      - '.github/workflows/fodid-demo-page.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  page:
+    name: 51Did demo page in Chrome, both routes
+    runs-on: ubuntu-latest
+    steps:
+      # The crates are versioned from the release tags, and fodid compiles in
+      # the OWID source from the owid-rust submodule.
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      # A pull request from a fork gets no secrets, so it skips with a
+      # warning. Anywhere else a missing key is an error, because a run that
+      # skips has checked nothing.
+      - name: Check the keys are available
+        id: keys
+        shell: pwsh
+        env:
+          RESOURCE_KEY: ${{ vars._51DEGREES_RESOURCE_KEY_51DID }}
+          LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY_51DID }}
+          FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
+        run: |
+          $missing = @()
+          if (-not $env:RESOURCE_KEY) { $missing += '_51DEGREES_RESOURCE_KEY_51DID' }
+          if (-not $env:LICENSE_KEY) { $missing += '_51DEGREES_LICENSE_KEY_51DID' }
+          if (-not $missing) {
+            'run=true' >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          $list = $missing -join ', '
+          if ($env:FROM_FORK -eq 'true') {
+            Write-Host "::warning title=No keys::A fork has no $list, so the page is not checked."
+            'run=false' >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          Write-Host "::error title=Missing keys::$list not available to this workflow."
+          exit 1
+      - name: Copy the OWID source into fodid
+        if: steps.keys.outputs.run == 'true'
+        shell: pwsh
+        run: ./ci/copy-owid-source.ps1
+      - name: Build the demo from this checkout's crates
+        if: steps.keys.outputs.run == 'true'
+        shell: pwsh
+        run: >-
+          ./ci/test-examples-against-source.ps1 -Command {
+          cargo build --config source.toml -p fodid-examples
+          --bin fodid-web-creator-context }
+      - name: Start the demo and check its page
+        if: steps.keys.outputs.run == 'true'
+        shell: pwsh
+        env:
+          _51DEGREES_RESOURCE_KEY: ${{ vars._51DEGREES_RESOURCE_KEY_51DID }}
+          _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY_51DID }}
+          PORT: '5100'
+        run: |
+          $exe = './examples/target/debug/fodid-web-creator-context'
+          if ($IsWindows) { $exe += '.exe' }
+          $demo = Start-Process -FilePath $exe -PassThru -NoNewWindow `
+            -RedirectStandardOutput demo.out.txt -RedirectStandardError demo.err.txt
+          try {
+            $deadline = [DateTime]::UtcNow.AddMinutes(2)
+            while ($true) {
+              if ($demo.HasExited) { throw "The demo exited with code $($demo.ExitCode)." }
+              try {
+                if ((Invoke-WebRequest http://127.0.0.1:5100/ -TimeoutSec 5).StatusCode -eq 200) { break }
+              } catch { }
+              if ([DateTime]::UtcNow -gt $deadline) { throw "The demo did not answer within 2 minutes." }
+              Start-Sleep -Seconds 1
+            }
+            ./ci/check-51did-demo-page.ps1 -Url http://127.0.0.1:5100
+          } finally {
+            if (-not $demo.HasExited) { $demo.Kill($true) }
+            Write-Host "--- demo output ---"
+            Get-Content demo.out.txt, demo.err.txt -ErrorAction SilentlyContinue
+          }

@@ -378,6 +378,12 @@ submodule is checked out and from that file otherwise.
   `javascript-builder/assets` differs from the `javascript-templates`
   submodule, on every PR that touches either and on every push to `main` and
   `rc`.
+- `fodid-demo-page.yml` opens the 51Did creator context demo's page in
+  headless Chrome on its two routes with `ci/check-51did-demo-page.ps1`, and
+  fails unless an identifier is created and its signature and creator context
+  verify. The demo is built from this checkout's crates and calls the public
+  cloud with a resource key and a licence key that carry 51Did. Runs on pull
+  requests that change the demo or the check.
 - `dotnet-comparison.yml` runs the crates and the published .NET packages
   over the corpus in `parity/` and fails on any difference that
   `parity/allowed-differences.json` does not list with its reason. See
