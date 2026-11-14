@@ -91,17 +91,19 @@ async fn a_page_request_shares_the_headers_no_element_reads() {
     drop(share);
     let documents = sink.0.lock().unwrap();
     assert_eq!(documents.len(), 1, "{documents:?}");
-    let document = &documents[0];
-    let session = format!("<SessionId>{SESSION_ID}</SessionId>");
+    // The http crate gives every header name in lower case, so the document
+    // is read without case.
+    let document = documents[0].to_lowercase();
+    let session = format!("<sessionid>{SESSION_ID}</sessionid>");
     for shared in [
-        "<header Name=\"User-Agent\">Mozilla/5.0</header>",
-        "<header Name=\"X-Test\">test</header>",
-        "<cookie Name=\"51D_Test\">kept</cookie>",
+        "<header name=\"user-agent\">mozilla/5.0</header>",
+        "<header name=\"x-test\">test</header>",
+        "<cookie name=\"51d_test\">kept</cookie>",
         session.as_str(),
     ] {
         assert!(document.contains(shared), "{shared} in {document}");
     }
-    for left_out in ["Name=\"Cookie\"", "Name=\"other\""] {
+    for left_out in ["name=\"cookie\"", "name=\"other\""] {
         assert!(!document.contains(left_out), "{left_out} in {document}");
     }
 }
