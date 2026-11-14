@@ -37,8 +37,8 @@
 //! 1. [`fiftyone_pipeline_engines_fiftyone::SequenceElement`] first, so the
 //!    session id and sequence number exist before anything else reads them.
 //!    It is only added when the application's elements do not already hold
-//!    one, so the elements of a pipeline builder with usage sharing on keep
-//!    their own.
+//!    one, found by its data key ignoring case, so the elements of a pipeline
+//!    builder with usage sharing on keep their own.
 //! 2. the application's own elements, in the order they were added.
 //! 3. [`fiftyone_pipeline_engines_fiftyone::SetHeadersElement`] (only when
 //!    [`WebIntegrationOptions::use_set_header_properties`] is set), after the
@@ -175,9 +175,9 @@ impl WebPipeline {
     /// order (for example a cloud request engine then a device-detection cloud
     /// engine, or a single on-premise engine). The sequence, set-headers, JSON
     /// and JavaScript elements are inserted around them as described in the
-    /// module documentation, and a set-headers element, JSON builder or
-    /// JavaScript builder among them is used in place of the one that would be
-    /// added. The returned pipeline uses
+    /// module documentation, and a sequence element, set-headers element, JSON
+    /// builder or JavaScript builder among them is used in place of the one
+    /// that would be added. The returned pipeline uses
     /// [`WebIntegrationOptions::suppress_process_exceptions`].
     ///
     /// Returns the same errors as [`fiftyone_pipeline_core::PipelineBuilder::build`]
@@ -281,10 +281,8 @@ fn order_elements(
 
     // 1. Sequence element first, unless the application's elements already
     // hold one, as a pipeline builder's elements do with usage sharing on.
-    let has_sequence = elements
-        .iter()
-        .any(|element| element.data_key() == SequenceElement::DEFAULT_ELEMENT_DATA_KEY);
-    if !has_sequence {
+    let given_sequence = position(&elements, SequenceElement::DEFAULT_ELEMENT_DATA_KEY).is_some();
+    if !given_sequence {
         ordered.push(Arc::new(SequenceElement::new()));
     }
 
