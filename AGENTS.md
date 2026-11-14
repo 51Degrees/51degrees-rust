@@ -428,7 +428,15 @@ submodule is checked out and from that file otherwise.
   `ci/fetch-assets.ps1` once before the builds and keeps the Lite and ASN
   files it fetches in the Actions cache. Each build runs the script again,
   which takes the files from that cache through common-ci's
-  `steps/fetch-assets.ps1` and copies them into `cxx/data`.
+  `steps/fetch-assets.ps1` and copies them into `cxx/data`. Beside the
+  submodule update, common-ci's package update runs `ci/update-packages.ps1`,
+  which moves this repository's crates in the examples' lock to their latest
+  versions on crates.io, and
+  raises a pull request into `rc` when it moved, so a fresh clone builds the
+  examples with the crates last released. The check of the examples against
+  the published crates, run by hand in `examples.yml` and after each release
+  in `publish.yml`, tests them first with the committed lock, as a fresh
+  clone does, then with the latest crates, and reads the free data files.
 - `caching-wasm.yml` lints and tests `fiftyone-caching`, the loading cache
   included, on wasm32-wasip1 under wasmtime and, with default features off,
   on wasm32-unknown-unknown under Node through `ci/run-wasm-unknown.mjs`.
@@ -466,6 +474,12 @@ submodule is checked out and from that file otherwise.
   `javascript-builder/assets` differs from the `javascript-templates`
   submodule, on every PR that touches either and on every push to `main` and
   `rc`.
+- `fodid-demo-page.yml` opens the 51Did creator context demo's page in
+  headless Chrome on its two routes with `ci/check-51did-demo-page.ps1`, and
+  fails unless an identifier is created and its signature and creator context
+  verify. The demo is built from this checkout's crates and calls the public
+  cloud with a resource key and a licence key that carry 51Did. Runs on pull
+  requests that change the demo or the check.
 - `dotnet-comparison.yml` runs the crates and the published .NET packages
   over the corpus in `parity/` and fails on any difference that
   `parity/allowed-differences.json` does not list with its reason. See

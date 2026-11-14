@@ -116,7 +116,8 @@ pub const SHARE_USAGE_DEFAULT_ADD_TIMEOUT_MS: u64 = 5;
 /// element waits for another entry once a message holds the minimum entries.
 pub const SHARE_USAGE_DEFAULT_TAKE_TIMEOUT_MS: u64 = 100;
 
-/// The default repeat-evidence interval in minutes (the sliding-window size).
+/// The default repeat-evidence interval in minutes, measured from the last
+/// share of matching evidence.
 pub const SHARE_USAGE_DEFAULT_REPEAT_EVIDENCE_INTERVAL_MINUTES: u64 = 20;
 
 /// The default share percentage. `1.0` means every request is shared.

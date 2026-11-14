@@ -731,3 +731,110 @@ async fn the_set_headers_output_is_written_only_with_the_option_on() {
     assert_eq!(accept_ch(true).await.as_deref(), Some("Sec-CH-UA"));
     assert_eq!(accept_ch(false).await, None);
 }
+
+// ----------------------------------------------------------------------------
+// The endpoints' paths and the JSON they serve.
+// ----------------------------------------------------------------------------
+
+/// Send one request with no body to the router. A `POST` carries the form
+/// content type the client-side script sends.
+async fn send(app: &Router, method: &str, uri: &str) -> axum::response::Response {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("host", "localhost")
+        .header("user-agent", "test-agent");
+    if method == "POST" {
+        request = request.header("content-type", "application/x-www-form-urlencoded");
+    }
+    app.clone()
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+/// The two endpoints are served from the paths the options give, and the
+/// default paths are then left to the application.
+#[tokio::test]
+async fn the_endpoints_are_served_from_the_paths_the_options_give() {
+    let elements: Vec<Arc<dyn FlowElement>> = vec![Arc::new(HintsElement::new())];
+    let options = WebIntegrationOptions {
+        javascript_endpoint: "/assets/fod.js".to_owned(),
+        json_endpoint: "/api/fod.json".to_owned(),
+        ..WebIntegrationOptions::default()
+    };
+    let web = WebPipeline::build(elements, options).expect("web pipeline builds");
+    let app = register(Router::new(), FiftyOneState::from_web_pipeline(&web));
+
+    let javascript = send(&app, "GET", "/assets/fod.js").await;
+    assert_eq!(javascript.status(), StatusCode::OK);
+    assert_eq!(
+        header(&javascript, "content-type").as_deref(),
+        Some("application/x-javascript")
+    );
+    let json = send(&app, "POST", "/api/fod.json").await;
+    assert_eq!(json.status(), StatusCode::OK);
+    assert_eq!(
+        header(&json, "content-type").as_deref(),
+        Some("application/json")
+    );
+    for (method, path) in [("GET", "/51Degrees.core.js"), ("POST", "/51dpipeline/json")] {
+        assert_eq!(
+            send(&app, method, path).await.status(),
+            StatusCode::NOT_FOUND,
+            "{method} {path} reaches the application, which has no such route"
+        );
+    }
+}
+
+/// The JSON endpoint answers with the JSON the JavaScript embeds for the same
+/// Evidence, so the script's call back to it gets data of the same form.
+#[tokio::test]
+async fn the_json_endpoint_gives_the_json_the_javascript_embeds() {
+    // The application gives an unminified JavaScript builder, so the JSON it
+    // embeds is the JSON builder's text as written.
+    let elements: Vec<Arc<dyn FlowElement>> = vec![
+        Arc::new(HintsElement::new()),
+        Arc::new(
+            JavaScriptBuilderElement::builder()
+                .set_minify(false)
+                .build(),
+        ),
+    ];
+    let web = WebPipeline::build(elements, WebIntegrationOptions::default())
+        .expect("web pipeline builds");
+    let app = register(Router::new(), FiftyOneState::from_web_pipeline(&web));
+    let evidence = "session-id=abc&sequence=1";
+
+    let javascript = send(&app, "GET", &format!("/51Degrees.core.js?{evidence}")).await;
+    assert_eq!(javascript.status(), StatusCode::OK);
+    let javascript = to_bytes(javascript.into_body(), usize::MAX).await.unwrap();
+    let javascript = String::from_utf8(javascript.to_vec()).unwrap();
+    let (_, after) = javascript
+        .split_once("var json = ")
+        .unwrap_or_else(|| panic!("the JavaScript embeds its JSON, got: {javascript}"));
+    let embedded = serde_json::Deserializer::from_str(after)
+        .into_iter::<serde_json::Value>()
+        .next()
+        .expect("a JSON value follows `var json = `")
+        .unwrap_or_else(|error| panic!("the embedded JSON parses: {error}"));
+    assert!(
+        embedded.get("hints").is_some(),
+        "the embedded JSON holds the element's data, got: {embedded}"
+    );
+
+    let json = Request::builder()
+        .method("POST")
+        .uri("/51dpipeline/json")
+        .header("host", "localhost")
+        .header("user-agent", "test-agent")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(Body::from(evidence))
+        .unwrap();
+    let json = app.oneshot(json).await.unwrap();
+    assert_eq!(json.status(), StatusCode::OK);
+    let json = to_bytes(json.into_body(), usize::MAX).await.unwrap();
+    let served: serde_json::Value = serde_json::from_slice(&json).unwrap();
+
+    assert_eq!(served, embedded);
+}
