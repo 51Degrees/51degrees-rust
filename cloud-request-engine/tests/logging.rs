@@ -272,6 +272,22 @@ fn header_evidence_replacing_cookie_evidence_logs_a_warning() {
     );
 }
 
+/// The warning names each key as the evidence first spelled it, where the
+/// keys are matched in lowercase.
+#[test]
+fn a_conflict_warning_names_each_key_as_first_spelled() {
+    let _serial = start();
+    let pipeline = pipeline(FakeCloud::default(), false);
+    process(
+        &pipeline,
+        &[("Header.User-Agent", "A"), ("Cookie.USER-AGENT", "B")],
+    );
+    assert_eq!(
+        take_logged(),
+        vec!["WARN 'Header.User-Agent=A' evidence conflicts with 'Cookie.USER-AGENT=B'"]
+    );
+}
+
 #[test]
 fn query_evidence_replacing_header_evidence_logs_nothing() {
     let _serial = start();

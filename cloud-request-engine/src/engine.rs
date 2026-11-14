@@ -487,7 +487,7 @@ impl CloudRequestEngine {
                 if from == FormEvidence::All
                     && !key_prefix(key).eq_ignore_ascii_case(EvidencePrefix::Query.as_str())
                 {
-                    log_conflict(key, value, &field, &entries);
+                    log_conflict(entry, &field, &entries);
                 }
                 existing.1 = name;
                 existing.2 = value.to_owned();
@@ -830,20 +830,27 @@ fn request_precedence(key: &str) -> (u32, &str, &str) {
     (rank, prefix, key)
 }
 
-/// Log a warning that `key` replaces evidence sent under the same `field`,
+/// Log a warning that `entry` replaces evidence sent under the same `field`,
 /// naming every other entry whose key ends with that field, as .NET does.
-/// A credential can be among them, as `query.resource` ends with `source`, so
-/// each value is written as [`shown_value`] gives it.
-fn log_conflict(key: &str, value: &str, field: &str, entries: &[EvidenceEntry<'_>]) {
+/// Each key is written as it was first spelled. A credential can be among
+/// them, as `query.resource` ends with `source`, so each value is written as
+/// [`shown_value`] gives it.
+fn log_conflict(entry: &EvidenceEntry<'_>, field: &str, entries: &[EvidenceEntry<'_>]) {
     let conflicts: Vec<String> = entries
         .iter()
-        .map(|entry| (entry.key(), entry.value()))
-        .filter(|(other, _)| *other != key && other.ends_with(field))
-        .map(|(other, other_value)| format!("{other}={}", shown_value(other, other_value)))
+        .filter(|other| other.key() != entry.key() && other.key().ends_with(field))
+        .map(|other| {
+            format!(
+                "{}={}",
+                other.key_as_given(),
+                shown_value(other.key(), other.value())
+            )
+        })
         .collect();
     log::warn!(
-        "'{key}={}' evidence conflicts with '{}'",
-        shown_value(key, value),
+        "'{}={}' evidence conflicts with '{}'",
+        entry.key_as_given(),
+        shown_value(entry.key(), entry.value()),
         conflicts.join("', '")
     );
 }
