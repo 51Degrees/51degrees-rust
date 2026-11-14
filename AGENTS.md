@@ -384,7 +384,9 @@ submodule is checked out and from that file otherwise.
   key as a fresh clone would, with no settings, through
   `ci/run-examples-on-free-data.ps1`, which lists them. The same script
   runs the cloud console examples with no key, where each must give the link
-  to create one and exit 0. The `usage-sharing`
+  to create one and exit 0, and a step before it runs the cloud examples'
+  ignored tests against the cloud service with the workflow's resource key.
+  The `usage-sharing`
   example is not in that list, because it sends to the usage sharing service
   when it ends. Its contract job builds the two device
   detection web examples the same way, through
