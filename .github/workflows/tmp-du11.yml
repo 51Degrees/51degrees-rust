@@ -1,0 +1,15 @@
+name: tmp data update message tests
+on:
+  push:
+    branches: ['tmp/rust-du11-*']
+jobs:
+  test:
+    name: update messages (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test -p fiftyone-pipeline-engines --all-features --test update_messages --test masked_keys
