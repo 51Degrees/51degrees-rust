@@ -1342,7 +1342,13 @@ impl Results {
     /// user agent style evidence and server values as the client IP.
     ///
     /// A header longer than 500 bytes is ignored with no error, and detection
-    /// moves on to the next header.
+    /// moves on to the next header. With the default settings, a long
+    /// User-Agent that is the only evidence gives the device id `0-0-0-0`, a
+    /// `0` for each component (see [`Results::device_id`]), which is the sign
+    /// that the header was ignored. With [`HashOptions::allow_unmatched`] on,
+    /// each component gives its default profile instead, and when other
+    /// evidence still matches, the device id is not all zeros although the
+    /// long header was ignored.
     pub fn process_evidence(&mut self, evidence: &fiftyone_pipeline_core::Evidence) -> Result<()> {
         let mut exception = sys::Exception::cleared();
         let results = self.as_ptr();
@@ -1359,7 +1365,11 @@ impl Results {
     /// Run a detection from a single User-Agent string.
     ///
     /// A User-Agent longer than 500 bytes is ignored with no error, which gives
-    /// the same results as no evidence.
+    /// the same results as no evidence. With the default settings the device
+    /// id is then `0-0-0-0`, a `0` for each component (see
+    /// [`Results::device_id`]), which is the sign that the User-Agent was
+    /// ignored. With [`HashOptions::allow_unmatched`] on, each component gives
+    /// its default profile instead, so the device id is not all zeros.
     pub fn process_user_agent(&mut self, user_agent: &str) -> Result<()> {
         let mut exception = sys::Exception::cleared();
         // Safety: the user agent bytes are valid for the duration of the call.

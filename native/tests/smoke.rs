@@ -342,6 +342,76 @@ mod device_detection {
         }
     }
 
+    /// With the default settings a User-Agent over the limit, as the only
+    /// evidence, gives the device id `0-0-0-0`, which shows it was ignored,
+    /// and the same User-Agent cut to the limit gives the device id of the
+    /// User-Agent itself. With unmatched results allowed, or with other
+    /// evidence that still matches, the device id is not all zeros.
+    #[test]
+    fn a_user_agent_over_the_limit_alone_gives_a_zero_device_id() {
+        let Some(data_file) = dd_lite_data_file() else {
+            eprintln!("no Lite Hash data file found; skipping zero device id test");
+            return;
+        };
+        const ZERO: &str = "0-0-0-0";
+        let over = padded_user_agent(HEADER_LIMIT + 1);
+        let cut = &over[..HEADER_LIMIT];
+
+        // The device ids from the direct User-Agent call and from evidence.
+        let device_ids = |manager: &Arc<dd::Manager>, user_agent: &str| {
+            let mut direct = manager.create_results().expect("results should allocate");
+            direct
+                .process_user_agent(user_agent)
+                .expect("a user agent should not raise an exception");
+            let mut through_evidence = manager.create_results().expect("results should allocate");
+            let evidence = Evidence::builder()
+                .add("header.user-agent", user_agent)
+                .build();
+            through_evidence
+                .process_evidence(&evidence)
+                .expect("a header should not raise an exception");
+            [direct, through_evidence].map(|results| {
+                results
+                    .device_id()
+                    .expect("reading the device id should not error")
+                    .expect("a detection should give a device id")
+            })
+        };
+
+        let defaults = open_loaded(&data_file);
+        assert_eq!(device_ids(&defaults, &over), [ZERO, ZERO], "over the limit");
+        let whole = device_ids(&defaults, MOBILE_USER_AGENT);
+        assert_ne!(whole[0], ZERO);
+        assert_eq!(device_ids(&defaults, cut), whole, "cut to the limit");
+
+        let mut options = dd::HashOptions::default();
+        options.allow_unmatched = Some(true);
+        let unmatched = dd::Manager::open_with_hash_options(
+            &data_file,
+            PerformanceProfile::Default,
+            None,
+            &options,
+        )
+        .expect("the Lite file should load with unmatched results allowed");
+        for id in device_ids(&unmatched, &over) {
+            assert_ne!(id, ZERO, "over the limit with unmatched results allowed");
+        }
+
+        let mut results = defaults.create_results().expect("results should allocate");
+        let evidence = Evidence::builder()
+            .add("query.user-agent", over.as_str())
+            .add("header.user-agent", DESKTOP_USER_AGENT)
+            .build();
+        results
+            .process_evidence(&evidence)
+            .expect("processing evidence should not raise an exception");
+        let id = results
+            .device_id()
+            .expect("reading the device id should not error")
+            .expect("a detection should give a device id");
+        assert_ne!(id, ZERO, "over the limit with other evidence that matches");
+    }
+
     /// Naming `DeviceId` resolves every component, whatever else is named, so
     /// the id is the one a data set with every property gives. Without it, a
     /// component with no named property reads as zero.
