@@ -376,6 +376,7 @@ pub fn compare_case(case: &Case, dotnet: &Value, rust: &Value) -> Vec<Difference
     for field in [
         "processError",
         "thrown",
+        "responseHeaders",
         "session",
         "evidenceAfter",
         "errors",

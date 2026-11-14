@@ -27,11 +27,11 @@ when the license keys are available to the run, over the Enterprise files.
 
 ## The pipelines
 
-Both programs build the same nine pipelines, with process errors collected
+Both programs build the same ten pipelines, with process errors collected
 rather than thrown in all but two. A case runs through the first, whose
 elements are listed below, unless its `pipeline` is `values`,
-`agent-signature`, `translation`, `cloud-translation` or one of the four
-group pipelines, `group`, `group-unsuppressed`, `in-sequence` and
+`agent-signature`, `translation`, `cloud-translation`, `set-headers` or one
+of the four group pipelines, `group`, `group-unsuppressed`, `in-sequence` and
 `in-sequence-unsuppressed`.
 
 1. The Sequence element.
@@ -142,6 +142,15 @@ process errors thrown, so their lines hold the errors in `thrown`. The
 the values and the errors of a group, and of the same elements in
 sequence, against .NET's.
 
+The Set Headers pipeline has the first pipeline's Device Detection engine
+and then the Set Headers element, with process errors collected
+([#221](https://github.com/51Degrees/51degrees-rust/issues/221)). The
+`set-headers-` cases give it Chrome, Edge, Safari and Firefox User-Agents,
+Chrome with its User-Agent Client Hints, and no evidence at all, so the
+comparison checks the response headers Device Detection asks for,
+`Accept-CH` among them, against .NET's on the Lite file and on the
+Enterprise file.
+
 ## The line
 
 Each program writes one JSON object per case.
@@ -151,7 +160,8 @@ Each program writes one JSON object per case.
 | `id` | The case id. |
 | `processError` | The error processing gave, or null. |
 | `thrown` | The message of each error processing returned as one of the sub-errors of a single error, or null. The specification's exception handling asks a pipeline whose process errors are not suppressed to return them that way, and .NET throws them as the inner exceptions of an `AggregateException`. The wording of the error around them is each language's own, so `processError` is null then. |
-| `properties` | For each element that lists properties, apart from the two builders and the cloud request engine, whose data is the case's own response, every property it lists, with the match metrics for `device` and `SortingCultureUsed`, which the engine writes without listing, for `countrynamestranslated`. Each is keyed by its lowercase name and holds its `name` with either a `type` and `value`, a `noValue` reason, or a `missing` message when reading it failed. |
+| `responseHeaders` | Each response header the Set Headers element gave with its value, or null when the flow data holds no Set Headers data, as in every pipeline but the Set Headers pipeline. |
+| `properties` | For each element that lists properties, apart from the two builders, the Set Headers element, whose headers are in `responseHeaders`, and the cloud request engine, whose data is the case's own response, every property it lists, with the match metrics for `device` and `SortingCultureUsed`, which the engine writes without listing, for `countrynamestranslated`. Each is keyed by its lowercase name and holds its `name` with either a `type` and `value`, a `noValue` reason, or a `missing` message when reading it failed. |
 | `session` | `query.session-id` and `query.sequence` from the evidence after processing, the sequence as a number, or null when it is not a 64-bit integer. |
 | `evidenceAfter` | `query.session-id` and `query.sequence` as the evidence holds them after processing. |
 | `errors` | The errors in the flow data, each with its element's data key and its message. |
@@ -176,7 +186,8 @@ the TAC and Native engines' `Profiles`) and `list`.
 ## The comparison
 
 The comparer names each difference by the case, a path into the line and a
-kind. Properties, the session and the errors are compared as data, so
+kind. Properties, the response headers, the session and the errors are
+compared as data, so
 numbers compare by value. When a property's types differ its values are
 compared as well, so allowing a type never hides a value. The JSON output
 is compared by structure, then by
