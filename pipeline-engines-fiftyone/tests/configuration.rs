@@ -316,11 +316,6 @@ fn every_setting_is_read_as_dotnet_reads_it() {
             "WARN Configuration for 'IgnoreFlowDataEvidenceFilter' is invalid.".to_string(),
             ignored("SetAspSessionCookieName"),
             ignored("SetTrackSession"),
-            ignored("SetFailuresToEnterRecovery"),
-            ignored("SetFailuresWindowSeconds"),
-            ignored("SetInitialRecoveryDelaySeconds"),
-            ignored("SetMaxRecoveryDelaySeconds"),
-            ignored("SetRecoveryMultiplier"),
         ]
     );
 }
@@ -477,13 +472,76 @@ fn settings_that_have_no_effect_still_refuse_what_dotnet_refuses() {
             )
         )
     );
-    // Recovery settings other than the failure count take any number, as
-    // in .NET.
-    share_usage(&[
-        ("FailuresWindowSeconds", "-1"),
-        ("RecoveryMultiplier", "-1"),
-    ])
-    .expect("negative recovery settings");
+}
+
+/// usage-sharing-element.md, "Configuration options": "An implementation
+/// MUST reject a value outside the range given." The messages are those of
+/// .NET's `ShareUsageBuilderBase`, an `ArgumentOutOfRangeException` with the
+/// value it was given.
+#[test]
+fn recovery_settings_are_checked_as_dotnet_checks_them() {
+    let _serial = start();
+    for (setting, value, parameter, rule) in [
+        (
+            "FailuresWindowSeconds",
+            "0",
+            "failuresWindowSeconds",
+            "Must be 1 or more.",
+        ),
+        (
+            "FailuresWindowSeconds",
+            "-1",
+            "failuresWindowSeconds",
+            "Must be 1 or more.",
+        ),
+        (
+            "InitialRecoveryDelaySeconds",
+            "0",
+            "initialDelaySeconds",
+            "Must be more than 0.",
+        ),
+        (
+            "InitialRecoveryDelaySeconds",
+            "-1.5",
+            "initialDelaySeconds",
+            "Must be more than 0.",
+        ),
+        (
+            "MaxRecoveryDelaySeconds",
+            "0",
+            "maxDelaySeconds",
+            "Must be more than 0.",
+        ),
+        (
+            "RecoveryMultiplier",
+            "0.5",
+            "multiplier",
+            "Must be 1 or more.",
+        ),
+        (
+            "RecoveryMultiplier",
+            "-1",
+            "multiplier",
+            "Must be 1 or more.",
+        ),
+    ] {
+        assert_eq!(
+            message(share_usage(&[(setting, value)])),
+            failed(
+                "ShareUsage",
+                &format!("{rule} (Parameter '{parameter}')\nActual value was {value}.")
+            ),
+            "{setting} {value}"
+        );
+    }
+    for (setting, value) in [
+        ("FailuresWindowSeconds", "1"),
+        ("InitialRecoveryDelaySeconds", "0.001"),
+        ("MaxRecoveryDelaySeconds", "0.001"),
+        ("RecoveryMultiplier", "1"),
+    ] {
+        share_usage(&[(setting, value)]).expect(setting);
+    }
 }
 
 #[test]

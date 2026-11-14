@@ -2366,4 +2366,125 @@ mod tests {
         );
         assert_eq!(plist_string(plist, "Missing"), None);
     }
+
+    /// A sink that keeps each batch in a [`Capture`] and the time it
+    /// arrived, and fails the first `failures` batches.
+    struct FailsFirst {
+        capture: Capture,
+        failures: usize,
+        arrived: Arc<Mutex<Vec<Instant>>>,
+    }
+
+    impl UsageSink for FailsFirst {
+        fn receive(&self, batch: UsageBatch) -> std::result::Result<(), SinkError> {
+            let arrived = {
+                let mut arrived = self.arrived.lock().unwrap();
+                arrived.push(Instant::now());
+                arrived.len()
+            };
+            self.capture.receive(batch)?;
+            if arrived <= self.failures {
+                Err("the endpoint answered 503".into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    /// The pause the specification's defaults give after ten failed sends.
+    const DEFAULT_FIRST_PAUSE: Duration = Duration::from_secs(2);
+
+    /// A usage sharing element with the default recovery settings in a
+    /// pipeline of its own, sending each record in a message of its own as
+    /// soon as it is queued.
+    fn sending_each_record(
+        sink: impl UsageSink + 'static,
+    ) -> (Arc<ShareUsageElement>, Arc<Pipeline>) {
+        let config = ShareUsageConfig::builder()
+            .minimum_entries_per_message(1)
+            .take_timeout(Duration::ZERO)
+            .build();
+        let element = Arc::new(ShareUsageElement::with_sink(config, sink));
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        (element, pipeline)
+    }
+
+    /// Process ten requests, waiting for each to be sent, so that ten sends
+    /// fail within the default window of 100 seconds.
+    fn fail_ten_sends(pipeline: &Pipeline, capture: &Capture) {
+        for n in 0..10 {
+            pipeline
+                .create_flow_data_with(user_agent(&format!("failing-{n}")))
+                .process()
+                .unwrap();
+            wait_for(|| capture.batches().len() == n + 1);
+        }
+        assert_eq!(capture.batches().len(), 10);
+    }
+
+    /// usage-sharing-element.md, "Back-off after failed sends": ten failed
+    /// sends within 100 seconds pause sending for 2 seconds, Evidence is
+    /// still queued and processing does not wait, and when the pause ends
+    /// the queue drains without more requests.
+    #[test]
+    fn sending_pauses_after_failed_sends_and_the_queue_drains_when_it_ends() {
+        let capture = Capture::default();
+        let arrived = Arc::new(Mutex::new(Vec::new()));
+        let (element, pipeline) = sending_each_record(FailsFirst {
+            capture: capture.clone(),
+            failures: 10,
+            arrived: Arc::clone(&arrived),
+        });
+        fail_ten_sends(&pipeline, &capture);
+
+        for n in 0..3 {
+            pipeline
+                .create_flow_data_with(user_agent(&format!("queued-{n}")))
+                .process()
+                .unwrap();
+        }
+        let processed = Instant::now();
+        wait_for(|| capture.devices() == 13);
+
+        let arrived = arrived.lock().unwrap().clone();
+        assert_eq!(capture.devices(), 13, "the queue drained");
+        assert!(
+            arrived[10] >= arrived[9] + DEFAULT_FIRST_PAUSE,
+            "a message was sent {:?} after the tenth failed send",
+            arrived[10] - arrived[9]
+        );
+        assert!(processed < arrived[10], "processing waited for the pause");
+        drop(pipeline);
+        drop(element);
+    }
+
+    /// usage-sharing-element.md, "Cleanup": while sending is paused,
+    /// cleanup does not send, and the entries still queued are discarded.
+    #[test]
+    fn closing_while_sending_is_paused_sends_nothing_more() {
+        let capture = Capture {
+            failure: Some("the endpoint answered 503".to_owned()),
+            ..Capture::default()
+        };
+        let (element, pipeline) = sending_each_record(capture.clone());
+        fail_ten_sends(&pipeline, &capture);
+
+        for n in 0..2 {
+            pipeline
+                .create_flow_data_with(user_agent(&format!("queued-{n}")))
+                .process()
+                .unwrap();
+        }
+        drop(pipeline);
+        drop(element);
+
+        assert_eq!(
+            capture.batches().len(),
+            10,
+            "a message was sent while paused"
+        );
+    }
 }
