@@ -62,7 +62,7 @@
     "path": "javascript",
     "kind": "text",
     "cases": ["no-evidence", "ua-*", "uach-*", "screen-*", "ip-*", "sequence-*", "session-*", "javascript-*", "usage-*"],
-    "reason": "The JavaScript holds the JSON, so every difference the json.device entries allow in the engines' pipeline shows here too, and each of those names its own reason. The values pipeline's cases are not listed, so their JavaScript must be the same."
+    "reason": "The JavaScript holds the JSON, so every difference the json entries, json.device and json.ip, allow in the engines' pipeline shows here too, and each of those names its own reason. The values pipeline's cases are not listed, so their JavaScript must be the same."
   },
   {
     "path": "javascript",
