@@ -76,11 +76,17 @@ use std::sync::Arc;
 use anyhow::Context;
 use axum::body::Body;
 use axum::extract::{Query, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 use examples_web_shared::serve_css;
+use fiftyone_cloud_request_engine::CloudRequestEngine;
+use fiftyone_fodid_cloud::FodIdCloudEngine;
+use fiftyone_pipeline_core::FlowElement;
+use fiftyone_pipeline_engines_fiftyone::ShareUsageElement;
+use fiftyone_pipeline_web::{WebIntegrationOptions, WebPipeline};
+use fiftyone_pipeline_web_axum::{javascript_handler, json_handler, FiftyOneState};
 use fodid::FodId;
 use fodid_client::{DidClient, Error as ClientError, RedeemResult, SignatureOutcome};
 use serde::Deserialize;
@@ -100,6 +106,16 @@ const FIND_OUT_MORE: &[(&str, &str)] = &[
 /// The route the demo page's relative stylesheet URL resolves to.
 const PAGE_CSS_ROUTE: &str = "/examples-main.min.css";
 
+/// The request headers something terminating the connection in front of this
+/// server uses to pass on the TLS and HTTP/2 fingerprints it worked out. These
+/// are the names the service accepts as evidence, so a header that arrives is
+/// forwarded to it unchanged and the page says nothing is missing.
+const FINGERPRINT_HEADERS: [&str; 2] = ["ja4", "h2"];
+
+/// Where the page sends a visitor whose account holds no licence keys, so the
+/// licence-scoped identifiers the demo shows cannot be created.
+const CONTACT_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=licence-key-required";
+
 /// The port the demo listens on when `PORT` is not set.
 const DEFAULT_PORT: u16 = 5100;
 
@@ -117,6 +133,9 @@ pub struct Options {
 #[derive(Clone)]
 struct Demo {
     client: Arc<DidClient>,
+    /// Whether the route through this server was built, so the page offers
+    /// it only when it works.
+    proxy: bool,
 }
 
 /// Build the demo router, ready to serve.
@@ -124,20 +143,84 @@ struct Demo {
 /// It is returned rather than served so the test can drive it in process with
 /// `tower::ServiceExt::oneshot` while [`run`] serves it over TCP. The test
 /// builds the client over an injected transport, so no cloud is called.
-pub fn build_app(client: DidClient) -> Router {
+/// `proxy` says whether the route through this server is mounted beside it.
+pub fn build_app(client: DidClient, proxy: bool) -> Router {
     Router::new()
         .route("/", get(home))
         .route(PAGE_CSS_ROUTE, get(serve_css))
         .route("/redeem", get(redeem))
         .with_state(Demo {
             client: Arc::new(client),
+            proxy,
         })
+}
+
+/// The demo router with the route through this server when it was built. When
+/// it was not, the direct route still works on its own, so the demo says why
+/// and serves the page without offering the other route.
+pub fn app_with_proxy(client: DidClient, proxy: anyhow::Result<Router>) -> Router {
+    match proxy {
+        Ok(proxy) => build_app(client, true).merge(proxy),
+        Err(error) => {
+            eprintln!(
+                "The route through this server is off, so the page offers only the \
+                 direct route: {error:#}"
+            );
+            build_app(client, false)
+        }
+    }
+}
+
+/// The two routes the browser uses when it reaches the service through this
+/// server rather than calling it directly: the client script, and the callback
+/// the script sends its evidence to.
+///
+/// Only the two endpoint handlers are mounted, not the per-request middleware
+/// the web integration usually adds, because the demo's own page, stylesheet
+/// and redeem routes have no use for a result and running the pipeline for
+/// each of them would call the service on every request.
+fn proxy_router(resource_key: &str, endpoint: &str) -> anyhow::Result<Router> {
+    let request_engine = Arc::new(
+        CloudRequestEngine::builder()
+            .resource_key(resource_key)
+            .endpoint(endpoint)
+            .build()
+            .context("building the cloud request engine")?,
+    );
+    let identifiers = FodIdCloudEngine::builder()
+        .cloud_request_engine(request_engine.clone())
+        .build()
+        .context("building the 51Did engine")?;
+    // Usage sharing is required for a web example, because it lets 51Degrees
+    // improve detection.
+    let elements: Vec<Arc<dyn FlowElement>> = vec![
+        Arc::new(ShareUsageElement::with_defaults()),
+        request_engine,
+        Arc::new(identifiers),
+    ];
+    let options = WebIntegrationOptions::default();
+    let javascript_route = options.javascript_endpoint.clone();
+    let json_route = options.json_endpoint.clone();
+    let web = WebPipeline::build(elements, options).context("assembling the web pipeline")?;
+    let state = FiftyOneState::from_web_pipeline(&web);
+    Ok(Router::new()
+        .route(&javascript_route, get(javascript_handler))
+        .route(&json_route, post(json_handler))
+        .with_state(state))
 }
 
 // [example]
 /// Serve the demo over TCP until interrupted.
 pub async fn run(options: Options) -> anyhow::Result<()> {
-    let app = build_app(options.client);
+    // The second route the page offers. Building it stands up and tears down a
+    // blocking HTTP client of its own, which cannot be dropped on an async
+    // thread, so it is built on a blocking one.
+    let resource_key = options.client.resource_key().to_owned();
+    let endpoint = options.client.endpoint().to_owned();
+    let proxy = tokio::task::spawn_blocking(move || proxy_router(&resource_key, &endpoint))
+        .await
+        .context("building the proxy routes")?;
+    let app = app_with_proxy(options.client, proxy);
     let listener = tokio::net::TcpListener::bind(options.address)
         .await
         .with_context(|| format!("binding {}", options.address))?;
@@ -155,7 +238,7 @@ pub async fn run(options: Options) -> anyhow::Result<()> {
 /// The page, with a fresh single-use challenge per load. The challenge is bound
 /// through both verification steps by the cloud, so a result verified under one
 /// page load cannot be redeemed under another.
-async fn home(State(demo): State<Demo>) -> Response {
+async fn home(State(demo): State<Demo>, headers: HeaderMap) -> Response {
     let mut random = [0u8; 16];
     if let Err(error) = getrandom::fill(&mut random) {
         return (
@@ -165,11 +248,26 @@ async fn home(State(demo): State<Demo>) -> Response {
             .into_response();
     }
     let challenge: String = random.iter().map(|b| format!("{b:02x}")).collect();
+    let fingerprints = if FINGERPRINT_HEADERS
+        .iter()
+        .any(|name| headers.contains_key(*name))
+    {
+        "present"
+    } else {
+        "absent"
+    };
     Html(
         page_with_find_out_more()
             .replace("__RESOURCE__", demo.client.resource_key())
             .replace("__CHALLENGE__", &challenge)
-            .replace("__API__", demo.client.endpoint()),
+            .replace("__API__", demo.client.endpoint())
+            .replace(
+                "__PROXY_SCRIPT__",
+                &WebIntegrationOptions::default().javascript_endpoint,
+            )
+            .replace("__FINGERPRINTS__", fingerprints)
+            .replace("__PROXY__", if demo.proxy { "on" } else { "off" })
+            .replace("__CONTACT__", &CONTACT_URL.replace('&', "&amp;")),
     )
     .into_response()
 }
@@ -429,8 +527,8 @@ mod tests {
     use super::*;
     use axum::body::{to_bytes, Body};
     use axum::http::{HeaderValue, Request};
-    use fodid_client::{DidHttpClient, DidHttpRequest, DidHttpResponse, LocalBoxFuture};
     use fodid::{Creator, Crypto};
+    use fodid_client::{DidHttpClient, DidHttpRequest, DidHttpResponse, LocalBoxFuture};
     use tower::ServiceExt;
 
     const RESOURCE_KEY: &str = "resource-key-placeholder";
@@ -494,6 +592,7 @@ mod tests {
                 .http_client(Arc::new(cloud))
                 .build()
                 .expect("the client builds"),
+            true,
         )
     }
 
@@ -546,6 +645,37 @@ mod tests {
         )
     }
 
+    /// The page warns that the transport factors are missing only when no
+    /// fingerprint reached this server. Something terminating the connection
+    /// in front of it passes one on under the name the service accepts, and
+    /// the warning then has nothing to say.
+    #[tokio::test]
+    async fn the_page_reports_a_fingerprint_only_when_a_header_carries_one() {
+        let app = app_over(FakeCloud {
+            public_key_pem: String::new(),
+            redeem_status: 500,
+            redeem_body: "",
+        });
+
+        let page = body_string(get(&app, "/").await).await;
+        assert!(page.contains("var FINGERPRINTS = \"absent\""));
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/")
+                    .header("ja4", "t13d1516h2_8daaf6152771_b186095e22b6")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let page = body_string(response).await;
+        assert!(page.contains("var FINGERPRINTS = \"present\""));
+    }
+
     #[tokio::test]
     async fn page_is_filled_in_with_a_fresh_challenge_per_load() {
         // No cloud call is made to serve the page, so placeholder values are
@@ -562,12 +692,21 @@ mod tests {
                 }))
                 .build()
                 .expect("the client builds"),
+            true,
         );
 
         let response = get(&app, "/").await;
         assert_eq!(response.status(), StatusCode::OK);
         let page = body_string(response).await;
-        for placeholder in ["__API__", "__RESOURCE__", "__CHALLENGE__"] {
+        for placeholder in [
+            "__API__",
+            "__RESOURCE__",
+            "__CHALLENGE__",
+            "__PROXY_SCRIPT__",
+            "__FINGERPRINTS__",
+            "__PROXY__",
+            "__CONTACT__",
+        ] {
             assert!(
                 !page.contains(placeholder),
                 "{placeholder} was not substituted"
@@ -590,6 +729,27 @@ mod tests {
             .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
         let second = challenge_of(&body_string(get(&app, "/").await).await);
         assert_ne!(first, second);
+    }
+
+    /// The route through this server is optional. When it cannot be built the
+    /// demo still serves the page, which then offers the direct route only.
+    #[tokio::test]
+    async fn the_page_offers_the_route_through_this_server_only_when_it_was_built() {
+        let client = || {
+            DidClient::builder(RESOURCE_KEY)
+                .endpoint("http://cloud.example/api/v4/")
+                .build()
+                .expect("the client builds")
+        };
+        let without = app_with_proxy(client(), Err(anyhow::anyhow!("no route")));
+        let response = get(&without, "/").await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(body_string(response).await.contains("var PROXY = \"off\""));
+
+        let with = app_with_proxy(client(), Ok(Router::new()));
+        assert!(body_string(get(&with, "/").await)
+            .await
+            .contains("var PROXY = \"on\""));
     }
 
     #[tokio::test]
@@ -679,6 +839,7 @@ mod tests {
                 .endpoint("http://127.0.0.1:9/api/v4/")
                 .build()
                 .expect("the client builds"),
+            true,
         );
         let response = get(&app, &redeem_uri(&fod_id)).await;
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);

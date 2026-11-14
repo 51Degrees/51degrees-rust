@@ -30,6 +30,21 @@ fodid = "4.5.8"
 # demo sends through; the tests inject a transport of their own.
 fodid-client = { version = "4.5.8", features = ["reqwest-client"] }
 
+# The pipeline behind the demo's second route, where the browser calls this
+# server and this server calls the service. The cloud request engine makes the
+# call, the identifier engine turns the answer into a 51Did, and the web crates
+# mount the client script and its callback here. reqwest-client compiles the
+# engine's built-in transport, which the running demo sends through.
+fiftyone-cloud-request-engine = { version = "4.5.2", features = ["reqwest-client"] }
+fiftyone-fodid-cloud = "4.5.3"
+fiftyone-pipeline-core = "4.5.2"
+fiftyone-pipeline-web = "4.5.2"
+fiftyone-pipeline-web-axum = "4.5.2"
+# ShareUsageElement, which every web example adds because it lets 51Degrees
+# improve detection. share-usage-transport compiles the built-in sender, off by
+# default so the crate stays wasm-buildable.
+fiftyone-pipeline-engines-fiftyone = { version = "4.5.2", features = ["share-usage-transport"] }
+
 # axum 0.8 matches the version the other web examples use, so no second major
 # version is pulled into the graph.
 axum.workspace = true
