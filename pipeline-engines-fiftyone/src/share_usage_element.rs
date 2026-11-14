@@ -2234,17 +2234,37 @@ mod tests {
     /// makes no difference.
     #[test]
     fn a_new_session_is_shared_again_only_with_track_session_on() {
-        let off = shared_for_sessions(ShareUsageConfig::default(), "sid", &["a", "a", "b"], false);
-        assert_eq!(off.matches("<Device>").count(), 1, "{off}");
+        for share_all in [false, true] {
+            let off = shared_for_sessions(
+                ShareUsageConfig::builder()
+                    .share_all_evidence(share_all)
+                    .build(),
+                "sid",
+                &["a", "a", "b"],
+                false,
+            );
+            assert_eq!(
+                off.matches("<Device>").count(),
+                1,
+                "share all {share_all}: {off}"
+            );
 
-        let on = shared_for_sessions(
-            ShareUsageConfig::builder().track_session("sid").build(),
-            "sid",
-            &["a", "a", "b"],
-            false,
-        );
-        assert_eq!(on.matches("<Device>").count(), 2, "{on}");
-        assert!(!on.contains("Name=\"sid\""), "{on}");
+            let on = shared_for_sessions(
+                ShareUsageConfig::builder()
+                    .share_all_evidence(share_all)
+                    .track_session("sid")
+                    .build(),
+                "sid",
+                &["a", "a", "b"],
+                false,
+            );
+            assert_eq!(
+                on.matches("<Device>").count(),
+                2,
+                "share all {share_all}: {on}"
+            );
+            assert!(!on.contains("Name=\"sid\""), "share all {share_all}: {on}");
+        }
     }
 
     /// The session cookie is read from the web request as well as from the
@@ -2274,30 +2294,67 @@ mod tests {
         }
     }
 
-    /// The session cookie is not shared unless all evidence is shared, even
-    /// when its name starts with `51D_`, while the other `51D_` cookies are.
+    /// usage-sharing-element.md: the session cookie is shared only when its
+    /// name starts with `51D_`, as no other cookie is, whether or not all
+    /// evidence is shared.
     #[test]
-    fn the_session_cookie_is_shared_only_when_all_evidence_is_shared() {
+    fn the_session_cookie_is_shared_only_when_its_name_starts_51d() {
         for share_all in [false, true] {
-            let xml = shared_for_sessions(
-                ShareUsageConfig::builder()
-                    .share_all_evidence(share_all)
-                    .track_session("51D_Session")
-                    .build(),
-                "51D_Session",
-                &["a"],
-                false,
-            );
-            assert!(
-                xml.contains("<cookie Name=\"51D_Other\">other</cookie>"),
-                "share all {share_all}: {xml}"
-            );
-            assert_eq!(
-                xml.contains("<cookie Name=\"51D_Session\">a</cookie>"),
-                share_all,
-                "share all {share_all}: {xml}"
-            );
+            for (cookie, shared) in [("51D_Session", true), ("sid", false)] {
+                let xml = shared_for_sessions(
+                    ShareUsageConfig::builder()
+                        .share_all_evidence(share_all)
+                        .track_session(cookie)
+                        .build(),
+                    cookie,
+                    &["a"],
+                    false,
+                );
+                assert!(
+                    xml.contains("<cookie Name=\"51D_Other\">other</cookie>"),
+                    "share all {share_all}, {cookie}: {xml}"
+                );
+                assert_eq!(
+                    xml.contains(&format!("<cookie Name=\"{cookie}\">a</cookie>")),
+                    shared,
+                    "share all {share_all}, {cookie}: {xml}"
+                );
+            }
         }
+    }
+
+    /// usage-sharing-element.md: share all query string parameters is on by
+    /// default, so every query string and form value is shared.
+    #[test]
+    fn every_query_value_is_shared_by_default() {
+        assert_eq!(
+            ShareUsageConfig::default().included_query_string_parameters(),
+            None
+        );
+        let capture = Capture::default();
+        let element = Arc::new(ShareUsageElement::with_sink(
+            ShareUsageConfig::default(),
+            capture.clone(),
+        ));
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        let mut data = pipeline.create_flow_data_with(
+            Evidence::builder()
+                .add("header.user-agent", "agent")
+                .add("query.campaign", "spring")
+                .add("query.51D_Other", "1")
+                .build(),
+        );
+        data.process().unwrap();
+        drop(data);
+        drop(pipeline);
+        drop(element);
+
+        let xml = capture.messages().concat();
+        assert!(xml.contains(">spring</query>"), "{xml}");
+        assert!(xml.contains("Name=\"51D_Other\""), "{xml}");
     }
 
     /// An element that replaces the session id and sequence evidence.

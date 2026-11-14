@@ -328,8 +328,24 @@ mod tests {
     #[test]
     fn share_all_includes_every_key_but_those_never_shared() {
         let filter = EvidenceKeyFilterShareUsage::share_all();
-        assert!(filter.include("cookie.sessionid"));
+        assert!(filter.include("cookie.51d_profile"));
         assert!(filter.include("query.other"));
+        assert!(filter.include("session.other"));
+    }
+
+    /// usage-sharing-element.md: a cookie whose name does not start with
+    /// `51D_` is never shared, even when all evidence is shared.
+    #[test]
+    fn no_cookie_but_51d_ones_is_shared_even_when_all_evidence_is() {
+        for (name, filter) in both_filters() {
+            for key in spellings("cookie.sessionid") {
+                assert!(!filter.include(&key), "{name}: {key} shared");
+                assert_eq!(filter.order(&key), None, "{name}: {key}");
+            }
+            for key in spellings("cookie.51d_profile") {
+                assert!(filter.include(&key), "{name}: {key} not shared");
+            }
+        }
     }
 
     /// The keys never shared, bare and after a prefix.
