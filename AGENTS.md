@@ -267,15 +267,63 @@ into `main` from any other branch.
 
 ## Releasing to crates.io
 
-Releases are automated, and every push to `main` releases. The version is never
-committed. `.github/workflows/publish.yml` works it out from the release tags
-with GitVersion and common-ci's `GitVersion.yml`, which gives `main` the next
-plain patch, such as 4.5.9 after 4.5.8, and `ci/set-crate-versions.ps1` writes
-it into every manifest on the build machine. The workflow refuses a major or
-minor move unless a person dispatches it with `allow-version-bump`, tests the
-examples against the crates at that version, publishes each crate to crates.io
-in dependency order with `ci/publish-crates.sh`, skipping any version already
-published, and tags the commit.
+Releases are automated, and every push to `main` publishes the crates that
+changed. Each crate has its own version, tagged `<crate>/<version>` (for
+example `fodid/4.5.19`), and no version is committed.
+`.github/workflows/publish.yml` runs `ci/get-release-plan.ps1`, which applies
+common-ci's `steps/release-plan.ps1` to `ci/packages.json`. A crate is
+released at its last tag plus one patch when a file that counts changed since
+that tag, under its folder or a path named in its `ExtraPaths`, and every
+crate that depends on it is released with it. `ExtraPaths` names the
+workspace `Cargo.toml` for every crate, and for a crate built from a
+submodule, the submodule and the script in `ci/` that copies it in, or, for
+`fiftyone-derived-properties`, the script that records its submodule's
+commit. common-ci's plan leaves out its ignore list, being a change only to
+Markdown, `docs`, `tests`, `test`, `examples` or LICENSE files, and calls
+`ci/release-plan-filter.ps1`, which leaves out a change to a crate's
+`Cargo.toml` only in the keys that describe it on crates.io, and a change to
+the workspace `Cargo.toml` outside `[workspace.package]` and
+`[workspace.dependencies]` or only in their descriptive keys, a dotted key
+counting in the table it reaches as TOML reads it. A change only
+to CI files other than those scripts releases nothing.
+`ci/set-crate-versions.ps1` then writes each
+planned crate's version, and the version every other crate last released,
+into the manifests and the requirements between them on the build machine.
+The workflow refuses a crate that moves its major or minor number against its
+own tags, or against its highest version on crates.io that is not yanked (for
+a crate crates.io does not have, the major and minor the others share),
+unless a person dispatches it with `allow-version-bump`, tests the
+examples against this tree, publishes the planned crates in the order of
+`ci/crates.txt` with `ci/publish-planned-crates.ps1` and
+`ci/publish-crates.sh`, skipping any version already published, and tags
+each crate and gives it a GitHub release with `ci/tag-crate-releases.ps1`,
+whose notes list the commits since the crate's last tag that changed a file
+of it that counts, merges left out.
+`release-plan.yml` prints the same plan on every pull request and publishes
+nothing.
+
+Trusted publishing cannot create a crate, so a crate's first version is
+published by a person. When the plan holds a crate crates.io does not have,
+the publish job publishes the crates before it, then fails, naming the crate
+and printing the commands that publish it by hand from the release commit
+with a token of an owner of the other crates and register the workflow as
+its trusted publisher. Running the failed job again then skips every
+version crates.io has and finishes the release. A new run, rather than a
+rerun, that finds a planned version already on crates.io stops before
+publishing anything, because another run published that version from
+another commit and this commit would be tagged with it.
+
+`ci/packages.json` lists each crate `ci/crates.txt` publishes, with its
+folder, its `ExtraPaths` and the crates it depends on, and a `FirstVersion`
+for a crate that has never been released. `ci/check-packages.ps1` fails when
+the file disagrees with the manifests and the copy scripts, so a dependency
+added to a manifest is added there too. A crate with no tag of its own and no
+`FirstVersion` stops the publish, and `ci/start-crate-tags.ps1` is the script
+a person runs once to tag every crate at the release it was last published
+from. A repository tag such as `4.5.19` above a crate's own tags also stops
+the publish, because the crate was released under that tag after its tags
+were made, so its tags do not mark the commit its version on crates.io came
+from. `ci/start-crate-tags.ps1 -Push` then tags every crate at that release.
 
 The crates require each other exactly, as in
 `fiftyone-common-sys = { version = "=4.5.2", path = "../common-sys" }`, so a
@@ -285,8 +333,9 @@ would let a fresh build of an older crate take newer `-sys` crates.
 Dev-dependencies are the exception and take the plain version, because they
 never reach a project's build and an exact one would force a new release of a
 crate whenever a crate its tests use is released. `set-crate-versions.ps1`
-writes the release's version into each requirement in that form, and
-`ci/check-crate-requirements.ps1`, which it runs before and after writing,
+writes the required crate's own version into each requirement and keeps the
+requirement's operator, and `ci/check-crate-requirements.ps1`, which it runs
+before and after writing,
 fails on a requirement in the other form, on a published crate that requires
 one `ci/crates.txt` does not publish, on a `ci/crates.txt` order that
 publishes a crate before one it requires, and on finding nothing to check.
@@ -384,8 +433,15 @@ submodule is checked out and from that file otherwise.
   detection web examples the same way, through
   `ci/test-examples-against-source.ps1`, and runs the browser contract
   against them. Runs on every PR.
-- `publish.yml` publishes on push to `main`, then a `verify-published` job
-  builds and tests `examples/` against the just-released crates.io packages.
+- `publish.yml` publishes the crates that changed on push to `main`, then a
+  `verify-published` job builds and tests `examples/` against the
+  just-released crates.io packages. That job runs whenever a crate is tagged
+  at the commit, so a rerun whose plan is empty, after a GitHub release
+  failed, still checks the release.
+- `release-plan.yml` checks `ci/packages.json` against the manifests and runs
+  the Pester tests of the release scripts (`ci/packages.Tests.ps1`) on Linux,
+  Windows and macOS, then prints the crates a release would publish, on every
+  PR into `main` or `rc`.
 - `utm-link-lint.yml` checks the UTM links described below, on every PR.
 - `javascript-templates-check.yml` fails when the template committed in
   `javascript-builder/assets` differs from the `javascript-templates`
