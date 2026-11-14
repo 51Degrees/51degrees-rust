@@ -253,6 +253,40 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The watcher runs on its own setting, so with the watcher on the engine
+    /// reads a copy even with automatic updates off, which lets a new file
+    /// replace the data file while the data set is open. With both off it
+    /// reads the data file itself, and `InMemory` holds no file open.
+    #[test]
+    fn the_watcher_on_its_own_asks_for_a_copy() {
+        let (dir, data_file, temp) = folder("watcher");
+        let copy = |updates: bool, watcher: bool, profile: PerformanceProfile| {
+            let config = DataFileConfiguration::builder(data_file.clone())
+                .automatic_updates_enabled(updates)
+                .file_system_watcher_enabled(watcher)
+                .build();
+            OperationalCopy::when_needed(
+                &data_file,
+                Some(temp.as_path()),
+                profile,
+                &config,
+                false,
+                false,
+            )
+            .is_some()
+        };
+        assert!(
+            copy(false, true, PerformanceProfile::Default),
+            "no copy with the watcher on and automatic updates off"
+        );
+        assert!(copy(true, false, PerformanceProfile::Default));
+        assert!(copy(true, true, PerformanceProfile::Default));
+        assert!(!copy(false, false, PerformanceProfile::Default));
+        assert!(!copy(false, true, PerformanceProfile::InMemory));
+        assert_eq!(files_in(&temp), Vec::<String>::new());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// With `reuse`, a copy already in the folder is read, and without it a
     /// new copy holding the data file is made beside it.
     #[test]
