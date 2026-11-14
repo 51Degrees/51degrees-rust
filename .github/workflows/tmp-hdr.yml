@@ -1,0 +1,15 @@
+name: tmp header lines test
+on:
+  push:
+    branches: ['tmp/rust-hdr-*']
+jobs:
+  test:
+    name: request tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test -p fiftyone-pipeline-web --lib request
