@@ -90,11 +90,11 @@ pub fn run(options: ExampleOptions) -> Result<()> {
     let config = DataFileConfiguration::builder(&options.data_file)
         // Off so `build` does not block; see the startup section in the docs.
         .update_on_startup(false)
-        // Watch the file on disk and reload when it is replaced, while
-        // automatic updates are on.
+        // Watch the file on disk and reload when it is replaced. The watcher
+        // needs no license key and runs whether automatic updates are on or off.
         .file_system_watcher_enabled(true)
-        // Poll the distributor for a newer file on an interval. Automatic
-        // updates are the master switch for polling and the watcher alike.
+        // Poll the distributor for a newer file on an interval, which needs a
+        // license key.
         .automatic_updates_enabled(options.license_key.is_some())
         // A short interval purely so the example does not appear idle; a real
         // deployment uses around 30 minutes.
@@ -202,11 +202,11 @@ fn describe_update_mechanisms(license_key: Option<&str>) {
          an Enterprise license key and a writable file location."
     );
     println!(
-        "2. File-system watcher. Set file_system_watcher_enabled(true), with \
-         automatic_updates_enabled(true), the master switch for automatic \
-         updates. The service watches the data file on disk and reloads the \
-         engine when the file is replaced, which is how a manually-downloaded \
-         file is picked up."
+        "2. File-system watcher. Set file_system_watcher_enabled(true). The \
+         service watches the data file on disk and reloads the engine when the \
+         file is replaced, which is how a manually-downloaded file is picked \
+         up. It needs no license key and runs whether automatic updates are on \
+         or off."
     );
     println!(
         "3. Remote-update polling. Set automatic_updates_enabled(true), a \
@@ -314,10 +314,11 @@ mod tests {
  *   configuration, building the engine blocks while the service polls the
  *   51Degrees distributor once, so the engine starts with the most recent data.
  *   This needs an Enterprise license key and a writable file location.
- * - File-system watcher. With `file_system_watcher_enabled(true)` and
- *   automatic updates on, the service watches the data file on disk and
- *   reloads the engine whenever the file is replaced. This is how a file you
- *   download and drop into place yourself is picked up automatically.
+ * - File-system watcher. With `file_system_watcher_enabled(true)`, the
+ *   service watches the data file on disk and reloads the engine whenever the
+ *   file is replaced, with no license key and whether automatic updates are
+ *   on or off. This is how a file you download and drop into place yourself
+ *   is picked up automatically.
  * - Remote-update polling. With `automatic_updates_enabled(true)`, a polling
  *   interval (around 30 minutes in production) and a randomisation window (around
  *   10 minutes, to stagger many instances), the service periodically polls the
