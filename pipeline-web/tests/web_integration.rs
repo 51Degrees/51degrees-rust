@@ -241,6 +241,59 @@ fn a_sequence_element_among_the_elements_is_not_added_again() {
     );
 }
 
+/// Runs a Sequence element under the data key it is given, as an element
+/// wrapping another does.
+struct WrappedSequence {
+    data_key: &'static str,
+    inner: fiftyone_pipeline_engines_fiftyone::SequenceElement,
+}
+
+impl FlowElement for WrappedSequence {
+    fn process(&self, data: &mut FlowData) -> Result<()> {
+        self.inner.process(data)
+    }
+    fn data_key(&self) -> &str {
+        self.data_key
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        self.inner.evidence_key_filter()
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        self.inner.properties()
+    }
+}
+
+/// A second Sequence element would add one to the sequence the first set, so
+/// the first request of a session would carry 2.
+#[test]
+fn a_sequence_element_is_found_by_its_data_key_ignoring_case() {
+    let given = Arc::new(WrappedSequence {
+        data_key: "Sequence",
+        inner: fiftyone_pipeline_engines_fiftyone::SequenceElement::new(),
+    });
+    let web = WebPipeline::build(
+        vec![
+            Arc::clone(&given) as Arc<dyn FlowElement>,
+            Arc::new(TestElement::new(false)),
+        ],
+        WebIntegrationOptions::default(),
+    )
+    .expect("web pipeline builds");
+    assert_eq!(
+        data_keys(&web),
+        vec![
+            "Sequence",
+            "device",
+            "set-headers",
+            "json-builder",
+            "javascriptbuilderelement",
+        ]
+    );
+    assert!(runs(&web, "Sequence", &given));
+    let data = processed(web.pipeline(), page_evidence("agent"));
+    assert_eq!(data.evidence().get("query.sequence"), Some("1"));
+}
+
 /// Runs a set-headers element under the data key it is given, as an element
 /// wrapping another does.
 struct WrappedSetHeaders {
