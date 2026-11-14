@@ -129,6 +129,37 @@ pub const SHARE_USAGE_DEFAULT_MIN_ENTRIES_PER_MESSAGE: usize = 50;
 /// The default usage-sharing endpoint.
 pub const SHARE_USAGE_DEFAULT_URL: &str = "https://devices-v4.51degrees.com/new.ashx";
 
+/// The default number of failed sends within the failures window that pauses
+/// usage sharing.
+pub const SHARE_USAGE_DEFAULT_FAILURES_TO_ENTER_RECOVERY: u32 = 10;
+
+/// The fewest failed sends that may be set to pause usage sharing.
+pub const SHARE_USAGE_FAILURES_TO_ENTER_RECOVERY_MIN: u32 = 1;
+
+/// The most failed sends that may be set to pause usage sharing.
+pub const SHARE_USAGE_FAILURES_TO_ENTER_RECOVERY_MAX: u32 = 100;
+
+/// The default time in seconds over which failed usage sharing sends are
+/// counted.
+pub const SHARE_USAGE_DEFAULT_FAILURES_WINDOW_SECONDS: u64 = 100;
+
+/// The shortest failures window that may be set, in seconds.
+pub const SHARE_USAGE_FAILURES_WINDOW_SECONDS_MIN: u64 = 1;
+
+/// The default length in seconds of the first pause after failed usage
+/// sharing sends.
+pub const SHARE_USAGE_DEFAULT_INITIAL_RECOVERY_DELAY_SECONDS: f64 = 2.0;
+
+/// The default longest pause in seconds after failed usage sharing sends.
+pub const SHARE_USAGE_DEFAULT_MAX_RECOVERY_DELAY_SECONDS: f64 = 300.0;
+
+/// The default number a pause is multiplied by each time the send tried when
+/// it ends fails.
+pub const SHARE_USAGE_DEFAULT_RECOVERY_MULTIPLIER: f64 = 2.0;
+
+/// The smallest recovery multiplier that may be set.
+pub const SHARE_USAGE_RECOVERY_MULTIPLIER_MIN: f64 = 1.0;
+
 #[cfg(test)]
 mod tests {
     use super::*;
