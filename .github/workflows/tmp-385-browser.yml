@@ -1,0 +1,42 @@
+name: Throwaway browser check of the 51Did demo page
+# Throwaway. Builds the demo with the committed lock as a fresh clone does,
+# starts it with a resource key that carries 51Did, and opens its page in
+# headless Chrome on both routes.
+on:
+  push:
+    branches: [tmp/rust-385-browser]
+jobs:
+  page:
+    name: 51Did demo page in Chrome, both routes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the demo with the committed lock
+        working-directory: examples
+        run: cargo build --locked -p fodid-examples --bin fodid-web-creator-context
+      - name: Start the demo and check its page
+        shell: pwsh
+        env:
+          _51DEGREES_RESOURCE_KEY: ${{ vars._51DEGREES_RESOURCE_KEY_51DID }}
+          _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY_51DID }}
+          PORT: '5100'
+        run: |
+          $demo = Start-Process -FilePath ./examples/target/debug/fodid-web-creator-context `
+            -PassThru -NoNewWindow -RedirectStandardOutput demo.out.txt -RedirectStandardError demo.err.txt
+          try {
+            $deadline = [DateTime]::UtcNow.AddMinutes(2)
+            while ($true) {
+              if ($demo.HasExited) { throw "The demo exited with code $($demo.ExitCode)." }
+              try {
+                if ((Invoke-WebRequest http://127.0.0.1:5100/ -TimeoutSec 5).StatusCode -eq 200) { break }
+              } catch { }
+              if ([DateTime]::UtcNow -gt $deadline) { throw "The demo did not answer within 2 minutes." }
+              Start-Sleep -Seconds 1
+            }
+            ./ci/check-51did-demo-page.ps1 -Url http://127.0.0.1:5100
+          } finally {
+            if (-not $demo.HasExited) { $demo.Kill($true) }
+            Write-Host "--- demo output ---"
+            Get-Content demo.out.txt, demo.err.txt -ErrorAction SilentlyContinue
+          }
