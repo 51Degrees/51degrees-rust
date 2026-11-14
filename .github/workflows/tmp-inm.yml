@@ -1,0 +1,20 @@
+name: tmp If-None-Match tests
+on:
+  push:
+    branches: ['tmp/rust-inm-*']
+jobs:
+  test:
+    name: web tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: pipeline-web web_integration
+        if: always()
+        run: cargo test -p fiftyone-pipeline-web --test web_integration
+      - name: pipeline-web-axum web_endpoints
+        if: always()
+        run: cargo test -p fiftyone-pipeline-web-axum --test web_endpoints
