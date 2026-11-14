@@ -442,7 +442,10 @@ submodule is checked out and from that file otherwise.
   (`source.toml`) before a release. Its contract job builds the two device
   detection web examples the same way, through
   `ci/test-examples-against-source.ps1`, and runs the browser contract
-  against them. Runs on every PR.
+  against them. Before the tests, `ci/start-browsers-once.ps1` starts one
+  session in Chrome and one in Firefox through the drivers the suite uses,
+  because the first session of a browser on a fresh runner can take longer
+  than the suite allows one WebDriver command. Runs on every PR.
 - `publish.yml` publishes the crates that changed on push to `main`, then a
   `verify-published` job builds and tests `examples/` against the
   just-released crates.io packages. That job runs whenever a crate is tagged
