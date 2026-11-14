@@ -45,6 +45,23 @@
 //! requires. Repeated failures are logged at most once a minute, with a count
 //! of the failures since the last message.
 //!
+//! # Back-off after failed sends
+//!
+//! Repeated failed sends pause sending, as the specification's
+//! [back-off section](https://github.com/51Degrees/specifications/blob/706de1f0cb3edd560eb7fd7ef3bb19b93a4883dc/pipeline-specification/pipeline-elements/usage-sharing-element.md#back-off-after-failed-sends)
+//! requires. When [`ShareUsageConfig::failures_to_enter_recovery`] sends
+//! have failed within [`ShareUsageConfig::failures_window`], the background
+//! thread sends nothing for [`ShareUsageConfig::initial_recovery_delay`].
+//! The first send after a pause is a trial. If it fails the pause is
+//! multiplied by [`ShareUsageConfig::recovery_multiplier`], up to
+//! [`ShareUsageConfig::max_recovery_delay`], and if it succeeds the back-off
+//! ends. Only the background thread waits, so processing carries on and its
+//! records queue until the queue is full, and when a pause ends the queue
+//! drains without waiting for more requests. A warning gives each pause and
+//! an information message says when sending resumes. When the element is
+//! dropped during a pause it sends nothing more, and logs how many queued
+//! entries it discarded.
+//!
 //! # What it shares
 //!
 //! The element accepts no evidence, so it never adds a key to the evidence a
@@ -94,11 +111,12 @@
 
 use std::any::Any;
 use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::OnceLock;
-use std::sync::{Arc, Mutex, PoisonError, Weak};
+use std::sync::{Arc, Condvar, Mutex, PoisonError, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -110,10 +128,15 @@ use fiftyone_pipeline_core::{
 
 use crate::constants::{
     EVIDENCE_SEQUENCE, EVIDENCE_SESSIONID, SHARE_USAGE_DEFAULT_ADD_TIMEOUT_MS,
-    SHARE_USAGE_DEFAULT_ELEMENT_DATA_KEY, SHARE_USAGE_DEFAULT_MAX_QUEUE_SIZE,
-    SHARE_USAGE_DEFAULT_MIN_ENTRIES_PER_MESSAGE,
-    SHARE_USAGE_DEFAULT_REPEAT_EVIDENCE_INTERVAL_MINUTES, SHARE_USAGE_DEFAULT_SHARE_PERCENTAGE,
-    SHARE_USAGE_DEFAULT_TAKE_TIMEOUT_MS, SHARE_USAGE_DEFAULT_URL,
+    SHARE_USAGE_DEFAULT_ELEMENT_DATA_KEY, SHARE_USAGE_DEFAULT_FAILURES_TO_ENTER_RECOVERY,
+    SHARE_USAGE_DEFAULT_FAILURES_WINDOW_SECONDS,
+    SHARE_USAGE_DEFAULT_INITIAL_RECOVERY_DELAY_SECONDS, SHARE_USAGE_DEFAULT_MAX_QUEUE_SIZE,
+    SHARE_USAGE_DEFAULT_MAX_RECOVERY_DELAY_SECONDS, SHARE_USAGE_DEFAULT_MIN_ENTRIES_PER_MESSAGE,
+    SHARE_USAGE_DEFAULT_RECOVERY_MULTIPLIER, SHARE_USAGE_DEFAULT_REPEAT_EVIDENCE_INTERVAL_MINUTES,
+    SHARE_USAGE_DEFAULT_SHARE_PERCENTAGE, SHARE_USAGE_DEFAULT_TAKE_TIMEOUT_MS,
+    SHARE_USAGE_DEFAULT_URL, SHARE_USAGE_FAILURES_TO_ENTER_RECOVERY_MAX,
+    SHARE_USAGE_FAILURES_TO_ENTER_RECOVERY_MIN, SHARE_USAGE_FAILURES_WINDOW_SECONDS_MIN,
+    SHARE_USAGE_RECOVERY_MULTIPLIER_MIN,
 };
 use crate::evidence_filter::{EvidenceKeyFilterShareUsage, EvidenceKeyFilterShareUsageTracker};
 use crate::sequence_element::parse_sequence;
@@ -143,6 +166,10 @@ const ADD_RETRY_INTERVAL_MILLISECONDS: u64 = 1;
 /// The shortest gap between two log messages about the same kind of failure.
 const LOG_INTERVAL_MILLISECONDS: u64 = 60_000;
 
+/// The longest single wait during a pause after failed sends. A longer pause
+/// is waited out in waits of this length.
+const LONGEST_WAIT_SECONDS: u64 = 24 * 60 * 60;
+
 /// Configuration for the usage-sharing element.
 ///
 /// Build one with [`ShareUsageConfig::builder`]. Every field has a default that
@@ -161,6 +188,11 @@ pub struct ShareUsageConfig {
     included_query_string_parameters: Option<Vec<String>>,
     share_all_evidence: bool,
     ignore_flow_data_evidence_filter: Vec<(String, String)>,
+    failures_to_enter_recovery: u32,
+    failures_window: Duration,
+    initial_recovery_delay: Duration,
+    max_recovery_delay: Duration,
+    recovery_multiplier: f64,
 }
 
 impl ShareUsageConfig {
@@ -231,6 +263,59 @@ impl ShareUsageConfig {
     pub fn share_all_evidence(&self) -> bool {
         self.share_all_evidence
     }
+
+    /// How many failed sends within [`failures_window`](Self::failures_window)
+    /// pause sending.
+    pub fn failures_to_enter_recovery(&self) -> u32 {
+        self.failures_to_enter_recovery
+    }
+
+    /// The time over which failed sends are counted.
+    pub fn failures_window(&self) -> Duration {
+        self.failures_window
+    }
+
+    /// The length of the first pause after failed sends.
+    pub fn initial_recovery_delay(&self) -> Duration {
+        self.initial_recovery_delay
+    }
+
+    /// The longest a pause after failed sends can be.
+    pub fn max_recovery_delay(&self) -> Duration {
+        self.max_recovery_delay
+    }
+
+    /// What a pause is multiplied by each time the send tried when it ends
+    /// fails.
+    pub fn recovery_multiplier(&self) -> f64 {
+        self.recovery_multiplier
+    }
+}
+
+/// The error for a recovery setting outside its range, in the words of the
+/// `ArgumentOutOfRangeException` .NET's usage sharing builder throws.
+pub(crate) fn out_of_range(parameter: &str, rule: &str, value: impl std::fmt::Display) -> Error {
+    Error::configuration(format!(
+        "{rule} (Parameter '{parameter}')\nActual value was {value}."
+    ))
+}
+
+/// The rule for a setting that must be 1 or more.
+pub(crate) const ONE_OR_MORE: &str = "Must be 1 or more.";
+
+/// The rule for a setting that must be more than 0.
+pub(crate) const MORE_THAN_ZERO: &str = "Must be more than 0.";
+
+/// A recovery delay given as a number of seconds, as a configuration file
+/// gives it, which must be more than 0. A number too large for a
+/// [`Duration`] gives the longest one, and one too small gives the shortest
+/// that is not zero.
+pub(crate) fn recovery_delay_from_seconds(parameter: &str, seconds: f64) -> Result<Duration> {
+    if seconds.is_nan() || seconds <= 0.0 {
+        return Err(out_of_range(parameter, MORE_THAN_ZERO, seconds));
+    }
+    Ok(Duration::try_from_secs_f64(seconds)
+        .map_or(Duration::MAX, |delay| delay.max(Duration::from_nanos(1))))
 }
 
 impl Default for ShareUsageConfig {
@@ -263,6 +348,15 @@ impl ShareUsageConfigBuilder {
                 included_query_string_parameters: Some(Vec::new()),
                 share_all_evidence: false,
                 ignore_flow_data_evidence_filter: Vec::new(),
+                failures_to_enter_recovery: SHARE_USAGE_DEFAULT_FAILURES_TO_ENTER_RECOVERY,
+                failures_window: Duration::from_secs(SHARE_USAGE_DEFAULT_FAILURES_WINDOW_SECONDS),
+                initial_recovery_delay: Duration::from_secs_f64(
+                    SHARE_USAGE_DEFAULT_INITIAL_RECOVERY_DELAY_SECONDS,
+                ),
+                max_recovery_delay: Duration::from_secs_f64(
+                    SHARE_USAGE_DEFAULT_MAX_RECOVERY_DELAY_SECONDS,
+                ),
+                recovery_multiplier: SHARE_USAGE_DEFAULT_RECOVERY_MULTIPLIER,
             },
         }
     }
@@ -373,6 +467,73 @@ impl ShareUsageConfigBuilder {
             .map(|(key, value)| (key.as_ref().to_lowercase(), value.into()))
             .collect();
         self
+    }
+
+    /// Set how many failed sends within the failures window pause sending,
+    /// from 1 to 100 (default 10). Returns an error for a number outside that
+    /// range, as the specification requires. Returns `self` for chaining.
+    pub fn failures_to_enter_recovery(mut self, failures: u32) -> Result<Self> {
+        if !(SHARE_USAGE_FAILURES_TO_ENTER_RECOVERY_MIN
+            ..=SHARE_USAGE_FAILURES_TO_ENTER_RECOVERY_MAX)
+            .contains(&failures)
+        {
+            return Err(Error::configuration(format!(
+                "failuresToEnterRecovery must be within \
+                 {SHARE_USAGE_FAILURES_TO_ENTER_RECOVERY_MIN} and \
+                 {SHARE_USAGE_FAILURES_TO_ENTER_RECOVERY_MAX} (both inclusive). Received: \
+                 {failures}. (Parameter 'failuresToEnterRecovery')"
+            )));
+        }
+        self.config.failures_to_enter_recovery = failures;
+        Ok(self)
+    }
+
+    /// Set the time over which failed sends are counted, 1 second or more
+    /// (default 100 seconds). Returns an error for a shorter time. Returns
+    /// `self` for chaining.
+    pub fn failures_window(mut self, window: Duration) -> Result<Self> {
+        if window < Duration::from_secs(SHARE_USAGE_FAILURES_WINDOW_SECONDS_MIN) {
+            return Err(out_of_range(
+                "failuresWindowSeconds",
+                ONE_OR_MORE,
+                window.as_secs_f64(),
+            ));
+        }
+        self.config.failures_window = window;
+        Ok(self)
+    }
+
+    /// Set the length of the first pause after failed sends, more than 0
+    /// (default 2 seconds). Returns an error for zero. Returns `self` for
+    /// chaining.
+    pub fn initial_recovery_delay(mut self, delay: Duration) -> Result<Self> {
+        if delay.is_zero() {
+            return Err(out_of_range("initialDelaySeconds", MORE_THAN_ZERO, 0));
+        }
+        self.config.initial_recovery_delay = delay;
+        Ok(self)
+    }
+
+    /// Set the longest a pause after failed sends can be, more than 0
+    /// (default 300 seconds). Returns an error for zero. Returns `self` for
+    /// chaining.
+    pub fn max_recovery_delay(mut self, delay: Duration) -> Result<Self> {
+        if delay.is_zero() {
+            return Err(out_of_range("maxDelaySeconds", MORE_THAN_ZERO, 0));
+        }
+        self.config.max_recovery_delay = delay;
+        Ok(self)
+    }
+
+    /// Set what a pause is multiplied by each time the send tried when it
+    /// ends fails, 1 or more (default 2). Returns an error for a smaller
+    /// number or one that is not a number. Returns `self` for chaining.
+    pub fn recovery_multiplier(mut self, multiplier: f64) -> Result<Self> {
+        if multiplier.is_nan() || multiplier < SHARE_USAGE_RECOVERY_MULTIPLIER_MIN {
+            return Err(out_of_range("multiplier", ONE_OR_MORE, multiplier));
+        }
+        self.config.recovery_multiplier = multiplier;
+        Ok(self)
     }
 
     /// Produce the configuration, raising the queue size so it can hold at
@@ -561,6 +722,9 @@ pub struct ShareUsageElement {
     success_count: Arc<AtomicU64>,
     fail_count: Arc<AtomicU64>,
     discarded: LogThrottle,
+    /// Set when the element is dropped, so the background thread ends a
+    /// pause after failed sends at once.
+    closing: Arc<Closing>,
 }
 
 impl ShareUsageElement {
@@ -641,6 +805,7 @@ impl ShareUsageElement {
 
         let success_count = Arc::new(AtomicU64::new(0));
         let fail_count = Arc::new(AtomicU64::new(0));
+        let closing = Arc::new(Closing::default());
 
         let worker = Worker {
             receiver: rx,
@@ -650,6 +815,7 @@ impl ShareUsageElement {
             success_count: Arc::clone(&success_count),
             fail_count: Arc::clone(&fail_count),
             send_failures: LogThrottle::new(),
+            closing: Arc::clone(&closing),
         };
         // Without a background thread nothing can be sent. The receiver is
         // dropped with the closure, so every later add is discarded as stopped
@@ -680,6 +846,7 @@ impl ShareUsageElement {
             success_count,
             fail_count,
             discarded: LogThrottle::new(),
+            closing,
         }
     }
 
@@ -885,11 +1052,14 @@ impl FlowElement for ShareUsageElement {
 
 impl Drop for ShareUsageElement {
     fn drop(&mut self) {
-        // Dropping the sender closes the channel, which the worker treats as a
-        // shutdown signal: it sends any remaining queued data (even below the
-        // minimum batch size) and then exits. We replace the held sender with a
-        // disconnected one so the original is dropped here, then join the
-        // worker so the final flush completes before the element goes away.
+        // Closing first ends a pause after failed sends at once, and the
+        // worker then sends nothing more. Dropping the sender closes the
+        // channel, which the worker treats as a shutdown signal: it sends any
+        // remaining queued data (even below the minimum batch size) and then
+        // exits. We replace the held sender with a disconnected one so the
+        // original is dropped here, then join the worker so the final flush
+        // completes before the element goes away.
+        self.closing.close();
         let (dead_tx, _dead_rx) = sync_channel::<UsageRecord>(0);
         let live_tx = std::mem::replace(&mut self.sender, dead_tx);
         drop(live_tx);
@@ -957,6 +1127,116 @@ fn add_to_queue(
     }
 }
 
+/// When to pause sending after failed sends, as the specification's back-off
+/// section says. Only the background thread holds it, and it gives the time
+/// of each failure.
+struct BackOff {
+    failures_to_enter_recovery: usize,
+    failures_window: Duration,
+    initial_delay_seconds: f64,
+    max_delay_seconds: f64,
+    multiplier: f64,
+    /// When each failure that counts towards the next pause happened.
+    failures: VecDeque<Instant>,
+    /// The current pause in seconds while backing off, otherwise zero.
+    delay_seconds: f64,
+}
+
+impl BackOff {
+    fn new(config: &ShareUsageConfig) -> Self {
+        BackOff {
+            failures_to_enter_recovery: usize::try_from(config.failures_to_enter_recovery)
+                .unwrap_or(usize::MAX),
+            failures_window: config.failures_window,
+            initial_delay_seconds: config.initial_recovery_delay.as_secs_f64(),
+            max_delay_seconds: config.max_recovery_delay.as_secs_f64(),
+            multiplier: config.recovery_multiplier,
+            failures: VecDeque::new(),
+            delay_seconds: 0.0,
+        }
+    }
+
+    /// Record a send that failed at `now`, and return the pause in seconds
+    /// that starts. That is zero while fewer sends than the setting have
+    /// failed within the window, counting successful sends between them as
+    /// nothing, then the initial delay, and the pause multiplied, up to the
+    /// maximum, each time the send tried after a pause fails.
+    fn failed(&mut self, now: Instant) -> f64 {
+        if self.delay_seconds > 0.0 {
+            self.delay_seconds = (self.delay_seconds * self.multiplier).min(self.max_delay_seconds);
+            return self.delay_seconds;
+        }
+        self.failures.push_back(now);
+        while self
+            .failures
+            .front()
+            .is_some_and(|first| now.saturating_duration_since(*first) > self.failures_window)
+        {
+            self.failures.pop_front();
+        }
+        if self.failures.len() < self.failures_to_enter_recovery {
+            return 0.0;
+        }
+        self.failures.clear();
+        self.delay_seconds = self.initial_delay_seconds.min(self.max_delay_seconds);
+        self.delay_seconds
+    }
+
+    /// Record a successful send. Returns true when it ends a back-off, after
+    /// which failures are counted from zero and the next pause is the
+    /// initial delay.
+    fn succeeded(&mut self) -> bool {
+        let backing_off = self.delay_seconds > 0.0;
+        self.delay_seconds = 0.0;
+        backing_off
+    }
+}
+
+/// Set when the element is dropped, so the background thread ends a pause
+/// after failed sends at once.
+#[derive(Default)]
+struct Closing {
+    closed: Mutex<bool>,
+    changed: Condvar,
+}
+
+impl Closing {
+    fn close(&self) {
+        *self.closed.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        self.changed.notify_all();
+    }
+
+    /// Wait for `seconds`, or until the element is dropped. Returns true when
+    /// the wait ran its course and false when the element was dropped.
+    fn wait(&self, seconds: f64) -> bool {
+        let deadline = Duration::try_from_secs_f64(seconds)
+            .ok()
+            .and_then(|pause| Instant::now().checked_add(pause));
+        let longest = Duration::from_secs(LONGEST_WAIT_SECONDS);
+        let mut closed = self.closed.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            if *closed {
+                return false;
+            }
+            let wait = match deadline {
+                Some(deadline) => {
+                    let now = Instant::now();
+                    if now >= deadline {
+                        return true;
+                    }
+                    (deadline - now).min(longest)
+                }
+                None => longest,
+            };
+            closed = self
+                .changed
+                .wait_timeout(closed, wait)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+    }
+}
+
 /// The background thread: what it reads from and where it delivers to.
 struct Worker {
     receiver: Receiver<UsageRecord>,
@@ -968,19 +1248,23 @@ struct Worker {
     success_count: Arc<AtomicU64>,
     fail_count: Arc<AtomicU64>,
     send_failures: LogThrottle,
+    closing: Arc<Closing>,
 }
 
 impl Worker {
     /// The consumer loop. Below the minimum entries it waits for each record
     /// with no time limit, so an idle element uses no processor time. Once it
     /// holds the minimum it takes more until none arrives within the take
-    /// timeout or it holds twice the minimum, then sends the message. Once the
-    /// element is dropped and every queued record has been received, it sends
-    /// what remains, even below the minimum, and exits.
+    /// timeout or it holds twice the minimum, then sends the message. After a
+    /// failed send that starts a pause it takes nothing until the pause ends,
+    /// so records wait in the queue. Once the element is dropped and every
+    /// queued record has been received, it sends what remains, even below the
+    /// minimum, and exits, unless it is paused, when it sends nothing more.
     fn run(self) {
         let min_entries = self.config.minimum_entries_per_message;
         let max_entries = min_entries.saturating_mul(MAXIMUM_ENTRIES_MULTIPLE);
         let take_timeout = self.config.take_timeout;
+        let mut back_off = BackOff::new(&self.config);
         let mut batch: Vec<UsageRecord> = Vec::with_capacity(max_entries);
 
         // `recv` fails only when the channel is closed and empty.
@@ -995,22 +1279,57 @@ impl Worker {
                     Err(_) => break,
                 }
             }
-            self.send_batch(std::mem::take(&mut batch));
+            if !self.send_then_pause(&mut back_off, std::mem::take(&mut batch)) {
+                return;
+            }
         }
         if !batch.is_empty() {
-            self.send_batch(batch);
+            self.send_then_pause(&mut back_off, batch);
         }
     }
 
+    /// Send the batch, then pause for as long as `back_off` gives after a
+    /// failure. Returns false when the element was dropped during the pause,
+    /// having discarded the records still queued and logged how many.
+    fn send_then_pause(&self, back_off: &mut BackOff, batch: Vec<UsageRecord>) -> bool {
+        if self.send_batch(batch) {
+            if back_off.succeeded() {
+                log::info!("Usage sharing resumed after a send succeeded.");
+            }
+            return true;
+        }
+        let pause = back_off.failed(Instant::now());
+        if pause <= 0.0 {
+            return true;
+        }
+        log::warn!(
+            "Usage sharing paused for {pause} seconds after failed sends. Usage data is still \
+             queued, up to the maximum queue size, and sending starts again when the pause \
+             ends."
+        );
+        if self.closing.wait(pause) {
+            return true;
+        }
+        let discarded = self.receiver.try_iter().count();
+        if discarded > 0 {
+            log::info!(
+                "{discarded} usage sharing entries were not sent, as sending was paused after \
+                 failed sends when usage sharing closed."
+            );
+        }
+        false
+    }
+
     /// Write the document and hand the batch to the sink, recording success
-    /// or failure.
-    fn send_batch(&self, batch: Vec<UsageRecord>) {
+    /// or failure. Returns false when the send failed.
+    fn send_batch(&self, batch: Vec<UsageRecord>) -> bool {
         if batch.is_empty() {
-            return;
+            return true;
         }
         match self.deliver(batch) {
             Ok(()) => {
                 self.success_count.fetch_add(1, Ordering::Relaxed);
+                true
             }
             Err(detail) => {
                 // Expendable: a failure is counted and logged, never
@@ -1022,6 +1341,7 @@ impl Worker {
                          Messages failed since the last report: {failures}."
                     );
                 }
+                false
             }
         }
     }
@@ -2484,6 +2804,191 @@ mod tests {
         assert_eq!(
             capture.batches().len(),
             10,
+            "a message was sent while paused"
+        );
+    }
+
+    /// A back-off with the default settings.
+    fn default_back_off() -> BackOff {
+        BackOff::new(&ShareUsageConfig::default())
+    }
+
+    /// Fail `count` sends one second apart from `start`, returning the
+    /// pause the last one starts.
+    fn fail_sends(back_off: &mut BackOff, start: Instant, count: u64) -> f64 {
+        let mut pause = 0.0;
+        for n in 0..count {
+            pause = back_off.failed(start + Duration::from_secs(n));
+        }
+        pause
+    }
+
+    /// Item 1: the failures to enter recovery within the failures window
+    /// pause sending for the initial recovery delay.
+    #[test]
+    fn ten_failures_within_the_window_pause_for_the_initial_delay() {
+        let mut back_off = default_back_off();
+        let start = Instant::now();
+        assert_eq!(fail_sends(&mut back_off, start, 9), 0.0);
+        assert_eq!(back_off.failed(start + Duration::from_secs(9)), 2.0);
+    }
+
+    /// Item 1: failures older than the window are not counted.
+    #[test]
+    fn failures_older_than_the_window_are_not_counted() {
+        let mut back_off = default_back_off();
+        let start = Instant::now();
+        assert_eq!(back_off.failed(start), 0.0);
+        let later = start + Duration::from_secs(101);
+        assert_eq!(fail_sends(&mut back_off, later, 9), 0.0);
+        assert_eq!(back_off.failed(later + Duration::from_secs(9)), 2.0);
+    }
+
+    /// Item 1: successful sends between the failures do not reset the count.
+    #[test]
+    fn successful_sends_between_failures_do_not_reset_the_count() {
+        let mut back_off = default_back_off();
+        let start = Instant::now();
+        for n in 0..9 {
+            assert_eq!(back_off.failed(start + Duration::from_secs(n)), 0.0);
+            assert!(!back_off.succeeded(), "no back-off to end");
+        }
+        assert_eq!(back_off.failed(start + Duration::from_secs(9)), 2.0);
+    }
+
+    /// Items 2 and 3: a failed trial multiplies the pause up to the maximum,
+    /// and a successful send ends the back-off, so failures are counted from
+    /// zero again and the next pause is the initial delay.
+    #[test]
+    fn failed_trials_lengthen_the_pause_and_a_success_ends_it() {
+        let mut back_off = default_back_off();
+        let start = Instant::now();
+        assert_eq!(fail_sends(&mut back_off, start, 10), 2.0);
+        let mut pauses = Vec::new();
+        for n in 0..9 {
+            pauses.push(back_off.failed(start + Duration::from_secs(20 + n)));
+        }
+        assert_eq!(
+            pauses,
+            [4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 300.0, 300.0]
+        );
+        assert!(back_off.succeeded(), "the success ends the back-off");
+        assert!(!back_off.succeeded());
+        let after = start + Duration::from_secs(40);
+        assert_eq!(fail_sends(&mut back_off, after, 9), 0.0);
+        assert_eq!(back_off.failed(after + Duration::from_secs(9)), 2.0);
+    }
+
+    /// The pause is never longer than the maximum, even the first.
+    #[test]
+    fn the_first_pause_is_no_longer_than_the_maximum() {
+        let config = ShareUsageConfig::builder()
+            .failures_to_enter_recovery(1)
+            .and_then(|builder| builder.initial_recovery_delay(Duration::from_secs(10)))
+            .and_then(|builder| builder.max_recovery_delay(Duration::from_secs(3)))
+            .unwrap()
+            .build();
+        let mut back_off = BackOff::new(&config);
+        assert_eq!(back_off.failed(Instant::now()), 3.0);
+    }
+
+    /// "Configuration options": the defaults, and a value outside the range
+    /// given is rejected.
+    #[test]
+    fn the_recovery_settings_have_the_defaults_and_ranges_given() {
+        let config = ShareUsageConfig::default();
+        assert_eq!(config.failures_to_enter_recovery(), 10);
+        assert_eq!(config.failures_window(), Duration::from_secs(100));
+        assert_eq!(config.initial_recovery_delay(), Duration::from_secs(2));
+        assert_eq!(config.max_recovery_delay(), Duration::from_secs(300));
+        assert_eq!(config.recovery_multiplier(), 2.0);
+
+        let builder = ShareUsageConfig::builder;
+        let message = |result: Result<ShareUsageConfigBuilder>| match result {
+            Err(error) => error.to_string(),
+            Ok(_) => panic!("the value was accepted"),
+        };
+        for failures in [0, 101] {
+            assert!(
+                message(builder().failures_to_enter_recovery(failures))
+                    .contains("failuresToEnterRecovery must be within 1 and 100"),
+                "{failures}"
+            );
+        }
+        assert!(
+            message(builder().failures_window(Duration::from_millis(999)))
+                .contains("Must be 1 or more. (Parameter 'failuresWindowSeconds')")
+        );
+        assert!(message(builder().initial_recovery_delay(Duration::ZERO))
+            .contains("Must be more than 0. (Parameter 'initialDelaySeconds')"));
+        assert!(message(builder().max_recovery_delay(Duration::ZERO))
+            .contains("Must be more than 0. (Parameter 'maxDelaySeconds')"));
+        for multiplier in [0.99, f64::NAN] {
+            assert!(
+                message(builder().recovery_multiplier(multiplier))
+                    .contains("Must be 1 or more. (Parameter 'multiplier')"),
+                "{multiplier}"
+            );
+        }
+
+        let config = builder()
+            .failures_to_enter_recovery(100)
+            .and_then(|b| b.failures_window(Duration::from_secs(1)))
+            .and_then(|b| b.initial_recovery_delay(Duration::from_nanos(1)))
+            .and_then(|b| b.max_recovery_delay(Duration::from_nanos(1)))
+            .and_then(|b| b.recovery_multiplier(1.0))
+            .expect("the limits are accepted")
+            .build();
+        assert_eq!(config.failures_to_enter_recovery(), 100);
+        assert_eq!(config.failures_window(), Duration::from_secs(1));
+        assert_eq!(config.initial_recovery_delay(), Duration::from_nanos(1));
+        assert_eq!(config.max_recovery_delay(), Duration::from_nanos(1));
+        assert_eq!(config.recovery_multiplier(), 1.0);
+    }
+
+    /// The longest a drop during a pause of 300 seconds may take before the
+    /// test fails. A drop that waited for the pause would take 300 seconds.
+    const DROP_DURING_A_LONG_PAUSE_LIMIT: Duration = Duration::from_secs(60);
+
+    /// "Cleanup": while sending is paused, cleanup does not wait for the
+    /// pause to end and sends nothing.
+    #[test]
+    fn closing_does_not_wait_for_a_pause_to_end() {
+        let capture = Capture {
+            failure: Some("the endpoint answered 503".to_owned()),
+            ..Capture::default()
+        };
+        let config = ShareUsageConfig::builder()
+            .minimum_entries_per_message(1)
+            .take_timeout(Duration::ZERO)
+            .failures_to_enter_recovery(1)
+            .and_then(|b| b.initial_recovery_delay(Duration::from_secs(300)))
+            .unwrap()
+            .build();
+        let element = Arc::new(ShareUsageElement::with_sink(config, capture.clone()));
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        pipeline
+            .create_flow_data_with(user_agent("failing"))
+            .process()
+            .unwrap();
+        wait_for(|| element.fail_count() == 1);
+        pipeline
+            .create_flow_data_with(user_agent("queued"))
+            .process()
+            .unwrap();
+
+        let start = Instant::now();
+        drop(pipeline);
+        drop(element);
+        let took = start.elapsed();
+
+        assert!(took < DROP_DURING_A_LONG_PAUSE_LIMIT, "{took:?}");
+        assert_eq!(
+            capture.batches().len(),
+            1,
             "a message was sent while paused"
         );
     }

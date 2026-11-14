@@ -225,6 +225,11 @@ fn the_defaults_are_those_of_dotnet() {
     assert_eq!(config.included_query_string_parameters(), Some(&[][..]));
     assert!(!config.share_all_evidence());
     assert!(config.ignore_flow_data_evidence_filter().is_empty());
+    assert_eq!(config.failures_to_enter_recovery(), 10);
+    assert_eq!(config.failures_window(), Duration::from_secs(100));
+    assert_eq!(config.initial_recovery_delay(), Duration::from_secs(2));
+    assert_eq!(config.max_recovery_delay(), Duration::from_secs(300));
+    assert_eq!(config.recovery_multiplier(), 2.0);
     assert!(logged().is_empty(), "{:?}", logged());
 }
 
@@ -279,6 +284,11 @@ fn every_setting_is_read_as_dotnet_reads_it() {
     assert_eq!(config.maximum_queue_size(), 200);
     assert_eq!(config.add_timeout(), Duration::from_millis(7));
     assert_eq!(config.take_timeout(), Duration::from_millis(300));
+    assert_eq!(config.failures_to_enter_recovery(), 5);
+    assert_eq!(config.failures_window(), Duration::from_secs(50));
+    assert_eq!(config.initial_recovery_delay(), Duration::from_millis(1500));
+    assert_eq!(config.max_recovery_delay(), Duration::from_secs(60));
+    assert_eq!(config.recovery_multiplier(), 3.0);
     // .NET holds the address as a Uri, which writes the scheme and host in
     // lower case.
     assert_eq!(config.share_usage_url(), "HTTPS://Example.com/usage");
