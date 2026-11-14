@@ -67,8 +67,16 @@ use crate::constants::{
 /// string, so sharing it would undo the rules for query string parameters.
 /// `request-path` would make each page a visitor opens look like a new
 /// session to the repeat evidence tracker, and is the part of a URL most
-/// likely to carry a name or an identifier.
-const NEVER_SHARED: [&str; 4] = ["id.email", "id.salt", "request-query", "request-path"];
+/// likely to carry a name or an identifier. `header.cookie` is the Cookie
+/// header, which carries every cookie. The `51D_` cookies are shared under
+/// their own `cookie.` keys instead.
+const NEVER_SHARED: [&str; 5] = [
+    "id.email",
+    "id.salt",
+    "request-query",
+    "request-path",
+    "header.cookie",
+];
 
 /// True if the lowercase `key` is one of [`NEVER_SHARED`], or ends with a `.`
 /// and one of them.
@@ -280,7 +288,6 @@ mod tests {
     #[test]
     fn share_all_includes_every_key_but_those_never_shared() {
         let filter = EvidenceKeyFilterShareUsage::share_all();
-        assert!(filter.include("header.cookie"));
         assert!(filter.include("cookie.sessionid"));
         assert!(filter.include("query.other"));
     }
@@ -296,6 +303,7 @@ mod tests {
         "query.id.email",
         "query.id.salt",
         "header.request-path",
+        "header.cookie",
     ];
 
     /// `key` as given, in upper case, and with each letter after a `.` or
@@ -376,12 +384,11 @@ mod tests {
     }
 
     #[test]
-    fn the_cookie_header_is_shared_only_when_sharing_all() {
-        let rule_based = EvidenceKeyFilterShareUsage::new(Vec::<&str>::new(), None::<Vec<&str>>);
-        let share_all = EvidenceKeyFilterShareUsage::share_all();
-        for key in spellings("header.cookie") {
-            assert!(!rule_based.include(&key), "{key} shared");
-            assert!(share_all.include(&key), "{key} not shared when sharing all");
+    fn the_cookie_header_is_never_shared() {
+        for (name, filter) in both_filters() {
+            for key in spellings("header.cookie") {
+                assert!(!filter.include(&key), "{name}: {key} shared");
+            }
         }
     }
 

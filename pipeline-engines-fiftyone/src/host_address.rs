@@ -164,9 +164,16 @@ struct InterfaceAddress {
 }
 
 /// The addresses of the host's interfaces that are up, in the order the
-/// system lists them.
+/// system lists them, less the loopback ones `leave_out_loopback` drops.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn interface_addresses() -> Vec<SocketAddr> {
+    leave_out_loopback(listed_interface_addresses())
+}
+
+/// The addresses of the host's interfaces that are up, in the order the
+/// system lists them, each marked as loopback or not.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn listed_interface_addresses() -> Vec<InterfaceAddress> {
     let mut first: *mut libc::ifaddrs = std::ptr::null_mut();
     // SAFETY: getifaddrs writes the head of a list it allocates to `first`,
     // which is freed below.
@@ -198,7 +205,7 @@ fn interface_addresses() -> Vec<SocketAddr> {
     }
     // SAFETY: `first` came from getifaddrs and is freed once.
     unsafe { libc::freeifaddrs(first) };
-    leave_out_loopback(found)
+    found
 }
 
 /// No interface addresses are added on other systems.
@@ -341,6 +348,18 @@ mod tests {
             leave_out_loopback(found),
             [v4("127.0.0.1"), v6("fe80::1", 2)]
         );
+    }
+
+    /// The system lists the loopback interface's IPv4 address, so reading it
+    /// with its bytes in any other order gives an address that is not there.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn the_listed_addresses_hold_127_0_0_1_as_loopback() {
+        let listed: Vec<(SocketAddr, bool)> = listed_interface_addresses()
+            .into_iter()
+            .map(|entry| (entry.address, entry.loopback))
+            .collect();
+        assert!(listed.contains(&(v4("127.0.0.1"), true)), "{listed:?}");
     }
 
     /// The name read through the platform call is the one the system's own

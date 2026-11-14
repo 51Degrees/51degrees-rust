@@ -1085,19 +1085,12 @@ impl ServiceHandle {
         // An error message is masked where the check ends, but a log entry
         // written here is not, so the URL these entries name is masked now.
         let logged_url = redact_with(&url, &config.data_update_license_keys);
-        let response = request.send().map_err(|e| {
-            // A request that never reached the service and one that reached it
-            // and gave nothing back are the same failure here, where .NET tells
-            // them apart, so the message is the one for the first.
-            DataUpdateError::new(
-                AutoUpdateStatus::HttpsError,
-                format!(
-                    "Error accessing data update service at '{url}' for engine \
-                     '{name}'. Error detail: {}",
-                    request_error_message(e)
-                ),
-            )
-        })?;
+        // A request that never reached the service and one that reached it
+        // and gave nothing back are the same failure here, where .NET tells
+        // them apart, so the message is the one for the first.
+        let response = request
+            .send()
+            .map_err(|e| access_error(&url, name, request_error_message(e)))?;
 
         let status = response.status();
         if status == reqwest::StatusCode::NOT_MODIFIED {
@@ -1170,7 +1163,7 @@ impl ServiceHandle {
             // Memory data source: the engine takes the data as bytes.
             let mut compressed = Vec::new();
             body.read_to_end(&mut compressed)
-                .map_err(|e| read_error(&url, e))?;
+                .map_err(|e| access_error(&url, name, read_error_message(e)))?;
             log::info!("Downloaded new data from '{logged_url}' for Engine '{name}'");
             verify_md5(
                 config.verify_md5,
@@ -1197,7 +1190,9 @@ impl ServiceHandle {
         // rename. Each is removed when it goes out of scope, so an update that
         // fails part way leaves nothing behind.
         let download = TempFile::beside(path, "download");
-        save_body(&mut body, download.path(), &url)?;
+        save_body(&mut body, download.path(), |e| {
+            access_error(&url, name, read_error_message(e))
+        })?;
         log::info!("Downloaded new data from '{logged_url}' for Engine '{name}'");
         verify_md5(
             config.verify_md5,
@@ -1416,8 +1411,13 @@ impl Drop for TempFile {
 }
 
 /// Write everything `body` reads into a new file at `path`, flushed to disk.
-/// A failed read names the configured URL, and a failed write names the file.
-fn save_body(body: &mut impl Read, path: &Path, url: &str) -> Result<(), DataUpdateError> {
+/// A failed read is the error `read_error` makes of it, and a failed write
+/// names the file.
+fn save_body(
+    body: &mut impl Read,
+    path: &Path,
+    read_error: impl Fn(std::io::Error) -> DataUpdateError,
+) -> Result<(), DataUpdateError> {
     let write_error = |error: std::io::Error| {
         DataUpdateError::new(
             AutoUpdateStatus::StreamError,
@@ -1431,7 +1431,7 @@ fn save_body(body: &mut impl Read, path: &Path, url: &str) -> Result<(), DataUpd
             Ok(0) => break,
             Ok(read) => read,
             Err(error) if error.kind() == ErrorKind::Interrupted => continue,
-            Err(error) => return Err(read_error(url, error)),
+            Err(error) => return Err(read_error(error)),
         };
         file.write_all(&buffer[..read]).map_err(write_error)?;
     }
@@ -1475,13 +1475,17 @@ fn verify_md5(
     }
 }
 
-/// The error for a response body that could not be read.
-fn read_error(url: &str, error: std::io::Error) -> DataUpdateError {
+/// The error for a request to the update URL that failed, and for a response
+/// whose body could not be read in full, such as a download cut short. Both
+/// are the first row of the specification's errors table, because .NET reads
+/// the whole response before its request returns and reports either failure
+/// with this message.
+fn access_error(url: &str, engine: &str, cause: String) -> DataUpdateError {
     DataUpdateError::new(
-        AutoUpdateStatus::StreamError,
+        AutoUpdateStatus::HttpsError,
         format!(
-            "error reading data update response from '{url}': {}",
-            read_error_message(error)
+            "Error accessing data update service at '{url}' for engine \
+             '{engine}'. Error detail: {cause}"
         ),
     )
 }

@@ -36,7 +36,9 @@ use std::sync::Arc;
 use fiftyone_device_detection_onpremise::DeviceDetectionOnPremiseEngineBuilder;
 use fiftyone_device_detection_shared::{DeviceData, DEVICE_DATA_KEY, GENERATED_PROPERTY_TYPES};
 use fiftyone_native::PerformanceProfile;
-use fiftyone_pipeline_core::{ElementData, Evidence, FlowElement, Pipeline, PropertyValueType};
+use fiftyone_pipeline_core::{
+    ElementData, Evidence, FlowElement, Pipeline, PropertyValue, PropertyValueType,
+};
 use fiftyone_pipeline_engines::{AspectEngine, MissingPropertyReason, OnPremiseAspectEngine};
 
 /// A representative desktop Chrome on Windows User-Agent.
@@ -46,6 +48,26 @@ const DESKTOP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
 /// A representative mobile Safari on iPhone User-Agent.
 const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) \
     AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+
+/// The reason the C library gives, and .NET gives from it, for a property
+/// with no value when no evidence the engine reads was supplied.
+const NO_EVIDENCE_REASON: &str = "The evidence required to determine this property was not \
+    supplied. The most common evidence passed to this engine is 'header.user-agent'.";
+
+/// The reason for a property that is not a list when the matched profile
+/// holds no value for it.
+const NO_VALUE_IN_PROFILE_REASON: &str =
+    "None of the results contain a value for the requested property.";
+
+/// The start of the reason for a property whose component matched no
+/// profile. The rest is a link to the documentation on lenient matching.
+const NO_PROFILE_REASON_START: &str =
+    "No matching profiles could be found for the supplied evidence.";
+
+/// The reason a property has no value, or `None` when it has one.
+fn no_value_reason(device: &impl ElementData, name: &str) -> Option<String> {
+    device.get(name).err().map(|error| error.message)
+}
 
 /// Locate the packaged Lite Hash data file, mirroring the native crate's test
 /// resolution. Resolution order: an explicit `_51DEGREES_DD_PATH`
@@ -481,8 +503,74 @@ fn values_are_read_as_dotnet_reads_them() {
     assert!(!device.javascript_get_high_entropy_values().has_value());
 }
 
+/// A property that is not a list, which the matched profile holds no value
+/// for, gives the reason .NET gives, by name and through its typed accessor.
+/// For `curl/8.5.0` the JavaScript properties are such, in the Lite and the
+/// Enterprise file.
+#[test]
+fn a_property_the_matched_profile_holds_no_value_for_says_so() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the no value reason test");
+        return;
+    };
+    let device = detect(engine, "curl/8.5.0");
+    assert_eq!(
+        device.javascript_hardware_profile().no_value_message(),
+        Some(NO_VALUE_IN_PROFILE_REASON)
+    );
+    assert_eq!(
+        no_value_reason(&device, "JavascriptGetHighEntropyValues").as_deref(),
+        Some(NO_VALUE_IN_PROFILE_REASON)
+    );
+}
+
+/// An empty User-Agent matches no profile, so each property gives the reason
+/// .NET gives, which points to more lenient matching, by name and through its
+/// typed accessor.
+#[test]
+fn a_component_with_no_profile_says_none_was_matched() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the no profile reason test");
+        return;
+    };
+    let device = detect(engine, "");
+    for name in ["IsMobile", "BrowserName", "PlatformName"] {
+        let reason = no_value_reason(&device, name).unwrap_or_default();
+        assert!(
+            reason.starts_with(NO_PROFILE_REASON_START),
+            "{name}: {reason}"
+        );
+    }
+    let browser = device.browser_name();
+    let reason = browser.no_value_message().unwrap_or_default();
+    assert!(reason.starts_with(NO_PROFILE_REASON_START), "{reason}");
+}
+
+/// A property the data file types as JavaScript is given as JavaScript, as
+/// .NET gives it, and its typed accessor gives the same text.
+#[test]
+fn a_javascript_property_is_given_as_javascript() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the JavaScript type test");
+        return;
+    };
+    let device = detect(engine, MOBILE_USER_AGENT);
+    let value = device
+        .get("JavascriptHardwareProfile")
+        .expect("an iPhone has a hardware profile script");
+    let script = match value {
+        PropertyValue::JavaScript(script) => script,
+        other => panic!("not JavaScript: {other:?}"),
+    };
+    assert_eq!(
+        device.javascript_hardware_profile().value().ok(),
+        Some(&script)
+    );
+}
+
 /// With no evidence no data file property has a value, where an empty string
-/// would be one, as .NET gives none, and the match metrics say that nothing
+/// would be one, as .NET gives none, and each gives .NET's reason, that the
+/// evidence it needs was not supplied. The match metrics say that nothing
 /// matched.
 #[test]
 fn with_no_evidence_no_data_file_property_has_a_value() {
@@ -514,8 +602,17 @@ fn with_no_evidence_no_data_file_property_has_a_value() {
         .collect();
     assert!(files.len() > 1, "{keys:?}");
     for key in files {
-        assert!(device.get(key).is_err(), "{key}: {:?}", device.get(key));
+        assert_eq!(
+            no_value_reason(device, key).as_deref(),
+            Some(NO_EVIDENCE_REASON),
+            "{key}: {:?}",
+            device.get(key)
+        );
     }
+    assert_eq!(
+        device.browser_name().no_value_message(),
+        Some(NO_EVIDENCE_REASON)
+    );
     assert_eq!(
         device.method().value().ok().map(String::as_str),
         Some("NONE")
