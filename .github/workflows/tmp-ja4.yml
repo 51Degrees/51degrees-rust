@@ -1,0 +1,15 @@
+name: tmp usage sharing added evidence test
+on:
+  push:
+    branches: ['tmp/rust-ja4-*']
+jobs:
+  test:
+    name: usage sharing tests (ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Engines library tests
+        run: cargo test -p fiftyone-pipeline-engines-fiftyone --lib --no-fail-fast
+      - name: Web usage sharing tests
+        if: always()
+        run: cargo test -p fiftyone-pipeline-web --test usage_sharing --no-fail-fast

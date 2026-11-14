@@ -184,7 +184,7 @@ impl EvidenceKeyFilterShareUsage {
                 Some(included) => field.starts_with(FIFTYONE_PREFIX) || included.contains(field),
             }
         } else {
-            true
+            prefix != "fiftyone"
         }
     }
 }
