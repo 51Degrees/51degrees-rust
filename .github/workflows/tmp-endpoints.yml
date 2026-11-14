@@ -1,0 +1,15 @@
+name: tmp configured endpoint tests
+on:
+  push:
+    branches: ['tmp/rust-endpoints-*']
+jobs:
+  test:
+    name: configured endpoints (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test -p fiftyone-pipeline-web-axum --test configured_endpoints
