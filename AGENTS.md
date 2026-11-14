@@ -413,6 +413,10 @@ submodule is checked out and from that file otherwise.
   restored nothing, so later runs of the same workflow on the same ref that
   day download nothing. An entry is found only by the same list of paths it
   was saved with, so the list lives in that action alone.
+  A second job fetches the Enterprise data files the comparison with .NET
+  reads, through common-ci's fetch step with the inputs
+  `dotnet-comparison.yml` gives it, so the day's entry is saved on `main`
+  and a comparison on any branch restores it.
 - `nightly-pipeline.yml` first runs common-ci's submodule update, which moves
   every submodule to the head of its default branch and raises a pull request
   into `rc` when one has moved, then builds the eligible pull requests into
