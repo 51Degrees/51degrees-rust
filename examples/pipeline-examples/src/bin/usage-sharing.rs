@@ -115,8 +115,8 @@ pub struct UsageSharingOptions {
     /// HTTP headers that must never be shared (the `cookie` header is always
     /// blocked regardless of this list).
     pub blocked_http_headers: Vec<String>,
-    /// The de-duplication window: identical evidence seen again inside this
-    /// interval is not shared twice.
+    /// The repeat evidence interval: identical evidence is shared at most once
+    /// in each interval, measured from the time it was last shared.
     pub repeat_evidence_interval: Duration,
     /// The birth date the example processes.
     pub date_of_birth: String,
@@ -313,8 +313,8 @@ mod tests {
  *
  * How sharing behaves
  * -------------------
- * The element samples a configurable percentage of requests, de-duplicates
- * repeated evidence within a sliding window, batches the survivors and sends each
+ * The element samples a configurable percentage of requests, shares repeated
+ * evidence at most once in each repeat interval, batches the rest and sends each
  * batch from a background thread. None of this blocks request processing. The
  * `cookie` header is never shared, and additional headers can be blocked through
  * the options.
