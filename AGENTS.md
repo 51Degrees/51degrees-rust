@@ -98,7 +98,7 @@ to run, so an exit code of 0 means it ran against a file.
 The examples read `_51DEGREES_DD_PATH` and `_51DEGREES_IPI_PATH` for a data file
 elsewhere, and the cloud examples read `_51DEGREES_RESOURCE_KEY`, for which a
 key comes from the
-[Configurator](https://configure.51degrees.com/?utm_source=github&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=agents.md&utm_term=configure).
+[configuration page](https://51degrees.com/configure/?utm_source=github&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=agents.md&utm_term=configure).
 Every name starts with an underscore, because bash and sh refuse a name that
 starts with a digit, so `export` works in a shell and `$env:` in PowerShell.
 
