@@ -456,9 +456,9 @@ mod tests {
  * are rendered as a `c-eg-alert` at the top of the page. The results table
  * shows `RegisteredName`, `RegisteredOwner` and `RegisteredCountry`, which the
  * free Lite file carries, `Asn` and `AsnName`, which the free ASN file
- * carries, and properties only the Enterprise data file carries, such as
- * `Country`, `Town`,
- * `Latitude`, `Longitude`, `IsHosted` and `IsVPN`. The data file's own list of
+ * carries. Every other row is a property only the Enterprise data file
+ * carries, such as `Country`, `Town`, `Latitude`, `Longitude`, `IsHosted` and
+ * `IsVPN`. The data file's own list of
  * properties says which it has, so with a free file each of those rows says
  * "needs the Enterprise data file", and a message under the table names them
  * with a link to contact 51Degrees about a copy. The `c-eg-message`

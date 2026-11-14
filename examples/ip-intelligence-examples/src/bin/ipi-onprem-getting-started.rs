@@ -169,7 +169,13 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
         carried.extend(available);
     }
 
-    let missing = examples_shared::missing_properties(ENTERPRISE_PROPERTIES, &carried);
+    // The Enterprise properties this example asks for.
+    let asked: Vec<&str> = ENTERPRISE_PROPERTIES
+        .iter()
+        .copied()
+        .filter(|name| DISPLAYED_PROPERTIES.contains(name))
+        .collect();
+    let missing = examples_shared::missing_properties(&asked, &carried);
     if let Some(message) = examples_shared::enterprise_data_file_message(&missing, CONTACT_US_URL) {
         writeln!(out)?;
         writeln!(out, "{message}")?;
@@ -581,9 +587,9 @@ mod tests {
  *
  * With no file named, the example reads both free files from the data
  * repository in turn, the ASN file for `Asn` and `AsnName` and the Lite file
- * for `RegisteredName`, `RegisteredOwner` and `RegisteredCountry`. It also asks
- * for `Country`, `CountryCode`, `Town`, `Latitude`, `Longitude`, `IsHosted`
- * and `IsVPN`, which only the Enterprise data file carries. Each data file's
+ * for `RegisteredName`, `RegisteredOwner` and `RegisteredCountry`. Every other
+ * property it asks for, such as `Country`, `Town`, `Latitude`, `Longitude`,
+ * `IsHosted` and `IsVPN`, only the Enterprise data file carries. Each data file's
  * own list of properties says which it carries, so with a free file each of
  * those prints "needs the Enterprise data file", and the run ends by naming
  * them with a link to contact 51Degrees about a copy of the Enterprise data
