@@ -340,6 +340,17 @@ namespace FiftyOne.Parity
                 line["usage"] = UsageRecords.Find(records, sessionId);
                 line["usageCustom"] = UsageRecords.Find(customRecords, sessionId);
             }
+            // The text around the records of each element's first document
+            // goes on the first line that ran through usage sharing, as the
+            // Rust producer places it.
+            if (sharedLines.Count > 0)
+            {
+                sharedLines[0]["usageDocument"] =
+                    UsageRecords.FirstDocumentFrame(capture.Messages());
+                sharedLines[0]["usageCustomDocument"] =
+                    UsageRecords.FirstDocumentFrame(
+                        customShareUsage.Documents());
+            }
 
             using (var writer = new StreamWriter(args.Out, false,
                 new UTF8Encoding(false)))
@@ -1159,6 +1170,35 @@ namespace FiftyOne.Parity
                 }
             }
             return records;
+        }
+
+        // The text of the first message before its first record and
+        // after its last, as before and after, or null when there is no
+        // message. A message holding no record is all before.
+        public static JsonObject FirstDocumentFrame(List<string> messages)
+        {
+            const string open = "<Device>";
+            const string close = "</Device>";
+            if (messages.Count == 0)
+            {
+                return null;
+            }
+            var message = messages[0];
+            var first = message.IndexOf(open, StringComparison.Ordinal);
+            var last = message.LastIndexOf(close, StringComparison.Ordinal);
+            if (first < 0 || last < 0)
+            {
+                return new JsonObject
+                {
+                    ["before"] = message,
+                    ["after"] = string.Empty
+                };
+            }
+            return new JsonObject
+            {
+                ["before"] = message.Substring(0, first),
+                ["after"] = message.Substring(last + close.Length)
+            };
         }
 
         // The record written with the session id, or null.

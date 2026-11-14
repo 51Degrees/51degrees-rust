@@ -169,6 +169,7 @@ Each program writes one JSON object per case.
 | `javascript` | The JavaScript builder's output. |
 | `usage` | The usage sharing record written for the case, or null. |
 | `usageCustom` | The record the second usage sharing element wrote for the case, or null. |
+| `usageDocument`, `usageCustomDocument` | On the first line that ran through usage sharing, the text of each element's first document before its first record and after its last, as `before` and `after`, with the byte order mark where the document starts with one. Absent or null on every other line. |
 | `fodid` | For a 51Did case, the parse status and, when the 51Did was read, the value of each accessor, else null. |
 | `metadata` | For the 51Did metadata case, the component's name and id and each property's metadata in list order. |
 | `configuration` | For a configuration case, what was built or the error (see "The configuration comparison"). |
@@ -186,8 +187,8 @@ the TAC and Native engines' `Profiles`) and `list`.
 ## The comparison
 
 The comparer names each difference by the case, a path into the line and a
-kind. Properties, the response headers, the session and the errors are
-compared as data, so
+kind. Properties, the response headers, the text around the usage records,
+the session and the errors are compared as data, so
 numbers compare by value. When a property's types differ its values are
 compared as well, so allowing a type never hides a value. The JSON output
 is compared by structure, then by

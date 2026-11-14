@@ -212,11 +212,18 @@ fn main() -> Result<()> {
     drop(pipeline);
     let records = capture.records_by_session();
     let custom_records = custom_capture.records_by_session();
-    for index in shared {
+    for &index in &shared {
         let line = &mut lines[index];
         let session_id = line["session"]["id"].as_str().map(str::to_owned);
         line["usage"] = record_for(&records, session_id.as_deref());
         line["usageCustom"] = record_for(&custom_records, session_id.as_deref());
+    }
+    // The text around the records of each element's first document goes on
+    // the first line that ran through usage sharing, as the .NET producer
+    // places it.
+    if let Some(&first) = shared.first() {
+        lines[first]["usageDocument"] = capture.first_document_frame();
+        lines[first]["usageCustomDocument"] = custom_capture.first_document_frame();
     }
 
     let mut out = BufWriter::new(
