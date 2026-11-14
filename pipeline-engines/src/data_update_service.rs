@@ -180,10 +180,11 @@ impl UpdateCallbacks {
             .push(callback);
     }
 
-    /// Start a check for `engine` on `data_file` by telling every start
-    /// callback, in the order they were added. A callback that panics is
-    /// logged and the others are still told.
+    /// Start a check for `engine` on `data_file` by logging it and telling
+    /// every start callback, in the order they were added. A callback that
+    /// panics is logged and the others are still told.
     fn start(&self, engine: &str, data_file: Option<&Arc<AspectEngineDataFile>>) {
+        log::info!("Checking for update");
         let Some(data_file) = data_file else {
             return;
         };
@@ -513,6 +514,7 @@ impl DataUpdateService {
         // engine on the data it loaded, so the file is still registered for
         // the updates that follow.
         if config.update_on_startup && !already_registered {
+            log::info!("Updating on start-up");
             self.inner
                 .callbacks
                 .start(engine.data_key(), Some(&data_file));
@@ -744,6 +746,7 @@ impl DataUpdateService {
             Some(p) => p.to_path_buf(),
             None => return,
         };
+        log::info!("Creating file system watcher");
         let file_name = path.file_name().map(ToOwned::to_owned);
 
         let engine = Weak::clone(&registration.engine);
@@ -1081,6 +1084,7 @@ impl ServiceHandle {
         // An error message is masked where the check ends, but a log entry
         // written here is not, so the URL these entries name is masked now.
         let logged_url = redact_with(&url, &config.data_update_license_keys);
+        log::info!("Checking for update from '{logged_url}' for Engine '{name}'");
         // A request that never reached the service and one that reached it
         // and gave nothing back are the same failure here, where .NET tells
         // them apart, so the message is the one for the first.
