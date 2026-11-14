@@ -1,0 +1,96 @@
+name: Throwaway measure of the browser contract's first cases
+# Throwaway. Runs the browser contract job for both examples, with the first
+# start of each browser (on) and without it (off), three rounds each, so the
+# time of each browser's first case can be compared.
+on:
+  push:
+    branches: [tmp/rust-f6-measure]
+jobs:
+  contract:
+    name: contract ${{ matrix.mode }} first-start ${{ matrix.first }} round ${{ matrix.round }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [cloud, onpremise]
+        first: [on, off]
+        round: [1, 2, 3]
+    steps:
+      # The script builds the example from this checkout's crates, whose -sys
+      # crates compile the C sources in the cxx submodule. Its data
+      # submodules are not needed, because the TAC file is fetched below. The
+      # crates are versioned from the release tags.
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: examples
+          key: browser-contract
+      # The suite targets net10.0, which the runner image is not guaranteed
+      # to carry.
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      # A pull request from a fork gets no secrets, so it skips with a warning.
+      # Anywhere else a missing secret is an error, because a run that skips
+      # has checked nothing.
+      - name: Check the secrets are available
+        id: secrets
+        shell: pwsh
+        env:
+          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          DEVICE_DETECTION_KEY: ${{ secrets.DEVICE_DETECTION_KEY }}
+          DEVICE_DETECTION_URL: ${{ secrets.DEVICE_DETECTION_URL }}
+          FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
+          MODE: ${{ matrix.mode }}
+        run: |
+          $missing = @()
+          if (-not $env:_51DEGREES_RESOURCE_KEY) {
+            $missing += '_51DEGREES_RESOURCE_KEY_BESPOKE'
+          }
+          if ($env:MODE -eq 'onpremise' -and
+              -not $env:DEVICE_DETECTION_KEY -and -not $env:DEVICE_DETECTION_URL) {
+            $missing += 'DEVICE_DETECTION_KEY or DEVICE_DETECTION_URL'
+          }
+          if (-not $missing) {
+            'run=true' >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          $list = $missing -join ', '
+          if ($env:FROM_FORK -eq 'true') {
+            Write-Host "::warning title=No secrets::A fork has no $list, so the contract is skipped."
+            'run=false' >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          Write-Host "::error title=Missing secrets::$list not available to this workflow."
+          exit 1
+      # The same shared step every other repository uses to fetch data files,
+      # cached for the day.
+      - name: Fetch the TAC data file
+        if: matrix.mode == 'onpremise' && steps.secrets.outputs.run == 'true'
+        uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: TAC-HashV41.hash
+          cache: true
+          device-detection-key: ${{ secrets.DEVICE_DETECTION_KEY }}
+          device-detection-url: ${{ secrets.DEVICE_DETECTION_URL }}
+      - name: Leave out the first start of each browser
+        if: matrix.first == 'off'
+        shell: pwsh
+        run: Remove-Item ci/start-browsers-once.ps1
+
+      - name: Contract tests
+        if: steps.secrets.outputs.run == 'true'
+        shell: pwsh
+        env:
+          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+        run: >-
+          ./ci/run-browser-contract.ps1
+          -Mode ${{ matrix.mode }}
+          -ResourceKey $env:_51DEGREES_RESOURCE_KEY
+          -DataFile assets/TAC-HashV41.hash
