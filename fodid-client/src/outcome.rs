@@ -79,12 +79,12 @@ pub enum ContextOutcome {
 }
 
 impl ContextOutcome {
-    /// Maps the cloud's `context` string, answering
+    /// Maps the cloud's `context` string, ignoring letter case, answering
     /// [`ContextOutcome::Unreadable`] for anything not known, including an
     /// absent value, so an answer this client does not understand fails
     /// closed.
     pub fn from_cloud(value: Option<&str>) -> Self {
-        match value {
+        match value.map(str::to_ascii_lowercase).as_deref() {
             Some("verified") => Self::Verified,
             Some("mismatch") => Self::Mismatch,
             Some("nocontext") => Self::NoContext,
@@ -253,10 +253,10 @@ pub enum SignatureOutcome {
 }
 
 impl SignatureOutcome {
-    /// Maps the cloud's `signature` string, answering
+    /// Maps the cloud's `signature` string, ignoring letter case, answering
     /// [`SignatureOutcome::Unknown`] for anything not known.
     pub fn from_cloud(value: Option<&str>) -> Self {
-        match value {
+        match value.map(str::to_ascii_lowercase).as_deref() {
             Some("verified") => Self::Verified,
             Some("invalid") => Self::Invalid,
             _ => Self::Unknown,
