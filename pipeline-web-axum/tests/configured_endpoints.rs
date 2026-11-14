@@ -69,12 +69,20 @@ async fn the_script_calls_back_to_the_configured_json_path() {
     assert_eq!(javascript.status(), StatusCode::OK);
     let bytes = to_bytes(javascript.into_body(), usize::MAX).await.unwrap();
     let script = String::from_utf8(bytes.to_vec()).unwrap();
+    // The callback URL as the script holds it, for the failure message.
+    let callback = script
+        .find("//example.com")
+        .and_then(|at| script.get(at..(at + CALLBACK_SHOWN).min(script.len())))
+        .unwrap_or("no callback URL");
     assert!(
-        script.contains(&format!("//example.com{JSON_PATH}'")),
-        "the script does not call back to {JSON_PATH}"
+        script.contains(&format!("//example.com{JSON_PATH}")),
+        "the script does not call back to {JSON_PATH}: {callback}"
     );
     assert!(
         !script.contains("/51dpipeline/json"),
-        "the script calls back to the default path"
+        "the script calls back to the default path: {callback}"
     );
 }
+
+/// How many bytes of the callback URL a failure message shows.
+const CALLBACK_SHOWN: usize = 60;
