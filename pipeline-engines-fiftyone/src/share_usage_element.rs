@@ -222,13 +222,15 @@ impl ShareUsageConfig {
     }
 
     /// The query string parameters that are shared, as they were given, in
-    /// addition to any starting with `51d_`. `None` shares every one.
+    /// addition to any starting with `51d_`. `None`, the default, shares
+    /// every one.
     pub fn included_query_string_parameters(&self) -> Option<&[String]> {
         self.included_query_string_parameters.as_deref()
     }
 
     /// True if every evidence value is shared, ignoring the blocked-header
-    /// and query filters, apart from the keys that are never shared (see
+    /// and query filters, apart from the keys that are never shared, which
+    /// include every cookie whose name does not start with `51D_` (see
     /// [`EvidenceKeyFilterShareUsage`]).
     pub fn share_all_evidence(&self) -> bool {
         self.share_all_evidence
@@ -268,7 +270,7 @@ impl ShareUsageConfigBuilder {
                 ),
                 share_usage_url: SHARE_USAGE_DEFAULT_URL.to_owned(),
                 blocked_http_headers: Vec::new(),
-                included_query_string_parameters: Some(Vec::new()),
+                included_query_string_parameters: None,
                 share_all_evidence: false,
                 ignore_flow_data_evidence_filter: Vec::new(),
                 session_cookie_name: None,
@@ -346,8 +348,9 @@ impl ShareUsageConfigBuilder {
     }
 
     /// Set the query string parameters to share (in addition to any starting
-    /// with `51d_`). Passing `None` shares every query parameter. Returns
-    /// `self` for chaining.
+    /// with `51d_`). Passing `None`, the default, shares every query
+    /// parameter, and `Some` of an empty list shares only those starting with
+    /// `51d_`. Returns `self` for chaining.
     pub fn included_query_string_parameters<I, S>(mut self, params: Option<I>) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -359,7 +362,8 @@ impl ShareUsageConfigBuilder {
     }
 
     /// Share every evidence value, ignoring the blocked-header and query
-    /// filters, apart from the keys that are never shared (see
+    /// filters, apart from the keys that are never shared, which include
+    /// every cookie whose name does not start with `51D_` (see
     /// [`EvidenceKeyFilterShareUsage`]). Returns `self` for chaining.
     pub fn share_all_evidence(mut self, share_all: bool) -> Self {
         self.config.share_all_evidence = share_all;
@@ -370,10 +374,10 @@ impl ShareUsageConfigBuilder {
     ///
     /// The cookie's value is then compared along with the evidence, so the
     /// same evidence from a new session is shared again while a repeat
-    /// within one session is not. The cookie itself is not shared unless all
-    /// evidence is shared, and then track session has no effect, as every
-    /// cookie is shared and compared. A name that is empty or only white
-    /// space leaves track session off. Returns `self` for chaining.
+    /// within one session is not, whether or not all evidence is shared. The
+    /// cookie itself is shared only when its name starts with `51D_`, as no
+    /// other cookie is. A name that is empty or only white space leaves
+    /// track session off. Returns `self` for chaining.
     pub fn track_session(mut self, cookie_name: impl Into<String>) -> Self {
         let name = cookie_name.into().trim().to_owned();
         self.config.session_cookie_name = (!name.is_empty()).then_some(name);
@@ -635,27 +639,16 @@ impl ShareUsageElement {
     }
 
     fn with_boxed_sink(config: ShareUsageConfig, sink: Box<dyn UsageSink>) -> Self {
-        // With all evidence shared every cookie is shared and compared, so
-        // track session has no effect.
-        let session_cookie = config
-            .session_cookie_name
-            .as_deref()
-            .filter(|_| !config.share_all_evidence);
-
         // Build the evidence filter from the configured settings. Used for both
         // the element filter and the tracker filter so the two cannot diverge.
         let make_filter = || {
-            let filter = if config.share_all_evidence {
+            if config.share_all_evidence {
                 EvidenceKeyFilterShareUsage::share_all()
             } else {
                 EvidenceKeyFilterShareUsage::new(
                     config.blocked_http_headers.clone(),
                     config.included_query_string_parameters.clone(),
                 )
-            };
-            match session_cookie {
-                Some(name) => filter.without_session_cookie(name),
-                None => filter,
             }
         };
 
@@ -665,7 +658,7 @@ impl ShareUsageElement {
         // session id and sequence so they cannot defeat deduplication, and
         // compares the session cookie when track session is on.
         let mut tracker_filter = EvidenceKeyFilterShareUsageTracker::new(make_filter());
-        if let Some(name) = session_cookie {
+        if let Some(name) = config.session_cookie_name.as_deref() {
             tracker_filter = tracker_filter.with_session_cookie(name);
         }
         let tracker = ShareUsageTracker::new(

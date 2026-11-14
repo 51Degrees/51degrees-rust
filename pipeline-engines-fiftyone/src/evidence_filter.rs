@@ -35,14 +35,15 @@
 //! `server.request-path` and `query.id.email` are never shared, while
 //! `query.valid.email` is an ordinary query string parameter. Nor is the key
 //! `server.http-request`, under which a web integration gives the web
-//! request, only the values read from it.
+//! request, only the values read from it. Nor is a `cookie.*` key whose name
+//! does not start with `51d_`, so a site's own cookies, its session cookie
+//! among them, are never shared.
 //!
 //! Unless all evidence is shared:
 //!
 //! - `header.*` is shared unless the header name is in the blocked list (the
 //!   `cookie` header, which carries every cookie, is always blocked).
-//! - `cookie.*` and `session.*` are shared only when the name starts with
-//!   `51d_`.
+//! - `session.*` is shared only when the name starts with `51d_`.
 //! - `query.*` is shared only when the parameter name starts with `51d_` or is
 //!   in the configured allow list. With no allow list (`None`) every query
 //!   parameter is shared.
@@ -112,9 +113,6 @@ pub struct EvidenceKeyFilterShareUsage {
     /// Lower-cased query parameter names to share. `None` means share all
     /// query parameters.
     included_query_string_params: Option<HashSet<String>>,
-    /// The lower-cased name of the session cookie, which is not shared
-    /// unless every key is.
-    session_cookie: Option<String>,
 }
 
 impl EvidenceKeyFilterShareUsage {
@@ -147,7 +145,6 @@ impl EvidenceKeyFilterShareUsage {
             share_all: false,
             blocked_http_headers: blocked,
             included_query_string_params: included,
-            session_cookie: None,
         }
     }
 
@@ -157,16 +154,7 @@ impl EvidenceKeyFilterShareUsage {
             share_all: true,
             blocked_http_headers: HashSet::new(),
             included_query_string_params: None,
-            session_cookie: None,
         }
-    }
-
-    /// Leave out the cookie with this name, in any case, unless every key is
-    /// shared, even when the name starts with `51D_`. It is the session
-    /// cookie that track session compares. Returns `self` for chaining.
-    pub fn without_session_cookie(mut self, name: &str) -> Self {
-        self.session_cookie = Some(name.to_lowercase());
-        self
     }
 
     /// The core rule, shared by this filter and the tracker filter.
@@ -175,24 +163,22 @@ impl EvidenceKeyFilterShareUsage {
         if is_never_shared(&key) || key == EVIDENCE_HTTP_REQUEST_KEY {
             return false;
         }
-        if self.share_all {
-            return true;
-        }
 
         let Some((prefix, field)) = key.split_once(EVIDENCE_SEPARATOR) else {
             // No prefix: share by default.
             return true;
         };
-        if prefix.is_empty() {
+        if prefix == EVIDENCE_COOKIE_PREFIX {
+            // Only 51D_ cookies, even when all evidence is shared.
+            return field.starts_with(FIFTYONE_PREFIX);
+        }
+        if self.share_all || prefix.is_empty() {
             return true;
         }
 
         if prefix == EVIDENCE_HTTP_HEADER_PREFIX {
             !self.blocked_http_headers.contains(field)
-        } else if prefix == EVIDENCE_COOKIE_PREFIX && self.session_cookie.as_deref() == Some(field)
-        {
-            false
-        } else if prefix == EVIDENCE_COOKIE_PREFIX || prefix == EVIDENCE_SESSION_PREFIX {
+        } else if prefix == EVIDENCE_SESSION_PREFIX {
             field.starts_with(FIFTYONE_PREFIX)
         } else if prefix == EVIDENCE_QUERY_PREFIX {
             match &self.included_query_string_params {
@@ -226,7 +212,8 @@ impl EvidenceKeyFilter for EvidenceKeyFilterShareUsage {
 /// element makes the session id unique and increments the sequence), so
 /// including them in the dedup key would make every request look unique and
 /// defeat the repeat-evidence suppression. With track session on it also
-/// includes the session cookie, which the wrapped filter does not share.
+/// includes the session cookie, which the wrapped filter does not share
+/// unless its name starts with `51D_`.
 #[derive(Debug, Clone)]
 pub struct EvidenceKeyFilterShareUsageTracker {
     inner: EvidenceKeyFilterShareUsage,

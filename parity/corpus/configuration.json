@@ -53,6 +53,7 @@
               "ShareUsageUrl": "https://parity.test/usage",
               "BlockedHttpHeaders": "Referer,X-Forwarded-For",
               "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "ShareAllQueryStringParameters": "false",
               "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
               "ShareAllEvidence": "false",
               "RepeatEvidenceIntervalMinutes": "5"
@@ -115,6 +116,7 @@
               "ShareUsageUrl": "https://parity.test/usage",
               "BlockedHttpHeaders": "Referer,X-Forwarded-For",
               "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "ShareAllQueryStringParameters": "false",
               "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
               "ShareAllEvidence": "false",
               "RepeatEvidenceIntervalMinutes": "5"
@@ -181,6 +183,7 @@
               "ShareUsageUrl": "https://parity.test/usage",
               "BlockedHttpHeaders": "Referer,X-Forwarded-For",
               "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "ShareAllQueryStringParameters": "false",
               "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
               "ShareAllEvidence": "false",
               "RepeatEvidenceIntervalMinutes": "5"
@@ -247,6 +250,7 @@
               "ShareUsageUrl": "https://parity.test/usage",
               "BlockedHttpHeaders": "Referer,X-Forwarded-For",
               "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "ShareAllQueryStringParameters": "false",
               "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
               "ShareAllEvidence": "false",
               "RepeatEvidenceIntervalMinutes": "5"
@@ -313,6 +317,7 @@
               "ShareUsageUrl": "https://parity.test/usage",
               "BlockedHttpHeaders": "Referer,X-Forwarded-For",
               "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "ShareAllQueryStringParameters": "false",
               "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
               "ShareAllEvidence": "false",
               "RepeatEvidenceIntervalMinutes": "5",
@@ -381,6 +386,7 @@
               "ShareUsageUrl": "https://parity.test/usage",
               "BlockedHttpHeaders": "Referer,X-Forwarded-For",
               "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "ShareAllQueryStringParameters": "false",
               "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
               "ShareAllEvidence": "false",
               "RepeatEvidenceIntervalMinutes": "5"
@@ -717,6 +723,7 @@
               "ShareUsageUrl": "https://parity.test/usage",
               "BlockedHttpHeaders": "Referer,X-Forwarded-For",
               "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "ShareAllQueryStringParameters": "false",
               "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
               "ShareAllEvidence": "false",
               "RepeatEvidenceIntervalMinutes": "5"
@@ -783,6 +790,7 @@
               "ShareUsageUrl": "https://parity.test/usage",
               "BlockedHttpHeaders": "Referer,X-Forwarded-For",
               "IncludedQueryStringParameters": "utm_source,utm_medium",
+              "ShareAllQueryStringParameters": "false",
               "IgnoreFlowDataEvidenceFilter": "header.x-health-check:true",
               "ShareAllEvidence": "false",
               "RepeatEvidenceIntervalMinutes": "5"
