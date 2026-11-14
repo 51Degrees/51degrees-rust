@@ -1466,11 +1466,12 @@ fn the_response_to_a_failed_request_is_not_kept_once_processing_recovers() {
 }
 
 #[test]
-fn a_304_while_processing_is_failing_carries_the_fields_of_a_failed_200() {
+fn a_304_while_processing_is_failing_carries_the_fields_of_a_good_200() {
     // A browser that holds a good response revalidates it with its ETag.
-    // While processing is failing the 304 carries what a failed 200 would,
-    // being private, no-cache and no ETag, and once processing recovers it
-    // carries the cacheable fields and the ETag again.
+    // The ETag depends on the evidence alone, so the 304 carries the fields
+    // of a 200 whose processing recorded no errors, while processing is
+    // failing as at any other time, and the browser keeps the good response
+    // and its max-age (web integration specification, the 304 response).
     let failing = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let web = WebPipeline::build(
         vec![Arc::new(FlakyElement {
@@ -1501,8 +1502,11 @@ fn a_304_while_processing_is_failing_carries_the_fields_of_a_failed_200() {
         &options,
     );
     assert_eq!(during.status, WebResponse::STATUS_NOT_MODIFIED);
-    assert_eq!(during.header("Cache-Control"), Some("private, no-cache"));
-    assert_eq!(during.header("ETag"), None);
+    assert_eq!(
+        during.header("Cache-Control"),
+        Some("private, max-age=1800")
+    );
+    assert_eq!(during.header("ETag"), Some(etag));
     assert!(during.header("Vary").is_some());
     assert_eq!(during.header("Vary"), good.header("Vary"));
 
