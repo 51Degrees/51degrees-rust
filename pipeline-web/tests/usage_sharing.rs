@@ -264,6 +264,46 @@ fn usage_sharing_shares_the_web_requests_headers_no_element_accepts() {
     }
 }
 
+/// The raw Cookie header is never shared, even when all evidence is shared,
+/// whether it reaches the element as evidence or in the web request. The
+/// cookies themselves are shared under their own keys.
+#[test]
+fn the_cookie_header_is_never_shared_even_when_sharing_all() {
+    let sink = Arc::new(Keep::default());
+    let share = Arc::new(ShareUsageElement::with_sink(
+        ShareUsageConfig::builder().share_all_evidence(true).build(),
+        Arc::clone(&sink),
+    ));
+    let web = web_pipeline(&share);
+    let request = TestRequest {
+        headers: pairs(&[
+            ("User-Agent", "Mozilla/5.0"),
+            ("Cookie", "51D_Test=kept; other=also-kept"),
+        ]),
+        cookies: pairs(&[("51D_Test", "kept"), ("other", "also-kept")]),
+        query: pairs(&[("session-id", SESSION_ID)]),
+        line: None,
+    };
+    let data = processed(&web, &request);
+    drop(data);
+
+    drop(web);
+    drop(share);
+    let documents = sink.0.lock().unwrap();
+    assert_eq!(documents.len(), 1, "{documents:?}");
+    let document = &documents[0];
+    for shared in [
+        "<header Name=\"User-Agent\">Mozilla/5.0</header>",
+        "<cookie Name=\"51D_Test\">kept</cookie>",
+    ] {
+        assert!(document.contains(shared), "{shared} in {document}");
+    }
+    assert!(
+        !document.contains("Name=\"Cookie\""),
+        "the Cookie header in {document}"
+    );
+}
+
 /// The ignore filter reads a key of the web request only when usage sharing
 /// shares that key, so a pair on a key that is not shared and that no element
 /// accepts does not stop the request being shared. A pair on a shared key

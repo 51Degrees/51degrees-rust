@@ -124,8 +124,9 @@ pub trait JavaScriptBuilderSteps: Send + Sync + RefUnwindSafe {
     /// value as it is given, so a name should be given once and both should
     /// already be encoded for a URL. The default gives every `query.`
     /// evidence value apart from the session id and sequence, named by the
-    /// text after `query.`, with the name and value encoded as .NET's
-    /// `WebUtility.UrlEncode` encodes them, in name order.
+    /// text after `query.` in the key as it was given, with the name and value
+    /// encoded as .NET's `WebUtility.UrlEncode` encodes them, in the order the
+    /// evidence was added.
     fn get_parameters(&self, context: &JavaScriptBuilderContext<'_>) -> Vec<(String, String)> {
         default_steps::get_parameters(context)
     }

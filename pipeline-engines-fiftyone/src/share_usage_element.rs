@@ -1520,10 +1520,7 @@ mod tests {
         );
         let xml = &capture.messages()[0];
         assert!(!xml.contains("never-shared"), "{xml}");
-        assert!(
-            xml.contains("<header Name=\"Cookie\">cookie-header</header>"),
-            "{xml}"
-        );
+        assert!(!xml.contains("cookie-header"), "{xml}");
         assert!(
             xml.contains("<Session Name=\"Other\">session-other</Session>"),
             "{xml}"
@@ -2095,6 +2092,66 @@ mod tests {
             xml.contains("<Sequence>4</Sequence>"),
             "the incremented sequence: {xml}"
         );
+    }
+
+    /// Three calls in one session, as the cloud's own test makes them. The
+    /// first has no sequence, the second the sequence the first was given
+    /// and the same values, and the third the next sequence and a changed
+    /// `51D_` value. The session id and sequence never take part in the
+    /// repeat comparison, whatever is shared, so the second call is a repeat
+    /// and is not shared, and the third is shared with the same session id
+    /// and its own sequence. Every record is sent before the element is
+    /// dropped, so a missing record is not a matter of timing.
+    #[test]
+    fn a_repeat_in_one_session_is_shared_once_whatever_its_sequence() {
+        for share_all in [false, true] {
+            let capture = Capture::default();
+            let element = Arc::new(ShareUsageElement::with_sink(
+                ShareUsageConfig::builder()
+                    .share_all_evidence(share_all)
+                    .build(),
+                capture.clone(),
+            ));
+            let pipeline = Pipeline::builder()
+                .add_element(Arc::new(SequenceElement::new()))
+                .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+                .build()
+                .unwrap();
+            // Process one call and return the session id it ended with.
+            let call = |session: Option<&str>, sequence: Option<&str>, width: &str| {
+                let mut evidence = Evidence::builder()
+                    .add("header.user-agent", "agent")
+                    .add("query.51D_ScreenPixelsWidth", width);
+                if let Some(session) = session {
+                    evidence = evidence.add(EVIDENCE_SESSIONID, session);
+                }
+                if let Some(sequence) = sequence {
+                    evidence = evidence.add(EVIDENCE_SEQUENCE, sequence);
+                }
+                let mut data = pipeline.create_flow_data_with(evidence.build());
+                data.process().unwrap();
+                data.evidence()
+                    .get(EVIDENCE_SESSIONID)
+                    .expect("the sequence element adds a session id")
+                    .to_owned()
+            };
+            let session = call(None, None, "1080");
+            call(Some(&session), Some("1"), "1080");
+            call(Some(&session), Some("2"), "1440");
+            drop(pipeline);
+            drop(element);
+
+            let xml = capture.messages().concat();
+            let records: Vec<&str> = xml.split("<Device>").skip(1).collect();
+            assert_eq!(records.len(), 2, "share all {share_all}: {xml}");
+            for (record, sequence) in records.iter().zip([1, 3]) {
+                let ids =
+                    format!("<SessionId>{session}</SessionId><Sequence>{sequence}</Sequence>");
+                assert!(record.contains(&ids), "share all {share_all}: {xml}");
+            }
+            assert!(records[0].contains(">1080</query>"), "{xml}");
+            assert!(records[1].contains(">1440</query>"), "{xml}");
+        }
     }
 
     /// An element that replaces the session id and sequence evidence.

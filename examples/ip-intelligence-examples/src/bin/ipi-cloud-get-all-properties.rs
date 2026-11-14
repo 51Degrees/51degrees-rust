@@ -168,7 +168,7 @@ fn main() -> Result<()> {
         println!(
             "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
              variable or pass a key as the first argument. Create a key for free at \
-             https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-get-all-properties.rs&utm_term=resource-key-required."
+             https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-get-all-properties.rs&utm_term=resource-key-required."
         );
         examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
         return Ok(());
@@ -251,7 +251,7 @@ mod tests {
  * production deployment should enable usage sharing.
  *
  * To run this example, create a Resource Key for free at
- * https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-get-all-properties.rs&utm_term=ipi-cloud-get-all-properties and supply it via the _51DEGREES_RESOURCE_KEY
+ * https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-get-all-properties.rs&utm_term=ipi-cloud-get-all-properties and supply it via the _51DEGREES_RESOURCE_KEY
  * environment variable or as the first command-line argument. By default the
  * pipeline talks to the public cloud endpoint; set the _51DEGREES_CLOUD_ENDPOINT
  * environment variable to point at a self-hosted Cloud service instead.
