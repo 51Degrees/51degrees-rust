@@ -23,8 +23,9 @@
 //! Usage sharing in a web pipeline. The usage sharing element accepts no
 //! evidence, so a revalidation's `If-None-Match` header does not change the
 //! ETag or the `Vary` header, and it still shares the headers of the web
-//! request that no other element accepts. Its ignore filter reads the web
-//! request only for the keys it shares.
+//! request that no other element accepts, with the evidence an application
+//! adds beside it. Its ignore filter reads the web request only for the keys
+//! it shares.
 
 use std::any::Any;
 use std::sync::{Arc, Mutex};
@@ -261,6 +262,79 @@ fn usage_sharing_shares_the_web_requests_headers_no_element_accepts() {
     }
     for left_out in ["Name=\"X-Blocked\"", "Name=\"Cookie\"", "Name=\"other\""] {
         assert!(!document.contains(left_out), "{left_out} in {document}");
+    }
+}
+
+/// Evidence an application adds beside the web request, under keys no
+/// element accepts, is shared with the web request's values. The JA4 and
+/// HTTP/2 fingerprints and the resource key or licence key are such values,
+/// and the billing keys are shared whatever the configuration.
+#[test]
+fn the_fingerprints_and_the_billing_key_an_application_adds_are_shared() {
+    const JA4: &str = "t13d1516h2_8daaf6152771_02713d6af862";
+    const H2: &str = "1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p";
+    const BILLING_VALUE: &str = "billing-key-value";
+    let request = TestRequest {
+        headers: pairs(&[("User-Agent", "Mozilla/5.0"), ("X-Test", "test")]),
+        query: pairs(&[("session-id", SESSION_ID)]),
+        ..Default::default()
+    };
+    let configurations = [
+        ("by default", ShareUsageConfig::builder().build()),
+        (
+            "with a blocked header and a query parameter list",
+            ShareUsageConfig::builder()
+                .blocked_http_headers(["x-blocked"])
+                .included_query_string_parameters(Some(["listed"]))
+                .build(),
+        ),
+        (
+            "sharing all",
+            ShareUsageConfig::builder().share_all_evidence(true).build(),
+        ),
+    ];
+    for (billing_key, billing_name) in [
+        ("fiftyone.resource-key", "resource-key"),
+        ("fiftyone.license-key", "license-key"),
+    ] {
+        for (configured, config) in &configurations {
+            let sink = Arc::new(Keep::default());
+            let share = Arc::new(ShareUsageElement::with_sink(
+                config.clone(),
+                Arc::clone(&sink),
+            ));
+            let web = web_pipeline(&share);
+            let evidence = build_evidence(&request, web.pipeline().evidence_key_filter());
+            let mut data = web.pipeline().create_flow_data_with(evidence);
+            data.add_evidence("server.ja4", JA4);
+            data.add_evidence("server.h2", H2);
+            data.add_evidence(billing_key, BILLING_VALUE);
+            data.process()
+                .expect("processing does not error (suppressed)");
+            drop(data);
+
+            // The element delivers what it holds when it is dropped.
+            drop(web);
+            drop(share);
+            let documents = sink.0.lock().unwrap();
+            assert_eq!(
+                documents.len(),
+                1,
+                "{billing_key} {configured}: {documents:?}"
+            );
+            let document = &documents[0];
+            for shared in [
+                format!("<server Name=\"ja4\">{JA4}</server>"),
+                format!("<server Name=\"h2\">{H2}</server>"),
+                format!("<fiftyone Name=\"{billing_name}\">{BILLING_VALUE}</fiftyone>"),
+                "<header Name=\"X-Test\">test</header>".to_owned(),
+            ] {
+                assert!(
+                    document.contains(&shared),
+                    "{shared} {configured} in {document}"
+                );
+            }
+        }
     }
 }
 
