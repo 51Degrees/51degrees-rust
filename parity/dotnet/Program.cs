@@ -119,6 +119,10 @@ namespace FiftyOne.Parity
         private const string InSequenceUnsuppressedPipeline =
             "in-sequence-unsuppressed";
 
+        // The pipeline of a case that runs through Device Detection and
+        // then the Set Headers element.
+        private const string SetHeadersPipeline = "set-headers";
+
         // Long enough that the first fetch of a directory the handler serves
         // at once never runs out, and shorter than the slow agent's delay.
         private static readonly TimeSpan AgentSignatureWaitBudget =
@@ -273,12 +277,22 @@ namespace FiftyOne.Parity
                     .SetSuppressProcessExceptions(false)
                     .Build()
             };
-            // The builders' whole output is recorded instead, and the cloud
-            // request engine's data is the case's own response.
+            // Device Detection and then the Set Headers element, so the
+            // response headers Device Detection asks for are compared.
+            var setHeadersElement =
+                new SetHeadersElementBuilder(loggerFactory).Build();
+            var setHeaders = new PipelineBuilder(loggerFactory)
+                .AddFlowElement(device)
+                .AddFlowElement(setHeadersElement)
+                .SetSuppressProcessExceptions(true)
+                .Build();
+            // The builders' whole output is recorded instead, as are the
+            // response headers, and the cloud request engine's data is the
+            // case's own response.
             var skipped = new HashSet<string>
             {
                 json.ElementDataKey, javascript.ElementDataKey,
-                cloudRequest.ElementDataKey
+                cloudRequest.ElementDataKey, setHeadersElement.ElementDataKey
             };
 
             var lines = new List<JsonObject>();
@@ -295,6 +309,7 @@ namespace FiftyOne.Parity
                     AgentSignaturePipeline => agentSignature,
                     TranslationPipeline => translation,
                     CloudTranslationPipeline => cloudTranslation,
+                    SetHeadersPipeline => setHeaders,
                     var other when groups.ContainsKey(other) => groups[other],
                     var other => throw new ArgumentException(
                         $"{item["id"]}: unknown pipeline {other}")
@@ -325,6 +340,17 @@ namespace FiftyOne.Parity
                 line["usage"] = UsageRecords.Find(records, sessionId);
                 line["usageCustom"] = UsageRecords.Find(customRecords, sessionId);
             }
+            // The text around the records of each element's first document
+            // goes on the first line that ran through usage sharing, as the
+            // Rust producer places it.
+            if (sharedLines.Count > 0)
+            {
+                sharedLines[0]["usageDocument"] =
+                    UsageRecords.FirstDocumentFrame(capture.Messages());
+                sharedLines[0]["usageCustomDocument"] =
+                    UsageRecords.FirstDocumentFrame(
+                        customShareUsage.Documents());
+            }
 
             using (var writer = new StreamWriter(args.Out, false,
                 new UTF8Encoding(false)))
@@ -339,6 +365,7 @@ namespace FiftyOne.Parity
                 $"{lines.Count} cases written to {args.Out}, " +
                 $"{records.Count} usage records and " +
                 $"{customRecords.Count} custom usage records captured");
+            setHeaders.Dispose();
             foreach (var group in groups.Values)
             {
                 group.Dispose();
@@ -396,6 +423,7 @@ namespace FiftyOne.Parity
                 ["id"] = item["id"].GetValue<string>(),
                 ["processError"] = processError,
                 ["thrown"] = thrown,
+                ["responseHeaders"] = ResponseHeaders(data),
                 ["properties"] = Properties(pipeline, data, skipped),
                 ["session"] = new JsonObject
                 {
@@ -459,6 +487,27 @@ namespace FiftyOne.Parity
             {
                 return null;
             }
+        }
+
+        // Each response header the Set Headers element gave with its value,
+        // or null when the flow data holds no Set Headers data.
+        private static JsonObject ResponseHeaders(IFlowData data)
+        {
+            var found = data.ElementDataAsDictionary().Values
+                .OfType<global::FiftyOne.Pipeline.Engines.FiftyOne.Data
+                    .ISetHeadersData>()
+                .FirstOrDefault();
+            if (found?.ResponseHeaderDictionary == null)
+            {
+                return null;
+            }
+            var headers = new JsonObject();
+            foreach (var header in found.ResponseHeaderDictionary
+                .OrderBy(h => h.Key, StringComparer.Ordinal))
+            {
+                headers[header.Key] = header.Value;
+            }
+            return headers;
         }
 
         // Every property of every element that lists properties, keyed by
@@ -1121,6 +1170,35 @@ namespace FiftyOne.Parity
                 }
             }
             return records;
+        }
+
+        // The text of the first message before its first record and
+        // after its last, as before and after, or null when there is no
+        // message. A message holding no record is all before.
+        public static JsonObject FirstDocumentFrame(List<string> messages)
+        {
+            const string open = "<Device>";
+            const string close = "</Device>";
+            if (messages.Count == 0)
+            {
+                return null;
+            }
+            var message = messages[0];
+            var first = message.IndexOf(open, StringComparison.Ordinal);
+            var last = message.LastIndexOf(close, StringComparison.Ordinal);
+            if (first < 0 || last < 0)
+            {
+                return new JsonObject
+                {
+                    ["before"] = message,
+                    ["after"] = string.Empty
+                };
+            }
+            return new JsonObject
+            {
+                ["before"] = message.Substring(0, first),
+                ["after"] = message.Substring(last + close.Length)
+            };
         }
 
         // The record written with the session id, or null.
