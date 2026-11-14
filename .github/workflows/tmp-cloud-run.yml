@@ -1,0 +1,31 @@
+name: tmp cloud console examples
+on:
+  push:
+    branches: ['tmp/rust-cloud-run-*']
+jobs:
+  free-data-run:
+    name: the run of every example that needs no key
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Copy the OWID source into fodid
+        shell: pwsh
+        run: ./ci/copy-owid-source.ps1
+      - name: Restore the data files
+        uses: ./.github/actions/restore-data-files
+      - name: Name the week for the Lite IP Intelligence file
+        id: week
+        shell: bash
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - name: Restore the Lite IP Intelligence file
+        uses: actions/cache/restore@v4
+        with:
+          path: cxx/data/ip-intelligence/51Degrees-LiteV41.ipi
+          key: ipi-lite-v41-${{ runner.os }}-${{ steps.week.outputs.week }}
+      - name: Run the examples
+        shell: pwsh
+        run: ./ci/run-examples-on-free-data.ps1

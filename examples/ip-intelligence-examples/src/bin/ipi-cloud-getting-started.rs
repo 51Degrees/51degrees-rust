@@ -207,7 +207,7 @@ fn main() -> Result<()> {
              variable or pass a key as the first argument. Create a key for free at \
              https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-getting-started.rs&utm_term=resource-key-required."
         );
-        examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
+
         return Ok(());
     };
 

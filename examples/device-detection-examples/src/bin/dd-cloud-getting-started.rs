@@ -199,7 +199,7 @@ fn main() -> Result<()> {
             "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
              variable (or pass the key as the first argument). The 51Degrees cloud \
              service is accessed using a resource key, which you can create for free \
-             at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=resource-key-required."
+             at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=resource-key."
         );
         examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
         return Ok(());
