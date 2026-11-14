@@ -80,6 +80,7 @@ $Cloud = @(
     "dd-cloud-getting-started",
     "dd-cloud-metadata",
     "dd-cloud-native-model",
+    "dd-cloud-options-file",
     "dd-cloud-tac"
 ) | ForEach-Object {
     @{ Package = "device-detection-examples"; Bin = $_; NoDataFile = $true; NoKey = $true }
