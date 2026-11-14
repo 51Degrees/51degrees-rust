@@ -162,7 +162,7 @@ else {
     $packages = ($selected | ForEach-Object { "-p $_" }) -join ' '
 }
 
-Write-Host "Systems: $($os -join ', ')$(if (-not $withMac) { ', macOS left out' })"
+Write-Host "Systems: $($os -join ', ').$(if (-not $withMac) { ' macOS is left out.' })"
 if ($whole) {
     Write-Host "Builds the whole workspace, because $reason."
 }
