@@ -1,24 +1,31 @@
 <#
 .SYNOPSIS
-Runs every on-premise example as someone who has just cloned the repository
-would, on the free data files with no settings, and fails when one fails.
+Runs every example that needs no key as someone who has just cloned the
+repository would, on the free data files with no settings, and fails when one
+fails.
 
 .DESCRIPTION
-Each example runs from examples/ with no arguments and with every
-_51DEGREES_ variable removed, so it finds the free data files in cxx/data
-itself. Before any example starts, the data repository's script is run once,
+Each example runs from examples/ with every _51DEGREES_ variable removed,
+and every deprecated name deprecated-names/environment.rs lists for one, so
+it finds the free data files in cxx/data itself. A console example is given
+no arguments. Before any example starts, the data repository's script is run once,
 as an example runs it, to download every free file the repository links that
 is not already there, so no two examples download the same file. A try that
 fails, or that does not finish in time and is stopped, is made again, and a
 file still missing after the last try fails the step before the examples are
 built.
 
-The console examples must exit 0, print the contact-us link for the
-Enterprise data file, and end with the "Find out more" section. A data file
-an example could not download fails the step too. An example that runs too
-long is stopped with every process it started, so a download it began cannot
-keep a file open for the next one. The two on-premise web examples are
-started, and their page must carry the same link and section.
+The console examples must exit 0 and end with the "Find out more" section.
+One that reads a 51Degrees data file must also print the contact-us link for
+the Enterprise data file before that section. The pipeline examples read no
+51Degrees data file, so they have no such link to give. A data file an
+example could not download fails the step too. An example that runs too long
+is stopped with every process it started, so a download it began cannot keep
+a file open for the next one. The web examples are started, and their page is
+held to the same rules.
+
+The usage-sharing example is not run, because it sends what it holds to the
+usage sharing service when it ends.
 
 Each example's output is printed in a group, and the lines about the
 Enterprise data file and any download are printed outside the groups so the
@@ -51,16 +58,28 @@ $Console = @(
     @{ Package = "ip-intelligence-examples"; Bin = "ipi-onprem-offline-processing" },
     @{ Package = "ip-intelligence-examples"; Bin = "ipi-onprem-performance" },
     @{ Package = "ip-intelligence-examples"; Bin = "ipi-onprem-suspicious" },
-    @{ Package = "ip-intelligence-examples"; Bin = "ipi-onprem-update-data-file" }
+    @{ Package = "ip-intelligence-examples"; Bin = "ipi-onprem-update-data-file" },
+    @{ Package = "pipeline-examples"; Bin = "caching"; NoDataFile = $true },
+    @{ Package = "pipeline-examples"; Bin = "ss-simple"; NoDataFile = $true },
+    @{ Package = "pipeline-examples"; Bin = "ss-onprem"; NoDataFile = $true },
+    @{ Package = "pipeline-examples"; Bin = "ss-cloud"; NoDataFile = $true }
 )
 
-# The on-premise web examples, each started, asked for its page and stopped.
+# The web examples that need no key, each started, asked for its page and
+# stopped. One takes its port from PORT, and ss-clientside takes the address
+# to listen on as its argument.
 $Web = @(
     @{ Package = "device-detection-examples"; Bin = "dd-web-getting-started-onprem"; Port = 5301 },
-    @{ Package = "ip-intelligence-examples"; Bin = "ipi-web-getting-started-onprem"; Port = 5302 }
+    @{ Package = "ip-intelligence-examples"; Bin = "ipi-web-getting-started-onprem"; Port = 5302 },
+    @{ Package = "device-detection-examples"; Bin = "dd-web-uach"; Port = 5303 },
+    @{
+        Package = "pipeline-examples"; Bin = "ss-clientside"; Port = 5304
+        AddressArgument = $true; NoDataFile = $true
+    }
 )
 
-# What every example's output must carry.
+# What the output of an example that reads a 51Degrees data file must carry,
+# and what every example's output must carry.
 $ContactUs = "51degrees.com/contact-us?utm_source=code"
 $EnterpriseTerm = "utm_term=enterprise-data-file"
 $FindOutMore = "Find out more"
@@ -78,10 +97,23 @@ $Data = Join-Path $Root "cxx/data"
 $Logs = Join-Path $Examples "target/free-data-logs"
 $failures = [System.Collections.Generic.List[string]]::new()
 
-# Out of the box means no settings, so every variable the examples or the
-# engines read is removed for this process and the examples it starts.
+# The deprecated names the examples still read when the current name is not
+# set, taken from the one file that lists them.
+function Get-DeprecatedNames {
+    $source = Get-Content -Raw (Join-Path $Root "deprecated-names/environment.rs")
+    $pairs = [regex]::Matches($source, '"(_51DEGREES_[A-Z0-9_]+)",\s*"([A-Z0-9_]+)"')
+    if ($pairs.Count -eq 0) {
+        throw "No deprecated names were found in deprecated-names/environment.rs."
+    }
+    return $pairs | ForEach-Object { $_.Groups[2].Value }
+}
+
+# Out of the box means no settings, so every 51Degrees variable the examples
+# or the engines read, under its current or its deprecated name, is removed
+# for this process and the examples it starts.
+$Deprecated = @(Get-DeprecatedNames)
 Get-ChildItem Env: |
-    Where-Object { $_.Name -like "_51DEGREES_*" } |
+    Where-Object { $_.Name -like "_51DEGREES_*" -or $_.Name -in $Deprecated } |
     ForEach-Object {
         Write-Host "Removing $($_.Name) from the environment."
         Remove-Item -Path "Env:$($_.Name)"
@@ -95,9 +127,11 @@ function Get-Exe([string]$Bin) {
 }
 
 # Start an example with its output going to files, and return the process.
-function Start-Example([string]$Bin) {
+function Start-Example([string]$Bin, [string]$Argument) {
+    $arguments = @{}
+    if ($Argument) { $arguments.ArgumentList = $Argument }
     $process = Start-Process -FilePath (Get-Exe $Bin) -PassThru -NoNewWindow `
-        -WorkingDirectory $Examples `
+        -WorkingDirectory $Examples @arguments `
         -RedirectStandardOutput (Join-Path $Logs "$Bin.out.txt") `
         -RedirectStandardError (Join-Path $Logs "$Bin.err.txt")
     # Reading the handle now keeps the exit code readable once it exits.
@@ -197,17 +231,21 @@ function Show-Output([string]$Bin, [string]$Text) {
         ForEach-Object { Write-Host "  $Bin | $($_.Trim())" }
 }
 
-# Check that `Text` carries the contact-us link and then the section.
-function Test-Output([string]$Bin, [string]$Text) {
-    $link = $Text.IndexOf($EnterpriseTerm)
+# Check that `Text` carries the section, and for an example that reads a
+# 51Degrees data file the contact-us link before it.
+function Test-Output($Example, [string]$Text) {
+    $bin = $Example.Bin
     $section = $Text.LastIndexOf($FindOutMore)
-    if (-not $Text.Contains($ContactUs) -or $link -lt 0) {
-        $failures.Add("$Bin gave no contact-us link for the Enterprise data file")
-    }
     if ($section -lt 0) {
-        $failures.Add("$Bin has no '$FindOutMore' section")
-    } elseif ($link -gt $section) {
-        $failures.Add("$Bin does not end with its '$FindOutMore' section")
+        $failures.Add("$bin has no '$FindOutMore' section")
+    }
+    if ($Example.NoDataFile) { return }
+    $link = $Text.IndexOf($EnterpriseTerm)
+    if (-not $Text.Contains($ContactUs) -or $link -lt 0) {
+        $failures.Add("$bin gave no contact-us link for the Enterprise data file")
+    }
+    if ($section -ge 0 -and $link -gt $section) {
+        $failures.Add("$bin does not end with its '$FindOutMore' section")
     }
 }
 
@@ -238,15 +276,16 @@ function Invoke-Console($Example) {
     if ((Get-Errors $bin) -match 'could not be downloaded') {
         $failures.Add("$bin could not download a data file")
     }
-    Test-Output $bin $text
+    Test-Output $Example $text
 }
 
 function Invoke-Web($Example) {
     $bin = $Example.Bin
-    $url = "http://localhost:$($Example.Port)/"
+    $url = "http://127.0.0.1:$($Example.Port)/"
     Write-Host "Starting $bin on $url"
     $env:PORT = "$($Example.Port)"
-    $process = Start-Example $bin
+    $argument = if ($Example.AddressArgument) { "127.0.0.1:$($Example.Port)" } else { "" }
+    $process = Start-Example $bin $argument
     try {
         $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
         $page = $null
@@ -269,7 +308,7 @@ function Invoke-Web($Example) {
             $page = ""
         }
         Show-Output $bin $page
-        if ($page) { Test-Output $bin $page }
+        if ($page) { Test-Output $Example $page }
     } finally {
         Stop-Tree $process
         Remove-Item Env:PORT -ErrorAction SilentlyContinue
@@ -280,7 +319,7 @@ $run = {
     $packages = ($Console + $Web) | ForEach-Object { $_.Package } | Select-Object -Unique
     $bins = ($Console + $Web) | ForEach-Object { "--bin"; $_.Bin }
     $selection = $packages | ForEach-Object { "-p"; $_ }
-    Write-Host "::group::Build the on-premise examples"
+    Write-Host "::group::Build the examples"
     cargo build --config source.toml @selection @bins
     Write-Host "::endgroup::"
 
@@ -289,7 +328,7 @@ $run = {
     foreach ($example in $Web) { Invoke-Web $example }
 }
 
-# Every example reads a free data file, so without them the examples are
+# Most examples read a free data file, so without them the examples are
 # not built or run.
 if (Get-FreeDataFiles) {
     & (Join-Path $PSScriptRoot "test-examples-against-source.ps1") -Root $Root -Command $run
@@ -299,4 +338,4 @@ if ($failures.Count -gt 0) {
     foreach ($failure in $failures) { Write-Host "::error::$failure" }
     exit 1
 }
-Write-Host "Every on-premise example ran on the free data files."
+Write-Host "Every example that needs no key ran on the free data files."
