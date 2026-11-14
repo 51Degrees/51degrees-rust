@@ -29,8 +29,9 @@ name: Nightly Pipeline
 # branch of SWAN-community/owid-rust also arrives this way and is compiled
 # into fodid. The update pull request then goes through the same checks as
 # any other, in this run when it is eligible, and merging it releases the
-# crates. The package update does the same for the examples' lock, moving it
-# to the latest versions on crates.io through ci/update-packages.ps1, so a
+# crates. The package update does the same for the examples' lock, moving
+# this repository's crates in it to their latest versions on crates.io
+# through ci/update-packages.ps1, so a
 # fresh clone builds the examples with the crates last released.
 
 on:
@@ -53,7 +54,8 @@ jobs:
     secrets:
       token: ${{ secrets.ACCESS_TOKEN }}
 
-  # Moves the examples' lock to the latest versions on crates.io with
+  # Moves this repository's crates in the examples' lock to their latest
+  # versions on crates.io with
   # ci/update-packages.ps1, in a pull request when it changed, as the other
   # languages move their examples to the packages they last released.
   PackageUpdate:

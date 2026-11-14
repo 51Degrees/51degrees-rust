@@ -358,7 +358,8 @@ submodule is checked out and from that file otherwise.
   which takes the files from that cache through common-ci's
   `steps/fetch-assets.ps1` and copies them into `cxx/data`. Beside the
   submodule update, common-ci's package update runs `ci/update-packages.ps1`,
-  which moves the examples' lock to the latest versions on crates.io, and
+  which moves this repository's crates in the examples' lock to their latest
+  versions on crates.io, and
   raises a pull request into `rc` when it moved, so a fresh clone builds the
   examples with the crates last released. The check of the examples against
   the published crates, run by hand in `examples.yml` and after each release
