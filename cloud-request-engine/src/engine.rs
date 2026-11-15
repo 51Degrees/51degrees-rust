@@ -389,18 +389,15 @@ impl CloudRequestEngine {
             let _ = self.evidence_filter.set(filter);
         }
         if self.public_properties.get().is_none() {
-            let products = match &self.resource_key {
-                Some(key) => fetch_public_properties(
-                    self.http.as_ref(),
-                    &self.recovery,
-                    &self.endpoints,
-                    key,
-                    self.license_key.as_deref(),
-                    origin,
-                    &self.secrets,
-                ),
-                None => Ok(LicensedProducts::default()),
-            }?;
+            let products = fetch_public_properties(
+                self.http.as_ref(),
+                &self.recovery,
+                &self.endpoints,
+                self.resource_key.as_deref(),
+                self.license_key.as_deref(),
+                origin,
+                &self.secrets,
+            )?;
             let _ = self.public_properties.set(products);
         }
         Ok(())
@@ -1366,25 +1363,18 @@ impl CloudRequestEngineBuilder {
             let origin = self.cloud_request_origin.as_deref();
             let evidence =
                 fetch_evidence_keys(http.as_ref(), &recovery, &endpoints, origin, &secrets);
-            let products = match &resource_key {
-                Some(key) => fetch_public_properties(
-                    http.as_ref(),
-                    &recovery,
-                    &endpoints,
-                    key,
-                    license_key.as_deref(),
-                    origin,
-                    &secrets,
-                ),
-                // The accessible-properties endpoint takes a resource key and
-                // refuses a request without one, so an engine holding only a
-                // license key has nothing to fetch and starts with none. A
-                // downstream cloud aspect engine already handles empty
-                // metadata, reading the response JSON and inferring each
-                // property's type from its value, which is what it does today
-                // for a resource key that grants it no product.
-                None => Ok(LicensedProducts::default()),
-            };
+            // Both discovery requests are made at build, with a license key
+            // alone too, because the cloud service answers the accessible
+            // properties of a license key as it does those of a resource key.
+            let products = fetch_public_properties(
+                http.as_ref(),
+                &recovery,
+                &endpoints,
+                resource_key.as_deref(),
+                license_key.as_deref(),
+                origin,
+                &secrets,
+            );
             // Both requests are made first, so a 4xx answer to either fails
             // the build even when the other failed for a transient reason.
             // Neither checks the recovery gate, so a failure that opens a
@@ -1779,29 +1769,34 @@ fn fetch_evidence_keys(
 /// The license key is sent with the resource key when one is set and not
 /// blank, as the data request does, because the cloud adds the products the
 /// license key grants to those of the resource key. Asking with the resource
-/// key alone left those products out of the engine's metadata.
+/// key alone left those products out of the engine's metadata. An engine
+/// built on a license key alone asks with the license key, and the cloud
+/// answers with every property it entitles.
 fn fetch_public_properties(
     http: &dyn CloudHttpClient,
     recovery: &RecoveryGate,
     endpoints: &Endpoints,
-    resource_key: &str,
+    resource_key: Option<&str>,
     license_key: Option<&str>,
     origin: Option<&str>,
     secrets: &[String],
 ) -> Result<LicensedProducts> {
-    let mut url = format!(
-        "{}?{}={}",
-        endpoints.properties,
-        constants::RESOURCE_PARAMETER,
-        encode_query_value(resource_key)
-    );
+    let mut parameters = Vec::new();
+    if let Some(resource) = resource_key {
+        parameters.push(format!(
+            "{}={}",
+            constants::RESOURCE_PARAMETER,
+            encode_query_value(resource)
+        ));
+    }
     if let Some(license) = license_key.filter(|l| !l.trim().is_empty()) {
-        url.push_str(&format!(
-            "&{}={}",
+        parameters.push(format!(
+            "{}={}",
             constants::LICENSE_PARAMETER,
             encode_query_value(license)
         ));
     }
+    let url = format!("{}?{}", endpoints.properties, parameters.join("&"));
     let request = CloudHttpRequest {
         method: HttpMethod::Get,
         url,
