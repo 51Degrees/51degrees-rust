@@ -1254,7 +1254,7 @@ impl ServiceHandle {
                 name,
             )?;
             let data = if config.decompress_content {
-                gzip_decompress(&compressed).map_err(|e| decompress_error(&url, e))?
+                gzip_decompress(&compressed).map_err(|e| decompress_error(&url, name, e))?
             } else {
                 compressed
             };
@@ -1272,7 +1272,7 @@ impl ServiceHandle {
         // rename. Each is removed when it goes out of scope, so an update that
         // fails part way leaves nothing behind.
         let download = TempFile::beside(path, "download");
-        save_body(&mut body, download.path(), |e| {
+        save_body(&mut body, download.path(), name, |e| {
             access_error(&url, name, read_error_message(e))
         })?;
         log::info!("Downloaded new data from '{logged_url}' for Engine '{name}'");
@@ -1285,7 +1285,7 @@ impl ServiceHandle {
         let new_file = if config.decompress_content {
             let decompressed = TempFile::beside(path, "new");
             gunzip_file(download.path(), decompressed.path(), &stop)
-                .map_err(|e| decompress_error(&url, e))?;
+                .map_err(|e| decompress_error(&url, name, e))?;
             drop(download);
             decompressed
         } else {
@@ -1493,16 +1493,17 @@ impl Drop for TempFile {
 }
 
 /// Write everything `body` reads into a new file at `path`, flushed to disk.
-/// A failed read is the error `read_error` makes of it, and a failed write
-/// names the file.
+/// A failed read is the error `read_error` makes of it, and a failed write is
+/// an unhandled error for `engine` naming the file.
 fn save_body(
     body: &mut impl Read,
     path: &Path,
+    engine: &str,
     read_error: impl Fn(std::io::Error) -> DataUpdateError,
 ) -> Result<(), DataUpdateError> {
     let write_error = |error: std::io::Error| {
-        DataUpdateError::new(
-            AutoUpdateStatus::StreamError,
+        unhandled_error(
+            engine,
             format!("error writing data update to '{}': {error}", path.display()),
         )
     };
@@ -1572,10 +1573,24 @@ fn access_error(url: &str, engine: &str, cause: String) -> DataUpdateError {
     )
 }
 
-/// The error for a download that could not be decompressed.
-fn decompress_error(url: &str, error: std::io::Error) -> DataUpdateError {
+/// The error for a failure the errors table lists under no other row, such
+/// as a download that cannot be decompressed or written, which .NET also
+/// reports as an unhandled error, with `cause` attached.
+fn unhandled_error(engine: &str, cause: impl std::fmt::Display) -> DataUpdateError {
     DataUpdateError::new(
-        AutoUpdateStatus::StreamError,
+        AutoUpdateStatus::UnknownError,
+        format!(
+            "An unhandled error occurred while checking for automatic updates for engine \
+             '{engine}'. Error detail: {cause}"
+        ),
+    )
+}
+
+/// The error for a download from `url` for `engine` that could not be
+/// decompressed.
+fn decompress_error(url: &str, engine: &str, error: std::io::Error) -> DataUpdateError {
+    unhandled_error(
+        engine,
         format!("error decompressing data update from '{url}': {error}"),
     )
 }

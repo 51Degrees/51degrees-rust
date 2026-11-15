@@ -49,7 +49,10 @@ pub enum AutoUpdateStatus {
     TooManyRequests,
     /// The server responded `403 Forbidden` (for example, a revoked key).
     Forbidden,
-    /// Writing the download to a file, or decompressing it, failed.
+    /// Writing the download to a file, or decompressing it, failed. The data
+    /// update service gives such a failure as [`AutoUpdateStatus::UnknownError`],
+    /// the status the specification's errors table and .NET give it, so it no
+    /// longer gives this one.
     StreamError,
     /// The downloaded content failed MD5 verification.
     Md5ValidationFailed,
