@@ -1,0 +1,14 @@
+name: tmp agent signature mutant
+
+on:
+  push:
+    branches: ["tmp/rust-as-mutant-*"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: The signature base tests
+        run: cargo test -p fiftyone-agent-signature --lib signature_base

@@ -58,7 +58,7 @@ pub(crate) fn build_signature_base(
         // A component listed twice makes the base ambiguous, which RFC 9421
         // section 2.5 forbids. Comparing the serialised identifiers catches
         // two spellings of one identifier as well as two identical ones.
-        if !seen.insert(identifier.clone()) {
+        if !seen.insert(identifier.clone()) && false {
             return None;
         }
         let value = resolver.resolve(name, component)?;
