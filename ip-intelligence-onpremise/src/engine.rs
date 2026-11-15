@@ -212,6 +212,25 @@ struct FilePropertyPlace {
     value_count: u32,
 }
 
+/// The properties and components of the data file `manager` holds, from which
+/// [`describe`] builds the engine's metadata.
+fn read_metadata(manager: &Manager) -> Result<(Vec<DataFileProperty>, Vec<DataFileComponent>)> {
+    Ok((
+        manager.data_file_properties()?,
+        manager.data_file_components()?,
+    ))
+}
+
+/// Read the metadata of `candidate`, a data set opened on its own from the
+/// data a refresh is about to load, before the engine's data set is replaced
+/// with that data. Data whose metadata cannot be read then fails the refresh,
+/// and the engine goes on using the data set it had, as the data updates
+/// specification asks. A reload replaces the data set before the engine can
+/// read the new metadata, so the check cannot wait until then.
+fn check_metadata(candidate: &Manager) -> Result<()> {
+    read_metadata(candidate).map(|_| ())
+}
+
 /// The data set `manager` holds, read from `copy` when there is one, and its
 /// metadata, reporting `tier_override` when it is set, otherwise the tier the
 /// data file names. The missing property rules always compare with the tier
@@ -230,12 +249,12 @@ fn describe(
         .data_set_name()
         .unwrap_or_else(|| DEFAULT_DATA_SOURCE_TIER.to_owned());
     let tier = tier_override.clone().unwrap_or_else(|| file_tier.clone());
-    let file_properties = manager.data_file_properties()?;
+    let (file_properties, file_components) = read_metadata(&manager)?;
     let EngineMetadata {
         lent,
         fiftyone_properties,
         components,
-    } = build_metadata(&file_properties, &manager.data_file_components()?, tier);
+    } = build_metadata(&file_properties, &file_components, tier);
     let readable = Arc::new(ReadableNames::new(&file_properties, names));
     let file_property_places = file_properties
         .iter()
@@ -542,8 +561,9 @@ impl IpIntelligenceOnPremiseEngine {
 
     /// Reload the data set in the engine's manager from the data file at
     /// `path`, or from the copy of it the engine reads, and describe the new
-    /// data set. See [`Self::swap_in`]. A reload that fails leaves the data
-    /// set in use and removes the copy, which nothing then reads.
+    /// data set. See [`Self::swap_in`]. The new data's metadata is read first
+    /// (see [`check_metadata`]). A reload that fails leaves the data set in
+    /// use and removes the copy, which nothing then reads.
     fn reload_from_path(&self, path: &Path) -> Result<()> {
         let _refreshing = self
             .refresh_lock
@@ -559,19 +579,28 @@ impl IpIntelligenceOnPremiseEngine {
                 self.reuse_temp_file,
             )
         });
+        let source = copy.as_ref().map_or(path, OperationalCopy::path);
+        check_metadata(&Manager::open(source, PerformanceProfile::LowMemory)?)?;
         let manager = Arc::clone(&self.loaded.load().manager);
-        manager.reload_from_file(copy.as_ref().map_or(path, OperationalCopy::path))?;
+        manager.reload_from_file(source)?;
         self.swap_in(copy, manager)
     }
 
     /// Reload the data set in the engine's manager from `data`, the whole of
     /// a data file, which the C library copies, and describe the new data
-    /// set. See [`Self::swap_in`].
+    /// set. See [`Self::swap_in`]. The new data's metadata is read first
+    /// (see [`check_metadata`]), from a second copy of `data` held only for
+    /// that read.
     fn reload_from_memory(&self, data: &[u8]) -> Result<()> {
         let _refreshing = self
             .refresh_lock
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        check_metadata(&Manager::open_from_memory(
+            data.to_vec(),
+            PerformanceProfile::LowMemory,
+            None,
+        )?)?;
         let manager = Arc::clone(&self.loaded.load().manager);
         manager.reload_from_memory(data)?;
         self.swap_in(None, manager)
@@ -584,9 +613,10 @@ impl IpIntelligenceOnPremiseEngine {
     /// header follow the new data, which can differ from the old. The caller
     /// holds the refresh lock.
     ///
-    /// When the new data set's metadata cannot be read the error is returned
-    /// and lookups go on reading the new data set by the properties of the
-    /// one before, whose names and indexes it keeps, with `copy` kept until
+    /// The metadata was read before the reload, so it fails here only when a
+    /// second read of the same data fails. Then the error is returned and
+    /// lookups go on reading the new data set by the properties of the one
+    /// before, whose names and indexes it keeps, with `copy` kept until
     /// nothing reads it.
     fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
         let evidence_keys = DataFileEvidenceKeys::whitelist(&manager);
