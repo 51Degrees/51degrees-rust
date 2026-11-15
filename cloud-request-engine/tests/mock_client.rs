@@ -1477,6 +1477,59 @@ fn accessible_properties_are_asked_for_with_the_license_key() {
     );
 }
 
+/// The request the builder asked the `accessibleproperties` endpoint with.
+fn accessible_properties_request(client: &FakeClient) -> CloudHttpRequest {
+    client
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|r| r.url.contains("accessibleproperties"))
+        .expect("the build asked for the accessible properties")
+        .clone()
+}
+
+/// cloud-request-engine.md: "An Engine built on a License Key alone MUST
+/// make the `accessibleproperties` request with the License Key, sent as
+/// `license` in the body of a POST request rather than in the URL, so that
+/// the key stays out of request logs." With a resource key as well, the
+/// License Key stays out of the URL for the same reason.
+#[test]
+fn a_license_key_is_sent_for_accessible_properties_in_the_body_of_a_post() {
+    let client = Arc::new(FakeClient::default());
+    license_engine_with(client.clone(), &["device.ismobile"]);
+    let request = accessible_properties_request(&client);
+    assert_eq!(request.method, HttpMethod::Post, "a License Key alone");
+    assert_eq!(
+        request.url, "https://cloud.example.test/api/v4/accessibleproperties",
+        "a License Key alone"
+    );
+    assert_eq!(
+        request.form,
+        vec![("license".to_owned(), "test-license-key".to_owned())],
+        "a License Key alone"
+    );
+
+    let client = Arc::new(FakeClient::default());
+    CloudRequestEngine::builder()
+        .resource_key("test-resource-key")
+        .license_key("LICENSE+KEY/1")
+        .endpoint("https://cloud.example.test/api/v4/")
+        .http_client(client.clone())
+        .build()
+        .unwrap();
+    let request = accessible_properties_request(&client);
+    assert_eq!(request.method, HttpMethod::Post, "both keys");
+    assert!(!request.url.contains("license"), "both keys: {}", request.url);
+    assert!(
+        request
+            .form
+            .contains(&("license".to_owned(), "LICENSE+KEY/1".to_owned())),
+        "both keys: {:?}",
+        request.form
+    );
+}
+
 #[test]
 fn accessible_properties_are_asked_for_without_a_blank_license_key() {
     for license in [None, Some(""), Some("  ")] {
