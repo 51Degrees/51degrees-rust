@@ -403,9 +403,12 @@ submodule is checked out and from that file otherwise.
 - `data-files.yml` runs each day on `main` and keeps the free data files in
   one Actions cache entry. It restores the newest entry, asks the Distributor
   only whether each file has changed (`-Update`), and saves the files under a
-  new dated key. `pull-request.yml`, `examples.yml` and
-  `nightly-performance.yml` restore that entry through
-  `.github/actions/restore-data-files`. They leave the daily entry to
+  new dated key. `pull-request.yml`, `examples.yml`,
+  `nightly-performance.yml`, `dotnet-comparison.yml` and both jobs of
+  `publish.yml` restore that entry through
+  `.github/actions/restore-data-files`, and download only a file the entry
+  lacks, so no job downloads the free data files while the entry holds them.
+  They leave the daily entry to
   `data-files.yml`, because an entry saved by a pull request run can only be
   restored by that pull request. Until a daily entry
   exists, the action falls back to an entry keyed by the ref, the workflow
