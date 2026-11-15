@@ -473,6 +473,35 @@ mod tests {
         assert_eq!(uach.get(SEC_CH_UA_MOBILE).unwrap().as_str(), Some("?1"));
     }
 
+    /// A query value that cannot be decoded, or that gives no header, leaves
+    /// the cookie value to be used, because the specification counts a value
+    /// as available only when it gives at least one header.
+    #[test]
+    fn cookie_evidence_used_when_the_query_value_gives_no_header() {
+        let cookie_blob = encode(r#"{"platform": "Windows"}"#);
+        for (case, query_blob) in [
+            ("not base 64", "not base 64!".to_owned()),
+            ("not JSON", STANDARD.encode(b"this is not json")),
+            ("no header", encode("{}")),
+        ] {
+            let pipeline = Pipeline::builder()
+                .add_element(Arc::new(UachJsConversionElement::new()))
+                .build()
+                .unwrap();
+            let mut data = pipeline.create_flow_data_with(
+                Evidence::builder()
+                    .add(UACH_EVIDENCE_QUERY_KEY, query_blob)
+                    .add(UACH_EVIDENCE_COOKIE_KEY, cookie_blob.clone())
+                    .build(),
+            );
+            data.process().unwrap();
+
+            let uach = data.get(UachJsConversionElement::DATA_KEY).unwrap();
+            let platform = uach.get(SEC_CH_UA_PLATFORM).expect(case);
+            assert_eq!(platform.as_str(), Some("\"Windows\""), "{case}");
+        }
+    }
+
     #[test]
     fn no_evidence_produces_empty_data_not_error() {
         let pipeline = Pipeline::builder()
