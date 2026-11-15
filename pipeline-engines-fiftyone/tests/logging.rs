@@ -405,6 +405,82 @@ fn a_pause_after_failed_sends_logs_each_failure_then_one_pause_warning() {
     );
 }
 
+/// A sink that takes `delay` over each message and counts the records the
+/// messages hold.
+struct Slow {
+    delay: Duration,
+    received: Arc<AtomicUsize>,
+}
+
+impl UsageSink for Slow {
+    fn receive(
+        &self,
+        batch: UsageBatch,
+    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        std::thread::sleep(self.delay);
+        self.received
+            .fetch_add(batch.records().len(), Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+/// usage-sharing-element.md, "Cleanup": "Cleanup SHOULD complete within 5
+/// seconds, so that closing the element does not hold up the process that
+/// closes it. If the data waiting in the queue has not all been sent after 5
+/// seconds, the element SHOULD stop sending, discard the data remaining in
+/// the queue and log a warning." Twenty records to a sink that takes a
+/// second over each message would hold closing for ten seconds or more.
+#[test]
+fn closing_stops_sending_after_five_seconds_and_logs_what_was_left() {
+    const CLOSE_LIMIT_MILLISECONDS: u64 = 5000;
+    // How long closing may take beyond the limit, for the scheduler.
+    const CLOSE_MARGIN_MILLISECONDS: u64 = 1500;
+    const SEND_SECONDS: u64 = 1;
+    const RECORDS: usize = 20;
+    let _serial = start();
+    let received = Arc::new(AtomicUsize::new(0));
+    let share = Arc::new(ShareUsageElement::with_sink(
+        ShareUsageConfig::builder()
+            .minimum_entries_per_message(1)
+            .take_timeout(Duration::ZERO)
+            .build(),
+        Slow {
+            delay: Duration::from_secs(SEND_SECONDS),
+            received: Arc::clone(&received),
+        },
+    ));
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::clone(&share) as Arc<dyn FlowElement>)
+        .build()
+        .unwrap();
+    for n in 0..RECORDS {
+        let evidence = Evidence::builder()
+            .add("header.user-agent", format!("slow-{n}"))
+            .build();
+        pipeline.create_flow_data_with(evidence).process().unwrap();
+    }
+
+    let closing = Instant::now();
+    drop(pipeline);
+    drop(share);
+    let took = closing.elapsed();
+
+    assert!(
+        took < Duration::from_millis(CLOSE_LIMIT_MILLISECONDS + CLOSE_MARGIN_MILLISECONDS),
+        "closing took {took:?}"
+    );
+    assert!(received.load(Ordering::SeqCst) < RECORDS);
+    let records = logged();
+    assert!(
+        records.iter().any(|record| record.starts_with("WARN ")
+            && record.ends_with(
+                " usage sharing entries were not sent, because sending did not finish \
+                 within 5000 ms when closing down."
+            )),
+        "{records:?}"
+    );
+}
+
 /// usage-sharing-element.md, "Request detail": "When failures occur, the
 /// status code and content of the response MUST be logged to aid
 /// troubleshooting." So each refused send gives a warning with the status
