@@ -64,6 +64,15 @@
 //! dropped during a pause it sends nothing more, and logs how many queued
 //! entries it discarded.
 //!
+//! # Closing
+//!
+//! Dropping the element sends what is still queued, for up to
+//! [`SHARE_USAGE_CLOSE_TIMEOUT_MS`], as the specification's cleanup section
+//! asks, so that a slow endpoint cannot hold up the process that drops it.
+//! When that time runs out the background thread sends nothing more after
+//! the send it is making, the entries still queued are discarded, and a
+//! warning says how many.
+//!
 //! # What it shares
 //!
 //! The element accepts no evidence, so it never adds a key to the evidence a
@@ -115,10 +124,10 @@ use std::any::Any;
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::OnceLock;
-use std::sync::{Arc, Condvar, Mutex, PoisonError, Weak};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -129,7 +138,8 @@ use fiftyone_pipeline_core::{
 };
 
 use crate::constants::{
-    EVIDENCE_SEQUENCE, EVIDENCE_SESSIONID, SHARE_USAGE_DEFAULT_ADD_TIMEOUT_MS,
+    EVIDENCE_SEQUENCE, EVIDENCE_SESSIONID, SHARE_USAGE_CLOSE_TIMEOUT_MS,
+    SHARE_USAGE_DEFAULT_ADD_TIMEOUT_MS,
     SHARE_USAGE_DEFAULT_ELEMENT_DATA_KEY, SHARE_USAGE_DEFAULT_FAILURES_TO_ENTER_RECOVERY,
     SHARE_USAGE_DEFAULT_FAILURES_WINDOW_SECONDS,
     SHARE_USAGE_DEFAULT_INITIAL_RECOVERY_DELAY_SECONDS, SHARE_USAGE_DEFAULT_MAX_QUEUE_SIZE,
@@ -726,8 +736,8 @@ enum Discarded {
 /// Sends usage data to 51Degrees for analysis.
 ///
 /// Construct one with [`ShareUsageElement::new`]. The background sending thread
-/// is started on construction and stopped, after a final flush, when the
-/// element is dropped.
+/// is started on construction and stopped when the element is dropped, after
+/// it sends what is queued for up to [`SHARE_USAGE_CLOSE_TIMEOUT_MS`].
 ///
 /// One element can be in only one pipeline at a time. Building a second
 /// pipeline with it fails while the first is still alive, and so does adding
@@ -747,9 +757,11 @@ pub struct ShareUsageElement {
     success_count: Arc<AtomicU64>,
     fail_count: Arc<AtomicU64>,
     discarded: LogThrottle,
-    /// Set when the element is dropped, so the background thread ends a
-    /// pause after failed sends at once.
+    /// Shared with the background thread, so dropping the element can end a
+    /// pause, wait for the thread and stop it sending.
     closing: Arc<Closing>,
+    /// The records added to the queue and not yet taken from it.
+    queued: Arc<AtomicUsize>,
 }
 
 impl ShareUsageElement {
@@ -847,6 +859,7 @@ impl ShareUsageElement {
         let success_count = Arc::new(AtomicU64::new(0));
         let fail_count = Arc::new(AtomicU64::new(0));
         let closing = Arc::new(Closing::default());
+        let queued = Arc::new(AtomicUsize::new(0));
 
         let worker = Worker {
             receiver: rx,
@@ -856,6 +869,7 @@ impl ShareUsageElement {
             success_count: Arc::clone(&success_count),
             fail_count: Arc::clone(&fail_count),
             closing: Arc::clone(&closing),
+            queued: Arc::clone(&queued),
         };
         // Without a background thread nothing can be sent. The receiver is
         // dropped with the closure, so every later add is discarded as stopped
@@ -887,6 +901,7 @@ impl ShareUsageElement {
             fail_count,
             discarded: LogThrottle::new(),
             closing,
+            queued,
         }
     }
 
@@ -1026,7 +1041,11 @@ impl FlowElement for ShareUsageElement {
         // timeout for room. Data that does not fit is discarded, which the
         // specification permits, and logged. Sharing must never fail the
         // pipeline.
+        // Counted before it is added, so the background thread never takes
+        // a record that is not counted yet.
+        self.queued.fetch_add(1, Ordering::Relaxed);
         if let Err(reason) = add_to_queue(&self.sender, usage, self.config.add_timeout) {
+            self.queued.fetch_sub(1, Ordering::Relaxed);
             self.log_discarded(reason);
         }
 
@@ -1094,11 +1113,9 @@ impl Drop for ShareUsageElement {
     fn drop(&mut self) {
         // Closing first ends a pause after failed sends at once, and the
         // worker then sends nothing more. Dropping the sender closes the
-        // channel, which the worker treats as a shutdown signal: it sends any
-        // remaining queued data (even below the minimum batch size) and then
-        // exits. We replace the held sender with a disconnected one so the
-        // original is dropped here, then join the worker so the final flush
-        // completes before the element goes away.
+        // channel, so the worker sends what is queued, even below the
+        // minimum entries, and ends. The held sender is swapped for a
+        // disconnected one so the original is dropped here.
         self.closing.close();
         let (dead_tx, _dead_rx) = sync_channel::<UsageRecord>(0);
         let live_tx = std::mem::replace(&mut self.sender, dead_tx);
@@ -1108,9 +1125,24 @@ impl Drop for ShareUsageElement {
             Ok(mut guard) => guard.take(),
             Err(poisoned) => poisoned.into_inner().take(),
         };
-        if let Some(handle) = handle {
+        let Some(handle) = handle else {
+            return;
+        };
+        if self
+            .closing
+            .wait_finished(Duration::from_millis(SHARE_USAGE_CLOSE_TIMEOUT_MS))
+        {
             let _ = handle.join();
+            return;
         }
+        // The worker finishes the send it is making, sends nothing more and
+        // ends on its own, and what is still queued is discarded.
+        self.closing.stop();
+        log::warn!(
+            "{} usage sharing entries were not sent, because sending did not \
+             finish within {SHARE_USAGE_CLOSE_TIMEOUT_MS} ms when closing down.",
+            self.queued.load(Ordering::Relaxed)
+        );
     }
 }
 
@@ -1232,18 +1264,65 @@ impl BackOff {
     }
 }
 
-/// Set when the element is dropped, so the background thread ends a pause
-/// after failed sends at once.
+/// What dropping the element tells the background thread, and what the
+/// thread tells the drop.
 #[derive(Default)]
 struct Closing {
-    closed: Mutex<bool>,
+    state: Mutex<ClosingState>,
     changed: Condvar,
 }
 
+#[derive(Default)]
+struct ClosingState {
+    /// The element is dropped, so a pause after failed sends ends at once.
+    closed: bool,
+    /// The close timeout ran out, so the thread sends nothing more.
+    stopped: bool,
+    /// The thread has ended.
+    finished: bool,
+}
+
 impl Closing {
+    fn state(&self) -> MutexGuard<'_, ClosingState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     fn close(&self) {
-        *self.closed.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        self.state().closed = true;
         self.changed.notify_all();
+    }
+
+    fn stop(&self) {
+        self.state().stopped = true;
+    }
+
+    fn stopped(&self) -> bool {
+        self.state().stopped
+    }
+
+    fn finish(&self) {
+        self.state().finished = true;
+        self.changed.notify_all();
+    }
+
+    /// Wait up to `limit` for the thread to end. Returns true when it ended.
+    fn wait_finished(&self, limit: Duration) -> bool {
+        let deadline = Instant::now() + limit;
+        let mut state = self.state();
+        loop {
+            if state.finished {
+                return true;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return false;
+            }
+            state = self
+                .changed
+                .wait_timeout(state, deadline - now)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
     }
 
     /// Wait for `seconds`, or until the element is dropped. Returns true when
@@ -1253,9 +1332,9 @@ impl Closing {
             .ok()
             .and_then(|pause| Instant::now().checked_add(pause));
         let longest = Duration::from_secs(LONGEST_WAIT_SECONDS);
-        let mut closed = self.closed.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut state = self.state();
         loop {
-            if *closed {
+            if state.closed {
                 return false;
             }
             let wait = match deadline {
@@ -1268,12 +1347,21 @@ impl Closing {
                 }
                 None => longest,
             };
-            closed = self
+            state = self
                 .changed
-                .wait_timeout(closed, wait)
+                .wait_timeout(state, wait)
                 .unwrap_or_else(PoisonError::into_inner)
                 .0;
         }
+    }
+}
+
+/// Tells the drop that the background thread has ended, however it ends.
+struct Finished<'a>(&'a Closing);
+
+impl Drop for Finished<'_> {
+    fn drop(&mut self) {
+        self.0.finish();
     }
 }
 
@@ -1288,6 +1376,7 @@ struct Worker {
     success_count: Arc<AtomicU64>,
     fail_count: Arc<AtomicU64>,
     closing: Arc<Closing>,
+    queued: Arc<AtomicUsize>,
 }
 
 impl Worker {
@@ -1298,8 +1387,10 @@ impl Worker {
     /// failed send that starts a pause it takes nothing until the pause ends,
     /// so records wait in the queue. Once the element is dropped and every
     /// queued record has been received, it sends what remains, even below the
-    /// minimum, and exits, unless it is paused, when it sends nothing more.
+    /// minimum, and exits, unless it is paused or the close timeout has run
+    /// out, when it sends nothing more.
     fn run(self) {
+        let _finished = Finished(self.closing.as_ref());
         let min_entries = self.config.minimum_entries_per_message;
         let max_entries = min_entries.saturating_mul(MAXIMUM_ENTRIES_MULTIPLE);
         let take_timeout = self.config.take_timeout;
@@ -1308,21 +1399,27 @@ impl Worker {
 
         // `recv` fails only when the channel is closed and empty.
         while let Ok(item) = self.receiver.recv() {
+            self.queued.fetch_sub(1, Ordering::Relaxed);
             batch.push(item);
             if batch.len() < min_entries {
                 continue;
             }
             while batch.len() < max_entries {
                 match self.receiver.recv_timeout(take_timeout) {
-                    Ok(item) => batch.push(item),
+                    Ok(item) => {
+                        self.queued.fetch_sub(1, Ordering::Relaxed);
+                        batch.push(item);
+                    }
                     Err(_) => break,
                 }
             }
-            if !self.send_then_pause(&mut back_off, std::mem::take(&mut batch)) {
+            if self.closing.stopped()
+                || !self.send_then_pause(&mut back_off, std::mem::take(&mut batch))
+            {
                 return;
             }
         }
-        if !batch.is_empty() {
+        if !batch.is_empty() && !self.closing.stopped() {
             self.send_then_pause(&mut back_off, batch);
         }
     }
@@ -1350,6 +1447,7 @@ impl Worker {
             return true;
         }
         let discarded = self.receiver.try_iter().count();
+        self.queued.fetch_sub(discarded, Ordering::Relaxed);
         if discarded > 0 {
             log::info!(
                 "{discarded} usage sharing entries were not sent, as sending was paused after \
