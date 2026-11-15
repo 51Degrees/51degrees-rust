@@ -33,11 +33,12 @@ use fiftyone_pipeline_engines::{
     MissingPropertyResult,
 };
 
+use fiftyone_cloud_request_engine::aspect::{aspect_response, AspectResponse};
 use fiftyone_cloud_request_engine::CloudRequestEngine;
 use fiftyone_device_detection_shared::{DeviceDataBase, DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY};
 
-use crate::dto::map_device_object;
-use crate::meta::{cloud_json, fill_metadata, property_list_request_failed, DiscoveredMetadata};
+use crate::dto::map_device_portion;
+use crate::meta::{fill_metadata, property_list_request_failed, DiscoveredMetadata};
 
 /// The engine's name in configuration errors and log records.
 const ENGINE_NAME: &str = "DeviceDetectionCloudEngine";
@@ -198,20 +199,22 @@ impl DeviceDetectionCloudEngine {
         );
     }
 
-    /// Read the cloud JSON, slice the `device` member, and store the resulting
+    /// Take the `device` portion of the cloud response through the shared
+    /// Cloud Aspect Engine processing in
+    /// [`fiftyone_cloud_request_engine::aspect`], and store the resulting
     /// [`DeviceDataBase`](fiftyone_device_detection_shared::DeviceDataBase) under
     /// [`DEVICE_DATA_KEY`].
     ///
     /// Returns an [`Error::PipelineConfiguration`] if no cloud request engine ran
-    /// before this engine. An empty or absent JSON response, which means the
-    /// request engine failed and recorded its own error, gives empty device
-    /// data marked as from a failed cloud request, and a flow error that does
-    /// not fail processing. Data from a response is given the reason for each
-    /// property the response did not return.
+    /// before this engine. A request engine that failed and recorded its own
+    /// error leaves no response, which gives empty device data marked as from
+    /// a failed cloud request, and a flow error that does not fail
+    /// processing. Data from a response is given the reason for each property
+    /// the response did not return.
     fn populate(&self, data: &mut FlowData) -> Result<()> {
-        let json = match cloud_json(data, ENGINE_NAME)? {
-            Some(json) => json,
-            None => {
+        let portion = match aspect_response(data, DEVICE_ELEMENT_DATA_KEY, ENGINE_NAME)? {
+            AspectResponse::Portion(portion) => portion,
+            AspectResponse::NoResponse => {
                 CloudRequestEngine::record_not_processed(
                     data,
                     ENGINE_NAME,
@@ -225,32 +228,13 @@ impl DeviceDetectionCloudEngine {
             }
         };
 
-        let device = slice_device_json(&json)?;
-        let mut device_data = map_device_object(&device);
+        let mut device_data = map_device_portion(&portion);
         if let Some(metadata) = self.metadata.get() {
             metadata.add_missing_property_source(&mut device_data);
         }
         data.get_or_add(DEVICE_DATA_KEY, || device_data)?;
         Ok(())
     }
-}
-
-/// Parse the cloud response and return its `device` member as a JSON value.
-///
-/// Returns an [`Error::CloudRequest`] if the body is not valid JSON. A missing
-/// `device` member yields a JSON `null`, which the mapper renders as empty
-/// device data rather than an error.
-fn slice_device_json(json: &str) -> Result<serde_json::Value> {
-    let document: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| Error::CloudRequest {
-            status_code: 0,
-            retry_after_seconds: None,
-            message: format!("failed to parse the cloud device-detection response: {e}"),
-        })?;
-    Ok(document
-        .get(DEVICE_ELEMENT_DATA_KEY)
-        .cloned()
-        .unwrap_or(serde_json::Value::Null))
 }
 
 impl FlowElement for DeviceDetectionCloudEngine {
@@ -402,28 +386,6 @@ impl Default for DeviceDetectionCloudEngineBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn slice_device_json_extracts_device_member() {
-        let json = r#"{"device":{"ismobile":true},"javascriptProperties":[]}"#;
-        let device = slice_device_json(json).unwrap();
-        assert_eq!(device.get("ismobile").and_then(|v| v.as_bool()), Some(true));
-    }
-
-    #[test]
-    fn slice_device_json_missing_member_is_null() {
-        let json = r#"{"location":{}}"#;
-        let device = slice_device_json(json).unwrap();
-        assert!(device.is_null());
-    }
-
-    #[test]
-    fn slice_device_json_invalid_is_cloud_error() {
-        match slice_device_json("not json") {
-            Err(Error::CloudRequest { .. }) => {}
-            other => panic!("expected a cloud request error, got {other:?}"),
-        }
-    }
 
     #[test]
     fn try_build_requires_request_engine() {

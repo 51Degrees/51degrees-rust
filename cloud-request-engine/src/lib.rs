@@ -171,9 +171,15 @@
 //! [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the name
 //! .NET gives it, with .NET's settings, so a configuration file written for
 //! .NET makes the same engine here.
+//!
+//! [`aspect`] holds the processing every Cloud Aspect Engine shares, reading
+//! the portion of this engine's response for its Data Key and each property's
+//! value or the reason it has none, which the Device Detection and IP
+//! Intelligence cloud engines use.
 
 #![warn(missing_docs)]
 
+pub mod aspect;
 pub mod configuration;
 mod constants;
 mod data;
