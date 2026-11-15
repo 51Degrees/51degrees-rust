@@ -203,12 +203,15 @@ impl UachJsConversionElement {
         }
     }
 
-    /// Pick the encoded blob from evidence, preferring the query key over the
-    /// cookie key as the specification requires.
-    fn select_evidence<'a>(&self, data: &'a FlowData) -> Option<&'a str> {
-        data.evidence()
-            .get(UACH_EVIDENCE_QUERY_KEY)
-            .or_else(|| data.evidence().get(UACH_EVIDENCE_COOKIE_KEY))
+    /// The headers the encoded value gives, from the query key when its value
+    /// gives at least one header, otherwise from the cookie key, because the
+    /// specification counts a value as available only when it does.
+    fn converted(&self, data: &FlowData) -> Option<Vec<(String, String)>> {
+        [UACH_EVIDENCE_QUERY_KEY, UACH_EVIDENCE_COOKIE_KEY]
+            .into_iter()
+            .filter_map(|key| data.evidence().get(key))
+            .filter_map(convert_high_entropy)
+            .find(|values| !values.is_empty())
     }
 }
 
@@ -224,7 +227,7 @@ impl FlowElement for UachJsConversionElement {
     fn process(&self, data: &mut FlowData) -> Result<()> {
         // Convert outside the get_or_add closure so the immutable evidence
         // borrow ends before the mutable element-data borrow begins.
-        let converted = self.select_evidence(data).and_then(convert_high_entropy);
+        let converted = self.converted(data);
 
         let element_data = data.get_or_add(Self::DATA_KEY, UachData::new)?;
         if let Some(values) = converted {
