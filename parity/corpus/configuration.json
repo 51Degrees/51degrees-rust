@@ -958,6 +958,7 @@
               "shareUsageUrl": "https://parity.test/usage",
               "blockedHttpHeaders": null,
               "includedQueryStringParameters": "utm_source",
+              "shareAllQueryStringParameters": false,
               "ignoreFlowDataEvidenceFilter": null,
               "shareAllEvidence": false,
               "repeatEvidenceIntervalMinutes": 5

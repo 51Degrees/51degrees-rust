@@ -219,7 +219,7 @@ fn the_defaults_are_those_of_dotnet() {
     );
     assert!(config.blocked_http_headers().is_empty());
     // usage-sharing-element.md: share all query string parameters is on by
-    // default, where .NET up to 4.5.129 has it off.
+    // default, where .NET up to 4.5.130 has it off.
     assert_eq!(config.included_query_string_parameters(), None);
     assert!(!config.share_all_evidence());
     assert!(config.ignore_flow_data_evidence_filter().is_empty());

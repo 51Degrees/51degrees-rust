@@ -144,6 +144,15 @@
     "reason": "The crates' usage sharing element says it is concurrent, because it sends from a thread of its own, so a pipeline holding it is concurrent with no parallel group. .NET's ShareUsageElement says it is not."
   },
   {
+    "path": "configuration.elements[*].evidenceFilter.query.utm_*",
+    "kind": "value",
+    "cases": ["configuration-setting-in-both-sections", "configuration-engines-only", "configuration-text-forms", "configuration-translation-countries"],
+    "dotnet": {"value": [false]},
+    "rust": {"value": [true]},
+    "reason": "usage-sharing-element.md says share all query string parameters is on by default, so every query string and form parameter is shared unless a user turns it off, and these cases keep the usage sharing defaults. .NET up to 4.5.130 has it off by default and shares only the parameters starting 51D_ and those listed.",
+    "issue": 410
+  },
+  {
     "path": "configuration.error",
     "kind": "value",
     "cases": ["configuration-unknown-parameter-in-group"],
