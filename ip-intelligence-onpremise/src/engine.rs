@@ -1343,13 +1343,13 @@ mod tests {
         let engine = no_names_engine(&file);
         let published = || engine.loaded.load().manager.data_set_published();
         let before = published();
-        let reloads: [(&str, Box<dyn Fn() -> Result<()> + '_>); 2] = [
+        let reloads: [Reload<'_>; 2] = [
             (
-                "from a path",
+                "from a path".to_owned(),
                 Box::new(|| engine.reload_from_path(&unreadable)),
             ),
             (
-                "from memory",
+                "from memory".to_owned(),
                 Box::new(|| engine.refresh_from_memory(None, &bytes)),
             ),
         ];
