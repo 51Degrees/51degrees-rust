@@ -93,12 +93,13 @@ impl StandIn {
         urls
     }
 
-    /// The data requests, being each POST.
+    /// The data requests, being each POST other than the one for the
+    /// accessible properties, which carries a license key in its body.
     fn data(&self) -> Vec<CloudHttpRequest> {
         let requests = self.requests.lock().unwrap();
         requests
             .iter()
-            .filter(|r| r.method == HttpMethod::Post)
+            .filter(|r| r.method == HttpMethod::Post && !r.url.contains("accessibleproperties"))
             .cloned()
             .collect()
     }

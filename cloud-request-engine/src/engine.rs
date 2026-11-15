@@ -1772,6 +1772,11 @@ fn fetch_evidence_keys(
 /// key alone left those products out of the engine's metadata. An engine
 /// built on a license key alone asks with the license key, and the cloud
 /// answers with every property it entitles.
+///
+/// A license key is sent as `license` in the body of a POST request rather
+/// than in the URL, so the key stays out of request logs, as the
+/// specification requires. A resource key alone is asked for with a GET
+/// whose query names it, as before.
 fn fetch_public_properties(
     http: &dyn CloudHttpClient,
     recovery: &RecoveryGate,
@@ -1781,26 +1786,26 @@ fn fetch_public_properties(
     origin: Option<&str>,
     secrets: &[String],
 ) -> Result<LicensedProducts> {
-    let mut parameters = Vec::new();
-    if let Some(resource) = resource_key {
-        parameters.push(format!(
-            "{}={}",
+    let url = match resource_key {
+        Some(resource) => format!(
+            "{}?{}={}",
+            endpoints.properties,
             constants::RESOURCE_PARAMETER,
             encode_query_value(resource)
-        ));
-    }
-    if let Some(license) = license_key.filter(|l| !l.trim().is_empty()) {
-        parameters.push(format!(
-            "{}={}",
-            constants::LICENSE_PARAMETER,
-            encode_query_value(license)
-        ));
-    }
-    let url = format!("{}?{}", endpoints.properties, parameters.join("&"));
+        ),
+        None => endpoints.properties.clone(),
+    };
+    let license = license_key.filter(|l| !l.trim().is_empty());
     let request = CloudHttpRequest {
-        method: HttpMethod::Get,
+        method: if license.is_some() {
+            HttpMethod::Post
+        } else {
+            HttpMethod::Get
+        },
         url,
-        form: Vec::new(),
+        form: license
+            .map(|license| vec![(constants::LICENSE_PARAMETER.to_owned(), license.to_owned())])
+            .unwrap_or_default(),
         origin: origin.map(str::to_owned),
     };
     let parsed = send_and_validate(http, recovery, Gate::Skip, &request, true, secrets)

@@ -1461,7 +1461,7 @@ fn accessible_properties_url(client: &FakeClient) -> String {
 fn accessible_properties_are_asked_for_with_the_license_key() {
     // The cloud adds the products a license key grants to those of the
     // resource key, and the data request sends both keys, so the metadata
-    // has to be asked for with both as well.
+    // has to be asked for with both as well, the license key in the body.
     let client = Arc::new(FakeClient::default());
     CloudRequestEngine::builder()
         .resource_key("test-resource-key")
@@ -1472,8 +1472,11 @@ fn accessible_properties_are_asked_for_with_the_license_key() {
         .unwrap();
     assert_eq!(
         accessible_properties_url(&client),
-        "https://cloud.example.test/api/v4/accessibleproperties\
-         ?resource=test-resource-key&license=LICENSE%2BKEY%2F1"
+        "https://cloud.example.test/api/v4/accessibleproperties?resource=test-resource-key"
+    );
+    assert_eq!(
+        accessible_properties_request(&client).form,
+        vec![("license".to_owned(), "LICENSE+KEY/1".to_owned())]
     );
 }
 
@@ -1520,7 +1523,11 @@ fn a_license_key_is_sent_for_accessible_properties_in_the_body_of_a_post() {
         .unwrap();
     let request = accessible_properties_request(&client);
     assert_eq!(request.method, HttpMethod::Post, "both keys");
-    assert!(!request.url.contains("license"), "both keys: {}", request.url);
+    assert!(
+        !request.url.contains("license"),
+        "both keys: {}",
+        request.url
+    );
     assert!(
         request
             .form
@@ -1797,7 +1804,7 @@ fn evidence_named_values_does_not_displace_the_engines_property_list() {
     let requests = client.requests.lock().unwrap();
     let data_request = requests
         .iter()
-        .find(|r| r.method == HttpMethod::Post)
+        .find(|r| r.method == HttpMethod::Post && r.url.contains("/json"))
         .expect("a POST to the data endpoint");
     let values: Vec<&String> = data_request
         .form
