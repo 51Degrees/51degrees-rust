@@ -61,6 +61,9 @@ pub enum AutoUpdateStatus {
     NoConfiguration,
     /// A temporary directory path was required but is not configured.
     TempPathNotSet,
+    /// A data file the file system watcher saw change could not be opened
+    /// for reading within ten minutes, so the engine was not refreshed.
+    Timeout,
     /// An unanticipated error occurred during the check.
     UnknownError,
 }
@@ -126,6 +129,7 @@ mod tests {
             AutoUpdateStatus::RefreshFailed,
             AutoUpdateStatus::NoConfiguration,
             AutoUpdateStatus::TempPathNotSet,
+            AutoUpdateStatus::Timeout,
             AutoUpdateStatus::UnknownError,
         ] {
             assert!(!status.is_ok(), "{status:?}");

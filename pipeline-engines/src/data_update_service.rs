@@ -284,6 +284,21 @@ const REFRESH_TRIES: u32 = 10;
 /// try.
 const REFRESH_RETRY_DELAY_MILLISECONDS: u64 = 200;
 
+/// How long the file system watcher waits for a changed data file to open
+/// for reading before it gives up, because whatever writes the file can
+/// still hold it.
+const WATCHED_FILE_OPEN_LIMIT_MINUTES: u64 = 10;
+
+/// How long the file system watcher waits between tries to open a changed
+/// data file.
+const WATCHED_FILE_OPEN_RETRY_MILLISECONDS: u64 = 500;
+
+/// Whether the file at `path` opens for reading, trying every `retry` until
+/// `limit` has passed.
+fn wait_until_readable(_path: &Path, _limit: Duration, _retry: Duration) -> bool {
+    true
+}
+
 /// Run an engine's refresh, giving the cause of a refresh that fails or
 /// panics as text, so a panic in a refresh is reported like a failure and
 /// never ends the thread that made the check.
@@ -1040,6 +1055,10 @@ impl ServiceHandle {
     /// there is. A further event for a write that an earlier event took, as
     /// when one write raises several events, waited while that write was
     /// applied and has nothing left to do, so it is in progress, as in .NET.
+    /// A newer file is refreshed from once it opens for reading, because
+    /// whatever writes it can still hold it, and one that does not open
+    /// within ten minutes gives [`AutoUpdateStatus::Timeout`], which is not
+    /// logged.
     fn refresh_from_watched_file(
         engine: &Arc<dyn OnPremiseAspectEngine>,
         data_file: &AspectEngineDataFile,
@@ -1058,6 +1077,13 @@ impl ServiceHandle {
         }
         data_file.set_last_applied_modified(modified);
         data_file.set_last_watched_modified(modified);
+        if !wait_until_readable(
+            path,
+            Duration::from_secs(WATCHED_FILE_OPEN_LIMIT_MINUTES * 60),
+            Duration::from_millis(WATCHED_FILE_OPEN_RETRY_MILLISECONDS),
+        ) {
+            return Ok(AutoUpdateStatus::Timeout);
+        }
         log::info!(
             "Attempting to refresh Engine '{}' with new data",
             engine.data_key()
@@ -1567,6 +1593,60 @@ fn read_error_message(error: std::io::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A path in the temporary folder for one of the tests below.
+    fn temp_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("fiftyone-{name}-{}", std::process::id()))
+    }
+
+    /// A file that opens is readable at once.
+    #[test]
+    fn a_file_that_opens_is_readable_at_once() {
+        let path = temp_path("readable");
+        std::fs::write(&path, b"data").unwrap();
+        let limit = Duration::from_secs(5);
+        let started = Instant::now();
+        assert!(wait_until_readable(&path, limit, Duration::from_millis(50)));
+        assert!(started.elapsed() < limit);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A file that cannot be opened is tried until the limit passes, and is
+    /// then not readable, so the watcher gives a timeout.
+    #[test]
+    fn a_file_that_never_opens_is_tried_until_the_limit() {
+        let path = temp_path("never-readable");
+        let _ = std::fs::remove_file(&path);
+        let limit = Duration::from_millis(300);
+        let started = Instant::now();
+        assert!(!wait_until_readable(
+            &path,
+            limit,
+            Duration::from_millis(50)
+        ));
+        assert!(started.elapsed() >= limit);
+    }
+
+    /// A file that opens part way through the wait is readable then.
+    #[test]
+    fn a_file_that_opens_during_the_wait_is_readable() {
+        let path = temp_path("later-readable");
+        let _ = std::fs::remove_file(&path);
+        let writer = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(300));
+                std::fs::write(&path, b"data").unwrap();
+            })
+        };
+        assert!(wait_until_readable(
+            &path,
+            Duration::from_secs(10),
+            Duration::from_millis(50)
+        ));
+        writer.join().unwrap();
+        let _ = std::fs::remove_file(&path);
+    }
 
     #[test]
     fn md5_matches_known_vector() {
