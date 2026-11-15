@@ -39,13 +39,19 @@ log shows them without opening one.
 
 The examples are built against this tree's crates, through
 ci/test-examples-against-source.ps1, which leaves the working tree as it
-found it.
+found it. With -Published they are built against the crates on crates.io
+that examples/Cargo.lock names, as a fresh clone builds them.
 
 .PARAMETER Root
 The workspace root. Defaults to the repository this script sits in.
+
+.PARAMETER Published
+Build the examples against the published crates the committed lock names,
+rather than against this tree's crates.
 #>
 param (
-    [string]$Root = (Join-Path $PSScriptRoot "..")
+    [string]$Root = (Join-Path $PSScriptRoot ".."),
+    [switch]$Published
 )
 $ErrorActionPreference = "Stop"
 
@@ -368,7 +374,14 @@ $run = {
     $bins = $all | ForEach-Object { "--bin"; $_.Bin }
     $selection = $packages | ForEach-Object { "-p"; $_ }
     Write-Host "::group::Build the examples"
-    cargo build --config source.toml @selection @bins
+    if ($Published) {
+        cargo build --locked @selection @bins
+    } else {
+        cargo build --config source.toml @selection @bins
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "The examples did not build."
+    }
     Write-Host "::endgroup::"
 
     $null = New-Item -ItemType Directory -Force -Path $Logs
@@ -379,7 +392,12 @@ $run = {
 # Most examples read a free data file, so without them the examples are
 # not built or run.
 if (Get-FreeDataFiles) {
-    & (Join-Path $PSScriptRoot "test-examples-against-source.ps1") -Root $Root -Command $run
+    if ($Published) {
+        Push-Location $Examples
+        try { & $run } finally { Pop-Location }
+    } else {
+        & (Join-Path $PSScriptRoot "test-examples-against-source.ps1") -Root $Root -Command $run
+    }
 }
 
 if ($failures.Count -gt 0) {
