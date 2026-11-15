@@ -407,6 +407,49 @@ fn a_refresh_that_fails_fewer_times_than_the_tries(dir: &Path) {
     assert_eq!(take(), Vec::<String>::new(), "tries that failed");
 }
 
+/// A download that cannot be decompressed is a failure the errors table
+/// lists under no other row, so a programmatic check gives it to its caller
+/// as an unhandled error with the table's message, and logs nothing. The
+/// engine is not refreshed, from a data file on disk or from memory.
+fn a_download_that_cannot_be_decompressed(dir: &Path) {
+    let path = dir.join("compressed.dat");
+    std::fs::write(&path, b"version 1").unwrap();
+    for (case, builder) in [
+        ("a data file", DataFileConfiguration::builder(&path)),
+        ("data in memory", DataFileConfiguration::memory_builder()),
+    ] {
+        let (engine, shared) = engine(
+            builder
+                .data_update_url(serve(b"not gzip data"))
+                // The test server sends no Content-MD5, and this test is not
+                // about the hash, so the check that warns is off.
+                .verify_md5(false)
+                .decompress_content(true)
+                .automatic_updates_enabled(false)
+                .build(),
+            0,
+        );
+        let service = DataUpdateService::new();
+        let error = service.check_for_update(&shared, None).expect_err(case);
+        assert_eq!(
+            error.status,
+            AutoUpdateStatus::UnknownError,
+            "{case}: {}",
+            error.message
+        );
+        assert!(
+            error.message.starts_with(
+                "An unhandled error occurred while checking for automatic updates for \
+                 engine 'failing'."
+            ),
+            "{case}: {}",
+            error.message
+        );
+        assert_eq!(engine.refreshes.load(Ordering::SeqCst), 0, "{case}");
+        assert_eq!(take(), Vec::<String>::new(), "{case}");
+    }
+}
+
 /// A programmatic update with no update URL of a registered file no newer
 /// than the one the engine was built from needs no update, and the engine is
 /// not refreshed until the file is newer.
@@ -882,6 +925,7 @@ fn a_refresh_that_fails_is_logged_and_reported_as_a_failure() {
 
     a_programmatic_update(&dir);
     a_refresh_that_fails_fewer_times_than_the_tries(&dir);
+    a_download_that_cannot_be_decompressed(&dir);
     a_programmatic_update_of_a_registered_file(&dir);
     a_programmatic_update_of_data_in_memory();
     an_update_from_memory();
