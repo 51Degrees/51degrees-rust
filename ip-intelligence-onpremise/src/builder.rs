@@ -332,8 +332,8 @@ impl IpIntelligenceOnPremiseEngineBuilder {
     ///
     /// Registration starts the file-system watcher and schedules the polls the
     /// options configure, and polls once first when update on startup is on.
-    /// A startup poll that fails leaves the engine on the data file it loaded,
-    /// as the specification says, and the service logs the failure. Refuses,
+    /// A startup poll that fails is the build's error, naming the data file
+    /// and the status, as the specification's errors table says. Refuses,
     /// before opening the file, when automatic updates or update on
     /// startup are on and no licence key is set.
     pub fn build_shared(mut self) -> Result<Arc<IpIntelligenceOnPremiseEngine>> {
@@ -346,9 +346,13 @@ impl IpIntelligenceOnPremiseEngineBuilder {
                 .cloned()
                 .ok_or_else(|| Error::configuration("engine has no data file to register"))?;
             let as_engine: Arc<dyn OnPremiseAspectEngine> = engine.clone();
-            // A failed update on start-up leaves the engine on the data file it
-            // loaded, as the specification says, and the service logs it.
-            let _ = service.register(as_engine, data_file);
+            // A failed update on start-up is passed to the caller, as the
+            // specification's errors table says, rather than logged.
+            if let Err(error) = service.register(as_engine, Arc::clone(&data_file)) {
+                return Err(Error::configuration(
+                    error.on_startup_message(data_file.identifier()),
+                ));
+            }
         }
         Ok(engine)
     }

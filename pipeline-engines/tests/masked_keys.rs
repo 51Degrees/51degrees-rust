@@ -113,8 +113,8 @@ impl OnPremiseAspectEngine for LoadedEngine {
 
 /// The URL is used as configured, with the key in its query, so the update
 /// on start-up and the scheduled poll both fail with that URL to hand. The
-/// error, the start-up warning and the scheduled poll's warning each name it
-/// with the key masked.
+/// error the update on start-up gives the caller and the scheduled poll's
+/// record each name it with the key masked.
 #[test]
 fn a_failed_update_from_a_url_carrying_a_licence_key_shows_only_its_masked_form() {
     let _ = log::set_logger(&LOGGER);
@@ -174,11 +174,14 @@ fn a_failed_update_from_a_url_carrying_a_licence_key_shows_only_its_masked_form(
             "a log record shows the key: {record}"
         );
     }
-    for wanted in ["on start-up", "Error accessing data update service at"] {
-        assert!(
-            logged.iter().any(|record| record.contains(wanted)
-                && record.contains(&format!("LicenseKeys={MASKED}"))),
-            "no record with '{wanted}' names the masked key: {logged:?}"
-        );
-    }
+    // The update on start-up passes its error to the caller and logs none,
+    // as the errors table says, so the scheduled poll's record is the one
+    // that names the URL.
+    assert!(
+        logged.iter().any(
+            |record| record.contains("Error accessing data update service at")
+                && record.contains(&format!("LicenseKeys={MASKED}"))
+        ),
+        "no record of the scheduled poll names the masked key: {logged:?}"
+    );
 }

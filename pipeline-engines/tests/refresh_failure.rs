@@ -68,9 +68,13 @@ const PANIC: &str = "a callback that panics";
 /// What a refresh of [`FailingEngine`] that panics says.
 const REFRESH_PANIC: &str = "a refresh that panics";
 
-/// The start of the record logged for a refresh that failed.
+/// The start of the record logged for a refresh that failed, from a data
+/// file or from memory. The record names the Engine by its type.
 const APPLYING: &str = "ERROR Error during check for data update. An error occurred when \
-                        applying a data update to engine 'failing'.";
+                        applying a data update to engine 'FailingEngine'";
+
+/// How many times the service tries a refresh from a data file.
+const TRIES: usize = 10;
 
 /// How much older than the file last applied a file put in place is.
 const OLDER: Duration = Duration::from_secs(60);
@@ -80,7 +84,8 @@ const NEWER: Duration = Duration::from_secs(60);
 
 /// The start of the record logged for a callback that panicked.
 const PANIC_RECORD: &str =
-    "ERROR An unhandled error occurred while checking for automatic updates for engine 'failing'.";
+    "ERROR An unhandled error occurred while checking for automatic updates for engine \
+     'FailingEngine'.";
 
 /// Log records at warning level or above, as "LEVEL message".
 static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -223,12 +228,22 @@ fn data_file(engine: &Arc<dyn OnPremiseAspectEngine>) -> Arc<AspectEngineDataFil
     Arc::clone(&engine.data_files()[0])
 }
 
-/// The record a refresh that failed because of `cause` logs, being the entry
-/// the errors table gives for a failed check, with the error attached.
+/// The record a refresh from memory that failed because of `cause` logs,
+/// being the entry the errors table gives for a failed check, with the error
+/// attached.
 fn applying(cause: &str) -> String {
     format!(
         "ERROR Error during check for data update. An error occurred when applying a data \
-         update to engine 'failing'. Error detail: {cause}"
+         update to engine 'FailingEngine'. Error detail: {cause}"
+    )
+}
+
+/// The record a refresh from a data file that failed [`TRIES`] times because
+/// of `cause` logs.
+fn applying_from_file(cause: &str) -> String {
+    format!(
+        "ERROR Error during check for data update. An error occurred when applying a data \
+         update to engine 'FailingEngine' after {TRIES} tries. Error detail: {cause}"
     )
 }
 
@@ -310,7 +325,8 @@ fn make_newer(path: &Path) {
 
 /// A programmatic update with no update URL, which refreshes the engine from
 /// its file only when the file is newer than the one last applied. A refresh
-/// that fails is reported and given to the caller, and is not logged.
+/// that fails each of its [`TRIES`] is reported and given to the caller, and
+/// is not logged.
 fn a_programmatic_update(dir: &Path) {
     let path = dir.join("programmatic.dat");
     std::fs::write(&path, b"version 1").unwrap();
@@ -318,7 +334,7 @@ fn a_programmatic_update(dir: &Path) {
         DataFileConfiguration::builder(&path)
             .automatic_updates_enabled(false)
             .build(),
-        1,
+        TRIES,
     );
     let service = DataUpdateService::new();
     let reports = reports(&service, &data_file(&shared));
@@ -340,7 +356,7 @@ fn a_programmatic_update(dir: &Path) {
 
     let status = service.check_for_update(&shared, None).unwrap();
     assert_eq!(status, AutoUpdateStatus::NotNeeded, "a file no newer");
-    assert_eq!(engine.refreshes.load(Ordering::SeqCst), 2);
+    assert_eq!(engine.refreshes.load(Ordering::SeqCst), TRIES + 1);
 
     make_newer(&path);
     let status = service.check_for_update(&shared, None).unwrap();
@@ -355,18 +371,21 @@ fn a_programmatic_update(dir: &Path) {
             AutoUpdateStatus::Success
         ]
     );
-    assert_eq!(engine.refreshes.load(Ordering::SeqCst), 3);
+    assert_eq!(engine.refreshes.load(Ordering::SeqCst), TRIES + 2);
 }
 
 /// A programmatic update with no update URL of a registered file no newer
 /// than the one the engine was built from needs no update, and the engine is
-/// not refreshed until the file is newer.
+/// not refreshed until the file is newer. The file system watcher is off,
+/// because it would otherwise race the programmatic check to apply the newer
+/// file.
 fn a_programmatic_update_of_a_registered_file(dir: &Path) {
     let path = dir.join("registered.dat");
     std::fs::write(&path, b"version 1").unwrap();
     let (engine, shared) = engine(
         DataFileConfiguration::builder(&path)
             .automatic_updates_enabled(false)
+            .file_system_watcher_enabled(false)
             .build(),
         0,
     );
@@ -443,9 +462,9 @@ fn an_update_from_memory() {
     assert_eq!(engine.refreshes.load(Ordering::SeqCst), 2);
 }
 
-/// The update on start-up, which logs the refresh's own record and not the
-/// start-up warning as well.
-fn the_update_on_start_up(refused: &str) {
+/// The update on start-up, which passes the refresh that failed to the
+/// caller and logs nothing, as the errors table says.
+fn the_update_on_start_up() {
     let url = serve(b"new data");
     let (engine, shared) = engine(
         DataFileConfiguration::memory_builder()
@@ -466,7 +485,7 @@ fn the_update_on_start_up(refused: &str) {
         .register(Arc::clone(&shared), data_file(&shared))
         .expect_err("the refresh fails");
     assert_eq!(error.status, AutoUpdateStatus::RefreshFailed);
-    assert_eq!(take(), [refused], "the update on start-up");
+    assert_eq!(take(), Vec::<String>::new(), "the update on start-up");
     assert_eq!(statuses(&reports), [AutoUpdateStatus::RefreshFailed]);
 
     let status = service.check_for_update(&shared, None).unwrap();
@@ -576,7 +595,7 @@ fn a_callback_that_panics_on_a_programmatic_check(dir: &Path) {
 fn a_watched_file(dir: &Path, refused: &str) {
     let path = dir.join("watched.dat");
     std::fs::write(&path, b"version 1").unwrap();
-    let (engine, shared) = engine(DataFileConfiguration::builder(&path).build(), 1);
+    let (engine, shared) = engine(DataFileConfiguration::builder(&path).build(), TRIES);
     let service = DataUpdateService::new();
     let reports = reports(&service, &data_file(&shared));
     let status = service
@@ -621,7 +640,10 @@ fn a_watched_file(dir: &Path, refused: &str) {
         "{statuses:?}"
     );
     assert_eq!(take(), [refused], "a watched file");
-    assert_eq!(engine.refreshes.load(Ordering::SeqCst), statuses.len());
+    assert_eq!(
+        engine.refreshes.load(Ordering::SeqCst),
+        TRIES + statuses.len() - 1
+    );
 }
 
 /// A change to a watched file that leaves it no newer than the file last
@@ -720,7 +742,7 @@ fn a_refresh_that_panics_in_a_poll() {
 fn a_refresh_that_panics_after_a_change(dir: &Path) {
     let path = dir.join("panics.dat");
     std::fs::write(&path, b"version 1").unwrap();
-    let (engine, shared) = panicking(DataFileConfiguration::builder(&path).build(), 1, 0);
+    let (engine, shared) = panicking(DataFileConfiguration::builder(&path).build(), TRIES, 0);
     let service = DataUpdateService::new();
     let reports = reports(&service, &data_file(&shared));
     service
@@ -749,7 +771,10 @@ fn a_refresh_that_panics_after_a_change(dir: &Path) {
         Some(&AutoUpdateStatus::Success),
         "a watched file: {statuses:?}"
     );
-    assert_eq!(engine.refreshes.load(Ordering::SeqCst), statuses.len());
+    assert_eq!(
+        engine.refreshes.load(Ordering::SeqCst),
+        TRIES + statuses.len() - 1
+    );
     assert_panic_logged("a watched file");
 }
 
@@ -820,6 +845,7 @@ fn a_refresh_that_fails_is_logged_and_reported_as_a_failure() {
     assert_eq!(take(), ["WARN logger check"]);
 
     let refused = applying(&Error::configuration(REFUSED).to_string());
+    let refused_from_file = applying_from_file(&Error::configuration(REFUSED).to_string());
     let dir = std::env::temp_dir().join(format!("fiftyone-refresh-failure-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -828,9 +854,9 @@ fn a_refresh_that_fails_is_logged_and_reported_as_a_failure() {
     a_programmatic_update_of_a_registered_file(&dir);
     a_programmatic_update_of_data_in_memory();
     an_update_from_memory();
-    the_update_on_start_up(&refused);
+    the_update_on_start_up();
     a_scheduled_poll(&refused);
-    a_watched_file(&dir, &refused);
+    a_watched_file(&dir, &refused_from_file);
     a_watched_file_that_is_not_newer(&dir);
     a_refresh_that_panics_in_a_poll();
     a_refresh_that_panics_after_a_change(&dir);

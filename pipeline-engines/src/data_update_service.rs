@@ -274,25 +274,96 @@ fn log_callback_panic(engine: &str, panic: &(dyn Any + Send)) {
     );
 }
 
-/// Run an engine's refresh, giving a refresh that fails or panics as
-/// [`AutoUpdateStatus::RefreshFailed`], so a panic in a refresh is reported
-/// like a failure and never ends the thread that made the check.
+/// How many times a refresh from a data file is tried before it fails, as
+/// the errors table's row for a refresh from the data file gives it.
+const REFRESH_TRIES: usize = 10;
+
+/// How long a refresh from a data file waits before it is tried again, so a
+/// file another process still holds has time to be released.
+const REFRESH_RETRY_DELAY: Duration = Duration::from_millis(100);
+
+/// How long a watched file is given to become readable after it changes
+/// before the check ends with [`AutoUpdateStatus::Timeout`], as the errors
+/// table gives it.
+const WATCHED_FILE_READABLE_WITHIN: Duration = Duration::from_secs(10 * 60);
+
+/// How often a watched file that cannot yet be read is tried again.
+const READABLE_CHECK_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Run one try of an engine's refresh, giving the cause of a refresh that
+/// fails or panics, so a panic in a refresh is reported like a failure and
+/// never ends the thread that made the check.
+fn try_refresh(refresh: impl FnOnce() -> fiftyone_pipeline_core::Result<()>) -> Option<String> {
+    match catch_unwind(AssertUnwindSafe(refresh)) {
+        Ok(Ok(())) => None,
+        Ok(Err(error)) => Some(error.to_string()),
+        Err(panic) => Some(format!(
+            "the refresh panicked: {}",
+            panic_message(panic.as_ref())
+        )),
+    }
+}
+
+/// Run an engine's refresh from data held in memory once, giving a refresh
+/// that fails or panics as [`AutoUpdateStatus::RefreshFailed`] with the
+/// errors table's message for it, which names the Engine by its type.
 fn guarded_refresh(
     engine: &str,
     refresh: impl FnOnce() -> fiftyone_pipeline_core::Result<()>,
 ) -> Result<(), DataUpdateError> {
-    let cause = match catch_unwind(AssertUnwindSafe(refresh)) {
-        Ok(Ok(())) => return Ok(()),
-        Ok(Err(error)) => error.to_string(),
-        Err(panic) => format!("the refresh panicked: {}", panic_message(panic.as_ref())),
-    };
+    match try_refresh(refresh) {
+        None => Ok(()),
+        Some(cause) => Err(DataUpdateError::new(
+            AutoUpdateStatus::RefreshFailed,
+            format!(
+                "An error occurred when applying a data update to engine '{engine}'. \
+                 Error detail: {cause}"
+            ),
+        )),
+    }
+}
+
+/// Refresh `engine` from its data file `identifier`, trying up to
+/// [`REFRESH_TRIES`] times, as .NET does, and giving a refresh that still
+/// fails as [`AutoUpdateStatus::RefreshFailed`] with the errors table's
+/// message, which names the tries.
+fn refresh_from_file(
+    engine: &dyn OnPremiseAspectEngine,
+    identifier: &str,
+) -> Result<(), DataUpdateError> {
+    let mut cause = String::new();
+    for attempt in 1..=REFRESH_TRIES {
+        match try_refresh(|| engine.refresh(Some(identifier))) {
+            None => return Ok(()),
+            Some(failed) => cause = failed,
+        }
+        if attempt < REFRESH_TRIES {
+            std::thread::sleep(REFRESH_RETRY_DELAY);
+        }
+    }
     Err(DataUpdateError::new(
         AutoUpdateStatus::RefreshFailed,
         format!(
-            "An error occurred when applying a data update to engine '{engine}'. \
-             Error detail: {cause}"
+            "An error occurred when applying a data update to engine '{}' after \
+             {REFRESH_TRIES} tries. Error detail: {cause}",
+            engine.engine_type_name()
         ),
     ))
+}
+
+/// Whether the file at `path` can be opened for reading within `limit`,
+/// trying again every [`READABLE_CHECK_INTERVAL`] while it cannot.
+fn wait_until_readable(path: &Path, limit: Duration) -> bool {
+    let start = Instant::now();
+    loop {
+        if std::fs::File::open(path).is_ok_and(|file| file.metadata().is_ok_and(|m| m.is_file())) {
+            return true;
+        }
+        if start.elapsed() >= limit {
+            return false;
+        }
+        std::thread::sleep(READABLE_CHECK_INTERVAL.min(limit));
+    }
 }
 
 /// The message a panic carries, when it is text.
@@ -465,8 +536,9 @@ impl DataUpdateService {
     ///
     /// Returns the status of the startup poll, or [`AutoUpdateStatus::NotNeeded`]
     /// when no startup poll was requested. A failed startup poll leaves the
-    /// engine on the data it loaded, as the specification says. It is logged
-    /// and returned as an error, and the file is registered all the same, so
+    /// engine on the data it loaded, as the specification says. It is
+    /// returned as an error and not logged, as the errors table says of the
+    /// update on start-up, and the file is registered all the same, so
     /// the updates that follow still run.
     ///
     /// The registration lasts as long as the caller keeps `engine`. Given the
@@ -484,7 +556,7 @@ impl DataUpdateService {
                  service was given the only reference to its engine, which is dropped \
                  when registration ends. Keep a reference to the engine for as long as \
                  it is to be updated.",
-                engine.data_key()
+                engine.engine_type_name()
             );
             return Ok(AutoUpdateStatus::NotNeeded);
         }
@@ -512,24 +584,16 @@ impl DataUpdateService {
 
         // Update on startup: poll once, synchronously. A failure leaves the
         // engine on the data it loaded, so the file is still registered for
-        // the updates that follow.
+        // the updates that follow. The errors table says the update on
+        // start-up passes its error to the caller instead of logging it.
         if config.update_on_startup && !already_registered {
             log::info!("Updating on start-up");
             self.inner
                 .callbacks
-                .start(engine.data_key(), Some(&data_file));
+                .start(engine.engine_type_name(), Some(&data_file));
             startup = self.check_for_update_from_url(&registration);
-            if let Err(error) = &startup {
-                if error.status != AutoUpdateStatus::RefreshFailed {
-                    log::warn!(
-                        "An error occurred while updating the data file for {} on start-up. \
-                         The data it has is used. Error detail: {error}",
-                        engine.data_key()
-                    );
-                }
-            }
-            self.inner.callbacks.finish(
-                engine.data_key(),
+            self.inner.callbacks.report(
+                engine.engine_type_name(),
                 Some(&data_file),
                 &startup,
                 CallbackPanic::Raise,
@@ -608,7 +672,7 @@ impl DataUpdateService {
 
         self.inner
             .callbacks
-            .start(engine.data_key(), Some(&registration.data_file));
+            .start(engine.engine_type_name(), Some(&registration.data_file));
         let result = if registration.data_file.data_update_url().is_some() {
             self.check_for_update_from_url(&registration)
         } else if let Some(path) = registration.data_file.data_file_path() {
@@ -620,7 +684,7 @@ impl DataUpdateService {
             self.reschedule_after_update(&registration);
         }
         self.inner.callbacks.report(
-            engine.data_key(),
+            engine.engine_type_name(),
             Some(&registration.data_file),
             &result,
             CallbackPanic::Raise,
@@ -641,7 +705,7 @@ impl DataUpdateService {
         data_file_identifier: Option<&str>,
         data: &[u8],
     ) -> DataUpdateResult {
-        guarded_refresh(engine.data_key(), || {
+        guarded_refresh(engine.engine_type_name(), || {
             engine.refresh_from_memory(data_file_identifier, data)
         })
         .map(|()| AutoUpdateStatus::Success)
@@ -807,11 +871,9 @@ impl DataUpdateService {
         }
         log::info!(
             "Attempting to refresh Engine '{}' with new data",
-            engine.data_key()
+            engine.engine_type_name()
         );
-        guarded_refresh(engine.data_key(), || {
-            engine.refresh(Some(data_file.identifier()))
-        })?;
+        refresh_from_file(engine.as_ref(), data_file.identifier())?;
         data_file.set_last_applied_modified(modified);
         Ok(AutoUpdateStatus::Success)
     }
@@ -930,12 +992,12 @@ impl ServiceHandle {
                 };
                 self.inner
                     .callbacks
-                    .start(engine.data_key(), Some(&registration.data_file));
+                    .start(engine.engine_type_name(), Some(&registration.data_file));
                 let result = self.check_for_update_from_url(&registration);
                 let applied = matches!(result, Ok(AutoUpdateStatus::Success));
                 log_poll(&result);
                 self.inner.callbacks.finish(
-                    engine.data_key(),
+                    engine.engine_type_name(),
                     Some(&registration.data_file),
                     &result,
                     CallbackPanic::Log,
@@ -981,7 +1043,7 @@ impl ServiceHandle {
             callbacks.report(name, Some(data_file), &result, CallbackPanic::Log);
             return;
         };
-        let key = engine.data_key();
+        let key = engine.engine_type_name();
         callbacks.start(key, Some(data_file));
         let result = Self::refresh_from_watched_file(&engine, data_file);
         callbacks.finish(key, Some(data_file), &result, CallbackPanic::Log);
@@ -1011,14 +1073,25 @@ impl ServiceHandle {
         }
         data_file.set_last_applied_modified(modified);
         data_file.set_last_watched_modified(modified);
+        // The writer may still hold the file. One that cannot be opened for
+        // reading within the time the errors table gives is a timeout, which
+        // is reported and not logged.
+        if !wait_until_readable(path, WATCHED_FILE_READABLE_WITHIN) {
+            return Err(DataUpdateError::new(
+                AutoUpdateStatus::Timeout,
+                format!(
+                    "The data file '{}' could not be opened for reading within {} minutes.",
+                    path.display(),
+                    WATCHED_FILE_READABLE_WITHIN.as_secs() / 60
+                ),
+            ));
+        }
         log::info!(
             "Attempting to refresh Engine '{}' with new data",
-            engine.data_key()
+            engine.engine_type_name()
         );
-        guarded_refresh(engine.data_key(), || {
-            engine.refresh(Some(data_file.identifier()))
-        })
-        .map(|()| AutoUpdateStatus::Success)
+        refresh_from_file(engine.as_ref(), data_file.identifier())
+            .map(|()| AutoUpdateStatus::Success)
     }
 
     /// True once the service has been dropped.
@@ -1080,7 +1153,7 @@ impl ServiceHandle {
             }
         }
 
-        let name = engine.data_key();
+        let name = engine.engine_type_name();
         // An error message is masked where the check ends, but a log entry
         // written here is not, so the URL these entries name is masked now.
         let logged_url = redact_with(&url, &config.data_update_license_keys);
@@ -1172,13 +1245,13 @@ impl ServiceHandle {
                 name,
             )?;
             let data = if config.decompress_content {
-                gzip_decompress(&compressed).map_err(|e| decompress_error(&url, e))?
+                gzip_decompress(&compressed).map_err(|e| decompress_error(&url, name, e))?
             } else {
                 compressed
             };
             let recorded = data_file.published_changes();
             log::info!("Attempting to refresh Engine '{name}' with new data");
-            guarded_refresh(engine.data_key(), || {
+            guarded_refresh(name, || {
                 engine.refresh_from_memory(Some(data_file.identifier()), &data)
             })?;
             Self::record_published(data_file, recorded);
@@ -1190,7 +1263,7 @@ impl ServiceHandle {
         // rename. Each is removed when it goes out of scope, so an update that
         // fails part way leaves nothing behind.
         let download = TempFile::beside(path, "download");
-        save_body(&mut body, download.path(), |e| {
+        save_body(&mut body, download.path(), name, |e| {
             access_error(&url, name, read_error_message(e))
         })?;
         log::info!("Downloaded new data from '{logged_url}' for Engine '{name}'");
@@ -1203,7 +1276,7 @@ impl ServiceHandle {
         let new_file = if config.decompress_content {
             let decompressed = TempFile::beside(path, "new");
             gunzip_file(download.path(), decompressed.path(), &stop)
-                .map_err(|e| decompress_error(&url, e))?;
+                .map_err(|e| decompress_error(&url, name, e))?;
             drop(download);
             decompressed
         } else {
@@ -1228,9 +1301,7 @@ impl ServiceHandle {
         })?;
         let recorded = data_file.published_changes();
         log::info!("Attempting to refresh Engine '{name}' with new data");
-        guarded_refresh(engine.data_key(), || {
-            engine.refresh(Some(data_file.identifier()))
-        })?;
+        refresh_from_file(engine.as_ref(), data_file.identifier())?;
         Self::record_published(data_file, recorded);
 
         Ok(AutoUpdateStatus::Success)
@@ -1262,9 +1333,15 @@ fn log_poll(result: &DataUpdateResult) {
 }
 
 /// Log a check that failed, as the errors table gives: the entry "Error
-/// during check for data update", with the error attached.
+/// during check for data update", with the error attached, or for an error
+/// the table has no row for, its last message, which the error carries. A
+/// timeout is not logged.
 fn log_check_failed(error: &DataUpdateError) {
-    log::error!("Error during check for data update. {}", error.message);
+    match error.status {
+        AutoUpdateStatus::Timeout => {}
+        AutoUpdateStatus::UnknownError => log::error!("{}", error.message),
+        _ => log::error!("Error during check for data update. {}", error.message),
+    }
 }
 
 /// The message of a failed request and each of its causes, without the URL
@@ -1411,17 +1488,22 @@ impl Drop for TempFile {
 }
 
 /// Write everything `body` reads into a new file at `path`, flushed to disk.
-/// A failed read is the error `read_error` makes of it, and a failed write
-/// names the file.
+/// A failed read is the error `read_error` makes of it, and a failed write,
+/// which the errors table has no row for, is an unknown error for `engine`
+/// naming the file.
 fn save_body(
     body: &mut impl Read,
     path: &Path,
+    engine: &str,
     read_error: impl Fn(std::io::Error) -> DataUpdateError,
 ) -> Result<(), DataUpdateError> {
     let write_error = |error: std::io::Error| {
-        DataUpdateError::new(
-            AutoUpdateStatus::StreamError,
-            format!("error writing data update to '{}': {error}", path.display()),
+        unknown_error(
+            engine,
+            format!(
+                "writing the download to '{}' failed: {error}",
+                path.display()
+            ),
         )
     };
     let mut file = std::fs::File::create(path).map_err(write_error)?;
@@ -1490,11 +1572,25 @@ fn access_error(url: &str, engine: &str, cause: String) -> DataUpdateError {
     )
 }
 
-/// The error for a download that could not be decompressed.
-fn decompress_error(url: &str, error: std::io::Error) -> DataUpdateError {
+/// The error for a download that could not be decompressed, which the errors
+/// table has no row for, so it is an unknown error for `engine`.
+fn decompress_error(url: &str, engine: &str, error: std::io::Error) -> DataUpdateError {
+    unknown_error(
+        engine,
+        format!("decompressing the data update from '{url}' failed: {error}"),
+    )
+}
+
+/// An error the errors table has no row for, being
+/// [`AutoUpdateStatus::UnknownError`] with the table's last message, naming
+/// the Engine by its type, and `detail`.
+fn unknown_error(engine: &str, detail: String) -> DataUpdateError {
     DataUpdateError::new(
-        AutoUpdateStatus::StreamError,
-        format!("error decompressing data update from '{url}': {error}"),
+        AutoUpdateStatus::UnknownError,
+        format!(
+            "An unhandled error occurred while checking for automatic updates for engine \
+             '{engine}'. Error detail: {detail}"
+        ),
     )
 }
 

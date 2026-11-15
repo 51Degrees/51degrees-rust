@@ -896,21 +896,16 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
     fn refresh(&self, _data_file_identifier: Option<&str>) -> Result<()> {
         // A single-file engine ignores the identifier. Reload the data set
         // from the file's configured path on disk. A reload that fails is
-        // logged at error level, as .NET does, and returned. The message keeps
-        // .NET's "If issue persists" so support can search for one phrase
-        // across languages.
+        // returned and not logged here: the data update service logs it with
+        // the message of the specification's errors table, which is the same
+        // in every language, and a caller that refreshes directly has the
+        // error.
         let path = self
             .data_files
             .first()
             .and_then(|file| file.data_file_path().map(Path::to_path_buf));
         match path {
-            Some(path) => self.reload_from_path(&path).inspect_err(|error| {
-                log::error!(
-                    "Failed to refresh data from '{}'. The engine keeps the data it had. \
-                     If issue persists, please contact support@51degrees.com. {error}",
-                    path.display()
-                );
-            }),
+            Some(path) => self.reload_from_path(&path),
             None => Err(Error::configuration(format!(
                 "Engine '{}' has no data file path to refresh from.",
                 self.data_key()
@@ -920,13 +915,8 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
 
     fn refresh_from_memory(&self, _data_file_identifier: Option<&str>, data: &[u8]) -> Result<()> {
         // A single-file engine ignores the identifier. A refresh that fails is
-        // logged as a refresh from the file is.
-        self.reload_from_memory(data).inspect_err(|error| {
-            log::error!(
-                "Failed to refresh data from memory. The engine keeps the data it had. \
-                 If issue persists, please contact support@51degrees.com. {error}"
-            );
-        })
+        // returned, as a refresh from the file is.
+        self.reload_from_memory(data)
     }
 }
 

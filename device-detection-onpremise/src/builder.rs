@@ -414,9 +414,13 @@ impl DeviceDetectionOnPremiseEngineBuilder {
                 .cloned()
                 .ok_or_else(|| Error::configuration("engine has no data file to register"))?;
             let as_engine: Arc<dyn OnPremiseAspectEngine> = engine.clone();
-            // A failed update on start-up leaves the engine on the data file it
-            // loaded, as the specification says, and the service logs it.
-            let _ = service.register(as_engine, data_file);
+            // A failed update on start-up is passed to the caller, as the
+            // specification's errors table says, rather than logged.
+            if let Err(error) = service.register(as_engine, Arc::clone(&data_file)) {
+                return Err(Error::configuration(
+                    error.on_startup_message(data_file.identifier()),
+                ));
+            }
         }
 
         Ok(engine)

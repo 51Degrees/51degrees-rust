@@ -49,7 +49,10 @@ pub enum AutoUpdateStatus {
     TooManyRequests,
     /// The server responded `403 Forbidden` (for example, a revoked key).
     Forbidden,
-    /// Writing the download to a file, or decompressing it, failed.
+    /// Writing the download to a file, or decompressing it, failed. The
+    /// service no longer gives it, because the specification's errors table
+    /// has no row for either failure, so each is an
+    /// [`AutoUpdateStatus::UnknownError`]. Kept so code that names it builds.
     StreamError,
     /// The downloaded content failed MD5 verification.
     Md5ValidationFailed,
@@ -63,9 +66,34 @@ pub enum AutoUpdateStatus {
     TempPathNotSet,
     /// An unanticipated error occurred during the check.
     UnknownError,
+    /// A watched data file could not be opened for reading within 10
+    /// minutes of it changing, the specification's `AUTO_UPDATE_TIMEOUT`.
+    Timeout,
 }
 
 impl AutoUpdateStatus {
+    /// The name the specification's errors table, and .NET, give the status,
+    /// such as `AUTO_UPDATE_ERR_403_FORBIDDEN`, so a message names it the
+    /// same way in every language.
+    pub fn name(&self) -> &'static str {
+        match self {
+            AutoUpdateStatus::Success => "AUTO_UPDATE_SUCCESS",
+            AutoUpdateStatus::NotNeeded => "AUTO_UPDATE_NOT_NEEDED",
+            AutoUpdateStatus::InProgress => "AUTO_UPDATE_IN_PROGRESS",
+            AutoUpdateStatus::HttpsError => "AUTO_UPDATE_HTTPS_ERR",
+            AutoUpdateStatus::TooManyRequests => "AUTO_UPDATE_ERR_429_TOO_MANY_ATTEMPTS",
+            AutoUpdateStatus::Forbidden => "AUTO_UPDATE_ERR_403_FORBIDDEN",
+            AutoUpdateStatus::StreamError => "AUTO_UPDATE_UNKNOWN_ERROR",
+            AutoUpdateStatus::Md5ValidationFailed => "AUTO_UPDATE_ERR_MD5_VALIDATION_FAILED",
+            AutoUpdateStatus::NewFileCannotRename => "AUTO_UPDATE_NEW_FILE_CANT_RENAME",
+            AutoUpdateStatus::RefreshFailed => "AUTO_UPDATE_REFRESH_FAILED",
+            AutoUpdateStatus::NoConfiguration => "AUTO_UPDATE_NO_CONFIGURATION",
+            AutoUpdateStatus::TempPathNotSet => "AUTO_UPDATE_TEMP_PATH_NOT_SET",
+            AutoUpdateStatus::UnknownError => "AUTO_UPDATE_UNKNOWN_ERROR",
+            AutoUpdateStatus::Timeout => "AUTO_UPDATE_TIMEOUT",
+        }
+    }
+
     /// True if the status represents a successful or no-op outcome rather than
     /// a failure.
     pub fn is_ok(&self) -> bool {
@@ -95,6 +123,20 @@ impl DataUpdateError {
             status,
             message: message.into(),
         }
+    }
+
+    /// The message for an update on start-up of the data file `identifier`
+    /// that ended with this error, being the errors table's "Update on startup
+    /// failed for \<data file identifier\> with status \<status\>. See log for
+    /// details", with this error's message after it. A builder that registers
+    /// a data file passes it to its caller as the build's error.
+    pub fn on_startup_message(&self, identifier: &str) -> String {
+        format!(
+            "Update on startup failed for {identifier} with status {}. See log for details. \
+             Error detail: {}",
+            self.status.name(),
+            self.message
+        )
     }
 }
 
@@ -127,6 +169,7 @@ mod tests {
             AutoUpdateStatus::NoConfiguration,
             AutoUpdateStatus::TempPathNotSet,
             AutoUpdateStatus::UnknownError,
+            AutoUpdateStatus::Timeout,
         ] {
             assert!(!status.is_ok(), "{status:?}");
         }

@@ -20,10 +20,11 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! What a refresh that fails logs. .NET's Hash engine logs one error and keeps
-//! the data it had, so this engine logs one error, keeps its data and returns
-//! the error. Kept in its own test binary because a logger is installed once
-//! for the whole process.
+//! What a refresh that fails logs. The engine keeps the data it had and
+//! returns the error, and logs nothing, because the data update service logs
+//! a failed refresh with the message of the specification's errors table,
+//! which is the same in every language. Kept in its own test binary because
+//! a logger is installed once for the whole process.
 //!
 //! The test needs the Lite file `_51DEGREES_DD_PATH` names and skips with a
 //! note when it is missing.
@@ -91,19 +92,13 @@ fn is_mobile(engine: &Arc<DeviceDetectionOnPremiseEngine>) -> bool {
     format!("{:?}", device.get("IsMobile").unwrap()) == "Bool(true)"
 }
 
-/// Refresh, and check the refresh fails, logs exactly one error naming the
-/// file, and leaves the engine answering.
+/// Refresh, and check the refresh fails, logs nothing, and leaves the engine
+/// answering.
 fn refresh_fails(engine: &Arc<DeviceDetectionOnPremiseEngine>, path: &Path, case: &str) {
     let result = engine.refresh(None);
     let records = take();
-    let error = result.expect_err(case);
-    assert_eq!(records.len(), 1, "{case}: {records:?}");
-    let expected = format!(
-        "ERROR Failed to refresh data from '{}'. The engine keeps the data it had. If issue \
-         persists, please contact support@51degrees.com. {error}",
-        path.display()
-    );
-    assert_eq!(records[0], expected, "{case}");
+    result.expect_err(case);
+    assert_eq!(records, Vec::<String>::new(), "{case}: {}", path.display());
     assert!(is_mobile(engine), "{case}: the engine kept its data");
     assert_eq!(take(), Vec::<String>::new(), "{case}");
 }
@@ -111,7 +106,7 @@ fn refresh_fails(engine: &Arc<DeviceDetectionOnPremiseEngine>, path: &Path, case
 /// One test, so the records cannot come from another test running at the
 /// same time.
 #[test]
-fn a_refresh_that_fails_logs_one_error_and_keeps_the_data() {
+fn a_refresh_that_fails_logs_nothing_and_keeps_the_data() {
     let Some(lite) = crate::deprecated_names::var("_51DEGREES_DD_PATH")
         .ok()
         .map(PathBuf::from)
@@ -152,8 +147,7 @@ fn a_refresh_that_fails_logs_one_error_and_keeps_the_data() {
     std::fs::remove_file(&path).unwrap();
     refresh_fails(&engine, &path, "no file");
 
-    // A refresh from memory that fails logs as one from a file does, naming
-    // no file.
+    // A refresh from memory that fails logs nothing either.
     for (case, data) in [
         ("no data", Vec::new()),
         (
@@ -163,15 +157,8 @@ fn a_refresh_that_fails_logs_one_error_and_keeps_the_data() {
     ] {
         let result = engine.refresh_from_memory(None, &data);
         let records = take();
-        let error = result.expect_err(case);
-        assert_eq!(
-            records,
-            vec![format!(
-                "ERROR Failed to refresh data from memory. The engine keeps the data it had. \
-                 If issue persists, please contact support@51degrees.com. {error}"
-            )],
-            "{case}"
-        );
+        result.expect_err(case);
+        assert_eq!(records, Vec::<String>::new(), "{case}");
         assert!(is_mobile(&engine), "{case}: the engine kept its data");
     }
     engine
