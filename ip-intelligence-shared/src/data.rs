@@ -1304,6 +1304,57 @@ mod tests {
         assert_eq!(WEIGHTED_RECORD_VALUE_KEY, "value");
     }
 
+    /// data-model.md: "Each property MUST also be exposed as a weighted
+    /// value". A plain property reads as a weighted list holding its value at
+    /// the full weighting, `UInt16.MaxValue`, which weighted-values.md says
+    /// represents a weighting of 1.0, and a property with no value reads as
+    /// no value with its reason.
+    #[test]
+    fn every_property_is_also_exposed_as_a_weighted_value() {
+        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+        data.set_string("RegisteredName", "Cloudflare");
+        data.set_wkt_string("Areas", WktString::from("POINT(2 4)".to_owned()));
+        data.set_float("Latitude", 51.5);
+        data.set_integer("AccuracyRadius", 25);
+        data.set_boolean("IsVpn", false);
+        data.set_float_no_value("Longitude", "no location");
+        let whole = |value: &str| vec![WeightedValue::new(u16::MAX, value.to_owned())];
+        for (name, expected) in [
+            ("RegisteredName", "Cloudflare"),
+            ("Areas", "POINT(2 4)"),
+            ("Latitude", "51.5"),
+            ("AccuracyRadius", "25"),
+            ("IsVpn", "false"),
+        ] {
+            assert_eq!(
+                data.weighted_string(name).value().cloned().ok(),
+                Some(whole(expected)),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            data.weighted_string("Longitude").no_value_message(),
+            Some("no location"),
+        );
+
+        // A value read on request is exposed in the same way.
+        for (stored, expected) in [
+            (
+                StoredValue::String(ValueStore::Value("Cloudflare".to_owned())),
+                "Cloudflare",
+            ),
+            (StoredValue::Float(ValueStore::Value(51.5)), "51.5"),
+            (StoredValue::Integer(ValueStore::Value(25)), "25"),
+            (StoredValue::Boolean(ValueStore::Value(true)), "true"),
+        ] {
+            assert_eq!(
+                stored.weighted_string().value().cloned().ok(),
+                Some(whole(expected)),
+                "{expected}"
+            );
+        }
+    }
+
     #[test]
     fn usable_through_trait_objects() {
         let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
