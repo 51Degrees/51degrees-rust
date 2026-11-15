@@ -295,8 +295,17 @@ const WATCHED_FILE_OPEN_RETRY_MILLISECONDS: u64 = 500;
 
 /// Whether the file at `path` opens for reading, trying every `retry` until
 /// `limit` has passed.
-fn wait_until_readable(_path: &Path, _limit: Duration, _retry: Duration) -> bool {
-    true
+fn wait_until_readable(path: &Path, limit: Duration, retry: Duration) -> bool {
+    let until = Instant::now() + limit;
+    loop {
+        if std::fs::File::open(path).is_ok() {
+            return true;
+        }
+        if Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(retry);
+    }
 }
 
 /// Run an engine's refresh, giving the cause of a refresh that fails or
