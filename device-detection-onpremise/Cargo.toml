@@ -22,8 +22,9 @@ fiftyone-device-detection-shared = { version = "=4.5.2", path = "../device-detec
 # never collide in a Device Detection binary.
 fiftyone-native = { version = "=4.5.2", path = "../native", default-features = false, features = ["dd"] }
 arc-swap.workspace = true
-# Logs a refresh that fails through the log facade, which does nothing until
-# the application installs a logger.
+# Logs settings that have no effect and a property lookup over an index it
+# lacks through the log facade, which does nothing until the application
+# installs a logger.
 log = "0.4"
 
 [dev-dependencies]
