@@ -226,9 +226,10 @@ fn read_metadata(manager: &Manager) -> Result<(Vec<DataFileProperty>, Vec<DataFi
 /// with that data. Data whose metadata cannot be read then fails the refresh,
 /// and the engine goes on using the data set it had, as the data updates
 /// specification asks. A reload replaces the data set before the engine can
-/// read the new metadata, so the check cannot wait until then.
-fn check_metadata(candidate: &Manager) -> Result<()> {
-    read_metadata(candidate).map(|_| ())
+/// read the new metadata, so the check cannot wait until then. `candidate`
+/// is closed when the check ends, before the reload opens the data again.
+fn check_metadata(candidate: Arc<Manager>) -> Result<()> {
+    read_metadata(&candidate).map(|_| ())
 }
 
 /// The data set `manager` holds, read from `copy` when there is one, and its
@@ -580,7 +581,7 @@ impl IpIntelligenceOnPremiseEngine {
             )
         });
         let source = copy.as_ref().map_or(path, OperationalCopy::path);
-        check_metadata(&Manager::open(source, PerformanceProfile::LowMemory)?)?;
+        check_metadata(Manager::open(source, PerformanceProfile::LowMemory)?)?;
         let manager = Arc::clone(&self.loaded.load().manager);
         manager.reload_from_file(source)?;
         self.swap_in(copy, manager)
@@ -596,7 +597,7 @@ impl IpIntelligenceOnPremiseEngine {
             .refresh_lock
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        check_metadata(&Manager::open_from_memory(
+        check_metadata(Manager::open_from_memory(
             data.to_vec(),
             PerformanceProfile::LowMemory,
             None,
