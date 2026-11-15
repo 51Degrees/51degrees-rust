@@ -412,8 +412,14 @@ mod tests {
     #[test]
     fn a_factor_word_is_read_whatever_its_case() {
         for (outcome, words) in [
-            (FactorOutcome::Verified, ["Verified", "VERIFIED", "vErIfIeD"]),
-            (FactorOutcome::Mismatch, ["Mismatch", "MISMATCH", "misMatch"]),
+            (
+                FactorOutcome::Verified,
+                ["Verified", "VERIFIED", "vErIfIeD"],
+            ),
+            (
+                FactorOutcome::Mismatch,
+                ["Mismatch", "MISMATCH", "misMatch"],
+            ),
             (
                 FactorOutcome::Misconfigured,
                 ["Misconfigured", "MISCONFIGURED", "misConfigured"],

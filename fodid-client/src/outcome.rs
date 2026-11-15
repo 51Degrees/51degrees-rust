@@ -220,9 +220,10 @@ impl FactorOutcome {
     /// `verified`, `misconfigured` and `notrecorded` are each read on their
     /// own, because none of them is a mismatch. Anything else, including a
     /// word this client does not know, is a mismatch, so an unexpected value
-    /// never reads as a pass.
+    /// never reads as a pass. The word is compared ignoring case, as .NET
+    /// compares it, so `Verified` reads as `verified`.
     pub fn from_cloud(value: Option<&str>) -> Self {
-        match value {
+        match value.map(str::to_ascii_lowercase).as_deref() {
             Some("verified") => Self::Verified,
             Some("misconfigured") => Self::Misconfigured,
             Some("notrecorded") => Self::NotRecorded,
