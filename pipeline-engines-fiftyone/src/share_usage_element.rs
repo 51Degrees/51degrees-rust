@@ -256,13 +256,15 @@ impl ShareUsageConfig {
     }
 
     /// The query string parameters that are shared, as they were given, in
-    /// addition to any starting with `51d_`. `None` shares every one.
+    /// addition to any starting with `51d_`. `None`, the default, shares
+    /// every one.
     pub fn included_query_string_parameters(&self) -> Option<&[String]> {
         self.included_query_string_parameters.as_deref()
     }
 
     /// True if every evidence value is shared, ignoring the blocked-header
-    /// and query filters, apart from the keys that are never shared (see
+    /// and query filters, apart from the keys that are never shared, which
+    /// include every cookie whose name does not start with `51D_` (see
     /// [`EvidenceKeyFilterShareUsage`]).
     pub fn share_all_evidence(&self) -> bool {
         self.share_all_evidence
@@ -355,7 +357,7 @@ impl ShareUsageConfigBuilder {
                 ),
                 share_usage_url: SHARE_USAGE_DEFAULT_URL.to_owned(),
                 blocked_http_headers: Vec::new(),
-                included_query_string_parameters: Some(Vec::new()),
+                included_query_string_parameters: None,
                 share_all_evidence: false,
                 ignore_flow_data_evidence_filter: Vec::new(),
                 failures_to_enter_recovery: SHARE_USAGE_DEFAULT_FAILURES_TO_ENTER_RECOVERY,
@@ -442,8 +444,9 @@ impl ShareUsageConfigBuilder {
     }
 
     /// Set the query string parameters to share (in addition to any starting
-    /// with `51d_`). Passing `None` shares every query parameter. Returns
-    /// `self` for chaining.
+    /// with `51d_`). Passing `None`, the default, shares every query
+    /// parameter, and `Some` of an empty list shares only those starting with
+    /// `51d_`. Returns `self` for chaining.
     pub fn included_query_string_parameters<I, S>(mut self, params: Option<I>) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -455,7 +458,8 @@ impl ShareUsageConfigBuilder {
     }
 
     /// Share every evidence value, ignoring the blocked-header and query
-    /// filters, apart from the keys that are never shared (see
+    /// filters, apart from the keys that are never shared, which include
+    /// every cookie whose name does not start with `51D_` (see
     /// [`EvidenceKeyFilterShareUsage`]). Returns `self` for chaining.
     pub fn share_all_evidence(mut self, share_all: bool) -> Self {
         self.config.share_all_evidence = share_all;
@@ -466,10 +470,10 @@ impl ShareUsageConfigBuilder {
     ///
     /// The cookie's value is then compared along with the evidence, so the
     /// same evidence from a new session is shared again while a repeat
-    /// within one session is not. The cookie itself is not shared unless all
-    /// evidence is shared, and then track session has no effect, as every
-    /// cookie is shared and compared. A name that is empty or only white
-    /// space leaves track session off. Returns `self` for chaining.
+    /// within one session is not, whether or not all evidence is shared. The
+    /// cookie itself is shared only when its name starts with `51D_`, as no
+    /// other cookie is. A name that is empty or only white space leaves
+    /// track session off. Returns `self` for chaining.
     pub fn track_session(mut self, cookie_name: impl Into<String>) -> Self {
         let name = cookie_name.into().trim().to_owned();
         self.config.session_cookie_name = (!name.is_empty()).then_some(name);
@@ -801,27 +805,16 @@ impl ShareUsageElement {
     }
 
     fn with_boxed_sink(config: ShareUsageConfig, sink: Box<dyn UsageSink>) -> Self {
-        // With all evidence shared every cookie is shared and compared, so
-        // track session has no effect.
-        let session_cookie = config
-            .session_cookie_name
-            .as_deref()
-            .filter(|_| !config.share_all_evidence);
-
         // Build the evidence filter from the configured settings. Used for both
         // the element filter and the tracker filter so the two cannot diverge.
         let make_filter = || {
-            let filter = if config.share_all_evidence {
+            if config.share_all_evidence {
                 EvidenceKeyFilterShareUsage::share_all()
             } else {
                 EvidenceKeyFilterShareUsage::new(
                     config.blocked_http_headers.clone(),
                     config.included_query_string_parameters.clone(),
                 )
-            };
-            match session_cookie {
-                Some(name) => filter.without_session_cookie(name),
-                None => filter,
             }
         };
 
@@ -831,7 +824,7 @@ impl ShareUsageElement {
         // session id and sequence so they cannot defeat deduplication, and
         // compares the session cookie when track session is on.
         let mut tracker_filter = EvidenceKeyFilterShareUsageTracker::new(make_filter());
-        if let Some(name) = session_cookie {
+        if let Some(name) = config.session_cookie_name.as_deref() {
             tracker_filter = tracker_filter.with_session_cookie(name);
         }
         let tracker = ShareUsageTracker::new(
@@ -2550,17 +2543,37 @@ mod tests {
     /// makes no difference.
     #[test]
     fn a_new_session_is_shared_again_only_with_track_session_on() {
-        let off = shared_for_sessions(ShareUsageConfig::default(), "sid", &["a", "a", "b"], false);
-        assert_eq!(off.matches("<Device>").count(), 1, "{off}");
+        for share_all in [false, true] {
+            let off = shared_for_sessions(
+                ShareUsageConfig::builder()
+                    .share_all_evidence(share_all)
+                    .build(),
+                "sid",
+                &["a", "a", "b"],
+                false,
+            );
+            assert_eq!(
+                off.matches("<Device>").count(),
+                1,
+                "share all {share_all}: {off}"
+            );
 
-        let on = shared_for_sessions(
-            ShareUsageConfig::builder().track_session("sid").build(),
-            "sid",
-            &["a", "a", "b"],
-            false,
-        );
-        assert_eq!(on.matches("<Device>").count(), 2, "{on}");
-        assert!(!on.contains("Name=\"sid\""), "{on}");
+            let on = shared_for_sessions(
+                ShareUsageConfig::builder()
+                    .share_all_evidence(share_all)
+                    .track_session("sid")
+                    .build(),
+                "sid",
+                &["a", "a", "b"],
+                false,
+            );
+            assert_eq!(
+                on.matches("<Device>").count(),
+                2,
+                "share all {share_all}: {on}"
+            );
+            assert!(!on.contains("Name=\"sid\""), "share all {share_all}: {on}");
+        }
     }
 
     /// The session cookie is read from the web request as well as from the
@@ -2590,30 +2603,67 @@ mod tests {
         }
     }
 
-    /// The session cookie is not shared unless all evidence is shared, even
-    /// when its name starts with `51D_`, while the other `51D_` cookies are.
+    /// usage-sharing-element.md: the session cookie is shared only when its
+    /// name starts with `51D_`, as no other cookie is, whether or not all
+    /// evidence is shared.
     #[test]
-    fn the_session_cookie_is_shared_only_when_all_evidence_is_shared() {
+    fn the_session_cookie_is_shared_only_when_its_name_starts_51d() {
         for share_all in [false, true] {
-            let xml = shared_for_sessions(
-                ShareUsageConfig::builder()
-                    .share_all_evidence(share_all)
-                    .track_session("51D_Session")
-                    .build(),
-                "51D_Session",
-                &["a"],
-                false,
-            );
-            assert!(
-                xml.contains("<cookie Name=\"51D_Other\">other</cookie>"),
-                "share all {share_all}: {xml}"
-            );
-            assert_eq!(
-                xml.contains("<cookie Name=\"51D_Session\">a</cookie>"),
-                share_all,
-                "share all {share_all}: {xml}"
-            );
+            for (cookie, shared) in [("51D_Session", true), ("sid", false)] {
+                let xml = shared_for_sessions(
+                    ShareUsageConfig::builder()
+                        .share_all_evidence(share_all)
+                        .track_session(cookie)
+                        .build(),
+                    cookie,
+                    &["a"],
+                    false,
+                );
+                assert!(
+                    xml.contains("<cookie Name=\"51D_Other\">other</cookie>"),
+                    "share all {share_all}, {cookie}: {xml}"
+                );
+                assert_eq!(
+                    xml.contains(&format!("<cookie Name=\"{cookie}\">a</cookie>")),
+                    shared,
+                    "share all {share_all}, {cookie}: {xml}"
+                );
+            }
         }
+    }
+
+    /// usage-sharing-element.md: share all query string parameters is on by
+    /// default, so every query string and form value is shared.
+    #[test]
+    fn every_query_value_is_shared_by_default() {
+        assert_eq!(
+            ShareUsageConfig::default().included_query_string_parameters(),
+            None
+        );
+        let capture = Capture::default();
+        let element = Arc::new(ShareUsageElement::with_sink(
+            ShareUsageConfig::default(),
+            capture.clone(),
+        ));
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        let mut data = pipeline.create_flow_data_with(
+            Evidence::builder()
+                .add("header.user-agent", "agent")
+                .add("query.campaign", "spring")
+                .add("query.51D_Other", "1")
+                .build(),
+        );
+        data.process().unwrap();
+        drop(data);
+        drop(pipeline);
+        drop(element);
+
+        let xml = capture.messages().concat();
+        assert!(xml.contains(">spring</query>"), "{xml}");
+        assert!(xml.contains("Name=\"51D_Other\""), "{xml}");
     }
 
     /// An element that replaces the session id and sequence evidence.

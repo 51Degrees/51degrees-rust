@@ -29,9 +29,11 @@
 //! sharing builder takes .NET's settings, read and checked as .NET reads
 //! and checks them:
 //!
-//! - `SetIncludedQueryStringParameters` and `SetIncludedQueryStringParameter`
-//!   add to the query string parameters that are shared, and
-//!   `SetShareAllQueryStringParameters` shares them all.
+//! - `SetShareAllQueryStringParameters` shares every query string and form
+//!   parameter, and is on unless set to false, as the specification gives.
+//!   `SetIncludedQueryStringParameters` and `SetIncludedQueryStringParameter`
+//!   add to the parameters shared when it is off, in whichever order the
+//!   settings come.
 //! - `SetBlockedHttpHeaders` replaces the headers that are not shared, and
 //!   `SetBlockedHttpHeader` adds one.
 //! - `SetIgnoreFlowDataEvidenceFilter` adds `key:value` pairs separated by
@@ -50,8 +52,8 @@
 //!   range is refused with .NET's message.
 //! - `SetTrackSession` compares the session cookie that
 //!   `SetAspSessionCookieName` names, which has no effect unless track
-//!   session is on. Track session with no name is refused unless all
-//!   evidence is shared, as there is no session cookie to default to.
+//!   session is on. Track session with no name is refused, as there is no
+//!   session cookie to default to.
 //!
 //! The pipeline holds the usage sharing element as a resource, so what a
 //! configuration set can be read back with [`ShareUsageElement::config`].
@@ -262,9 +264,11 @@ fn set_headers_element_builder() -> BuilderDefinition<SetHeadersElementBuilder> 
 }
 
 /// The usage sharing settings, held as .NET's `ShareUsageBuilder` holds
-/// them until the element is made, with its defaults and in its types.
+/// them until the element is made, in its types and with the defaults the
+/// specification gives.
 struct ShareUsageBuilder {
-    included_query_string_parameters: Option<Vec<String>>,
+    share_all_query_string_parameters: bool,
+    included_query_string_parameters: Vec<String>,
     share_all_evidence: bool,
     blocked_http_headers: Vec<String>,
     ignore_flow_data_evidence_filter: Vec<(String, String)>,
@@ -287,7 +291,8 @@ struct ShareUsageBuilder {
 impl ShareUsageBuilder {
     fn new() -> Self {
         ShareUsageBuilder {
-            included_query_string_parameters: Some(Vec::new()),
+            share_all_query_string_parameters: true,
+            included_query_string_parameters: Vec::new(),
             share_all_evidence: false,
             blocked_http_headers: Vec::new(),
             ignore_flow_data_evidence_filter: Vec::new(),
@@ -314,22 +319,19 @@ impl ShareUsageBuilder {
         }
     }
 
-    /// Add query string parameters to share. Once every one is shared,
-    /// adding names changes nothing.
+    /// Add query string parameters to share when not every one is shared.
     fn include(mut self, names: impl IntoIterator<Item = String>) -> Self {
-        if let Some(included) = self.included_query_string_parameters.as_mut() {
-            included.extend(names);
-        }
+        self.included_query_string_parameters.extend(names);
         self
     }
 
     /// The configuration for the element, with the queue size .NET gives
     /// and refusing the sizes .NET's element refuses. Track session with no
-    /// session cookie named is refused too, unless all evidence is shared,
-    /// as there is then no session to compare.
+    /// session cookie named is refused too, as there is then no session to
+    /// compare.
     fn config(self) -> Result<ShareUsageConfig> {
         let session_cookie_name = self.session_cookie_name.trim();
-        if self.track_session && session_cookie_name.is_empty() && !self.share_all_evidence {
+        if self.track_session && session_cookie_name.is_empty() {
             return Err(Error::configuration(
                 "Usage sharing's 'SetTrackSession' is on but 'SetAspSessionCookieName' names no \
                  session cookie, so there is no session to compare. Set \
@@ -363,7 +365,10 @@ impl ShareUsageBuilder {
             )));
         };
         Ok(ShareUsageConfig::builder()
-            .included_query_string_parameters(self.included_query_string_parameters)
+            .included_query_string_parameters(
+                (!self.share_all_query_string_parameters)
+                    .then_some(self.included_query_string_parameters),
+            )
             .share_all_evidence(self.share_all_evidence)
             .blocked_http_headers(self.blocked_http_headers)
             .ignore_flow_data_evidence_filter(self.ignore_flow_data_evidence_filter)
@@ -470,11 +475,7 @@ fn share_usage_builder() -> BuilderDefinition<ShareUsageBuilder> {
     .setting(
         "SetShareAllQueryStringParameters",
         |mut builder: ShareUsageBuilder, share_all: bool| {
-            if share_all {
-                builder.included_query_string_parameters = None;
-            } else if builder.included_query_string_parameters.is_none() {
-                builder.included_query_string_parameters = Some(Vec::new());
-            }
+            builder.share_all_query_string_parameters = share_all;
             builder
         },
     )
