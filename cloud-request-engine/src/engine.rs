@@ -1484,8 +1484,11 @@ impl CloudRequestEngineBuilder {
 
         match (&resource_key, &license_key) {
             (None, None) => Err(Error::configuration(
-                "a CloudRequestEngine needs a credential and this one was given \
-                 none. Either set a resource key with resource_key(..), which \
+                "a CloudRequestEngine was given neither a resource key nor a \
+                 license key, so its requests would carry nothing to \
+                 authenticate with, and the cloud service answers 401 to \
+                 every such request, so every request this engine made would \
+                 fail. Either set a resource key with resource_key(..), which \
                  you can create for free at \
                  https://51degrees.com/configure?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=cloud-request-engine-src-engine.rs&utm_term=credential-required, \
                  or set a license key with license_key(..) and name the \
@@ -2085,7 +2088,7 @@ mod tests {
         // fails before it looks at a transport or an endpoint.
         let message = refusal(CloudRequestEngine::builder().build());
         assert!(
-            message.contains("needs a credential") && message.contains("resource_key(.."),
+            message.contains("nothing to authenticate") && message.contains("resource_key(.."),
             "the message should name the settings to change, got {message}"
         );
     }
@@ -2245,7 +2248,7 @@ mod tests {
         for blank in ["", "   ", "\n"] {
             let message = refusal(CloudRequestEngine::builder().resource_key(blank).build());
             assert!(
-                message.contains("needs a credential"),
+                message.contains("nothing to authenticate"),
                 "a blank resource key should not count as one, got {message}"
             );
         }
