@@ -1,0 +1,120 @@
+name: Temporary timing of main against the release head, alternated
+
+# Builds the on-premise performance examples of main and of the release head
+# on one runner, gives both the same data files, then runs them in turn for a
+# number of rounds, turning the order each round. Only this branch runs it.
+
+on:
+  push:
+    branches:
+      - 'tmp/rust-timing-monday'
+
+jobs:
+  Timing:
+    runs-on: ubuntu-latest
+    env:
+      ROUNDS: 30
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: ac676bd6408bafc2a5e3fc5be5b48e21cdf2dc5e
+          path: main
+          submodules: recursive
+          fetch-depth: 0
+      - name: Checkout the release head
+        uses: actions/checkout@v4
+        with:
+          ref: 1380ed0da9bb2b490c4b2341d7291113ff9611d0
+          path: head
+          submodules: recursive
+          fetch-depth: 0
+      - name: Restore the data files
+        uses: ./head/.github/actions/restore-data-files
+        with:
+          root: head
+      - name: Download any data file not restored
+        continue-on-error: true
+        shell: pwsh
+        working-directory: head
+        run: ./cxx/data/get-data-files.ps1 51Degrees-LiteV4.1.hash "20000 User Agents.csv" 51Degrees-IPIV4AsnIpiV41.ipi
+      - name: Give both sides the same data files
+        shell: bash
+        run: |
+          set -euo pipefail
+          d="${GITHUB_WORKSPACE}/head/cxx/data"
+          for f in "$d/device-detection/51Degrees-LiteV4.1.hash" "$d/device-detection/20000 User Agents.csv" "$d/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" "$d/ip-intelligence/evidence.yml"; do
+            if [ ! -f "$f" ]; then
+              echo "::error::$f is missing"
+              exit 1
+            fi
+          done
+          # main reads the User-Agents and the IP evidence from the older data
+          # folders, so the head's copies are put there.
+          mkdir -p main/cxx/device-detection-data main/cxx/ip-intelligence-data
+          rm -f "main/cxx/device-detection-data/20000 User Agents.csv" main/cxx/ip-intelligence-data/evidence.yml
+          cp "$d/device-detection/20000 User Agents.csv" "main/cxx/device-detection-data/20000 User Agents.csv"
+          cp "$d/ip-intelligence/evidence.yml" main/cxx/ip-intelligence-data/evidence.yml
+          sha256sum "$d/device-detection/51Degrees-LiteV4.1.hash" "$d/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" \
+            "$d/device-detection/20000 User Agents.csv" "main/cxx/device-detection-data/20000 User Agents.csv" \
+            "$d/ip-intelligence/evidence.yml" main/cxx/ip-intelligence-data/evidence.yml
+          # Both the older and the newer names, so each side reads the same files.
+          for prefix in "" "_"; do
+            echo "${prefix}51DEGREES_DD_PATH=$d/device-detection/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
+            echo "${prefix}51DEGREES_IPI_PATH=$d/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
+          done
+      - name: Install CMake
+        uses: lukka/get-cmake@latest
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build both sides' performance examples in release
+        shell: pwsh
+        run: |
+          rustc --version
+          foreach ($side in 'main', 'head') {
+            Write-Host "Building $side"
+            & "./$side/ci/test-examples-against-source.ps1" -Command {
+              cargo build --release --config source.toml -p device-detection-examples --bin dd-onprem-performance
+              cargo build --release --config source.toml -p ip-intelligence-examples --bin ipi-onprem-performance
+            }
+          }
+      - name: Run main and the head in turn
+        shell: bash
+        run: |
+          set -uo pipefail
+          nproc
+          lscpu | grep -E 'Model name' || true
+          bin() { find "$GITHUB_WORKSPACE/$1/examples/target/release" -maxdepth 1 -type f -name "$2" | head -1; }
+          for side in main head; do
+            for b in dd-onprem-performance ipi-onprem-performance; do
+              p=$(bin "$side" "$b")
+              if [ ! -x "$p" ]; then echo "::error::$side $b was not built"; exit 1; fi
+              echo "BINARY $side $b $p"
+            done
+          done
+          mkdir -p out
+          for round in $(seq 1 "$ROUNDS"); do
+            if [ $((round % 2)) -eq 1 ]; then order="main head"; else order="head main"; fi
+            for side in $order; do
+              f="$GITHUB_WORKSPACE/out/dd-$side-$round.txt"
+              if ! (cd "$side/examples" && "$(bin "$side" dd-onprem-performance)" > "$f" 2>&1); then
+                echo "::error::Device Detection $side round $round failed"; cat "$f"; exit 1
+              fi
+              v=$(grep -E 'Detections per second' "$f" | tail -1 | grep -oE '[0-9]+$')
+              n=$(grep -E 'Detections +:' "$f" | tail -1 | grep -oE '[0-9]+$')
+              echo "RESULT dd $round $side $v detections $n"
+            done
+            for side in $order; do
+              f="$GITHUB_WORKSPACE/out/ipi-$side-$round.txt"
+              if ! (cd "$side/examples" && "$(bin "$side" ipi-onprem-performance)" > "$f" 2>&1); then
+                echo "::error::IP Intelligence $side round $round failed"; cat "$f"; exit 1
+              fi
+              s=$(grep -A4 'Single-threaded result' "$f" | grep -oE 'Throughput: [0-9]+' | grep -oE '[0-9]+')
+              m=$(grep -A4 'Multi-threaded result' "$f" | grep -oE 'Throughput: [0-9]+' | grep -oE '[0-9]+')
+              l=$(grep -oE 'Loaded [0-9]+' "$f" | grep -oE '[0-9]+')
+              echo "RESULT ipi $round $side $m single $s loaded $l"
+            done
+          done
+          for f in out/dd-main-1.txt out/dd-head-1.txt out/ipi-main-1.txt out/ipi-head-1.txt; do
+            echo "===== $f"; sed -n '1,40p' "$f"
+          done
