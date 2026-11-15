@@ -1557,6 +1557,40 @@ fn license_engine_with(client: Arc<FakeClient>, values: &[&str]) -> CloudRequest
         .unwrap()
 }
 
+/// cloud-request-engine.md: "The Engine MUST attempt both discovery requests
+/// when it is built (in its builder or constructor), and MAY make them in
+/// parallel, so that in the normal case a built Engine is fully initialised
+/// and immediately ready to process Flow Data." A License Key alone is no
+/// exception, because the remote server answers `accessibleproperties` for it.
+#[test]
+fn a_license_key_alone_makes_both_discovery_requests_at_build() {
+    let client = Arc::new(FakeClient::default());
+    client.set_properties(FakeClient::ok(
+        r#"{"Products":{"device":{"DataTier":"CloudV4","Properties":[{"Name":"IsMobile","Type":"Bool"}]}}}"#,
+    ));
+    let engine = license_engine_with(client.clone(), &["device.ismobile"]);
+
+    let urls: Vec<String> = client
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|r| r.url.clone())
+        .collect();
+    assert_eq!(urls.len(), 2, "both discovery requests at build: {urls:?}");
+    assert!(urls.iter().any(|u| u.contains("evidencekeys")), "{urls:?}");
+    assert!(
+        urls.iter().any(|u| u.contains("accessibleproperties")),
+        "{urls:?}"
+    );
+    let products = engine.public_properties().unwrap();
+    assert_eq!(
+        products.products.get("device").unwrap().properties[0].name,
+        "IsMobile",
+        "the engine holds what the License Key entitles"
+    );
+}
+
 #[test]
 fn a_license_key_alone_authenticates_the_request() {
     let client = Arc::new(FakeClient::default());
