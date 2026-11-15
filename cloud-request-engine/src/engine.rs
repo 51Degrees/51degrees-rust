@@ -1604,9 +1604,9 @@ fn send_and_validate(
 ///
 /// A resource key that does not start `AQ`, or a licence key of any shape, is
 /// invisible to the shape rules, so the exact values are masked here where
-/// they are known. Only the two variants that carry free text need it, and the
-/// enum is marked `non_exhaustive`, so the remaining arm returns the error as
-/// it stands.
+/// they are known. Only the two variants that carry free text need it, and an
+/// aggregate of them, and the enum is marked `non_exhaustive`, so the
+/// remaining arm returns the error as it stands.
 fn redact_secrets(error: Error, secrets: &[String]) -> Error {
     match error {
         Error::CloudRequest {
@@ -1621,6 +1621,17 @@ fn redact_secrets(error: Error, secrets: &[String]) -> Error {
         Error::PipelineConfiguration { message } => Error::PipelineConfiguration {
             message: redact_with(&message, secrets).into_owned(),
         },
+        // A response with several errors gives one for each, so each is
+        // masked.
+        Error::Aggregate(errors) => Error::Aggregate(
+            errors
+                .into_iter()
+                .map(|error| FlowError {
+                    source: redact_secrets(error.source, secrets),
+                    ..error
+                })
+                .collect(),
+        ),
         other => other,
     }
 }
@@ -1713,17 +1724,24 @@ fn discovery_pending() -> Error {
 /// Return a discovery request's 4xx answer as the build's error, and pass any
 /// other result back. A 4xx answer, such as an unknown resource key, is a
 /// definitive configuration error, which a retry with the same configuration
-/// can never fix. Anything else, including a request that did not complete,
-/// is transient.
+/// can never fix, whether its body held one error or several. Anything else,
+/// including a request that did not complete, is transient.
 fn definitive_fails_build<T>(result: Result<T>) -> Result<Result<T>> {
     match result {
-        Err(
-            error @ Error::CloudRequest {
-                status_code: 400..=499,
-                ..
-            },
-        ) => Err(error),
+        Err(error) if is_4xx_answer(&error) => Err(error),
         other => Ok(other),
+    }
+}
+
+/// Whether an error is the service's 4xx answer, as one cloud error or as an
+/// aggregate of the cloud errors from one answer's several entries.
+fn is_4xx_answer(error: &Error) -> bool {
+    match error {
+        Error::CloudRequest { status_code, .. } => (400..=499).contains(status_code),
+        Error::Aggregate(errors) => {
+            !errors.is_empty() && errors.iter().all(|error| is_4xx_answer(&error.source))
+        }
+        _ => false,
     }
 }
 

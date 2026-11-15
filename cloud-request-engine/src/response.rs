@@ -28,7 +28,9 @@
 //! of the specification:
 //!
 //! - If the response body contains a top-level `errors` array with entries,
-//!   raise an error using those messages.
+//!   raise an error using those messages. One entry gives a
+//!   [`fiftyone_pipeline_core::Error::CloudRequest`], and several give a
+//!   [`fiftyone_pipeline_core::Error::Aggregate`] holding one for each.
 //! - If the body is empty, raise `No data in response from cloud service at
 //!   '[url]'`.
 //! - Otherwise, if the status code indicates failure, raise `Cloud service at
@@ -37,8 +39,9 @@
 //!   log them.
 
 use fiftyone_pipeline_core::redact::redact;
-use fiftyone_pipeline_core::Error;
+use fiftyone_pipeline_core::{Error, FlowError};
 
+use crate::constants::ELEMENT_DATA_KEY;
 use crate::http::CloudHttpResponse;
 
 /// The result of validating a cloud response that did not raise an error.
@@ -77,7 +80,9 @@ pub fn parse_retry_after(value: Option<&str>) -> Option<u64> {
 /// than text anyone prints.
 ///
 /// Returns `Ok(ParsedResponse)` when the response is usable, or
-/// `Err(Error::CloudRequest)` describing the failure.
+/// `Err(Error::CloudRequest)` describing the failure, or `Err(Error::Aggregate)`
+/// holding one `Error::CloudRequest` for each entry when the response's
+/// `errors` holds several.
 pub fn validate_response(
     response: &CloudHttpResponse,
     url: &str,
@@ -160,25 +165,39 @@ pub(crate) fn validate_keeping_warnings(
         ));
     }
 
-    if messages.is_empty() {
-        (Ok(response.body.clone()), warnings)
-    } else {
-        // The service repeats the resource key back inside its own error text,
-        // so the joined message is cleaned whatever it was built from.
-        let mut message = redact(&messages.join("; ")).into_owned();
-        // An invalid or missing resource key is the most common cause of a cloud
-        // error, so point the reader at the configurator to create a valid one.
-        if message.to_lowercase().contains("resource key") {
-            message.push_str(
-                ". Create a resource key at \
-                 https://51degrees.com/configure?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=cloud-request-engine-src-response.rs&utm_term=resource-key-invalid",
-            );
-        }
-        (
-            Err(cloud_error(response.status, retry_after, message)),
-            warnings,
-        )
+    let mut errors: Vec<Error> = messages
+        .iter()
+        .map(|message| cloud_error(response.status, retry_after, error_message(message)))
+        .collect();
+    let error = match errors.len() {
+        0 => return (Ok(response.body.clone()), warnings),
+        1 => errors.remove(0),
+        // Several entries are kept apart, each a cloud error with the
+        // response's status, as the specification asks.
+        _ => Error::Aggregate(
+            errors
+                .into_iter()
+                .map(|error| FlowError::new(ELEMENT_DATA_KEY, error))
+                .collect(),
+        ),
+    };
+    (Err(error), warnings)
+}
+
+/// The message of one cloud error, cleaned of credentials, because the
+/// service repeats the resource key back inside its own error text. An
+/// invalid or missing resource key is the most common cause of a cloud
+/// error, so a message about one points the reader at the configurator to
+/// create a valid one.
+fn error_message(message: &str) -> String {
+    let mut message = redact(message).into_owned();
+    if message.to_lowercase().contains("resource key") {
+        message.push_str(
+            ". Create a resource key at \
+             https://51degrees.com/configure?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=cloud-request-engine-src-response.rs&utm_term=resource-key-invalid",
+        );
     }
+    message
 }
 
 /// Build an [`Error::CloudRequest`] from the status, retry hint and message.

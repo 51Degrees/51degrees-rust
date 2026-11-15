@@ -308,10 +308,8 @@ fn run_at_once(elements: &[Arc<dyn FlowElement>], before: &Arc<BeforeGroup>) -> 
 /// Produce a value-equivalent copy of an [`Error`] for aggregation.
 ///
 /// [`Error`] is not [`Clone`] because some variants may carry non-clonable
-/// sources in future. For the aggregate we only need to preserve the
-/// user-visible message, so we rebuild a configuration-style error carrying the
-/// original `Display` output. The dedicated variants that are clonable are
-/// preserved as themselves.
+/// sources in future, so each variant is rebuilt from its values, an
+/// aggregate with a copy of each error it holds.
 fn clone_error(error: &Error) -> Error {
     match error {
         Error::PropertyMissing {
@@ -346,11 +344,18 @@ fn clone_error(error: &Error) -> Error {
         Error::Pipeline { message } => Error::Pipeline {
             message: message.clone(),
         },
-        // Nested aggregates and any future non-clonable variants collapse to a
-        // configuration error carrying the rendered message.
-        other => Error::PipelineConfiguration {
-            message: other.to_string(),
-        },
+        // An element's error that holds several, such as a cloud response
+        // with several errors, keeps each.
+        Error::Aggregate(errors) => Error::Aggregate(
+            errors
+                .iter()
+                .map(|error| FlowError {
+                    element_data_key: error.element_data_key.clone(),
+                    should_throw: error.should_throw,
+                    source: clone_error(&error.source),
+                })
+                .collect(),
+        ),
     }
 }
 
