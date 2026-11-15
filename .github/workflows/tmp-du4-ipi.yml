@@ -1,0 +1,36 @@
+name: tmp IP Intelligence refresh test
+
+on:
+  push:
+    branches: ["tmp/rust-du4-ipi-*"]
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      DATA_FILES: |
+        cxx/data/device-detection/51Degrees-LiteV4.1.hash
+        cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Restore the data files
+        uses: ./.github/actions/restore-data-files
+      - name: Download any data file not restored
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $names = $env:DATA_FILES.Trim() -split '\r?\n' |
+            ForEach-Object { Split-Path -Leaf $_.Trim() }
+          ./cxx/data/get-data-files.ps1 @names
+      - name: The IP Intelligence on-premise tests
+        shell: pwsh
+        run: |
+          Get-ChildItem cxx/data/ip-intelligence -Filter *.ipi | ForEach-Object { "$($_.Name) $($_.Length)" }
+          cargo test -p fiftyone-ip-intelligence-onpremise --no-fail-fast -- --nocapture a_refresh_whose_metadata_cannot_be_read
