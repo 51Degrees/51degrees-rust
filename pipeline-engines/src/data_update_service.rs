@@ -52,8 +52,10 @@
 //! that fails or panics is reported as [`AutoUpdateStatus::RefreshFailed`],
 //! never as success, and is logged at error level with the message the
 //! specification's errors table gives, apart from a programmatic check,
-//! which gives the error to its caller instead. The engine keeps the data it
-//! had, and polling and watching go on. An update from memory reports and
+//! which gives the error to its caller instead. A refresh from the data file
+//! is tried up to ten times, 200 milliseconds apart, before it fails, because
+//! the file can still be held by whatever wrote it. The engine keeps the data
+//! it had, and polling and watching go on. An update from memory reports and
 //! logs nothing, and gives its result to the caller.
 //!
 //! # Threading
@@ -274,25 +276,70 @@ fn log_callback_panic(engine: &str, panic: &(dyn Any + Send)) {
     );
 }
 
-/// Run an engine's refresh, giving a refresh that fails or panics as
-/// [`AutoUpdateStatus::RefreshFailed`], so a panic in a refresh is reported
-/// like a failure and never ends the thread that made the check.
+/// How many times a refresh from the data file is tried before the update
+/// fails, because the file can still be held by whatever wrote it.
+const REFRESH_TRIES: u32 = 10;
+
+/// How long to wait after a refresh from the data file fails before the next
+/// try.
+const REFRESH_RETRY_DELAY_MILLISECONDS: u64 = 200;
+
+/// Run an engine's refresh, giving the cause of a refresh that fails or
+/// panics as text, so a panic in a refresh is reported like a failure and
+/// never ends the thread that made the check.
+fn try_refresh(refresh: impl FnOnce() -> fiftyone_pipeline_core::Result<()>) -> Result<(), String> {
+    match catch_unwind(AssertUnwindSafe(refresh)) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(panic) => Err(format!(
+            "the refresh panicked: {}",
+            panic_message(panic.as_ref())
+        )),
+    }
+}
+
+/// Refresh an engine from data held in memory, once, giving a refresh that
+/// fails or panics as [`AutoUpdateStatus::RefreshFailed`].
 fn guarded_refresh(
     engine: &str,
     refresh: impl FnOnce() -> fiftyone_pipeline_core::Result<()>,
 ) -> Result<(), DataUpdateError> {
-    let cause = match catch_unwind(AssertUnwindSafe(refresh)) {
-        Ok(Ok(())) => return Ok(()),
-        Ok(Err(error)) => error.to_string(),
-        Err(panic) => format!("the refresh panicked: {}", panic_message(panic.as_ref())),
-    };
-    Err(DataUpdateError::new(
-        AutoUpdateStatus::RefreshFailed,
-        format!(
-            "An error occurred when applying a data update to engine '{engine}'. \
-             Error detail: {cause}"
-        ),
-    ))
+    try_refresh(refresh).map_err(|cause| {
+        DataUpdateError::new(
+            AutoUpdateStatus::RefreshFailed,
+            format!(
+                "An error occurred when applying a data update to engine '{engine}'. \
+                 Error detail: {cause}"
+            ),
+        )
+    })
+}
+
+/// Refresh an engine from its data file, trying up to [`REFRESH_TRIES`] times
+/// with [`REFRESH_RETRY_DELAY_MILLISECONDS`] between tries, and giving a
+/// refresh whose last try fails or panics as
+/// [`AutoUpdateStatus::RefreshFailed`], with the number of tries made.
+fn guarded_refresh_from_file(
+    engine: &str,
+    refresh: impl Fn() -> fiftyone_pipeline_core::Result<()>,
+) -> Result<(), DataUpdateError> {
+    let mut tries = 0;
+    loop {
+        tries += 1;
+        match try_refresh(&refresh) {
+            Ok(()) => return Ok(()),
+            Err(cause) if tries >= REFRESH_TRIES => {
+                return Err(DataUpdateError::new(
+                    AutoUpdateStatus::RefreshFailed,
+                    format!(
+                        "An error occurred when applying a data update to engine \
+                         '{engine}' after {tries} tries. Error detail: {cause}"
+                    ),
+                ))
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(REFRESH_RETRY_DELAY_MILLISECONDS)),
+        }
+    }
 }
 
 /// The message a panic carries, when it is text.
@@ -809,7 +856,7 @@ impl DataUpdateService {
             "Attempting to refresh Engine '{}' with new data",
             engine.data_key()
         );
-        guarded_refresh(engine.data_key(), || {
+        guarded_refresh_from_file(engine.data_key(), || {
             engine.refresh(Some(data_file.identifier()))
         })?;
         data_file.set_last_applied_modified(modified);
@@ -1015,7 +1062,7 @@ impl ServiceHandle {
             "Attempting to refresh Engine '{}' with new data",
             engine.data_key()
         );
-        guarded_refresh(engine.data_key(), || {
+        guarded_refresh_from_file(engine.data_key(), || {
             engine.refresh(Some(data_file.identifier()))
         })
         .map(|()| AutoUpdateStatus::Success)
@@ -1228,7 +1275,7 @@ impl ServiceHandle {
         })?;
         let recorded = data_file.published_changes();
         log::info!("Attempting to refresh Engine '{name}' with new data");
-        guarded_refresh(engine.data_key(), || {
+        guarded_refresh_from_file(engine.data_key(), || {
             engine.refresh(Some(data_file.identifier()))
         })?;
         Self::record_published(data_file, recorded);
