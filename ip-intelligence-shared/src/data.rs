@@ -357,7 +357,9 @@ impl StoredValue {
         }
     }
 
-    /// The value as a weighted list, ordered high weighting first.
+    /// The value as a weighted list, ordered high weighting first. A plain
+    /// value is the one value of its list, at the full weighting, as
+    /// [`whole_weighted`] gives it.
     fn weighted_string(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
         match self {
             StoredValue::WeightedString(WeightedStore::Values(list)) => {
@@ -366,8 +368,29 @@ impl StoredValue {
             StoredValue::WeightedString(WeightedStore::NoValue { message }) => {
                 AspectPropertyValue::no_value(message.clone())
             }
-            _ => AspectPropertyValue::empty(),
+            StoredValue::String(store) => whole_weighted(store),
+            StoredValue::WktString(store) => whole_weighted(store),
+            StoredValue::Float(store) => whole_weighted(store),
+            StoredValue::Integer(store) => whole_weighted(store),
+            StoredValue::Boolean(store) => whole_weighted(store),
+            StoredValue::Nothing => AspectPropertyValue::empty(),
         }
+    }
+}
+
+/// A plain value as a weighted value, being a list holding the value as text
+/// at the full raw weighting, `u16::MAX`, which is a weighting of 1.0, or the
+/// no-value with its reason. The IP Intelligence data model says each
+/// property is also exposed as a weighted value, so a property that is not
+/// weighted reads through [`IpIntelligenceDataBase::weighted_string`] too.
+fn whole_weighted<T: fmt::Display>(
+    store: &ValueStore<T>,
+) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
+    match store {
+        ValueStore::Value(value) => {
+            AspectPropertyValue::new(vec![WeightedValue::new(u16::MAX, value.to_string())])
+        }
+        ValueStore::NoValue { message } => AspectPropertyValue::no_value(message.clone()),
     }
 }
 
@@ -905,21 +928,41 @@ impl IpIntelligenceDataBase {
         }
     }
 
-    /// Read a weighted string property by name.
+    /// Read any property by name as a weighted value.
     ///
     /// Returns [`AspectPropertyValue::NoValue`] when the property is absent or
     /// was recorded as a no-value. The list is ordered high weighting first.
     /// This is how the weighted properties (`CountryCodesGeographical`,
     /// `CountryCodesPopulation`, `Mcc` and `StateGeoNameIdsGeographical`) are
-    /// read.
+    /// read. Every other property reads as a list of its one value, as text,
+    /// at the full raw weighting, `u16::MAX`, because the IP Intelligence data
+    /// model exposes each property as a weighted value too.
     pub fn weighted_string(&self, name: &str) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
-        match self.weighted_strings.get(&key(name)) {
-            Some(WeightedStore::Values(list)) => AspectPropertyValue::new(list.clone()),
-            Some(WeightedStore::NoValue { message }) => {
-                AspectPropertyValue::no_value(message.clone())
-            }
-            None => self.deferred_value(name, StoredValue::weighted_string),
+        let key = key(name);
+        if let Some(store) = self.weighted_strings.get(&key) {
+            return match store {
+                WeightedStore::Values(list) => AspectPropertyValue::new(list.clone()),
+                WeightedStore::NoValue { message } => {
+                    AspectPropertyValue::no_value(message.clone())
+                }
+            };
         }
+        if let Some(store) = self.strings.get(&key) {
+            return whole_weighted(store);
+        }
+        if let Some(store) = self.wkt_strings.get(&key) {
+            return whole_weighted(store);
+        }
+        if let Some(store) = self.floats.get(&key) {
+            return whole_weighted(store);
+        }
+        if let Some(store) = self.integers.get(&key) {
+            return whole_weighted(store);
+        }
+        if let Some(store) = self.booleans.get(&key) {
+            return whole_weighted(store);
+        }
+        self.deferred_value(name, StoredValue::weighted_string)
     }
 
     // -- getters at a typed accessor's slot ---------------------------------
