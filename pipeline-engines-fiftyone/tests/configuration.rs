@@ -218,7 +218,9 @@ fn the_defaults_are_those_of_dotnet() {
         Duration::from_secs(20 * MINUTE_SECONDS)
     );
     assert!(config.blocked_http_headers().is_empty());
-    assert_eq!(config.included_query_string_parameters(), Some(&[][..]));
+    // usage-sharing-element.md: share all query string parameters is on by
+    // default, where .NET up to 4.5.130 has it off.
+    assert_eq!(config.included_query_string_parameters(), None);
     assert!(!config.share_all_evidence());
     assert!(config.ignore_flow_data_evidence_filter().is_empty());
     assert_eq!(config.failures_to_enter_recovery(), 10);
@@ -235,6 +237,7 @@ fn every_setting_is_read_as_dotnet_reads_it() {
     let pipeline = share_usage(&[
         ("IncludedQueryStringParameters", "a,\"b,c\",,"),
         ("IncludedQueryStringParameter", "d"),
+        ("ShareAllQueryStringParameters", "false"),
         ("ShareAllEvidence", "false"),
         ("BlockedHttpHeaders", "X-One,x-two"),
         ("BlockedHttpHeader", "X-Three"),
@@ -355,10 +358,14 @@ fn sharing_all_evidence_shares_every_key_but_those_never_shared() {
     assert!(share_usage_config(&pipeline).share_all_evidence());
     let element = share_usage_element(&pipeline);
     let filter = element.shared_evidence_filter();
-    for key in ["cookie.session", "query.anything"] {
+    for key in ["cookie.51d_session", "query.anything", "session.anything"] {
         assert!(filter.include(key), "{key}");
     }
-    assert!(!filter.include("header.cookie"));
+    // usage-sharing-element.md: no cookie but a 51D_ one is shared, even
+    // when all evidence is shared.
+    for key in ["header.cookie", "cookie.session"] {
+        assert!(!filter.include(key), "{key}");
+    }
 }
 
 #[test]
@@ -549,21 +556,38 @@ fn recovery_settings_are_checked_as_dotnet_checks_them() {
     }
 }
 
+/// usage-sharing-element.md: share all query string parameters is on by
+/// default, and the included query string parameters have an effect only
+/// when it is off, whichever of the two settings comes first.
 #[test]
-fn query_string_parameters_are_shared_as_dotnet_shares_them() {
+fn query_string_parameters_are_shared_as_the_specification_says() {
     let _serial = start();
     let included = |parameters: &[(&str, &str)]| {
         config(share_usage(parameters))
             .included_query_string_parameters()
             .map(<[String]>::to_vec)
     };
-    assert_eq!(
-        included(&[
-            ("IncludedQueryStringParameter", "x"),
-            ("ShareAllQueryStringParameters", "true"),
-        ]),
-        None
-    );
+    assert_eq!(included(&[]), None);
+    for setting in [
+        "IncludedQueryStringParameter",
+        "IncludedQueryStringParameters",
+    ] {
+        assert_eq!(included(&[(setting, "x")]), None, "{setting}");
+        for share_all in ["true", "false"] {
+            let shared = (share_all == "false").then(|| strings(&["x"]));
+            let all = ("ShareAllQueryStringParameters", share_all);
+            assert_eq!(
+                included(&[(setting, "x"), all]),
+                shared,
+                "{setting} then {share_all}"
+            );
+            assert_eq!(
+                included(&[all, (setting, "x")]),
+                shared,
+                "{share_all} then {setting}"
+            );
+        }
+    }
     assert_eq!(
         included(&[
             ("ShareAllQueryStringParameters", "true"),
@@ -571,20 +595,11 @@ fn query_string_parameters_are_shared_as_dotnet_shares_them() {
         ]),
         Some(Vec::new())
     );
-    // .NET fails for both with a NullReferenceException. A configuration
-    // file cannot give this order, as its names are applied sorted.
-    for setting in [
-        "IncludedQueryStringParameter",
-        "IncludedQueryStringParameters",
-    ] {
-        assert_eq!(
-            included(&[("ShareAllQueryStringParameters", "true"), (setting, "x")]),
-            None,
-            "{setting}"
-        );
-    }
     assert_eq!(
-        included(&[("SetIncludedQueryStringParameters", "")]),
+        included(&[
+            ("SetIncludedQueryStringParameters", ""),
+            ("ShareAllQueryStringParameters", "false"),
+        ]),
         Some(Vec::new())
     );
     // The list adds to what is there, as one parameter does.
@@ -592,6 +607,7 @@ fn query_string_parameters_are_shared_as_dotnet_shares_them() {
         included(&[
             ("IncludedQueryStringParameter", "x"),
             ("IncludedQueryStringParameters", "y,z"),
+            ("ShareAllQueryStringParameters", "false"),
         ]),
         Some(strings(&["x", "y", "z"]))
     );
@@ -599,7 +615,8 @@ fn query_string_parameters_are_shared_as_dotnet_shares_them() {
     // A list given in code is taken as it is.
     let options = PipelineOptions::new().element(
         ElementOptions::new("ShareUsage")
-            .parameter("SetIncludedQueryStringParameters", vec!["p", "q,r"]),
+            .parameter("SetIncludedQueryStringParameters", vec!["p", "q,r"])
+            .parameter("SetShareAllQueryStringParameters", "false"),
     );
     assert_eq!(
         config(build(&options)).included_query_string_parameters(),
@@ -880,12 +897,27 @@ fn track_session_with_no_session_cookie_name_is_refused() {
     let named_only = config(share_usage(&[("AspSessionCookieName", "sid")]));
     assert_eq!(named_only.session_cookie_name(), None);
 
-    // With all evidence shared, track session has no effect and needs no name.
+    // usage-sharing-element.md: track session works the same whether or not
+    // all evidence is shared, so it needs a name either way.
+    assert_eq!(
+        message(share_usage(&[
+            ("TrackSession", "true"),
+            ("ShareAllEvidence", "true"),
+        ])),
+        failed(
+            "ShareUsage",
+            "Usage sharing's 'SetTrackSession' is on but 'SetAspSessionCookieName' names no \
+             session cookie, so there is no session to compare. Set \
+             'SetAspSessionCookieName' to the name of the cookie that holds the session id, \
+             or turn 'SetTrackSession' off."
+        )
+    );
     let share_all = config(share_usage(&[
         ("TrackSession", "true"),
         ("ShareAllEvidence", "true"),
+        ("AspSessionCookieName", "sid"),
     ]));
-    assert_eq!(share_all.session_cookie_name(), None);
+    assert_eq!(share_all.session_cookie_name(), Some("sid"));
     assert_eq!(logged(), Vec::<String>::new());
 }
 

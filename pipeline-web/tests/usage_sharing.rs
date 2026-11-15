@@ -400,6 +400,9 @@ fn the_ignore_filter_reads_only_the_shared_keys_of_the_web_request() {
         let share = Arc::new(ShareUsageElement::with_sink(
             ShareUsageConfig::builder()
                 .blocked_http_headers(["x-blocked"])
+                // Only the 51D_ query parameters, so query.other is not
+                // shared.
+                .included_query_string_parameters(Some(Vec::<&str>::new()))
                 .ignore_flow_data_evidence_filter([(key, value)])
                 .build(),
             Arc::clone(&sink),
