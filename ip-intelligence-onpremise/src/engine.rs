@@ -1261,6 +1261,85 @@ mod tests {
     use fiftyone_pipeline_core::{ElementData, Evidence, Pipeline};
     use fiftyone_pipeline_engines::AspectData;
 
+    /// `file` published a year later, with its first property's description
+    /// past the end of the strings, as `tests/metadata.rs` makes it. The data
+    /// set loads, because loading reads no description, and reading its
+    /// metadata then fails. The places are those of `ipi.h`, `collection.h`
+    /// and `property.h` in 51degrees-cxx.
+    fn later_with_unreadable_metadata(file: &Path) -> Vec<u8> {
+        const PUBLISHED_HEADER: usize = 66;
+        const PROPERTIES_HEADER: usize = 122;
+        const PROPERTY_SIZE: usize = 44;
+        const DESCRIPTION_OFFSET: usize = 16;
+        let mut bytes = std::fs::read(file).unwrap();
+        let year_at = PUBLISHED_HEADER..PUBLISHED_HEADER + 2;
+        let year = i16::from_le_bytes(bytes[year_at.clone()].try_into().unwrap());
+        bytes[year_at].copy_from_slice(&(year + 1).to_le_bytes());
+        let read_u32 = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+        let start = u64::from_le_bytes(
+            bytes[PROPERTIES_HEADER..PROPERTIES_HEADER + 8]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let length = read_u32(PROPERTIES_HEADER + 8) as usize;
+        let count = read_u32(PROPERTIES_HEADER + 12) as usize;
+        assert_eq!(length, count * PROPERTY_SIZE, "the properties are found");
+        let at = start + DESCRIPTION_OFFSET;
+        bytes[at..at + 4].copy_from_slice(&(i32::MAX as u32).to_le_bytes());
+        bytes
+    }
+
+    /// A refresh to a data file that loads but whose metadata cannot be read
+    /// fails, and the engine goes on using the data set it had, from a path
+    /// and from memory, as the data updates specification asks. The new file
+    /// is published a year later, so the publish date of the engine's data
+    /// set shows which data set it uses.
+    #[test]
+    fn a_refresh_whose_metadata_cannot_be_read_keeps_the_data_set_it_had() {
+        let Some(file) = ipi_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping the failed refresh");
+            return;
+        };
+        let bytes = later_with_unreadable_metadata(&file);
+        let dir = std::env::temp_dir().join(format!(
+            "fiftyone-ipi-keeps-data-set-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let unreadable = dir.join("51Degrees.ipi");
+        std::fs::write(&unreadable, &bytes).unwrap();
+        let engine = no_names_engine(&file);
+        let published = || engine.loaded.load().manager.data_set_published();
+        let before = published();
+        let reloads: [(&str, Box<dyn Fn() -> Result<()> + '_>); 2] = [
+            (
+                "from a path",
+                Box::new(|| engine.reload_from_path(&unreadable)),
+            ),
+            (
+                "from memory",
+                Box::new(|| engine.refresh_from_memory(None, &bytes)),
+            ),
+        ];
+        for (label, reload) in reloads {
+            let error = reload().expect_err("the new metadata cannot be read");
+            assert!(
+                error
+                    .to_string()
+                    .contains("the data file's metadata could not be read (property 0)"),
+                "{label}: {error}"
+            );
+            assert_eq!(
+                published(),
+                before,
+                "{label}: the engine goes on using the data set it had"
+            );
+        }
+        drop(engine);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn the_engine_type_name_is_the_name_of_the_type() {
         let full = std::any::type_name::<IpIntelligenceOnPremiseEngine>();
