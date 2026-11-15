@@ -384,6 +384,13 @@ struct LentMetadata {
     tier: String,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Set by a test to make [`describe`] fail on this thread, as it does
+    /// for a data set whose metadata cannot be read.
+    static FAIL_DESCRIBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// The data set `manager` holds, read from `copy` when there is one, and its
 /// metadata, reporting `tier_override` when it is set, otherwise the tier the
 /// data file names. The missing property rules always compare with the tier
@@ -398,6 +405,12 @@ fn describe(
     tier_override: &Option<String>,
     names: &Arc<BuildNames>,
 ) -> Result<(LoadedDataSet, LentMetadata)> {
+    #[cfg(test)]
+    if FAIL_DESCRIBE.with(std::cell::Cell::get) {
+        return Err(Error::configuration(
+            "the data set's metadata could not be read (test)",
+        ));
+    }
     // An explicit builder override wins, then the tier read from the native
     // data file header (Lite, Enterprise, TAC and so on), then the safe Lite
     // default when the native name is absent.
@@ -1774,6 +1787,61 @@ mod tests {
             .into_iter()
             .map(|root| root.join("cxx/data/device-detection/51Degrees-LiteV4.1.hash"))
             .find(|path| path.is_file())
+    }
+
+    /// `bytes`, a data file published on `published`, with the day it was
+    /// published moved by one, so a data set loaded from it can be told from
+    /// one loaded from `bytes`.
+    fn published_another_day(bytes: &[u8], published: (i32, u32, u32)) -> Vec<u8> {
+        let (year, month, day) = published;
+        let year = i16::try_from(year).unwrap().to_le_bytes();
+        let date = [year[0], year[1], month as u8, day as u8];
+        let at = bytes[..512]
+            .windows(4)
+            .position(|window| window == date)
+            .expect("the header holds the published date");
+        let mut changed = bytes.to_vec();
+        changed[at + 3] = if day < 28 { day as u8 + 1 } else { day as u8 - 1 };
+        changed
+    }
+
+    /// data-updates.md: "If the updated data source cannot be used, the
+    /// refresh MUST fail with an error, and the Engine MUST go on using the
+    /// data source it had, so that processing is unaffected." A data set the
+    /// C library loads but whose metadata cannot then be read cannot be used.
+    #[test]
+    fn a_refresh_that_cannot_use_the_new_data_keeps_the_data_source_it_had() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the failed refresh");
+            return;
+        };
+        let bytes = std::fs::read(&path).unwrap();
+        for profile in [PerformanceProfile::InMemory, PerformanceProfile::LowMemory] {
+            let engine = crate::DeviceDetectionOnPremiseEngineBuilder::new(&path)
+                .performance_profile(profile)
+                .build()
+                .expect("the data file loads");
+            let published = || engine.loaded.load().manager.data_set_published();
+            let before = published().expect("the header holds a date");
+            let later = published_another_day(&bytes, before);
+
+            FAIL_DESCRIBE.with(|fail| fail.set(true));
+            let result = engine.refresh_from_memory(None, &later);
+            FAIL_DESCRIBE.with(|fail| fail.set(false));
+            assert!(result.is_err(), "{}: the refresh fails", profile.as_str());
+            assert_eq!(
+                published(),
+                Some(before),
+                "{}: detections read the data set the engine had",
+                profile.as_str()
+            );
+
+            // The same data used with nothing in the way is taken.
+            engine
+                .refresh_from_memory(None, &later)
+                .expect("the changed data file loads");
+            assert_ne!(published(), Some(before), "{}", profile.as_str());
+        }
     }
 
     /// `FIFTYONE_DEGREES_FILE_POOL_MAX_HANDLES` in the C library's `file.h`,
