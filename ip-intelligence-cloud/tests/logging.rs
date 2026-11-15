@@ -233,10 +233,12 @@ fn a_property_with_no_metadata_logs_nothing() {
     }
 }
 
-/// With only a license key there are no accessible properties to read, so the
-/// engine gives empty metadata, as the specification says, and logs nothing.
+/// With only a license key the cloud request engine asks for the accessible
+/// properties with the license key, and the engine takes its metadata from
+/// that answer, as cloud-request-engine.md's "Discovery under a License Key"
+/// says, and logs nothing.
 #[test]
-fn a_license_key_alone_gives_empty_metadata_and_logs_nothing() {
+fn a_license_key_alone_gives_the_metadata_it_entitles_and_logs_nothing() {
     let _serial = start();
     let request = Arc::new(
         CloudRequestEngine::builder()
@@ -265,5 +267,5 @@ fn a_license_key_alone_gives_empty_metadata_and_logs_nothing() {
         process(&pipeline);
         assert_eq!(take_logged(), Vec::<String>::new(), "request {request}");
     }
-    assert!(pipeline.flow_elements()[1].properties().is_empty());
+    assert!(!pipeline.flow_elements()[1].properties().is_empty());
 }
