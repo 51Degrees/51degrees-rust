@@ -676,6 +676,40 @@ fn a_4xx_answer_to_either_discovery_request_fails_the_build() {
     }
 }
 
+/// A 4xx answer whose `errors` holds several entries fails the build as one
+/// with a single entry does, with each entry kept apart.
+#[test]
+fn a_4xx_answer_with_several_errors_fails_the_build_with_each() {
+    let client = Arc::new(FakeClient::default());
+    client.set_properties(FakeClient::with_status(
+        403,
+        r#"{"errors":["first refusal","second refusal"]}"#,
+    ));
+    let result = CloudRequestEngine::builder()
+        .resource_key("test-resource-key")
+        .endpoint("https://cloud.example.test/api/v4/")
+        .http_client(client)
+        .build();
+    let Err(Error::Aggregate(errors)) = &result else {
+        panic!("expected the build to fail with each error");
+    };
+    let entries: Vec<(u16, &str)> = errors
+        .iter()
+        .map(|error| match &error.source {
+            Error::CloudRequest {
+                status_code,
+                message,
+                ..
+            } => (*status_code, message.as_str()),
+            other => panic!("expected a cloud error, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        entries,
+        vec![(403, "first refusal"), (403, "second refusal")]
+    );
+}
+
 #[test]
 fn evidence_keys_that_cannot_be_reached_are_fetched_on_first_use() {
     let client = Arc::new(FakeClient::default());

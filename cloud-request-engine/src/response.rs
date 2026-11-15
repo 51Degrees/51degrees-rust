@@ -250,14 +250,38 @@ mod tests {
         }
     }
 
+    /// Several entries in `errors` are kept apart in an aggregate, as the
+    /// cloud request engine specification asks, each a cloud error with the
+    /// response's status.
     #[test]
-    fn multiple_errors_are_joined() {
+    fn multiple_errors_are_kept_apart() {
         let resp = response(400, r#"{"errors":["first","second"]}"#);
         let err = validate_response(&resp, "https://x/json", true).unwrap_err();
-        let Error::CloudRequest { message, .. } = err else {
-            panic!("expected cloud error");
+        let Error::Aggregate(errors) = &err else {
+            panic!("expected an aggregate of the errors, got {err:?}");
         };
-        assert!(message.contains("first") && message.contains("second"));
+        let entries: Vec<(&str, u16, &str)> = errors
+            .iter()
+            .map(|error| match &error.source {
+                Error::CloudRequest {
+                    status_code,
+                    message,
+                    ..
+                } => (
+                    error.element_data_key.as_str(),
+                    *status_code,
+                    message.as_str(),
+                ),
+                other => panic!("expected a cloud error, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            entries,
+            vec![
+                ("cloud-response", 400, "first"),
+                ("cloud-response", 400, "second")
+            ]
+        );
     }
 
     #[test]
