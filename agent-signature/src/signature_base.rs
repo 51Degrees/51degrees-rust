@@ -51,7 +51,7 @@ pub(crate) fn build_signature_base(
     for component in components {
         // RFC 9421 section 2.1 requires every component identifier to be a
         // string.
-        let name = component.as_string()?;
+        let name = component.as_string().unwrap_or("not a string");
         // Each identifier is written in its strict serialisation, which is
         // how a compliant signer wrote it whatever spelling the header used.
         let identifier = serialize_item(component);
