@@ -33,7 +33,15 @@ use super::entry::Entry;
 use super::store::{Lookup, Store};
 use crate::cache::{Cache, PutCache};
 use crate::config::CacheBuilder;
-use crate::lru::LruCache;
+use crate::lru::{LruCache, Weigher};
+#[cfg(not(target_family = "wasm"))]
+use crate::memory_budget::MemoryBudget;
+
+/// The bytes an entry takes beyond its value: the key, the times and the
+/// cache's own bookkeeping.
+fn entry_overhead<K, V>() -> usize {
+    std::mem::size_of::<K>() + std::mem::size_of::<Kept<V>>() + 32
+}
 
 /// A [`Store`] in process memory, the sharded [`LruCache`] with lifetimes.
 ///
@@ -41,6 +49,13 @@ use crate::lru::LruCache;
 /// and it drops an entry once the `keep_for` it was written with runs out. It
 /// is the store of an [`LruLoadingCache`](crate::LruLoadingCache), and stands
 /// in for a platform store in tests. It never makes callers wait.
+///
+/// A store can also be bounded by bytes, with a fixed
+/// [limit](LruStoreBuilder::max_bytes) or, on native targets, a
+/// [`MemoryBudget`](crate::MemoryBudget) that follows the machine's memory,
+/// so that copies in memory are evicted when memory comes under pressure.
+/// Below a store on disk, an evicted entry is read back from there rather
+/// than loaded from the source.
 pub struct LruStore<K, V>
 where
     K: Hash + Eq + Send + Sync,
@@ -48,6 +63,11 @@ where
 {
     cache: LruCache<K, Kept<V>>,
     clock: Arc<dyn Clock>,
+    /// The fixed limit on bytes, which a budget never exceeds.
+    #[cfg(not(target_family = "wasm"))]
+    max_bytes: Option<usize>,
+    #[cfg(not(target_family = "wasm"))]
+    budget: Option<MemoryBudget>,
 }
 
 /// An entry and the time the store drops it.
@@ -67,6 +87,10 @@ where
         LruStoreBuilder {
             cache: CacheBuilder::new(),
             clock: None,
+            weigher: None,
+            max_bytes: None,
+            #[cfg(not(target_family = "wasm"))]
+            budget: None,
             types: PhantomData,
         }
     }
@@ -85,6 +109,30 @@ where
     /// The most entries the store holds.
     pub fn capacity(&self) -> usize {
         self.cache.capacity()
+    }
+
+    /// The bytes the entries take, or zero for a store not bounded by bytes.
+    pub fn bytes(&self) -> usize {
+        self.cache.bytes()
+    }
+
+    /// The most bytes the store now holds, or `None` for a store not bounded
+    /// by bytes.
+    pub fn max_bytes(&self) -> Option<usize> {
+        self.cache.max_bytes()
+    }
+
+    /// Reads the memory budget again when its period has passed, and evicts
+    /// entries when it has fallen.
+    #[cfg(not(target_family = "wasm"))]
+    fn follow_budget(&self) {
+        let Some(budget) = &self.budget else {
+            return;
+        };
+        if let Some(bytes) = budget.bytes_if_due(self.cache.bytes()) {
+            self.cache
+                .set_max_bytes(self.max_bytes.map_or(bytes, |most| most.min(bytes)));
+        }
     }
 }
 
@@ -123,6 +171,8 @@ where
             until: keep_for.and_then(|keep_for| now.checked_add(keep_for)),
         };
         self.cache.put(key.clone(), kept);
+        #[cfg(not(target_family = "wasm"))]
+        self.follow_budget();
     }
 
     async fn remove(&self, key: &K) {
@@ -134,6 +184,10 @@ where
 pub struct LruStoreBuilder<K, V> {
     cache: CacheBuilder,
     clock: Option<Arc<dyn Clock>>,
+    weigher: Option<Weigher<K, Kept<V>>>,
+    max_bytes: Option<usize>,
+    #[cfg(not(target_family = "wasm"))]
+    budget: Option<MemoryBudget>,
     types: PhantomData<fn(K) -> V>,
 }
 
@@ -169,9 +223,82 @@ where
     ///
     /// On `wasm32-unknown-unknown` when no [clock](Self::clock) was given.
     pub fn build(self) -> LruStore<K, V> {
-        LruStore {
-            cache: self.cache.build(),
-            clock: clock::given_or_system(self.clock),
+        let mut cache = self.cache.build();
+        if let Some(weigher) = self.weigher {
+            cache = cache.with_weigher(weigher);
         }
+        #[allow(unused_mut)]
+        let mut most = self.max_bytes;
+        #[cfg(not(target_family = "wasm"))]
+        if let Some(budget) = &self.budget {
+            let bytes = budget.bytes_for(0);
+            most = Some(most.map_or(bytes, |most| most.min(bytes)));
+        }
+        if let Some(most) = most {
+            cache.set_max_bytes(most);
+        }
+        LruStore {
+            cache,
+            clock: clock::given_or_system(self.clock),
+            #[cfg(not(target_family = "wasm"))]
+            max_bytes: self.max_bytes,
+            #[cfg(not(target_family = "wasm"))]
+            budget: self.budget,
+        }
+    }
+}
+
+impl<K, V> LruStoreBuilder<K, V>
+where
+    K: Hash + Eq + Clone + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
+{
+    /// How many bytes a value takes, for a store bounded by bytes. The store
+    /// adds what each entry takes beyond its value. Without it, a store
+    /// bounded by bytes counts only that, which suits values of one fixed
+    /// size.
+    ///
+    /// ```
+    /// use fiftyone_caching::LruStore;
+    ///
+    /// let store = LruStore::<String, Vec<u8>>::builder()
+    ///     .weigh(|value: &Vec<u8>| value.len())
+    ///     .max_bytes(64 * 1024 * 1024)
+    ///     .build();
+    /// assert!(store.max_bytes().is_some());
+    /// ```
+    pub fn weigh(mut self, weigh: impl Fn(&V) -> usize + Send + Sync + 'static) -> Self {
+        let overhead = entry_overhead::<K, V>();
+        self.weigher = Some(Arc::new(move |_: &K, kept: &Kept<V>| {
+            weigh(&kept.entry.value).saturating_add(overhead)
+        }));
+        self
+    }
+
+    /// The most bytes the entries take. Once over it, the least recently
+    /// used entries are evicted.
+    pub fn max_bytes(mut self, max_bytes: usize) -> Self {
+        self.max_bytes = Some(max_bytes);
+        self.counting_bytes()
+    }
+
+    /// Bounds the entries by a budget that follows the machine's memory, so
+    /// the store evicts entries when memory comes under pressure. A
+    /// [`max_bytes`](Self::max_bytes) given too is never exceeded. Native
+    /// targets only.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn memory_budget(mut self, budget: MemoryBudget) -> Self {
+        self.budget = Some(budget);
+        self.counting_bytes()
+    }
+
+    /// Counts what each entry takes beyond its value when no
+    /// [weigher](Self::weigh) was given.
+    fn counting_bytes(mut self) -> Self {
+        if self.weigher.is_none() {
+            let overhead = entry_overhead::<K, V>();
+            self.weigher = Some(Arc::new(move |_: &K, _: &Kept<V>| overhead));
+        }
+        self
     }
 }

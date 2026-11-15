@@ -665,6 +665,7 @@ dependencies = [
  "fiftyone-caching",
  "fiftyone-pipeline-core",
  "hashlink",
+ "libc",
  "spin-sdk",
  "tokio",
  "tokio-util",

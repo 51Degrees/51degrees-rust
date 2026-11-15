@@ -31,6 +31,16 @@ runs.
   store.
 - `tokio`, for native hosts, adds a spawner over a tokio-util local pool.
 
+On native targets, `FileStore` keeps the entries on disk for a host with no
+platform store. Each entry is a file named by a hash of its key, written to
+a temporary file and renamed into place, holding the time it must be
+dropped. Expired and unused files are cleared, and the files are kept within
+a share of the volume's space by removing the least recently used. A
+`LruStore` above it can be bounded by bytes, with `MemoryBudget` following
+the machine's memory, so copies in memory are evicted under memory pressure
+and read back from disk rather than loaded from the source. Both size
+themselves from the machine, with no setting.
+
 The crate builds for native targets, `wasm32-wasip1` and `wasm32-wasip2`,
 and for `wasm32-unknown-unknown` with default features off. The `pipeline`
 feature, on by default, brings `DataKeyedCache` and the dependency on

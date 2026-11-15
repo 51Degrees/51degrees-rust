@@ -170,6 +170,58 @@
 //! | `spin` | `wasm32-wasip2` | The `spin` module, with a store over Spin's key-value store |
 //! | `tokio` | Native | The `tokio` module, with a spawner over a tokio-util local pool |
 //!
+//! ### On disk, for native hosts
+//!
+//! A native host with no platform store keeps entries on disk in a
+//! [`FileStore`] wrapped in an [`EncodedStore`], below a copy in memory:
+//!
+//! ```text
+//! LoadingCache(LruStore with a MemoryBudget, time to live 5 min)
+//!   loads from LoadingCache(EncodedStore(FileStore), time to live 1 day)
+//!     loads from the source
+//! ```
+//!
+//! - Data loaded from the source is kept on disk and in memory.
+//! - The [`MemoryBudget`] follows the machine's memory, so the copies in
+//!   memory are evicted, least recently used first, when memory comes under
+//!   pressure. Each store can instead be given a fixed number of bytes.
+//! - An evicted entry is read back from disk without going to the source,
+//!   unless it is stale, when the source loads it again.
+//! - The files are cleared once expired or unused for the time to idle,
+//!   and kept within a share of the volume's space by removing the least
+//!   recently used. They survive a restart.
+//!
+//! Both size themselves from the machine, with no setting. [`FileStore`],
+//! [`MemoryBudget`] and [`machine`] are on native targets only.
+//!
+//! ```no_run
+//! # #[cfg(not(target_family = "wasm"))]
+//! # fn main() -> std::io::Result<()> {
+//! use std::sync::Arc;
+//! use std::time::Duration;
+//! use fiftyone_caching::{
+//!     from_fn, EncodedStore, FileStore, LoadingCache, LruStore, MemoryBudget, Utf8,
+//! };
+//!
+//! let disk = EncodedStore::new(Arc::new(FileStore::open("cache")?), Utf8);
+//! let source = from_fn(|url: String| async move { Ok::<_, String>(format!("page at {url}")) });
+//! let on_disk = LoadingCache::builder(disk, source)
+//!     .time_to_live(Duration::from_secs(24 * 60 * 60))
+//!     .build();
+//! let memory = LruStore::builder()
+//!     .weigh(|page: &String| page.len())
+//!     .memory_budget(MemoryBudget::from_machine())
+//!     .build();
+//! let pages = LoadingCache::builder(memory, on_disk)
+//!     .time_to_live(Duration::from_secs(5 * 60))
+//!     .build();
+//! # let _ = pages;
+//! # Ok(())
+//! # }
+//! # #[cfg(target_family = "wasm")]
+//! # fn main() {}
+//! ```
+//!
 //! ### Example
 //!
 //! ```
@@ -234,8 +286,14 @@ mod cache;
 mod config;
 #[cfg(feature = "pipeline")]
 mod data_keyed;
+#[cfg(not(target_family = "wasm"))]
+mod file_store;
 mod loading;
 mod lru;
+#[cfg(not(target_family = "wasm"))]
+pub mod machine;
+#[cfg(not(target_family = "wasm"))]
+mod memory_budget;
 
 #[cfg(all(feature = "cloudflare", target_arch = "wasm32", target_os = "unknown"))]
 pub mod cloudflare;
@@ -262,6 +320,8 @@ pub use cache::{Cache, PutCache};
 pub use config::{default_concurrency, CacheBuilder, DEFAULT_SIZE};
 #[cfg(feature = "pipeline")]
 pub use data_keyed::DataKeyedCache;
+#[cfg(not(target_family = "wasm"))]
+pub use file_store::{FileStore, FileStoreBuilder, DEFAULT_MOST_BYTES};
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub use loading::SystemClock;
 pub use loading::{
@@ -271,4 +331,6 @@ pub use loading::{
     Raw, Spawn, SpawnLocal, Spawned, SpawnedLocal, StartLoad, Store, Stored, Utf8, ValueLoader,
     ENTRY_FORMAT,
 };
-pub use lru::LruCache;
+pub use lru::{LruCache, Weigher};
+#[cfg(not(target_family = "wasm"))]
+pub use memory_budget::MemoryBudget;

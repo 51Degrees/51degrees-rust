@@ -42,6 +42,11 @@ hashlink = "0.10"
 ahash.workspace = true
 tokio-util = { version = "0.7", optional = true, features = ["rt"] }
 
+# The volume's space is read with statvfs, and the memory on Apple systems
+# with sysctl, for the store on disk and the memory budget.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # WebAssembly builds seed ahash when the crate is compiled, so getrandom, which
 # does not build for wasm32-unknown-unknown without a JavaScript backend, never
 # reaches them.
