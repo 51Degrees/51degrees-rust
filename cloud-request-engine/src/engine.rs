@@ -2090,6 +2090,27 @@ mod tests {
         );
     }
 
+    /// cloud-request-engine.md: "The error raised MUST explain why the
+    /// combination cannot work rather than restating the rule." With no
+    /// credential "There is nothing to authenticate with, and the remote
+    /// server answers 401."
+    #[test]
+    fn the_refusal_of_no_credential_explains_why_it_cannot_work() {
+        let message = refusal(CloudRequestEngine::builder().build());
+        assert!(
+            message.contains("nothing to authenticate"),
+            "the message should say there is nothing to authenticate with, got {message}"
+        );
+        assert!(
+            message.contains("401"),
+            "the message should say the cloud service answers 401, got {message}"
+        );
+        assert!(
+            !message.contains("needs a credential"),
+            "the message should not restate the rule, got {message}"
+        );
+    }
+
     #[test]
     fn both_credentials_build_an_engine() {
         // A license key alongside a resource key is accepted and both keys are
