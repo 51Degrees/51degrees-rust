@@ -144,9 +144,10 @@ pub struct IpIntelligenceOnPremiseEngine {
     /// keeps its native results, and the data set they came from, until it is
     /// dropped.
     base: AspectEngineBase<IpIntelligenceDataBase>,
-    /// The native manager, whose data set a refresh reloads in place as the
-    /// C library's reload does, the properties a lookup reads from the data
-    /// set it holds and their metadata, replaced together after each reload.
+    /// The native manager, which a refresh replaces with a manager holding
+    /// the new data set once that data set can be used, the properties a
+    /// lookup reads from the data set it holds and their metadata, replaced
+    /// together.
     /// In-flight results hold the data set they were created from, so a
     /// reload does not change what they read.
     loaded: ArcSwap<LoadedDataSet>,
@@ -553,10 +554,17 @@ impl IpIntelligenceOnPremiseEngine {
         }))
     }
 
-    /// Reload the data set in the engine's manager from the data file at
-    /// `path`, or from the copy of it the engine reads, and describe the new
-    /// data set. See [`Self::swap_in`]. A reload that fails leaves the data
-    /// set in use and removes the copy, which nothing then reads.
+    /// The names the engine was built with, in their order, for a new data
+    /// set to be opened with, or [`None`] for every property when there are
+    /// none.
+    fn reload_names(&self) -> Option<Vec<&str>> {
+        (!self.names.list.is_empty()).then(|| self.names.list.iter().map(String::as_str).collect())
+    }
+
+    /// Load a new data set from the data file at `path`, or from the copy of
+    /// it the engine reads, into a manager of its own, and put it in use once
+    /// it is described. See [`Self::swap_in`]. A load that fails leaves the
+    /// data set in use and removes the copy, which nothing then reads.
     fn reload_from_path(&self, path: &Path) -> Result<()> {
         let _refreshing = self
             .refresh_lock
@@ -572,45 +580,43 @@ impl IpIntelligenceOnPremiseEngine {
                 self.reuse_temp_file,
             )
         });
-        let manager = Arc::clone(&self.loaded.load().manager);
-        manager.reload_from_file(copy.as_ref().map_or(path, OperationalCopy::path))?;
+        let manager = Manager::open_with_options(
+            copy.as_ref().map_or(path, OperationalCopy::path),
+            self.profile,
+            self.reload_names().as_deref(),
+            self.concurrency,
+        )?;
         self.swap_in(copy, manager)
     }
 
-    /// Reload the data set in the engine's manager from `data`, the whole of
-    /// a data file, which the C library copies, and describe the new data
-    /// set. See [`Self::swap_in`].
+    /// Load a new data set from `data`, the whole of a data file, into a
+    /// manager of its own, and put it in use once it is described. See
+    /// [`Self::swap_in`].
     fn reload_from_memory(&self, data: &[u8]) -> Result<()> {
         let _refreshing = self
             .refresh_lock
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let manager = Arc::clone(&self.loaded.load().manager);
-        manager.reload_from_memory(data)?;
+        let manager =
+            Manager::open_from_memory(data.to_vec(), self.profile, self.reload_names().as_deref())?;
         self.swap_in(None, manager)
     }
 
-    /// Give lookups the properties of the data set `manager` holds after a
-    /// reload, which reads `copy` when there is one. A concurrent `process`
+    /// Put in use the data set `manager` holds, which reads `copy` when there
+    /// is one. The manager was opened with the names the engine was built
+    /// with, which the C library indexes by their place in the list, so each
+    /// name keeps its index, as in a reload in place. A concurrent `process`
     /// call keeps what it read and the data set its results came from. The
     /// evidence keys, the metadata, the tier and the dates in the data file
     /// header follow the new data, which can differ from the old. The caller
     /// holds the refresh lock.
     ///
     /// When the new data set's metadata cannot be read the error is returned
-    /// and lookups go on reading the new data set by the properties of the
-    /// one before, whose names and indexes it keeps, with `copy` kept until
-    /// nothing reads it.
+    /// and nothing changes: lookups go on reading the data set the engine
+    /// had, and the new one is freed and `copy` removed.
     fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
         let evidence_keys = DataFileEvidenceKeys::whitelist(&manager);
-        let (mut loaded, metadata) = match describe(None, manager, &self.tier_override, &self.names)
-        {
-            Ok(described) => described,
-            Err(error) => {
-                self.keep_copy(copy);
-                return Err(error);
-            }
-        };
+        let (mut loaded, metadata) = describe(None, manager, &self.tier_override, &self.names)?;
         loaded._copy = copy;
         let loaded = Arc::new(loaded);
         self.loaded.store(Arc::clone(&loaded));
@@ -622,23 +628,6 @@ impl IpIntelligenceOnPremiseEngine {
             record_dates(&loaded.manager, data_file);
         }
         Ok(())
-    }
-
-    /// Keep `copy`, which the data set the manager now holds reads, with what
-    /// lookups read from the data set before it, because the new data set's
-    /// metadata could not be read. The copy before it then goes once nothing
-    /// reads its data set, and this one once nothing reads the new data set.
-    fn keep_copy(&self, copy: Option<OperationalCopy>) {
-        let current = self.loaded.load();
-        self.loaded.store(Arc::new(LoadedDataSet {
-            manager: Arc::clone(&current.manager),
-            readable: Arc::clone(&current.readable),
-            file_properties: current.file_properties.clone(),
-            missing: Arc::clone(&current.missing),
-            fiftyone_properties: Arc::clone(&current.fiftyone_properties),
-            components: Arc::clone(&current.components),
-            _copy: copy,
-        }));
     }
 }
 
@@ -1653,7 +1642,11 @@ mod tests {
             .position(|window| window == date)
             .expect("the header holds the published date");
         let mut changed = bytes.to_vec();
-        changed[at + 3] = if day < 28 { day as u8 + 1 } else { day as u8 - 1 };
+        changed[at + 3] = if day < 28 {
+            day as u8 + 1
+        } else {
+            day as u8 - 1
+        };
         changed
     }
 
@@ -1690,29 +1683,31 @@ mod tests {
         assert_ne!(published(), Some(before));
     }
 
-    /// A refresh reloads the data set into the engine's own manager, as the
-    /// C library's reload does, from the file, from memory and from another
-    /// path, so the engine's manager is the same one after each.
+    /// A refresh loads the data set into a manager of its own, from the file,
+    /// from memory and from another path, so the data set the engine had is
+    /// untouched until the new one is in use, and the new manager holds the
+    /// names of the one before, in their order.
     #[test]
-    fn a_refresh_reloads_the_data_set_in_the_engines_manager() {
+    fn a_refresh_loads_the_data_set_into_a_new_manager_with_the_same_names() {
         let Some(data_file) = ipi_data_file() else {
-            eprintln!("no usable IP-intelligence data file; skipping the reload in place");
+            eprintln!("no usable IP-intelligence data file; skipping the new manager");
             return;
         };
         let engine = no_names_engine(&data_file);
-        let manager = Arc::clone(&engine.loaded.load().manager);
+        let names = engine.loaded.load().manager.available_property_names();
         let bytes = std::fs::read(&data_file).expect("the data file reads");
-        let same = || Arc::ptr_eq(&manager, &engine.loaded.load().manager);
-        engine.refresh(None).expect("the data file loads again");
-        assert!(same(), "from the file");
-        engine
-            .refresh_from_memory(None, &bytes)
-            .expect("the data loads again");
-        assert!(same(), "from memory");
-        engine
-            .reload_from_path(&data_file)
-            .expect("the data file loads again");
-        assert!(same(), "from a path");
+        let refreshes: [(&str, &dyn Fn() -> Result<()>); 3] = [
+            ("from the file", &|| engine.refresh(None)),
+            ("from memory", &|| engine.refresh_from_memory(None, &bytes)),
+            ("from a path", &|| engine.reload_from_path(&data_file)),
+        ];
+        for (case, refresh) in refreshes {
+            let manager = Arc::clone(&engine.loaded.load().manager);
+            refresh().expect(case);
+            let now = Arc::clone(&engine.loaded.load().manager);
+            assert!(!Arc::ptr_eq(&manager, &now), "{case}");
+            assert_eq!(now.available_property_names(), names, "{case}");
+        }
     }
 
     /// Flow data holding the client IP 1.1.1.1, from a pipeline of `engine`.
