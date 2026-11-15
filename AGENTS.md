@@ -439,7 +439,9 @@ submodule is checked out and from that file otherwise.
   examples with the crates last released. The check of the examples against
   the published crates, run by hand in `examples.yml` and after each release
   in `publish.yml`, tests them first with the committed lock, as a fresh
-  clone does, then with the latest crates, and reads the free data files.
+  clone does, and runs every example that needs no key as a program against
+  those crates with `ci/run-examples-on-free-data.ps1 -Published`, then
+  tests them with the latest crates, and reads the free data files.
 - `caching-wasm.yml` lints and tests `fiftyone-caching`, the loading cache
   included, on wasm32-wasip1 under wasmtime and, with default features off,
   on wasm32-unknown-unknown under Node through `ci/run-wasm-unknown.mjs`.

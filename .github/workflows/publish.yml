@@ -247,6 +247,13 @@ jobs:
       # package update moves it.
       - name: Test the examples with the committed lock, as a fresh clone does
         run: cargo test --locked
+      # Each example that needs no key also runs as a program, as the run
+      # against this tree's crates does, so a main that fails against the
+      # published crates is found.
+      - name: Run the examples that need no key against the published crates
+        working-directory: .
+        shell: pwsh
+        run: ./ci/run-examples-on-free-data.ps1 -Published
       # Give the crates.io index a moment to serve the just-published versions,
       # then resolve them and run the examples' tests against the real packages.
       - name: Test the examples with the crates just published
