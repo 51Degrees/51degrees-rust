@@ -1,0 +1,25 @@
+name: Temporary minification timing
+# Throwaway. Measures the minification performance test on each runner image,
+# five times each, so its budget can be set from runner figures.
+on:
+  push:
+    branches: ['tmp/rust-483-timing']
+jobs:
+  measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-22.04, ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Measure five times in release
+        shell: bash
+        run: |
+          cargo test --release -p fiftyone-javascript-builder --test performance --no-run
+          for i in 1 2 3 4 5; do
+            cargo test --release -p fiftyone-javascript-builder --test performance -- --ignored --nocapture minification_stays_within_its_budget 2>&1 | grep -E 'Median render|test result|panicked' || true
+          done
