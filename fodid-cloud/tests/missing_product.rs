@@ -206,9 +206,8 @@ fn a_failed_property_list_request_is_the_reason_a_property_is_missing() {
     assert_eq!(take_logged(), Vec::<String>::new());
 }
 
-/// With only a license key that does not entitle the 51Did product, the
-/// engine gives empty metadata, as the specification says, and logs nothing,
-/// because the warning names a resource key.
+/// With only a license key there are no accessible properties to read, so the
+/// engine gives empty metadata, as the specification says, and logs nothing.
 #[test]
 fn a_license_key_alone_gives_empty_metadata_and_logs_nothing() {
     let _serial = start();

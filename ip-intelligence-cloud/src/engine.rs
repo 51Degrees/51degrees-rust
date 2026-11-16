@@ -93,9 +93,8 @@ struct DerivedMetadata {
 /// return gives the reason it is missing and logs a warning, as .NET's
 /// `MissingPropertyServiceCloud` does. When the key lacks the `ip` product
 /// the read logs nothing, as the engine has logged the missing product once.
-/// With a license key alone the metadata lists the properties the license
-/// key entitles, but the data does not say why one is missing, because the
-/// reasons it gives name a resource key.
+/// With a license key alone the granted properties are not listed, so the
+/// data cannot say why one is missing.
 ///
 /// # Example
 ///
@@ -227,9 +226,9 @@ impl IpIntelligenceCloudEngine {
     /// empty and the engine reports the shared defaults. When the accessible
     /// properties hold no `ip` product, or list it with no properties, the
     /// engine gets empty metadata, as the cloud aspect engine specification
-    /// says. An engine with only a license key takes its metadata from the
-    /// properties the license key entitles, as the cloud request engine
-    /// specification says. With a resource key the call that sets the
+    /// says. An engine with only a license key gets empty metadata too,
+    /// because it has no accessible properties to read, as the cloud request
+    /// engine specification says. With a resource key the call that sets the
     /// empty metadata logs a warning naming the data key, so the missing
     /// product is logged once. The reason for a missing property is derived
     /// with the metadata, naming no properties when the key has no `ip`

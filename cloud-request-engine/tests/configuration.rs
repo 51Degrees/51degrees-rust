@@ -81,8 +81,7 @@ impl CloudHttpClient for StandIn {
 }
 
 impl StandIn {
-    /// The address of each GET, which the discovery requests are on a
-    /// resource key.
+    /// The address of each GET, which the discovery requests are.
     fn discovery(&self) -> Vec<String> {
         let requests = self.requests.lock().unwrap();
         let mut urls: Vec<String> = requests
@@ -94,13 +93,12 @@ impl StandIn {
         urls
     }
 
-    /// The data requests, being each POST to an endpoint other than the
-    /// accessible properties, which a license key alone asks with a POST.
+    /// The data requests, being each POST.
     fn data(&self) -> Vec<CloudHttpRequest> {
         let requests = self.requests.lock().unwrap();
         requests
             .iter()
-            .filter(|r| r.method == HttpMethod::Post && !r.url.contains("accessibleproperties"))
+            .filter(|r| r.method == HttpMethod::Post)
             .cloned()
             .collect()
     }

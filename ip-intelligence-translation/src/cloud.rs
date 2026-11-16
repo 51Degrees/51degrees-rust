@@ -156,8 +156,8 @@ struct DerivedMetadata {
 /// with the reason in the `<name>nullreason` entry or `Unknown`. An entry
 /// the metadata does not list, such as `SortingCultureUsed`, is kept as
 /// text or a list and logs a warning. With no metadata at all, as with a
-/// license key that does not entitle the product, each value's form is read
-/// from the JSON with nothing logged.
+/// license key alone, each value's form is read from the JSON with nothing
+/// logged.
 ///
 /// A response without the section, as for a key without the product, leaves
 /// the data without values and raises no error, as the cloud aspect engine
@@ -221,8 +221,8 @@ pub struct CloudCountriesTranslationEngine {
     /// The aspect metadata of the default properties.
     default_aspect_properties: Vec<AspectPropertyMetaData>,
     /// Why a property is missing from data of a successful request. `None`
-    /// with a license key alone, because the reasons it gives name a
-    /// resource key.
+    /// with a license key alone, because the properties it grants are not
+    /// listed.
     missing: OnceCell<Option<Arc<MissingPropertySource>>>,
     forms: OnceCell<HashMap<String, Form>>,
 }

@@ -26,8 +26,9 @@
 //! things from the cloud the first time it is used: the accepted evidence keys
 //! (`evidencekeys`) and the accessible properties (`accessibleproperties`). Both
 //! depend only on the keys, so for a given pair of keys they are stable. An
-//! engine holding a license key and no resource key asks for the accessible
-//! properties with the license key.
+//! engine holding a license key and no resource key has no accessible
+//! properties to fetch, because that endpoint takes a resource key, so the
+//! snapshot holds the evidence keys alone.
 //!
 //! On a long-lived host that one-time discovery is cheap. On a short-lived host,
 //! such as a `wasm32-wasip1` edge runtime where the instance is created and

@@ -129,10 +129,9 @@ pub(crate) fn property_list_request_failed(
 /// fills it logs a warning naming `engine_name` and `element_data_key`, so
 /// the missing product is logged once for the life of the engine, as the
 /// cloud aspect engine specification says. A read of one of the product's
-/// properties then logs nothing. With only a license key the metadata comes
-/// from the properties the license key entitles, nothing is logged, and the
-/// metadata holds no missing property source, because the reasons that
-/// source gives name a resource key.
+/// properties then logs nothing. With only a license key there are no
+/// accessible properties to read, so nothing is logged and the metadata
+/// holds no missing property source.
 pub(crate) fn fill_metadata(
     slot: &OnceLock<DiscoveredMetadata>,
     request_engine: &CloudRequestEngine,
