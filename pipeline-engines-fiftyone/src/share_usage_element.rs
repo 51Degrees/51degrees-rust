@@ -2793,7 +2793,10 @@ mod tests {
         }
         drop(release);
         assert!(returned, "process waited for the held send");
-        assert_eq!(sent_before_return, 0, "a send ended before the sink was released");
+        assert_eq!(
+            sent_before_return, 0,
+            "a send ended before the sink was released"
+        );
         processing.join().unwrap();
         drop(pipeline);
         drop(element);
