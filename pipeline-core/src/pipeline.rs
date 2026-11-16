@@ -94,7 +94,7 @@ impl Pipeline {
     /// The list is read from the elements on each call, because an element
     /// such as a cloud aspect engine learns its properties after it is built
     /// (see [`FlowElement::properties_loaded`]). This answers the
-    /// [properties specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#property-metadata),
+    /// [properties specification](https://github.com/51Degrees/specifications/blob/706de1f0cb3edd560eb7fd7ef3bb19b93a4883dc/pipeline-specification/features/properties.md#property-metadata),
     /// which says it must be possible to get property metadata at the
     /// pipeline level for all properties of all its elements.
     pub fn properties(&self) -> Vec<PropertyMetaData> {
