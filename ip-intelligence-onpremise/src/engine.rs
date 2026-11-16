@@ -2420,4 +2420,101 @@ mod tests {
             .expect("processing after refresh should not error");
         assert!(data.get(IP_DATA_KEY).is_some());
     }
+
+    /// Where the data file's header gives the place of its properties, and
+    /// where a property's description offset sits in its record, from
+    /// `ipi.h`, `collection.h` and `property.h` in 51degrees-cxx with the 64
+    /// bit file offsets the IP Intelligence format uses.
+    const PROPERTIES_HEADER: usize = 122;
+    const PROPERTY_SIZE: usize = 44;
+    const DESCRIPTION_OFFSET: usize = 16;
+
+    /// `file` with its first property's description past the end of the
+    /// strings. The C library loads it, because loading reads no
+    /// description, and reading the engine's metadata then fails.
+    fn with_unreadable_metadata(file: &Path) -> Vec<u8> {
+        let mut bytes = std::fs::read(file).unwrap();
+        let read_u32 = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+        let start = u64::from_le_bytes(
+            bytes[PROPERTIES_HEADER..PROPERTIES_HEADER + 8]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let length = read_u32(PROPERTIES_HEADER + 8) as usize;
+        let count = read_u32(PROPERTIES_HEADER + 12) as usize;
+        assert_eq!(length, count * PROPERTY_SIZE, "the properties are found");
+        let at = start + DESCRIPTION_OFFSET;
+        bytes[at..at + 4].copy_from_slice(&(i32::MAX as u32).to_le_bytes());
+        bytes
+    }
+
+    /// The data updates specification says "If the updated data source
+    /// cannot be used, the refresh MUST fail with an error, and the Engine
+    /// MUST go on using the data source it had, so that processing is
+    /// unaffected." A data file the C library loads but whose metadata
+    /// cannot be read is one the engine cannot use, so a refresh to it, from
+    /// the file or from memory, fails and the engine's manager still holds
+    /// the data set it had, under each profile.
+    #[test]
+    fn a_refresh_that_cannot_be_used_keeps_the_data_set_it_had() {
+        let Some(file) = ipi_data_file() else {
+            eprintln!("no IP-intelligence data file; skipping the failed refresh");
+            return;
+        };
+        let unreadable = with_unreadable_metadata(&file);
+        for profile in [
+            PerformanceProfile::Balanced,
+            PerformanceProfile::LowMemory,
+            PerformanceProfile::HighPerformance,
+            PerformanceProfile::InMemory,
+        ] {
+            let dir = std::env::temp_dir().join(format!(
+                "fiftyone-ipi-keeps-{}-{}",
+                profile.as_str(),
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            let temp = dir.join("temp");
+            std::fs::create_dir_all(&temp).unwrap();
+            let path = dir.join("51Degrees.ipi");
+            std::fs::copy(&file, &path).unwrap();
+            let engine = IpIntelligenceOnPremiseEngine::builder(&path)
+                .performance_profile(profile)
+                .temp_dir_path(&temp)
+                .auto_update(false)
+                .file_system_watcher(false)
+                .build()
+                .expect("the data file loads");
+            let readable = |context: &str| {
+                let properties = engine.loaded.load().manager.data_file_properties();
+                assert!(
+                    properties.is_ok(),
+                    "{profile:?} {context}: the engine reads the data set that failed: {}",
+                    properties.err().map(|e| e.to_string()).unwrap_or_default()
+                );
+            };
+
+            let error = engine
+                .refresh_from_memory(None, &unreadable)
+                .expect_err("the new data cannot be used");
+            assert!(
+                error.to_string().contains("metadata could not be read"),
+                "{error}"
+            );
+            readable("from memory");
+
+            std::fs::write(&path, &unreadable).unwrap();
+            let error = engine
+                .refresh(None)
+                .expect_err("the new data file cannot be used");
+            assert!(
+                error.to_string().contains("metadata could not be read"),
+                "{error}"
+            );
+            readable("from the file");
+
+            drop(engine);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
 }
