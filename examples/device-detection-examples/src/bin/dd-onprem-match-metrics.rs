@@ -399,6 +399,20 @@ mod tests {
             );
         }
     }
+
+    /// Examples must demonstrate commonly used settings that are not the
+    /// default. Suppressing process errors is one, so the example builds a
+    /// pipeline with it on.
+    #[test]
+    fn shows_a_pipeline_that_suppresses_process_errors() {
+        let Some(data_file) = examples_shared::dd_data_path() else {
+            eprintln!("skipping: no on-premise data file found (set _51DEGREES_DD_PATH)");
+            return;
+        };
+        let pipeline = pipeline_that_suppresses_process_errors(&data_file)
+            .expect("the pipeline builds");
+        assert!(pipeline.is_suppress_process_exceptions());
+    }
 }
 
 /*
