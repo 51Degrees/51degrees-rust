@@ -114,7 +114,13 @@ fn the_pipeline_finds_a_property_by_its_element_and_name_ignoring_case() {
     let found = pipeline.property("Device", "ismobile").unwrap();
     assert_eq!(found.element_data_key, "device");
     assert_eq!(found.name, "IsMobile");
-    assert_eq!(pipeline.property("ip", "ISMOBILE").unwrap().element_data_key, "ip");
+    assert_eq!(
+        pipeline
+            .property("ip", "ISMOBILE")
+            .unwrap()
+            .element_data_key,
+        "ip"
+    );
     assert!(pipeline.property("device", "browsername").is_none());
     assert!(pipeline.property("location", "ismobile").is_none());
 }
