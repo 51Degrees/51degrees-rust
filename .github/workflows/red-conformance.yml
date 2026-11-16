@@ -1,0 +1,41 @@
+name: Temporary red run of pull request 481
+
+# Throwaway. The branch is pull request 481's head with its fix commits
+# reverted, so the tree is `rc` plus the pull request's new tests and none of
+# its code changes. Each job runs one of those tests and is expected to fail.
+
+on:
+  push:
+    branches:
+      - 'tmp/red-conf-481'
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    name: ${{ matrix.rule }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rule: every IP Intelligence property is also a weighted value
+            run: cargo test -p fiftyone-ip-intelligence-shared --test weighted_every_property
+          - rule: an engine configured with no names is created with no names
+            run: cargo test -p fiftyone-ip-intelligence-onpremise --lib
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Copy the OWID source the fodid crate compiles in
+        run: pwsh ./ci/copy-owid-source.ps1
+      - name: Point the tests at the free data files in the data submodule
+        run: |
+          echo "_51DEGREES_DD_PATH=${GITHUB_WORKSPACE}/cxx/data/device-detection/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
+          echo "_51DEGREES_IPI_PATH=${GITHUB_WORKSPACE}/cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
+      - name: Run the new test without the fix
+        env:
+          RUN: ${{ matrix.run }}
+        run: bash -c "$RUN"
