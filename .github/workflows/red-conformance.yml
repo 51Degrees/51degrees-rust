@@ -20,7 +20,7 @@ jobs:
       matrix:
         include:
           - rule: the match metrics example shows the setting that suppresses process errors
-            run: cargo test -p fiftyone-device-detection-examples --bin dd-onprem-match-metrics
+            run: cd examples && cargo test --config source.toml -p device-detection-examples --bin dd-onprem-match-metrics
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
