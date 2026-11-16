@@ -107,12 +107,9 @@ jobs:
             "base/cxx/device-detection-data/20000 User Agents.csv" \
             "$d/ip-intelligence/evidence.yml" \
             base/cxx/ip-intelligence-data/evidence.yml
-          # Both the current names and the deprecated ones, so each side reads
-          # the same files whichever it looks for.
-          for prefix in "" "_"; do
-            echo "${prefix}51DEGREES_DD_PATH=$d/device-detection/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
-            echo "${prefix}51DEGREES_IPI_PATH=$d/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
-          done
+          # Both sides read these names, so each reads the same files.
+          echo "_51DEGREES_DD_PATH=$d/device-detection/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
+          echo "_51DEGREES_IPI_PATH=$d/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
 
       # The comparison script comes from the ref this run was started on, not
       # from either side, because a head being timed need not carry it.
