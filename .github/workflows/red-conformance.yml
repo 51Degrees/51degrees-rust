@@ -1,0 +1,28 @@
+name: Temporary red run of pull request 484, both keys
+
+# Throwaway. The branch is pull request 484's head with rc merged and the new
+# test of the two-key request added, and none of the fix that follows it.
+# The job runs that test and is expected to fail, because the head sends the
+# License Key in a POST body even beside a Resource Key.
+
+on:
+  push:
+    branches:
+      - 'tmp/red-conf-484c'
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    name: with a resource key, the accessible properties are asked for by the GET carrying both keys
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Copy the OWID source the fodid crate compiles in
+        run: pwsh ./ci/copy-owid-source.ps1
+      - name: Run the new test without the fix
+        run: cargo test -p fiftyone-cloud-request-engine --test mock_client accessible_properties_are_asked_for
