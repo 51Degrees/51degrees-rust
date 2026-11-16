@@ -47,6 +47,7 @@ use fiftyone_pipeline_core::{
     ElementData, MapElementData, MissingPropertyReason, NoValueError, PropertyValue,
 };
 
+use crate::aspect_property_value::AspectPropertyValue;
 use crate::missing_property::{
     cloud_request_failed, first_known_reason, MissingPropertyResult, MissingPropertySource,
 };
@@ -80,6 +81,35 @@ pub trait AspectData: ElementData {
     /// Only meaningful when the engine is configured to record cache hits (see
     /// [`crate::AspectEngine::records_cache_hits`]).
     fn cache_hit(&self) -> bool;
+
+    /// The stored string of each property, where this data holds property
+    /// values as strings and parses them into the type each property
+    /// declares, or `None` where it does not. Defaults to `None`.
+    ///
+    /// This is the capability a caller tests for at run time, as the
+    /// [access-to-results specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/access-to-results.md#accessing-results)
+    /// and its
+    /// [values stored as strings](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/value-types.md#values-stored-as-strings)
+    /// section say. A caller that gets `None` reads the typed value instead.
+    fn values_as_string(&self) -> Option<&dyn ProvidesValuesAsString> {
+        None
+    }
+}
+
+/// Element data that holds property values as the strings a data file
+/// stores and parses each into the type its property declares, giving the
+/// stored string as well as the parsed value.
+///
+/// A caller reaches this through [`AspectData::values_as_string`]. The parsed
+/// value cannot always say what the data said: a boolean property whose
+/// profile stores `Unknown` parses as `false`. The stored string can. The
+/// typed accessors and [`ElementData::get`] are unchanged by it.
+pub trait ProvidesValuesAsString {
+    /// The string stored for the property named, matched ignoring case,
+    /// exactly as stored. Where a profile stores several values they are
+    /// joined with `|`, as the 51Degrees C++ results do. A property with
+    /// nothing stored gives a no-value carrying the reason.
+    fn value_as_string(&self, name: &str) -> AspectPropertyValue<String>;
 }
 
 /// A reusable backing for aspect-data structs.

@@ -49,7 +49,12 @@ impl StoredReader {
                 "platformname".to_string(),
                 "browsername".to_string(),
             ],
-            stored: vec![vec!["Unknown"], vec!["True", "False"], vec!["Android"], vec![]],
+            stored: vec![
+                vec!["Unknown"],
+                vec!["True", "False"],
+                vec!["Android"],
+                vec![],
+            ],
         }
     }
 }
@@ -101,8 +106,14 @@ fn the_stored_string_is_got_as_well_as_the_parsed_value() {
     let stored = device
         .values_as_string()
         .expect("data holding values as strings offers them");
-    assert_eq!(stored.value_as_string("IsMobile").value().unwrap(), "Unknown");
-    assert_eq!(stored.value_as_string("ismobile").value().unwrap(), "Unknown");
+    assert_eq!(
+        stored.value_as_string("IsMobile").value().unwrap(),
+        "Unknown"
+    );
+    assert_eq!(
+        stored.value_as_string("ismobile").value().unwrap(),
+        "Unknown"
+    );
 
     // The parsed value is still there, unchanged by reading the string.
     assert!(!*device.is_mobile().value().unwrap());
@@ -113,7 +124,10 @@ fn several_stored_values_are_given_where_the_parsed_value_has_none() {
     let device = DeviceDataBase::new().with_reader(StoredReader::new());
     assert!(!device.is_tv().has_value());
     let stored = device.values_as_string().unwrap();
-    assert_eq!(stored.value_as_string("IsTv").value().unwrap(), "True|False");
+    assert_eq!(
+        stored.value_as_string("IsTv").value().unwrap(),
+        "True|False"
+    );
 }
 
 #[test]

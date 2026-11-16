@@ -38,8 +38,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use arc_swap::ArcSwap;
 
 use fiftyone_device_detection_shared::{
-    declared_property_value_type, DeviceDataBase, DevicePropertyReader, DEVICE_DATA_KEY,
-    DEVICE_ELEMENT_DATA_KEY, TYPED_PROPERTY_NAMES,
+    declared_property_value_type, DeviceDataBase, DevicePropertyReader, StoredOutcome,
+    DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY, TYPED_PROPERTY_NAMES,
 };
 use fiftyone_native::dd::{
     hardware_profile_script, DataFileComponent, DataFileProperty, DataFileValue, HashOptions,
@@ -1207,6 +1207,36 @@ impl DevicePropertyReader for DetectionReader {
         };
         let reason = no_value_reason(&values);
         Ok(native_value(Some(values), value_type).ok_or_else(|| Some(reason.message())))
+    }
+
+    /// The data file holds each property's values as strings, which
+    /// [`native_value`] parses into the declared type.
+    fn stores_strings(&self) -> bool {
+        true
+    }
+
+    /// The strings the matched profile stores for the property, exactly as
+    /// the data file holds them and joined with `|` as the C++ `ResultsBase`
+    /// in 51degrees-cxx joins them. A match metric is worked out rather than
+    /// stored, so it has none.
+    fn read_stored_string(&self, position: usize) -> Option<StoredOutcome> {
+        let results = self.results.lock().unwrap_or_else(PoisonError::into_inner);
+        let index = match &self.loaded.readable.properties[position] {
+            ReadableProperty::Metric(_) => return None,
+            ReadableProperty::File { index, .. } => *index,
+        };
+        let values = match results.values_by_index(index) {
+            Ok(values) => values,
+            Err(error) => return Some(Err(error.to_string())),
+        };
+        Some(match values {
+            Some(values) if !values.is_empty() => Ok(Ok(values.join(VALUE_SEPARATOR))),
+            Some(values) => Ok(Err(Some(no_value_reason(&values).message()))),
+            None => results
+                .no_value_reason_by_index(index)
+                .map(|reason| Err(Some(reason.message())))
+                .map_err(|error| error.to_string()),
+        })
     }
 }
 

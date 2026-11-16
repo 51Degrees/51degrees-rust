@@ -81,7 +81,7 @@ mod uach;
 
 pub use data::{
     declared_property_value_type, default_aspect_property_metadata, default_property_metadata,
-    generated_property_names, DeviceDataBase, DevicePropertyReader, DEVICE_DATA_KEY,
+    generated_property_names, DeviceDataBase, DevicePropertyReader, StoredOutcome, DEVICE_DATA_KEY,
     DEVICE_ELEMENT_DATA_KEY,
 };
 pub use device_data::{DeviceData, GENERATED_PROPERTY_TYPES, TYPED_PROPERTY_NAMES};

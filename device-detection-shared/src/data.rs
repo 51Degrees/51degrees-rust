@@ -38,7 +38,7 @@ use fiftyone_pipeline_core::{
     TypedKey,
 };
 use fiftyone_pipeline_engines::{
-    AspectData, AspectDataBase, AspectPropertyMetaData, AspectPropertyValue,
+    AspectData, AspectDataBase, AspectPropertyMetaData, AspectPropertyValue, ProvidesValuesAsString,
 };
 
 use crate::device_data::GENERATED_PROPERTY_TYPES;
@@ -73,6 +73,10 @@ const ABSENT_MESSAGE: &str = "The property was not present in the device data.";
 /// unexpected type for the requested accessor.
 const WRONG_TYPE_MESSAGE: &str =
     "The property was present but its stored value did not match the requested type.";
+
+/// The explanation a stored string read gives for a property whose value is
+/// not stored as a string, such as a match metric.
+const NOT_STORED_MESSAGE: &str = "The property's value is not stored as a string.";
 
 /// The type the warning for a read of a missing property names.
 const DATA_TYPE_NAME: &str = "DeviceDataBase";
@@ -115,7 +119,28 @@ pub trait DevicePropertyReader: Send + Sync {
     fn typed_positions(&self) -> Option<&[Option<usize>]> {
         None
     }
+
+    /// True if this reader holds each property as the strings its data
+    /// stores and parses them into the declared type, so the data offers
+    /// [`ProvidesValuesAsString`] through
+    /// [`AspectData::values_as_string`]. Defaults to `false`.
+    fn stores_strings(&self) -> bool {
+        false
+    }
+
+    /// The string stored for the property at `position`, exactly as stored,
+    /// with several values joined with `|`. `Ok(Err(reason))` when nothing is
+    /// stored, `Err` with a message when the read fails, and `None` when the
+    /// property is not stored as a string, such as a match metric. Defaults
+    /// to `None`.
+    fn read_stored_string(&self, _position: usize) -> Option<StoredOutcome> {
+        None
+    }
 }
+
+/// The outcome of reading the stored string of one property, as
+/// [`DevicePropertyReader::read_stored_string`] gives it.
+pub type StoredOutcome = Result<Result<String, Option<String>>, String>;
 
 /// The outcome of reading one property, as
 /// [`DevicePropertyReader::read_property_with_reason`] gives it.
@@ -179,6 +204,13 @@ impl DeferredValues {
         let position = self.readable(name)?;
         let mut read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
         Some(self.outcome(&mut read, position).clone())
+    }
+
+    /// The stored string of a property, or `None` when the reader cannot
+    /// read it or does not store it as a string. Read on each request.
+    fn stored_string(&self, name: &str) -> Option<StoredOutcome> {
+        let position = self.readable(name)?;
+        self.reader.read_stored_string(position)
     }
 
     /// The lowercase names of every property the reader holds, with or
@@ -657,6 +689,46 @@ impl AspectData for DeviceDataBase {
 
     fn cache_hit(&self) -> bool {
         self.base.cache_hit()
+    }
+
+    /// Offered when the engine attached a reader that stores strings, as the
+    /// on-premise engine's does. A cloud engine's values are already typed.
+    fn values_as_string(&self) -> Option<&dyn ProvidesValuesAsString> {
+        self.deferred
+            .as_ref()
+            .filter(|deferred| deferred.reader.stores_strings())
+            .map(|_| self as &dyn ProvidesValuesAsString)
+    }
+}
+
+impl ProvidesValuesAsString for DeviceDataBase {
+    /// A value set on the data directly is given when it is a string. A
+    /// property held with no value, or missing, gives the no-value its typed
+    /// accessor gives.
+    fn value_as_string(&self, name: &str) -> AspectPropertyValue<String> {
+        if let Some(value) = self.base.values().get_value(name) {
+            return match value.as_str() {
+                Some(text) => AspectPropertyValue::new(text.to_owned()),
+                None => AspectPropertyValue::no_value(NOT_STORED_MESSAGE),
+            };
+        }
+        if let Some(message) = self.no_value_message(name) {
+            return AspectPropertyValue::no_value(message);
+        }
+        match self
+            .deferred
+            .as_ref()
+            .and_then(|deferred| deferred.stored_string(name))
+        {
+            Some(Ok(Ok(text))) => AspectPropertyValue::new(text),
+            Some(Ok(Err(Some(reason)))) => AspectPropertyValue::no_value(reason),
+            Some(Ok(Err(None))) => AspectPropertyValue::no_value(ABSENT_MESSAGE),
+            Some(Err(message)) => AspectPropertyValue::no_value(message),
+            None => match self.lookup(name) {
+                Lookup::Found(_) => AspectPropertyValue::no_value(NOT_STORED_MESSAGE),
+                other => Self::converted(other, |_| None),
+            },
+        }
     }
 }
 
