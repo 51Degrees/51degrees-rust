@@ -24,8 +24,12 @@
 //!
 //! - line 10: "All Engines MUST populate data objects that implement Aspect
 //!   Data as defined in the Pipeline specification."
+//! - line 34: "Element data returned by an IP Intelligence Engine MUST extend
+//!   `IAspectData`."
 
-use fiftyone_ip_intelligence_shared::{IpIntelligenceDataBase, IP_DATA_KEY_NAME};
+use fiftyone_ip_intelligence_shared::{
+    IpIntelligenceData, IpIntelligenceDataBase, IP_DATA_KEY_NAME,
+};
 use fiftyone_pipeline_core::ElementData;
 use fiftyone_pipeline_engines::AspectData;
 
@@ -47,4 +51,21 @@ fn engine_data_is_aspect_data() {
     // Aspect Data is Element Data, so the values are read by name from it.
     let element: &dyn ElementData = &data;
     assert!(element.get("NoSuchProperty").is_err());
+}
+
+/// Reads the Aspect Data of any IP Intelligence data through the IP
+/// Intelligence interface alone, which compiles only while that interface
+/// extends Aspect Data.
+fn engine_keys_of(data: &dyn IpIntelligenceData) -> Vec<String> {
+    let aspect: &dyn AspectData = data;
+    aspect.engine_keys().to_vec()
+}
+
+/// The IP Intelligence data interface, which both engines return, extends
+/// Aspect Data, so any implementation of it is read as Aspect Data.
+#[test]
+fn ip_intelligence_data_extends_aspect_data() {
+    let data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
+    assert_eq!(engine_keys_of(&data), [IP_DATA_KEY_NAME.to_string()]);
+    assert!(!(&data as &dyn IpIntelligenceData).cache_hit());
 }
