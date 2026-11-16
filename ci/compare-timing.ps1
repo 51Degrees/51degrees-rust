@@ -40,15 +40,15 @@ $text = Get-Content -LiteralPath $Log -Raw -ErrorAction Stop
 #   per second, one thread> loaded <addresses>
 $measures = [ordered] @{
     'Device Detection, detections per second on 4 threads' = @{
-        Pattern = 'RESULT dd (?<round>\d+) (?<side>base|head|main) (?<value>\d+) detections'
+        Pattern = 'RESULT dd (?<round>\d+) (?<side>base|head) (?<value>\d+) detections'
         Figures = @{}
     }
     'IP Intelligence, lookups per second on 4 threads'     = @{
-        Pattern = 'RESULT ipi (?<round>\d+) (?<side>base|head|main) (?<value>\d+) single'
+        Pattern = 'RESULT ipi (?<round>\d+) (?<side>base|head) (?<value>\d+) single'
         Figures = @{}
     }
     'IP Intelligence, lookups per second on one thread'    = @{
-        Pattern = 'RESULT ipi (?<round>\d+) (?<side>base|head|main) \d+ single (?<value>\d+)'
+        Pattern = 'RESULT ipi (?<round>\d+) (?<side>base|head) \d+ single (?<value>\d+)'
         Figures = @{}
     }
 }
