@@ -33,6 +33,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, ThreadId};
+use std::time::Duration;
 
 use axum::body::{to_bytes, Body};
 use axum::extract::ConnectInfo;
@@ -893,6 +894,36 @@ async fn a_304_during_an_outage_keeps_the_etag_and_max_age() {
     );
     assert_eq!(header(&during, "etag"), Some(etag));
     assert_eq!(header(&during, "vary"), header(&good, "vary"));
+}
+
+/// The web integration specification says "Max-age SHOULD be configurable",
+/// so a web pipeline configured with 60 seconds serves its `200` and the
+/// `304` to a revalidation with `private, max-age=60`.
+#[tokio::test]
+async fn the_max_age_is_the_one_the_options_give() {
+    let counting = Arc::new(CountingElement::new());
+    let elements: Vec<Arc<dyn FlowElement>> = vec![counting.clone()];
+    let options = WebIntegrationOptions {
+        cache_max_age: Duration::from_secs(60),
+        ..WebIntegrationOptions::default()
+    };
+    let web = WebPipeline::build(elements, options).expect("web pipeline builds");
+    let app = register(Router::new(), FiftyOneState::from_web_pipeline(&web));
+
+    let first = app.clone().oneshot(get_javascript(None)).await.unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(
+        header(&first, "cache-control").as_deref(),
+        Some("private, max-age=60")
+    );
+    let etag = header(&first, "etag").expect("the 200 has an ETag");
+
+    let second = app.oneshot(get_javascript(Some(&etag))).await.unwrap();
+    assert_eq!(second.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        header(&second, "cache-control").as_deref(),
+        Some("private, max-age=60")
+    );
 }
 
 // ----------------------------------------------------------------------------
