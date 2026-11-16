@@ -54,12 +54,22 @@ use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 
 /// The most minification may add to the median render, in release.
 ///
-/// Measured on a Windows 11 developer machine in release on 16 November 2026,
-/// the median render was 0.11 ms for the 49,196 byte unminified script and
-/// 2.45 ms for the 15,524 byte minified one, so minifying added 2.34 ms. The
-/// limit is about ten times that, to leave room for a slower, shared CI
-/// runner, which has not been measured yet, while still failing on a change
-/// that makes minifying many times slower.
+/// Each measurement is in release, of the 49,196 byte unminified script and
+/// the 15,524 byte minified one, on 16 November 2026.
+///
+/// - A Windows 11 developer machine: minifying added 2.34 ms.
+/// - A shared Windows 11 machine with 4 processors, busy with other work:
+///   minifying added 3.63 ms to 3.91 ms over five runs. Before the minifier's
+///   threads were used again it added 30.6 ms there, and 137.8 ms on another
+///   busy machine, most of it the start of a thread with a large stack for
+///   each request.
+///
+/// The limit is over six times the highest of these, to leave room for a
+/// slower, shared CI runner, while still failing on a change that makes
+/// minifying many times slower. The nightly performance runner,
+/// `ubuntu-latest`, has not been measured yet, and the limit is to be checked
+/// against it. `minify::tests::minifying_uses_its_threads_again` is what
+/// keeps the minifier from starting a thread for each request.
 #[cfg(feature = "minify")]
 const MINIFY_BUDGET: Duration = Duration::from_millis(25);
 

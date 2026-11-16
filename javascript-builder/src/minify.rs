@@ -28,8 +28,9 @@
 //! case in the minifier) falls back to the original, unminified content and
 //! says why in [`MinifyOutcome::errors`], so valid JavaScript is always served.
 //!
-//! oxc runs on a thread of its own, and a panic in it ends that thread and
-//! becomes the unminified fallback when the thread is joined.
+//! oxc runs on one of the minifier's threads, which have a large stack and are
+//! started once and used for every request. A panic in it is caught on that
+//! thread and becomes the unminified fallback.
 //!
 //! Without the `minify` feature, and on wasm targets (where the oxc dependency
 //! is not compiled, see the crate's target-specific dependency), the rendered
@@ -76,16 +77,16 @@ fn minify_impl(content: String) -> MinifyOutcome {
     }
 }
 
-/// Minify `source` with oxc on a dedicated thread, returning what went wrong on
+/// Minify `source` with oxc on a minifier thread, returning what went wrong on
 /// any parse error or panic so the caller serves the unminified content.
 ///
 /// oxc parses and minifies by recursing over the AST. On a thread with a small
 /// stack a deep script could overflow it, which surfaces on Windows as a process
 /// access violation (exit 0xc0000005) rather than a catchable panic. The Windows
 /// main thread is only 1 MiB, which is where the rustdoc doctest harness runs, so
-/// the work is moved to a thread with a generous stack. Joining that thread also
-/// contains an ordinary panic from an edge case (the join returns an error),
-/// which becomes the unminified fallback.
+/// the work is moved to one of the minifier's threads, which have a generous
+/// stack and are started once (see [`minifier_threads`]). An ordinary panic from
+/// an edge case is caught there and becomes the unminified fallback.
 #[cfg(all(feature = "minify", not(target_family = "wasm")))]
 fn try_minify(source: &str) -> Result<String, Vec<String>> {
     let source = source.to_owned();
@@ -96,18 +97,86 @@ fn try_minify(source: &str) -> Result<String, Vec<String>> {
 #[cfg(all(feature = "minify", not(target_family = "wasm")))]
 const MINIFIER_STACK: usize = 16 * 1024 * 1024;
 
+/// What the minifier says when its work panicked or its threads stopped.
+#[cfg(all(feature = "minify", not(target_family = "wasm")))]
+const MINIFIER_STOPPED: &str = "The minifier stopped unexpectedly.";
+
+/// Work for a minifier thread.
+#[cfg(all(feature = "minify", not(target_family = "wasm")))]
+type MinifierJob = Box<dyn FnOnce() + Send>;
+
+/// The minifier's threads, one for each processor, each with a
+/// [`MINIFIER_STACK`] stack. They are started on the first use and kept for
+/// the life of the process, because starting a thread with a large stack for
+/// each request cost more than the minifying itself. Each takes the next job
+/// from the one queue, so a request waits only when every thread is busy.
+#[cfg(all(feature = "minify", not(target_family = "wasm")))]
+fn minifier_threads() -> Result<&'static std::sync::mpsc::Sender<MinifierJob>, String> {
+    use std::sync::{mpsc, Arc, Mutex, OnceLock};
+
+    static THREADS: OnceLock<Result<mpsc::Sender<MinifierJob>, String>> = OnceLock::new();
+    THREADS
+        .get_or_init(|| {
+            let (sender, receiver) = mpsc::channel::<MinifierJob>();
+            let receiver = Arc::new(Mutex::new(receiver));
+            let count = std::thread::available_parallelism().map_or(1, |count| count.get());
+            let mut started = 0;
+            let mut last_error = None;
+            for index in 0..count {
+                let receiver = Arc::clone(&receiver);
+                let spawned = std::thread::Builder::new()
+                    .name(format!("fiftyone-minifier-{index}"))
+                    .stack_size(MINIFIER_STACK)
+                    .spawn(move || loop {
+                        // The lock is held only while waiting for the next
+                        // job, and no job runs under it, so it is never
+                        // poisoned in practice.
+                        let job = receiver
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .recv();
+                        match job {
+                            Ok(job) => job(),
+                            Err(_) => return,
+                        }
+                    });
+                match spawned {
+                    Ok(_) => started += 1,
+                    Err(error) => last_error = Some(error),
+                }
+            }
+            match (started, last_error) {
+                (0, Some(error)) => Err(format!("The minifier could not start: {error}.")),
+                (0, None) => Err("The minifier could not start.".to_owned()),
+                _ => Ok(sender),
+            }
+        })
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
 /// Run `work` on a minifier thread, which has a [`MINIFIER_STACK`] stack, and
-/// return what it returns, or why it did not.
+/// return what it returns, or why it did not. A panic in `work` is caught on
+/// that thread, which goes on to the next job.
 #[cfg(all(feature = "minify", not(target_family = "wasm")))]
 fn on_minifier_thread<R: Send + 'static>(
     work: impl FnOnce() -> R + Send + 'static,
 ) -> Result<R, String> {
-    std::thread::Builder::new()
-        .stack_size(MINIFIER_STACK)
-        .spawn(work)
-        .map_err(|error| format!("The minifier could not start: {error}."))?
-        .join()
-        .map_err(|_| "The minifier stopped unexpectedly.".to_owned())
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    let (reply, result) = std::sync::mpsc::channel();
+    let job: MinifierJob = Box::new(move || {
+        // The caller is waiting for this reply, and it is gone only if the
+        // caller has stopped, so a failed send needs nothing more.
+        let _ = reply.send(catch_unwind(AssertUnwindSafe(work)));
+    });
+    minifier_threads()?
+        .send(job)
+        .map_err(|_| MINIFIER_STOPPED.to_owned())?;
+    match result.recv() {
+        Ok(Ok(value)) => Ok(value),
+        _ => Err(MINIFIER_STOPPED.to_owned()),
+    }
 }
 
 /// Parse, minify and print `source` with oxc. Returns the parser's messages if
