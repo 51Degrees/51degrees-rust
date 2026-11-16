@@ -1660,7 +1660,12 @@ mod tests {
         std::fs::write(&path, b"data").unwrap();
         let limit = Duration::from_secs(5);
         let started = Instant::now();
-        assert!(wait_until_readable(&path, limit, Duration::from_millis(50), &|| false));
+        assert!(wait_until_readable(
+            &path,
+            limit,
+            Duration::from_millis(50),
+            &|| false
+        ));
         assert!(started.elapsed() < limit);
         let _ = std::fs::remove_file(&path);
     }
