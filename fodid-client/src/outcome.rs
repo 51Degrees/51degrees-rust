@@ -221,8 +221,12 @@ impl FactorOutcome {
     /// own, because none of them is a mismatch. Anything else, including a
     /// word this client does not know, is a mismatch, so an unexpected value
     /// never reads as a pass.
+    ///
+    /// The word is compared ignoring case, as the other packages do, so
+    /// `Verified` reads as [`FactorOutcome::Verified`] and `NotRecorded` as
+    /// [`FactorOutcome::NotRecorded`] rather than as a mismatch.
     pub fn from_cloud(value: Option<&str>) -> Self {
-        match value {
+        match value.map(str::to_ascii_lowercase).as_deref() {
             Some("verified") => Self::Verified,
             Some("misconfigured") => Self::Misconfigured,
             Some("notrecorded") => Self::NotRecorded,
