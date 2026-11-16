@@ -406,8 +406,8 @@ struct ReadmeExamples;
 /// Each block below reaches for one of them and must fail to compile.
 /// Fields and methods are reached on `FodId`, and each constant both at the
 /// crate root and in the module that holds it, so making a field or method
-/// public on `FodId`, exporting a constant at the root, or making a
-/// constant public in its own module fails this test. The error code on
+/// public on `FodId`, exporting a constant at the root, or making both a
+/// constant and its module public fails this test. The error code on
 /// each block is the one it gives, for the reader, as rustdoc checks the
 /// codes only on nightly. The first block reads every field through the
 /// accessor that names it, and must compile, so the blocks after it do not
