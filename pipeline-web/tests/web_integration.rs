@@ -493,6 +493,35 @@ fn element_ordering_without_set_headers() {
     );
 }
 
+/// The web integration specification says, of the Sequence, JSON Builder,
+/// JavaScript Builder and Set Headers elements, that "there MUST be
+/// configuration options to allow users to prevent them being added (or
+/// disable them) if they wish to do so". So an option leaves out the Sequence
+/// Element, and the other elements are added as before.
+#[test]
+fn element_ordering_without_sequence() {
+    let options = WebIntegrationOptions {
+        use_sequence_element: false,
+        ..WebIntegrationOptions::default()
+    };
+    let web = WebPipeline::build(vec![Arc::new(TestElement::new(false))], options).expect("builds");
+    let keys: Vec<&str> = web
+        .pipeline()
+        .flow_elements()
+        .iter()
+        .map(|e| e.data_key())
+        .collect();
+    assert_eq!(
+        keys,
+        vec![
+            "device",
+            "set-headers",
+            "json-builder",
+            "javascriptbuilderelement"
+        ]
+    );
+}
+
 // ----------------------------------------------------------------------------
 // Endpoint suffix matching.
 // ----------------------------------------------------------------------------
