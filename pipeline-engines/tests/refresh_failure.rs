@@ -70,7 +70,7 @@ const REFRESH_PANIC: &str = "a refresh that panics";
 
 /// The start of the record logged for a refresh that failed.
 const APPLYING: &str = "ERROR Error during check for data update. An error occurred when \
-                        applying a data update to engine 'failing'.";
+                        applying a data update to engine 'FailingEngine'.";
 
 /// How much older than the file last applied a file put in place is.
 const OLDER: Duration = Duration::from_secs(60);
@@ -80,7 +80,7 @@ const NEWER: Duration = Duration::from_secs(60);
 
 /// The start of the record logged for a callback that panicked.
 const PANIC_RECORD: &str =
-    "ERROR An unhandled error occurred while checking for automatic updates for engine 'failing'.";
+    "ERROR An unhandled error occurred while checking for automatic updates for engine 'FailingEngine'.";
 
 /// Log records at warning level or above, as "LEVEL message".
 static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -228,7 +228,7 @@ fn data_file(engine: &Arc<dyn OnPremiseAspectEngine>) -> Arc<AspectEngineDataFil
 fn applying(cause: &str) -> String {
     format!(
         "ERROR Error during check for data update. An error occurred when applying a data \
-         update to engine 'failing'. Error detail: {cause}"
+         update to engine 'FailingEngine'. Error detail: {cause}"
     )
 }
 
@@ -645,6 +645,11 @@ fn a_watched_file_that_is_not_newer(dir: &Path) {
     let applied = std::fs::metadata(&path).unwrap().modified().unwrap();
     std::thread::sleep(WATCHER_START);
     let before = statuses(&reports).len();
+    // Writing version 2 can raise more than one event, such as one when the
+    // file is emptied and one when it is written, and each event that finds
+    // a newer file refreshes the engine, so the refreshes are counted from
+    // here.
+    let refreshed = engine.refreshes.load(Ordering::SeqCst);
 
     // The older copy is written beside the file and renamed over it, so no
     // event can see a newer modified time.
@@ -671,7 +676,11 @@ fn a_watched_file_that_is_not_newer(dir: &Path) {
             .all(|status| *status == AutoUpdateStatus::NotNeeded),
         "{statuses:?}"
     );
-    assert_eq!(engine.refreshes.load(Ordering::SeqCst), 1, "{statuses:?}");
+    assert_eq!(
+        engine.refreshes.load(Ordering::SeqCst),
+        refreshed,
+        "the older file refreshed the engine: {statuses:?}"
+    );
     assert_eq!(
         take(),
         Vec::<String>::new(),

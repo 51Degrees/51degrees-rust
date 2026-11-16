@@ -49,7 +49,10 @@ pub enum AutoUpdateStatus {
     TooManyRequests,
     /// The server responded `403 Forbidden` (for example, a revoked key).
     Forbidden,
-    /// Writing the download to a file, or decompressing it, failed.
+    /// Not reported by the data update service, which gives a download that
+    /// cannot be written to a file or decompressed as
+    /// [`AutoUpdateStatus::UnknownError`], as the specification's errors
+    /// table and .NET give it. Kept so code that names it still compiles.
     StreamError,
     /// The downloaded content failed MD5 verification.
     Md5ValidationFailed,
@@ -61,7 +64,9 @@ pub enum AutoUpdateStatus {
     NoConfiguration,
     /// A temporary directory path was required but is not configured.
     TempPathNotSet,
-    /// An unanticipated error occurred during the check.
+    /// An error the other statuses do not cover occurred during the check,
+    /// such as a download that could not be written to a file or
+    /// decompressed.
     UnknownError,
 }
 
