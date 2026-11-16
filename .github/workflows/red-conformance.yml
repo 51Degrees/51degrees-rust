@@ -1,0 +1,45 @@
+name: Temporary red run of pull request 486
+
+# Throwaway. The branch is pull request 486's head with its fix commits
+# reverted, so the tree is `rc` plus the pull request's new tests and none of
+# its code changes. Each job runs one of those tests and is expected to fail.
+
+on:
+  push:
+    branches:
+      - 'tmp/red-conf-486'
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    name: ${{ matrix.rule }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rule: Property metadata is available at the Pipeline level
+            run: cargo test -p fiftyone-pipeline-core --test pipeline_properties
+          - rule: Element Data is got by supplying an element instance
+            run: cargo test -p fiftyone-pipeline-core --test data_from_element
+          - rule: a Property's stored string is got beside its parsed value
+            run: cargo test -p fiftyone-device-detection-shared --test stored_strings
+          - rule: string keys are lower case and hold only allowed characters
+            run: cargo test -p fiftyone-pipeline-web --test data_keys
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Copy the OWID source the fodid crate compiles in
+        run: pwsh ./ci/copy-owid-source.ps1
+      - name: Point the tests at the free data files in the data submodule
+        run: |
+          echo "_51DEGREES_DD_PATH=${GITHUB_WORKSPACE}/cxx/data/device-detection/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
+          echo "_51DEGREES_IPI_PATH=${GITHUB_WORKSPACE}/cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
+      - name: Run the new test without the fix
+        env:
+          RUN: ${{ matrix.run }}
+        run: bash -c "$RUN"
