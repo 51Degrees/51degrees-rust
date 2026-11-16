@@ -74,3 +74,18 @@ $runExamples = {
 foreach ($example in $performanceExamples) {
     & $publishStep -SourceFile $example.Results -Name $example.Name -RepoName $RepoName -SummaryDir $OutputDir
 }
+
+# The performance test of the JavaScript builder's minification, which the
+# specification requires (javascript-builder.md, "Performance tests MUST be in
+# place to verify the performance impact of this feature"). It fails when
+# minifying adds more than its budget to a render. It measures time, so a
+# debug cargo test leaves it out as ignored, and it runs here in release. It
+# runs after the results above are published, so a failure here still leaves
+# the night's figures on the graphs. It reads no data file.
+Write-Host "Running the JavaScript builder minification performance test..."
+Push-Location $RepoName
+try {
+    cargo test --release -p fiftyone-javascript-builder --test performance -- --ignored --nocapture
+} finally {
+    Pop-Location
+}
