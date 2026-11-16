@@ -412,7 +412,7 @@ mod tests {
     fn the_resource_key_and_license_key_are_shared_whatever_the_configuration() {
         let narrow = EvidenceKeyFilterShareUsage::new(
             ["user-agent", "fiftyone", "resource-key", "license-key"],
-            Some(["other"]),
+            Some(vec!["other"]),
         );
         let mut filters: Vec<(&str, EvidenceKeyFilterShareUsage)> = both_filters().into();
         filters.push(("headers blocked and one query value", narrow));
