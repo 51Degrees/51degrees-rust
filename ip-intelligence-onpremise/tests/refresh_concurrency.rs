@@ -80,12 +80,12 @@ fn engine_and_pipeline(
             .expect("the data file loads"),
     );
     let element: Arc<dyn FlowElement> = engine.clone();
-    let pipeline = Arc::new(Pipeline::builder().add_element(element).build().unwrap());
+    let pipeline = Pipeline::builder().add_element(element).build().unwrap();
     (engine, pipeline)
 }
 
 /// The `AsnName` the pipeline gives for `ip`, written out.
-fn asn_name(pipeline: &Pipeline, ip: &str) -> String {
+fn asn_name(pipeline: &Arc<Pipeline>, ip: &str) -> String {
     let mut data =
         pipeline.create_flow_data_with(Evidence::builder().add("query.client-ip", ip).build());
     data.process().expect("processing succeeds");

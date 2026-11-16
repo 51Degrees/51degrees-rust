@@ -126,14 +126,12 @@ fn engine(
         .file_system_watcher_enabled(false)
         .license_key_required_for_updates(false)
         .build();
-    Arc::new(
-        DeviceDetectionOnPremiseEngineBuilder::new(path)
-            .performance_profile(profile)
-            .temp_dir_path(temp)
-            .auto_update(config, None)
-            .build()
-            .expect("the data file loads"),
-    )
+    DeviceDetectionOnPremiseEngineBuilder::new(path)
+        .performance_profile(profile)
+        .temp_dir_path(temp)
+        .auto_update(config, None)
+        .build()
+        .expect("the data file loads")
 }
 
 /// Whether `engine` detects the mobile User-Agent as a mobile device.

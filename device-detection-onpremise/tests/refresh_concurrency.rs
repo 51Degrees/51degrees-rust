@@ -82,19 +82,17 @@ fn engine_and_pipeline(
     path: &PathBuf,
     profile: PerformanceProfile,
 ) -> (Arc<DeviceDetectionOnPremiseEngine>, Arc<Pipeline>) {
-    let engine = Arc::new(
-        DeviceDetectionOnPremiseEngineBuilder::new(path)
-            .performance_profile(profile)
-            .build()
-            .expect("the data file loads"),
-    );
+    let engine = DeviceDetectionOnPremiseEngineBuilder::new(path)
+        .performance_profile(profile)
+        .build()
+        .expect("the data file loads");
     let element: Arc<dyn FlowElement> = engine.clone();
-    let pipeline = Arc::new(Pipeline::builder().add_element(element).build().unwrap());
+    let pipeline = Pipeline::builder().add_element(element).build().unwrap();
     (engine, pipeline)
 }
 
 /// Whether the pipeline detects `user_agent` as a mobile device.
-fn is_mobile(pipeline: &Pipeline, user_agent: &str) -> Option<bool> {
+fn is_mobile(pipeline: &Arc<Pipeline>, user_agent: &str) -> Option<bool> {
     let mut data = pipeline.create_flow_data_with(
         Evidence::builder()
             .add("header.user-agent", user_agent)
