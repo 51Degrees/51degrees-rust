@@ -59,8 +59,7 @@
 //! - **`Content-Type`**: `application/x-javascript` for JavaScript,
 //!   `application/json` for JSON.
 //! - **`Content-Length`**: the UTF-8 byte length of the body.
-//! - **`Cache-Control`**: `private, max-age=1800`, or the `max-age`
-//!   [`WebIntegrationOptions::cache_max_age`] gives, when processing recorded no
+//! - **`Cache-Control`**: `private, max-age=1800` when processing recorded no
 //!   errors and the builder's data was there, else `private, no-cache` and no
 //!   `ETag`, so a browser that kept the response to a failed request fetches
 //!   it again in full rather than having it confirmed by a `304`.
@@ -168,7 +167,7 @@ mod set_headers;
 pub use clientside::{
     compute_etag, etag_matches, serve_if_none_match, serve_javascript, serve_json, vary_header,
     EndpointOptions, CACHE_CONTROL_CACHEABLE, CACHE_CONTROL_NO_CACHE, CONTENT_TYPE_JAVASCRIPT,
-    CONTENT_TYPE_JSON, DEFAULT_CACHE_MAX_AGE,
+    CONTENT_TYPE_JSON,
 };
 pub use pipeline::{endpoint_matches, WebEndpoint, WebIntegrationOptions, WebPipeline};
 pub use request::{build_evidence, RequestData};
