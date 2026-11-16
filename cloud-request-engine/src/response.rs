@@ -261,6 +261,34 @@ mod tests {
     }
 
     #[test]
+    fn multiple_errors_are_raised_as_an_aggregate_of_one_error_each() {
+        // cloud-request-engine.md line 452: "(If there are multiple entries
+        // then a language-appropriate structure, such as the C#
+        // AggregateException SHOULD be used)". The Rust structure is
+        // Error::Aggregate, holding one cloud request error per entry.
+        let resp = response(400, r#"{"errors":["first","second"]}"#);
+        let err = validate_response(&resp, "https://x/json", true).unwrap_err();
+        let Error::Aggregate(errors) = err else {
+            panic!("expected an aggregate, got {err:?}");
+        };
+        let entries: Vec<(u16, String)> = errors
+            .iter()
+            .map(|error| match &error.source {
+                Error::CloudRequest {
+                    status_code,
+                    message,
+                    ..
+                } => (*status_code, message.clone()),
+                other => panic!("expected a cloud request error, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            entries,
+            vec![(400, "first".to_owned()), (400, "second".to_owned())]
+        );
+    }
+
+    #[test]
     fn empty_body_raises_no_data() {
         let resp = response(200, "");
         let err = validate_response(&resp, "https://cloud/json", true).unwrap_err();
