@@ -499,7 +499,9 @@ fn every_engine_populates_aspect_data() {
         pipeline.create_flow_data_with(Evidence::builder().add("header.user-agent", "A").build());
     data.process().expect("processing succeeds");
 
-    let device = data.get(DEVICE_DATA_KEY).expect("the device data is stored");
+    let device = data
+        .get(DEVICE_DATA_KEY)
+        .expect("the device data is stored");
     assert_eq!(engine_keys_of(device), ["device"]);
     assert!(!device.cache_hit());
     let hardware = data
