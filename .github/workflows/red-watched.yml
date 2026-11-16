@@ -1,0 +1,23 @@
+name: Temporary red run, a watched file whose refresh failed
+
+# Throwaway. The branch is rc with the new test and none of the fix, so the
+# test is expected to fail at its last check, the later programmatic check
+# answering NotNeeded.
+
+on:
+  push:
+    branches:
+      - 'tmp/red-watched-applied'
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    name: a watched file whose refresh failed is refreshed by a later check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run the new test without the fix
+        run: cargo test -p fiftyone-pipeline-engines --lib a_watched_file_whose_refresh_failed_is_refreshed_by_a_later_check
