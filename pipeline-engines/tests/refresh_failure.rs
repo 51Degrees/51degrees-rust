@@ -456,9 +456,15 @@ fn a_download_that_cannot_be_decompressed(dir: &Path) {
 fn a_programmatic_update_of_a_registered_file(dir: &Path) {
     let path = dir.join("registered.dat");
     std::fs::write(&path, b"version 1").unwrap();
+    // The file system watcher runs on its own setting, whatever automatic
+    // update is, so a registered file is watched unless it is turned off.
+    // This case is about the programmatic check alone, and a watcher would
+    // refresh the engine as well when the file is made newer below, adding
+    // a report this case does not expect.
     let (engine, shared) = engine(
         DataFileConfiguration::builder(&path)
             .automatic_updates_enabled(false)
+            .file_system_watcher_enabled(false)
             .build(),
         0,
     );
