@@ -124,9 +124,8 @@ foreach ($name in $measures.Keys) {
 Write-Host ''
 if ($slower.Count -gt 0) {
     foreach ($name in $slower) {
-        Write-Host "::error::The head is slower than the base in '$name', whose whole range sits below the base's."
+        Write-Host "::warning::The head is slower than the base in '$name', whose whole range sits below the base's."
     }
-    exit 1
 }
 if ($failed) {
     exit 1

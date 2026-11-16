@@ -1,0 +1,40 @@
+name: Temporary red run of pull request 488
+
+# Throwaway. Two runs of ci/compare-timing.Tests.ps1, each expected to fail.
+# The first is at the test commit d1014909, before the comparison script
+# existed. The second is this branch, which is pull request 488's head with
+# the script's gate changed to warn rather than fail on a slower measure, as
+# common-ci's compare-performance.ps1 does on a short history, so the cases
+# that expect a slower head to fail the run must fail.
+
+on:
+  push:
+    branches:
+      - 'tmp/red-488'
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: the tests at their own commit, before the script existed
+            ref: d10149093dc9a3708869b766f30129431524b200
+          - name: the tests against a gate that only warns
+            ref: ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          fetch-depth: 0
+      - name: Install Pester
+        shell: pwsh
+        run: Install-Module -Name Pester -MinimumVersion 5.0.0 -Force -Scope CurrentUser -SkipPublisherCheck
+      - name: Run the release timing tests
+        shell: pwsh
+        run: Invoke-Pester -Path ./ci/compare-timing.Tests.ps1 -Output Detailed -CI
