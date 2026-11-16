@@ -2453,6 +2453,46 @@ mod tests {
         assert!(data.get(IP_DATA_KEY).is_some());
     }
 
+    /// The specification says "The Pipeline that contains the Aspect Engine
+    /// MUST still be capable of processing Flow Data with minimal performance
+    /// impact while data refresh is happening." While a refresh holds the
+    /// refresh lock, as it does for the whole of a reload, a lookup on
+    /// another thread completes, because processing never waits for a
+    /// refresh. The limit on the wait is no performance threshold: a lookup
+    /// takes far less, and only one blocked on the lock reaches it.
+    #[test]
+    fn a_lookup_does_not_wait_for_a_refresh_in_progress() {
+        let Some(engine) = asn_engine() else {
+            eprintln!("no usable IP-intelligence data file; skipping the lookup during a refresh");
+            return;
+        };
+        let engine = Arc::new(engine);
+        let _refreshing = engine
+            .refresh_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let looking_up = Arc::clone(&engine);
+        std::thread::spawn(move || {
+            let element: Arc<dyn FlowElement> = looking_up.clone();
+            let pipeline = Pipeline::builder()
+                .add_element(element)
+                .build()
+                .expect("the pipeline builds");
+            let data = pipeline.create_flow_data_with(
+                Evidence::builder()
+                    .add("query.client-ip", "1.1.1.1")
+                    .build(),
+            );
+            let _ = sender.send(looking_up.lookup(&data).is_ok());
+        });
+        assert_eq!(
+            receiver.recv_timeout(std::time::Duration::from_secs(300)),
+            Ok(true),
+            "the lookup completes while the refresh lock is held"
+        );
+    }
+
     /// Where the data file's header gives the place of its properties, and
     /// where a property's description offset sits in its record, from
     /// `ipi.h`, `collection.h` and `property.h` in 51degrees-cxx with the 64

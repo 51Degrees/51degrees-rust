@@ -2229,6 +2229,46 @@ mod tests {
         assert!(Arc::ptr_eq(&manager, &engine.data_set()), "from a path");
     }
 
+    /// The specification says "The Pipeline that contains the Aspect Engine
+    /// MUST still be capable of processing Flow Data with minimal performance
+    /// impact while data refresh is happening." While a refresh holds the
+    /// refresh lock, as it does for the whole of a reload, a detection on
+    /// another thread completes, because processing never waits for a
+    /// refresh. The limit on the wait is no performance threshold: a
+    /// detection takes far less, and only one blocked on the lock reaches it.
+    #[test]
+    fn a_detection_does_not_wait_for_a_refresh_in_progress() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the detection during a refresh");
+            return;
+        };
+        let (engine, _) = engine_and_data(&path);
+        let _refreshing = engine
+            .refresh_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let detecting = Arc::clone(&engine);
+        std::thread::spawn(move || {
+            let element: Arc<dyn FlowElement> = detecting.clone();
+            let pipeline = fiftyone_pipeline_core::Pipeline::builder()
+                .add_element(element)
+                .build()
+                .expect("the pipeline builds");
+            let data = pipeline.create_flow_data_with(
+                Evidence::builder()
+                    .add("header.user-agent", CHROME_ON_WINDOWS)
+                    .build(),
+            );
+            let _ = sender.send(detecting.detect(&data).is_ok());
+        });
+        assert_eq!(
+            receiver.recv_timeout(std::time::Duration::from_secs(300)),
+            Ok(true),
+            "the detection completes while the refresh lock is held"
+        );
+    }
+
     /// A reload of `engine` the tests below make, with the words its
     /// messages name it by.
     type Reload<'a> = (String, Box<dyn Fn() -> Result<()> + 'a>);
