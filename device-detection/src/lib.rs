@@ -312,6 +312,7 @@ pub struct DeviceDetectionOnPremisePipelineBuilder {
     polling_interval_seconds: Option<u64>,
     max_randomisation_seconds: Option<u64>,
     data_update_service: Option<std::sync::Arc<DataUpdateService>>,
+    suppress_process_exceptions: bool,
 }
 
 #[cfg(feature = "on-premise")]
@@ -338,7 +339,16 @@ impl DeviceDetectionOnPremisePipelineBuilder {
             polling_interval_seconds: None,
             max_randomisation_seconds: None,
             data_update_service: None,
+            suppress_process_exceptions: false,
         }
+    }
+
+    /// Set whether the pipeline records a processing error on the flow data
+    /// instead of returning it from `process`. Defaults to `false`, matching
+    /// the pipeline default.
+    pub fn suppress_process_exceptions(mut self, suppress: bool) -> Self {
+        self.suppress_process_exceptions = suppress;
+        self
     }
 
     /// Enable or disable automatic data file updates. On by default, as in
@@ -608,7 +618,9 @@ impl DeviceDetectionOnPremisePipelineBuilder {
             pipeline_builder =
                 pipeline_builder.add_element(Arc::new(ShareUsageElement::with_defaults()));
         }
-        pipeline_builder.build()
+        pipeline_builder
+            .suppress_process_exceptions(self.suppress_process_exceptions)
+            .build()
     }
 }
 
@@ -629,6 +641,7 @@ pub struct DeviceDetectionCloudPipelineBuilder {
     share_usage: bool,
     hardware_profile: bool,
     cloud_state: Option<CloudEngineState>,
+    suppress_process_exceptions: bool,
 }
 
 #[cfg(feature = "cloud")]
@@ -641,7 +654,16 @@ impl DeviceDetectionCloudPipelineBuilder {
             share_usage: cfg!(feature = "share-usage"),
             hardware_profile: false,
             cloud_state: None,
+            suppress_process_exceptions: false,
         }
+    }
+
+    /// Set whether the pipeline records a processing error on the flow data
+    /// instead of returning it from `process`. Defaults to `false`, matching
+    /// the pipeline default.
+    pub fn suppress_process_exceptions(mut self, suppress: bool) -> Self {
+        self.suppress_process_exceptions = suppress;
+        self
     }
 
     /// Override the cloud endpoint URL. By default the request engine's own
@@ -739,7 +761,9 @@ impl DeviceDetectionCloudPipelineBuilder {
             pipeline_builder =
                 pipeline_builder.add_element(Arc::new(ShareUsageElement::with_defaults()));
         }
-        pipeline_builder.build()
+        pipeline_builder
+            .suppress_process_exceptions(self.suppress_process_exceptions)
+            .build()
     }
 }
 
