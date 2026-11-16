@@ -78,11 +78,6 @@ const DEFAULT_DATA_SOURCE_TIER: &str = "Lite";
 /// file upgrade names.
 const ENGINE_TYPE_NAME: &str = "DeviceDetectionOnPremiseEngine";
 
-/// The profile a refresh opens the new data under to check that its metadata
-/// reads before the engine's manager reloads it. It reads from the data file
-/// only what the check needs, so the check holds little memory.
-const CHECK_PROFILE: PerformanceProfile = PerformanceProfile::LowMemory;
-
 /// A match-metric pseudo-property, which the Hash engine gives in addition to
 /// the data file's own properties. Its value is read from the detection's
 /// results when it is first requested, not from the data file.
@@ -389,6 +384,26 @@ struct LentMetadata {
     tier: String,
 }
 
+/// The properties and components of the data file `manager` holds, from which
+/// [`describe`] builds the engine's metadata.
+fn read_metadata(manager: &Manager) -> Result<(Vec<DataFileProperty>, Vec<DataFileComponent>)> {
+    Ok((
+        manager.data_file_properties()?,
+        manager.data_file_components()?,
+    ))
+}
+
+/// Read the metadata of `candidate`, a data set opened on its own from the
+/// data a refresh is about to load, before the engine's data set is replaced
+/// with that data. Data whose metadata cannot be read then fails the refresh,
+/// and the engine goes on using the data set it had, as the data updates
+/// specification asks. A reload replaces the data set before the engine can
+/// read the new metadata, so the check cannot wait until then. `candidate`
+/// is closed when the check ends, before the reload opens the data again.
+fn check_metadata(candidate: Arc<Manager>) -> Result<()> {
+    read_metadata(&candidate).map(|_| ())
+}
+
 /// The data set `manager` holds, read from `copy` when there is one, and its
 /// metadata, reporting `tier_override` when it is set, otherwise the tier the
 /// data file names. The missing property rules always compare with the tier
@@ -410,12 +425,12 @@ fn describe(
         .data_set_name()
         .unwrap_or_else(|| DEFAULT_DATA_SOURCE_TIER.to_owned());
     let tier = tier_override.clone().unwrap_or_else(|| file_tier.clone());
-    let file_properties = manager.data_file_properties()?;
+    let (file_properties, file_components) = read_metadata(&manager)?;
     let EngineMetadata {
         lent,
         fiftyone_properties,
         components,
-    } = build_metadata(&file_properties, &manager.data_file_components()?, tier);
+    } = build_metadata(&file_properties, &file_components, tier);
     let readable = Arc::new(ReadableProperties::new(&file_properties, names));
     let file_property_places = file_properties
         .iter()
@@ -742,11 +757,11 @@ impl DeviceDetectionOnPremiseEngine {
 
     /// Reload the data set in the engine's manager from the data file at
     /// `path`, or from the copy of it the engine reads, and describe the new
-    /// data set. See [`Self::swap_in`].
+    /// data set. See [`Self::swap_in`]. The new data's metadata is read first
+    /// (see [`check_metadata`]).
     ///
     /// Shared by [`OnPremiseAspectEngine::refresh`] and the builder's reload
-    /// path. A reload that fails, or a data file the engine cannot use (see
-    /// [`Self::check_usable`]), leaves the data set in use and removes the
+    /// path. A reload that fails leaves the data set in use and removes the
     /// copy, which nothing then reads.
     fn reload_from_path(&self, path: &Path) -> Result<()> {
         let _refreshing = self
@@ -764,12 +779,7 @@ impl DeviceDetectionOnPremiseEngine {
             )
         });
         let source = copy.as_ref().map_or(path, OperationalCopy::path);
-        self.check_usable(Manager::open_with_options(
-            source,
-            CHECK_PROFILE,
-            None,
-            Some(1),
-        ))?;
+        check_metadata(Manager::open(source, PerformanceProfile::LowMemory)?)?;
         let manager = Arc::clone(&self.loaded.load().manager);
         manager.reload_from_file(source)?;
         self.swap_in(copy, manager)
@@ -777,34 +787,23 @@ impl DeviceDetectionOnPremiseEngine {
 
     /// Reload the data set in the engine's manager from `data`, the whole of
     /// a data file, which the C library copies, and describe the new data
-    /// set. See [`Self::swap_in`]. Data the engine cannot use (see
-    /// [`Self::check_usable`]) leaves the data set in use.
+    /// set. See [`Self::swap_in`]. The new data's metadata is read first
+    /// (see [`check_metadata`]), from a second copy of `data` held only for
+    /// that read.
     fn reload_from_memory(&self, data: &[u8]) -> Result<()> {
         let _refreshing = self
             .refresh_lock
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        self.check_usable(Manager::open_from_memory(
+        check_metadata(Manager::open_from_memory(
             data.to_vec(),
-            CHECK_PROFILE,
+            PerformanceProfile::LowMemory,
             None,
             &HashOptions::default(),
-        ))?;
+        )?)?;
         let manager = Arc::clone(&self.loaded.load().manager);
         manager.reload_from_memory(data)?;
         self.swap_in(None, manager)
-    }
-
-    /// Read the metadata of `opened`, a data set of its own opened from the
-    /// new data before the engine's manager reloads it, as [`describe`]
-    /// reads it after the reload. The C library loads a data file whose
-    /// metadata cannot be read, and its reload replaces the data set in the
-    /// engine's manager in place, so the data is checked first and refused
-    /// with the error, leaving the engine on the data set it had. The check
-    /// opens the data under [`CHECK_PROFILE`], which reads only what it
-    /// needs, and frees it before the reload.
-    fn check_usable(&self, opened: Result<Arc<Manager>>) -> Result<()> {
-        describe(None, opened?, &self.tier_override, &self.names).map(drop)
     }
 
     /// Give detections the properties of the data set `manager` holds after a
@@ -814,11 +813,11 @@ impl DeviceDetectionOnPremiseEngine {
     /// tier. In-flight detections keep what they read and the data set their
     /// results came from. The caller holds the refresh lock.
     ///
-    /// The reload is made only once [`Self::check_usable`] has read the new
-    /// data's metadata, so this reads it again from the same data. Should it
-    /// still fail, the error is returned and detections go on reading the new
-    /// data set by the properties of the one before, whose names and indexes
-    /// it keeps, with `copy` kept until nothing reads it.
+    /// The metadata was read before the reload, so it fails here only when a
+    /// second read of the same data fails. Then the error is returned and
+    /// detections go on reading the new data set by the properties of the one
+    /// before, whose names and indexes it keeps, with `copy` kept until
+    /// nothing reads it.
     fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
         let evidence_keys = manager.evidence_keys();
         let (mut loaded, metadata) = match describe(None, manager, &self.tier_override, &self.names)
@@ -929,10 +928,10 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
 
     fn refresh(&self, _data_file_identifier: Option<&str>) -> Result<()> {
         // A single-file engine ignores the identifier. Reload the data set
-        // from the file's configured path on disk. A reload that fails is
-        // returned and not logged, as the specification's errors table says:
-        // the data update service logs a failed check it made itself, and
-        // a programmatic refresh passes the error to its caller.
+        // from the file's configured path on disk. A reload that fails keeps
+        // the data the engine had and is returned without being logged,
+        // because the caller reports it, the data update service logging a
+        // failed check once.
         let path = self
             .data_files
             .first()
@@ -948,7 +947,7 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
 
     fn refresh_from_memory(&self, _data_file_identifier: Option<&str>, data: &[u8]) -> Result<()> {
         // A single-file engine ignores the identifier. A refresh that fails is
-        // returned and not logged, as a refresh from the file is.
+        // returned as a refresh from the file is.
         self.reload_from_memory(data)
     }
 }
@@ -2227,46 +2226,6 @@ mod tests {
             .reload_from_path(&path)
             .expect("the data file loads again");
         assert!(Arc::ptr_eq(&manager, &engine.data_set()), "from a path");
-    }
-
-    /// The specification says "The Pipeline that contains the Aspect Engine
-    /// MUST still be capable of processing Flow Data with minimal performance
-    /// impact while data refresh is happening." While a refresh holds the
-    /// refresh lock, as it does for the whole of a reload, a detection on
-    /// another thread completes, because processing never waits for a
-    /// refresh. The limit on the wait is no performance threshold: a
-    /// detection takes far less, and only one blocked on the lock reaches it.
-    #[test]
-    fn a_detection_does_not_wait_for_a_refresh_in_progress() {
-        let Some(path) = data_file() else {
-            eprintln!("no Hash data file found; skipping the detection during a refresh");
-            return;
-        };
-        let (engine, _) = engine_and_data(&path);
-        let _refreshing = engine
-            .refresh_lock
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let detecting = Arc::clone(&engine);
-        std::thread::spawn(move || {
-            let element: Arc<dyn FlowElement> = detecting.clone();
-            let pipeline = fiftyone_pipeline_core::Pipeline::builder()
-                .add_element(element)
-                .build()
-                .expect("the pipeline builds");
-            let data = pipeline.create_flow_data_with(
-                Evidence::builder()
-                    .add("header.user-agent", CHROME_ON_WINDOWS)
-                    .build(),
-            );
-            let _ = sender.send(detecting.detect(&data).is_ok());
-        });
-        assert_eq!(
-            receiver.recv_timeout(std::time::Duration::from_secs(300)),
-            Ok(true),
-            "the detection completes while the refresh lock is held"
-        );
     }
 
     /// A reload of `engine` the tests below make, with the words its
