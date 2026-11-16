@@ -27,13 +27,17 @@
 //! any kind outside the table, such as a download that cannot be
 //! decompressed or written, the status `AUTO_UPDATE_UNKNOWN_ERROR` and the
 //! message "An unhandled error occurred while checking for automatic updates
-//! for engine '<Engine type name>'". Kept in its own test binary because a
-//! logger is installed once for the whole process.
+//! for engine '<Engine type name>'". A refresh from the data file is tried
+//! 10 times before it gives `AUTO_UPDATE_REFRESH_FAILED` and "An error
+//! occurred when applying a data update to engine '<Engine type name>' after
+//! <tries> tries.", and one from memory once. Kept in its own test binary
+//! because a logger is installed once for the whole process.
 #![cfg(feature = "data-update")]
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use fiftyone_pipeline_core::{
@@ -95,11 +99,40 @@ fn logged() -> Vec<String> {
     std::mem::take(&mut *LOGGED.lock().unwrap())
 }
 
-/// An engine whose type name and data key differ, which takes any data.
+/// An engine whose type name and data key differ, whose first refreshes
+/// fail, while failures are left, and whose later ones take any data.
 struct NamedEngine {
     filter: EvidenceKeyFilterWhitelist,
     data_files: Vec<Arc<AspectEngineDataFile>>,
+    failures: Mutex<usize>,
+    refreshes: AtomicUsize,
 }
+
+impl NamedEngine {
+    /// One refresh, which fails while failures are left.
+    fn attempt(&self) -> Result<()> {
+        self.refreshes.fetch_add(1, Ordering::SeqCst);
+        let failed = {
+            let mut left = self.failures.lock().unwrap();
+            let failed = *left > 0;
+            if failed {
+                *left -= 1;
+            }
+            failed
+        };
+        if failed {
+            Err(fiftyone_pipeline_core::Error::configuration(REFUSED))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// What a refresh of [`NamedEngine`] that fails says.
+const REFUSED: &str = "the refresh is refused";
+
+/// The tries the errors table gives a refresh from the data file.
+const TRIES: usize = 10;
 
 impl FlowElement for NamedEngine {
     fn process(&self, _data: &mut FlowData) -> Result<()> {
@@ -130,17 +163,24 @@ impl OnPremiseAspectEngine for NamedEngine {
         &self.data_files
     }
     fn refresh(&self, _identifier: Option<&str>) -> Result<()> {
-        Ok(())
+        self.attempt()
     }
     fn refresh_from_memory(&self, _identifier: Option<&str>, _data: &[u8]) -> Result<()> {
-        Ok(())
+        self.attempt()
     }
 }
 
 fn engine(config: DataFileConfiguration) -> Arc<dyn OnPremiseAspectEngine> {
+    failing(config, 0)
+}
+
+/// A [`NamedEngine`] for `config` whose first `failures` refreshes fail.
+fn failing(config: DataFileConfiguration, failures: usize) -> Arc<NamedEngine> {
     Arc::new(NamedEngine {
         filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
         data_files: vec![Arc::new(AspectEngineDataFile::new(config))],
+        failures: Mutex::new(failures),
+        refreshes: AtomicUsize::new(0),
     })
 }
 
@@ -314,4 +354,84 @@ fn a_download_that_cannot_be_written_is_an_unknown_error() {
     assert_eq!(error.status, AutoUpdateStatus::UnknownError);
     assert!(error.message.starts_with(UNHANDLED), "{}", error.message);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The configuration of a file data source at `path` with no update URL,
+/// which a programmatic check refreshes the engine from.
+fn local_file_config(path: &PathBuf) -> DataFileConfiguration {
+    DataFileConfiguration::builder(path)
+        .automatic_updates_enabled(false)
+        .file_system_watcher_enabled(false)
+        .build()
+}
+
+/// A refresh from the data file that fails fewer than 10 times is tried
+/// until it works.
+#[test]
+fn a_refresh_from_the_file_is_tried_again_until_it_works() {
+    let _guard = start();
+    let dir = folder("tried-again");
+    let path = dir.join("data.hash");
+    std::fs::write(&path, b"new data").unwrap();
+    let engine = failing(local_file_config(&path), TRIES - 1);
+    let shared: Arc<dyn OnPremiseAspectEngine> = engine.clone();
+
+    let status = DataUpdateService::new().check_for_update(&shared, None);
+
+    assert_eq!(
+        status.map_err(|e| e.to_string()),
+        Ok(AutoUpdateStatus::Success)
+    );
+    assert_eq!(engine.refreshes.load(Ordering::SeqCst), TRIES);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A refresh from the data file that fails 10 times gives the table's status
+/// and message, which names the tries.
+#[test]
+fn a_refresh_from_the_file_that_fails_10_times_names_the_tries() {
+    let _guard = start();
+    let dir = folder("ten-tries");
+    let path = dir.join("data.hash");
+    std::fs::write(&path, b"new data").unwrap();
+    let engine = failing(local_file_config(&path), usize::MAX);
+    let shared: Arc<dyn OnPremiseAspectEngine> = engine.clone();
+
+    let error = DataUpdateService::new()
+        .check_for_update(&shared, None)
+        .expect_err("every try fails");
+
+    assert_eq!(error.status, AutoUpdateStatus::RefreshFailed);
+    let expected = format!(
+        "An error occurred when applying a data update to engine '{TYPE_NAME}' after \
+         {TRIES} tries."
+    );
+    assert!(error.message.starts_with(&expected), "{}", error.message);
+    assert!(error.message.contains(REFUSED), "{}", error.message);
+    assert_eq!(engine.refreshes.load(Ordering::SeqCst), TRIES);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A refresh from data held in memory is tried once, and its message names
+/// no tries.
+#[test]
+fn a_refresh_from_memory_is_tried_once() {
+    let _guard = start();
+    let engine = failing(
+        DataFileConfiguration::memory_builder()
+            .automatic_updates_enabled(false)
+            .build(),
+        1,
+    );
+    let shared: Arc<dyn OnPremiseAspectEngine> = engine.clone();
+
+    let error = DataUpdateService::new()
+        .update_from_memory(&shared, None, b"new data")
+        .expect_err("the refresh fails");
+
+    assert_eq!(error.status, AutoUpdateStatus::RefreshFailed);
+    let expected =
+        format!("An error occurred when applying a data update to engine '{TYPE_NAME}'.");
+    assert!(error.message.starts_with(&expected), "{}", error.message);
+    assert_eq!(engine.refreshes.load(Ordering::SeqCst), 1);
 }
