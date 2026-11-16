@@ -35,8 +35,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 
 use fiftyone_device_detection::{
-    DeviceData, DeviceDetectionOnPremiseEngineBuilder, DeviceDetectionPipelineBuilder, Evidence,
-    PerformanceProfile, Pipeline, DEVICE_DATA_KEY,
+    DeviceData, DeviceDetectionPipelineBuilder, Evidence, PerformanceProfile, Pipeline,
+    DEVICE_DATA_KEY,
 };
 use fiftyone_pipeline_engines::AspectPropertyValue;
 
@@ -357,19 +357,14 @@ impl HardwareNameJoined for fiftyone_device_detection::DeviceDataBase {
 }
 
 /// Build an on-premise pipeline with process errors suppressed, which is off
-/// by default. The Device Detection pipeline builder has no setting for it, so
-/// the engine is built on its own and added to a pipeline built with
-/// `Pipeline::builder()`, whose `suppress_process_exceptions(true)` turns it
-/// on. An error an element meets while processing is then kept in the flow
-/// data's errors instead of being returned from `process`, so a web site
+/// by default. An error an element meets while processing is then kept in the
+/// flow data's errors instead of being returned from `process`, so a web site
 /// keeps serving pages when detection fails for one request.
 fn pipeline_that_suppresses_process_errors(data_file: &std::path::Path) -> Result<Arc<Pipeline>> {
-    let engine = DeviceDetectionOnPremiseEngineBuilder::new(data_file)
+    DeviceDetectionPipelineBuilder::on_premise(data_file)
         .performance_profile(PerformanceProfile::LowMemory)
-        .build()
-        .context("failed to build the on-premise device-detection engine")?;
-    Pipeline::builder()
-        .add_element(engine)
+        .share_usage(false)
+        .auto_update(false)
         .suppress_process_exceptions(true)
         .build()
         .context("failed to build the pipeline that suppresses process errors")
@@ -499,10 +494,8 @@ mod tests {
  * Process errors are not suppressed by default, so an error an element meets
  * is returned from `process`. Many web sites turn suppression on, so that a
  * failed detection for one request is kept in the flow data's errors and the
- * page is still served. The Device Detection pipeline builder has no setting
- * for it, so the example builds the engine with
- * `DeviceDetectionOnPremiseEngineBuilder` and adds it to a pipeline from
- * `Pipeline::builder()` with `.suppress_process_exceptions(true)`.
+ * page is still served. The example builds a second pipeline with
+ * `.suppress_process_exceptions(true)` to show it.
  *
  * The data file is read from the first command-line argument, the
  * `_51DEGREES_DD_PATH` environment variable, or the Lite Hash file in the data
