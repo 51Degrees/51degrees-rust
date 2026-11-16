@@ -30,22 +30,26 @@
 //! [`MINIFY_BUDGET`] to a render. It measures, so it is ignored in a debug
 //! `cargo test`, and `ci/run-performance-tests.ps1` runs it in release.
 //! [`the_performance_run_runs_this_test`] checks that the script does.
+//!
+//! The tests measure time or read the script from disk, so they are
+//! compiled only off WebAssembly, where a test has no file system.
+#![cfg(not(target_family = "wasm"))]
 
 use std::path::Path;
-#[cfg(all(feature = "minify", not(target_family = "wasm")))]
+#[cfg(feature = "minify")]
 use std::sync::Arc;
-#[cfg(all(feature = "minify", not(target_family = "wasm")))]
+#[cfg(feature = "minify")]
 use std::time::{Duration, Instant};
 
-#[cfg(all(feature = "minify", not(target_family = "wasm")))]
+#[cfg(feature = "minify")]
 use fiftyone_javascript_builder::{
     JavaScriptBuilderElement, JavaScriptBuilderElementBuilder, JAVASCRIPT_BUILDER_DATA_KEY,
 };
-#[cfg(all(feature = "minify", not(target_family = "wasm")))]
+#[cfg(feature = "minify")]
 use fiftyone_json_builder::JsonBuilderElement;
-#[cfg(all(feature = "minify", not(target_family = "wasm")))]
+#[cfg(feature = "minify")]
 use fiftyone_pipeline_core::{Evidence, Pipeline};
-#[cfg(all(feature = "minify", not(target_family = "wasm")))]
+#[cfg(feature = "minify")]
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 
 /// The most minification may add to the median render, in release.
@@ -56,16 +60,16 @@ use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 /// limit is about ten times that, to leave room for a slower, shared CI
 /// runner, which has not been measured yet, while still failing on a change
 /// that makes minifying many times slower.
-#[cfg(all(feature = "minify", not(target_family = "wasm")))]
+#[cfg(feature = "minify")]
 const MINIFY_BUDGET: Duration = Duration::from_millis(25);
 
 /// Renders timed for each configuration, after one untimed render.
-#[cfg(all(feature = "minify", not(target_family = "wasm")))]
+#[cfg(feature = "minify")]
 const RENDERS: usize = 201;
 
 /// A pipeline of the Sequence element, the JSON builder and the JavaScript
 /// builder, as a client-side integration has.
-#[cfg(all(feature = "minify", not(target_family = "wasm")))]
+#[cfg(feature = "minify")]
 fn pipeline(
     configure: impl FnOnce(JavaScriptBuilderElementBuilder) -> JavaScriptBuilderElement,
 ) -> Arc<Pipeline> {
@@ -79,7 +83,7 @@ fn pipeline(
 
 /// Process one request with a host, so the script has its callback URL, and
 /// return the script.
-#[cfg(all(feature = "minify", not(target_family = "wasm")))]
+#[cfg(feature = "minify")]
 fn render(pipeline: &Arc<Pipeline>) -> String {
     let mut data = pipeline.create_flow_data_with(
         Evidence::builder()
@@ -96,7 +100,7 @@ fn render(pipeline: &Arc<Pipeline>) -> String {
 /// The median time of [`RENDERS`] renders, after one untimed render that
 /// compiles the template. The median leaves out the odd render slowed by
 /// other work on the machine.
-#[cfg(all(feature = "minify", not(target_family = "wasm")))]
+#[cfg(feature = "minify")]
 fn median_render(pipeline: &Arc<Pipeline>) -> (Duration, usize) {
     let length = render(pipeline).len();
     let mut times: Vec<Duration> = (0..RENDERS)
@@ -114,7 +118,7 @@ fn median_render(pipeline: &Arc<Pipeline>) -> (Duration, usize) {
 
 /// Minification makes the script smaller and adds no more than
 /// [`MINIFY_BUDGET`] to a render.
-#[cfg(all(feature = "minify", not(target_family = "wasm")))]
+#[cfg(feature = "minify")]
 #[test]
 #[ignore = "measures time, so ci/run-performance-tests.ps1 runs it in release"]
 fn minification_stays_within_its_budget() {
