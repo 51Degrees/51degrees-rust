@@ -399,3 +399,85 @@ pub use owid::{Configuration, Creator};
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]
 struct ReadmeExamples;
+
+/// package-surface.md, "What a package does not expose": "A package MUST NOT
+/// make any of the following public, in any language", being the raw flags
+/// byte, the offsets and lengths, the Terms index and the Payload version.
+/// Each block below reaches for one of them and must fail to compile, so
+/// making any of them public fails this test. The first block reads every
+/// field through the accessor that names it, and must compile, so the
+/// blocks after it fail for the reason they name and not a broken fixture.
+///
+/// ```
+/// fn read(id: &fodid::FodId) -> (fodid::Usage, fodid::IdType, u32, &[u8], Option<&str>) {
+///     (id.usage(), id.id_type(), id.license_id(), id.match_key(), id.terms())
+/// }
+/// # let _ = read;
+/// ```
+///
+/// The raw flags byte, as a field and as a method.
+///
+/// ```compile_fail,E0616
+/// fn read(id: &fodid::FodId) -> u8 { id.flags }
+/// # let _ = read;
+/// ```
+///
+/// ```compile_fail,E0599
+/// fn read(id: &fodid::FodId) -> u8 { id.flags() }
+/// # let _ = read;
+/// ```
+///
+/// The offsets and lengths.
+///
+/// ```compile_fail
+/// let _ = fodid::FLAGS_OFFSET;
+/// ```
+///
+/// ```compile_fail
+/// let _ = fodid::LICENSE_ID_OFFSET;
+/// ```
+///
+/// ```compile_fail
+/// let _ = fodid::LICENSE_ID_LENGTH;
+/// ```
+///
+/// ```compile_fail
+/// let _ = fodid::MATCH_KEY_OFFSET;
+/// ```
+///
+/// ```compile_fail
+/// let _ = fodid::MATCH_KEY_LENGTH;
+/// ```
+///
+/// ```compile_fail
+/// let _ = fodid::HEADER_LENGTH;
+/// ```
+///
+/// ```compile_fail
+/// let _ = fodid::GUID_LENGTH;
+/// ```
+///
+/// The Terms index, as a field and as a method.
+///
+/// ```compile_fail,E0616
+/// fn read(id: &fodid::FodId) -> u8 { id.terms_index }
+/// # let _ = read;
+/// ```
+///
+/// ```compile_fail,E0599
+/// fn read(id: &fodid::FodId) -> u8 { id.terms_index() }
+/// # let _ = read;
+/// ```
+///
+/// The Payload version, as a method and as the constant this crate reads.
+///
+/// ```compile_fail,E0599
+/// fn read(id: &fodid::FodId) -> u8 { id.payload_version() }
+/// # let _ = read;
+/// ```
+///
+/// ```compile_fail
+/// let _ = fodid::SUPPORTED_PAYLOAD_VERSION;
+/// ```
+#[cfg(doctest)]
+struct NotExposed;
