@@ -499,10 +499,7 @@ submodule is checked out and from that file otherwise.
   checkout's crates through `ci/test-examples-against-source.ps1`. Each
   example writes its own results JSON, and common-ci provides the steps that
   validate and compare it (`steps/publish-performance-results.ps1` and
-  `steps/compare-performance.ps1`). It then runs the JavaScript builder's
-  minification performance test, `javascript-builder/tests/performance.rs`,
-  in release, which fails when minifying adds more than its budget to a
-  render. See
+  `steps/compare-performance.ps1`). See
   [ci/missing-ci-scripts.md](ci/missing-ci-scripts.md) for how this relates to
   the org-standard reusable-workflow contract and the planned direction.
 
