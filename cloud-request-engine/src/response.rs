@@ -28,9 +28,7 @@
 //! of the specification:
 //!
 //! - If the response body contains a top-level `errors` array with entries,
-//!   raise an error using those messages. One entry is raised as an
-//!   [`fiftyone_pipeline_core::Error::CloudRequest`], and several as an
-//!   [`fiftyone_pipeline_core::Error::Aggregate`] holding one each.
+//!   raise an error using those messages.
 //! - If the body is empty, raise `No data in response from cloud service at
 //!   '[url]'`.
 //! - Otherwise, if the status code indicates failure, raise `Cloud service at
@@ -39,9 +37,8 @@
 //!   log them.
 
 use fiftyone_pipeline_core::redact::redact;
-use fiftyone_pipeline_core::{Error, FlowError};
+use fiftyone_pipeline_core::Error;
 
-use crate::constants::ELEMENT_DATA_KEY;
 use crate::http::CloudHttpResponse;
 
 /// The result of validating a cloud response that did not raise an error.
@@ -80,9 +77,7 @@ pub fn parse_retry_after(value: Option<&str>) -> Option<u64> {
 /// than text anyone prints.
 ///
 /// Returns `Ok(ParsedResponse)` when the response is usable, or
-/// `Err(Error::CloudRequest)` describing the failure. A response whose
-/// `errors` list has several entries gives `Err(Error::Aggregate)`, holding
-/// an `Error::CloudRequest` for each entry with the response's status.
+/// `Err(Error::CloudRequest)` describing the failure.
 pub fn validate_response(
     response: &CloudHttpResponse,
     url: &str,
@@ -165,40 +160,25 @@ pub(crate) fn validate_keeping_warnings(
         ));
     }
 
-    let status = response.status;
-    let error = |message: &str| cloud_error(status, retry_after, explain(message));
-    match messages.as_slice() {
-        [] => (Ok(response.body.clone()), warnings),
-        [message] => (Err(error(message)), warnings),
-        // Several entries are raised as an aggregate of one error each, as the
-        // specification asks with .NET's AggregateException as its example,
-        // so a caller can read each entry on its own.
-        several => (
-            Err(Error::Aggregate(
-                several
-                    .iter()
-                    .map(|message| FlowError::new(ELEMENT_DATA_KEY, error(message)))
-                    .collect(),
-            )),
+    if messages.is_empty() {
+        (Ok(response.body.clone()), warnings)
+    } else {
+        // The service repeats the resource key back inside its own error text,
+        // so the joined message is cleaned whatever it was built from.
+        let mut message = redact(&messages.join("; ")).into_owned();
+        // An invalid or missing resource key is the most common cause of a cloud
+        // error, so point the reader at the configurator to create a valid one.
+        if message.to_lowercase().contains("resource key") {
+            message.push_str(
+                ". Create a resource key at \
+                 https://51degrees.com/configure?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=cloud-request-engine-src-response.rs&utm_term=resource-key-invalid",
+            );
+        }
+        (
+            Err(cloud_error(response.status, retry_after, message)),
             warnings,
-        ),
+        )
     }
-}
-
-/// The message for one error entry. The service repeats the resource key back
-/// inside its own error text, so the message is cleaned whatever it was built
-/// from. An invalid or missing resource key is the most common cause of a cloud
-/// error, so a message about one points the reader at the configurator to
-/// create a valid one.
-fn explain(message: &str) -> String {
-    let mut message = redact(message).into_owned();
-    if message.to_lowercase().contains("resource key") {
-        message.push_str(
-            ". Create a resource key at \
-             https://51degrees.com/configure?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=cloud-request-engine-src-response.rs&utm_term=resource-key-invalid",
-        );
-    }
-    message
 }
 
 /// Build an [`Error::CloudRequest`] from the status, retry hint and message.
@@ -268,6 +248,16 @@ mod tests {
             }
             other => panic!("unexpected error {other:?}"),
         }
+    }
+
+    #[test]
+    fn multiple_errors_are_joined() {
+        let resp = response(400, r#"{"errors":["first","second"]}"#);
+        let err = validate_response(&resp, "https://x/json", true).unwrap_err();
+        let Error::CloudRequest { message, .. } = err else {
+            panic!("expected cloud error");
+        };
+        assert!(message.contains("first") && message.contains("second"));
     }
 
     #[test]
