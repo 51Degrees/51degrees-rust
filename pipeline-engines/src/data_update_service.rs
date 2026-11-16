@@ -308,7 +308,7 @@ fn wait_until_readable(
         if std::fs::File::open(path).is_ok() {
             return true;
         }
-        if stop() || Instant::now() >= until {
+        if Instant::now() >= until {
             return false;
         }
         std::thread::sleep(retry);

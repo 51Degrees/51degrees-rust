@@ -1,0 +1,17 @@
+name: tmp stop
+
+on:
+  push:
+    branches: ['tmp/rust-464-*']
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo test data_update_service
+        run: cargo test -p fiftyone-pipeline-engines --lib data_update_service
