@@ -370,7 +370,11 @@ impl IpIntelligenceOnPremiseEngineBuilder {
             self.reuse_temp_file,
         );
         let manager = {
-            let property_refs = names_to_open_with(&requested);
+            let property_refs: Option<Vec<&str>> = if requested.is_empty() {
+                None
+            } else {
+                Some(requested.iter().map(String::as_str).collect())
+            };
             Manager::open_with_options(
                 copy.as_ref()
                     .map_or(self.data_file_path.as_path(), OperationalCopy::path),
@@ -434,18 +438,6 @@ impl IpIntelligenceOnPremiseEngineBuilder {
             config = config.max_randomisation_seconds(seconds);
         }
         config.build()
-    }
-}
-
-/// The names the native Engine is opened with: none when the builder was
-/// given none, never the data set's own, so an Engine with no names walks a
-/// graph only when a Property of it is first read, and otherwise the names
-/// the builder was given.
-fn names_to_open_with(requested: &[String]) -> Option<Vec<&str>> {
-    if requested.is_empty() {
-        None
-    } else {
-        Some(requested.iter().map(String::as_str).collect())
     }
 }
 
