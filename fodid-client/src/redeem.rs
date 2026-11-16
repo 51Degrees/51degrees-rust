@@ -407,6 +407,32 @@ mod tests {
     }
 
     #[test]
+    fn a_factor_word_is_compared_ignoring_case() {
+        // package-surface.md: "The comparison ignores case, as .NET does, so
+        // a package whose language compares exactly ... MUST lower-case the
+        // word before it compares."
+        let result = RedeemResult::from_response(
+            200,
+            r#"{"context":"mismatch",
+                "factors":{"transport":"Verified","device":"NotRecorded",
+                           "browserip":"MISCONFIGURED","asn":"Mismatch"}}"#,
+        );
+        let factors = result.factors().expect("factors are present");
+        assert_eq!(factors["transport"], FactorOutcome::Verified);
+        assert_eq!(factors["device"], FactorOutcome::NotRecorded);
+        assert_eq!(factors["browserip"], FactorOutcome::Misconfigured);
+        assert_eq!(factors["asn"], FactorOutcome::Mismatch);
+        for (word, outcome) in [
+            ("Verified", FactorOutcome::Verified),
+            ("NotRecorded", FactorOutcome::NotRecorded),
+            ("Misconfigured", FactorOutcome::Misconfigured),
+            ("VERIFIED", FactorOutcome::Verified),
+        ] {
+            assert_eq!(FactorOutcome::from_cloud(Some(word)), outcome, "{word}");
+        }
+    }
+
+    #[test]
     fn an_unknown_factor_value_is_a_mismatch_not_a_pass() {
         let result = RedeemResult::from_response(
             200,
