@@ -323,6 +323,32 @@ fn refresh_from_file(
     ))
 }
 
+/// How long a change to a watched data file waits for the file to open for
+/// reading, as the specification's errors table gives it.
+const WATCHED_FILE_WAIT: Duration = Duration::from_secs(10 * 60);
+
+/// The pause between tries to open a watched data file for reading.
+const WATCHED_FILE_PAUSE: Duration = Duration::from_millis(500);
+
+/// Wait until the file at `path` opens for reading, trying again after each
+/// [`WATCHED_FILE_PAUSE`] until `wait` has passed, as a file a writer still
+/// holds cannot be opened on every platform. A file that still cannot be
+/// opened is [`AutoUpdateStatus::Timeout`], with no message, which the
+/// errors table gives and which is not logged.
+fn wait_until_readable(path: &Path, wait: Duration) -> Result<(), DataUpdateError> {
+    let end = Instant::now() + wait;
+    loop {
+        if std::fs::File::open(path).is_ok() {
+            return Ok(());
+        }
+        let now = Instant::now();
+        if now >= end {
+            return Err(DataUpdateError::new(AutoUpdateStatus::Timeout, ""));
+        }
+        std::thread::sleep(WATCHED_FILE_PAUSE.min(end - now));
+    }
+}
+
 /// Run one refresh, giving one that fails or panics as the cause, so a panic
 /// in a refresh never ends the thread that made the check.
 fn attempt_refresh(
@@ -1034,6 +1060,9 @@ impl ServiceHandle {
     /// there is. A further event for a write that an earlier event took, as
     /// when one write raises several events, waited while that write was
     /// applied and has nothing left to do, so it is in progress, as in .NET.
+    /// A newer file is refreshed from once it opens for reading, and one that
+    /// does not open within [`WATCHED_FILE_WAIT`] is
+    /// [`AutoUpdateStatus::Timeout`].
     fn refresh_from_watched_file(
         engine: &Arc<dyn OnPremiseAspectEngine>,
         data_file: &AspectEngineDataFile,
@@ -1050,6 +1079,10 @@ impl ServiceHandle {
             }
             return Ok(AutoUpdateStatus::NotNeeded);
         }
+        // A writer can still hold the file, so wait for it to open. A file
+        // that does not open in time is not recorded as applied, so a later
+        // event for it tries again.
+        wait_until_readable(path, WATCHED_FILE_WAIT)?;
         data_file.set_last_applied_modified(modified);
         data_file.set_last_watched_modified(modified);
         log::info!(

@@ -64,6 +64,11 @@ pub enum AutoUpdateStatus {
     NoConfiguration,
     /// A temporary directory path was required but is not configured.
     TempPathNotSet,
+    /// A watched data file that changed could not be opened for reading
+    /// within 10 minutes, as when a writer still holds it, so the engine was
+    /// not refreshed. Not logged, and the error carries no message, as the
+    /// specification's errors table gives it.
+    Timeout,
     /// An error the other statuses do not cover occurred during the check,
     /// such as a download that could not be written to a file or
     /// decompressed.
