@@ -1,0 +1,17 @@
+name: tmp race
+
+on:
+  push:
+    branches: ['tmp/rust-race-*']
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo test refresh_failure
+        run: cargo test -p fiftyone-pipeline-engines --test refresh_failure
