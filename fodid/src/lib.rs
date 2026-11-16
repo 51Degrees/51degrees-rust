@@ -403,10 +403,13 @@ struct ReadmeExamples;
 /// package-surface.md, "What a package does not expose": "A package MUST NOT
 /// make any of the following public, in any language", being the raw flags
 /// byte, the offsets and lengths, the Terms index and the Payload version.
-/// Each block below reaches for one of them and must fail to compile, so
-/// making any of them public fails this test. The first block reads every
-/// field through the accessor that names it, and must compile, so the
-/// blocks after it fail for the reason they name and not a broken fixture.
+/// Each block below reaches for one of them and must fail to compile with
+/// the error it names. Fields and methods are reached on `FodId`, and each
+/// constant both at the crate root and in the module that holds it, so
+/// making a field or method public on `FodId`, exporting a constant at the
+/// root, or making a constant public in its own module fails this test. The first block reads every field through the
+/// accessor that names it, and must compile, so the blocks after it fail for
+/// the reason they name and not a broken fixture.
 ///
 /// ```
 /// fn read(id: &fodid::FodId) -> (fodid::Usage, fodid::IdType, u32, &[u8], Option<&str>) {
@@ -429,32 +432,60 @@ struct ReadmeExamples;
 ///
 /// The offsets and lengths.
 ///
-/// ```compile_fail
+/// ```compile_fail,E0425
 /// let _ = fodid::FLAGS_OFFSET;
 /// ```
 ///
-/// ```compile_fail
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::FLAGS_OFFSET;
+/// ```
+///
+/// ```compile_fail,E0425
 /// let _ = fodid::LICENSE_ID_OFFSET;
 /// ```
 ///
-/// ```compile_fail
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::LICENSE_ID_OFFSET;
+/// ```
+///
+/// ```compile_fail,E0425
 /// let _ = fodid::LICENSE_ID_LENGTH;
 /// ```
 ///
-/// ```compile_fail
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::LICENSE_ID_LENGTH;
+/// ```
+///
+/// ```compile_fail,E0425
 /// let _ = fodid::MATCH_KEY_OFFSET;
 /// ```
 ///
-/// ```compile_fail
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::MATCH_KEY_OFFSET;
+/// ```
+///
+/// ```compile_fail,E0425
 /// let _ = fodid::MATCH_KEY_LENGTH;
 /// ```
 ///
-/// ```compile_fail
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::MATCH_KEY_LENGTH;
+/// ```
+///
+/// ```compile_fail,E0425
 /// let _ = fodid::HEADER_LENGTH;
 /// ```
 ///
-/// ```compile_fail
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::HEADER_LENGTH;
+/// ```
+///
+/// ```compile_fail,E0425
 /// let _ = fodid::GUID_LENGTH;
+/// ```
+///
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::GUID_LENGTH;
 /// ```
 ///
 /// The Terms index, as a field and as a method.
@@ -476,8 +507,12 @@ struct ReadmeExamples;
 /// # let _ = read;
 /// ```
 ///
-/// ```compile_fail
+/// ```compile_fail,E0425
 /// let _ = fodid::SUPPORTED_PAYLOAD_VERSION;
+/// ```
+///
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::SUPPORTED_PAYLOAD_VERSION;
 /// ```
 #[cfg(doctest)]
 struct NotExposed;
