@@ -83,6 +83,7 @@
 use std::any::Any;
 use std::fmt;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use fiftyone_javascript_builder::{JavaScriptBuilderElement, JAVASCRIPT_BUILDER_ELEMENT_DATA_KEY};
 use fiftyone_json_builder::{JsonBuilderElement, JSON_BUILDER_ELEMENT_DATA_KEY};
@@ -92,7 +93,7 @@ use fiftyone_pipeline_core::constants::{
 use fiftyone_pipeline_core::{EvidenceKeyFilterWhitelist, FlowElement, Pipeline, Result};
 use fiftyone_pipeline_engines_fiftyone::{SequenceElement, SetHeadersElement};
 
-use crate::clientside::EndpointOptions;
+use crate::clientside::{EndpointOptions, DEFAULT_CACHE_MAX_AGE};
 
 /// The client-side endpoint a request path targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,6 +151,13 @@ pub struct WebIntegrationOptions {
     /// JavaScript builder the web pipeline adds calls back to this path. One
     /// the application gives calls back to its own endpoint.
     pub json_endpoint: String,
+
+    /// The `max-age` that the client-side endpoints give in `Cache-Control`
+    /// when processing records no errors, and in each `304`. Defaults to
+    /// [`crate::DEFAULT_CACHE_MAX_AGE`], 30 minutes. A part of a second is
+    /// dropped. A shorter one makes a browser ask again sooner for values,
+    /// such as a location, that can change over time.
+    pub cache_max_age: Duration,
 }
 
 impl Default for WebIntegrationOptions {
@@ -161,6 +169,7 @@ impl Default for WebIntegrationOptions {
             suppress_process_exceptions: true,
             javascript_endpoint: DEFAULT_CORE_JS_ENDPOINT.to_owned(),
             json_endpoint: DEFAULT_JSON_ENDPOINT.to_owned(),
+            cache_max_age: DEFAULT_CACHE_MAX_AGE,
         }
     }
 }
@@ -244,9 +253,11 @@ impl WebPipeline {
     }
 
     /// The [`EndpointOptions`] for the client-side endpoints, taking the `Vary`
-    /// header from [`WebPipeline::vary_whitelist`] at each response.
+    /// header from [`WebPipeline::vary_whitelist`] at each response and the
+    /// `max-age` from [`WebIntegrationOptions::cache_max_age`].
     pub fn endpoint_options(&self) -> EndpointOptions {
         EndpointOptions::from_vary_list(Arc::clone(&self.vary))
+            .with_max_age(self.options.cache_max_age)
     }
 
     /// Decide which client-side endpoint, if any, a request path targets.

@@ -49,7 +49,8 @@
 //! - `Content-Type`: `application/x-javascript` (JS) or `application/json`
 //!   (JSON).
 //! - `Content-Length`: the UTF-8 byte length of the body.
-//! - `Cache-Control`: `private, max-age=1800` when the flow data recorded no
+//! - `Cache-Control`: `private, max-age=1800`, or the `max-age`
+//!   [`EndpointOptions::with_max_age`] gives, when the flow data recorded no
 //!   processing errors and the builder's data was there, otherwise
 //!   `private, no-cache`. That response carries no `ETag`, so a browser that
 //!   kept it fetches it again in full rather than having it confirmed by a
@@ -136,6 +137,7 @@ use std::hash::{BuildHasher, Hash, Hasher};
 use std::ops::Deref;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::sync::Arc;
+use std::time::Duration;
 
 use ahash::RandomState;
 use fiftyone_javascript_builder::{
@@ -157,11 +159,17 @@ pub const CONTENT_TYPE_JAVASCRIPT: &str = "application/x-javascript";
 /// The `Content-Type` used for the JSON endpoint.
 pub const CONTENT_TYPE_JSON: &str = "application/json";
 
+/// The `max-age` of a cacheable response when none is configured, 30
+/// minutes, as the web integration specification's table gives.
+pub const DEFAULT_CACHE_MAX_AGE: Duration = Duration::from_secs(1800);
+
 /// The `Cache-Control` value used when processing recorded no errors and the
-/// builder whose output the endpoint serves left its data.
+/// builder whose output the endpoint serves left its data, with the default
+/// `max-age`.
 ///
 /// `private` so shared caches (proxies) do not store the per-device result, and
 /// `max-age=1800` (30 minutes) so the client may reuse it for half an hour.
+/// [`EndpointOptions::with_max_age`] gives another `max-age`.
 pub const CACHE_CONTROL_CACHEABLE: &str = "private, max-age=1800";
 
 /// The `Cache-Control` value used when processing recorded one or more errors,
@@ -194,7 +202,7 @@ const ETAG_SEED_3: u64 = 0x_dead_beef_51de_9e55;
 /// advertises the HTTP headers that influence the result, and the caching and
 /// CORS headers are emitted. [`EndpointOptions::new`] takes a fixed list
 /// instead.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct EndpointOptions {
     /// An evidence-key whitelist whose `header.*` keys derive the `Vary`
     /// header, used in place of the pipeline's list. `None` with no pipeline
@@ -211,6 +219,22 @@ pub struct EndpointOptions {
     /// own. The `If-None-Match` short circuit still applies, and its `304` or
     /// `412` carries no headers. `false` by default.
     suppress_extra_headers: bool,
+
+    /// The `max-age` of a cacheable response and of a `304`, in whole
+    /// seconds, set by [`EndpointOptions::with_max_age`].
+    /// [`DEFAULT_CACHE_MAX_AGE`] by default.
+    max_age_seconds: u64,
+}
+
+impl Default for EndpointOptions {
+    fn default() -> Self {
+        EndpointOptions {
+            vary_whitelist: None,
+            pipeline_vary: None,
+            suppress_extra_headers: false,
+            max_age_seconds: DEFAULT_CACHE_MAX_AGE.as_secs(),
+        }
+    }
 }
 
 /// A pipeline's shared `Vary` list that keeps [`EndpointOptions`]
@@ -238,8 +262,7 @@ impl EndpointOptions {
     pub fn new(vary_whitelist: EvidenceKeyFilterWhitelist) -> Self {
         EndpointOptions {
             vary_whitelist: Some(vary_whitelist),
-            pipeline_vary: None,
-            suppress_extra_headers: false,
+            ..EndpointOptions::default()
         }
     }
 
@@ -247,9 +270,8 @@ impl EndpointOptions {
     /// caching/CORS headers enabled.
     pub(crate) fn from_vary_list(list: Arc<VaryList>) -> Self {
         EndpointOptions {
-            vary_whitelist: None,
             pipeline_vary: Some(SharedVaryList(list)),
-            suppress_extra_headers: false,
+            ..EndpointOptions::default()
         }
     }
 
@@ -267,6 +289,19 @@ impl EndpointOptions {
     pub fn without_extra_headers(mut self) -> Self {
         self.suppress_extra_headers = true;
         self
+    }
+
+    /// Set the `max-age` that a cacheable response and a `304` carry in
+    /// `Cache-Control`, in place of [`DEFAULT_CACHE_MAX_AGE`]. A part of a
+    /// second is dropped. Returns `self` for chaining.
+    pub fn with_max_age(mut self, max_age: Duration) -> Self {
+        self.max_age_seconds = max_age.as_secs();
+        self
+    }
+
+    /// The `max-age` that a cacheable response and a `304` carry.
+    pub fn max_age(&self) -> Duration {
+        Duration::from_secs(self.max_age_seconds)
     }
 }
 
@@ -530,7 +565,10 @@ fn extra_headers(
     etag: &str,
     options: &EndpointOptions,
 ) -> Vec<(String, String)> {
-    let mut headers = vec![("Cache-Control".to_owned(), cache_control(cacheable))];
+    let mut headers = vec![(
+        "Cache-Control".to_owned(),
+        cache_control(cacheable, options.max_age_seconds),
+    )];
 
     if let Some(whitelist) = options.current_vary_whitelist() {
         let vary = vary_header(whitelist);
@@ -553,10 +591,11 @@ fn extra_headers(
     headers
 }
 
-/// The `Cache-Control` value for a response.
-fn cache_control(cacheable: bool) -> String {
+/// The `Cache-Control` value for a response, with the `max-age` in seconds
+/// for one that is cacheable.
+fn cache_control(cacheable: bool, max_age_seconds: u64) -> String {
     if cacheable {
-        CACHE_CONTROL_CACHEABLE.to_owned()
+        format!("private, max-age={max_age_seconds}")
     } else {
         CACHE_CONTROL_NO_CACHE.to_owned()
     }

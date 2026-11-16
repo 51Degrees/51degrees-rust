@@ -57,7 +57,8 @@ struct Inner {
 
 impl FiftyOneState {
     /// Build the shared state from a pipeline, its web options and the `Vary`
-    /// whitelist.
+    /// whitelist. The endpoints take their `max-age` from
+    /// [`WebIntegrationOptions::cache_max_age`].
     ///
     /// Prefer [`FiftyOneState::from_web_pipeline`], which takes the three pieces
     /// straight from a [`WebPipeline`] so they cannot drift apart.
@@ -66,7 +67,9 @@ impl FiftyOneState {
         options: WebIntegrationOptions,
         vary_whitelist: EvidenceKeyFilterWhitelist,
     ) -> Self {
-        Self::with_endpoint_options(pipeline, options, EndpointOptions::new(vary_whitelist))
+        let endpoint_options =
+            EndpointOptions::new(vary_whitelist).with_max_age(options.cache_max_age);
+        Self::with_endpoint_options(pipeline, options, endpoint_options)
     }
 
     /// Build the shared state from a [`WebPipeline`], taking its pipeline,
