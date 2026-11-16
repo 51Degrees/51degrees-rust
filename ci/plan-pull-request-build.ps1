@@ -23,7 +23,9 @@ Writes these to $OutputFile, the step's GITHUB_OUTPUT:
   empty when nothing needs building;
 - native, true when fiftyone-native is built, for the steps that need both
   C libraries;
-- fodid, true when fodid is built, for its steps with every feature on.
+- fodid, true when fodid is built, for its steps with every feature on;
+- caching, true when fiftyone-caching is built, for its steps with the
+  disk feature on.
 .PARAMETER Event
 The event that started the run, github.event_name.
 .PARAMETER BaseRef
@@ -179,6 +181,7 @@ if ($OutputFile) {
         "os=$(ConvertTo-Json -Compress @($os))",
         "packages=$packages",
         "native=$(($selected -contains 'fiftyone-native').ToString().ToLower())",
-        "fodid=$(($selected -contains 'fodid').ToString().ToLower())"
+        "fodid=$(($selected -contains 'fodid').ToString().ToLower())",
+        "caching=$(($selected -contains 'fiftyone-caching').ToString().ToLower())"
     ) | Add-Content -Path $OutputFile -Encoding utf8
 }
