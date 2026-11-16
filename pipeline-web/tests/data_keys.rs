@@ -57,3 +57,15 @@ fn data_keys_only_contain_alphanumeric_characters_full_stop_or_hyphen() {
         );
     }
 }
+
+/// "Lower-case SHOULD be used." (access-to-results.md line 10)
+#[test]
+fn data_keys_are_lower_case() {
+    for key in DATA_KEYS {
+        assert_eq!(
+            key,
+            key.to_lowercase(),
+            "the data key '{key}' is not lower-case"
+        );
+    }
+}
