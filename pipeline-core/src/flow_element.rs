@@ -55,6 +55,7 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use crate::element_data::ElementData;
 use crate::error::Result;
 use crate::evidence::EvidenceKeyFilter;
 use crate::flow_data::FlowData;
@@ -189,6 +190,20 @@ pub trait FlowElement: Send + Sync {
     fn into_any(self: Arc<Self>) -> Option<Arc<dyn Any + Send + Sync>> {
         None
     }
+}
+
+/// A flow element whose element data is of one type known when the program
+/// is compiled, so [`FlowData::get_from_element`] gives that data, as that
+/// type, from the element itself.
+///
+/// This is mechanism 3 of the
+/// [access-to-results specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/access-to-results.md#accessing-results),
+/// which says it should be possible to get element data by supplying an
+/// element instance. The element adds data of type
+/// [`TypedFlowElement::Data`] under its [`FlowElement::data_key`].
+pub trait TypedFlowElement: FlowElement {
+    /// The type of the element data this element adds.
+    type Data: ElementData;
 }
 
 #[cfg(test)]

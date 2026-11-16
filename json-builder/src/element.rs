@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use fiftyone_pipeline_core::{
     ElementData, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
-    PropertyMetaData, PropertyValue, PropertyValueType, Result,
+    PropertyMetaData, PropertyValue, PropertyValueType, Result, TypedFlowElement,
 };
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 
@@ -377,4 +377,9 @@ impl FlowElement for JsonBuilderElement {
     fn into_any(self: Arc<Self>) -> Option<Arc<dyn Any + Send + Sync>> {
         Some(self)
     }
+}
+
+/// So [`FlowData::get_from_element`] gives the JSON this element built.
+impl TypedFlowElement for JsonBuilderElement {
+    type Data = JsonBuilderData;
 }
