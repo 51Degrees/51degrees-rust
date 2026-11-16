@@ -73,7 +73,8 @@ impl CloudHttpResponse {
 /// travels as a url-encoded form body). The discovery endpoints
 /// (`evidencekeys`, `accessibleproperties`) are reached with
 /// [`HttpMethod::Get`], apart from `accessibleproperties` with a license
-/// key, which is a POST carrying the license key in its body.
+/// key and no resource key, which is a POST carrying the license key in its
+/// body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
     /// An HTTP GET, used for the discovery endpoints.
