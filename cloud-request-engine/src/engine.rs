@@ -2091,6 +2091,23 @@ mod tests {
     }
 
     #[test]
+    fn no_credential_refusal_explains_why_it_cannot_work() {
+        // cloud-request-engine.md line 171: "The error raised MUST explain why
+        // the combination cannot work rather than restating the rule." The
+        // table's reason for neither key is that there is nothing to
+        // authenticate with and the cloud service answers 401.
+        let message = refusal(CloudRequestEngine::builder().build());
+        assert!(
+            message.contains("nothing to authenticate"),
+            "the message should say there is nothing to authenticate with, got {message}"
+        );
+        assert!(
+            message.contains("401"),
+            "the message should say the cloud service answers 401, got {message}"
+        );
+    }
+
+    #[test]
     fn both_credentials_build_an_engine() {
         // A license key alongside a resource key is accepted and both keys are
         // sent. With no property list the license key adds no property.
