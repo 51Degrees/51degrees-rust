@@ -56,7 +56,7 @@ use crate::error::{Error, Result};
 // `FodId::from_owid` adds the two together at the point it needs the number.
 
 /// Byte offset of the flags field within the payload.
-pub(crate) const FLAGS_OFFSET: usize = 0;
+pub const FLAGS_OFFSET: usize = 0;
 
 /// Byte offset of the License Id field within the payload.
 pub(crate) const LICENSE_ID_OFFSET: usize = 1;

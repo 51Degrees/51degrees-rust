@@ -338,7 +338,8 @@
 #![warn(missing_docs)]
 
 mod error;
-mod fodid;
+pub mod fodid;
+pub use fodid::FLAGS_OFFSET;
 
 pub use error::{Error, Result};
 // The typed surface, and nothing else. The payload offsets and lengths stay

@@ -1,0 +1,28 @@
+name: Temporary mutant run, FLAGS_OFFSET made public
+
+# Throwaway. Pull request 476's head with FLAGS_OFFSET made public, both
+# re-exported at the crate root and in a public module fodid::fodid. The two
+# blocks that reach for it there are expected to compile, which fails them,
+# and every other block to pass.
+
+on:
+  push:
+    branches:
+      - 'tmp/rust-476-mutant'
+
+permissions:
+  contents: read
+
+jobs:
+  codes:
+    name: the two FLAGS_OFFSET blocks fail when the constant is public
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Copy the OWID source the fodid crate compiles in
+        run: pwsh ./ci/copy-owid-source.ps1
+      - name: Run the fodid documentation tests
+        run: cargo test -p fodid --doc
