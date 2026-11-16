@@ -386,6 +386,9 @@ fn a_programmatic_update_of_a_registered_file(dir: &Path) {
     assert_eq!(engine.refreshes.load(Ordering::SeqCst), 0);
 
     make_newer(&path);
+    // Deliberate wait, to give the file system watcher time to notice the
+    // change and refresh the engine itself. Not for the draft.
+    std::thread::sleep(std::time::Duration::from_secs(3));
     let status = service.check_for_update(&shared, None).unwrap();
     assert_eq!(status, AutoUpdateStatus::Success);
     assert_eq!(
