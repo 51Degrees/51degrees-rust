@@ -1461,8 +1461,7 @@ fn accessible_properties_url(client: &FakeClient) -> String {
 fn accessible_properties_are_asked_for_with_the_license_key() {
     // The cloud adds the products a license key grants to those of the
     // resource key, and the data request sends both keys, so the metadata
-    // has to be asked for with both as well. The license key travels in the
-    // body, out of the URL.
+    // has to be asked for with both as well.
     let client = Arc::new(FakeClient::default());
     CloudRequestEngine::builder()
         .resource_key("test-resource-key")
@@ -1474,11 +1473,7 @@ fn accessible_properties_are_asked_for_with_the_license_key() {
     assert_eq!(
         accessible_properties_url(&client),
         "https://cloud.example.test/api/v4/accessibleproperties\
-         ?resource=test-resource-key"
-    );
-    assert_eq!(
-        accessible_properties_request(&client).form,
-        vec![("license".to_owned(), "LICENSE+KEY/1".to_owned())]
+         ?resource=test-resource-key&license=LICENSE%2BKEY%2F1"
     );
 }
 

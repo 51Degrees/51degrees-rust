@@ -1767,11 +1767,11 @@ fn fetch_evidence_keys(
 /// license key grants to those of the resource key. Asking with the resource
 /// key alone left those products out of the engine's metadata.
 ///
-/// A license key, alone or beside a resource key, is sent as `license` in
-/// the body of a POST rather than in the URL, so that the key stays out of
-/// request logs. On a license key alone the service answers with every
-/// property the license key entitles, as it answers a resource key with the
-/// properties the key carries.
+/// An engine on a license key alone asks with the license key, sent as
+/// `license` in the body of a POST so that the key stays out of request
+/// logs. The service answers it with every property the license key
+/// entitles, as it answers a resource key with the properties the key
+/// carries.
 fn fetch_public_properties(
     http: &dyn CloudHttpClient,
     recovery: &RecoveryGate,
@@ -1781,30 +1781,36 @@ fn fetch_public_properties(
     origin: Option<&str>,
     secrets: &[String],
 ) -> Result<LicensedProducts> {
-    // The resource key stays in the query string, where the service has
-    // always read it. A license key never goes there, with or without a
-    // resource key, so a request that carries one is a POST with the key in
-    // its body.
-    let url = match resource_key {
-        Some(resource_key) => format!(
-            "{}?{}={}",
-            endpoints.properties,
-            constants::RESOURCE_PARAMETER,
-            encode_query_value(resource_key)
-        ),
-        None => endpoints.properties.clone(),
-    };
-    let request = match license_key.filter(|l| !l.trim().is_empty()) {
-        Some(license) => CloudHttpRequest {
-            method: HttpMethod::Post,
-            url,
-            form: vec![(constants::LICENSE_PARAMETER.to_owned(), license.to_owned())],
-            origin: origin.map(str::to_owned),
-        },
+    let license_key = license_key.filter(|l| !l.trim().is_empty());
+    let request = match resource_key {
+        Some(resource_key) => {
+            let mut url = format!(
+                "{}?{}={}",
+                endpoints.properties,
+                constants::RESOURCE_PARAMETER,
+                encode_query_value(resource_key)
+            );
+            if let Some(license) = license_key {
+                url.push_str(&format!(
+                    "&{}={}",
+                    constants::LICENSE_PARAMETER,
+                    encode_query_value(license)
+                ));
+            }
+            CloudHttpRequest {
+                method: HttpMethod::Get,
+                url,
+                form: Vec::new(),
+                origin: origin.map(str::to_owned),
+            }
+        }
         None => CloudHttpRequest {
-            method: HttpMethod::Get,
-            url,
-            form: Vec::new(),
+            method: HttpMethod::Post,
+            url: endpoints.properties.clone(),
+            form: license_key
+                .map(|license| (constants::LICENSE_PARAMETER.to_owned(), license.to_owned()))
+                .into_iter()
+                .collect(),
             origin: origin.map(str::to_owned),
         },
     };
@@ -1842,9 +1848,9 @@ fn encode_query_value(value: &str) -> String {
     encoded
 }
 
-/// The URL without its query string, for messages. The accessible
-/// properties request carries the resource key in the query string, which
-/// belongs in no error message or log.
+/// The URL without its query string, for messages. The discovery requests
+/// carry the resource and license keys in the query string, and neither
+/// belongs in an error message or a log.
 pub(crate) fn url_without_query(url: &str) -> &str {
     url.split_once('?').map_or(url, |(endpoint, _)| endpoint)
 }
