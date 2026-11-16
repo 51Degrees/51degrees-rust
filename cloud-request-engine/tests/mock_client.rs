@@ -1605,11 +1605,9 @@ fn a_license_key_alone_authenticates_the_request() {
     ));
 
     let engine = license_engine_with(client.clone(), &["device.ismobile", "device.iscrawler"]);
-    // Only the evidence keys were fetched. The accessible-properties endpoint
-    // takes a resource key and refuses a request without one, so a license-key
-    // engine does not call it and starts with no accessible properties.
-    assert_eq!(client.request_count(), 1, "evidence keys only");
-    assert!(engine.public_properties().unwrap().products.is_empty());
+    // Both discovery documents were fetched, the accessible properties with
+    // the license key.
+    assert_eq!(client.request_count(), 2, "both discovery requests");
     assert_eq!(engine.resource_key(), None);
 
     let pipeline = Pipeline::builder()
@@ -1623,7 +1621,7 @@ fn a_license_key_alone_authenticates_the_request() {
     let requests = client.requests.lock().unwrap();
     let data_request = requests
         .iter()
-        .find(|r| r.method == HttpMethod::Post)
+        .find(|r| r.method == HttpMethod::Post && !r.url.contains("accessibleproperties"))
         .expect("a POST to the data endpoint");
 
     // The license key authenticates the request on its own, and the properties
@@ -1751,7 +1749,7 @@ fn evidence_named_values_does_not_displace_the_engines_property_list() {
     let requests = client.requests.lock().unwrap();
     let data_request = requests
         .iter()
-        .find(|r| r.method == HttpMethod::Post)
+        .find(|r| r.method == HttpMethod::Post && !r.url.contains("accessibleproperties"))
         .expect("a POST to the data endpoint");
     let values: Vec<&String> = data_request
         .form

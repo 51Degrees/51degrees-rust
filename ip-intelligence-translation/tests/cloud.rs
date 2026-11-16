@@ -689,9 +689,9 @@ fn a_key_without_the_product_has_no_properties_and_logs_once() {
     }
 }
 
-/// With only a license key the granted properties are not listed, so each
-/// value's form is read from the JSON, nothing is logged, and a property
-/// the response did not return has no reason.
+/// With only a license key whose accessible properties list no product, each
+/// value's form is read from the JSON, nothing is logged, and a property the
+/// response did not return has no reason.
 #[test]
 fn a_license_key_alone_reads_each_form_from_the_json() {
     let _serial = start();
