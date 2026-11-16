@@ -453,10 +453,11 @@ fn names_to_open_with(requested: &[String]) -> Option<Vec<&str>> {
 mod tests {
     use super::*;
 
-    /// ip-intelligence-on-premise.md line 395: "An implementation configured
-    /// with no names MUST create the Engine with no names, and MUST NOT pass
-    /// the data set's names itself". With no names set, the native Engine is
-    /// opened with no names, and with names set, with those names alone.
+    /// ip-intelligence-on-premise.md lines 391 to 393: "An implementation
+    /// configured with no names MUST create the Engine with no names, and
+    /// MUST NOT pass the data set's names itself". With no names set, the
+    /// native Engine is opened with no names, and with names set, with those
+    /// names alone.
     #[test]
     fn no_names_configured_opens_the_engine_with_no_names() {
         assert_eq!(names_to_open_with(&[]), None);

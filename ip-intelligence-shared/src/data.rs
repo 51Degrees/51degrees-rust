@@ -918,7 +918,9 @@ impl IpIntelligenceDataBase {
     /// `CountryCodesPopulation`, `Mcc` and `StateGeoNameIdsGeographical`) are
     /// read. Every other property is also exposed as a weighted value, as
     /// the IP Intelligence data model requires, being its value as text with
-    /// the full weighting.
+    /// the full weighting. A float or an integer is written as Rust writes
+    /// it, which for a float is the shortest text that reads back as the same
+    /// `f32` and need not be the text the data file holds.
     pub fn weighted_string(&self, name: &str) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
         let key = key(name);
         if let Some(store) = self.weighted_strings.get(&key) {
