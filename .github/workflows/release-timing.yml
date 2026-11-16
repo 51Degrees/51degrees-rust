@@ -16,6 +16,12 @@ name: Release Timing
 # the base's, and fails the run when one is.
 
 on:
+  # GitHub will not dispatch a workflow by name until it is on the default
+  # branch, so this temporary branch adds a push trigger to prove the run.
+  # The merged file carries workflow_dispatch alone.
+  push:
+    branches:
+      - 'tmp/rust-timing-tue3'
   workflow_dispatch:
     inputs:
       base:
@@ -36,15 +42,15 @@ permissions:
 
 jobs:
   timing:
-    name: ${{ inputs.head }} against ${{ inputs.base }}
+    name: the head against the base
     runs-on: ubuntu-latest
     env:
-      ROUNDS: ${{ inputs.rounds }}
+      ROUNDS: ${{ inputs.rounds || 30 }}
     steps:
       - name: Checkout the base
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.base }}
+          ref: ${{ inputs.base || 'main' }}
           path: base
           submodules: recursive
           fetch-depth: 0
@@ -52,7 +58,7 @@ jobs:
       - name: Checkout the head
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.head }}
+          ref: ${{ inputs.head || 'rc' }}
           path: head
           submodules: recursive
           fetch-depth: 0
@@ -182,7 +188,7 @@ jobs:
       # base's, and when a measure has fewer paired rounds than were asked for.
       - name: Compare the two sides under the release timing rule
         shell: pwsh
-        run: ./scripts/ci/compare-timing.ps1 -Log out/results.txt -Rounds ${{ inputs.rounds }}
+        run: ./scripts/ci/compare-timing.ps1 -Log out/results.txt -Rounds ${{ inputs.rounds || 30 }}
 
       - name: Keep the rounds' output
         if: always()
