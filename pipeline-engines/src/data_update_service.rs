@@ -281,10 +281,9 @@ fn guarded_refresh(
     engine: &str,
     refresh: impl FnOnce() -> fiftyone_pipeline_core::Result<()>,
 ) -> Result<(), DataUpdateError> {
-    let cause = match catch_unwind(AssertUnwindSafe(refresh)) {
-        Ok(Ok(())) => return Ok(()),
-        Ok(Err(error)) => error.to_string(),
-        Err(panic) => format!("the refresh panicked: {}", panic_message(panic.as_ref())),
+    let cause = match attempt_refresh(refresh) {
+        Ok(()) => return Ok(()),
+        Err(cause) => cause,
     };
     Err(DataUpdateError::new(
         AutoUpdateStatus::RefreshFailed,
@@ -293,6 +292,50 @@ fn guarded_refresh(
              Error detail: {cause}"
         ),
     ))
+}
+
+/// The most times a refresh of an engine from its data file is tried, as the
+/// specification's errors table gives it.
+const FILE_REFRESH_TRIES: usize = 10;
+
+/// Refresh `engine` from its data file `identifier`, trying again while the
+/// refresh fails or panics, up to [`FILE_REFRESH_TRIES`] times in all, and
+/// give one that still fails as [`AutoUpdateStatus::RefreshFailed`] with the
+/// errors table's message naming the tries, and the last cause.
+fn refresh_from_file(
+    engine: &dyn OnPremiseAspectEngine,
+    identifier: &str,
+) -> Result<(), DataUpdateError> {
+    let mut cause = String::new();
+    for _ in 0..FILE_REFRESH_TRIES {
+        match attempt_refresh(|| engine.refresh(Some(identifier))) {
+            Ok(()) => return Ok(()),
+            Err(failed) => cause = failed,
+        }
+    }
+    Err(DataUpdateError::new(
+        AutoUpdateStatus::RefreshFailed,
+        format!(
+            "An error occurred when applying a data update to engine '{}' after \
+             {FILE_REFRESH_TRIES} tries. Error detail: {cause}",
+            engine.engine_type_name()
+        ),
+    ))
+}
+
+/// Run one refresh, giving one that fails or panics as the cause, so a panic
+/// in a refresh never ends the thread that made the check.
+fn attempt_refresh(
+    refresh: impl FnOnce() -> fiftyone_pipeline_core::Result<()>,
+) -> Result<(), String> {
+    match catch_unwind(AssertUnwindSafe(refresh)) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(panic) => Err(format!(
+            "the refresh panicked: {}",
+            panic_message(panic.as_ref())
+        )),
+    }
 }
 
 /// The message a panic carries, when it is text.
@@ -809,9 +852,7 @@ impl DataUpdateService {
             "Attempting to refresh Engine '{}' with new data",
             engine.engine_type_name()
         );
-        guarded_refresh(engine.engine_type_name(), || {
-            engine.refresh(Some(data_file.identifier()))
-        })?;
+        refresh_from_file(engine.as_ref(), data_file.identifier())?;
         data_file.set_last_applied_modified(modified);
         Ok(AutoUpdateStatus::Success)
     }
@@ -1015,10 +1056,8 @@ impl ServiceHandle {
             "Attempting to refresh Engine '{}' with new data",
             engine.engine_type_name()
         );
-        guarded_refresh(engine.engine_type_name(), || {
-            engine.refresh(Some(data_file.identifier()))
-        })
-        .map(|()| AutoUpdateStatus::Success)
+        refresh_from_file(engine.as_ref(), data_file.identifier())
+            .map(|()| AutoUpdateStatus::Success)
     }
 
     /// True once the service has been dropped.
@@ -1228,9 +1267,7 @@ impl ServiceHandle {
         })?;
         let recorded = data_file.published_changes();
         log::info!("Attempting to refresh Engine '{name}' with new data");
-        guarded_refresh(engine.engine_type_name(), || {
-            engine.refresh(Some(data_file.identifier()))
-        })?;
+        refresh_from_file(engine.as_ref(), data_file.identifier())?;
         Self::record_published(data_file, recorded);
 
         Ok(AutoUpdateStatus::Success)
