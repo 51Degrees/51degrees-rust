@@ -1461,8 +1461,10 @@ fn accessible_properties_url(client: &FakeClient) -> String {
 fn accessible_properties_are_asked_for_with_the_license_key() {
     // The cloud adds the products a license key grants to those of the
     // resource key, and the data request sends both keys, so the metadata
-    // has to be asked for with both as well. The license key travels in the
-    // body, out of the URL.
+    // has to be asked for with both as well. With a resource key that is the
+    // GET the service has always answered, with both keys in its query
+    // string. cloud-request-engine.md lines 273 to 275 ask for a POST only
+    // for "an Engine built on a License Key alone".
     let client = Arc::new(FakeClient::default());
     CloudRequestEngine::builder()
         .resource_key("test-resource-key")
@@ -1474,12 +1476,11 @@ fn accessible_properties_are_asked_for_with_the_license_key() {
     assert_eq!(
         accessible_properties_url(&client),
         "https://cloud.example.test/api/v4/accessibleproperties\
-         ?resource=test-resource-key"
+         ?resource=test-resource-key&license=LICENSE%2BKEY%2F1"
     );
-    assert_eq!(
-        accessible_properties_request(&client).form,
-        vec![("license".to_owned(), "LICENSE+KEY/1".to_owned())]
-    );
+    let request = accessible_properties_request(&client);
+    assert_eq!(request.method, HttpMethod::Get);
+    assert!(request.form.is_empty(), "the form is {:?}", request.form);
 }
 
 #[test]
@@ -1631,31 +1632,6 @@ fn the_license_key_goes_in_the_body_of_a_post_and_never_in_the_url() {
     assert!(
         !request.url.contains("test-license-key"),
         "license key alone, the URL is {}",
-        request.url
-    );
-
-    // The reason, keeping the key out of request logs, holds as much when a
-    // resource key is set beside it.
-    let client = Arc::new(FakeClient::default());
-    CloudRequestEngine::builder()
-        .resource_key("test-resource-key")
-        .license_key("test-license-key")
-        .endpoint("https://cloud.example.test/api/v4/")
-        .http_client(client.clone())
-        .build()
-        .unwrap();
-    let request = accessible_properties_request(&client);
-    assert_eq!(request.method, HttpMethod::Post, "both keys");
-    assert!(
-        request
-            .form
-            .contains(&("license".to_owned(), "test-license-key".to_owned())),
-        "both keys, the form is {:?}",
-        request.form
-    );
-    assert!(
-        !request.url.contains("test-license-key"),
-        "both keys, the URL is {}",
         request.url
     );
 }
