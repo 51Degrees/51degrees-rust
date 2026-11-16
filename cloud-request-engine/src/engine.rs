@@ -1485,9 +1485,7 @@ impl CloudRequestEngineBuilder {
         match (&resource_key, &license_key) {
             (None, None) => Err(Error::configuration(
                 "a CloudRequestEngine needs a credential and this one was given \
-                 none, so there is nothing to authenticate its requests with \
-                 and the cloud service would answer every one with 401 \
-                 Unauthorized. Either set a resource key with resource_key(..), which \
+                 none. Either set a resource key with resource_key(..), which \
                  you can create for free at \
                  https://51degrees.com/configure?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=cloud-request-engine-src-engine.rs&utm_term=credential-required, \
                  or set a license key with license_key(..) and name the \
