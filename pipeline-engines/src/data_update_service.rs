@@ -332,14 +332,14 @@ fn try_refresh(refresh: impl FnOnce() -> fiftyone_pipeline_core::Result<()>) -> 
 /// Refresh an engine from data held in memory, once, giving a refresh that
 /// fails or panics as [`AutoUpdateStatus::RefreshFailed`].
 fn guarded_refresh(
-    engine: &str,
+    engine_type: &str,
     refresh: impl FnOnce() -> fiftyone_pipeline_core::Result<()>,
 ) -> Result<(), DataUpdateError> {
     try_refresh(refresh).map_err(|cause| {
         DataUpdateError::new(
             AutoUpdateStatus::RefreshFailed,
             format!(
-                "An error occurred when applying a data update to engine '{engine}'. \
+                "An error occurred when applying a data update to engine '{engine_type}'. \
                  Error detail: {cause}"
             ),
         )
@@ -351,7 +351,7 @@ fn guarded_refresh(
 /// refresh whose last try fails or panics as
 /// [`AutoUpdateStatus::RefreshFailed`], with the number of tries made.
 fn guarded_refresh_from_file(
-    engine: &str,
+    engine_type: &str,
     refresh: impl Fn() -> fiftyone_pipeline_core::Result<()>,
 ) -> Result<(), DataUpdateError> {
     let mut tries = 0;
@@ -364,7 +364,7 @@ fn guarded_refresh_from_file(
                     AutoUpdateStatus::RefreshFailed,
                     format!(
                         "An error occurred when applying a data update to engine \
-                         '{engine}' after {tries} tries. Error detail: {cause}"
+                         '{engine_type}' after {tries} tries. Error detail: {cause}"
                     ),
                 ))
             }
@@ -571,7 +571,7 @@ impl DataUpdateService {
                  service was given the only reference to its engine, which is dropped \
                  when registration ends. Keep a reference to the engine for as long as \
                  it is to be updated.",
-                engine.data_key()
+                engine.engine_type_name()
             );
             return Ok(AutoUpdateStatus::NotNeeded);
         }
@@ -611,7 +611,7 @@ impl DataUpdateService {
                     log::warn!(
                         "An error occurred while updating the data file for {} on start-up. \
                          The data it has is used. Error detail: {error}",
-                        engine.data_key()
+                        engine.engine_type_name()
                     );
                 }
             }
@@ -728,7 +728,7 @@ impl DataUpdateService {
         data_file_identifier: Option<&str>,
         data: &[u8],
     ) -> DataUpdateResult {
-        guarded_refresh(engine.data_key(), || {
+        guarded_refresh(engine.engine_type_name(), || {
             engine.refresh_from_memory(data_file_identifier, data)
         })
         .map(|()| AutoUpdateStatus::Success)
@@ -905,7 +905,7 @@ impl DataUpdateService {
             "Attempting to refresh Engine '{}' with new data",
             engine.engine_type_name()
         );
-        guarded_refresh_from_file(engine.data_key(), || {
+        guarded_refresh_from_file(engine.engine_type_name(), || {
             engine.refresh(Some(data_file.identifier()))
         })?;
         data_file.set_last_applied_modified(modified);
@@ -1131,7 +1131,7 @@ impl ServiceHandle {
             "Attempting to refresh Engine '{}' with new data",
             engine.engine_type_name()
         );
-        guarded_refresh_from_file(engine.data_key(), || {
+        guarded_refresh_from_file(engine.engine_type_name(), || {
             engine.refresh(Some(data_file.identifier()))
         })
         .map(|()| AutoUpdateStatus::Success)
@@ -1292,7 +1292,7 @@ impl ServiceHandle {
             };
             let recorded = data_file.published_changes();
             log::info!("Attempting to refresh Engine '{name}' with new data");
-            guarded_refresh(engine.data_key(), || {
+            guarded_refresh(engine.engine_type_name(), || {
                 engine.refresh_from_memory(Some(data_file.identifier()), &data)
             })?;
             Self::record_published(data_file, recorded);
@@ -1342,7 +1342,7 @@ impl ServiceHandle {
         })?;
         let recorded = data_file.published_changes();
         log::info!("Attempting to refresh Engine '{name}' with new data");
-        guarded_refresh_from_file(engine.data_key(), || {
+        guarded_refresh_from_file(engine.engine_type_name(), || {
             engine.refresh(Some(data_file.identifier()))
         })?;
         Self::record_published(data_file, recorded);
