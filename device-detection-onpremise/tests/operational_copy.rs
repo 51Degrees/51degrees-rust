@@ -369,10 +369,10 @@ fn a_build_that_fails_leaves_no_copy() {
     }
 }
 
-/// A refresh that fails after the new data set is open leaves only the copy
-/// the engine still reads, and the engine keeps detecting from it. The reload
-/// replaces the data set in the engine's manager, so that is the new copy,
-/// and the old one goes with the data set it held.
+/// A refresh to a data file whose metadata cannot be read leaves only the
+/// copy the engine still reads, and the engine keeps detecting from it. The
+/// new data is checked before the engine's manager reloads it, so that is
+/// the copy the engine had, and the new one is removed.
 #[test]
 fn a_refresh_that_fails_leaves_only_the_copy_in_use() {
     let Some(lite) = lite_data_file() else {
@@ -404,8 +404,7 @@ fn a_refresh_that_fails_leaves_only_the_copy_in_use() {
 
         assert!(is_unreadable_metadata(&error), "{profile:?}: {error}");
         let left = files_in(&temp);
-        assert_eq!(left.len(), 1, "{profile:?}: {left:?}");
-        assert_ne!(left, in_use, "{profile:?}");
+        assert_eq!(left, in_use, "{profile:?}");
         assert_eq!(is_mobile(&detect(&engine)), Some(true), "{profile:?}");
         drop(engine);
         assert_eq!(files_in(&temp), Vec::<String>::new(), "{profile:?}");

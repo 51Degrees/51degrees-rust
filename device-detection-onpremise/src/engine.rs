@@ -78,6 +78,11 @@ const DEFAULT_DATA_SOURCE_TIER: &str = "Lite";
 /// file upgrade names.
 const ENGINE_TYPE_NAME: &str = "DeviceDetectionOnPremiseEngine";
 
+/// The profile a refresh opens the new data under to check that its metadata
+/// reads before the engine's manager reloads it. It reads from the data file
+/// only what the check needs, so the check holds little memory.
+const CHECK_PROFILE: PerformanceProfile = PerformanceProfile::LowMemory;
+
 /// A match-metric pseudo-property, which the Hash engine gives in addition to
 /// the data file's own properties. Its value is read from the detection's
 /// results when it is first requested, not from the data file.
@@ -740,7 +745,8 @@ impl DeviceDetectionOnPremiseEngine {
     /// data set. See [`Self::swap_in`].
     ///
     /// Shared by [`OnPremiseAspectEngine::refresh`] and the builder's reload
-    /// path. A reload that fails leaves the data set in use and removes the
+    /// path. A reload that fails, or a data file the engine cannot use (see
+    /// [`Self::check_usable`]), leaves the data set in use and removes the
     /// copy, which nothing then reads.
     fn reload_from_path(&self, path: &Path) -> Result<()> {
         let _refreshing = self
@@ -757,22 +763,48 @@ impl DeviceDetectionOnPremiseEngine {
                 self.reuse_temp_file,
             )
         });
+        let source = copy.as_ref().map_or(path, OperationalCopy::path);
+        self.check_usable(Manager::open_with_options(
+            source,
+            CHECK_PROFILE,
+            None,
+            Some(1),
+        ))?;
         let manager = Arc::clone(&self.loaded.load().manager);
-        manager.reload_from_file(copy.as_ref().map_or(path, OperationalCopy::path))?;
+        manager.reload_from_file(source)?;
         self.swap_in(copy, manager)
     }
 
     /// Reload the data set in the engine's manager from `data`, the whole of
     /// a data file, which the C library copies, and describe the new data
-    /// set. See [`Self::swap_in`].
+    /// set. See [`Self::swap_in`]. Data the engine cannot use (see
+    /// [`Self::check_usable`]) leaves the data set in use.
     fn reload_from_memory(&self, data: &[u8]) -> Result<()> {
         let _refreshing = self
             .refresh_lock
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        self.check_usable(Manager::open_from_memory(
+            data.to_vec(),
+            CHECK_PROFILE,
+            None,
+            &HashOptions::default(),
+        ))?;
         let manager = Arc::clone(&self.loaded.load().manager);
         manager.reload_from_memory(data)?;
         self.swap_in(None, manager)
+    }
+
+    /// Read the metadata of `opened`, a data set of its own opened from the
+    /// new data before the engine's manager reloads it, as [`describe`]
+    /// reads it after the reload. The C library loads a data file whose
+    /// metadata cannot be read, and its reload replaces the data set in the
+    /// engine's manager in place, so the data is checked first and refused
+    /// with the error, leaving the engine on the data set it had. The check
+    /// opens the data under [`CHECK_PROFILE`], which reads only what it
+    /// needs, and frees it before the reload.
+    fn check_usable(&self, opened: Result<Arc<Manager>>) -> Result<()> {
+        describe(None, opened?, &self.tier_override, &self.names).map(drop)
     }
 
     /// Give detections the properties of the data set `manager` holds after a
@@ -782,10 +814,11 @@ impl DeviceDetectionOnPremiseEngine {
     /// tier. In-flight detections keep what they read and the data set their
     /// results came from. The caller holds the refresh lock.
     ///
-    /// When the new data set's metadata cannot be read the error is returned
-    /// and detections go on reading the new data set by the properties of the
-    /// one before, whose names and indexes it keeps, with `copy` kept until
-    /// nothing reads it.
+    /// The reload is made only once [`Self::check_usable`] has read the new
+    /// data's metadata, so this reads it again from the same data. Should it
+    /// still fail, the error is returned and detections go on reading the new
+    /// data set by the properties of the one before, whose names and indexes
+    /// it keeps, with `copy` kept until nothing reads it.
     fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
         let evidence_keys = manager.evidence_keys();
         let (mut loaded, metadata) = match describe(None, manager, &self.tier_override, &self.names)
