@@ -142,7 +142,7 @@ pub use evidence::{
     EvidenceKeyFilterAggregator, EvidenceKeyFilterWhitelist, EvidencePrefix,
 };
 pub use flow_data::FlowData;
-pub use flow_element::{FlowElement, TypedFlowElement};
+pub use flow_element::FlowElement;
 pub use pipeline::{Pipeline, PipelineBuilder};
 pub use property::PropertyMetaData;
 pub use typed_key::TypedKey;

@@ -52,7 +52,7 @@ use crate::ci_map::ci_get;
 use crate::element_data::ElementData;
 use crate::error::{Error, FlowError, NoValueError, Result};
 use crate::evidence::{DataKey, Evidence, EvidenceKeyFilter};
-use crate::flow_element::{FlowElement, TypedFlowElement};
+use crate::flow_element::FlowElement;
 use crate::pipeline::Pipeline;
 use crate::typed_key::TypedKey;
 use crate::value::PropertyValue;
@@ -429,19 +429,6 @@ impl FlowData {
     pub fn get<T: ElementData>(&self, key: TypedKey<T>) -> Option<&T> {
         self.lookup(key.name())
             .and_then(|data| data.as_any().downcast_ref::<T>())
-    }
-
-    /// Get the element data the given element added, as the element's own
-    /// data type.
-    ///
-    /// This is mechanism 3 of the
-    /// [access-to-results specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/access-to-results.md#accessing-results)
-    /// (get element data by supplying an element instance). The data is found
-    /// under the element's [`FlowElement::data_key`] and downcast to [`TypedFlowElement::Data`]. Returns `None` if there is
-    /// no data under the key, or the stored data is not of that type.
-    pub fn get_from_element<E: TypedFlowElement + ?Sized>(&self, element: &E) -> Option<&E::Data> {
-        self.lookup(element.data_key())
-            .and_then(|data| data.as_any().downcast_ref::<E::Data>())
     }
 
     /// Get the element data for a [`TypedKey`], or insert it using `create` if
