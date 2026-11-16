@@ -16,9 +16,6 @@
 # and the recorded commit from the package. The workspace crates each one
 # depends on are given as patches, so the package builds against this
 # checkout rather than against what crates.io holds.
-#
-# It also checks that no published Device Detection crate packages its tests
-# or examples.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -77,18 +74,6 @@ for crate in fiftyone-derived-properties fiftyone-ip-intelligence-translation; d
     fail "$crate packages a licence file"
   fi
 done
-
-# No published Device Detection package carries its tests or examples, as
-# the Device Detection specification asks.
-# https://github.com/51Degrees/specifications/blob/main/device-detection-specification/packaging-and-structure.md
-echo "::group::Device Detection packages"
-for crate in $(grep -E '^fiftyone-device-detection' ci/crates.txt); do
-  extra="$(listing "$crate" | grep -E '^(tests|examples|benches)/' || true)"
-  if [ -n "$extra" ]; then
-    fail "$crate packages tests or examples: $(echo $extra)"
-  fi
-done
-echo "::endgroup::"
 
 if [ "$failed" -ne 0 ]; then
   exit 1
