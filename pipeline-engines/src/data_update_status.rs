@@ -129,7 +129,7 @@ impl DataUpdateError {
     /// that ended with this error, being the errors table's "Update on startup
     /// failed for \<data file identifier\> with status \<status\>. See log for
     /// details", with this error's message after it. A builder that registers
-    /// a data file passes it to its caller as the build's error.
+    /// a data file it has already loaded logs it and keeps that data file.
     pub fn on_startup_message(&self, identifier: &str) -> String {
         format!(
             "Update on startup failed for {identifier} with status {}. See log for details. \
