@@ -114,8 +114,13 @@ fn folder_with(lite: &Path, test: &str) -> (PathBuf, PathBuf, PathBuf) {
     (dir, path, temp)
 }
 
-/// An engine over the data file at `path` under `profile`, copying it into
-/// `temp` where the profile needs a copy, with no update service.
+/// An engine over the data file at `path` under `profile`, holding its own
+/// copy in `temp`, with no update service.
+///
+/// The copy is on for every profile, as it is for any deployment that
+/// refreshes, because a profile that reads from the file would otherwise read
+/// the bytes this test writes over `path` and the test would be measuring
+/// the file being destroyed under the engine rather than the refresh.
 fn engine(
     path: &Path,
     temp: &Path,
@@ -129,6 +134,7 @@ fn engine(
     DeviceDetectionOnPremiseEngineBuilder::new(path)
         .performance_profile(profile)
         .temp_dir_path(temp)
+        .create_temp_data_copy(true)
         .auto_update(config, None)
         .build()
         .expect("the data file loads")
