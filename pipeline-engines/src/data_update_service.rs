@@ -856,7 +856,7 @@ impl DataUpdateService {
                 let stop = || {
                     service
                         .upgrade()
-                        .map_or(true, |service| service.shutting_down())
+                        .is_none_or(|service| service.shutting_down())
                 };
                 ServiceHandle::on_file_changed(&engine, &data_file, &callbacks, &stop);
             }
@@ -1702,7 +1702,7 @@ mod tests {
             let stop = || {
                 service_weak
                     .upgrade()
-                    .map_or(true, |service| service.shutting_down())
+                    .is_none_or(|service| service.shutting_down())
             };
             assert!(!stop(), "the service is still alive when the wait starts");
             let started = Instant::now();
