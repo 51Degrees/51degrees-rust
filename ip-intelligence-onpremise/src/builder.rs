@@ -445,6 +445,28 @@ impl IpIntelligenceOnPremiseEngineBuilder {
 mod tests {
     use super::*;
 
+    /// ip-intelligence-on-premise.md line 395: "An implementation configured
+    /// with no names MUST create the Engine with no names, and MUST NOT pass
+    /// the data set's names itself". With no names set, the native Engine is
+    /// opened with no names, and with names set, with those names alone.
+    #[test]
+    fn no_names_configured_opens_the_engine_with_no_names() {
+        assert_eq!(names_to_open_with(&[]), None);
+        let set = ["RegisteredName".to_string(), "Asn".to_string()];
+        assert_eq!(
+            names_to_open_with(&set),
+            Some(vec!["RegisteredName", "Asn"])
+        );
+    }
+
+    /// With no names set, the builder holds no names at the point it opens
+    /// the Engine, so it has none of the data set's to pass.
+    #[test]
+    fn builder_with_no_names_holds_none_to_pass() {
+        let builder = IpIntelligenceOnPremiseEngineBuilder::new("does-not-exist.ipi");
+        assert_eq!(names_to_open_with(&builder.requested_properties), None);
+    }
+
     /// The defaults are those of the .NET and Java engines: updates and the
     /// watcher on, no poll at startup, the Distributor as the source with its
     /// URL formatter and the IP Intelligence download type.
