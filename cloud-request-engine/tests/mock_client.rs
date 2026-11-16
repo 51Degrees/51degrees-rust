@@ -1596,6 +1596,65 @@ fn a_license_key_alone_build_attempts_both_discovery_requests() {
     );
 }
 
+/// The request the builder asked the `accessibleproperties` endpoint with.
+fn accessible_properties_request(client: &FakeClient) -> CloudHttpRequest {
+    client
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|r| r.url.contains("accessibleproperties"))
+        .expect("the build asked for the accessible properties")
+        .clone()
+}
+
+#[test]
+fn the_license_key_goes_in_the_body_of_a_post_and_never_in_the_url() {
+    // cloud-request-engine.md line 273: "An Engine built on a License Key
+    // alone MUST make the `accessibleproperties` request with the License
+    // Key, sent as `license` in the body of a POST request rather than in the
+    // URL, so that the key stays out of request logs."
+    let client = Arc::new(FakeClient::default());
+    license_engine_with(client.clone(), &["device.ismobile"]);
+    let request = accessible_properties_request(&client);
+    assert_eq!(request.method, HttpMethod::Post, "license key alone");
+    assert_eq!(
+        request.form,
+        vec![("license".to_owned(), "test-license-key".to_owned())],
+        "license key alone"
+    );
+    assert!(
+        !request.url.contains("test-license-key"),
+        "license key alone, the URL is {}",
+        request.url
+    );
+
+    // The reason, keeping the key out of request logs, holds as much when a
+    // resource key is set beside it.
+    let client = Arc::new(FakeClient::default());
+    CloudRequestEngine::builder()
+        .resource_key("test-resource-key")
+        .license_key("test-license-key")
+        .endpoint("https://cloud.example.test/api/v4/")
+        .http_client(client.clone())
+        .build()
+        .unwrap();
+    let request = accessible_properties_request(&client);
+    assert_eq!(request.method, HttpMethod::Post, "both keys");
+    assert!(
+        request
+            .form
+            .contains(&("license".to_owned(), "test-license-key".to_owned())),
+        "both keys, the form is {:?}",
+        request.form
+    );
+    assert!(
+        !request.url.contains("test-license-key"),
+        "both keys, the URL is {}",
+        request.url
+    );
+}
+
 #[test]
 fn a_license_key_alone_authenticates_the_request() {
     let client = Arc::new(FakeClient::default());
