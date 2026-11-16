@@ -505,7 +505,7 @@ impl DataUpdateService {
     /// call to [`Self::update_from_memory`] is not reported. A change that
     /// leaves the watched file no newer than the one last applied is reported
     /// as [`AutoUpdateStatus::NotNeeded`], and a further change event for a
-    /// write already tried as [`AutoUpdateStatus::InProgress`], as .NET
+    /// write already applied as [`AutoUpdateStatus::InProgress`], as .NET
     /// reports an event that waited while another was applied. A refresh that
     /// fails or panics is
     /// reported as [`AutoUpdateStatus::RefreshFailed`] and the engine keeps
@@ -1089,13 +1089,11 @@ impl ServiceHandle {
     /// update, as in .NET, where a missing file's write time is the earliest
     /// there is. A further event for a write that an earlier event took, as
     /// when one write raises several events, waited while that write was
-    /// tried and has nothing left to do, so it is in progress, as in .NET.
+    /// applied and has nothing left to do, so it is in progress, as in .NET.
     /// A newer file is refreshed from once it opens for reading, because
     /// whatever writes it can still hold it, and one that does not open
     /// within ten minutes gives [`AutoUpdateStatus::Timeout`], which is not
-    /// logged. The file is recorded as applied only once its refresh works,
-    /// so a file the watcher could not apply is still newer than the data
-    /// the engine has when a programmatic check looks.
+    /// logged.
     fn refresh_from_watched_file(
         engine: &Arc<dyn OnPremiseAspectEngine>,
         data_file: &AspectEngineDataFile,
@@ -1107,12 +1105,13 @@ impl ServiceHandle {
         let Some(modified) = file_modified_time(path) else {
             return Ok(AutoUpdateStatus::NotNeeded);
         };
-        if data_file.last_watched_modified() == Some(modified) {
-            return Ok(AutoUpdateStatus::InProgress);
-        }
         if matches!(data_file.last_applied_modified(), Some(last) if modified <= last) {
+            if data_file.last_watched_modified() == Some(modified) {
+                return Ok(AutoUpdateStatus::InProgress);
+            }
             return Ok(AutoUpdateStatus::NotNeeded);
         }
+        data_file.set_last_applied_modified(modified);
         data_file.set_last_watched_modified(modified);
         if !wait_until_readable(
             path,
@@ -1134,9 +1133,8 @@ impl ServiceHandle {
         );
         guarded_refresh_from_file(engine.data_key(), || {
             engine.refresh(Some(data_file.identifier()))
-        })?;
-        data_file.set_last_applied_modified(modified);
-        Ok(AutoUpdateStatus::Success)
+        })
+        .map(|()| AutoUpdateStatus::Success)
     }
 
     /// True once the service has been dropped.
