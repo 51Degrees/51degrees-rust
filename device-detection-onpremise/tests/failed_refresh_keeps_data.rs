@@ -25,9 +25,11 @@
 //! the data source it had, so that processing is unaffected." A data file
 //! that the C library loads but whose metadata cannot be read is one the
 //! engine cannot use, so a refresh to it fails and the engine keeps the data
-//! set it had, under every profile, from a file and from memory. The tests
-//! need the Lite file, from `_51DEGREES_DD_PATH` or the data repository in
-//! the `cxx` submodule, and skip with a note without it.
+//! set it had, from a file and from memory. `operational_copy.rs` checks this
+//! for the profiles that read a copy of the data file, so these tests check
+//! the one it leaves out, the profile that holds the data set in memory. The
+//! tests need the Lite file, from `_51DEGREES_DD_PATH` or the data repository
+//! in the `cxx` submodule, and skip with a note without it.
 
 #[allow(dead_code)]
 #[path = "../../deprecated-names/environment.rs"]
@@ -48,15 +50,8 @@ use fiftyone_pipeline_engines::{DataFileConfiguration, OnPremiseAspectEngine};
 const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) \
     AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 
-/// Every profile, both those that read a copy of the data file and those
-/// that hold the data set in memory.
-const PROFILES: [PerformanceProfile; 5] = [
-    PerformanceProfile::Default,
-    PerformanceProfile::Balanced,
-    PerformanceProfile::LowMemory,
-    PerformanceProfile::HighPerformance,
-    PerformanceProfile::InMemory,
-];
+/// The profiles `operational_copy.rs` does not check a failed refresh under.
+const PROFILES: [PerformanceProfile; 1] = [PerformanceProfile::InMemory];
 
 /// Where the Hash data file's header gives the place of the properties, and
 /// where a property's description offset sits in its record, from `hash.h`
@@ -173,8 +168,7 @@ fn assert_uses_the_data_it_had(engine: &Arc<DeviceDetectionOnPremiseEngine>, con
 }
 
 /// A refresh from a data file whose metadata cannot be read fails with an
-/// error, and the engine goes on using the data set it had, under every
-/// profile.
+/// error, and the engine goes on using the data set it had in memory.
 #[test]
 fn a_refresh_from_a_file_that_cannot_be_used_keeps_the_data_set_it_had() {
     let Some(lite) = lite_data_file() else {
@@ -199,8 +193,8 @@ fn a_refresh_from_a_file_that_cannot_be_used_keeps_the_data_set_it_had() {
 }
 
 /// A refresh from memory holding a data file whose metadata cannot be read
-/// fails with an error, and the engine goes on using the data set it had,
-/// under every profile.
+/// fails with an error, and the engine goes on using the data set it had in
+/// memory.
 #[test]
 fn a_refresh_from_memory_that_cannot_be_used_keeps_the_data_set_it_had() {
     let Some(lite) = lite_data_file() else {
