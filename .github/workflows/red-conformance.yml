@@ -1,0 +1,45 @@
+name: Temporary red run of pull request 478
+
+# Throwaway. The branch is pull request 478's head with its one fix commit
+# reverted, so the tree is `rc` plus the pull request's new tests and none of
+# its code change. Each job runs one of those tests.
+
+on:
+  push:
+    branches:
+      - 'tmp/red-conf-478'
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    name: ${{ matrix.rule }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rule: the data update messages name the Engine by its type
+            run: cargo test -p fiftyone-pipeline-engines --test consistent_messages
+          - rule: a refresh that cannot be used keeps the data the engine had
+            run: cargo test -p fiftyone-device-detection-onpremise --test failed_refresh_keeps_data
+          - rule: a refresh error reaches the caller
+            run: cargo test -p fiftyone-device-detection-onpremise --test refresh_errors_to_caller
+          - rule: refreshes are thread safe and processing goes on during one
+            run: cargo test -p fiftyone-device-detection-onpremise --test refresh_concurrency && cargo test -p fiftyone-ip-intelligence-onpremise --test refresh_concurrency
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Copy the OWID source the fodid crate compiles in
+        run: pwsh ./ci/copy-owid-source.ps1
+      - name: Point the tests at the free data files in the data submodule
+        run: |
+          echo "_51DEGREES_DD_PATH=${GITHUB_WORKSPACE}/cxx/data/device-detection/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
+          echo "_51DEGREES_IPI_PATH=${GITHUB_WORKSPACE}/cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
+      - name: Run the new test without the fix
+        env:
+          RUN: ${{ matrix.run }}
+        run: bash -c "$RUN"
