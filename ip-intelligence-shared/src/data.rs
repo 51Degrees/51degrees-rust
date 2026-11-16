@@ -366,12 +366,7 @@ impl StoredValue {
             StoredValue::WeightedString(WeightedStore::NoValue { message }) => {
                 AspectPropertyValue::no_value(message.clone())
             }
-            StoredValue::String(store) => value_store_weighted(store, String::clone),
-            StoredValue::WktString(store) => value_store_weighted(store, |value| value.to_string()),
-            StoredValue::Float(store) => value_store_weighted(store, f32::to_string),
-            StoredValue::Integer(store) => value_store_weighted(store, i32::to_string),
-            StoredValue::Boolean(store) => value_store_weighted(store, render_bool),
-            StoredValue::Nothing => AspectPropertyValue::empty(),
+            _ => AspectPropertyValue::empty(),
         }
     }
 }
@@ -910,36 +905,21 @@ impl IpIntelligenceDataBase {
         }
     }
 
-    /// Read a property by name as a weighted list of strings.
+    /// Read a weighted string property by name.
     ///
     /// Returns [`AspectPropertyValue::NoValue`] when the property is absent or
     /// was recorded as a no-value. The list is ordered high weighting first.
     /// This is how the weighted properties (`CountryCodesGeographical`,
     /// `CountryCodesPopulation`, `Mcc` and `StateGeoNameIdsGeographical`) are
-    /// read. Every other property is also exposed as a weighted value, as
-    /// the IP Intelligence data model requires, being its value as text with
-    /// the full weighting.
+    /// read.
     pub fn weighted_string(&self, name: &str) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
-        let key = key(name);
-        if let Some(store) = self.weighted_strings.get(&key) {
-            return StoredValue::WeightedString(store.clone()).weighted_string();
+        match self.weighted_strings.get(&key(name)) {
+            Some(WeightedStore::Values(list)) => AspectPropertyValue::new(list.clone()),
+            Some(WeightedStore::NoValue { message }) => {
+                AspectPropertyValue::no_value(message.clone())
+            }
+            None => self.deferred_value(name, StoredValue::weighted_string),
         }
-        if let Some(store) = self.strings.get(&key) {
-            return value_store_weighted(store, String::clone);
-        }
-        if let Some(store) = self.wkt_strings.get(&key) {
-            return value_store_weighted(store, |value| value.to_string());
-        }
-        if let Some(store) = self.floats.get(&key) {
-            return value_store_weighted(store, f32::to_string);
-        }
-        if let Some(store) = self.integers.get(&key) {
-            return value_store_weighted(store, i32::to_string);
-        }
-        if let Some(store) = self.booleans.get(&key) {
-            return value_store_weighted(store, render_bool);
-        }
-        self.deferred_value(name, StoredValue::weighted_string)
     }
 
     // -- getters at a typed accessor's slot ---------------------------------
@@ -1016,26 +996,6 @@ fn value_store_converted<T: Clone, U: From<T>>(store: &ValueStore<T>) -> AspectP
         ValueStore::Value(value) => AspectPropertyValue::new(U::from(value.clone())),
         ValueStore::NoValue { message } => AspectPropertyValue::no_value(message.clone()),
     }
-}
-
-/// Expose a plain [`ValueStore`] as a weighted value, being its one value as
-/// text with the full weighting, so every property is also exposed as a
-/// weighted value.
-fn value_store_weighted<T>(
-    store: &ValueStore<T>,
-    render: impl Fn(&T) -> String,
-) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
-    match store {
-        ValueStore::Value(value) => {
-            AspectPropertyValue::new(vec![WeightedValue::new(u16::MAX, render(value))])
-        }
-        ValueStore::NoValue { message } => AspectPropertyValue::no_value(message.clone()),
-    }
-}
-
-/// A boolean as the data files render it.
-fn render_bool(value: &bool) -> String {
-    if *value { "True" } else { "False" }.to_string()
 }
 
 /// The message of a [`ValueStore::NoValue`].
