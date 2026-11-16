@@ -1,0 +1,27 @@
+name: Temporary check that a wrong error code fails a compile_fail block
+
+# Throwaway. Pull request 476's head with one block's error code made wrong,
+# E0599 where the crate-root FLAGS_OFFSET block gives E0425. The job is
+# expected to fail on that block alone if rustdoc checks the codes.
+
+on:
+  push:
+    branches:
+      - 'tmp/rust-476-codes'
+
+permissions:
+  contents: read
+
+jobs:
+  codes:
+    name: a wrong error code fails its compile_fail block
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Copy the OWID source the fodid crate compiles in
+        run: pwsh ./ci/copy-owid-source.ps1
+      - name: Run the fodid documentation tests
+        run: cargo test -p fodid --doc

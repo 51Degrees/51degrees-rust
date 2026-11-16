@@ -433,7 +433,7 @@ struct ReadmeExamples;
 ///
 /// The offsets and lengths.
 ///
-/// ```compile_fail,E0425
+/// ```compile_fail,E0599
 /// let _ = fodid::FLAGS_OFFSET;
 /// ```
 ///
