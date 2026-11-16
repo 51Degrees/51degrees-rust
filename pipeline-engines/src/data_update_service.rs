@@ -2849,7 +2849,7 @@ mod tests {
         );
 
         engine.allowed.store(true, Ordering::SeqCst);
-        let checked = ServiceHandle::refresh_if_newer(&as_engine, &data_file, &path);
+        let checked = DataUpdateService::refresh_if_newer(&as_engine, &data_file, &path);
         assert_eq!(
             checked.unwrap(),
             AutoUpdateStatus::Success,
