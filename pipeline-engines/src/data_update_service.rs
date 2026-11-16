@@ -52,8 +52,10 @@
 //! that fails or panics is reported as [`AutoUpdateStatus::RefreshFailed`],
 //! never as success, and is logged at error level with the message the
 //! specification's errors table gives, apart from a programmatic check,
-//! which gives the error to its caller instead. The engine keeps the data it
-//! had, and polling and watching go on. An update from memory reports and
+//! which gives the error to its caller instead. A refresh from the data file
+//! is tried up to ten times, 200 milliseconds apart, before it fails, because
+//! the file can still be held by whatever wrote it. The engine keeps the data
+//! it had, and polling and watching go on. An update from memory reports and
 //! logs nothing, and gives its result to the caller.
 //!
 //! # Threading
@@ -274,25 +276,101 @@ fn log_callback_panic(engine: &str, panic: &(dyn Any + Send)) {
     );
 }
 
-/// Run an engine's refresh, giving a refresh that fails or panics as
-/// [`AutoUpdateStatus::RefreshFailed`], so a panic in a refresh is reported
-/// like a failure and never ends the thread that made the check.
+/// How many times a refresh from the data file is tried before the update
+/// fails, because the file can still be held by whatever wrote it.
+const REFRESH_TRIES: u32 = 10;
+
+/// How long to wait after a refresh from the data file fails before the next
+/// try.
+const REFRESH_RETRY_DELAY_MILLISECONDS: u64 = 200;
+
+/// How long the file system watcher waits for a changed data file to open
+/// for reading before it gives up, because whatever writes the file can
+/// still hold it.
+const WATCHED_FILE_OPEN_LIMIT_MINUTES: u64 = 10;
+
+/// How long the file system watcher waits between tries to open a changed
+/// data file.
+const WATCHED_FILE_OPEN_RETRY_MILLISECONDS: u64 = 500;
+
+/// Whether the file at `path` opens for reading, trying every `retry` until
+/// `limit` has passed. Gives up as soon as `stop` answers true, so a
+/// shutdown does not wait the limit out, as the download and decompress
+/// paths do with the same kind of closure.
+fn wait_until_readable(
+    path: &Path,
+    limit: Duration,
+    retry: Duration,
+    stop: &dyn Fn() -> bool,
+) -> bool {
+    let until = Instant::now() + limit;
+    loop {
+        if std::fs::File::open(path).is_ok() {
+            return true;
+        }
+        if stop() || Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(retry);
+    }
+}
+
+/// Run an engine's refresh, giving the cause of a refresh that fails or
+/// panics as text, so a panic in a refresh is reported like a failure and
+/// never ends the thread that made the check.
+fn try_refresh(refresh: impl FnOnce() -> fiftyone_pipeline_core::Result<()>) -> Result<(), String> {
+    match catch_unwind(AssertUnwindSafe(refresh)) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(panic) => Err(format!(
+            "the refresh panicked: {}",
+            panic_message(panic.as_ref())
+        )),
+    }
+}
+
+/// Refresh an engine from data held in memory, once, giving a refresh that
+/// fails or panics as [`AutoUpdateStatus::RefreshFailed`].
 fn guarded_refresh(
     engine: &str,
     refresh: impl FnOnce() -> fiftyone_pipeline_core::Result<()>,
 ) -> Result<(), DataUpdateError> {
-    let cause = match catch_unwind(AssertUnwindSafe(refresh)) {
-        Ok(Ok(())) => return Ok(()),
-        Ok(Err(error)) => error.to_string(),
-        Err(panic) => format!("the refresh panicked: {}", panic_message(panic.as_ref())),
-    };
-    Err(DataUpdateError::new(
-        AutoUpdateStatus::RefreshFailed,
-        format!(
-            "An error occurred when applying a data update to engine '{engine}'. \
-             Error detail: {cause}"
-        ),
-    ))
+    try_refresh(refresh).map_err(|cause| {
+        DataUpdateError::new(
+            AutoUpdateStatus::RefreshFailed,
+            format!(
+                "An error occurred when applying a data update to engine '{engine}'. \
+                 Error detail: {cause}"
+            ),
+        )
+    })
+}
+
+/// Refresh an engine from its data file, trying up to [`REFRESH_TRIES`] times
+/// with [`REFRESH_RETRY_DELAY_MILLISECONDS`] between tries, and giving a
+/// refresh whose last try fails or panics as
+/// [`AutoUpdateStatus::RefreshFailed`], with the number of tries made.
+fn guarded_refresh_from_file(
+    engine: &str,
+    refresh: impl Fn() -> fiftyone_pipeline_core::Result<()>,
+) -> Result<(), DataUpdateError> {
+    let mut tries = 0;
+    loop {
+        tries += 1;
+        match try_refresh(&refresh) {
+            Ok(()) => return Ok(()),
+            Err(cause) if tries >= REFRESH_TRIES => {
+                return Err(DataUpdateError::new(
+                    AutoUpdateStatus::RefreshFailed,
+                    format!(
+                        "An error occurred when applying a data update to engine \
+                         '{engine}' after {tries} tries. Error detail: {cause}"
+                    ),
+                ))
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(REFRESH_RETRY_DELAY_MILLISECONDS)),
+        }
+    }
 }
 
 /// The message a panic carries, when it is text.
@@ -336,6 +414,15 @@ impl Inner {
             state: Mutex::new(SchedulerState::default()),
             callbacks: Arc::default(),
         }
+    }
+
+    /// True once the service has been dropped. Read by the long waits, so
+    /// that none of them holds a shutdown up.
+    fn shutting_down(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .shutting_down
     }
 
     /// Wake the scheduler, at once if it is waiting, or as soon as its round
@@ -752,6 +839,10 @@ impl DataUpdateService {
         let engine = Weak::clone(&registration.engine);
         let data_file = Arc::clone(&registration.data_file);
         let callbacks = Arc::clone(&self.inner.callbacks);
+        // Held weakly, because the service owns the registration that owns
+        // this watcher, so a strong handle here would keep the service
+        // alive for ever. A service already gone ends the wait too.
+        let service = Arc::downgrade(&self.inner);
         let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             let Ok(event) = res else {
                 return;
@@ -762,7 +853,12 @@ impl DataUpdateService {
                 .iter()
                 .any(|changed| changed.file_name() == file_name.as_deref());
             if names_the_file && (event.kind.is_modify() || event.kind.is_create()) {
-                ServiceHandle::on_file_changed(&engine, &data_file, &callbacks);
+                let stop = || {
+                    service
+                        .upgrade()
+                        .is_none_or(|service| service.shutting_down())
+                };
+                ServiceHandle::on_file_changed(&engine, &data_file, &callbacks, &stop);
             }
         });
 
@@ -809,7 +905,7 @@ impl DataUpdateService {
             "Attempting to refresh Engine '{}' with new data",
             engine.data_key()
         );
-        guarded_refresh(engine.data_key(), || {
+        guarded_refresh_from_file(engine.data_key(), || {
             engine.refresh(Some(data_file.identifier()))
         })?;
         data_file.set_last_applied_modified(modified);
@@ -971,6 +1067,7 @@ impl ServiceHandle {
         engine: &Weak<dyn OnPremiseAspectEngine>,
         data_file: &Arc<AspectEngineDataFile>,
         callbacks: &UpdateCallbacks,
+        stop: &dyn Fn() -> bool,
     ) {
         let Some(engine) = engine.upgrade() else {
             // With its engine gone the watcher belongs to no registered data
@@ -983,7 +1080,7 @@ impl ServiceHandle {
         };
         let key = engine.data_key();
         callbacks.start(key, Some(data_file));
-        let result = Self::refresh_from_watched_file(&engine, data_file);
+        let result = Self::refresh_from_watched_file(&engine, data_file, stop);
         callbacks.finish(key, Some(data_file), &result, CallbackPanic::Log);
     }
 
@@ -993,9 +1090,14 @@ impl ServiceHandle {
     /// there is. A further event for a write that an earlier event took, as
     /// when one write raises several events, waited while that write was
     /// applied and has nothing left to do, so it is in progress, as in .NET.
+    /// A newer file is refreshed from once it opens for reading, because
+    /// whatever writes it can still hold it, and one that does not open
+    /// within ten minutes gives [`AutoUpdateStatus::Timeout`], which is not
+    /// logged.
     fn refresh_from_watched_file(
         engine: &Arc<dyn OnPremiseAspectEngine>,
         data_file: &AspectEngineDataFile,
+        stop: &dyn Fn() -> bool,
     ) -> DataUpdateResult {
         let Some(path) = data_file.data_file_path() else {
             return Ok(AutoUpdateStatus::NotNeeded);
@@ -1011,11 +1113,25 @@ impl ServiceHandle {
         }
         data_file.set_last_applied_modified(modified);
         data_file.set_last_watched_modified(modified);
+        if !wait_until_readable(
+            path,
+            Duration::from_secs(WATCHED_FILE_OPEN_LIMIT_MINUTES * 60),
+            Duration::from_millis(WATCHED_FILE_OPEN_RETRY_MILLISECONDS),
+            stop,
+        ) {
+            // A wait the shutdown ended applied no update, and is not a
+            // timeout, because the limit did not pass.
+            return Ok(if stop() {
+                AutoUpdateStatus::NotNeeded
+            } else {
+                AutoUpdateStatus::Timeout
+            });
+        }
         log::info!(
             "Attempting to refresh Engine '{}' with new data",
             engine.data_key()
         );
-        guarded_refresh(engine.data_key(), || {
+        guarded_refresh_from_file(engine.data_key(), || {
             engine.refresh(Some(data_file.identifier()))
         })
         .map(|()| AutoUpdateStatus::Success)
@@ -1023,11 +1139,7 @@ impl ServiceHandle {
 
     /// True once the service has been dropped.
     fn shutting_down(&self) -> bool {
-        self.inner
-            .state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .shutting_down
+        self.inner.shutting_down()
     }
 
     /// Poll the remote update URL, verify, decompress, write and refresh.
@@ -1172,7 +1284,7 @@ impl ServiceHandle {
                 name,
             )?;
             let data = if config.decompress_content {
-                gzip_decompress(&compressed).map_err(|e| decompress_error(&url, e))?
+                gzip_decompress(&compressed).map_err(|e| decompress_error(&url, name, e))?
             } else {
                 compressed
             };
@@ -1190,7 +1302,7 @@ impl ServiceHandle {
         // rename. Each is removed when it goes out of scope, so an update that
         // fails part way leaves nothing behind.
         let download = TempFile::beside(path, "download");
-        save_body(&mut body, download.path(), |e| {
+        save_body(&mut body, download.path(), name, |e| {
             access_error(&url, name, read_error_message(e))
         })?;
         log::info!("Downloaded new data from '{logged_url}' for Engine '{name}'");
@@ -1203,7 +1315,7 @@ impl ServiceHandle {
         let new_file = if config.decompress_content {
             let decompressed = TempFile::beside(path, "new");
             gunzip_file(download.path(), decompressed.path(), &stop)
-                .map_err(|e| decompress_error(&url, e))?;
+                .map_err(|e| decompress_error(&url, name, e))?;
             drop(download);
             decompressed
         } else {
@@ -1228,7 +1340,7 @@ impl ServiceHandle {
         })?;
         let recorded = data_file.published_changes();
         log::info!("Attempting to refresh Engine '{name}' with new data");
-        guarded_refresh(engine.data_key(), || {
+        guarded_refresh_from_file(engine.data_key(), || {
             engine.refresh(Some(data_file.identifier()))
         })?;
         Self::record_published(data_file, recorded);
@@ -1411,16 +1523,17 @@ impl Drop for TempFile {
 }
 
 /// Write everything `body` reads into a new file at `path`, flushed to disk.
-/// A failed read is the error `read_error` makes of it, and a failed write
-/// names the file.
+/// A failed read is the error `read_error` makes of it, and a failed write is
+/// an unhandled error for `engine` naming the file.
 fn save_body(
     body: &mut impl Read,
     path: &Path,
+    engine: &str,
     read_error: impl Fn(std::io::Error) -> DataUpdateError,
 ) -> Result<(), DataUpdateError> {
     let write_error = |error: std::io::Error| {
-        DataUpdateError::new(
-            AutoUpdateStatus::StreamError,
+        unhandled_error(
+            engine,
             format!("error writing data update to '{}': {error}", path.display()),
         )
     };
@@ -1490,10 +1603,24 @@ fn access_error(url: &str, engine: &str, cause: String) -> DataUpdateError {
     )
 }
 
-/// The error for a download that could not be decompressed.
-fn decompress_error(url: &str, error: std::io::Error) -> DataUpdateError {
+/// The error for a failure the errors table lists under no other row, such
+/// as a download that cannot be decompressed or written, which .NET also
+/// reports as an unhandled error, with `cause` attached.
+fn unhandled_error(engine: &str, cause: impl std::fmt::Display) -> DataUpdateError {
     DataUpdateError::new(
-        AutoUpdateStatus::StreamError,
+        AutoUpdateStatus::UnknownError,
+        format!(
+            "An unhandled error occurred while checking for automatic updates for engine \
+             '{engine}'. Error detail: {cause}"
+        ),
+    )
+}
+
+/// The error for a download from `url` for `engine` that could not be
+/// decompressed.
+fn decompress_error(url: &str, engine: &str, error: std::io::Error) -> DataUpdateError {
+    unhandled_error(
+        engine,
         format!("error decompressing data update from '{url}': {error}"),
     )
 }
@@ -1520,6 +1647,108 @@ fn read_error_message(error: std::io::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A path in the temporary folder for one of the tests below.
+    fn temp_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("fiftyone-{name}-{}", std::process::id()))
+    }
+
+    /// A file that opens is readable at once.
+    #[test]
+    fn a_file_that_opens_is_readable_at_once() {
+        let path = temp_path("readable");
+        std::fs::write(&path, b"data").unwrap();
+        let limit = Duration::from_secs(5);
+        let started = Instant::now();
+        assert!(wait_until_readable(
+            &path,
+            limit,
+            Duration::from_millis(50),
+            &|| false
+        ));
+        assert!(started.elapsed() < limit);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A file that cannot be opened is tried until the limit passes, and is
+    /// then not readable, so the watcher gives a timeout.
+    #[test]
+    fn a_file_that_never_opens_is_tried_until_the_limit() {
+        let path = temp_path("never-readable");
+        let _ = std::fs::remove_file(&path);
+        let limit = Duration::from_millis(300);
+        let started = Instant::now();
+        assert!(!wait_until_readable(
+            &path,
+            limit,
+            Duration::from_millis(50),
+            &|| false
+        ));
+        assert!(started.elapsed() >= limit);
+    }
+
+    /// A wait for a watched file to open ends as soon as the service is
+    /// dropped, rather than holding the shutdown up until the limit passes.
+    /// The closure is built exactly as `install_watcher` builds it, from a
+    /// weak handle to the service, because that is the one the wait is given.
+    /// The limit here is a minute rather than the ten the watcher uses, so a
+    /// wait that ignored the closure fails this in a minute rather than ten.
+    #[test]
+    fn dropping_the_service_ends_a_wait_for_a_watched_file() {
+        let path = temp_path("stopped-wait");
+        // A file that is not there never opens, so the wait only ends when
+        // it is told to or when the limit passes.
+        let _ = std::fs::remove_file(&path);
+        let service = DataUpdateService::new();
+        let service_weak = Arc::downgrade(&service.inner);
+        let limit = Duration::from_secs(60);
+
+        let waiting = std::thread::spawn(move || {
+            let stop = || {
+                service_weak
+                    .upgrade()
+                    .is_none_or(|service| service.shutting_down())
+            };
+            assert!(!stop(), "the service is still alive when the wait starts");
+            let started = Instant::now();
+            let opened = wait_until_readable(&path, limit, Duration::from_millis(50), &stop);
+            (opened, started.elapsed())
+        });
+
+        // Let the wait get going, then drop the service, which sets
+        // shutting_down before any watcher is dropped.
+        std::thread::sleep(Duration::from_millis(200));
+        drop(service);
+
+        let (opened, took) = waiting.join().unwrap();
+        assert!(!opened, "a file that is not there never opens");
+        assert!(
+            took < Duration::from_secs(10),
+            "the wait took {took:?}, so dropping the service did not end it"
+        );
+    }
+
+    /// A file that opens part way through the wait is readable then.
+    #[test]
+    fn a_file_that_opens_during_the_wait_is_readable() {
+        let path = temp_path("later-readable");
+        let _ = std::fs::remove_file(&path);
+        let writer = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(300));
+                std::fs::write(&path, b"data").unwrap();
+            })
+        };
+        assert!(wait_until_readable(
+            &path,
+            Duration::from_secs(10),
+            Duration::from_millis(50),
+            &|| false
+        ));
+        writer.join().unwrap();
+        let _ = std::fs::remove_file(&path);
+    }
 
     #[test]
     fn md5_matches_known_vector() {
@@ -2331,7 +2560,7 @@ mod tests {
         drop(watched);
         assert!(engine.upgrade().is_none(), "the engine is still held");
 
-        ServiceHandle::on_file_changed(&engine, &data_file, &callbacks);
+        ServiceHandle::on_file_changed(&engine, &data_file, &callbacks, &|| false);
 
         assert_eq!(*told.lock().unwrap(), [AutoUpdateStatus::InProgress]);
         let _ = std::fs::remove_dir_all(&dir);
@@ -2359,7 +2588,7 @@ mod tests {
             .data_file
             .set_last_applied_modified(DateTime::<Utc>::from(built));
 
-        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks);
+        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks, &|| false);
 
         // One write, which raises two events.
         std::fs::write(&watched.path, b"version 2").unwrap();
@@ -2370,8 +2599,8 @@ mod tests {
             .set_modified(built + NEWER)
             .unwrap();
         watched.finish.send(()).unwrap();
-        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks);
-        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks);
+        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks, &|| false);
+        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks, &|| false);
 
         assert_eq!(
             *told.lock().unwrap(),

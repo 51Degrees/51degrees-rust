@@ -49,7 +49,10 @@ pub enum AutoUpdateStatus {
     TooManyRequests,
     /// The server responded `403 Forbidden` (for example, a revoked key).
     Forbidden,
-    /// Writing the download to a file, or decompressing it, failed.
+    /// Writing the download to a file, or decompressing it, failed. The data
+    /// update service gives such a failure as [`AutoUpdateStatus::UnknownError`],
+    /// the status the specification's errors table and .NET give it, so it no
+    /// longer gives this one.
     StreamError,
     /// The downloaded content failed MD5 verification.
     Md5ValidationFailed,
@@ -61,6 +64,9 @@ pub enum AutoUpdateStatus {
     NoConfiguration,
     /// A temporary directory path was required but is not configured.
     TempPathNotSet,
+    /// A data file the file system watcher saw change could not be opened
+    /// for reading within ten minutes, so the engine was not refreshed.
+    Timeout,
     /// An unanticipated error occurred during the check.
     UnknownError,
 }
@@ -126,6 +132,7 @@ mod tests {
             AutoUpdateStatus::RefreshFailed,
             AutoUpdateStatus::NoConfiguration,
             AutoUpdateStatus::TempPathNotSet,
+            AutoUpdateStatus::Timeout,
             AutoUpdateStatus::UnknownError,
         ] {
             assert!(!status.is_ok(), "{status:?}");
