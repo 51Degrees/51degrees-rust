@@ -407,9 +407,10 @@ struct ReadmeExamples;
 /// the error it names. Fields and methods are reached on `FodId`, and each
 /// constant both at the crate root and in the module that holds it, so
 /// making a field or method public on `FodId`, exporting a constant at the
-/// root, or making a constant public in its own module fails this test. The first block reads every field through the
-/// accessor that names it, and must compile, so the blocks after it fail for
-/// the reason they name and not a broken fixture.
+/// root, or making a constant public in its own module fails this test.
+/// The first block reads every field through the accessor that names it,
+/// and must compile, so the blocks after it fail for the reason they name
+/// and not a broken fixture.
 ///
 /// ```
 /// fn read(id: &fodid::FodId) -> (fodid::Usage, fodid::IdType, u32, &[u8], Option<&str>) {
