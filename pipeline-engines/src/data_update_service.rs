@@ -2745,4 +2745,115 @@ mod tests {
         let _ = std::fs::remove_dir_all(&only.dir);
         let _ = std::fs::remove_dir_all(&kept.dir);
     }
+
+    /// An engine whose refresh fails until the test allows it, and which
+    /// counts the refreshes that worked.
+    struct FailsUntilAllowed {
+        filter: fiftyone_pipeline_core::EvidenceKeyFilterWhitelist,
+        data_files: Vec<Arc<AspectEngineDataFile>>,
+        allowed: std::sync::atomic::AtomicBool,
+        refreshes: std::sync::atomic::AtomicUsize,
+    }
+
+    impl fiftyone_pipeline_core::FlowElement for FailsUntilAllowed {
+        fn process(
+            &self,
+            _data: &mut fiftyone_pipeline_core::FlowData,
+        ) -> fiftyone_pipeline_core::Result<()> {
+            Ok(())
+        }
+        fn data_key(&self) -> &str {
+            "fails-until-allowed"
+        }
+        fn evidence_key_filter(&self) -> &dyn fiftyone_pipeline_core::EvidenceKeyFilter {
+            &self.filter
+        }
+        fn properties(&self) -> &[fiftyone_pipeline_core::PropertyMetaData] {
+            &[]
+        }
+    }
+
+    impl crate::AspectEngine for FailsUntilAllowed {
+        fn data_source_tier(&self) -> &str {
+            "Lite"
+        }
+        fn aspect_properties(&self) -> &[crate::AspectPropertyMetaData] {
+            &[]
+        }
+    }
+
+    impl OnPremiseAspectEngine for FailsUntilAllowed {
+        fn data_files(&self) -> &[Arc<AspectEngineDataFile>] {
+            &self.data_files
+        }
+        fn refresh(&self, _identifier: Option<&str>) -> fiftyone_pipeline_core::Result<()> {
+            if !self.allowed.load(Ordering::SeqCst) {
+                return Err(fiftyone_pipeline_core::Error::configuration(
+                    "the new data cannot be used",
+                ));
+            }
+            self.refreshes.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    /// data-updates.md lines 39 to 41: "If the updated data source cannot be
+    /// used, the refresh MUST fail with an error, and the Engine MUST go on
+    /// using the data source it had". A watched file whose refresh failed is
+    /// therefore not the data the engine has, so a later programmatic check
+    /// refreshes from it rather than answering that no update is needed. A
+    /// further event for the same write is in progress, so the watcher does
+    /// not try a write that failed again.
+    #[test]
+    fn a_watched_file_whose_refresh_failed_is_refreshed_by_a_later_check() {
+        let dir = std::env::temp_dir().join(format!(
+            "fiftyone-update-service-watched-failed-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("device.dat");
+        std::fs::write(&path, b"version 1").unwrap();
+        let built = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let data_file = Arc::new(AspectEngineDataFile::new(
+            crate::DataFileConfiguration::builder(&path)
+                .file_system_watcher_enabled(true)
+                .build(),
+        ));
+        data_file.set_last_applied_modified(DateTime::<Utc>::from(built));
+        let engine = Arc::new(FailsUntilAllowed {
+            filter: fiftyone_pipeline_core::EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+            data_files: vec![Arc::clone(&data_file)],
+            allowed: std::sync::atomic::AtomicBool::new(false),
+            refreshes: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let as_engine: Arc<dyn OnPremiseAspectEngine> = engine.clone();
+
+        std::fs::write(&path, b"version 2").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(built + NEWER)
+            .unwrap();
+
+        let watched = ServiceHandle::refresh_from_watched_file(&as_engine, &data_file, &|| false);
+        assert!(watched.is_err(), "the watched refresh fails, {watched:?}");
+        let again = ServiceHandle::refresh_from_watched_file(&as_engine, &data_file, &|| false);
+        assert_eq!(
+            again.unwrap(),
+            AutoUpdateStatus::InProgress,
+            "a further event for the same write"
+        );
+
+        engine.allowed.store(true, Ordering::SeqCst);
+        let checked = ServiceHandle::refresh_if_newer(&as_engine, &data_file, &path);
+        assert_eq!(
+            checked.unwrap(),
+            AutoUpdateStatus::Success,
+            "a later check refreshes from the file the watcher could not apply"
+        );
+        assert_eq!(engine.refreshes.load(Ordering::SeqCst), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
