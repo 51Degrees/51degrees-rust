@@ -1574,6 +1574,71 @@ fn read_error_message(error: std::io::Error) -> String {
 mod tests {
     use super::*;
 
+    /// The errors table gives "A watched file could not be opened for
+    /// reading within 10 minutes" the status `AUTO_UPDATE_TIMEOUT`, which is
+    /// not logged and has no message.
+    #[test]
+    fn the_wait_for_a_watched_file_is_10_minutes() {
+        assert_eq!(WATCHED_FILE_WAIT, Duration::from_secs(10 * 60));
+    }
+
+    /// A watched file that cannot be opened for reading by the time the wait
+    /// ends gives a timeout, with no message.
+    #[test]
+    fn a_watched_file_that_cannot_be_opened_in_time_is_a_timeout() {
+        let missing =
+            std::env::temp_dir().join(format!("fiftyone-never-written-{}.dat", std::process::id()));
+        let error = wait_until_readable(&missing, Duration::ZERO).expect_err("the file is missing");
+        assert_eq!(error.status, AutoUpdateStatus::Timeout);
+        assert_eq!(error.message, "");
+    }
+
+    /// A watched file that opens for reading is read at once.
+    #[test]
+    fn a_watched_file_that_opens_needs_no_wait() {
+        let path =
+            std::env::temp_dir().join(format!("fiftyone-readable-{}.dat", std::process::id()));
+        std::fs::write(&path, b"data").unwrap();
+        let result = wait_until_readable(&path, Duration::ZERO);
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    /// On Windows a file another handle holds with no sharing cannot be
+    /// opened for reading, as when it is still being written. The wait gives
+    /// a timeout while the file is held past its end, and goes on to read
+    /// the file once it is released within it.
+    #[cfg(windows)]
+    #[test]
+    fn a_watched_file_held_by_a_writer_is_waited_for() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let path = std::env::temp_dir().join(format!("fiftyone-held-{}.dat", std::process::id()));
+        std::fs::write(&path, b"data").unwrap();
+        let held = std::fs::OpenOptions::new()
+            .write(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+
+        let error = wait_until_readable(&path, Duration::ZERO).expect_err("the file is held");
+        assert_eq!(error.status, AutoUpdateStatus::Timeout);
+
+        // Released by another thread once the wait has begun. The wait's
+        // limit is the 10 minutes the table gives, which only a file never
+        // released reaches.
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let writer = std::thread::spawn(move || {
+            let _ = released.recv();
+            drop(held);
+        });
+        release.send(()).unwrap();
+        let result = wait_until_readable(&path, WATCHED_FILE_WAIT);
+        writer.join().unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "{result:?}");
+    }
+
     #[test]
     fn md5_matches_known_vector() {
         // MD5("abc") = 900150983cd24fb0d6963f7d28e17f72
