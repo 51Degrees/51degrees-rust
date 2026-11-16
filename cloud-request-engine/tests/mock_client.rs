@@ -1557,6 +1557,45 @@ fn license_engine_with(client: Arc<FakeClient>, values: &[&str]) -> CloudRequest
         .unwrap()
 }
 
+/// The number of recorded requests whose URL names `endpoint`.
+fn requests_naming(client: &FakeClient, endpoint: &str) -> usize {
+    client
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.contains(endpoint))
+        .count()
+}
+
+#[test]
+fn a_license_key_alone_build_attempts_both_discovery_requests() {
+    // cloud-request-engine.md line 241: "The Engine MUST attempt both
+    // discovery requests when it is built (in its builder or constructor),
+    // and MAY make them in parallel, so that in the normal case a built Engine
+    // is fully initialised and immediately ready to process Flow Data."
+    let client = Arc::new(FakeClient::default());
+    client.set_properties(FakeClient::ok(
+        r#"{"Products":{"device":{"Properties":[{"Name":"IsMobile","Type":"Bool"}]}}}"#,
+    ));
+    let engine = license_engine_with(client.clone(), &["device.ismobile"]);
+    assert_eq!(requests_naming(&client, "evidencekeys"), 1, "evidence keys");
+    assert_eq!(
+        requests_naming(&client, "accessibleproperties"),
+        1,
+        "accessible properties"
+    );
+    assert!(engine.has_loaded_metadata(), "ready to process");
+    assert!(
+        engine
+            .public_properties()
+            .unwrap()
+            .products
+            .contains_key("device"),
+        "the products the license key entitles are known"
+    );
+}
+
 #[test]
 fn a_license_key_alone_authenticates_the_request() {
     let client = Arc::new(FakeClient::default());
