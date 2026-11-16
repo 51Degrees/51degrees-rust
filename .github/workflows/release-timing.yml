@@ -114,6 +114,13 @@ jobs:
             echo "${prefix}51DEGREES_IPI_PATH=$d/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
           done
 
+      # The comparison script comes from the ref this run was started on, not
+      # from either side, because a head being timed need not carry it.
+      - name: Checkout the scripts this run uses
+        uses: actions/checkout@v4
+        with:
+          path: scripts
+
       - name: Install CMake
         uses: lukka/get-cmake@latest
 
@@ -178,7 +185,7 @@ jobs:
       # base's, and when a measure has fewer paired rounds than were asked for.
       - name: Compare the two sides under the release timing rule
         shell: pwsh
-        run: ./head/ci/compare-timing.ps1 -Log out/results.txt -Rounds ${{ inputs.rounds }}
+        run: ./scripts/ci/compare-timing.ps1 -Log out/results.txt -Rounds ${{ inputs.rounds }}
 
       - name: Keep the rounds' output
         if: always()
