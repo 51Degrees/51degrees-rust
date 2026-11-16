@@ -22,8 +22,13 @@
 
 //! The memory and disk space the machine has, read from the operating
 //! system, so caches can size themselves with no setting. Native targets
-//! only.
+//! only. `disk` comes with the `disk` feature.
 
+// Without the disk feature, the code that reads a volume's space is not
+// called.
+#![cfg_attr(not(feature = "disk"), allow(dead_code))]
+
+#[cfg(any(unix, feature = "disk"))]
 use std::path::Path;
 
 /// The memory the machine has, in bytes.
@@ -52,6 +57,7 @@ pub fn memory() -> Option<MemoryInfo> {
 
 /// The space on the volume that holds `path`, or `None` where it cannot be
 /// read. `path` must exist.
+#[cfg(feature = "disk")]
 pub fn disk(path: &Path) -> Option<DiskInfo> {
     imp::disk(path)
 }
@@ -244,8 +250,11 @@ mod tests {
             assert!(memory
                 .available
                 .is_some_and(|available| available <= memory.total));
-            let disk = disk(&std::env::temp_dir()).expect("disk");
-            assert!(disk.total > 0 && disk.available <= disk.total);
+            #[cfg(feature = "disk")]
+            {
+                let disk = disk(&std::env::temp_dir()).expect("disk");
+                assert!(disk.total > 0 && disk.available <= disk.total);
+            }
         }
     }
 }

@@ -30,12 +30,17 @@ runs.
 - `spin`, for `wasm32-wasip2` on Spin 4, adds a store over Spin's key-value
   store.
 - `tokio`, for native hosts, adds a spawner over a tokio-util local pool.
+- `disk`, for native hosts, adds `FileStore`, a store on disk, and
+  `machine::disk`.
 
-On native targets, `FileStore` keeps the entries on disk for a host with no
-platform store. Each entry is a file named by a hash of its key, written to
-a temporary file and renamed into place, holding the time it must be
-dropped. Expired and unused files are cleared, and the files are kept within
-a share of the volume's space by removing the least recently used. A
+With the `disk` feature, `FileStore` keeps the entries on disk for a native
+host with no platform store, following the disk cache page of the pipeline
+specification. Each entry is a file named by a keyed hash of its key, two
+folders down, written to a temporary file and renamed into place. The file
+holds the key and the entry with every time the store relies on, so no
+decision reads a time from the file system. Expired, unused and damaged
+files are cleared, and the files are kept within a share of the volume's
+space by removing those used least recently. A
 `LruStore` above it can be bounded by bytes, with `MemoryBudget` following
 the machine's memory, so copies in memory are evicted under memory pressure
 and read back from disk rather than loaded from the source. Both size

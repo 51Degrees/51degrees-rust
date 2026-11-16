@@ -169,11 +169,16 @@
 //! | `cloudflare` | `wasm32-unknown-unknown` | The `cloudflare` module, with stores over Workers KV and the Cache API, a spawner that keeps loads running with `wait_until`, and a clock |
 //! | `spin` | `wasm32-wasip2` | The `spin` module, with a store over Spin's key-value store |
 //! | `tokio` | Native | The `tokio` module, with a spawner over a tokio-util local pool |
+//! | `disk` | Native | `FileStore`, the disk tier, and `machine::disk` |
 //!
 //! ### On disk, for native hosts
 //!
 //! A native host with no platform store keeps entries on disk in a
-//! [`FileStore`] wrapped in an [`EncodedStore`], below a copy in memory:
+//! `FileStore` wrapped in an [`EncodedStore`], below a copy in memory. The
+//! store comes with the `disk` feature, off by default, and follows the
+//! disk cache page of the 51Degrees pipeline specification: the files sit
+//! in two levels of folders named by a keyed hash of each key, and each
+//! file holds its key and every time the store relies on.
 //!
 //! ```text
 //! LoadingCache(LruStore with a MemoryBudget, time to live 5 min)
@@ -191,11 +196,11 @@
 //!   and kept within a share of the volume's space by removing the least
 //!   recently used. They survive a restart.
 //!
-//! Both size themselves from the machine, with no setting. [`FileStore`],
+//! Both size themselves from the machine, with no setting. `FileStore`,
 //! [`MemoryBudget`] and [`machine`] are on native targets only.
 //!
 //! ```no_run
-//! # #[cfg(not(target_family = "wasm"))]
+//! # #[cfg(all(feature = "disk", not(target_family = "wasm")))]
 //! # fn main() -> std::io::Result<()> {
 //! use std::sync::Arc;
 //! use std::time::Duration;
@@ -218,7 +223,7 @@
 //! # let _ = pages;
 //! # Ok(())
 //! # }
-//! # #[cfg(target_family = "wasm")]
+//! # #[cfg(not(all(feature = "disk", not(target_family = "wasm"))))]
 //! # fn main() {}
 //! ```
 //!
@@ -286,7 +291,7 @@ mod cache;
 mod config;
 #[cfg(feature = "pipeline")]
 mod data_keyed;
-#[cfg(not(target_family = "wasm"))]
+#[cfg(all(feature = "disk", not(target_family = "wasm")))]
 mod file_store;
 mod loading;
 mod lru;
@@ -320,7 +325,7 @@ pub use cache::{Cache, PutCache};
 pub use config::{default_concurrency, CacheBuilder, DEFAULT_SIZE};
 #[cfg(feature = "pipeline")]
 pub use data_keyed::DataKeyedCache;
-#[cfg(not(target_family = "wasm"))]
+#[cfg(all(feature = "disk", not(target_family = "wasm")))]
 pub use file_store::{FileStore, FileStoreBuilder, DEFAULT_MOST_BYTES};
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub use loading::SystemClock;

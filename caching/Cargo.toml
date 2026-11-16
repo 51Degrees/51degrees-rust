@@ -29,6 +29,10 @@ spin = ["dep:spin-sdk"]
 # A spawner that runs loads on a tokio-util local pool, in the tokio module,
 # for native hosts.
 tokio = ["dep:tokio-util"]
+# FileStore, the disk tier for native hosts, and machine::disk, which sizes
+# it. Off by default, so a build keeps nothing on disk unless it asks to.
+# Native only: it adds nothing on WebAssembly.
+disk = ["dep:hmac", "dep:sha2", "dep:getrandom", "dep:log"]
 
 [dependencies]
 fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core", optional = true }
@@ -41,6 +45,12 @@ hashlink = "0.10"
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 ahash.workspace = true
 tokio-util = { version = "0.7", optional = true, features = ["rt"] }
+# The disk feature names each file by an HMAC-SHA-256 of its key under a
+# random secret, and logs the reads and writes that fail.
+hmac = { version = "0.12", optional = true }
+sha2 = { version = "0.10", optional = true }
+getrandom = { version = "0.2", optional = true }
+log = { version = "0.4", optional = true }
 
 # The volume's space is read with statvfs, and the memory on Apple systems
 # with sysctl, for the store on disk and the memory budget.
