@@ -35,8 +35,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 
 use fiftyone_device_detection::{
-    DeviceData, DeviceDetectionPipelineBuilder, Evidence, PerformanceProfile, Pipeline,
-    DEVICE_DATA_KEY,
+    DeviceData, DeviceDetectionOnPremiseEngineBuilder, DeviceDetectionPipelineBuilder, Evidence,
+    PerformanceProfile, Pipeline, DEVICE_DATA_KEY,
 };
 use fiftyone_pipeline_engines::AspectPropertyValue;
 
@@ -107,6 +107,16 @@ pub fn run(options: ExampleOptions) -> Result<()> {
     // Demonstrate that requesting fewer properties is faster: time a one-property
     // engine against an all-properties engine over the same evidence.
     compare_property_count_timing(&options)?;
+
+    // A setting that is often used but is not the default: suppress process
+    // errors, so an error in an element is recorded on the flow data and the
+    // caller carries on, rather than the error being returned from process.
+    let suppressing = pipeline_that_suppresses_process_errors(&options.data_file)?;
+    println!();
+    println!(
+        "A pipeline built with process errors suppressed: {}",
+        suppressing.is_suppress_process_exceptions()
+    );
 
     let missing = examples_shared::missing_properties(ENTERPRISE_SHOWN, &available);
     if let Some(message) = examples_shared::enterprise_data_file_message(&missing, CONTACT_US_URL) {
@@ -346,6 +356,25 @@ impl HardwareNameJoined for fiftyone_device_detection::DeviceDataBase {
     }
 }
 
+/// Build an on-premise pipeline with process errors suppressed, which is off
+/// by default. The Device Detection pipeline builder has no setting for it, so
+/// the engine is built on its own and added to a pipeline built with
+/// `Pipeline::builder()`, whose `suppress_process_exceptions(true)` turns it
+/// on. An error an element meets while processing is then kept in the flow
+/// data's errors instead of being returned from `process`, so a web site
+/// keeps serving pages when detection fails for one request.
+fn pipeline_that_suppresses_process_errors(data_file: &std::path::Path) -> Result<Arc<Pipeline>> {
+    let engine = DeviceDetectionOnPremiseEngineBuilder::new(data_file)
+        .performance_profile(PerformanceProfile::LowMemory)
+        .build()
+        .context("failed to build the on-premise device-detection engine")?;
+    Pipeline::builder()
+        .add_element(engine)
+        .suppress_process_exceptions(true)
+        .build()
+        .context("failed to build the pipeline that suppresses process errors")
+}
+
 /// Resolve the data file then run the example, with the same fallback chain as
 /// the other on-premise examples (argument, env var, Lite file).
 fn main() -> Result<()> {
@@ -466,6 +495,14 @@ mod tests {
  * Usage sharing is turned off with `.share_usage(false)`, because this is a
  * console example. In normal operation leave it on, which is the builder's
  * default, so 51Degrees receives evidence that improves detection.
+ *
+ * Process errors are not suppressed by default, so an error an element meets
+ * is returned from `process`. Many web sites turn suppression on, so that a
+ * failed detection for one request is kept in the flow data's errors and the
+ * page is still served. The Device Detection pipeline builder has no setting
+ * for it, so the example builds the engine with
+ * `DeviceDetectionOnPremiseEngineBuilder` and adds it to a pipeline from
+ * `Pipeline::builder()` with `.suppress_process_exceptions(true)`.
  *
  * The data file is read from the first command-line argument, the
  * `_51DEGREES_DD_PATH` environment variable, or the Lite Hash file in the data
