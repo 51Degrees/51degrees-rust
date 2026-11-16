@@ -294,14 +294,21 @@ const WATCHED_FILE_OPEN_LIMIT_MINUTES: u64 = 10;
 const WATCHED_FILE_OPEN_RETRY_MILLISECONDS: u64 = 500;
 
 /// Whether the file at `path` opens for reading, trying every `retry` until
-/// `limit` has passed.
-fn wait_until_readable(path: &Path, limit: Duration, retry: Duration) -> bool {
+/// `limit` has passed. Gives up as soon as `stop` answers true, so a
+/// shutdown does not wait the limit out, as the download and decompress
+/// paths do with the same kind of closure.
+fn wait_until_readable(
+    path: &Path,
+    limit: Duration,
+    retry: Duration,
+    stop: &dyn Fn() -> bool,
+) -> bool {
     let until = Instant::now() + limit;
     loop {
         if std::fs::File::open(path).is_ok() {
             return true;
         }
-        if Instant::now() >= until {
+        if stop() || Instant::now() >= until {
             return false;
         }
         std::thread::sleep(retry);
@@ -407,6 +414,15 @@ impl Inner {
             state: Mutex::new(SchedulerState::default()),
             callbacks: Arc::default(),
         }
+    }
+
+    /// True once the service has been dropped. Read by the long waits, so
+    /// that none of them holds a shutdown up.
+    fn shutting_down(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .shutting_down
     }
 
     /// Wake the scheduler, at once if it is waiting, or as soon as its round
@@ -823,6 +839,10 @@ impl DataUpdateService {
         let engine = Weak::clone(&registration.engine);
         let data_file = Arc::clone(&registration.data_file);
         let callbacks = Arc::clone(&self.inner.callbacks);
+        // Held weakly, because the service owns the registration that owns
+        // this watcher, so a strong handle here would keep the service
+        // alive for ever. A service already gone ends the wait too.
+        let service = Arc::downgrade(&self.inner);
         let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             let Ok(event) = res else {
                 return;
@@ -833,7 +853,12 @@ impl DataUpdateService {
                 .iter()
                 .any(|changed| changed.file_name() == file_name.as_deref());
             if names_the_file && (event.kind.is_modify() || event.kind.is_create()) {
-                ServiceHandle::on_file_changed(&engine, &data_file, &callbacks);
+                let stop = || {
+                    service
+                        .upgrade()
+                        .map_or(true, |service| service.shutting_down())
+                };
+                ServiceHandle::on_file_changed(&engine, &data_file, &callbacks, &stop);
             }
         });
 
@@ -1042,6 +1067,7 @@ impl ServiceHandle {
         engine: &Weak<dyn OnPremiseAspectEngine>,
         data_file: &Arc<AspectEngineDataFile>,
         callbacks: &UpdateCallbacks,
+        stop: &dyn Fn() -> bool,
     ) {
         let Some(engine) = engine.upgrade() else {
             // With its engine gone the watcher belongs to no registered data
@@ -1054,7 +1080,7 @@ impl ServiceHandle {
         };
         let key = engine.data_key();
         callbacks.start(key, Some(data_file));
-        let result = Self::refresh_from_watched_file(&engine, data_file);
+        let result = Self::refresh_from_watched_file(&engine, data_file, stop);
         callbacks.finish(key, Some(data_file), &result, CallbackPanic::Log);
     }
 
@@ -1071,6 +1097,7 @@ impl ServiceHandle {
     fn refresh_from_watched_file(
         engine: &Arc<dyn OnPremiseAspectEngine>,
         data_file: &AspectEngineDataFile,
+        stop: &dyn Fn() -> bool,
     ) -> DataUpdateResult {
         let Some(path) = data_file.data_file_path() else {
             return Ok(AutoUpdateStatus::NotNeeded);
@@ -1090,8 +1117,15 @@ impl ServiceHandle {
             path,
             Duration::from_secs(WATCHED_FILE_OPEN_LIMIT_MINUTES * 60),
             Duration::from_millis(WATCHED_FILE_OPEN_RETRY_MILLISECONDS),
+            stop,
         ) {
-            return Ok(AutoUpdateStatus::Timeout);
+            // A wait the shutdown ended applied no update, and is not a
+            // timeout, because the limit did not pass.
+            return Ok(if stop() {
+                AutoUpdateStatus::NotNeeded
+            } else {
+                AutoUpdateStatus::Timeout
+            });
         }
         log::info!(
             "Attempting to refresh Engine '{}' with new data",
@@ -1105,11 +1139,7 @@ impl ServiceHandle {
 
     /// True once the service has been dropped.
     fn shutting_down(&self) -> bool {
-        self.inner
-            .state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .shutting_down
+        self.inner.shutting_down()
     }
 
     /// Poll the remote update URL, verify, decompress, write and refresh.
@@ -1630,7 +1660,7 @@ mod tests {
         std::fs::write(&path, b"data").unwrap();
         let limit = Duration::from_secs(5);
         let started = Instant::now();
-        assert!(wait_until_readable(&path, limit, Duration::from_millis(50)));
+        assert!(wait_until_readable(&path, limit, Duration::from_millis(50), &|| false));
         assert!(started.elapsed() < limit);
         let _ = std::fs::remove_file(&path);
     }
@@ -1646,9 +1676,51 @@ mod tests {
         assert!(!wait_until_readable(
             &path,
             limit,
-            Duration::from_millis(50)
+            Duration::from_millis(50),
+            &|| false
         ));
         assert!(started.elapsed() >= limit);
+    }
+
+    /// A wait for a watched file to open ends as soon as the service is
+    /// dropped, rather than holding the shutdown up until the limit passes.
+    /// The closure is built exactly as `install_watcher` builds it, from a
+    /// weak handle to the service, because that is the one the wait is given.
+    /// The limit here is a minute rather than the ten the watcher uses, so a
+    /// wait that ignored the closure fails this in a minute rather than ten.
+    #[test]
+    fn dropping_the_service_ends_a_wait_for_a_watched_file() {
+        let path = temp_path("stopped-wait");
+        // A file that is not there never opens, so the wait only ends when
+        // it is told to or when the limit passes.
+        let _ = std::fs::remove_file(&path);
+        let service = DataUpdateService::new();
+        let service_weak = Arc::downgrade(&service.inner);
+        let limit = Duration::from_secs(60);
+
+        let waiting = std::thread::spawn(move || {
+            let stop = || {
+                service_weak
+                    .upgrade()
+                    .map_or(true, |service| service.shutting_down())
+            };
+            assert!(!stop(), "the service is still alive when the wait starts");
+            let started = Instant::now();
+            let opened = wait_until_readable(&path, limit, Duration::from_millis(50), &stop);
+            (opened, started.elapsed())
+        });
+
+        // Let the wait get going, then drop the service, which sets
+        // shutting_down before any watcher is dropped.
+        std::thread::sleep(Duration::from_millis(200));
+        drop(service);
+
+        let (opened, took) = waiting.join().unwrap();
+        assert!(!opened, "a file that is not there never opens");
+        assert!(
+            took < Duration::from_secs(10),
+            "the wait took {took:?}, so dropping the service did not end it"
+        );
     }
 
     /// A file that opens part way through the wait is readable then.
@@ -1666,7 +1738,8 @@ mod tests {
         assert!(wait_until_readable(
             &path,
             Duration::from_secs(10),
-            Duration::from_millis(50)
+            Duration::from_millis(50),
+            &|| false
         ));
         writer.join().unwrap();
         let _ = std::fs::remove_file(&path);
@@ -2482,7 +2555,7 @@ mod tests {
         drop(watched);
         assert!(engine.upgrade().is_none(), "the engine is still held");
 
-        ServiceHandle::on_file_changed(&engine, &data_file, &callbacks);
+        ServiceHandle::on_file_changed(&engine, &data_file, &callbacks, &|| false);
 
         assert_eq!(*told.lock().unwrap(), [AutoUpdateStatus::InProgress]);
         let _ = std::fs::remove_dir_all(&dir);
@@ -2510,7 +2583,7 @@ mod tests {
             .data_file
             .set_last_applied_modified(DateTime::<Utc>::from(built));
 
-        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks);
+        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks, &|| false);
 
         // One write, which raises two events.
         std::fs::write(&watched.path, b"version 2").unwrap();
@@ -2521,8 +2594,8 @@ mod tests {
             .set_modified(built + NEWER)
             .unwrap();
         watched.finish.send(()).unwrap();
-        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks);
-        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks);
+        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks, &|| false);
+        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks, &|| false);
 
         assert_eq!(
             *told.lock().unwrap(),
