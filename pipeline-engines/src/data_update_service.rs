@@ -903,7 +903,7 @@ impl DataUpdateService {
         }
         log::info!(
             "Attempting to refresh Engine '{}' with new data",
-            engine.data_key()
+            engine.engine_type_name()
         );
         guarded_refresh_from_file(engine.data_key(), || {
             engine.refresh(Some(data_file.identifier()))
@@ -1129,7 +1129,7 @@ impl ServiceHandle {
         }
         log::info!(
             "Attempting to refresh Engine '{}' with new data",
-            engine.data_key()
+            engine.engine_type_name()
         );
         guarded_refresh_from_file(engine.data_key(), || {
             engine.refresh(Some(data_file.identifier()))
@@ -1192,7 +1192,9 @@ impl ServiceHandle {
             }
         }
 
-        let name = engine.data_key();
+        // The specification names the Engine by its type in every message
+        // of its table, not by its data key.
+        let name = engine.engine_type_name();
         // An error message is masked where the check ends, but a log entry
         // written here is not, so the URL these entries name is masked now.
         let logged_url = redact_with(&url, &config.data_update_license_keys);
