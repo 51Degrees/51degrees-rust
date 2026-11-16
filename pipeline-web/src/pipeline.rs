@@ -34,11 +34,10 @@
 //!
 //! The built pipeline runs:
 //!
-//! 1. [`fiftyone_pipeline_engines_fiftyone::SequenceElement`] first (only when
-//!    [`WebIntegrationOptions::use_sequence_element`] is set), so the session
-//!    id and sequence number exist before anything else reads them. It is
-//!    only added when the application's elements do not already hold one,
-//!    found by its data key ignoring case, so the elements of a pipeline
+//! 1. [`fiftyone_pipeline_engines_fiftyone::SequenceElement`] first, so the
+//!    session id and sequence number exist before anything else reads them.
+//!    It is only added when the application's elements do not already hold
+//!    one, found by its data key ignoring case, so the elements of a pipeline
 //!    builder with usage sharing on keep their own.
 //! 2. the application's own elements, in the order they were added.
 //! 3. [`fiftyone_pipeline_engines_fiftyone::SetHeadersElement`] (only when
@@ -112,13 +111,6 @@ pub enum WebEndpoint {
 /// [`fiftyone_pipeline_core::constants`] values.
 #[derive(Debug, Clone)]
 pub struct WebIntegrationOptions {
-    /// When `true` (the default) a sequence element is added first, only when
-    /// the application's elements hold none, so the session id and sequence
-    /// number exist before anything else reads them. Set it to `false` to
-    /// leave it out. A sequence element among the application's elements runs
-    /// either way.
-    pub use_sequence_element: bool,
-
     /// When `true` (the default) a JSON builder and a JavaScript builder are
     /// added, each only when the application's elements hold none, so the
     /// client-side endpoints have content to serve. Set it to `false` for a
@@ -155,7 +147,6 @@ pub struct WebIntegrationOptions {
 impl Default for WebIntegrationOptions {
     fn default() -> Self {
         WebIntegrationOptions {
-            use_sequence_element: true,
             client_side_evidence_enabled: true,
             use_set_header_properties: true,
             suppress_process_exceptions: true,
@@ -290,11 +281,10 @@ fn order_elements(
     let mut ordered: Vec<Arc<dyn FlowElement>> = Vec::with_capacity(elements.len() + 4);
     let mut resources: Vec<Resource> = Vec::new();
 
-    // 1. Sequence element first, unless the option leaves it out or the
-    // application's elements already hold one, as a pipeline builder's
-    // elements do with usage sharing on.
+    // 1. Sequence element first, unless the application's elements already
+    // hold one, as a pipeline builder's elements do with usage sharing on.
     let given_sequence = position(&elements, SequenceElement::DEFAULT_ELEMENT_DATA_KEY).is_some();
-    if options.use_sequence_element && !given_sequence {
+    if !given_sequence {
         ordered.push(Arc::new(SequenceElement::new()));
     }
 
