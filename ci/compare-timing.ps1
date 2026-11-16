@@ -56,9 +56,7 @@ $measures = [ordered] @{
 foreach ($name in @($measures.Keys)) {
     $figures = @{ base = @{}; head = @{} }
     foreach ($match in [regex]::Matches($text, $measures[$name].Pattern)) {
-        # 'main' is the name the first runs of this comparison gave the base
-        # side, so a log from one of those still reads.
-        $side = if ($match.Groups['side'].Value -eq 'head') { 'head' } else { 'base' }
+        $side = $match.Groups['side'].Value
         $figures[$side][[int] $match.Groups['round'].Value] = [long] $match.Groups['value'].Value
     }
     $measures[$name].Figures = $figures
