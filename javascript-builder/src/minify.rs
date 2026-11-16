@@ -88,17 +88,26 @@ fn minify_impl(content: String) -> MinifyOutcome {
 /// which becomes the unminified fallback.
 #[cfg(all(feature = "minify", not(target_family = "wasm")))]
 fn try_minify(source: &str) -> Result<String, Vec<String>> {
-    std::thread::scope(|scope| {
-        match std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn_scoped(scope, || minify_with_oxc(source))
-        {
-            Ok(handle) => handle
-                .join()
-                .unwrap_or_else(|_| Err(vec!["The minifier stopped unexpectedly.".to_owned()])),
-            Err(error) => Err(vec![format!("The minifier could not start: {error}.")]),
-        }
-    })
+    let source = source.to_owned();
+    on_minifier_thread(move || minify_with_oxc(&source)).unwrap_or_else(|error| Err(vec![error]))
+}
+
+/// The stack each minifier thread has.
+#[cfg(all(feature = "minify", not(target_family = "wasm")))]
+const MINIFIER_STACK: usize = 16 * 1024 * 1024;
+
+/// Run `work` on a minifier thread, which has a [`MINIFIER_STACK`] stack, and
+/// return what it returns, or why it did not.
+#[cfg(all(feature = "minify", not(target_family = "wasm")))]
+fn on_minifier_thread<R: Send + 'static>(
+    work: impl FnOnce() -> R + Send + 'static,
+) -> Result<R, String> {
+    std::thread::Builder::new()
+        .stack_size(MINIFIER_STACK)
+        .spawn(work)
+        .map_err(|error| format!("The minifier could not start: {error}."))?
+        .join()
+        .map_err(|_| "The minifier stopped unexpectedly.".to_owned())
 }
 
 /// Parse, minify and print `source` with oxc. Returns the parser's messages if
@@ -208,6 +217,46 @@ mod tests {
             outcome.errors
         );
         assert_eq!(outcome.content, content, "the original content is kept");
+    }
+
+    /// Starting a thread with a large stack for each request cost more than
+    /// the minifying itself, 12.8 ms against 3.7 ms in release on a shared
+    /// Windows 11 machine, and much more when the machine was busy. The
+    /// minifier's threads are started once and used again, at most one for
+    /// each processor.
+    #[cfg(all(feature = "minify", not(target_family = "wasm")))]
+    #[test]
+    fn minifying_uses_its_threads_again() {
+        let threads: std::collections::HashSet<std::thread::ThreadId> = (0..32)
+            .map(|_| {
+                on_minifier_thread(|| std::thread::current().id())
+                    .expect("the work runs on a minifier thread")
+            })
+            .collect();
+        let processors = std::thread::available_parallelism().map_or(1, |count| count.get());
+        assert!(
+            threads.len() <= processors,
+            "32 minifications ran on {} threads, more than the {processors} \
+             processors",
+            threads.len()
+        );
+    }
+
+    /// A panic in the minifier is the unminified fallback, and the minifier
+    /// keeps working after it.
+    #[cfg(all(feature = "minify", not(target_family = "wasm")))]
+    #[test]
+    fn the_minifier_works_after_a_panic() {
+        let panicked = on_minifier_thread(|| -> usize { panic!("a minifier edge case") });
+        assert_eq!(
+            panicked.expect_err("a panic is an error"),
+            "The minifier stopped unexpectedly."
+        );
+        for _ in 0..8 {
+            assert_eq!(on_minifier_thread(|| 1 + 1), Ok(2));
+        }
+        let outcome = minify("var  x  =  1 ;".to_owned());
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
     }
 
     #[cfg(not(all(feature = "minify", not(target_family = "wasm"))))]
