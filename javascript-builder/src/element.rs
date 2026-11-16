@@ -30,7 +30,7 @@ use fiftyone_json_builder::JSON_BUILDER_DATA_KEY;
 use fiftyone_pipeline_core::constants::EVIDENCE_PROTOCOL_KEY;
 use fiftyone_pipeline_core::{
     EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
-    PropertyValue, PropertyValueType, Result, TypedFlowElement,
+    PropertyValue, PropertyValueType, Result,
 };
 
 use crate::builder::{
@@ -578,11 +578,6 @@ impl FlowElement for JavaScriptBuilderElement {
     fn into_any(self: Arc<Self>) -> Option<Arc<dyn Any + Send + Sync>> {
         Some(self)
     }
-}
-
-/// So [`FlowData::get_from_element`] gives the JavaScript this element built.
-impl TypedFlowElement for JavaScriptBuilderElement {
-    type Data = JavaScriptBuilderElementData;
 }
 
 #[cfg(test)]

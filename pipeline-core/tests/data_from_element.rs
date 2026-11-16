@@ -110,10 +110,7 @@ fn element_data_is_got_by_supplying_the_element_that_added_it() {
     // object, so no key or downcast is needed.
     let sky_data: &ColourData = data.get_from_element(sky.as_ref()).unwrap();
     assert_eq!(sky_data.colour, "blue");
-    assert_eq!(
-        data.get_from_element(grass.as_ref()).unwrap().colour,
-        "green"
-    );
+    assert_eq!(data.get_from_element(grass.as_ref()).unwrap().colour, "green");
 }
 
 #[test]
