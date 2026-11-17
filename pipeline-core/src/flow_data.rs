@@ -79,6 +79,22 @@ pub struct FlowData {
     /// to add, in order. None of them was added.
     refused_evidence: Vec<String>,
     processed: bool,
+    /// Which element data may be written now. See [`FlowData::get_or_add`].
+    writing: Writing,
+}
+
+/// Which element data in a flow data may be written.
+#[derive(Clone, Copy)]
+enum Writing {
+    /// Processing has not started, so the caller may write what it added.
+    Caller,
+    /// The element at `index` in the pipeline is processing. It may write the
+    /// element data under its own data key, which another element may have
+    /// added first, and what it added itself, being the keys of `order` from
+    /// `first_added` on.
+    Element { index: usize, first_added: usize },
+    /// No element is processing, so no element data may be written.
+    Nothing,
 }
 
 /// Where a flow data finds its pipeline.
@@ -135,6 +151,7 @@ impl FlowData {
             warnings: Vec::new(),
             refused_evidence: Vec::new(),
             processed: false,
+            writing: Writing::Caller,
         }
     }
 
@@ -346,6 +363,7 @@ impl FlowData {
             warnings: Vec::new(),
             refused_evidence: Vec::new(),
             processed: true,
+            writing: Writing::Nothing,
         }
     }
 
@@ -441,6 +459,16 @@ impl FlowData {
     /// An element in a parallel group can read the data added before the
     /// group but not change it, so for a key added before the group this
     /// returns a configuration error.
+    ///
+    /// Element data is written only by the element that provides it, or the
+    /// elements that share it, and only while they process, as the
+    /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#element-data)
+    /// requires. So for data already added, this returns a configuration
+    /// error once the element that added it has finished, and while any
+    /// other element processes. An element whose data key is that of data
+    /// already added, such as a second engine sharing one instance, may write
+    /// it while it processes. Data the caller adds before processing can be
+    /// written until processing starts.
     pub fn get_or_add<T, F>(&mut self, key: TypedKey<T>, create: F) -> Result<&mut T>
     where
         T: ElementData,
@@ -456,7 +484,16 @@ impl FlowData {
                 )));
             }
         }
+        let writable = self.may_write(&stored_key);
         let boxed = match self.data.entry(stored_key) {
+            Entry::Occupied(_) if !writable => {
+                return Err(Error::configuration(format!(
+                    "Element data under key '{}' cannot be written, because \
+                     the element that writes it is not processing. Element \
+                     data is read only once its element has finished.",
+                    key.name()
+                )));
+            }
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
                 self.order.push(entry.key().clone());
@@ -470,6 +507,35 @@ impl FlowData {
                 key.name()
             ))
         })
+    }
+
+    /// Whether the element data under `stored_key`, which is lowercased, may
+    /// be written now.
+    fn may_write(&self, stored_key: &str) -> bool {
+        match self.writing {
+            Writing::Caller => true,
+            Writing::Nothing => false,
+            Writing::Element { index, first_added } => {
+                self.pipeline().stored_data_key(index) == stored_key
+                    || self.order[first_added..]
+                        .iter()
+                        .any(|added| added == stored_key)
+            }
+        }
+    }
+
+    /// Open the element data of the element at `index` in the pipeline for
+    /// writing while it processes, with whatever it adds.
+    pub(crate) fn begin_element(&mut self, index: usize) {
+        self.writing = Writing::Element {
+            index,
+            first_added: self.order.len(),
+        };
+    }
+
+    /// Record that no element is processing, so no element data is written.
+    pub(crate) fn end_element(&mut self) {
+        self.writing = Writing::Nothing;
     }
 
     /// List the data keys present in this flow data, lowercased, in the order
