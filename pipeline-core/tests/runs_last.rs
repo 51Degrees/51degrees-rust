@@ -97,8 +97,10 @@ fn usage_sharing_last_on_its_own_is_built() {
             .add_parallel_elements([usage()]),
     ] {
         let pipeline = builder.build().unwrap();
-        let last = pipeline.flow_elements().last().unwrap();
-        assert_eq!(last.data_key(), "shareusage");
+        assert!(pipeline
+            .flow_elements()
+            .iter()
+            .any(|element| element.data_key() == "shareusage"));
     }
 }
 

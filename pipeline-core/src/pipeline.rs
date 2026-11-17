@@ -488,7 +488,6 @@ impl PipelineBuilder {
             ));
         }
         check_group_data_keys(&self.elements, &self.steps)?;
-        check_runs_last(&self.elements, &self.steps)?;
         check_group_evidence(&self.elements, &self.steps)?;
 
         // Build the pipeline-wide evidence filter by ORing each element's
@@ -526,6 +525,9 @@ impl PipelineBuilder {
         for element in &pipeline.elements {
             element.add_pipeline(&pipeline)?;
         }
+        // Checked after add_pipeline, so an element's own refusal, such as
+        // usage sharing added twice, is the one given.
+        check_runs_last(&pipeline.elements, &pipeline.steps)?;
         Ok(pipeline)
     }
 }
