@@ -21,8 +21,8 @@
  * ********************************************************************* */
 
 //! Evidence an element adds with `FlowData::add_evidence`, read by the
-//! elements after it and by the caller, added once the group has finished
-//! from an element of a parallel group, and left out of
+//! elements after it and by the caller, dropped when the group finishes from
+//! an element of a parallel group, and left out of
 //! `FlowData::supplied_evidence`.
 
 use std::any::Any;
@@ -231,11 +231,11 @@ fn the_caller_can_add_evidence_before_processing() {
 }
 
 /// An element of a group must not add evidence, and nothing checks it. What
-/// one adds all the same is added once the group has finished, so the
-/// elements of the group see the evidence from before the group, the element
-/// after the group sees what was added, and no error is recorded.
+/// one adds all the same stays in its own view of the flow data, which is
+/// dropped when the group finishes, so every element sees the evidence from
+/// before the group, the flow data keeps it, and no error is recorded.
 #[test]
-fn evidence_an_element_of_a_group_adds_is_added_once_the_group_has_finished() {
+fn evidence_an_element_of_a_group_adds_is_dropped_when_the_group_finishes() {
     const NAMES: &[&str] = &["query.added", "query.sequence"];
     let group = [
         element("adder", |data| {
@@ -254,25 +254,19 @@ fn evidence_an_element_of_a_group_adds_is_added_once_the_group_has_finished() {
     let mut data = pipeline.create_flow_data_with(supplied());
     data.process().unwrap();
 
-    for key in ["adder", "other"] {
+    for key in ["adder", "other", "after"] {
         assert_eq!(seen(&data, key, "query.added"), "absent", "{key}");
         assert_eq!(seen(&data, key, "query.sequence"), "5", "{key}");
     }
-    assert_eq!(seen(&data, "after", "query.added"), "1");
-    assert_eq!(seen(&data, "after", "query.sequence"), "6");
     assert_eq!(
         entries(data.evidence()),
-        pairs(&[
-            ("header.User-Agent", "test"),
-            ("query.Sequence", "6"),
-            ("query.added", "1"),
-        ])
+        pairs(&[("header.User-Agent", "test"), ("query.Sequence", "5")])
     );
     assert!(data.errors().is_empty(), "{:?}", data.errors());
 }
 
 /// With errors not suppressed, evidence an element of a group adds fails
-/// nothing, and the element after the group reads it.
+/// nothing, and is dropped when the group finishes.
 #[test]
 fn evidence_an_element_of_a_group_adds_fails_nothing() {
     let pipeline = Pipeline::builder()
@@ -286,15 +280,15 @@ fn evidence_an_element_of_a_group_adds_fails_nothing() {
     let mut data = pipeline.create_flow_data_with(supplied());
 
     data.process().unwrap();
-    assert_eq!(seen(&data, "after", "query.added"), "1");
-    assert_eq!(data.evidence().get("query.added"), Some("1"));
+    assert_eq!(seen(&data, "after", "query.added"), "absent");
+    assert_eq!(data.evidence().get("query.added"), None);
 }
 
 /// A pipeline builds a group holding an element that says it adds evidence,
 /// wherever it is in the group, because that is the element's
-/// responsibility, and the element after the group reads what it added. The
+/// responsibility, and what it added is dropped when the group finishes. The
 /// element builds on its own, and as a group of one, which is the element on
-/// its own.
+/// its own, and then the element after it reads what it added.
 #[test]
 fn a_group_holding_an_element_that_adds_evidence_is_built() {
     const ADDED: &[(&str, &str)] = &[("query.added", "1")];
@@ -307,7 +301,7 @@ fn a_group_holding_an_element_that_adds_evidence_is_built() {
                 .add_parallel_elements(group)
                 .add_element(reader("after", &["query.added"])),
         );
-        assert_eq!(seen(&data, "after", "query.added"), "1");
+        assert_eq!(seen(&data, "after", "query.added"), "absent");
     }
 
     for builder in [
