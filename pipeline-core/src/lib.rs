@@ -129,6 +129,7 @@ mod flow_data;
 mod flow_element;
 mod group_threads;
 mod pipeline;
+mod pool;
 mod property;
 pub mod redact;
 mod typed_key;

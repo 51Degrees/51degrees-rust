@@ -95,6 +95,19 @@ pub trait ElementData: Any + Send + Sync {
 
     /// Borrow this value as `&mut dyn Any` for downcasting to the concrete type.
     fn as_any_mut(&mut self) -> &mut dyn Any;
+
+    /// Clear every value so the instance can serve another request, keeping
+    /// the memory it holds, and return `true`. The default returns `false`,
+    /// and data that returns `false` is not reused.
+    ///
+    /// A flow data calls this for each element data it holds when it is
+    /// dropped, and keeps those that return `true` for
+    /// [`crate::FlowData::get_or_add_pooled`] to hand out again, as the
+    /// [resource cleanup specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/resource-cleanup.md#reusing-element-data)
+    /// recommends. Return `false` while a lazy task may still write the data.
+    fn reset(&mut self) -> bool {
+        false
+    }
 }
 
 /// A reusable, case-insensitive property bag that concrete element data can
@@ -165,6 +178,12 @@ impl MapElementData {
 }
 
 impl ElementData for MapElementData {
+    fn reset(&mut self) -> bool {
+        self.values.clear();
+        self.order.clear();
+        true
+    }
+
     fn get(&self, name: &str) -> Result<PropertyValue, NoValueError> {
         match self.get_value(name) {
             Some(value) => Ok(value.clone()),
