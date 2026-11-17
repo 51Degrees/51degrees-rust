@@ -30,10 +30,12 @@
 //! [conceptual overview](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/conceptual-overview.md#flow-data).
 //!
 //! A flow data belongs to exactly one pipeline and is created by it
-//! ([`crate::Pipeline::create_flow_data`]). It is intended to be used on a
-//! single thread, per the
-//! [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#flow-data),
-//! so its accessors take `&self`/`&mut self` and need no internal locking.
+//! ([`crate::Pipeline::create_flow_data`]). It is used by one thread at a
+//! time, as the
+//! [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#flow-data)
+//! says, so it takes no lock. It may move from one thread to another, but it
+//! is not safe to use from several threads at once, and a caller that needs
+//! to is responsible for any locking.
 //!
 //! A parallel group gives each of its elements a flow data of its own, which
 //! reads the evidence, element data, errors and warnings from before the group
@@ -63,6 +65,15 @@ use crate::warning::FlowWarning;
 /// Construct one via [`crate::Pipeline::create_flow_data`], add evidence when
 /// creating it, call [`FlowData::process`], then read results with
 /// [`FlowData::get`] (typed) or [`FlowData::get_str`] (by key).
+///
+/// A flow data is not safe to use from several threads at once, even once it
+/// has been processed, because element data that reads an on-premise
+/// engine's results writes into them when it is read. It may move from one
+/// thread to another, as an asynchronous task does. A caller that needs to
+/// use one from several threads at once is responsible for any locking, for
+/// example by wrapping its calls in a lock of its own. Work handed to another
+/// thread takes the values it needs, read from the flow data first, rather
+/// than the flow data.
 pub struct FlowData {
     source: Source,
     evidence: Evidence,
