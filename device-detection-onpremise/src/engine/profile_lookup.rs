@@ -23,9 +23,10 @@
 //! The profiles that hold a value of a property, looked up in the data set
 //! the engine has loaded.
 
+use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use fiftyone_device_detection_shared::{DeviceDataBase, DevicePropertyReader, ProfileReader};
 use fiftyone_pipeline_core::{Error, Evidence, Result};
@@ -120,7 +121,10 @@ impl DeviceDetectionOnPremiseEngine {
     /// so the results each id's profile is read from are created with the
     /// ids, before anything is read. Give both to
     /// [`MultiDeviceData::push_profile_ids`](fiftyone_device_detection_shared::MultiDeviceData::push_profile_ids)
-    /// to read the profiles only when they are first asked for.
+    /// to read the profiles only when they are first asked for. The reader
+    /// holds those results and takes no lock on them, so it is not safe to
+    /// use from several threads at once, and a caller that shares it
+    /// coordinates its own access.
     ///
     /// A profile the reader cannot read gives device data holding its id,
     /// whose other properties give the error as the reason they have no
@@ -142,7 +146,7 @@ impl DeviceDetectionOnPremiseEngine {
         let ids = found.iter().map(|(id, _)| *id).collect();
         let reader = LoadedProfiles {
             loaded,
-            results: Mutex::new(found.into_iter().collect()),
+            results: UnsafeCell::new(found.into_iter().collect()),
             warned: AtomicBool::new(false),
         };
         Ok((ids, Arc::new(reader)))
@@ -212,7 +216,7 @@ fn profile(
         .build();
     results.process_evidence(&evidence)?;
     let mut device = device_data(DetectionReader {
-        results: Mutex::new(results),
+        results,
         loaded: Arc::clone(loaded),
     });
     device.insert(PROFILE_ID_PROPERTY_NAME, id.to_string());
@@ -225,19 +229,25 @@ struct LoadedProfiles {
     loaded: Arc<LoadedDataSet>,
     /// The results to read each id's profile from, created from the data set
     /// the ids were found in, and taken by the id's first read. An id read
-    /// again, or one not found, is read from the data set in use.
-    results: Mutex<HashMap<u32, Results>>,
+    /// again, or one not found, is read from the data set in use. No lock is
+    /// taken.
+    results: UnsafeCell<HashMap<u32, Results>>,
     /// Set once a profile of this lookup has failed to read.
     warned: AtomicBool,
 }
 
+// Safety: the results instances held here are not safe to use from several
+// threads at once, and the reader takes no lock on them, as the
+// thread-safety specification's results instances section requires. A
+// caller that reads profiles from several threads coordinates its own
+// access, as `MultiDeviceData` does by reading them once.
+unsafe impl Sync for LoadedProfiles {}
+
 impl ProfileReader for LoadedProfiles {
     fn read_profile(&self, id: u32) -> DeviceDataBase {
-        let results = self
-            .results
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&id);
+        // Safety: the caller coordinates access, so no other reference to
+        // the map is live.
+        let results = unsafe { &mut *self.results.get() }.remove(&id);
         profile(&self.loaded, results, id).unwrap_or_else(|error| {
             unread_profile(
                 id,

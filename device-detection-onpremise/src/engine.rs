@@ -730,10 +730,7 @@ impl DeviceDetectionOnPremiseEngine {
         let evidence = self.collect_evidence(data);
         results.process_evidence(&evidence)?;
 
-        Ok(DetectionReader {
-            results: Mutex::new(results),
-            loaded,
-        })
+        Ok(DetectionReader { results, loaded })
     }
 
     /// Collect the evidence the engine's filter accepts into a single
@@ -1135,14 +1132,20 @@ impl ReadableProperties {
 /// Reads the properties of one detection from its native results when they are
 /// requested.
 struct DetectionReader {
-    /// The native results. Reading a value writes into them, so each read
-    /// holds the lock. Declared first, so they are freed before the data set
-    /// they came from.
-    results: Mutex<Results>,
+    /// The native results. Reading a value writes into them, and no lock is
+    /// taken. Declared first, so they are freed before the data set they came
+    /// from.
+    results: Results,
     /// The data set snapshot the results came from, which the property indexes
     /// belong to.
     loaded: Arc<LoadedDataSet>,
 }
+
+// Safety: a results instance is not safe to use from several threads at
+// once, and the reader takes no lock on it, as the thread-safety
+// specification's results instances section requires. A caller that shares
+// the device data across threads coordinates its own access.
+unsafe impl Sync for DetectionReader {}
 
 /// New device data reading each property from `reader` when it is first
 /// requested, giving the reason a property its data set lacks is missing.
@@ -1177,10 +1180,10 @@ impl DevicePropertyReader for DetectionReader {
     /// results hold no value that is the reason the C library decides, and
     /// otherwise the reason `no_value_reason` gives.
     fn read_property_with_reason(&self, position: usize) -> ReasonedOutcome {
-        let results = self.results.lock().unwrap_or_else(PoisonError::into_inner);
+        let results = &self.results;
         let (name, value_type, index) = match &self.loaded.readable.properties[position] {
             ReadableProperty::Metric(metric) => {
-                return metric.read(&results).map(|value| value.ok_or(None));
+                return metric.read(results).map(|value| value.ok_or(None));
             }
             ReadableProperty::File {
                 name,
@@ -1878,13 +1881,7 @@ mod tests {
         let (engine, data) = engine_and_data(&path);
         for metric in Metric::READ_ORDER {
             let reader = engine.detection_reader(&data).expect("detection succeeds");
-            let pending = || {
-                reader
-                    .results
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .pending_graphs()
-            };
+            let pending = || reader.results.pending_graphs();
             let all = pending();
             assert!(all > 1, "a graph for each component: {all}");
             let position = |name: &str| reader.position(name).expect(name);

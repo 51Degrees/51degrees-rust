@@ -554,7 +554,7 @@ impl IpIntelligenceOnPremiseEngine {
         ip.base_mut()
             .add_missing_property_source(Arc::clone(&loaded.missing));
         Ok(ip.with_reader(LookupReader {
-            results: Mutex::new(results),
+            results,
             client_ip,
             loaded,
         }))
@@ -996,15 +996,21 @@ impl ReadableNames {
 /// Reads the properties of one lookup from its native results when they are
 /// requested.
 struct LookupReader {
-    /// The native results. Reading a value writes into them, so each read
-    /// holds the lock. Declared first, so they are freed before the data set
-    /// they came from.
-    results: Mutex<Results>,
+    /// The native results. Reading a value writes into them, and no lock is
+    /// taken. Declared first, so they are freed before the data set they came
+    /// from.
+    results: Results,
     /// The client IP evidence the lookup read, for [`ADDED_PROPERTIES`].
     client_ip: ClientIpEvidence,
     /// The data set the results came from, with its properties.
     loaded: Arc<LoadedDataSet>,
 }
+
+// Safety: a results instance is not safe to use from several threads at
+// once, and the reader takes no lock on it, as the thread-safety
+// specification's results instances section requires. A caller that shares
+// the IP Intelligence data across threads coordinates its own access.
+unsafe impl Sync for LookupReader {}
 
 impl IpIntelligencePropertyReader for LookupReader {
     fn property_names(&self) -> &[String] {
@@ -1031,8 +1037,7 @@ impl IpIntelligencePropertyReader for LookupReader {
         };
         let name = &readable.names[position];
         let value_type = readable.value_types[position];
-        let results = self.results.lock().unwrap_or_else(PoisonError::into_inner);
-        populate_property(data, &results, name, index, value_type)
+        populate_property(data, &self.results, name, index, value_type)
             .map_err(|error| error.to_string())
     }
 }
@@ -2016,7 +2021,7 @@ mod tests {
             .process_client_ip_evidence(&evidence)
             .expect("the address is read");
         LookupReader {
-            results: Mutex::new(results),
+            results,
             client_ip,
             loaded,
         }
