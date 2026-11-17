@@ -1393,4 +1393,26 @@ mod tests {
         }
         assert!(seen.iter().all(|seen| *seen), "a slot no accessor passes");
     }
+
+    /// Implemented for every type, and a second time for every `Sync` type,
+    /// so naming the item through it is ambiguous, and fails to compile,
+    /// exactly when the type is `Sync`.
+    trait AmbiguousIfSync<A> {
+        fn check() {}
+    }
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+    struct IsSync;
+    impl<T: ?Sized + Sync> AmbiguousIfSync<IsSync> for T {}
+
+    fn assert_send<T: Send>() {}
+
+    /// Device data that reads from a results instance is not safe to use from several threads at once, so it is
+    /// `Send` but not `Sync`, and the compiler refuses code that shares one
+    /// across threads, as the thread-safety specification's results
+    /// instances section requires.
+    #[test]
+    fn it_is_send_but_not_sync() {
+        assert_send::<DeviceDataBase>();
+        <DeviceDataBase as AmbiguousIfSync<_>>::check();
+    }
 }
