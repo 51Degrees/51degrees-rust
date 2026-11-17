@@ -39,8 +39,9 @@
 //! reads the evidence, element data, errors and warnings from before the group
 //! through a shared view and keeps the element data, errors and warnings the
 //! element adds. The pipeline moves those back into the original flow data
-//! once every element has finished. An element of a group adds no evidence,
-//! because the others read the evidence at the same time.
+//! once every element has finished. An element of a group must not add
+//! evidence, because the others read the evidence at the same time, and
+//! evidence one adds all the same is added once the group has finished.
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -75,9 +76,9 @@ pub struct FlowData {
     order: Vec<String>,
     errors: Vec<FlowError>,
     warnings: Vec<FlowWarning>,
-    /// For an element in a parallel group, the keys of the evidence it tried
-    /// to add, in order. None of them was added.
-    refused_evidence: Vec<String>,
+    /// For an element in a parallel group, the evidence it added, in order,
+    /// which the pipeline adds once the group has finished.
+    group_evidence: Vec<(String, String)>,
     processed: bool,
 }
 
@@ -115,8 +116,8 @@ pub(crate) struct GroupMemberAdded {
     pub(crate) errors: Vec<FlowError>,
     /// The warnings it recorded.
     pub(crate) warnings: Vec<FlowWarning>,
-    /// The keys of the evidence it tried to add, in order.
-    pub(crate) refused_evidence: Vec<String>,
+    /// The evidence it added, in order.
+    pub(crate) evidence: Vec<(String, String)>,
 }
 
 impl FlowData {
@@ -133,7 +134,7 @@ impl FlowData {
             order: Vec::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
-            refused_evidence: Vec::new(),
+            group_evidence: Vec::new(),
             processed: false,
         }
     }
@@ -181,10 +182,12 @@ impl FlowData {
     /// An element in a parallel group must not add evidence, because the
     /// other elements of the group read the evidence at the same time, as the
     /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#evidence)
-    /// says. The value is not added, and once the group has finished the
-    /// pipeline records a configuration error against the element. An
+    /// says. That is the element's responsibility, and nothing checks it. An
     /// element that adds evidence runs on its own, before the elements that
-    /// read the value, and says so with [`FlowElement::adds_evidence`].
+    /// read the value. Evidence an element of a group adds all the same is
+    /// added once the group has finished, in the order the elements were
+    /// given, so no element of the group sees it and the elements after the
+    /// group do.
     ///
     /// It can also be called after processing, as .NET's and Java's
     /// `AddEvidence` can. Evidence added then changes no element's results,
@@ -200,7 +203,7 @@ impl FlowData {
     pub fn add_evidence(&mut self, key: impl AsRef<str>, value: impl Into<String>) {
         let key = key.as_ref();
         if matches!(self.source, Source::Group(_)) {
-            self.refused_evidence.push(key.to_owned());
+            self.group_evidence.push((key.to_owned(), value.into()));
             return;
         }
         log::debug!("Evidence '{key}' was added to a flow data.");
@@ -344,7 +347,7 @@ impl FlowData {
             order: Vec::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
-            refused_evidence: Vec::new(),
+            group_evidence: Vec::new(),
             processed: true,
         }
     }
@@ -357,7 +360,7 @@ impl FlowData {
             order: self.order,
             errors: self.errors,
             warnings: self.warnings,
-            refused_evidence: self.refused_evidence,
+            evidence: self.group_evidence,
         }
     }
 

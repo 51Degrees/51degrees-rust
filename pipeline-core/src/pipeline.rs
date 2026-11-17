@@ -205,8 +205,9 @@ impl Pipeline {
     /// of its own that reads what `data` held before the group, then add what
     /// each one added and record each one's errors, in the order given. An
     /// element's recorded errors come before its returned error, as they do
-    /// in sequence. Each key of evidence an element tried to add gives a
-    /// configuration error against that element.
+    /// in sequence. Evidence an element added is added to `data` then, in the
+    /// same order, with no error, because whether an element of a group adds
+    /// evidence is its own responsibility.
     ///
     /// A panic in an element is raised again here once every element has
     /// finished and `data` holds its evidence and earlier results again.
@@ -231,15 +232,8 @@ impl Pipeline {
                         self.record_error(data, element.data_key(), error);
                     }
                     data.add_group_member_warnings(added.warnings);
-                    for key in added.refused_evidence {
-                        let error = Error::configuration(format!(
-                            "An element of a parallel group tried to add the \
-                             evidence '{key}', which was refused, because the \
-                             other elements of the group read the evidence at \
-                             the same time. Add the element on its own, before \
-                             the elements that read the value."
-                        ));
-                        self.record_error(data, element.data_key(), error);
+                    for (key, value) in added.evidence {
+                        data.add_evidence(key, value);
                     }
                     for key in data.add_group_member_data(added.data, added.order) {
                         let error = Error::configuration(format!(
@@ -403,10 +397,9 @@ impl PipelineBuilder {
     /// [`FlowData::add_evidence`], because the others read the evidence at the
     /// same time, as the
     /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#evidence)
-    /// says. [`PipelineBuilder::build`] refuses a group holding an element
-    /// whose [`FlowElement::adds_evidence`] is `true`, such as the Sequence
-    /// element. Evidence that any other element of a group adds is not added,
-    /// and a configuration error is recorded against that element instead.
+    /// says. That is the element's responsibility, and nothing checks it.
+    /// Evidence an element of a group adds all the same is added once the
+    /// group has finished, so the elements after the group read it.
     ///
     /// So an element of a group cannot add data under a key that another
     /// element of the group adds or that was added before the group. It gets a
@@ -475,10 +468,9 @@ impl PipelineBuilder {
     /// pipeline, in order. Returns an error if no elements were added, since an
     /// empty pipeline cannot do useful work and almost always indicates a
     /// misconfiguration, if a parallel group holds an element with the data
-    /// key of another element of the group or of one before the group, or an
-    /// element that adds evidence (see
-    /// [`PipelineBuilder::add_parallel_elements`]), or the first
-    /// error an element returns from `add_pipeline`.
+    /// key of another element of the group or of one before the group (see
+    /// [`PipelineBuilder::add_parallel_elements`]), or the first error an
+    /// element returns from `add_pipeline`.
     pub fn build(self) -> Result<Arc<Pipeline>> {
         if self.elements.is_empty() {
             return Err(Error::configuration(
@@ -486,7 +478,6 @@ impl PipelineBuilder {
             ));
         }
         check_group_data_keys(&self.elements, &self.steps)?;
-        check_group_evidence(&self.elements, &self.steps)?;
 
         // Build the pipeline-wide evidence filter by ORing each element's
         // filter. Each element's filter is wrapped so the aggregator can query
@@ -560,27 +551,6 @@ fn check_group_data_keys(elements: &[Arc<dyn FlowElement>], steps: &[Step]) -> R
                 }
                 before.extend(group);
             }
-        }
-    }
-    Ok(())
-}
-
-/// Refuse a parallel group holding an element that says it adds evidence,
-/// because the other elements of the group read the evidence at the same
-/// time.
-fn check_group_evidence(elements: &[Arc<dyn FlowElement>], steps: &[Step]) -> Result<()> {
-    for step in steps {
-        let Step::Group(range) = step else {
-            continue;
-        };
-        if let Some(element) = elements[range.clone()].iter().find(|e| e.adds_evidence()) {
-            return Err(Error::configuration(format!(
-                "An element of a parallel group with the data key '{}' adds \
-                 evidence, which the other elements of the group read at the \
-                 same time. Add it on its own, before the elements that read \
-                 what it adds.",
-                element.data_key()
-            )));
         }
     }
     Ok(())
