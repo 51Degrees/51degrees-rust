@@ -62,9 +62,10 @@
 
 use std::any::Any;
 use std::borrow::Cow;
+use std::cell::UnsafeCell;
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use fiftyone_pipeline_core::{
     ElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType, TypedKey,
@@ -375,8 +376,15 @@ impl StoredValue {
 /// read at most once.
 struct DeferredValues {
     reader: Box<dyn IpIntelligencePropertyReader>,
-    state: Mutex<DeferredState>,
+    /// What has been read so far. No lock is taken.
+    state: UnsafeCell<DeferredState>,
 }
+
+// Safety: the values are read from a results instance, and neither is safe
+// to use from several threads at once. No lock is taken, as the
+// thread-safety specification's results instances section requires, and a
+// caller that shares the data across threads coordinates its own access.
+unsafe impl Sync for DeferredValues {}
 
 struct DeferredState {
     /// The dynamic-bag mirror of the values read so far, which the reader
@@ -432,8 +440,9 @@ impl DeferredValues {
         position: usize,
         look: impl FnOnce(&StoredValue, &IpIntelligenceDataBase) -> R,
     ) -> Result<R, String> {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let state = &mut *state;
+        // Safety: the caller coordinates access, so no other reference to
+        // the state is live.
+        let state = unsafe { &mut *self.state.get() };
         if let Some(message) = self.read(state, position) {
             return Err(message);
         }
@@ -444,8 +453,9 @@ impl DeferredValues {
     /// reason for none, in the reader's order whatever order they were read
     /// in, reading any not yet read.
     fn keys(&self) -> Vec<String> {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let state = &mut *state;
+        // Safety: the caller coordinates access, so no other reference to
+        // the state is live.
+        let state = unsafe { &mut *self.state.get() };
         for position in 0..self.reader.property_names().len() {
             self.read(state, position);
         }
@@ -465,7 +475,9 @@ fn needs_lowercase(name: &str) -> bool {
 
 impl fmt::Debug for DeferredValues {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        // Safety: the caller coordinates access, so nothing writes the state
+        // meanwhile.
+        let state = unsafe { &*self.state.get() };
         f.debug_struct("DeferredValues")
             .field("read", &state.read)
             .field("stored", &state.stored)
@@ -546,12 +558,17 @@ impl IpIntelligenceDataBase {
     /// Read every property not set on this data directly from `reader` when it
     /// is first requested, keeping each value once read.
     ///
-    /// A value set directly takes precedence over the reader's. Reads go
-    /// through a lock, so the data can be shared between threads.
+    /// A value set directly takes precedence over the reader's. Reads take no
+    /// lock, as the
+    /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#results-instances)
+    /// requires, so the data is not safe to read from several threads at
+    /// once, and a caller that shares it across threads coordinates its own
+    /// access. A clone shares the values read with the data it was cloned
+    /// from, so the two are not safe to read from two threads at once either.
     pub fn with_reader(mut self, reader: impl IpIntelligencePropertyReader + 'static) -> Self {
         self.deferred = Some(Arc::new(DeferredValues {
             reader: Box::new(reader),
-            state: Mutex::new(DeferredState {
+            state: UnsafeCell::new(DeferredState {
                 values: IpIntelligenceDataBase::new(IP_DATA_KEY_NAME),
                 read: Vec::new(),
                 stored: Vec::new(),
@@ -1166,6 +1183,7 @@ mod tests {
     use fiftyone_pipeline_engines::{
         EngineDeployment, MissingPropertyReason, MissingPropertySource, DEFAULT_NO_VALUE_MESSAGE,
     };
+    use std::sync::Mutex;
 
     /// A small weighted string list, deliberately out of weighting order so the
     /// setter's sort is exercised.
@@ -1901,16 +1919,23 @@ mod tests {
         assert_eq!(reads_of(&reads, "country"), 0);
     }
 
+    /// Reads from several threads, each holding a lock of the caller's own
+    /// because the data takes none, agree and read once.
     // WebAssembly has no threads to spawn.
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn reads_from_several_threads_agree_and_read_once() {
         let (reader, reads) = CountingReader::new();
-        let data = Arc::new(IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader));
+        let data = Arc::new(Mutex::new(
+            IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader),
+        ));
         let handles: Vec<_> = (0..8)
             .map(|_| {
                 let data = Arc::clone(&data);
-                std::thread::spawn(move || data.country().value().unwrap().clone())
+                std::thread::spawn(move || {
+                    let data = data.lock().unwrap();
+                    data.country().value().unwrap().clone()
+                })
             })
             .collect();
         for handle in handles {

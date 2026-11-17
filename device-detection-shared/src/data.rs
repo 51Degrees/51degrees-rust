@@ -30,8 +30,9 @@
 //! interface-compatible.
 
 use std::any::Any;
+use std::cell::UnsafeCell;
 use std::fmt;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use fiftyone_pipeline_core::{
     ElementData, MapElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType,
@@ -126,9 +127,15 @@ type ReadOutcome = Result<Result<PropertyValue, Option<String>>, String>;
 struct DeferredValues {
     reader: Box<dyn DevicePropertyReader>,
     /// The outcome of each read so far, by position in the reader's names.
-    /// Empty until the first read.
-    read: Mutex<Vec<Option<ReadOutcome>>>,
+    /// Empty until the first read. No lock is taken.
+    read: UnsafeCell<Vec<Option<ReadOutcome>>>,
 }
+
+// Safety: the values are read from a results instance, and neither is safe
+// to use from several threads at once. No lock is taken, as the
+// thread-safety specification's results instances section requires, and a
+// caller that shares the data across threads coordinates its own access.
+unsafe impl Sync for DeferredValues {}
 
 impl DeferredValues {
     /// The position of a property in the reader's names, or `None` when the
@@ -169,16 +176,20 @@ impl DeferredValues {
         if position >= self.reader.property_names().len() {
             return None;
         }
-        let mut read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
-        Some(self.outcome(&mut read, position).clone())
+        // Safety: the caller coordinates access, so no other reference to
+        // the values read is live.
+        let read = unsafe { &mut *self.read.get() };
+        Some(self.outcome(read, position).clone())
     }
 
     /// The value of a property, read on its first request, or `None` when the
     /// reader cannot read it.
     fn get(&self, name: &str) -> Option<ReadOutcome> {
         let position = self.readable(name)?;
-        let mut read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
-        Some(self.outcome(&mut read, position).clone())
+        // Safety: the caller coordinates access, so no other reference to
+        // the values read is live.
+        let read = unsafe { &mut *self.read.get() };
+        Some(self.outcome(read, position).clone())
     }
 
     /// The lowercase names of every property the reader holds, with or
@@ -195,7 +206,9 @@ fn needs_lowercase(name: &str) -> bool {
 
 impl fmt::Debug for DeferredValues {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
+        // Safety: the caller coordinates access, so nothing writes the
+        // values read meanwhile.
+        let read = unsafe { &*self.read.get() };
         let read: Vec<(&String, &ReadOutcome)> = self
             .reader
             .property_names()
@@ -319,12 +332,17 @@ impl DeviceDataBase {
     /// Read every property not in the bag from `reader` when it is first
     /// requested, keeping each value once read.
     ///
-    /// A value in the bag takes precedence over the reader's. Reads go through
-    /// a lock, so the data can be shared between threads.
+    /// A value in the bag takes precedence over the reader's. Reads take no
+    /// lock, as the
+    /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#results-instances)
+    /// requires, so the data is not safe to read from several threads at
+    /// once, and a caller that shares it across threads coordinates its own
+    /// access. A clone shares the values read with the data it was cloned
+    /// from, so the two are not safe to read from two threads at once either.
     pub fn with_reader(mut self, reader: impl DevicePropertyReader + 'static) -> Self {
         self.deferred = Some(Arc::new(DeferredValues {
             reader: Box::new(reader),
-            read: Mutex::new(Vec::new()),
+            read: UnsafeCell::new(Vec::new()),
         }));
         self
     }
@@ -714,6 +732,7 @@ mod tests {
         EngineDeployment, MissingPropertyReason, MissingPropertySource,
     };
     use std::collections::HashMap;
+    use std::sync::Mutex;
 
     #[test]
     fn data_key_string_is_device() {
@@ -1242,16 +1261,21 @@ mod tests {
         );
     }
 
+    /// Reads from several threads, each holding a lock of the caller's own
+    /// because the data takes none, agree and read once.
     // WebAssembly has no threads to spawn.
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn reads_from_several_threads_agree_and_read_once() {
         let (reader, reads) = CountingReader::new();
-        let device = Arc::new(DeviceDataBase::new().with_reader(reader));
+        let device = Arc::new(Mutex::new(DeviceDataBase::new().with_reader(reader)));
         let handles: Vec<_> = (0..8)
             .map(|_| {
                 let device = Arc::clone(&device);
-                std::thread::spawn(move || device.platform_name().value().unwrap().clone())
+                std::thread::spawn(move || {
+                    let device = device.lock().unwrap();
+                    device.platform_name().value().unwrap().clone()
+                })
             })
             .collect();
         for handle in handles {
