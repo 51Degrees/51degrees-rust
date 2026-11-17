@@ -890,3 +890,40 @@ fn device_data_gives_the_engine_reason_for_a_missing_property() {
         MissingPropertyReason::Unknown
     );
 }
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let Some(engine) = build_engine() else {
+        return;
+    };
+    let element: Arc<dyn FlowElement> = engine;
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("pipeline builds");
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("header.user-agent", "Mozilla/5.0")
+            .build(),
+    );
+    data.process().expect("processing succeeds");
+    assert!(
+        data.get(DEVICE_DATA_KEY).is_some(),
+        "no data under '{}'",
+        DEVICE_DATA_KEY.name()
+    );
+    match data.get_or_add(DEVICE_DATA_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            DEVICE_DATA_KEY.name()
+        ),
+    }
+}

@@ -374,3 +374,37 @@ fn a_second_pipeline_needs_the_same_device_detection_engine() {
         .build();
     assert!(result.is_err());
 }
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let Some(device) = device_engine() else {
+        return;
+    };
+    let robots = robots();
+    let pipeline = pipeline(&device, &robots);
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("query.robotstxt.tdl", "https://m4ow.uk/socw/1.txt")
+            .build(),
+    );
+    data.process().expect("the request is processed");
+    assert!(
+        data.get(ROBOTS_TXT_DATA_KEY).is_some(),
+        "no data under '{}'",
+        ROBOTS_TXT_DATA_KEY.name()
+    );
+    match data.get_or_add(ROBOTS_TXT_DATA_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            ROBOTS_TXT_DATA_KEY.name()
+        ),
+    }
+}

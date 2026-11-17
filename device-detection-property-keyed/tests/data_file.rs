@@ -498,3 +498,36 @@ fn a_value_the_engine_refuses_gives_a_warning_and_no_profiles() {
         );
     }
 }
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires. The two
+/// engines share the hardware data, so each writes it while it processes.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let Some(device) = device_with_key_properties() else {
+        return;
+    };
+    let (tac, native) = (tac(), native());
+    let pipeline = pipeline(&device, &[&tac, &native]);
+    let mut data = process(
+        &pipeline,
+        &[(TAC_KEY, VALID_TAC), (NATIVE_MODEL_KEY, VALID_NATIVE_MODEL)],
+    );
+    assert!(
+        data.get(HARDWARE_DATA_KEY).is_some(),
+        "no data under '{}'",
+        HARDWARE_DATA_KEY.name()
+    );
+    match data.get_or_add(HARDWARE_DATA_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            HARDWARE_DATA_KEY.name()
+        ),
+    }
+}

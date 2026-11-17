@@ -685,3 +685,43 @@ fn ip_data_names_no_tier_for_a_property_the_asn_file_lacks() {
         assert!(!typed.contains("license/data"), "{properties:?}: {typed}");
     }
 }
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let Some(file) = asn_data_file() else {
+        eprintln!("no ASN data file found; skipping");
+        return;
+    };
+    let Some(engine) = build_engine(&file, PerformanceProfile::HighPerformance, ASN_PROPERTIES)
+    else {
+        return;
+    };
+    let element: Arc<dyn FlowElement> = engine;
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("pipeline builds");
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("query.client-ip", CLOUDFLARE_IPV4)
+            .build(),
+    );
+    data.process().expect("processing succeeds");
+    assert!(
+        data.get(IP_DATA_KEY).is_some(),
+        "no data under '{}'",
+        IP_DATA_KEY.name()
+    );
+    match data.get_or_add(IP_DATA_KEY, || unreachable!("the element added its data")) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            IP_DATA_KEY.name()
+        ),
+    }
+}
