@@ -45,8 +45,9 @@
 //!   service.
 //! - [`WebPipeline`] and [`WebIntegrationOptions`]: a helper that assembles the
 //!   application's elements into the order the specification requires (sequence,
-//!   elements, set-headers, JSON builder, JavaScript builder), and resolves the
-//!   endpoint paths and `Vary` whitelist.
+//!   elements, set-headers, JSON builder, JavaScript builder, then usage
+//!   sharing when the application gives it), and resolves the endpoint paths
+//!   and `Vary` whitelist.
 //! - [`response_headers`] and [`apply_set_headers`]: read the set-headers
 //!   element's output and merge it into an outgoing response. This is the
 //!   set-headers service.
