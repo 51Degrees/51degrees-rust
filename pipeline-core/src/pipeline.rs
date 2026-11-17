@@ -205,9 +205,9 @@ impl Pipeline {
     /// of its own that reads what `data` held before the group, then add what
     /// each one added and record each one's errors, in the order given. An
     /// element's recorded errors come before its returned error, as they do
-    /// in sequence. Evidence an element added is added to `data` then, in the
-    /// same order, with no error, because whether an element of a group adds
-    /// evidence is its own responsibility.
+    /// in sequence. Evidence an element added stays in its own flow data and
+    /// is dropped with it, because the group adds nothing on its members'
+    /// behalf.
     ///
     /// A panic in an element is raised again here once every element has
     /// finished and `data` holds its evidence and earlier results again.
@@ -232,9 +232,6 @@ impl Pipeline {
                         self.record_error(data, element.data_key(), error);
                     }
                     data.add_group_member_warnings(added.warnings);
-                    for (key, value) in added.evidence {
-                        data.add_evidence(key, value);
-                    }
                     for key in data.add_group_member_data(added.data, added.order) {
                         let error = Error::configuration(format!(
                             "Element data under key '{key}' was added by more \
@@ -398,8 +395,8 @@ impl PipelineBuilder {
     /// same time, as the
     /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#evidence)
     /// says. That is the element's responsibility, and nothing checks it.
-    /// Evidence an element of a group adds all the same is added once the
-    /// group has finished, so the elements after the group read it.
+    /// Evidence an element of a group adds all the same is dropped when the
+    /// group finishes, because the group adds nothing on its members' behalf.
     ///
     /// So an element of a group cannot add data under a key that another
     /// element of the group adds or that was added before the group. It gets a

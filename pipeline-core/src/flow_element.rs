@@ -78,6 +78,16 @@ pub trait FlowElement: Send + Sync {
     ///
     /// `process` takes `&self` so a single element instance can serve many
     /// concurrent requests.
+    ///
+    /// An element in a parallel group (see
+    /// [`crate::PipelineBuilder::add_parallel_elements`]) must not add
+    /// evidence, as the
+    /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#evidence)
+    /// says, and that is the element's responsibility, because nothing
+    /// checks it. Evidence it adds all the same stays in its own view of the
+    /// flow data and is dropped when the group finishes, because the group
+    /// adds nothing on its members' behalf. So an element that needs evidence
+    /// it adds to outlive the group must not run in a group.
     fn process(&self, data: &mut FlowData) -> Result<()>;
 
     /// The string data key used to store and retrieve this element's data in a
