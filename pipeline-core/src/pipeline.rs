@@ -57,6 +57,9 @@ use crate::group_threads::Job;
 pub struct Pipeline {
     /// The elements in the order they run, which `steps` indexes.
     elements: Vec<Arc<dyn FlowElement>>,
+    /// The data key of each element in `elements`, lowercased as flow data
+    /// stores it.
+    stored_data_keys: Vec<String>,
     steps: Vec<Step>,
     /// The elements in the order [`Pipeline::flow_elements`] lists them.
     listed: Vec<Arc<dyn FlowElement>>,
@@ -119,6 +122,12 @@ impl Pipeline {
             .find_map(|resource| Arc::clone(resource).downcast::<T>().ok())
     }
 
+    /// The data key of the element at `index` in the order the elements run,
+    /// lowercased as flow data stores it.
+    pub(crate) fn stored_data_key(&self, index: usize) -> &str {
+        &self.stored_data_keys[index]
+    }
+
     /// Create a new, unprocessed flow data bound to this pipeline, with no
     /// evidence. Add evidence to it before processing.
     pub fn create_flow_data(self: &Arc<Self>) -> FlowData {
@@ -153,15 +162,19 @@ impl Pipeline {
     /// This follows the
     /// [exception-handling specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/exception-handling.md#process-function).
     pub(crate) fn process(&self, data: &mut FlowData) -> Result<()> {
+        data.end_element();
         for step in &self.steps {
             match step {
                 Step::Element(index) => {
                     let element = &self.elements[*index];
-                    if let Err(error) = element.process(data) {
+                    data.begin_element(*index);
+                    let result = element.process(data);
+                    data.end_element();
+                    if let Err(error) = result {
                         self.record_error(data, element.data_key(), error);
                     }
                 }
-                Step::Group(range) => self.process_group(&self.elements[range.clone()], data),
+                Step::Group(range) => self.process_group(range.clone(), data),
             }
         }
 
@@ -210,9 +223,10 @@ impl Pipeline {
     ///
     /// A panic in an element is raised again here once every element has
     /// finished and `data` holds its evidence and earlier results again.
-    fn process_group(&self, elements: &[Arc<dyn FlowElement>], data: &mut FlowData) {
+    fn process_group(&self, range: Range<usize>, data: &mut FlowData) {
+        let elements = &self.elements[range.clone()];
         let before = data.begin_group();
-        let outcomes: Vec<_> = run_at_once(elements, &before)
+        let outcomes: Vec<_> = run_at_once(elements, range.start, &before)
             .into_iter()
             // Dropping each member's flow data releases its share of `before`.
             .map(|outcome| outcome.map(|(member, result)| (member.into_added(), result)))
@@ -274,21 +288,28 @@ enum Step {
 type Outcome = thread::Result<(FlowData, Result<()>)>;
 
 /// Run each element on a group member flow data, all at the same time, and
-/// return the outcomes in element order.
+/// return the outcomes in element order. `first_index` is the position of the
+/// first of `elements` in the pipeline.
 ///
 /// Every element but the first is offered to the group threads, and the first
 /// runs on this thread. This thread then runs any element no group thread has
 /// started, so the group finishes even when no group thread is free or the
 /// platform cannot start threads.
-fn run_at_once(elements: &[Arc<dyn FlowElement>], before: &Arc<BeforeGroup>) -> Vec<Outcome> {
+fn run_at_once(
+    elements: &[Arc<dyn FlowElement>],
+    first_index: usize,
+    before: &Arc<BeforeGroup>,
+) -> Vec<Outcome> {
     let Some((first, others)) = elements.split_first() else {
         return Vec::new();
     };
     let jobs: Vec<_> = others
         .iter()
-        .map(|element| {
+        .zip(first_index + 1..)
+        .map(|(element, index)| {
             let element = Arc::clone(element);
             let mut member = FlowData::group_member(before);
+            member.begin_element(index);
             Job::offer(move || {
                 let result = element.process(&mut member);
                 (member, result)
@@ -296,6 +317,7 @@ fn run_at_once(elements: &[Arc<dyn FlowElement>], before: &Arc<BeforeGroup>) -> 
         })
         .collect();
     let mut member = FlowData::group_member(before);
+    member.begin_element(first_index);
     let mut outcomes = Vec::with_capacity(elements.len());
     outcomes.push(panic::catch_unwind(AssertUnwindSafe(move || {
         let result = first.process(&mut member);
@@ -511,8 +533,14 @@ impl PipelineBuilder {
         }
         listed.append(&mut grouped);
 
+        let stored_data_keys = self
+            .elements
+            .iter()
+            .map(|element| element.data_key().to_lowercase())
+            .collect();
         let pipeline = Arc::new(Pipeline {
             elements: self.elements,
+            stored_data_keys,
             steps: self.steps,
             listed,
             evidence_key_filter: aggregator,
