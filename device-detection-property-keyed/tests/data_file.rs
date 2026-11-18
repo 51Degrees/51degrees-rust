@@ -499,11 +499,32 @@ fn a_value_the_engine_refuses_gives_a_warning_and_no_profiles() {
     }
 }
 
+/// The data file `_51DEGREES_DD_PATH` names, or `None` when it names none.
+/// CI names the data file there, so the check that element data is read
+/// only fails rather than skips when the file it names is missing.
+fn named_data_file() -> Option<PathBuf> {
+    let path = crate::deprecated_names::var("_51DEGREES_DD_PATH").ok()?;
+    let path = PathBuf::from(path.trim());
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    assert!(
+        path.is_file(),
+        "{} is missing, but _51DEGREES_DD_PATH names it",
+        path.display()
+    );
+    Some(path)
+}
+
 /// Element data is read only once its element has finished, as the
 /// thread-safety specification's Element Data section requires. The two
 /// engines share the hardware data, so each writes it while it processes.
 #[test]
 fn its_element_data_is_read_only_once_processed() {
+    // Fails when the file `_51DEGREES_DD_PATH` names is missing. A data
+    // file with no TAC or NativeModel property, such as the Lite file, still
+    // skips, and the comparison with .NET runs this check on the TAC file.
+    let _ = named_data_file();
     let Some(device) = device_with_key_properties() else {
         return;
     };

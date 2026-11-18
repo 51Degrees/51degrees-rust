@@ -375,11 +375,33 @@ fn a_second_pipeline_needs_the_same_device_detection_engine() {
     assert!(result.is_err());
 }
 
+/// The data file `_51DEGREES_DD_PATH` names, or `None` when it names none.
+/// CI names the data file there, so the check that element data is read
+/// only fails rather than skips when the file it names is missing.
+fn named_data_file() -> Option<PathBuf> {
+    let path = crate::deprecated_names::var("_51DEGREES_DD_PATH").ok()?;
+    let path = PathBuf::from(path.trim());
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    assert!(
+        path.is_file(),
+        "{} is missing, but _51DEGREES_DD_PATH names it",
+        path.display()
+    );
+    Some(path)
+}
+
 /// Element data is read only once its element has finished, as the
 /// thread-safety specification's Element Data section requires.
 #[test]
 fn its_element_data_is_read_only_once_processed() {
+    let named = named_data_file();
     let Some(device) = device_engine() else {
+        assert!(
+            named.is_none(),
+            "the data file _51DEGREES_DD_PATH names did not load"
+        );
         return;
     };
     let robots = robots();

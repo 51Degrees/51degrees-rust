@@ -686,16 +686,38 @@ fn ip_data_names_no_tier_for_a_property_the_asn_file_lacks() {
     }
 }
 
+/// The data file `_51DEGREES_IPI_PATH` names, or `None` when it names none.
+/// CI names the data file there, so the check that element data is read
+/// only fails rather than skips when the file it names is missing.
+fn named_data_file() -> Option<PathBuf> {
+    let path = crate::deprecated_names::var("_51DEGREES_IPI_PATH").ok()?;
+    let path = PathBuf::from(path.trim());
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    assert!(
+        path.is_file(),
+        "{} is missing, but _51DEGREES_IPI_PATH names it",
+        path.display()
+    );
+    Some(path)
+}
+
 /// Element data is read only once its element has finished, as the
 /// thread-safety specification's Element Data section requires.
 #[test]
 fn its_element_data_is_read_only_once_processed() {
+    let named = named_data_file();
     let Some(file) = asn_data_file() else {
         eprintln!("no ASN data file found; skipping");
         return;
     };
     let Some(engine) = build_engine(&file, PerformanceProfile::HighPerformance, ASN_PROPERTIES)
     else {
+        assert!(
+            named.is_none(),
+            "the data file _51DEGREES_IPI_PATH names did not load"
+        );
         return;
     };
     let element: Arc<dyn FlowElement> = engine;
