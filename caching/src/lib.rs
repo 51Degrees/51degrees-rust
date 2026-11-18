@@ -330,11 +330,11 @@ pub use file_store::{FileStore, FileStoreBuilder, DEFAULT_MOST_BYTES};
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub use loading::SystemClock;
 pub use loading::{
-    decode_entry, encode_entry, from_fn, ByteLookup, ByteStore, Clock, Codec, DecodeError,
-    EncodedStore, EncodedStoreBuilder, Entry, FnLoader, Inline, ListKeys, LoadRunner, LoadTask,
-    Loaded, LoadingCache, LoadingCacheBuilder, Lookup, LruLoadingCache, LruStore, LruStoreBuilder,
-    Raw, Spawn, SpawnLocal, Spawned, SpawnedLocal, StartLoad, Store, Stored, Utf8, ValueLoader,
-    ENTRY_FORMAT,
+    decode_entry, encode_entry, encode_entry_published, from_fn, ByteLookup, ByteStore, Clock,
+    Codec, DecodeError, EncodedStore, EncodedStoreBuilder, Entry, FnLoader, Inline, ListKeys,
+    LoadRunner, LoadTask, Loaded, LoadingCache, LoadingCacheBuilder, Lookup, LruLoadingCache,
+    LruStore, LruStoreBuilder, Raw, Spawn, SpawnLocal, Spawned, SpawnedLocal, StartLoad, Store,
+    Stored, Utf8, ValueLoader, ENTRY_FORMAT,
 };
 pub use lru::{LruCache, Weigher};
 #[cfg(not(target_family = "wasm"))]

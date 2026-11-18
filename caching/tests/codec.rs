@@ -92,7 +92,9 @@ fn reads_back_every_combination_of_times() {
                 read,
                 Stored {
                     entry: written,
-                    drop_at
+                    drop_at,
+                    published: UNIX_EPOCH,
+                    value_version: 0,
                 }
             );
         }

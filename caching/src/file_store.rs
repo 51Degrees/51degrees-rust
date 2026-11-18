@@ -35,6 +35,11 @@
 //! | Length | The key |
 //! | Rest | The entry, in the [entry format](crate::encode_entry) |
 //!
+//! The entry holds Data published and the value format version, which
+//! [`EncodedStore`](crate::EncodedStore) compares on every read. An entry
+//! from other data or in another value format answers absent, and its file
+//! is removed.
+//!
 //! Every time the store relies on is in the entry: Written, Renewed and the
 //! drop time. No decision reads or writes a file system time.
 
@@ -61,9 +66,9 @@ const FILE_FORMAT: u8 = 1;
 /// The bytes before the key: the marker, the version and the key's length.
 const PREFIX_LEN: usize = 4 + 1 + 4;
 
-/// The most bytes of an entry before its value: the version, the flags and
-/// four times.
-const MOST_ENTRY_HEADER_LEN: usize = 2 + 4 * 8;
+/// The most bytes of an entry before its value: the version, the flags, four
+/// times, Data published and the value format version.
+const MOST_ENTRY_HEADER_LEN: usize = 2 + 4 * 8 + 8 + 2;
 
 /// Where Renewed sits in an entry: after the version, the flags and Written.
 const RENEWED_IN_ENTRY: usize = 2 + 8;

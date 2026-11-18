@@ -40,7 +40,10 @@ pub use cache::{LoadingCache, LoadingCacheBuilder, LruLoadingCache};
 pub use clock::Clock;
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub use clock::SystemClock;
-pub use codec::{decode_entry, encode_entry, Codec, DecodeError, Raw, Stored, Utf8, ENTRY_FORMAT};
+pub use codec::{
+    decode_entry, encode_entry, encode_entry_published, Codec, DecodeError, Raw, Stored, Utf8,
+    ENTRY_FORMAT,
+};
 #[cfg(all(feature = "disk", not(target_family = "wasm")))]
 pub(crate) use codec::{read_header, Header};
 pub use entry::{Entry, Loaded};
