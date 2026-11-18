@@ -39,7 +39,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Barrier};
+use std::sync::{Arc, Barrier, Mutex, Once, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use common::*;
@@ -614,7 +614,8 @@ fn nothing_is_made_before_the_store_opens_and_only_the_secret_until_a_write() {
 
     let disk = builder.open().expect("opens");
     assert_eq!(names(folder.path()), [SECRET]);
-    assert_eq!(fs::read(folder.path().join(SECRET)).unwrap().len(), 32);
+    // The store holds the secret locked, so only its length is read.
+    assert_eq!(fs::metadata(folder.path().join(SECRET)).unwrap().len(), 32);
 
     put(&disk, &clock, "key", b"value", None);
     let names = names(folder.path());
@@ -1035,74 +1036,207 @@ fn files_the_store_did_not_write_are_left_untouched() {
     }
 }
 
+/// The warnings the stores have logged, kept from the first call on.
+fn warnings() -> &'static Mutex<Vec<String>> {
+    struct Kept(Mutex<Vec<String>>);
+
+    impl log::Log for Kept {
+        fn enabled(&self, metadata: &log::Metadata) -> bool {
+            metadata.level() <= log::Level::Warn
+        }
+
+        fn log(&self, record: &log::Record) {
+            if self.enabled(record.metadata()) {
+                let mut kept = self.0.lock().unwrap_or_else(|e| e.into_inner());
+                kept.push(record.args().to_string());
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    static KEPT: Kept = Kept(Mutex::new(Vec::new()));
+    static INSTALL: Once = Once::new();
+    INSTALL.call_once(|| {
+        let _ = log::set_logger(&KEPT);
+        log::set_max_level(log::LevelFilter::Warn);
+    });
+    &KEPT.0
+}
+
+/// True when a store has warned that `folder` is open in another store and
+/// that each store needs a folder of its own.
+fn warned_of_a_shared_folder(folder: &Path) -> bool {
+    let folder = folder.display().to_string();
+    warnings()
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|warning| warning.contains(&folder) && warning.contains("a folder of its own"))
+}
+
+/// Every file under `path` with its bytes, sorted by path.
+fn snapshot(path: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut files: Vec<_> = all_files(path)
+        .into_iter()
+        .map(|file| {
+            let bytes = fs::read(&file).expect("reads");
+            (file, bytes)
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+/// A store that refused its folder answers absent, drops writes and removes
+/// nothing.
+fn carries_on_without_the_folder(disk: &FileStore, clock: &TestClock) {
+    assert!(disk.is_refused());
+    assert_eq!(value(disk, "key"), None);
+    put(disk, clock, "other", b"value", None);
+    assert_eq!(value(disk, "other"), None);
+    block_on(disk.remove("key"));
+    assert_eq!(disk.file_count(), 0);
+    assert_eq!(disk.clear_expired(), 0);
+}
+
 #[test]
-fn two_stores_work_on_one_folder_at_once() {
-    let folder = Folder::new("two");
+fn a_second_store_in_the_same_process_is_refused_the_folder() {
+    let folder = Folder::new("second");
+    let clock = TestClock::new();
+    warnings();
+    put(&open(&folder, &clock), &clock, "key", b"value", None);
+    let before = snapshot(folder.path());
+
+    let first = open(&folder, &clock);
+    assert!(!first.is_refused());
+    // The same folder by another spelling of its path.
+    let second = FileStore::builder(folder.path().join("."))
+        .clock(clock.shared())
+        .open()
+        .expect("refusing a folder is not an error");
+    carries_on_without_the_folder(&second, &clock);
+    assert!(warned_of_a_shared_folder(folder.path()));
+    assert_eq!(value(&first, "key"), Some(b"value".to_vec()));
+    drop(second);
+    drop(first);
+    assert_eq!(snapshot(folder.path()), before);
+
+    // Once the first store has closed, the folder opens again.
+    let again = open(&folder, &clock);
+    assert!(!again.is_refused());
+    assert_eq!(value(&again, "key"), Some(b"value".to_vec()));
+}
+
+#[test]
+fn stores_opening_one_folder_at_once_leave_it_to_one() {
+    let folder = Folder::new("at-once");
     let clock = TestClock::new();
     let stores = 4;
-    let keys = 50;
     let barrier = Arc::new(Barrier::new(stores));
     let threads: Vec<_> = (0..stores)
-        .map(|store| {
+        .map(|_| {
             let path = folder.path().to_path_buf();
             let clock = clock.clone();
             let barrier = Arc::clone(&barrier);
             std::thread::spawn(move || {
-                // Every store opens the new folder at once, so they race to
-                // make the secret.
                 barrier.wait();
-                let disk = FileStore::builder(&path)
+                FileStore::builder(&path)
                     .clock(clock.shared())
                     .open()
-                    .expect("opens");
-                for key in 0..keys {
-                    put(
-                        &disk,
-                        &clock,
-                        &format!("{store}-{key}"),
-                        &[store as u8],
-                        None,
-                    );
-                    let shared = format!("shared from {store}");
-                    put(&disk, &clock, "shared", shared.as_bytes(), None);
-                    if let Some(found) = value(&disk, "shared") {
-                        let found = String::from_utf8(found).unwrap();
-                        assert!(found.starts_with("shared from "), "{found}");
-                    }
-                }
-                for key in 0..keys {
-                    assert_eq!(
-                        value(&disk, &format!("{store}-{key}")),
-                        Some(vec![store as u8])
-                    );
-                }
+                    .expect("opens")
             })
         })
         .collect();
-    for thread in threads {
-        thread.join().expect("the store kept its entries");
+    let opened: Vec<FileStore> = threads
+        .into_iter()
+        .map(|thread| thread.join().expect("opens"))
+        .collect();
+    let open: Vec<&FileStore> = opened.iter().filter(|disk| !disk.is_refused()).collect();
+    assert_eq!(open.len(), 1);
+    put(open[0], &clock, "key", b"value", None);
+    assert_eq!(value(open[0], "key"), Some(b"value".to_vec()));
+    for refused in opened.iter().filter(|disk| disk.is_refused()) {
+        assert_eq!(value(refused, "key"), None);
     }
+}
 
-    // Another store finds every entry each one wrote.
+/// Names the folder `opens_a_folder_another_process_holds` opens, in a
+/// process of its own.
+const HELD_FOLDER: &str = "FIFTYONE_CACHING_HELD_FOLDER";
+
+#[test]
+fn a_store_in_another_process_is_refused_the_folder() {
+    let folder = Folder::new("process");
+    let clock = TestClock::new();
+    put(&open(&folder, &clock), &clock, "key", b"value", None);
+    let before = snapshot(folder.path());
+
     let disk = open(&folder, &clock);
-    for store in 0..stores {
-        for key in 0..keys {
-            assert_eq!(
-                value(&disk, &format!("{store}-{key}")),
-                Some(vec![store as u8]),
-                "{store}-{key}"
-            );
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "opens_a_folder_another_process_holds",
+            "--nocapture",
+            "--test-threads",
+            "1",
+        ])
+        .env(HELD_FOLDER, folder.path())
+        .output()
+        .expect("runs");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(stdout.contains("refused and warned"), "{stdout}{stderr}");
+    assert_eq!(value(&disk, "key"), Some(b"value".to_vec()));
+    drop(disk);
+    assert_eq!(snapshot(folder.path()), before);
+}
+
+/// Run by `a_store_in_another_process_is_refused_the_folder` in a process of
+/// its own. Does nothing otherwise.
+#[test]
+fn opens_a_folder_another_process_holds() {
+    let Some(path) = std::env::var_os(HELD_FOLDER) else {
+        return;
+    };
+    let path = PathBuf::from(path);
+    let clock = TestClock::new();
+    warnings();
+    let disk = FileStore::builder(&path)
+        .clock(clock.shared())
+        .open()
+        .expect("refusing a folder is not an error");
+    carries_on_without_the_folder(&disk, &clock);
+    assert!(warned_of_a_shared_folder(&path));
+    println!("refused and warned");
+}
+
+#[test]
+fn a_store_opens_once_in_once_lock_get_or_init() {
+    let folder = Folder::new("once-lock");
+    let clock = TestClock::new();
+    let disk: OnceLock<Option<FileStore>> = OnceLock::new();
+    let open = || {
+        disk.get_or_init(|| {
+            FileStore::builder(folder.path())
+                .clock(clock.shared())
+                .open()
+                .ok()
+        })
+        .as_ref()
+        .expect("opens")
+    };
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            scope.spawn(|| {
+                let disk = open();
+                assert!(!disk.is_refused());
+                put(disk, &clock, "key", b"value", None);
+                assert_eq!(value(disk, "key"), Some(b"value".to_vec()));
+            });
         }
-    }
-    assert!(value(&disk, "shared").is_some());
-    assert_eq!(disk.file_count(), stores * keys + 1);
-    assert_eq!(
-        names(folder.path())
-            .iter()
-            .filter(|name| name.ends_with(".tmp"))
-            .count(),
-        0
-    );
+    });
 }
 
 #[test]
@@ -1131,22 +1265,19 @@ fn a_missing_or_damaged_secret_gives_a_new_secret_and_an_empty_store() {
     let folder = Folder::new("secret");
     let clock = TestClock::new();
     let secret_path = folder.path().join(SECRET);
-    let first = {
-        let disk = open(&folder, &clock);
-        put(&disk, &clock, "a", b"value", None);
-        fs::read(&secret_path).unwrap()
-    };
+    put(&open(&folder, &clock), &clock, "a", b"value", None);
+    let first = fs::read(&secret_path).unwrap();
     assert_eq!(first.len(), 32);
 
     // Missing.
     fs::remove_file(&secret_path).unwrap();
-    let second = {
+    {
         let disk = open(&folder, &clock);
         assert_eq!(disk.file_count(), 0);
         assert_eq!(value(&disk, "a"), None);
         put(&disk, &clock, "b", b"value", None);
-        fs::read(&secret_path).unwrap()
-    };
+    }
+    let second = fs::read(&secret_path).unwrap();
     assert_eq!(second.len(), 32);
     assert_ne!(first, second);
 
@@ -1156,16 +1287,26 @@ fn a_missing_or_damaged_secret_gives_a_new_secret_and_an_empty_store() {
         let disk = open(&folder, &clock);
         assert_eq!(disk.file_count(), 0);
         assert_eq!(value(&disk, "b"), None);
-        assert_eq!(fs::read(&secret_path).unwrap().len(), 32);
     }
+    assert_eq!(fs::read(&secret_path).unwrap().len(), 32);
 
-    // Unreadable, and impossible to replace: the store keeps a secret in
-    // memory and still works.
+    // A folder where the secret should be cannot be held open, so the
+    // store fails, naming its folder, and removes nothing.
     fs::remove_file(&secret_path).unwrap();
     fs::create_dir(&secret_path).unwrap();
-    let disk = open(&folder, &clock);
-    put(&disk, &clock, "c", b"value", None);
-    assert_eq!(value(&disk, "c"), Some(b"value".to_vec()));
+    let before = snapshot(folder.path());
+    let error = FileStore::builder(folder.path())
+        .clock(clock.shared())
+        .open()
+        .err()
+        .expect("fails");
+    assert!(
+        error
+            .to_string()
+            .contains(&folder.path().display().to_string()),
+        "{error}"
+    );
+    assert_eq!(snapshot(folder.path()), before);
 }
 
 /// Every folder under `path` with the number of files directly in it and its
