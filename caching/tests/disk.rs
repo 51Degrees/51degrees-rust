@@ -1260,6 +1260,81 @@ fn a_folder_that_cannot_be_written_never_fails_a_request() {
     assert_eq!(disk.clear_expired(), 0);
 }
 
+/// Asserts `opened` failed with an error that names `folder`.
+fn fails_naming(opened: std::io::Result<FileStore>, folder: &Path) {
+    let error = opened.err().expect("fails");
+    assert!(
+        error.to_string().contains(&folder.display().to_string()),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_store_that_cannot_make_its_folder_fails_naming_it() {
+    let folder = Folder::new("not-a-folder");
+    fs::write(folder.path(), b"a file").unwrap();
+    let inside = folder.path().join("cache");
+    fails_naming(FileStore::open(&inside), &inside);
+}
+
+/// On Unix, a folder the store cannot write in, list, or reach the files
+/// of.
+#[cfg(unix)]
+#[test]
+fn a_store_without_the_permissions_it_needs_on_its_folder_fails_naming_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // The system checks no permission for root.
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    for mode in [0o500, 0o300, 0o600] {
+        let folder = Folder::new("permissions");
+        let clock = TestClock::new();
+        put(&open(&folder, &clock), &clock, "key", b"value", None);
+        let set = |mode| fs::set_permissions(folder.path(), fs::Permissions::from_mode(mode));
+        set(mode).unwrap();
+        let opened = FileStore::builder(folder.path())
+            .clock(clock.shared())
+            .open();
+        set(0o700).unwrap();
+        fails_naming(opened, folder.path());
+        assert_eq!(
+            value(&open(&folder, &clock), "key"),
+            Some(b"value".to_vec())
+        );
+    }
+}
+
+/// On Windows, a folder the store cannot add a file to.
+#[cfg(windows)]
+#[test]
+fn a_store_that_cannot_write_in_its_folder_fails_naming_it() {
+    let folder = Folder::new("permissions");
+    let clock = TestClock::new();
+    put(&open(&folder, &clock), &clock, "key", b"value", None);
+    let icacls = |args: &[&str]| {
+        let status = std::process::Command::new("icacls")
+            .arg(folder.path())
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .expect("runs icacls");
+        assert!(status.success());
+    };
+    // Everyone is denied adding a file to the folder itself.
+    icacls(&["/deny", "*S-1-1-0:(WD)"]);
+    let opened = FileStore::builder(folder.path())
+        .clock(clock.shared())
+        .open();
+    icacls(&["/remove:d", "*S-1-1-0"]);
+    fails_naming(opened, folder.path());
+    assert_eq!(
+        value(&open(&folder, &clock), "key"),
+        Some(b"value".to_vec())
+    );
+}
+
 #[test]
 fn a_missing_or_damaged_secret_gives_a_new_secret_and_an_empty_store() {
     let folder = Folder::new("secret");
