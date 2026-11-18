@@ -44,8 +44,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use common::*;
 use fiftyone_caching::machine::MemoryInfo;
 use fiftyone_caching::{
-    decode_entry, encode_entry, ByteLookup, ByteStore, EncodedStore, Entry, FileStore,
-    LoadingCache, LruStore, MemoryBudget, Raw, Utf8,
+    decode_entry, encode_entry, ByteLookup, ByteStore, Codec, EncodedStore, Entry, FileStore,
+    LoadingCache, Lookup, LruStore, MemoryBudget, Raw, Store, Utf8,
 };
 
 /// The file in the folder root that holds the secret.
@@ -747,6 +747,62 @@ fn an_entry_written_later_than_now_answers_absent_and_is_removed() {
     block_on(disk.put("ahead", written_at(ahead, b"value", None), None));
     assert_eq!(disk.file_count(), 1);
     assert_eq!(value(&disk, "ahead"), None);
+    assert_eq!(disk.file_count(), 0);
+}
+
+/// Keeps `String` values as their text, in a value format of the given
+/// version.
+struct Versioned(u16);
+
+impl Codec<String> for Versioned {
+    fn encode(&self, value: &String) -> Option<Vec<u8>> {
+        Some(value.as_bytes().to_vec())
+    }
+
+    fn decode(&self, bytes: &[u8]) -> Option<String> {
+        String::from_utf8(bytes.to_vec()).ok()
+    }
+
+    fn version(&self) -> u16 {
+        self.0
+    }
+}
+
+#[test]
+fn an_entry_from_other_data_or_in_another_value_format_answers_absent_and_is_removed() {
+    let folder = Folder::new("published");
+    let clock = TestClock::new();
+    let disk = open(&folder, &clock);
+    let store = |published: SystemTime, version: u16| {
+        EncodedStore::builder(Arc::clone(&disk), Versioned(version))
+            .published(move || published)
+            .clock(clock.shared())
+            .build()
+    };
+    let get = |store: &EncodedStore<Disk, Versioned>, key: u32| {
+        block_on(Store::<u32, String>::get(store, &key))
+    };
+    let yesterday = clock.now() - secs(24 * 60 * 60);
+    let written = Entry {
+        value: "value".to_owned(),
+        written: clock.now(),
+        expires: None,
+        renewed: clock.now(),
+    };
+    let first = store(yesterday, 1);
+    block_on(first.put(&1u32, &written, None));
+    block_on(first.put(&2u32, &written, None));
+    assert!(matches!(get(&first, 1), Lookup::Hit(_)));
+    assert_eq!(disk.file_count(), 2);
+
+    // The source moves to data published today.
+    let updated = store(clock.now(), 1);
+    assert!(matches!(get(&updated, 1), Lookup::Miss));
+    assert_eq!(disk.file_count(), 1);
+
+    // An upgrade writes values in version 2.
+    let upgraded = store(yesterday, 2);
+    assert!(matches!(get(&upgraded, 2), Lookup::Miss));
     assert_eq!(disk.file_count(), 0);
 }
 
