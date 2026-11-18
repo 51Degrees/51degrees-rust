@@ -62,9 +62,10 @@
 
 use std::any::Any;
 use std::borrow::Cow;
+use std::cell::UnsafeCell;
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use fiftyone_pipeline_core::{
     ElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType, TypedKey,
@@ -222,7 +223,11 @@ where
 /// than a copy of every value, so a caller that reads one property does not pay
 /// to read the others, some of which are costly, such as a polygon written out
 /// as text.
-pub trait IpIntelligencePropertyReader: Send + Sync {
+///
+/// A reader is `Send` but need not be `Sync`, because one that reads a results
+/// instance is not safe to use from several threads at once, so the compiler
+/// refuses code that shares one across threads.
+pub trait IpIntelligencePropertyReader: Send {
     /// The lowercase names of the properties this reader can read. A property
     /// is identified by its position in this list.
     fn property_names(&self) -> &[String];
@@ -375,8 +380,18 @@ impl StoredValue {
 /// read at most once.
 struct DeferredValues {
     reader: Box<dyn IpIntelligencePropertyReader>,
-    state: Mutex<DeferredState>,
+    /// What has been read so far. No lock is taken.
+    state: UnsafeCell<DeferredState>,
 }
+
+// Safety: the reader is `Send` but not `Sync`, because it reads a results
+// instance, which is not safe to use from several threads at once, and no
+// lock is taken. This is marked `Sync` so the element data that holds it
+// stays usable in property values and parallel groups. The caller is
+// responsible for thread-safe access: one that uses it from several threads
+// at once coordinates that itself, as the thread-safety specification at
+// 52e9b047 says.
+unsafe impl Sync for DeferredValues {}
 
 struct DeferredState {
     /// The dynamic-bag mirror of the values read so far, which the reader
@@ -432,8 +447,9 @@ impl DeferredValues {
         position: usize,
         look: impl FnOnce(&StoredValue, &IpIntelligenceDataBase) -> R,
     ) -> Result<R, String> {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let state = &mut *state;
+        // Safety: the caller coordinates access, so no other reference to
+        // the state is live.
+        let state = unsafe { &mut *self.state.get() };
         if let Some(message) = self.read(state, position) {
             return Err(message);
         }
@@ -444,8 +460,9 @@ impl DeferredValues {
     /// reason for none, in the reader's order whatever order they were read
     /// in, reading any not yet read.
     fn keys(&self) -> Vec<String> {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let state = &mut *state;
+        // Safety: the caller coordinates access, so no other reference to
+        // the state is live.
+        let state = unsafe { &mut *self.state.get() };
         for position in 0..self.reader.property_names().len() {
             self.read(state, position);
         }
@@ -465,7 +482,9 @@ fn needs_lowercase(name: &str) -> bool {
 
 impl fmt::Debug for DeferredValues {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        // Safety: the caller coordinates access, so nothing writes the state
+        // meanwhile.
+        let state = unsafe { &*self.state.get() };
         f.debug_struct("DeferredValues")
             .field("read", &state.read)
             .field("stored", &state.stored)
@@ -546,12 +565,17 @@ impl IpIntelligenceDataBase {
     /// Read every property not set on this data directly from `reader` when it
     /// is first requested, keeping each value once read.
     ///
-    /// A value set directly takes precedence over the reader's. Reads go
-    /// through a lock, so the data can be shared between threads.
+    /// A value set directly takes precedence over the reader's. Reads take no
+    /// lock, as the
+    /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#results-instances)
+    /// requires, so the data is not safe to read from several threads at
+    /// once, and a caller that shares it across threads coordinates its own
+    /// access. A clone shares the values read with the data it was cloned
+    /// from, so the two are not safe to read from two threads at once either.
     pub fn with_reader(mut self, reader: impl IpIntelligencePropertyReader + 'static) -> Self {
         self.deferred = Some(Arc::new(DeferredValues {
             reader: Box::new(reader),
-            state: Mutex::new(DeferredState {
+            state: UnsafeCell::new(DeferredState {
                 values: IpIntelligenceDataBase::new(IP_DATA_KEY_NAME),
                 read: Vec::new(),
                 stored: Vec::new(),
@@ -1166,6 +1190,7 @@ mod tests {
     use fiftyone_pipeline_engines::{
         EngineDeployment, MissingPropertyReason, MissingPropertySource, DEFAULT_NO_VALUE_MESSAGE,
     };
+    use std::sync::Mutex;
 
     /// A small weighted string list, deliberately out of weighting order so the
     /// setter's sort is exercised.
@@ -1901,16 +1926,23 @@ mod tests {
         assert_eq!(reads_of(&reads, "country"), 0);
     }
 
+    /// Reads from several threads, each holding a lock of the caller's own
+    /// because the data takes none, agree and read once.
     // WebAssembly has no threads to spawn.
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn reads_from_several_threads_agree_and_read_once() {
         let (reader, reads) = CountingReader::new();
-        let data = Arc::new(IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader));
+        let data = Arc::new(Mutex::new(
+            IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader),
+        ));
         let handles: Vec<_> = (0..8)
             .map(|_| {
                 let data = Arc::clone(&data);
-                std::thread::spawn(move || data.country().value().unwrap().clone())
+                std::thread::spawn(move || {
+                    let data = data.lock().unwrap();
+                    data.country().value().unwrap().clone()
+                })
             })
             .collect();
         for handle in handles {
@@ -2161,5 +2193,43 @@ mod tests {
             seen[slot] = true;
         }
         assert!(seen.iter().all(|seen| *seen), "a slot no accessor passes");
+    }
+
+    /// A reader that counts its reads in a `Cell`, so it is `Send` but not
+    /// `Sync`, as a reader over a results instance is.
+    struct CellReader {
+        names: Vec<String>,
+        reads: std::cell::Cell<usize>,
+    }
+
+    impl IpIntelligencePropertyReader for CellReader {
+        fn property_names(&self) -> &[String] {
+            &self.names
+        }
+
+        fn position(&self, name: &str) -> Option<usize> {
+            self.names.iter().position(|known| known == name)
+        }
+
+        fn read_property(
+            &self,
+            _position: usize,
+            data: &mut IpIntelligenceDataBase,
+        ) -> Result<(), String> {
+            self.reads.set(self.reads.get() + 1);
+            data.set_string("Country", "United Kingdom");
+            Ok(())
+        }
+    }
+
+    /// A reader need not be `Sync`, because one that reads a results instance
+    /// is not safe to use from several threads at once.
+    #[test]
+    fn a_reader_that_is_not_sync_backs_ip_intelligence_data() {
+        let data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(CellReader {
+            names: vec!["country".to_owned()],
+            reads: std::cell::Cell::new(0),
+        });
+        assert_eq!(data.country().value().unwrap().as_str(), "United Kingdom");
     }
 }

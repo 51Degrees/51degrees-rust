@@ -62,7 +62,15 @@ use crate::value::PropertyValue;
 /// [`crate::PipelineBuilder::add_parallel_elements`]) read the element data
 /// added before the group from several threads at once. Plain data is `Sync`
 /// with no extra code. A value worked out on first read needs a [`std::sync`]
-/// type such as `Mutex` or `OnceLock`, not a `Cell` or `RefCell`.
+/// type such as `OnceLock`, not a `Cell` or `RefCell`.
+///
+/// Element data that reads its values from an on-premise engine's results
+/// instance, such as the Device Detection and IP Intelligence data, takes no
+/// lock and is not safe to read from several threads at once, as the
+/// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#results-instances)
+/// requires. A caller that shares it across threads coordinates its own
+/// access, and a member of a parallel group that reads it is responsible for
+/// the thread safety of those reads.
 ///
 /// Element data is still written from one thread only, by the element that
 /// adds it. See the

@@ -55,7 +55,11 @@ pub const PROFILES_PROPERTY_NAME: &str = "Profiles";
 
 /// Gives the device data of a profile from its id, for the profiles a
 /// [`MultiDeviceData`] holds by id until they are first read.
-pub trait ProfileReader: Send + Sync {
+///
+/// A reader is `Send` but need not be `Sync`, because one that holds results
+/// instances is not safe to use from several threads at once, so the
+/// compiler refuses code that shares one across threads.
+pub trait ProfileReader: Send {
     /// The device data of the profile with id `id`. A profile that cannot be
     /// read gives device data whose properties report why.
     fn read_profile(&self, id: u32) -> DeviceDataBase;
@@ -111,6 +115,17 @@ struct FoundIds {
     reader: Arc<dyn ProfileReader>,
     ids: Vec<u32>,
 }
+
+// Safety: the reader is `Send` but not `Sync`, because it holds results
+// instances, which are not safe to use from several threads at once, and no
+// lock is taken. These ids and their reader are marked `Send` and `Sync` so
+// the element data that holds them stays usable in property values and
+// parallel groups. The caller is responsible for thread-safe access: one
+// that uses the data or a clone of it from several threads at once
+// coordinates that itself, as the thread-safety specification at 52e9b047
+// says.
+unsafe impl Send for FoundIds {}
+unsafe impl Sync for FoundIds {}
 
 impl fmt::Debug for FoundIds {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -422,5 +437,36 @@ mod tests {
         assert_eq!(reader.reads(), 0);
         assert_eq!(data.len(), 2);
         assert_eq!(profile_id(&data.profiles()[0]), "12280");
+    }
+
+    /// A profile reader that counts its reads in a `Cell`, so it is `Send`
+    /// but not `Sync`, as one over results instances is.
+    struct CellProfiles {
+        reads: std::cell::Cell<usize>,
+    }
+
+    impl ProfileReader for CellProfiles {
+        fn read_profile(&self, id: u32) -> DeviceDataBase {
+            self.reads.set(self.reads.get() + 1);
+            DeviceDataBase::new().set("ProfileId", id.to_string())
+        }
+    }
+
+    /// A profile reader need not be `Sync`, because one that holds results
+    /// instances is not safe to use from several threads at once.
+    #[test]
+    // The method takes an `Arc`, which a reader that is not `Sync` can still
+    // be put in.
+    #[allow(clippy::arc_with_non_send_sync)]
+    fn a_profile_reader_that_is_not_sync_gives_the_profiles() {
+        let mut data = MultiDeviceData::new();
+        data.push_profile_ids(
+            Arc::new(CellProfiles {
+                reads: std::cell::Cell::new(0),
+            }),
+            vec![7, 9],
+        );
+        let ids: Vec<String> = data.profiles().iter().map(profile_id).collect();
+        assert_eq!(ids, ["7", "9"]);
     }
 }
