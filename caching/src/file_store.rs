@@ -820,9 +820,10 @@ impl FileStoreBuilder {
     ///
     /// # Errors
     ///
-    /// When the folder cannot be made, or its secret file opened, with an
-    /// error that names the folder. A secret that is missing or not 32
-    /// bytes long is not an error: the store makes a new one.
+    /// When the store lacks the permissions it needs on the folder, to make
+    /// it or to read, write and remove files in it, with an error that names
+    /// the folder. A secret that is missing or not 32 bytes long is not an
+    /// error: the store makes a new one.
     pub fn open(self) -> io::Result<FileStore> {
         let dir = self.dir;
         let named = |error: io::Error| {
@@ -893,6 +894,7 @@ impl FileStoreBuilder {
                 );
             }
         }
+        store.check_permissions().map_err(named)?;
         store.secret = store.load_secret(&mut secret).map_err(named)?;
         hold.secret = Some(secret);
         store.hold = Some(hold);
@@ -909,6 +911,20 @@ impl FileStoreBuilder {
 }
 
 impl FileStore {
+    /// Lists the folder root, and makes, writes and removes a file in it, so
+    /// a store that lacks the permissions it needs fails when it opens
+    /// rather than on every request. The file has a temporary name, so one
+    /// left by a crash is cleared.
+    fn check_permissions(&self) -> io::Result<()> {
+        fs::read_dir(&self.root)?;
+        let probe = self
+            .root
+            .join(self.temp_name(SECRET_FILE, self.clock.now()));
+        let written = create_private(&probe).and_then(|mut file| file.write_all(b"probe"));
+        let removed = fs::remove_file(&probe);
+        written.and(removed)
+    }
+
     /// The secret in `file`, made when it is missing, unreadable or not 32
     /// bytes long, and written back in place, since the store holds the
     /// file locked.
