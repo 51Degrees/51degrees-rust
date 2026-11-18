@@ -328,6 +328,27 @@ mod tests {
 
     use super::*;
 
+    /// Implemented twice for a `Sync` type, so naming `check` on one is then
+    /// ambiguous and the test does not build.
+    trait AmbiguousIfSync<A> {
+        fn check() {}
+    }
+
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+
+    impl<T: ?Sized + Sync> AmbiguousIfSync<u8> for T {}
+
+    fn is_send<T: Send>() {}
+
+    /// The profile reader of a lookup is `Send` but not `Sync`, because a results instance is not safe
+    /// to use from several threads at once, so the compiler refuses code that
+    /// shares one across threads.
+    #[test]
+    fn a_profile_reader_is_send_but_not_sync() {
+        is_send::<LoadedProfiles>();
+        <LoadedProfiles as AmbiguousIfSync<_>>::check();
+    }
+
     thread_local! {
         /// The records logged on this thread, each as "LEVEL target message".
         static LOGGED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };

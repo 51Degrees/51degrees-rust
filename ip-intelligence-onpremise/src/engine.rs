@@ -1297,6 +1297,27 @@ mod tests {
     use fiftyone_pipeline_core::{ElementData, Evidence, Pipeline};
     use fiftyone_pipeline_engines::AspectData;
 
+    /// Implemented twice for a `Sync` type, so naming `check` on one is then
+    /// ambiguous and the test does not build.
+    trait AmbiguousIfSync<A> {
+        fn check() {}
+    }
+
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+
+    impl<T: ?Sized + Sync> AmbiguousIfSync<u8> for T {}
+
+    fn is_send<T: Send>() {}
+
+    /// A lookup's reader is `Send` but not `Sync`, because a results instance is not safe
+    /// to use from several threads at once, so the compiler refuses code that
+    /// shares one across threads.
+    #[test]
+    fn a_lookup_reader_is_send_but_not_sync() {
+        is_send::<LookupReader>();
+        <LookupReader as AmbiguousIfSync<_>>::check();
+    }
+
     /// `file` published a year later, with its first property's description
     /// past the end of the strings, as `tests/metadata.rs` makes it. The data
     /// set loads, because loading reads no description, and reading its

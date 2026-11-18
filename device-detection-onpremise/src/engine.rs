@@ -1526,6 +1526,27 @@ fn record_dates(manager: &Manager, data_file: &AspectEngineDataFile) {
 mod tests {
     use super::*;
 
+    /// Implemented twice for a `Sync` type, so naming `check` on one is then
+    /// ambiguous and the test does not build.
+    trait AmbiguousIfSync<A> {
+        fn check() {}
+    }
+
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+
+    impl<T: ?Sized + Sync> AmbiguousIfSync<u8> for T {}
+
+    fn is_send<T: Send>() {}
+
+    /// A detection's reader is `Send` but not `Sync`, because a results instance is not safe
+    /// to use from several threads at once, so the compiler refuses code that
+    /// shares one across threads.
+    #[test]
+    fn a_detection_reader_is_send_but_not_sync() {
+        is_send::<DetectionReader>();
+        <DetectionReader as AmbiguousIfSync<_>>::check();
+    }
+
     #[test]
     fn the_engine_type_name_is_the_name_of_the_type() {
         let full = std::any::type_name::<DeviceDetectionOnPremiseEngine>();
