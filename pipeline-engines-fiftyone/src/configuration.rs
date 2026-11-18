@@ -29,11 +29,11 @@
 //! sharing builder takes .NET's settings, read and checked as .NET reads
 //! and checks them:
 //!
-//! - `SetShareAllQueryStringParameters` shares every query string and form
-//!   parameter, and is on unless set to false, as the specification gives.
-//!   `SetIncludedQueryStringParameters` and `SetIncludedQueryStringParameter`
-//!   add to the parameters shared when it is off, in whichever order the
-//!   settings come.
+//! - `SetShareAllQueryStringParameters`, `SetIncludedQueryStringParameters`
+//!   and `SetIncludedQueryStringParameter` are deprecated and have no effect
+//!   on what is shared. They are still read, so existing configuration
+//!   loads. A query string or form parameter is shared only when its name
+//!   starts with `51D_` or an element of the pipeline accepts it.
 //! - `SetBlockedHttpHeaders` replaces the headers that are not shared, and
 //!   `SetBlockedHttpHeader` adds one.
 //! - `SetIgnoreFlowDataEvidenceFilter` adds `key:value` pairs separated by
@@ -322,7 +322,8 @@ impl ShareUsageBuilder {
         }
     }
 
-    /// Add query string parameters to share when not every one is shared.
+    /// Add included query string parameters, which are deprecated and have
+    /// no effect on what is shared.
     fn include(mut self, names: impl IntoIterator<Item = String>) -> Self {
         self.included_query_string_parameters.extend(names);
         self
