@@ -92,6 +92,40 @@ impl ElementData for Counted {
     }
 }
 
+/// How many `Moved` instances were created, rather than taken from the
+/// pool. Only the test across threads adds `Moved`, so other tests running
+/// at the same time do not change the count.
+static MOVED_CREATED: AtomicUsize = AtomicUsize::new(0);
+
+/// Element data that counts how often it is created, for the test across
+/// threads.
+struct Moved(MapElementData);
+
+impl Default for Moved {
+    fn default() -> Self {
+        MOVED_CREATED.fetch_add(1, Ordering::SeqCst);
+        Moved(MapElementData::new())
+    }
+}
+
+impl ElementData for Moved {
+    fn get(&self, name: &str) -> std::result::Result<PropertyValue, NoValueError> {
+        self.0.get(name)
+    }
+    fn keys(&self) -> Vec<String> {
+        self.0.keys()
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn reset(&mut self) -> bool {
+        self.0.reset()
+    }
+}
+
 /// How an element adds its data.
 #[derive(Clone, Copy)]
 enum Adds {
@@ -101,6 +135,8 @@ enum Adds {
     PooledMap,
     /// A `Counted` from the pool, with `get_or_add_pooled`.
     PooledCounted,
+    /// A `Moved` from the pool, with `get_or_add_pooled`.
+    PooledMoved,
 }
 
 /// An element that sets the property the `query.name` evidence names, or
@@ -140,6 +176,12 @@ impl FlowElement for Element {
                 let counted = data.get_or_add_pooled(TypedKey::<Counted>::new(KEY))?;
                 for name in names {
                     counted.0.insert(name, true);
+                }
+            }
+            Adds::PooledMoved => {
+                let moved = data.get_or_add_pooled(TypedKey::<Moved>::new(KEY))?;
+                for name in names {
+                    moved.0.insert(name, true);
                 }
             }
         }
@@ -241,6 +283,36 @@ fn data_goes_back_to_the_pool_only_when_its_flow_data_is_dropped() {
     let kept = HELD - (created() - after_holding);
     assert!(kept > 0 && kept < HELD, "the pool kept {kept} of {HELD}");
     drop(held);
+}
+
+/// Data a flow data gives back when it is dropped on one thread is taken by
+/// a request processed on another, as in a web server that processes on a
+/// blocking thread and drops the flow data on an asynchronous one.
+// WebAssembly has no threads to spawn.
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn data_given_back_on_one_thread_is_taken_on_another() {
+    let pipeline = pipeline(Adds::PooledMoved);
+    let created = || MOVED_CREATED.load(Ordering::SeqCst);
+    let on_a_new_thread = |name: &'static str| {
+        let pipeline = Arc::clone(&pipeline);
+        std::thread::spawn(move || processed(&pipeline, Some(name)))
+            .join()
+            .expect("the request is processed")
+    };
+
+    let first = on_a_new_thread("first");
+    let start = created();
+    std::thread::spawn(move || drop(first))
+        .join()
+        .expect("the flow data is dropped");
+    let second = on_a_new_thread("second");
+    assert_eq!(
+        created(),
+        start,
+        "the data given back on another thread was not taken"
+    );
+    assert_eq!(second.get_str(KEY).unwrap().keys(), ["second"]);
 }
 
 /// Data whose `reset` is the default is never reused, and a property bag
