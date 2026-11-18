@@ -1,0 +1,27 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "51Degrees Device Detection and IP Intelligence for Rust",
+  "description": "User-Agent parser for Rust that supports Device Detection, browser detection, mobile detection and crawler detection on-premise or in the cloud, as an alternative to UAParser.js, DeviceAtlas and WURFL. IP Intelligence adds IP geolocation, including IP to country data, as an alternative to MaxMind and IPinfo. Includes a 51Did reader.",
+  "excludeFolders": [
+    ".github",
+    "ci",
+    "cxx",
+    "owid-rust",
+    "javascript-templates",
+    "derived-properties/vendor",
+    "parity",
+    "tests",
+    "host-tests",
+    "archive",
+    "archived",
+    "old",
+    "deprecated",
+    "legacy",
+    "previous",
+    "outdated",
+    "superseded",
+    "benchmark",
+    "benchmarks",
+    "benches"
+  ]
+}
