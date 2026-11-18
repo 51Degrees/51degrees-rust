@@ -165,7 +165,10 @@ pub fn add_builders(registry: &mut BuilderRegistry) -> &mut BuilderRegistry {
 /// unless one is in the configuration on its own. An element in a parallel
 /// group of two or more is not counted, as .NET does not count one. The
 /// pipeline holds an element added this way as a resource, as it does one
-/// the configuration names.
+/// the configuration names. A configuration that puts usage sharing anywhere
+/// but last on its own, inside a parallel group included, makes a pipeline
+/// that [`PipelineBuilder::build`](fiftyone_pipeline_core::PipelineBuilder::build)
+/// refuses.
 ///
 /// The element sends usage only when this crate's `share-usage-transport`
 /// feature is on, which it is not by default (see [`ShareUsageElement`]).

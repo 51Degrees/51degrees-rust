@@ -1010,6 +1010,13 @@ impl Default for ShareUsageElement {
 }
 
 impl FlowElement for ShareUsageElement {
+    /// Usage sharing runs last and outside any parallel group, so it shares
+    /// the Evidence every other element added and reads it while nothing
+    /// changes it.
+    fn must_run_last(&self) -> bool {
+        true
+    }
+
     fn process(&self, data: &mut FlowData) -> Result<()> {
         if self.is_ignored(data.evidence()) {
             return Ok(());

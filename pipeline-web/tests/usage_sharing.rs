@@ -169,6 +169,33 @@ fn web_pipeline(share: &Arc<ShareUsageElement>) -> WebPipeline {
     .expect("web pipeline builds")
 }
 
+/// Usage sharing the application gives runs after every other element,
+/// wherever the application put it, as the usage sharing element
+/// specification's "Position in the Pipeline" section requires.
+#[test]
+fn usage_sharing_the_application_gives_runs_last() {
+    let share: Arc<dyn FlowElement> = Arc::new(ShareUsageElement::with_sink(
+        ShareUsageConfig::builder().build(),
+        Keep::default(),
+    ));
+    let engine = || Arc::new(Engine::new()) as Arc<dyn FlowElement>;
+    for elements in [
+        vec![Arc::clone(&share), engine()],
+        vec![engine(), Arc::clone(&share)],
+    ] {
+        let web = WebPipeline::build(elements, WebIntegrationOptions::default())
+            .expect("web pipeline builds");
+        let keys: Vec<&str> = web
+            .pipeline()
+            .flow_elements()
+            .iter()
+            .map(|element| element.data_key())
+            .collect();
+        assert_eq!(keys.last(), Some(&"shareusage"), "{keys:?}");
+        assert_eq!(keys.iter().filter(|key| **key == "shareusage").count(), 1);
+    }
+}
+
 /// Process `request` through `web` as a web integration does, with the
 /// evidence built from the request.
 fn processed(web: &WebPipeline, request: &TestRequest) -> FlowData {

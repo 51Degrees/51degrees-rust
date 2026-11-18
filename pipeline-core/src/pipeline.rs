@@ -499,8 +499,10 @@ impl PipelineBuilder {
     /// misconfiguration, if a parallel group holds an element with the data
     /// key of another element of the group or of one before the group, or an
     /// element that adds evidence (see
-    /// [`PipelineBuilder::add_parallel_elements`]), or the first
-    /// error an element returns from `add_pipeline`.
+    /// [`PipelineBuilder::add_parallel_elements`]), if an element that must run
+    /// last, being the usage sharing element, is anywhere but last on its own
+    /// (see [`FlowElement::must_run_last`]), or the first error an element
+    /// returns from `add_pipeline`.
     pub fn build(self) -> Result<Arc<Pipeline>> {
         if self.elements.is_empty() {
             return Err(Error::configuration(
@@ -551,6 +553,9 @@ impl PipelineBuilder {
         for element in &pipeline.elements {
             element.add_pipeline(&pipeline)?;
         }
+        // Checked after add_pipeline, so an element's own refusal, such as
+        // usage sharing added twice, is the one given.
+        check_runs_last(&pipeline.elements, &pipeline.steps)?;
         Ok(pipeline)
     }
 }
@@ -587,6 +592,29 @@ fn check_group_data_keys(elements: &[Arc<dyn FlowElement>], steps: &[Step]) -> R
                     }
                 }
                 before.extend(group);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Refuse a pipeline that puts an element that must run last, being the usage
+/// sharing element, anywhere but last on its own.
+fn check_runs_last(elements: &[Arc<dyn FlowElement>], steps: &[Step]) -> Result<()> {
+    let last = steps.len().saturating_sub(1);
+    for (position, step) in steps.iter().enumerate() {
+        let (range, alone) = match step {
+            Step::Element(index) => (*index..*index + 1, true),
+            Step::Group(range) => (range.clone(), false),
+        };
+        if let Some(element) = elements[range].iter().find(|e| e.must_run_last()) {
+            if !alone || position != last {
+                return Err(Error::configuration(format!(
+                    "The usage sharing element, with the data key '{}', must be \
+                     the last flow element in a pipeline and outside any \
+                     parallel group.",
+                    element.data_key()
+                )));
             }
         }
     }
