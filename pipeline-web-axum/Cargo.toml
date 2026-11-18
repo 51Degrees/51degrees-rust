@@ -2,6 +2,8 @@
 name = "fiftyone-pipeline-web-axum"
 version = "4.5.2"
 description = "axum extractor and tower middleware adapter that wires the 51Degrees web pipeline into an axum application."
+keywords = ["axum", "tower", "middleware", "client-hints", "51degrees"]
+categories = ["web-programming::http-server"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

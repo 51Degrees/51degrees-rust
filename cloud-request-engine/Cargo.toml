@@ -2,6 +2,8 @@
 name = "fiftyone-cloud-request-engine"
 version = "4.5.2"
 description = "Cloud HTTP engine that resolves the accepted evidence keys and accessible properties at build time, retrying on first use after a transient failure, with recovery mode, for the 51Degrees pipeline."
+keywords = ["device-detection", "ip-geolocation", "user-agent-parser", "cloud", "51degrees"]
+categories = ["web-programming::http-client", "api-bindings"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
