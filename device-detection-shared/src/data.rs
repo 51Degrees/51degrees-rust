@@ -84,7 +84,11 @@ const DATA_TYPE_NAME: &str = "DeviceDataBase";
 /// An on-premise engine gives its [`DeviceDataBase`] a reader rather than a copy
 /// of every value, so a caller that reads one property does not pay to read the
 /// others.
-pub trait DevicePropertyReader: Send + Sync {
+///
+/// A reader is `Send` but need not be `Sync`, because one that reads a results
+/// instance is not safe to use from several threads at once, so the compiler
+/// refuses code that shares one across threads.
+pub trait DevicePropertyReader: Send {
     /// The lowercase names of the properties this reader can read. A property
     /// is identified by its position in this list.
     fn property_names(&self) -> &[String];
@@ -131,10 +135,13 @@ struct DeferredValues {
     read: UnsafeCell<Vec<Option<ReadOutcome>>>,
 }
 
-// Safety: the values are read from a results instance, and neither is safe
-// to use from several threads at once. No lock is taken, as the
-// thread-safety specification's results instances section requires, and a
-// caller that shares the data across threads coordinates its own access.
+// Safety: the reader is `Send` but not `Sync`, because it reads a results
+// instance, which is not safe to use from several threads at once, and no
+// lock is taken. This is marked `Sync` so the element data that holds it
+// stays usable in property values and parallel groups. The caller is
+// responsible for thread-safe access: one that uses it from several threads
+// at once coordinates that itself, as the thread-safety specification at
+// 52e9b047 says.
 unsafe impl Sync for DeferredValues {}
 
 impl DeferredValues {
