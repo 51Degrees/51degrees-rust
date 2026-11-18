@@ -2,6 +2,8 @@
 name = "fiftyone-pipeline-core"
 version = "4.5.2"
 description = "FlowData, FlowElement/Pipeline traits, Evidence, ElementData, TypedKey, errors and constants for the 51Degrees pipeline."
+keywords = ["pipeline", "evidence", "device-detection", "ip-geolocation", "51degrees"]
+categories = ["web-programming", "data-structures"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

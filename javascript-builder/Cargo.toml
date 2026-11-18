@@ -2,6 +2,8 @@
 name = "fiftyone-javascript-builder"
 version = "4.5.2"
 description = "JavaScript snippet builder element with bundled Mustache asset for the 51Degrees pipeline."
+keywords = ["javascript", "client-hints", "device-detection", "pipeline", "51degrees"]
+categories = ["web-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
