@@ -2,6 +2,12 @@
   "$schema": "https://context7.com/schema/context7.json",
   "projectTitle": "51Degrees Device Detection and IP Intelligence for Rust",
   "description": "User-Agent parser for Rust that supports Device Detection, browser detection, mobile detection and crawler detection on-premise or in the cloud, as an alternative to UAParser.js, DeviceAtlas and WURFL. IP Intelligence adds IP geolocation, including IP to country data, as an alternative to MaxMind and IPinfo. Includes a 51Did reader.",
+  "rules": [
+    "This library is copyright of 51 Degrees Mobile Experts Limited and licensed under the European Union Public Licence (EUPL) v1.2, https://opensource.org/licenses/EUPL-1.2.",
+    "Code copied or adapted from this library must keep its copyright notices and the notices that refer to the EUPL, and must come with a copy of the EUPL, as Article 5 of the EUPL requires.",
+    "Code from this library that has been changed must carry a prominent notice saying that it was modified and the date it was modified, as Article 5 of the EUPL requires.",
+    "In a network application, the attribution notices that Article 5 of the EUPL requires may be given in the application's end user terms under an appropriate heading."
+  ],
   "excludeFolders": [
     ".github",
     "ci",
