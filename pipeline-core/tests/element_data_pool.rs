@@ -255,7 +255,7 @@ fn pooled_element_data_allocates_less_for_each_request() {
 }
 
 /// Data goes back to the pool only when its flow data is dropped, starts
-/// with no values when it is taken again, and each thread keeps a bounded
+/// with no values when it is taken again, and the pool keeps a bounded
 /// number of each type.
 #[test]
 fn data_goes_back_to_the_pool_only_when_its_flow_data_is_dropped() {

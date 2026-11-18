@@ -451,17 +451,18 @@ impl FlowData {
     }
 
     /// As [`FlowData::get_or_add`], with new data taken from those that flow
-    /// data dropped earlier on this thread gave back, or `T::default()` when
+    /// data dropped earlier gave back, on any thread, or `T::default()` when
     /// there is none, so an element does not create its data for every
     /// request. Data taken this way starts with no values, as
     /// [`ElementData::reset`] left it.
     ///
-    /// When a flow data is dropped, each element data it holds that
-    /// [`ElementData::reset`] clears goes back to the pool of the thread that
-    /// drops it, which keeps a bounded number of each type. So keeping a
-    /// reference to element data after its flow data is dropped is not
-    /// supported. The borrow checker stops a reference outliving the flow
-    /// data, and a clone made before then is a copy of its own.
+    /// Only a type some element takes this way has a pool, which every thread
+    /// shares and which keeps a bounded number. When a flow data is dropped,
+    /// on any thread, each element data it holds that [`ElementData::reset`]
+    /// clears goes back to the pool for its type. So keeping a reference to
+    /// element data after its flow data is dropped is not supported. The
+    /// borrow checker stops a reference outliving the flow data, and a clone
+    /// made before then is a copy of its own.
     pub fn get_or_add_pooled<T>(&mut self, key: TypedKey<T>) -> Result<&mut T>
     where
         T: ElementData + Default,

@@ -100,9 +100,10 @@ pub trait ElementData: Any + Send + Sync {
     /// the memory it holds, and return `true`. The default returns `false`,
     /// and data that returns `false` is not reused.
     ///
-    /// A flow data calls this for each element data it holds when it is
-    /// dropped, and keeps those that return `true` for
-    /// [`crate::FlowData::get_or_add_pooled`] to hand out again, as the
+    /// When a flow data is dropped, it calls this for each element data it
+    /// holds whose type some element takes with
+    /// [`crate::FlowData::get_or_add_pooled`], and keeps those that return
+    /// `true` for that method to hand out again, on any thread, as the
     /// [resource cleanup specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/resource-cleanup.md#reusing-element-data)
     /// recommends. Return `false` while a lazy task may still write the data.
     fn reset(&mut self) -> bool {
