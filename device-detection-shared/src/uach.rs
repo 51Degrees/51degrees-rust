@@ -203,12 +203,15 @@ impl UachJsConversionElement {
         }
     }
 
-    /// Pick the encoded blob from evidence, preferring the query key over the
-    /// cookie key as the specification requires.
-    fn select_evidence<'a>(&self, data: &'a FlowData) -> Option<&'a str> {
-        data.evidence()
-            .get(UACH_EVIDENCE_QUERY_KEY)
-            .or_else(|| data.evidence().get(UACH_EVIDENCE_COOKIE_KEY))
+    /// The headers the encoded value gives, from the query key when its value
+    /// gives at least one header, otherwise from the cookie key, because the
+    /// specification counts a value as available only when it does.
+    fn converted(&self, data: &FlowData) -> Option<Vec<(String, String)>> {
+        [UACH_EVIDENCE_QUERY_KEY, UACH_EVIDENCE_COOKIE_KEY]
+            .into_iter()
+            .filter_map(|key| data.evidence().get(key))
+            .filter_map(convert_high_entropy)
+            .find(|values| !values.is_empty())
     }
 }
 
@@ -224,7 +227,7 @@ impl FlowElement for UachJsConversionElement {
     fn process(&self, data: &mut FlowData) -> Result<()> {
         // Convert outside the get_or_add closure so the immutable evidence
         // borrow ends before the mutable element-data borrow begins.
-        let converted = self.select_evidence(data).and_then(convert_high_entropy);
+        let converted = self.converted(data);
 
         let element_data = data.get_or_add(Self::DATA_KEY, UachData::new)?;
         if let Some(values) = converted {
@@ -471,6 +474,35 @@ mod tests {
 
         let uach = data.get(UachJsConversionElement::DATA_KEY).unwrap();
         assert_eq!(uach.get(SEC_CH_UA_MOBILE).unwrap().as_str(), Some("?1"));
+    }
+
+    /// A query value that cannot be decoded, or that gives no header, leaves
+    /// the cookie value to be used, because the specification counts a value
+    /// as available only when it gives at least one header.
+    #[test]
+    fn cookie_evidence_used_when_the_query_value_gives_no_header() {
+        let cookie_blob = encode(r#"{"platform": "Windows"}"#);
+        for (case, query_blob) in [
+            ("not base 64", "not base 64!".to_owned()),
+            ("not JSON", STANDARD.encode(b"this is not json")),
+            ("no header", encode("{}")),
+        ] {
+            let pipeline = Pipeline::builder()
+                .add_element(Arc::new(UachJsConversionElement::new()))
+                .build()
+                .unwrap();
+            let mut data = pipeline.create_flow_data_with(
+                Evidence::builder()
+                    .add(UACH_EVIDENCE_QUERY_KEY, query_blob)
+                    .add(UACH_EVIDENCE_COOKIE_KEY, cookie_blob.clone())
+                    .build(),
+            );
+            data.process().unwrap();
+
+            let uach = data.get(UachJsConversionElement::DATA_KEY).unwrap();
+            let platform = uach.get(SEC_CH_UA_PLATFORM).expect(case);
+            assert_eq!(platform.as_str(), Some("\"Windows\""), "{case}");
+        }
     }
 
     #[test]

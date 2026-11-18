@@ -1610,17 +1610,6 @@ fn redact_secrets(error: Error, secrets: &[String]) -> Error {
         Error::PipelineConfiguration { message } => Error::PipelineConfiguration {
             message: redact_with(&message, secrets).into_owned(),
         },
-        // A response with several errors is raised as an aggregate of one
-        // cloud error each, and each is cleaned in turn.
-        Error::Aggregate(errors) => Error::Aggregate(
-            errors
-                .into_iter()
-                .map(|mut error| {
-                    error.source = redact_secrets(error.source, secrets);
-                    error
-                })
-                .collect(),
-        ),
         other => other,
     }
 }
@@ -1714,27 +1703,16 @@ fn discovery_pending() -> Error {
 /// other result back. A 4xx answer, such as an unknown resource key, is a
 /// definitive configuration error, which a retry with the same configuration
 /// can never fix. Anything else, including a request that did not complete,
-/// is transient. A response with several errors is raised as an aggregate of
-/// one cloud error each, all with the response's status, so an aggregate is
-/// definitive when its errors are.
+/// is transient.
 fn definitive_fails_build<T>(result: Result<T>) -> Result<Result<T>> {
     match result {
-        Err(error) if is_definitive(&error) => Err(error),
+        Err(
+            error @ Error::CloudRequest {
+                status_code: 400..=499,
+                ..
+            },
+        ) => Err(error),
         other => Ok(other),
-    }
-}
-
-/// Whether an error is a 4xx answer, or an aggregate of nothing else.
-fn is_definitive(error: &Error) -> bool {
-    match error {
-        Error::CloudRequest {
-            status_code: 400..=499,
-            ..
-        } => true,
-        Error::Aggregate(errors) => {
-            !errors.is_empty() && errors.iter().all(|error| is_definitive(&error.source))
-        }
-        _ => false,
     }
 }
 
@@ -1803,29 +1781,43 @@ fn fetch_public_properties(
     origin: Option<&str>,
     secrets: &[String],
 ) -> Result<LicensedProducts> {
-    // The resource key stays in the query string, where the service has
-    // always read it. A license key never goes there, with or without a
-    // resource key, so a request that carries one is a POST with the key in
-    // its body.
-    let url = match resource_key {
-        Some(resource_key) => format!(
-            "{}?{}={}",
-            endpoints.properties,
-            constants::RESOURCE_PARAMETER,
-            encode_query_value(resource_key)
-        ),
-        None => endpoints.properties.clone(),
-    };
-    let request = match license_key.filter(|l| !l.trim().is_empty()) {
-        Some(license) => CloudHttpRequest {
+    // With a resource key this is the GET the service has always answered,
+    // with a license key beside it in the query string, because the cloud
+    // adds the products the license grants to those of the resource key. A
+    // license key alone goes in the body of a POST instead, so that it stays
+    // out of request logs.
+    let license = license_key.filter(|l| !l.trim().is_empty());
+    let request = match (resource_key, license) {
+        (Some(resource_key), license) => {
+            let mut url = format!(
+                "{}?{}={}",
+                endpoints.properties,
+                constants::RESOURCE_PARAMETER,
+                encode_query_value(resource_key)
+            );
+            if let Some(license) = license {
+                url.push_str(&format!(
+                    "&{}={}",
+                    constants::LICENSE_PARAMETER,
+                    encode_query_value(license)
+                ));
+            }
+            CloudHttpRequest {
+                method: HttpMethod::Get,
+                url,
+                form: Vec::new(),
+                origin: origin.map(str::to_owned),
+            }
+        }
+        (None, Some(license)) => CloudHttpRequest {
             method: HttpMethod::Post,
-            url,
+            url: endpoints.properties.clone(),
             form: vec![(constants::LICENSE_PARAMETER.to_owned(), license.to_owned())],
             origin: origin.map(str::to_owned),
         },
-        None => CloudHttpRequest {
+        (None, None) => CloudHttpRequest {
             method: HttpMethod::Get,
-            url,
+            url: endpoints.properties.clone(),
             form: Vec::new(),
             origin: origin.map(str::to_owned),
         },
