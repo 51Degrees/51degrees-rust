@@ -399,6 +399,37 @@ mod tests {
         );
     }
 
+    /// The on-premise builder adds usage sharing after every element it adds
+    /// itself.
+    #[test]
+    fn on_premise_usage_sharing_runs_last() {
+        let Some(data_file) = asn_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping usage sharing last");
+            return;
+        };
+        // Built but never processed, so nothing is queued or sent.
+        let pipeline = IpIntelligencePipelineBuilder::on_premise(&data_file)
+            .performance_profile(PerformanceProfile::LowMemory)
+            .properties(ASN_PROPERTIES.iter().copied())
+            .share_usage(true)
+            .auto_update(false)
+            .file_system_watcher(false)
+            .build()
+            .expect("the ASN data file should build an on-premise pipeline");
+
+        let names: Vec<&str> = pipeline
+            .flow_elements()
+            .iter()
+            .map(|element| element.type_name())
+            .collect();
+        assert_eq!(names.len(), 3, "{names:?}");
+        assert_eq!(
+            names.last().copied(),
+            Some("fiftyone_pipeline_engines_fiftyone::share_usage_element::ShareUsageElement"),
+            "{names:?}"
+        );
+    }
+
     #[test]
     fn on_premise_builder_assembles_a_single_engine_pipeline() {
         let Some(data_file) = asn_data_file() else {
