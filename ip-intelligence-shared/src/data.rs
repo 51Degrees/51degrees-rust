@@ -2188,25 +2188,41 @@ mod tests {
         assert!(seen.iter().all(|seen| *seen), "a slot no accessor passes");
     }
 
-    /// Implemented for every type, and a second time for every `Sync` type,
-    /// so naming the item through it is ambiguous, and fails to compile,
-    /// exactly when the type is `Sync`.
-    trait AmbiguousIfSync<A> {
-        fn check() {}
+    /// A reader that counts its reads in a `Cell`, so it is `Send` but not
+    /// `Sync`, as a reader over a results instance is.
+    struct CellReader {
+        names: Vec<String>,
+        reads: std::cell::Cell<usize>,
     }
-    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
-    struct IsSync;
-    impl<T: ?Sized + Sync> AmbiguousIfSync<IsSync> for T {}
 
-    fn assert_send<T: Send>() {}
+    impl IpIntelligencePropertyReader for CellReader {
+        fn property_names(&self) -> &[String] {
+            &self.names
+        }
 
-    /// IP Intelligence data that reads from a results instance is not safe to use from several threads at once, so it is
-    /// `Send` but not `Sync`, and the compiler refuses code that shares one
-    /// across threads, as the thread-safety specification's results
-    /// instances section requires.
+        fn position(&self, name: &str) -> Option<usize> {
+            self.names.iter().position(|known| known == name)
+        }
+
+        fn read_property(
+            &self,
+            _position: usize,
+            data: &mut IpIntelligenceDataBase,
+        ) -> Result<(), String> {
+            self.reads.set(self.reads.get() + 1);
+            data.set_string("Country", "United Kingdom");
+            Ok(())
+        }
+    }
+
+    /// A reader need not be `Sync`, because one that reads a results instance
+    /// is not safe to use from several threads at once.
     #[test]
-    fn it_is_send_but_not_sync() {
-        assert_send::<IpIntelligenceDataBase>();
-        <IpIntelligenceDataBase as AmbiguousIfSync<_>>::check();
+    fn a_reader_that_is_not_sync_backs_ip_intelligence_data() {
+        let data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(CellReader {
+            names: vec!["country".to_owned()],
+            reads: std::cell::Cell::new(0),
+        });
+        assert_eq!(data.country().value().unwrap().as_str(), "United Kingdom");
     }
 }

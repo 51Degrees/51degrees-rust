@@ -423,4 +423,32 @@ mod tests {
         assert_eq!(data.len(), 2);
         assert_eq!(profile_id(&data.profiles()[0]), "12280");
     }
+
+    /// A profile reader that counts its reads in a `Cell`, so it is `Send`
+    /// but not `Sync`, as one over results instances is.
+    struct CellProfiles {
+        reads: std::cell::Cell<usize>,
+    }
+
+    impl ProfileReader for CellProfiles {
+        fn read_profile(&self, id: u32) -> DeviceDataBase {
+            self.reads.set(self.reads.get() + 1);
+            DeviceDataBase::new().set("ProfileId", id.to_string())
+        }
+    }
+
+    /// A profile reader need not be `Sync`, because one that holds results
+    /// instances is not safe to use from several threads at once.
+    #[test]
+    fn a_profile_reader_that_is_not_sync_gives_the_profiles() {
+        let mut data = MultiDeviceData::new();
+        data.push_profile_ids(
+            Arc::new(CellProfiles {
+                reads: std::cell::Cell::new(0),
+            }),
+            vec![7, 9],
+        );
+        let ids: Vec<String> = data.profiles().iter().map(profile_id).collect();
+        assert_eq!(ids, ["7", "9"]);
+    }
 }
