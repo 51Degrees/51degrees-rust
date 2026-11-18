@@ -45,7 +45,7 @@
 
 use std::convert::Infallible;
 use std::fs::{self, File};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -97,6 +97,13 @@ pub const DEFAULT_MOST_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 /// cannot be read.
 const FALLBACK_BYTES: u64 = 1024 * 1024 * 1024;
 
+/// With no time to idle, a read rewrites Renewed once it is this old, so
+/// trimming still goes by last use, to within this.
+const RENEW_WITH_NO_IDLE: Duration = Duration::from_secs(60 * 60);
+
+/// The locks that order the writes, renewals and removals of each file.
+const WRITE_LOCKS: usize = 16;
+
 /// How often expired files are cleared, when no period is given.
 const DEFAULT_SWEEP_EVERY: Duration = Duration::from_secs(10 * 60);
 
@@ -129,8 +136,11 @@ const ABANDONED_AFTER: Duration = Duration::from_secs(10 * 60);
 ///   [time to idle](FileStoreBuilder::time_to_idle), or written later than
 ///   now answers as absent and its file is removed.
 /// - A read rewrites Renewed in the file when it is more than a tenth of
-///   the time to idle in the past, so idle is measured to within 10%
-///   without a write on every read.
+///   the time to idle in the past, or more than an hour when no time to
+///   idle is set, so idle and last use are measured without a write on
+///   every read. The rewrite writes the whole file under a temporary name
+///   and renames it into place, and is dropped when a newer write of the
+///   entry has landed since the read.
 /// - The files are held within a number of bytes. Once over it, the files
 ///   with the oldest Renewed are removed until the store is back under
 ///   nine tenths of it.
@@ -165,6 +175,9 @@ pub struct FileStore {
     maintaining: Mutex<()>,
     /// When expired files are next cleared, as nanoseconds since the epoch.
     next_sweep: AtomicU64,
+    /// Held while a file is written, renewed or removed, chosen by its
+    /// name, so a renewal never lands over a newer write.
+    writing: [Mutex<()>; WRITE_LOCKS],
 }
 
 /// Numbers the temporary files of every store in the process, so two stores
@@ -365,12 +378,22 @@ impl FileStore {
     }
 
     /// True when a read now should rewrite Renewed, being when it is more
-    /// than a tenth of the time to idle in the past.
+    /// than a tenth of the time to idle in the past, or more than an hour
+    /// when no time to idle is set.
     fn renewal_due(&self, renewed: SystemTime, now: SystemTime) -> bool {
-        self.time_to_idle.is_some_and(|idle| {
-            now.duration_since(renewed)
-                .is_ok_and(|since| since > idle / 10)
-        })
+        let after = self
+            .time_to_idle
+            .map_or(RENEW_WITH_NO_IDLE, |idle| idle / 10);
+        now.duration_since(renewed).is_ok_and(|since| since > after)
+    }
+
+    /// The lock that orders the writes, renewals and removals of the file at
+    /// `path`.
+    fn write_lock(&self, path: &Path) -> std::sync::MutexGuard<'_, ()> {
+        let first = file_name(path).bytes().next().unwrap_or(0);
+        self.writing[usize::from(first) % WRITE_LOCKS]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     /// The Header of the entry at `path` when it is a file this store wrote
@@ -406,7 +429,11 @@ impl FileStore {
     /// Removes the entry file at `path`, then the folders above it that this
     /// leaves empty, up to the root. True when the file was removed.
     fn remove_entry(&self, path: &Path) -> bool {
-        if fs::remove_file(path).is_err() {
+        let removed = {
+            let _writing = self.write_lock(path);
+            fs::remove_file(path).is_ok()
+        };
+        if !removed {
             return false;
         }
         let mut folder = path.parent();
@@ -519,19 +546,30 @@ impl FileStore {
         written
     }
 
-    /// Rewrites the 8 bytes of Renewed in the file at `path`, which holds
-    /// `key_len` bytes of key, in place.
-    fn rewrite_renewed(&self, path: &Path, key_len: usize, now: SystemTime) {
-        let offset = (PREFIX_LEN + key_len + RENEWED_IN_ENTRY) as u64;
-        let rewritten = (|| {
-            let mut file = File::options().write(true).open(path)?;
-            file.seek(SeekFrom::Start(offset))?;
-            file.write_all(&nanos(now).to_le_bytes())
-        })();
-        if let Err(error) = rewritten {
-            if error.kind() != io::ErrorKind::NotFound {
+    /// Writes the file `read`, as a read of `key` found it at `path`, with
+    /// Renewed set to `now`, under a temporary name, and renames it into
+    /// place. Does nothing when the file has changed since, so an older
+    /// value never lands over a newer write.
+    fn renew(&self, path: &Path, key: &str, read: &[u8], now: SystemTime) {
+        let offset = PREFIX_LEN + key.len() + RENEWED_IN_ENTRY;
+        if read.len() < offset + 8 {
+            return;
+        }
+        let mut bytes = read.to_vec();
+        bytes[offset..offset + 8].copy_from_slice(&nanos(now).to_le_bytes());
+        let _writing = self.write_lock(path);
+        match fs::read(path) {
+            Ok(current) if current == read => {}
+            // Written again, renewed or removed since the read.
+            Ok(_) => return,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return,
+            Err(error) => {
                 log::warn!("The disk cache could not renew {}: {error}", path.display());
+                return;
             }
+        }
+        if let Err(error) = self.write_file(path, &bytes, now) {
+            log::warn!("The disk cache could not renew {}: {error}", path.display());
         }
     }
 
@@ -588,7 +626,7 @@ impl ByteStore for FileStore {
                     return ByteLookup::Miss;
                 }
                 if self.renewal_due(header.renewed, now) {
-                    self.rewrite_renewed(&path, key.len(), now);
+                    self.renew(&path, key, &bytes, now);
                 }
                 ByteLookup::Hit(entry.to_vec())
             }
@@ -609,9 +647,13 @@ impl ByteStore for FileStore {
         let now = self.clock.now();
         let file = compose(key, key_len, &bytes);
         let path = self.path_for(key);
-        let replaced = fs::metadata(&path).map(|metadata| metadata.len()).ok();
-        match self.write_file(&path, &file, now) {
-            Ok(()) => {
+        let written = {
+            let _writing = self.write_lock(&path);
+            let replaced = fs::metadata(&path).map(|metadata| metadata.len()).ok();
+            self.write_file(&path, &file, now).map(|()| replaced)
+        };
+        match written {
+            Ok(replaced) => {
                 if let Some(replaced) = replaced {
                     self.release(replaced);
                 }
@@ -681,8 +723,9 @@ impl FileStoreBuilder {
 
     /// How long an entry may go unread before it answers as absent and its
     /// file is cleared. Defaults to no limit, leaving each entry to the
-    /// lifetime it was written with. With no time to idle, a read never
-    /// rewrites Renewed, so trimming goes by when each entry was written.
+    /// lifetime it was written with. With no time to idle, a read rewrites
+    /// Renewed once it is more than an hour old, so trimming goes by last
+    /// use to within an hour.
     pub fn time_to_idle(mut self, time_to_idle: Duration) -> Self {
         self.time_to_idle = Some(time_to_idle);
         self
@@ -724,6 +767,7 @@ impl FileStoreBuilder {
             held: AtomicU64::new(0),
             maintaining: Mutex::new(()),
             next_sweep: AtomicU64::new(0),
+            writing: std::array::from_fn(|_| Mutex::new(())),
         };
         store.secret = store.load_secret();
         // A new secret leaves every file under the old one unreachable, and
