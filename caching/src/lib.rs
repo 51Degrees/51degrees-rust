@@ -195,6 +195,12 @@
 //! - The files are cleared once expired or unused for the time to idle,
 //!   and kept within a share of the volume's space by removing the least
 //!   recently used. They survive a restart.
+//! - An entry made from other data or in another value format answers
+//!   absent and is removed, given the published date the source uses now
+//!   through [`EncodedStoreBuilder::published`] and the codec's
+//!   [`Codec::version`].
+//! - Each store needs a folder of its own. A store opened on a folder that
+//!   another has open logs a warning and carries on without the disk.
 //!
 //! Both size themselves from the machine, with no setting. `FileStore`,
 //! [`MemoryBudget`] and [`machine`] are on native targets only.
