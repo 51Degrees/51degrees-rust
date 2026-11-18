@@ -927,3 +927,25 @@ fn its_element_data_is_read_only_once_processed() {
         ),
     }
 }
+
+/// CI names the data file in `_51DEGREES_DD_PATH`. The check that element
+/// data is read only fails, rather than skips, when the file it names is
+/// missing, so a run without its data file cannot pass the check. The
+/// check runs here in a new process of this test binary, given a name
+/// that is missing.
+#[test]
+fn the_read_only_check_fails_when_the_named_data_file_is_missing() {
+    let test = "its_element_data_is_read_only_once_processed";
+    let missing = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("missing-data-file");
+    let output = std::process::Command::new(std::env::current_exe().expect("the test binary"))
+        .args([test, "--exact"])
+        .env("_51DEGREES_DD_PATH", &missing)
+        .output()
+        .expect("the test binary runs");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains(&format!("test {test} ... FAILED")),
+        "{test} did not fail with _51DEGREES_DD_PATH naming {}, which is missing:\n{text}",
+        missing.display()
+    );
+}
