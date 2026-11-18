@@ -264,9 +264,11 @@ impl ShareUsageConfig {
         &self.blocked_http_headers
     }
 
-    /// The query string parameters that are shared, as they were given, in
-    /// addition to any starting with `51d_`. `None`, the default, shares
-    /// every one.
+    /// The included query string parameters, as they were given.
+    ///
+    /// Deprecated, and has no effect. A query string or form parameter is
+    /// shared only when its name starts with `51d_` or an element of the
+    /// pipeline accepts it, whatever the configuration.
     pub fn included_query_string_parameters(&self) -> Option<&[String]> {
         self.included_query_string_parameters.as_deref()
     }
@@ -452,10 +454,12 @@ impl ShareUsageConfigBuilder {
         self
     }
 
-    /// Set the query string parameters to share (in addition to any starting
-    /// with `51d_`). Passing `None`, the default, shares every query
-    /// parameter, and `Some` of an empty list shares only those starting with
-    /// `51d_`. Returns `self` for chaining.
+    /// Set the included query string parameters. Returns `self` for
+    /// chaining.
+    ///
+    /// Deprecated, and has no effect. A query string or form parameter is
+    /// shared only when its name starts with `51d_` or an element of the
+    /// pipeline accepts it, whatever the configuration.
     pub fn included_query_string_parameters<I, S>(mut self, params: Option<I>) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -752,6 +756,8 @@ pub struct ShareUsageElement {
     filter: Arc<EvidenceKeyFilterShareUsage>,
     properties: Vec<PropertyMetaData>,
     tracker: ShareUsageTracker,
+    /// The tracker's filter, asked with each request's pipeline.
+    tracker_filter: EvidenceKeyFilterShareUsageTracker,
     config: ShareUsageConfig,
     sender: SyncSender<UsageRecord>,
     worker: Mutex<Option<JoinHandle<()>>>,
@@ -822,10 +828,7 @@ impl ShareUsageElement {
             if config.share_all_evidence {
                 EvidenceKeyFilterShareUsage::share_all()
             } else {
-                EvidenceKeyFilterShareUsage::new(
-                    config.blocked_http_headers.clone(),
-                    config.included_query_string_parameters.clone(),
-                )
+                EvidenceKeyFilterShareUsage::new(config.blocked_http_headers.clone(), None)
             }
         };
 
@@ -843,7 +846,7 @@ impl ShareUsageElement {
             config
                 .maximum_queue_size
                 .max(SHARE_USAGE_DEFAULT_MAX_QUEUE_SIZE),
-            Box::new(tracker_filter),
+            Box::new(tracker_filter.clone()),
         );
 
         let (tx, rx) = sync_channel::<UsageRecord>(config.maximum_queue_size);
@@ -885,6 +888,7 @@ impl ShareUsageElement {
             filter,
             properties: Vec::new(),
             tracker,
+            tracker_filter,
             config,
             sender: tx,
             worker: Mutex::new(worker),
@@ -919,7 +923,10 @@ impl ShareUsageElement {
 
     /// Which of the keys the element finds are shared, as the configuration
     /// sets it. The element itself accepts no evidence, so this is not its
-    /// [`FlowElement::evidence_key_filter`].
+    /// [`FlowElement::evidence_key_filter`]. A query string or form parameter
+    /// also depends on the pipeline, so the element asks
+    /// [`EvidenceKeyFilterShareUsage::include_for`] with the pipeline's
+    /// filter.
     pub fn shared_evidence_filter(&self) -> &EvidenceKeyFilterShareUsage {
         &self.filter
     }
@@ -928,8 +935,9 @@ impl ShareUsageElement {
     /// shared. Each key is read from the evidence, and from the web request
     /// only when the shared evidence filter includes it, so a key of the
     /// request that is not shared and that no element accepts never stops a
-    /// request being shared. A key in both has the evidence's value.
-    fn is_ignored(&self, evidence: &Evidence) -> bool {
+    /// request being shared. A key in both has the evidence's value. `used`
+    /// is the pipeline's filter.
+    fn is_ignored(&self, evidence: &Evidence, used: &dyn EvidenceKeyFilter) -> bool {
         self.config
             .ignore_flow_data_evidence_filter
             .iter()
@@ -937,7 +945,7 @@ impl ShareUsageElement {
                 let found = evidence.get(key).or_else(|| {
                     evidence
                         .http_request()
-                        .filter(|_| self.filter.include(key))
+                        .filter(|_| self.filter.include_for(key, used))
                         .and_then(|request| request.get(key))
                 });
                 found == Some(value.as_str())
@@ -956,6 +964,7 @@ impl ShareUsageElement {
     /// evidence the element found for it. The evidence is read in the order
     /// it was given, with each key spelled as given.
     fn extract(&self, data: &FlowData, evidence: &Evidence) -> UsageRecord {
+        let used = data.evidence_key_filter();
         let mut record = UsageRecord::new(
             data.pipeline()
                 .flow_elements()
@@ -976,7 +985,7 @@ impl ShareUsageElement {
                 record.session_id = entry.value().to_owned();
             } else if key.eq_ignore_ascii_case(EVIDENCE_SEQUENCE) {
                 record.sequence = parse_sequence(entry.value()).unwrap_or(0);
-            } else if self.filter.include(key) {
+            } else if self.filter.include_for(key, used) {
                 record.add_evidence(entry.key_as_given(), entry.value());
             }
         }
@@ -1011,7 +1020,10 @@ impl Default for ShareUsageElement {
 
 impl FlowElement for ShareUsageElement {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        if self.is_ignored(data.evidence()) {
+        // The keys the pipeline's elements accept, which decide whether a
+        // query string or form parameter is shared.
+        let used = data.evidence_key_filter();
+        if self.is_ignored(data.evidence(), used) {
             return Ok(());
         }
 
@@ -1023,7 +1035,11 @@ impl FlowElement for ShareUsageElement {
         // Repeat-evidence deduplication: the tracker decides whether the
         // evidence found for this request is new enough to share.
         let found = found_evidence(data.evidence());
-        if !self.tracker.track_evidence(&found) {
+        let tracked = ForPipeline {
+            tracker: &self.tracker_filter,
+            used,
+        };
+        if !self.tracker.track_evidence_with(&found, &tracked) {
             return Ok(());
         }
 
@@ -1135,6 +1151,22 @@ impl Drop for ShareUsageElement {
              finish within {SHARE_USAGE_CLOSE_TIMEOUT_MS} ms when closing down.",
             self.queued.load(Ordering::Relaxed)
         );
+    }
+}
+
+/// The tracker's filter in one pipeline, whose filter is `used`.
+struct ForPipeline<'a> {
+    tracker: &'a EvidenceKeyFilterShareUsageTracker,
+    used: &'a dyn EvidenceKeyFilter,
+}
+
+impl EvidenceKeyFilter for ForPipeline<'_> {
+    fn include(&self, key: &str) -> bool {
+        self.tracker.include_for(key, self.used)
+    }
+
+    fn order(&self, key: &str) -> Option<i32> {
+        self.include(key).then_some(100)
     }
 }
 

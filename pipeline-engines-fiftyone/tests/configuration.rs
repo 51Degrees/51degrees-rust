@@ -297,19 +297,18 @@ fn every_setting_is_read_as_dotnet_reads_it() {
     );
     assert_eq!(config.session_cookie_name(), Some("MySession"));
 
-    // The element itself shares what the settings say.
+    // The element itself shares what the settings say. The included query
+    // string parameters are deprecated and have no effect, so a parameter
+    // no element of the pipeline accepts is shared only for a 51D_ name.
     let element = share_usage_element(&pipeline);
     let filter = element.shared_evidence_filter();
+    for key in ["query.51d_x", "header.accept"] {
+        assert!(filter.include(key), "{key}");
+    }
     for key in [
         "query.a",
         "query.b,c",
         "query.d",
-        "query.51d_x",
-        "header.accept",
-    ] {
-        assert!(filter.include(key), "{key}");
-    }
-    for key in [
         "query.e",
         "header.x-one",
         "header.x-two",
@@ -358,12 +357,13 @@ fn sharing_all_evidence_shares_every_key_but_those_never_shared() {
     assert!(share_usage_config(&pipeline).share_all_evidence());
     let element = share_usage_element(&pipeline);
     let filter = element.shared_evidence_filter();
-    for key in ["cookie.51d_session", "query.anything", "session.anything"] {
+    for key in ["cookie.51d_session", "query.51d_x", "session.anything"] {
         assert!(filter.include(key), "{key}");
     }
-    // usage-sharing-element.md: no cookie but a 51D_ one is shared, even
-    // when all evidence is shared.
-    for key in ["header.cookie", "cookie.session"] {
+    // usage-sharing-element.md: no cookie but a 51D_ one is shared, and no
+    // query string or form parameter but a 51D_ one or one the pipeline
+    // uses, even when all evidence is shared.
+    for key in ["header.cookie", "cookie.session", "query.anything"] {
         assert!(!filter.include(key), "{key}");
     }
 }
