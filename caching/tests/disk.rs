@@ -36,6 +36,7 @@
 mod common;
 
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
@@ -446,6 +447,84 @@ fn renewed_is_rewritten_only_once_more_than_a_tenth_of_the_time_to_idle_has_pass
     clock.advance_secs(9);
     assert!(value(&disk, "key").is_some());
     assert_eq!(renewed_in_file(folder.path(), "key"), renewed);
+}
+
+#[test]
+fn with_no_time_to_idle_renewed_is_rewritten_only_once_more_than_an_hour_has_passed() {
+    let folder = Folder::new("renewed-hourly");
+    let clock = TestClock::new();
+    let disk = open(&folder, &clock);
+
+    let start = clock.now();
+    put(&disk, &clock, "key", b"value", None);
+
+    // An hour on, a read leaves the file alone.
+    clock.advance_secs(60 * 60);
+    assert!(value(&disk, "key").is_some());
+    assert_eq!(renewed_in_file(folder.path(), "key"), start);
+
+    // Past it, a read rewrites Renewed.
+    clock.advance_secs(1);
+    assert!(value(&disk, "key").is_some());
+    let renewed = clock.now();
+    assert_eq!(renewed_in_file(folder.path(), "key"), renewed);
+
+    clock.advance_secs(60 * 60);
+    assert!(value(&disk, "key").is_some());
+    assert_eq!(renewed_in_file(folder.path(), "key"), renewed);
+}
+
+#[test]
+fn with_no_time_to_idle_trimming_removes_the_least_recently_used_first() {
+    let folder = Folder::new("limit-hourly");
+    let clock = TestClock::new();
+    let limit = 8 * 1024;
+    let disk = FileStore::builder(folder.path())
+        .max_bytes(limit)
+        .clock(clock.shared())
+        .open()
+        .expect("opens");
+
+    let value_bytes = vec![b'x'; 1000];
+    put(&disk, &clock, "first", &value_bytes, None);
+    for key in 0..9 {
+        clock.advance_secs(60 * 60 + 1);
+        // Reading the first entry renews it, so it is never the least
+        // recently used.
+        assert!(value(&disk, "first").is_some());
+        clock.advance_secs(1);
+        put(&disk, &clock, &format!("key-{key}"), &value_bytes, None);
+    }
+
+    assert!(value(&disk, "first").is_some());
+    assert_eq!(value(&disk, "key-0"), None);
+    assert!(value(&disk, "key-8").is_some());
+}
+
+#[test]
+fn a_read_that_renews_writes_a_whole_new_file_and_renames_it_into_place() {
+    let folder = Folder::new("renew-rename");
+    let clock = TestClock::new();
+    let disk = FileStore::builder(folder.path())
+        .time_to_idle(secs(100))
+        .clock(clock.shared())
+        .open()
+        .expect("opens");
+    put(&disk, &clock, "key", b"value", None);
+    let path = file_of(folder.path(), "key");
+    let before = fs::read(&path).unwrap();
+    // A handle open on the file sees it unchanged when another file is
+    // renamed over it, and sees any write made in place.
+    let mut held = fs::File::open(&path).unwrap();
+
+    clock.advance_secs(11);
+    assert_eq!(value(&disk, "key"), Some(b"value".to_vec()));
+    assert_eq!(renewed_in_file(folder.path(), "key"), clock.now());
+    let mut through_held = Vec::new();
+    held.read_to_end(&mut through_held).unwrap();
+    assert_eq!(through_held, before, "the file was rewritten in place");
+    let leaf = path.parent().unwrap();
+    assert_eq!(names(leaf), [path.file_name().unwrap().to_string_lossy()]);
 }
 
 #[test]

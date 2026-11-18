@@ -1082,6 +1082,33 @@ mod tests {
         );
     }
 
+    /// A read that found the older value renews it only after a newer write
+    /// of the same entry has landed. The newer value stays.
+    #[test]
+    fn a_renewal_never_puts_an_older_value_over_a_newer_write() {
+        let dir =
+            std::env::temp_dir().join(format!("fiftyone-caching-renewal-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = FileStore::builder(&dir)
+            .time_to_idle(Duration::from_secs(100))
+            .open()
+            .expect("opens");
+        let now = SystemTime::now();
+        now_or_never(store.put("a", entry(now, b"older"), None));
+        let path = store.path_for("a");
+        let older = fs::read(&path).unwrap();
+        now_or_never(store.put("a", entry(now, b"newer"), None));
+
+        store.renew(&path, "a", &older, now + Duration::from_secs(20));
+        let bytes = fs::read(&path).unwrap();
+        let Contents::Entry { entry, .. } = contents(&bytes) else {
+            panic!("an entry");
+        };
+        assert_eq!(read_header(entry).unwrap().1, b"newer");
+        drop(store);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// The test hook for a name collision: one key's file at another key's
     /// name answers absent, never the other key's value.
     #[test]
