@@ -92,15 +92,21 @@ impl ElementData for Counted {
     }
 }
 
+// WebAssembly has no threads to spawn, so it leaves out the test across
+// threads and what only that test uses.
+
 /// How many `Moved` instances were created, rather than taken from the
 /// pool. Only the test across threads adds `Moved`, so other tests running
 /// at the same time do not change the count.
+#[cfg(not(target_family = "wasm"))]
 static MOVED_CREATED: AtomicUsize = AtomicUsize::new(0);
 
 /// Element data that counts how often it is created, for the test across
 /// threads.
+#[cfg(not(target_family = "wasm"))]
 struct Moved(MapElementData);
 
+#[cfg(not(target_family = "wasm"))]
 impl Default for Moved {
     fn default() -> Self {
         MOVED_CREATED.fetch_add(1, Ordering::SeqCst);
@@ -108,6 +114,7 @@ impl Default for Moved {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl ElementData for Moved {
     fn get(&self, name: &str) -> std::result::Result<PropertyValue, NoValueError> {
         self.0.get(name)
@@ -136,6 +143,7 @@ enum Adds {
     /// A `Counted` from the pool, with `get_or_add_pooled`.
     PooledCounted,
     /// A `Moved` from the pool, with `get_or_add_pooled`.
+    #[cfg(not(target_family = "wasm"))]
     PooledMoved,
 }
 
@@ -178,6 +186,7 @@ impl FlowElement for Element {
                     counted.0.insert(name, true);
                 }
             }
+            #[cfg(not(target_family = "wasm"))]
             Adds::PooledMoved => {
                 let moved = data.get_or_add_pooled(TypedKey::<Moved>::new(KEY))?;
                 for name in names {
