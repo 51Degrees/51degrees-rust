@@ -42,10 +42,16 @@
 //!
 //! Every time the store relies on is in the entry: Written, Renewed and the
 //! drop time. No decision reads or writes a file system time.
+//!
+//! A folder is open in one store at a time. Within the process a list of
+//! the folders open, by their canonical paths, says which are taken, and
+//! across processes each store holds an exclusive lock on its secret file.
+//! The list is needed as well, because some systems' locks belong to the
+//! whole process and do not stop a second store in it.
 
 use std::convert::Infallible;
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -131,7 +137,7 @@ const ABANDONED_AFTER: Duration = Duration::from_secs(10 * 60);
 ///   that are not an entry is dropped.
 /// - A write goes to a temporary file in the same folder that is then
 ///   renamed into place, so a reader sees the old entry or the new one,
-///   never part of either, even in another process sharing the folder.
+///   never part of either.
 /// - An entry past its drop time, unused for the
 ///   [time to idle](FileStoreBuilder::time_to_idle), or written later than
 ///   now answers as absent and its file is removed.
@@ -154,6 +160,13 @@ const ABANDONED_AFTER: Duration = Duration::from_secs(10 * 60);
 /// anything else. On Unix it creates its folders readable only by the
 /// process's user. The files outlive the process, so a store opened again
 /// on the same folder holds what it held before.
+///
+/// Each store needs a folder of its own. A store opened on a folder that
+/// another store has open, in this process or another, is
+/// [refused](FileStore::is_refused): it logs a warning, leaves every file
+/// in the folder untouched, and carries on without the disk, answering
+/// absent and dropping writes, so no request fails. The folder is free
+/// again once the store that has it is dropped.
 ///
 /// Files are read and written on the calling thread. A read or write of a
 /// small entry takes a few microseconds on a local disk, which suits the
@@ -178,6 +191,33 @@ pub struct FileStore {
     /// Held while a file is written, renewed or removed, chosen by its
     /// name, so a renewal never lands over a newer write.
     writing: [Mutex<()>; WRITE_LOCKS],
+    /// The store's hold on its folder, or `None` when another store has the
+    /// folder open and this one carries on without it.
+    hold: Option<Hold>,
+}
+
+/// The canonical paths of the folders the stores in this process have
+/// open.
+static OPEN_FOLDERS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+fn open_folders() -> std::sync::MutexGuard<'static, Vec<PathBuf>> {
+    OPEN_FOLDERS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// A store's hold on its folder: its place in [`OPEN_FOLDERS`] and its
+/// secret file, locked against stores in other processes.
+struct Hold {
+    folder: PathBuf,
+    secret: Option<File>,
+}
+
+impl Drop for Hold {
+    fn drop(&mut self) {
+        // Unlocked first, so a store that finds the folder gone from the
+        // list finds the secret free too.
+        drop(self.secret.take());
+        open_folders().retain(|open| *open != self.folder);
+    }
 }
 
 /// Numbers the temporary files of every store in the process, so two stores
@@ -235,9 +275,16 @@ impl FileStore {
     ///
     /// # Errors
     ///
-    /// When the folder cannot be made.
+    /// As [`FileStoreBuilder::open`].
     pub fn open(dir: impl Into<PathBuf>) -> io::Result<Self> {
         Self::builder(dir).open()
+    }
+
+    /// True when another store had the folder open when this one opened, so
+    /// this one carries on without the disk: every read answers absent and
+    /// every write is dropped.
+    pub fn is_refused(&self) -> bool {
+        self.hold.is_none()
     }
 
     /// The most bytes the files take.
@@ -253,6 +300,9 @@ impl FileStore {
     /// The number of entries in the folder, including any that have expired
     /// and not yet been cleared.
     pub fn file_count(&self) -> usize {
+        if self.is_refused() {
+            return 0;
+        }
         self.list()
             .entries
             .iter()
@@ -265,6 +315,9 @@ impl FileStore {
     /// left by a write that never finished. Returns the number of entries
     /// removed.
     pub fn clear_expired(&self) -> usize {
+        if self.is_refused() {
+            return 0;
+        }
         let _maintaining = self.maintaining.lock().unwrap_or_else(|e| e.into_inner());
         self.clear_expired_locked()
     }
@@ -600,6 +653,9 @@ impl ByteStore for FileStore {
     const DROPS_EXPIRED: bool = false;
 
     async fn get(&self, key: &str) -> ByteLookup<Infallible> {
+        if self.is_refused() {
+            return ByteLookup::Miss;
+        }
         let path = self.path_for(key);
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
@@ -637,6 +693,9 @@ impl ByteStore for FileStore {
     /// entry holds, which [`EncodedStore`](crate::EncodedStore) sets from
     /// `keep_for`.
     async fn put(&self, key: &str, bytes: Vec<u8>, _keep_for: Option<Duration>) {
+        if self.is_refused() {
+            return;
+        }
         if read_header(&bytes).is_err() {
             log::warn!("The disk cache dropped a write of bytes that are not an entry.");
             return;
@@ -670,6 +729,9 @@ impl ByteStore for FileStore {
     }
 
     async fn remove(&self, key: &str) {
+        if self.is_refused() {
+            return;
+        }
         let path = self.path_for(key);
         if let Ok(metadata) = fs::metadata(&path) {
             if let Ok(bytes) = read_start(&path) {
@@ -684,6 +746,9 @@ impl ByteStore for FileStore {
 
 impl ListKeys for FileStore {
     async fn keys(&self, prefix: &str) -> Option<Vec<String>> {
+        if self.is_refused() {
+            return Some(Vec::new());
+        }
         let keys = self
             .list()
             .entries
@@ -746,21 +811,38 @@ impl FileStoreBuilder {
 
     /// Opens the store, making its folder and secret if needed. Clears the
     /// expired files and, when over the limit, those with the oldest
-    /// Renewed.
+    /// Renewed. Safe to call inside `OnceLock::get_or_init`: it blocks on
+    /// nothing another store holds.
+    ///
+    /// When another store, in this process or another, has the folder open,
+    /// the store is [refused](FileStore::is_refused): it logs a warning,
+    /// touches no file, and carries on without the disk.
     ///
     /// # Errors
     ///
-    /// When the folder cannot be made. A secret that cannot be read or
-    /// written is not an error: the store makes a new one.
+    /// When the folder cannot be made, or its secret file opened, with an
+    /// error that names the folder. A secret that is missing or not 32
+    /// bytes long is not an error: the store makes a new one.
     pub fn open(self) -> io::Result<FileStore> {
-        make_folder(&self.dir)?;
+        let dir = self.dir;
+        let named = |error: io::Error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "The disk cache cannot use the folder {}: {error}",
+                    dir.display()
+                ),
+            )
+        };
+        make_folder(&dir).map_err(named)?;
+        let folder = fs::canonicalize(&dir).map_err(named)?;
         let clock = self
             .clock
             .unwrap_or_else(|| Arc::new(crate::loading::SystemClock));
         let mut store = FileStore {
-            root: self.dir,
+            root: dir.clone(),
             secret: [0; SECRET_LEN],
-            max_bytes: u64::MAX,
+            max_bytes: 0,
             time_to_idle: self.time_to_idle,
             sweep_every: self.sweep_every,
             clock,
@@ -768,8 +850,53 @@ impl FileStoreBuilder {
             maintaining: Mutex::new(()),
             next_sweep: AtomicU64::new(0),
             writing: std::array::from_fn(|_| Mutex::new(())),
+            hold: None,
         };
-        store.secret = store.load_secret();
+        let refused = || {
+            log::warn!(
+                "The disk cache folder {} is open in another store, so this store carries \
+                 on without the disk. Each store needs a folder of its own.",
+                dir.display()
+            );
+        };
+
+        // Another store of this process, which its lock may not stop.
+        {
+            let mut open = open_folders();
+            if open.contains(&folder) {
+                refused();
+                return Ok(store);
+            }
+            open.push(folder.clone());
+        }
+        let mut hold = Hold {
+            folder,
+            secret: None,
+        };
+
+        // Another process, found by the lock on the secret file, which is
+        // made empty when missing and filled once locked.
+        let mut secret = open_secret(&dir.join(SECRET_FILE)).map_err(named)?;
+        match secret.try_lock() {
+            Ok(()) => {}
+            Err(fs::TryLockError::WouldBlock) => {
+                refused();
+                return Ok(store);
+            }
+            // A file system with no locks. The list still keeps out the
+            // stores of this process.
+            Err(fs::TryLockError::Error(error)) => {
+                log::warn!(
+                    "The disk cache could not lock {} and cannot tell whether a store in \
+                     another process has it open: {error}",
+                    dir.display()
+                );
+            }
+        }
+        store.secret = store.load_secret(&mut secret).map_err(named)?;
+        hold.secret = Some(secret);
+        store.hold = Some(hold);
+
         // A new secret leaves every file under the old one unreachable, and
         // clearing removes those along with the expired.
         store.clear_expired();
@@ -782,25 +909,29 @@ impl FileStoreBuilder {
 }
 
 impl FileStore {
-    /// The secret in the folder root, made when it is missing, unreadable or
-    /// not 32 bytes long. When two processes make one at once, both end up
-    /// with the one that reached the folder first.
-    fn load_secret(&self) -> [u8; SECRET_LEN] {
-        let path = self.root.join(SECRET_FILE);
-        let replace = match fs::read(&path) {
-            Ok(bytes) => match <[u8; SECRET_LEN]>::try_from(bytes.as_slice()) {
-                Ok(secret) => return secret,
-                Err(_) => true,
-            },
-            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+    /// The secret in `file`, made when it is missing, unreadable or not 32
+    /// bytes long, and written back in place, since the store holds the
+    /// file locked.
+    ///
+    /// # Errors
+    ///
+    /// When the store lacks the permission to read the secret.
+    fn load_secret(&self, file: &mut File) -> io::Result<[u8; SECRET_LEN]> {
+        let mut bytes = Vec::new();
+        match file.read_to_end(&mut bytes) {
+            Ok(_) => {
+                if let Ok(secret) = <[u8; SECRET_LEN]>::try_from(bytes.as_slice()) {
+                    return Ok(secret);
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => return Err(error),
             Err(error) => {
                 log::warn!(
-                    "The disk cache could not read its secret, {}, and makes a new one: {error}",
-                    path.display()
+                    "The disk cache could not read its secret in {}, and makes a new one: {error}",
+                    self.root.display()
                 );
-                true
             }
-        };
+        }
         let mut secret = [0u8; SECRET_LEN];
         if let Err(error) = getrandom::getrandom(&mut secret) {
             // Without randomness the names are still a hash of the key, so
@@ -808,57 +939,20 @@ impl FileStore {
             // folder.
             log::warn!("The disk cache could not make a random secret: {error}");
         }
-        match self.save_secret(&path, &secret, replace) {
-            Ok(Some(theirs)) => theirs,
-            Ok(None) => secret,
-            Err(error) => {
-                // The files this process writes cannot be found by another,
-                // and the next open clears them.
-                log::warn!(
-                    "The disk cache could not keep its secret in {}, and keeps it in memory: {error}",
-                    path.display()
-                );
-                secret
-            }
-        }
-    }
-
-    /// Puts `secret` at `path`. Unless `replace`, an existing secret wins and
-    /// is returned. Linking the finished file into place means no reader
-    /// sees a part-written secret.
-    fn save_secret(
-        &self,
-        path: &Path,
-        secret: &[u8; SECRET_LEN],
-        replace: bool,
-    ) -> io::Result<Option<[u8; SECRET_LEN]>> {
-        let now = self.clock.now();
-        let temp = self.root.join(self.temp_name(SECRET_FILE, now));
-        let result = (|| {
-            let mut file = create_private(&temp)?;
-            file.write_all(secret)?;
-            file.sync_all()?;
-            drop(file);
-            if replace {
-                fs::rename(&temp, path)?;
-            } else {
-                match fs::hard_link(&temp, path) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-                    // A file system with no hard links: rename, which
-                    // replaces a secret another process made at this moment.
-                    Err(_) => fs::rename(&temp, path)?,
-                }
-            }
-            // Read back what is in place, which is another process's secret
-            // when it got there first.
-            let bytes = fs::read(path)?;
-            Ok(<[u8; SECRET_LEN]>::try_from(bytes.as_slice())
-                .ok()
-                .filter(|theirs| theirs != secret))
+        let written = (|| {
+            file.set_len(0)?;
+            file.seek(SeekFrom::Start(0))?;
+            file.write_all(&secret)?;
+            file.sync_all()
         })();
-        let _ = fs::remove_file(&temp);
-        result
+        if let Err(error) = written {
+            // The next open finds a damaged secret and clears these files.
+            log::warn!(
+                "The disk cache could not keep its secret in {}, and keeps it in memory: {error}",
+                self.root.display()
+            );
+        }
+        Ok(secret)
     }
 }
 
@@ -884,6 +978,19 @@ fn make_folder(folder: &Path) -> io::Result<()> {
         builder.mode(0o700);
     }
     builder.create(folder)
+}
+
+/// Opens the secret file at `path` to read and write, making it empty and
+/// readable only by the process's user on Unix when it is missing.
+fn open_secret(path: &Path) -> io::Result<File> {
+    let mut options = File::options();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)
 }
 
 /// Creates a new file readable only by the process's user on Unix.
