@@ -149,7 +149,11 @@ impl DeviceDetectionOnPremiseEngine {
             results: UnsafeCell::new(found.into_iter().collect()),
             warned: AtomicBool::new(false),
         };
-        Ok((ids, Arc::new(reader)))
+        // The reader is not `Sync`. `MultiDeviceData` holds it in an `Arc`,
+        // and a caller that shares the data coordinates its own access.
+        #[allow(clippy::arc_with_non_send_sync)]
+        let reader = Arc::new(reader);
+        Ok((ids, reader))
     }
 }
 
@@ -235,13 +239,6 @@ struct LoadedProfiles {
     /// Set once a profile of this lookup has failed to read.
     warned: AtomicBool,
 }
-
-// Safety: the results instances held here are not safe to use from several
-// threads at once, and the reader takes no lock on them, as the
-// thread-safety specification's results instances section requires. A
-// caller that reads profiles from several threads coordinates its own
-// access, as `MultiDeviceData` does by reading them once.
-unsafe impl Sync for LoadedProfiles {}
 
 impl ProfileReader for LoadedProfiles {
     fn read_profile(&self, id: u32) -> DeviceDataBase {

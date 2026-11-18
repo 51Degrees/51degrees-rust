@@ -1006,12 +1006,6 @@ struct LookupReader {
     loaded: Arc<LoadedDataSet>,
 }
 
-// Safety: a results instance is not safe to use from several threads at
-// once, and the reader takes no lock on it, as the thread-safety
-// specification's results instances section requires. A caller that shares
-// the IP Intelligence data across threads coordinates its own access.
-unsafe impl Sync for LookupReader {}
-
 impl IpIntelligencePropertyReader for LookupReader {
     fn property_names(&self) -> &[String] {
         &self.loaded.readable.lowercase_names
