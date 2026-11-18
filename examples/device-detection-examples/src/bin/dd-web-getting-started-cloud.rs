@@ -185,6 +185,10 @@ pub fn run(options: Options) -> anyhow::Result<()> {
 async fn home(result: FiftyOneResult) -> Html<String> {
     // Read every displayed property and the evidence/response-header tables while
     // the flow data is briefly locked, then build the HTML outside the lock.
+    // A flow data is not safe to use from two threads at once. `with` holds
+    // this request's flow data for the closure, which copies what the page
+    // needs into values of its own. Work handed to another thread or task
+    // takes those values, never the flow data.
     let (results_html, evidence_html, headers_html, has_accept_ch) = result.with(|flow_data| {
         let results = flow_data
             .get(DEVICE_DATA_KEY)

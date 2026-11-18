@@ -198,6 +198,11 @@ fn proxy_router(resource_key: &str, endpoint: &str) -> anyhow::Result<Router> {
         request_engine,
         Arc::new(identifiers),
     ];
+    // A flow data is not safe to use from two threads at once. The two
+    // handlers create one flow data for each request and use it on a single
+    // task only. A handler that hands work to another thread or task reads
+    // the values it needs from the flow data first and passes those, never
+    // the flow data.
     let options = WebIntegrationOptions::default();
     let javascript_route = options.javascript_endpoint.clone();
     let json_route = options.json_endpoint.clone();

@@ -165,6 +165,10 @@ fn build_web_pipeline(share_usage: bool) -> Result<WebPipeline> {
 async fn home(result: FiftyOneResult) -> Html<String> {
     // Read the sign (and whether client JavaScript is still pending) out of the
     // processed flow data. The closure runs while the flow data is borrowed.
+    // A flow data is not safe to use from two threads at once. `get` holds
+    // this request's flow data for the closure, which copies what the page
+    // needs into values of its own. Work handed to another thread or task
+    // takes those values, never the flow data.
     let (sign, awaiting_input) = result
         .get(SimpleClientSideElement::KEY, |data| {
             let sign = data.star_sign().unwrap_or(UNKNOWN_STAR_SIGN).to_owned();
