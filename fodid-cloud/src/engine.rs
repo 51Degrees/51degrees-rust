@@ -208,8 +208,8 @@ impl FodIdCloudEngine {
     /// defaults. When the accessible properties hold no identifier product, or
     /// list it with no properties, the engine gets empty metadata, as the
     /// cloud aspect engine specification says. An engine with only a license
-    /// key gets empty metadata too, because it has no accessible properties
-    /// to read, as the cloud request engine specification says. With a
+    /// key takes its metadata from the properties the license key entitles,
+    /// as the cloud request engine specification says. With a
     /// resource key the call that sets the empty metadata logs a warning
     /// naming the data key, so the missing product is logged once. The
     /// properties are set last because a request that finds them set reads

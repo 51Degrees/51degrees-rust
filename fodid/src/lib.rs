@@ -399,3 +399,122 @@ pub use owid::{Configuration, Creator};
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]
 struct ReadmeExamples;
+
+/// package-surface.md, "What a package does not expose": "A package MUST NOT
+/// make any of the following public, in any language", being the raw flags
+/// byte, the offsets and lengths, the Terms index and the Payload version.
+/// Each block below reaches for one of them and must fail to compile.
+/// Fields and methods are reached on `FodId`, and each constant both at the
+/// crate root and in the module that holds it, so making a field or method
+/// public on `FodId`, exporting a constant at the root, or making both a
+/// constant and its module public fails this test. The error code on
+/// each block is the one it gives, for the reader, as rustdoc checks the
+/// codes only on nightly. The first block reads every field through the
+/// accessor that names it, and must compile, so the blocks after it do not
+/// fail because the crate or the type is missing.
+///
+/// ```
+/// fn read(id: &fodid::FodId) -> (fodid::Usage, fodid::IdType, u32, &[u8], Option<&str>) {
+///     (id.usage(), id.id_type(), id.license_id(), id.match_key(), id.terms())
+/// }
+/// # let _ = read;
+/// ```
+///
+/// The raw flags byte, as a field and as a method.
+///
+/// ```compile_fail,E0616
+/// fn read(id: &fodid::FodId) -> u8 { id.flags }
+/// # let _ = read;
+/// ```
+///
+/// ```compile_fail,E0599
+/// fn read(id: &fodid::FodId) -> u8 { id.flags() }
+/// # let _ = read;
+/// ```
+///
+/// The offsets and lengths.
+///
+/// ```compile_fail,E0425
+/// let _ = fodid::FLAGS_OFFSET;
+/// ```
+///
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::FLAGS_OFFSET;
+/// ```
+///
+/// ```compile_fail,E0425
+/// let _ = fodid::LICENSE_ID_OFFSET;
+/// ```
+///
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::LICENSE_ID_OFFSET;
+/// ```
+///
+/// ```compile_fail,E0425
+/// let _ = fodid::LICENSE_ID_LENGTH;
+/// ```
+///
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::LICENSE_ID_LENGTH;
+/// ```
+///
+/// ```compile_fail,E0425
+/// let _ = fodid::MATCH_KEY_OFFSET;
+/// ```
+///
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::MATCH_KEY_OFFSET;
+/// ```
+///
+/// ```compile_fail,E0425
+/// let _ = fodid::MATCH_KEY_LENGTH;
+/// ```
+///
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::MATCH_KEY_LENGTH;
+/// ```
+///
+/// ```compile_fail,E0425
+/// let _ = fodid::HEADER_LENGTH;
+/// ```
+///
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::HEADER_LENGTH;
+/// ```
+///
+/// ```compile_fail,E0425
+/// let _ = fodid::GUID_LENGTH;
+/// ```
+///
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::GUID_LENGTH;
+/// ```
+///
+/// The Terms index, as a field and as a method.
+///
+/// ```compile_fail,E0616
+/// fn read(id: &fodid::FodId) -> u8 { id.terms_index }
+/// # let _ = read;
+/// ```
+///
+/// ```compile_fail,E0599
+/// fn read(id: &fodid::FodId) -> u8 { id.terms_index() }
+/// # let _ = read;
+/// ```
+///
+/// The Payload version, as a method and as the constant this crate reads.
+///
+/// ```compile_fail,E0599
+/// fn read(id: &fodid::FodId) -> u8 { id.payload_version() }
+/// # let _ = read;
+/// ```
+///
+/// ```compile_fail,E0425
+/// let _ = fodid::SUPPORTED_PAYLOAD_VERSION;
+/// ```
+///
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::SUPPORTED_PAYLOAD_VERSION;
+/// ```
+#[cfg(doctest)]
+struct NotExposed;

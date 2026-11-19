@@ -505,7 +505,7 @@ impl DataUpdateService {
     /// call to [`Self::update_from_memory`] is not reported. A change that
     /// leaves the watched file no newer than the one last applied is reported
     /// as [`AutoUpdateStatus::NotNeeded`], and a further change event for a
-    /// write already applied as [`AutoUpdateStatus::InProgress`], as .NET
+    /// write already tried as [`AutoUpdateStatus::InProgress`], as .NET
     /// reports an event that waited while another was applied. A refresh that
     /// fails or panics is
     /// reported as [`AutoUpdateStatus::RefreshFailed`] and the engine keeps
@@ -1089,11 +1089,13 @@ impl ServiceHandle {
     /// update, as in .NET, where a missing file's write time is the earliest
     /// there is. A further event for a write that an earlier event took, as
     /// when one write raises several events, waited while that write was
-    /// applied and has nothing left to do, so it is in progress, as in .NET.
+    /// tried and has nothing left to do, so it is in progress, as in .NET.
     /// A newer file is refreshed from once it opens for reading, because
     /// whatever writes it can still hold it, and one that does not open
     /// within ten minutes gives [`AutoUpdateStatus::Timeout`], which is not
-    /// logged.
+    /// logged. The file is recorded as applied only once its refresh works,
+    /// so a file the watcher could not apply is still newer than the data
+    /// the engine has when a programmatic check looks.
     fn refresh_from_watched_file(
         engine: &Arc<dyn OnPremiseAspectEngine>,
         data_file: &AspectEngineDataFile,
@@ -1105,13 +1107,12 @@ impl ServiceHandle {
         let Some(modified) = file_modified_time(path) else {
             return Ok(AutoUpdateStatus::NotNeeded);
         };
+        if data_file.last_watched_modified() == Some(modified) {
+            return Ok(AutoUpdateStatus::InProgress);
+        }
         if matches!(data_file.last_applied_modified(), Some(last) if modified <= last) {
-            if data_file.last_watched_modified() == Some(modified) {
-                return Ok(AutoUpdateStatus::InProgress);
-            }
             return Ok(AutoUpdateStatus::NotNeeded);
         }
-        data_file.set_last_applied_modified(modified);
         data_file.set_last_watched_modified(modified);
         if !wait_until_readable(
             path,
@@ -1133,8 +1134,9 @@ impl ServiceHandle {
         );
         guarded_refresh_from_file(engine.data_key(), || {
             engine.refresh(Some(data_file.identifier()))
-        })
-        .map(|()| AutoUpdateStatus::Success)
+        })?;
+        data_file.set_last_applied_modified(modified);
+        Ok(AutoUpdateStatus::Success)
     }
 
     /// True once the service has been dropped.
@@ -2744,5 +2746,116 @@ mod tests {
         drop(service);
         let _ = std::fs::remove_dir_all(&only.dir);
         let _ = std::fs::remove_dir_all(&kept.dir);
+    }
+
+    /// An engine whose refresh fails until the test allows it, and which
+    /// counts the refreshes that worked.
+    struct FailsUntilAllowed {
+        filter: fiftyone_pipeline_core::EvidenceKeyFilterWhitelist,
+        data_files: Vec<Arc<AspectEngineDataFile>>,
+        allowed: std::sync::atomic::AtomicBool,
+        refreshes: std::sync::atomic::AtomicUsize,
+    }
+
+    impl fiftyone_pipeline_core::FlowElement for FailsUntilAllowed {
+        fn process(
+            &self,
+            _data: &mut fiftyone_pipeline_core::FlowData,
+        ) -> fiftyone_pipeline_core::Result<()> {
+            Ok(())
+        }
+        fn data_key(&self) -> &str {
+            "fails-until-allowed"
+        }
+        fn evidence_key_filter(&self) -> &dyn fiftyone_pipeline_core::EvidenceKeyFilter {
+            &self.filter
+        }
+        fn properties(&self) -> &[fiftyone_pipeline_core::PropertyMetaData] {
+            &[]
+        }
+    }
+
+    impl crate::AspectEngine for FailsUntilAllowed {
+        fn data_source_tier(&self) -> &str {
+            "Lite"
+        }
+        fn aspect_properties(&self) -> &[crate::AspectPropertyMetaData] {
+            &[]
+        }
+    }
+
+    impl OnPremiseAspectEngine for FailsUntilAllowed {
+        fn data_files(&self) -> &[Arc<AspectEngineDataFile>] {
+            &self.data_files
+        }
+        fn refresh(&self, _identifier: Option<&str>) -> fiftyone_pipeline_core::Result<()> {
+            if !self.allowed.load(Ordering::SeqCst) {
+                return Err(fiftyone_pipeline_core::Error::configuration(
+                    "the new data cannot be used",
+                ));
+            }
+            self.refreshes.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    /// data-updates.md lines 39 to 41: "If the updated data source cannot be
+    /// used, the refresh MUST fail with an error, and the Engine MUST go on
+    /// using the data source it had". A watched file whose refresh failed is
+    /// therefore not the data the engine has, so a later programmatic check
+    /// refreshes from it rather than answering that no update is needed. A
+    /// further event for the same write is in progress, so the watcher does
+    /// not try a write that failed again.
+    #[test]
+    fn a_watched_file_whose_refresh_failed_is_refreshed_by_a_later_check() {
+        let dir = std::env::temp_dir().join(format!(
+            "fiftyone-update-service-watched-failed-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("device.dat");
+        std::fs::write(&path, b"version 1").unwrap();
+        let built = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let data_file = Arc::new(AspectEngineDataFile::new(
+            crate::DataFileConfiguration::builder(&path)
+                .file_system_watcher_enabled(true)
+                .build(),
+        ));
+        data_file.set_last_applied_modified(DateTime::<Utc>::from(built));
+        let engine = Arc::new(FailsUntilAllowed {
+            filter: fiftyone_pipeline_core::EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+            data_files: vec![Arc::clone(&data_file)],
+            allowed: std::sync::atomic::AtomicBool::new(false),
+            refreshes: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let as_engine: Arc<dyn OnPremiseAspectEngine> = engine.clone();
+
+        std::fs::write(&path, b"version 2").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(built + NEWER)
+            .unwrap();
+
+        let watched = ServiceHandle::refresh_from_watched_file(&as_engine, &data_file, &|| false);
+        assert!(watched.is_err(), "the watched refresh fails, {watched:?}");
+        let again = ServiceHandle::refresh_from_watched_file(&as_engine, &data_file, &|| false);
+        assert_eq!(
+            again.unwrap(),
+            AutoUpdateStatus::InProgress,
+            "a further event for the same write"
+        );
+
+        engine.allowed.store(true, Ordering::SeqCst);
+        let checked = DataUpdateService::refresh_if_newer(&as_engine, &data_file, &path);
+        assert_eq!(
+            checked.unwrap(),
+            AutoUpdateStatus::Success,
+            "a later check refreshes from the file the watcher could not apply"
+        );
+        assert_eq!(engine.refreshes.load(Ordering::SeqCst), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

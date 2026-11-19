@@ -2,6 +2,8 @@
 name = "fiftyone-pipeline-engines"
 version = "4.5.2"
 description = "AspectEngine/AspectData, AspectPropertyValue, missing-property and data-update services, and cache wiring for the 51Degrees pipeline."
+keywords = ["pipeline", "aspect-engine", "data-update", "device-detection", "51degrees"]
+categories = ["web-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

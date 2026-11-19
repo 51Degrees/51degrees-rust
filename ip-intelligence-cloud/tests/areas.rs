@@ -123,3 +123,65 @@ fn areas_gives_the_text_of_the_wkt_value_in_a_cloud_response() {
         );
     }
 }
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let request_engine = Arc::new(
+        CloudRequestEngine::builder()
+            .resource_key("test-resource-key")
+            .http_client(Arc::new(FakeCloud {
+                response: format!(r#"{{ "ip": {{ "areas": "{AREA}" }} }}"#),
+            }))
+            .build()
+            .expect("request engine builds"),
+    );
+    let ip_engine = IpIntelligenceCloudEngine::builder()
+        .cloud_request_engine(Arc::clone(&request_engine))
+        .build()
+        .expect("IP Intelligence engine builds");
+    let pipeline = Pipeline::builder()
+        .add_element(request_engine)
+        .add_element(Arc::new(ip_engine))
+        .build()
+        .expect("pipeline builds");
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("query.client-ip", "192.0.2.1")
+            .build(),
+    );
+    data.process().expect("processing succeeds");
+    assert!(
+        data.get(CloudRequestEngine::DATA_KEY).is_some(),
+        "no data under '{}'",
+        CloudRequestEngine::DATA_KEY.name()
+    );
+    match data.get_or_add(CloudRequestEngine::DATA_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            CloudRequestEngine::DATA_KEY.name()
+        ),
+    }
+    assert!(
+        data.get(IP_DATA_KEY).is_some(),
+        "no data under '{}'",
+        IP_DATA_KEY.name()
+    );
+    match data.get_or_add(IP_DATA_KEY, || unreachable!("the element added its data")) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            IP_DATA_KEY.name()
+        ),
+    }
+}
