@@ -505,58 +505,6 @@ fn missing_cloud_request_engine_is_a_configuration_error() {
     );
 }
 
-/// Holds the data an Engine stored, for [`as_aspect_data!`].
-#[cfg(not(target_family = "wasm"))]
-struct Stored<'a, T>(&'a T);
-
-/// Gives the stored data as Aspect Data, chosen when its type implements
-/// [`AspectData`].
-#[cfg(not(target_family = "wasm"))]
-trait IsAspectData<'a> {
-    fn as_aspect_data(&self) -> Option<&'a dyn AspectData>;
-}
-
-#[cfg(not(target_family = "wasm"))]
-impl<'a, T: AspectData> IsAspectData<'a> for Stored<'a, T> {
-    fn as_aspect_data(&self) -> Option<&'a dyn AspectData> {
-        Some(self.0)
-    }
-}
-
-/// Gives nothing, chosen only when the stored data's type does not implement
-/// [`AspectData`], so it goes unused once every type does.
-#[cfg(not(target_family = "wasm"))]
-#[allow(dead_code)]
-trait IsNotAspectData<'a> {
-    fn as_aspect_data(&self) -> Option<&'a dyn AspectData>;
-}
-
-#[cfg(not(target_family = "wasm"))]
-impl<'a, T> IsNotAspectData<'a> for &Stored<'a, T> {
-    fn as_aspect_data(&self) -> Option<&'a dyn AspectData> {
-        None
-    }
-}
-
-/// The data an Engine stored as Aspect Data, or `None` when its type does not
-/// implement [`AspectData`]. Method lookup takes [`IsAspectData`] when the
-/// type implements it and [`IsNotAspectData`] otherwise, so a type that is not
-/// Aspect Data fails the test that asks, rather than the build of every test
-/// in this file. It is a macro because inside a generic function the type is
-/// not known, and the lookup would always take [`IsNotAspectData`].
-#[cfg(not(target_family = "wasm"))]
-macro_rules! as_aspect_data {
-    ($data:expr) => {
-        (&Stored($data)).as_aspect_data()
-    };
-}
-
-/// The Aspect Data each Engine stored, named by the Engine that stored it.
-#[cfg(not(target_family = "wasm"))]
-fn engine_keys_of(data: &dyn AspectData) -> Vec<String> {
-    data.engine_keys().to_vec()
-}
-
 /// "All Engines MUST populate data objects that implement Aspect Data as
 /// defined in the Pipeline specification." (device-detection-specification,
 /// data-model.md.) Both cloud Engines, the device Engine and the hardware
@@ -565,7 +513,7 @@ fn engine_keys_of(data: &dyn AspectData) -> Vec<String> {
 /// Not run on WebAssembly.
 #[cfg(not(target_family = "wasm"))]
 #[test]
-fn every_engine_populates_aspect_data() {
+fn both_cloud_engines_populate_aspect_data() {
     let (_, request_engine) = fake_pipeline();
     let device_engine = DeviceDetectionCloudEngine::builder()
         .cloud_request_engine(request_engine.clone())
@@ -583,17 +531,15 @@ fn every_engine_populates_aspect_data() {
         pipeline.create_flow_data_with(Evidence::builder().add("header.user-agent", "A").build());
     data.process().expect("processing succeeds");
 
-    let device = data
+    let device: &dyn AspectData = data
         .get(DEVICE_DATA_KEY)
         .expect("the device data is stored");
-    let device = as_aspect_data!(device).expect("the device data is Aspect Data");
-    assert_eq!(engine_keys_of(device), ["device"]);
+    assert_eq!(device.engine_keys(), ["device"]);
     assert!(!device.cache_hit());
-    let hardware = data
+    let hardware: &dyn AspectData = data
         .get(HARDWARE_DATA_KEY)
         .expect("the hardware data is stored");
-    let hardware = as_aspect_data!(hardware).expect("the hardware data is Aspect Data");
-    assert_eq!(engine_keys_of(hardware), ["hardware"]);
+    assert_eq!(hardware.engine_keys(), ["hardware"]);
     assert!(!hardware.cache_hit());
 }
 
