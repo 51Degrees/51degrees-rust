@@ -1220,7 +1220,7 @@ impl DevicePropertyReader for DetectionReader {
             ReadableProperty::Metric(_) => return None,
             ReadableProperty::File { index, .. } => *index,
         };
-        let results = self.results.lock().unwrap_or_else(PoisonError::into_inner);
+        let results = &self.results;
         let values = match results.values_by_index(index) {
             Ok(values) => values,
             Err(error) => return Some(Err(error.to_string())),
