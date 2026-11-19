@@ -233,12 +233,11 @@ fn a_property_with_no_metadata_logs_nothing() {
     }
 }
 
-/// With only a license key the cloud request engine asks for the accessible
-/// properties with the license key, and the engine takes its metadata from
-/// that answer, as cloud-request-engine.md's "Discovery under a License Key"
-/// says, and logs nothing.
+/// With only a license key the engine takes its metadata from the accessible
+/// properties the license key is answered with, as the specification says,
+/// and logs nothing.
 #[test]
-fn a_license_key_alone_gives_the_metadata_it_entitles_and_logs_nothing() {
+fn a_license_key_alone_takes_metadata_from_the_answer_and_logs_nothing() {
     let _serial = start();
     let request = Arc::new(
         CloudRequestEngine::builder()

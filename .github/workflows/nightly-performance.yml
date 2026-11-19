@@ -215,3 +215,16 @@ jobs:
           path: ${{ github.workspace }}/results_*.json
           if-no-files-found: ignore
           include-hidden-files: true
+
+      # 8. The performance test of the JavaScript builder's minification, which
+      #    the specification requires (javascript-builder.md, "Performance
+      #    tests MUST be in place to verify the performance impact of this
+      #    feature"). It fails when minifying adds more than its budget to a
+      #    render, in release. It is the last step, so its failure costs none
+      #    of the night's figures above, and it runs after a failed step too,
+      #    so that failure does not hide this one. It reads no data file.
+      - name: Minification performance test
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        working-directory: 51degrees-rust
+        run: cargo test --release -p fiftyone-javascript-builder --test performance -- --ignored --nocapture

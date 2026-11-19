@@ -2,6 +2,8 @@
 name = "fiftyone-pipeline-translation"
 version = "4.5.2"
 description = "TranslationEngine: translates the values another element produced into the language the request asks for, for the 51Degrees pipeline."
+keywords = ["translation", "localization", "i18n", "pipeline", "51degrees"]
+categories = ["internationalization", "localization"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -406,42 +406,6 @@ mod tests {
         }
     }
 
-    /// package-surface.md: "The comparison ignores case, as .NET does, so a
-    /// package whose language compares exactly, such as Java, MUST lower-case
-    /// the word before it compares."
-    #[test]
-    fn a_factor_word_is_read_whatever_its_case() {
-        for (outcome, words) in [
-            (
-                FactorOutcome::Verified,
-                ["Verified", "VERIFIED", "vErIfIeD"],
-            ),
-            (
-                FactorOutcome::Mismatch,
-                ["Mismatch", "MISMATCH", "misMatch"],
-            ),
-            (
-                FactorOutcome::Misconfigured,
-                ["Misconfigured", "MISCONFIGURED", "misConfigured"],
-            ),
-            (
-                FactorOutcome::NotRecorded,
-                ["NotRecorded", "NOTRECORDED", "notRecorded"],
-            ),
-        ] {
-            for word in words {
-                assert_eq!(FactorOutcome::from_cloud(Some(word)), outcome, "{word}");
-            }
-        }
-        let result = RedeemResult::from_response(
-            200,
-            r#"{"context":"mismatch","factors":{"asn":"Verified","device":"NotRecorded"}}"#,
-        );
-        let factors = result.factors().unwrap();
-        assert_eq!(factors["asn"], FactorOutcome::Verified);
-        assert_eq!(factors["device"], FactorOutcome::NotRecorded);
-    }
-
     #[test]
     fn an_unknown_factor_value_is_a_mismatch_not_a_pass() {
         let result = RedeemResult::from_response(

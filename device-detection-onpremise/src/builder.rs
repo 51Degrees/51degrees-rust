@@ -353,7 +353,7 @@ impl DeviceDetectionOnPremiseEngineBuilder {
     /// with that service before the engine is returned, so a startup poll (if
     /// requested) and the polling schedule are in effect. A startup poll that
     /// fails leaves the engine on the data file it loaded, as the
-    /// specification says, and the build logs the failure as a warning.
+    /// specification says, and the service logs the failure.
     pub fn build(self) -> Result<Arc<DeviceDetectionOnPremiseEngine>> {
         // The data-file configuration the engine carries. When auto-update was
         // requested, use that configuration; otherwise build a static one with
@@ -414,13 +414,9 @@ impl DeviceDetectionOnPremiseEngineBuilder {
                 .cloned()
                 .ok_or_else(|| Error::configuration("engine has no data file to register"))?;
             let as_engine: Arc<dyn OnPremiseAspectEngine> = engine.clone();
-            // The service passes a failed update on start-up to its caller,
-            // as the specification's errors table says. The engine already
-            // reads the data file it has, so the build falls back to it, as
-            // the update on start-up process says, and logs why.
-            if let Err(error) = service.register(as_engine, Arc::clone(&data_file)) {
-                log::warn!("{}", error.on_startup_message(data_file.identifier()));
-            }
+            // A failed update on start-up leaves the engine on the data file it
+            // loaded, as the specification says, and the service logs it.
+            let _ = service.register(as_engine, data_file);
         }
 
         Ok(engine)

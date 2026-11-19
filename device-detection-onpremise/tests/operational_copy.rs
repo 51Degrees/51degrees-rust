@@ -369,13 +369,12 @@ fn a_build_that_fails_leaves_no_copy() {
     }
 }
 
-/// A refresh that fails after the new data set is open leaves only the copy
-/// the engine still reads, and the engine keeps detecting from it. The data
-/// update feature's DU-4 says the engine goes on using the data source it
-/// had, so that is the copy made when the engine was built, and the new copy
-/// goes with the new data set when the refresh fails.
+/// A refresh to a data file whose metadata cannot be read fails, and the
+/// engine goes on using the data set and the copy it had, as the data updates
+/// specification asks, from the file and from memory. The copy made of the
+/// new file is removed, and the engine keeps detecting.
 #[test]
-fn a_refresh_that_fails_leaves_only_the_copy_in_use() {
+fn a_refresh_that_fails_keeps_the_data_set_and_the_copy_in_use() {
     let Some(lite) = lite_data_file() else {
         eprintln!("skipping operational copies: set _51DEGREES_DD_PATH to the Lite file");
         return;
@@ -397,6 +396,7 @@ fn a_refresh_that_fails_leaves_only_the_copy_in_use() {
             .expect("the data file loads");
         let in_use = files_in(&temp);
         assert_eq!(in_use.len(), 1, "{profile:?}");
+        let before = engine.data_set().create_results().unwrap();
 
         std::fs::write(&path, &unreadable).unwrap();
         let error = engine
@@ -405,7 +405,20 @@ fn a_refresh_that_fails_leaves_only_the_copy_in_use() {
 
         assert!(is_unreadable_metadata(&error), "{profile:?}: {error}");
         assert_eq!(files_in(&temp), in_use, "{profile:?}");
+        let after = engine.data_set().create_results().unwrap();
+        assert!(before.same_data_set(&after), "{profile:?}: from the file");
+        drop(after);
+
+        let error = engine
+            .refresh_from_memory(None, &unreadable)
+            .expect_err("the new metadata cannot be read");
+
+        assert!(is_unreadable_metadata(&error), "{profile:?}: {error}");
+        let after = engine.data_set().create_results().unwrap();
+        assert!(before.same_data_set(&after), "{profile:?}: from memory");
         assert_eq!(is_mobile(&detect(&engine)), Some(true), "{profile:?}");
+        drop(after);
+        drop(before);
         drop(engine);
         assert_eq!(files_in(&temp), Vec::<String>::new(), "{profile:?}");
         let _ = std::fs::remove_dir_all(&dir);

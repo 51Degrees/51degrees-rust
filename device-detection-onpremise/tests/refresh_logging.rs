@@ -20,11 +20,12 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! What a refresh that fails logs. The engine keeps the data it had and
-//! returns the error, and logs nothing, because the data update service logs
-//! a failed refresh with the message of the specification's errors table,
-//! which is the same in every language. Kept in its own test binary because
-//! a logger is installed once for the whole process.
+//! What a refresh that fails logs. The engine keeps the data it had and gives
+//! the error to its caller, logging nothing, because the caller reports it.
+//! The data update service logs a failed check once, and a programmatic
+//! refresh passes the error on, as the data updates specification asks and
+//! .NET's Hash engine does. Kept in its own test binary because a logger is
+//! installed once for the whole process.
 //!
 //! The test needs the Lite file `_51DEGREES_DD_PATH` names and skips with a
 //! note when it is missing.
@@ -92,15 +93,19 @@ fn is_mobile(engine: &Arc<DeviceDetectionOnPremiseEngine>) -> bool {
     format!("{:?}", device.get("IsMobile").unwrap()) == "Bool(true)"
 }
 
-/// Refresh, and check the refresh fails, logs nothing, and leaves the engine
-/// answering.
+/// Refresh from the file at `path`, and check the refresh fails, logs
+/// nothing, and leaves the engine answering.
 fn refresh_fails(engine: &Arc<DeviceDetectionOnPremiseEngine>, path: &Path, case: &str) {
     let result = engine.refresh(None);
     let records = take();
-    result.expect_err(case);
-    assert_eq!(records, Vec::<String>::new(), "{case}: {}", path.display());
+    let error = result.expect_err(case);
+    assert_eq!(
+        records,
+        Vec::<String>::new(),
+        "{case}, {}: {error}",
+        path.display()
+    );
     assert!(is_mobile(engine), "{case}: the engine kept its data");
-    assert_eq!(take(), Vec::<String>::new(), "{case}");
 }
 
 /// One test, so the records cannot come from another test running at the
@@ -157,8 +162,8 @@ fn a_refresh_that_fails_logs_nothing_and_keeps_the_data() {
     ] {
         let result = engine.refresh_from_memory(None, &data);
         let records = take();
-        result.expect_err(case);
-        assert_eq!(records, Vec::<String>::new(), "{case}");
+        let error = result.expect_err(case);
+        assert_eq!(records, Vec::<String>::new(), "{case}: {error}");
         assert!(is_mobile(&engine), "{case}: the engine kept its data");
     }
     engine

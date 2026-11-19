@@ -116,6 +116,62 @@ pub(crate) fn ascii_bytes(text: &str) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::structured_field::{parse_dictionary, Member};
+
+    /// Gives every component the same value, so only the checks of the
+    /// components themselves decide whether a base is built.
+    struct AnyValue;
+
+    impl ComponentResolver for AnyValue {
+        fn resolve(&self, _name: &str, _component: &Item) -> Option<String> {
+            Some(String::from("value"))
+        }
+    }
+
+    /// The covered components of a `Signature-Input` member written `list`.
+    fn components(list: &str) -> Vec<Item> {
+        let input = parse_dictionary(&format!("sig={list}")).expect(list);
+        match input.get("sig") {
+            Some(Member::InnerList(items, _)) => items.clone(),
+            other => panic!("{list} is not an inner list: {other:?}"),
+        }
+    }
+
+    /// Whether a base is built for the components written `list`.
+    fn builds(list: &str) -> bool {
+        build_signature_base(&components(list), "params", &AnyValue).is_some()
+    }
+
+    /// A covered component that is not a string makes the signature
+    /// unverifiable, as the Agent Signature Element specification says.
+    #[test]
+    fn a_component_that_is_not_a_string_gives_no_base() {
+        assert!(builds(r#"("@method" "@authority")"#));
+        for list in [
+            r#"("@method" 1)"#,
+            r#"("@method" method)"#,
+            r#"("@method" ?1)"#,
+        ] {
+            assert!(!builds(list), "{list}");
+        }
+    }
+
+    /// A component listed twice makes the signature unverifiable, as the
+    /// Agent Signature Element specification says, and the same component
+    /// with other parameters is another component.
+    #[test]
+    fn a_component_listed_twice_gives_no_base() {
+        for list in [
+            r#"("@method" "@method")"#,
+            r#"("content-type" "@method" "content-type")"#,
+            r#"("@query-param";name="a" "@query-param";name="a")"#,
+        ] {
+            assert!(!builds(list), "{list}");
+        }
+        assert!(builds(
+            r#"("@query-param";name="a" "@query-param";name="b")"#
+        ));
+    }
 
     #[test]
     fn a_default_port_is_removed_from_the_authority() {

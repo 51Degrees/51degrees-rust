@@ -153,13 +153,10 @@ struct Endpoints {
 /// [`CloudRequestEngine::accepted_evidence_keys`] return an error and the
 /// engine's evidence key filter accepts nothing.
 ///
-/// An engine holding a license key and no resource key is the exception,
-/// because the accessible-properties endpoint takes a resource key and refuses
-/// a request without one. The builder therefore does not call it, and
-/// [`CloudRequestEngine::public_properties`] is empty for such an engine. A
-/// downstream cloud aspect engine treats that the same way as a resource key
-/// that grants it no product, reading the response JSON and inferring each
-/// property's type from the value.
+/// An engine holding a license key and no resource key asks for the
+/// accessible properties with the license key, sent as `license` in the body
+/// of a POST so that the key stays out of request logs. The cloud answers it
+/// with every property the license key entitles.
 ///
 /// # Persisting discovered state
 ///
@@ -326,9 +323,8 @@ impl CloudRequestEngine {
     /// failure at build time it returns an [`Error::CloudRequest`] until a
     /// process call has fetched them.
     ///
-    /// It is empty for an engine authenticating with a license key, because the
-    /// accessible-properties endpoint takes a resource key and refuses a request
-    /// without one, so there is nothing for the builder to fetch.
+    /// For an engine authenticating with a license key alone they are the
+    /// properties the license key entitles.
     pub fn public_properties(&self) -> Result<&LicensedProducts> {
         self.public_properties.get().ok_or_else(discovery_pending)
     }
@@ -1363,9 +1359,10 @@ impl CloudRequestEngineBuilder {
             let origin = self.cloud_request_origin.as_deref();
             let evidence =
                 fetch_evidence_keys(http.as_ref(), &recovery, &endpoints, origin, &secrets);
-            // Both discovery requests are made at build, with a license key
-            // alone too, because the cloud service answers the accessible
-            // properties of a license key as it does those of a resource key.
+            // Both discovery requests are made whatever the credential. On a
+            // license key alone the accessible properties are asked for with
+            // the license key, which the service answers with every property
+            // the key entitles.
             let products = fetch_public_properties(
                 http.as_ref(),
                 &recovery,
@@ -1474,11 +1471,10 @@ impl CloudRequestEngineBuilder {
 
         match (&resource_key, &license_key) {
             (None, None) => Err(Error::configuration(
-                "a CloudRequestEngine was given neither a resource key nor a \
-                 license key, so its requests would carry nothing to \
-                 authenticate with, and the cloud service answers 401 to \
-                 every such request, so every request this engine made would \
-                 fail. Either set a resource key with resource_key(..), which \
+                "a CloudRequestEngine needs a credential and this one was given \
+                 none, so there is nothing to authenticate its requests with \
+                 and the cloud service would answer every one with 401 \
+                 Unauthorized. Either set a resource key with resource_key(..), which \
                  you can create for free at \
                  https://51degrees.com/configure?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=cloud-request-engine-src-engine.rs&utm_term=credential-required, \
                  or set a license key with license_key(..) and name the \
@@ -1769,14 +1765,13 @@ fn fetch_evidence_keys(
 /// The license key is sent with the resource key when one is set and not
 /// blank, as the data request does, because the cloud adds the products the
 /// license key grants to those of the resource key. Asking with the resource
-/// key alone left those products out of the engine's metadata. An engine
-/// built on a license key alone asks with the license key, and the cloud
-/// answers with every property it entitles.
+/// key alone left those products out of the engine's metadata.
 ///
-/// A license key is sent as `license` in the body of a POST request rather
-/// than in the URL, so the key stays out of request logs, as the
-/// specification requires. A resource key alone is asked for with a GET
-/// whose query names it, as before.
+/// A license key, alone or beside a resource key, is sent as `license` in
+/// the body of a POST rather than in the URL, so that the key stays out of
+/// request logs. On a license key alone the service answers with every
+/// property the license key entitles, as it answers a resource key with the
+/// properties the key carries.
 fn fetch_public_properties(
     http: &dyn CloudHttpClient,
     recovery: &RecoveryGate,
@@ -1786,27 +1781,46 @@ fn fetch_public_properties(
     origin: Option<&str>,
     secrets: &[String],
 ) -> Result<LicensedProducts> {
-    let url = match resource_key {
-        Some(resource) => format!(
-            "{}?{}={}",
-            endpoints.properties,
-            constants::RESOURCE_PARAMETER,
-            encode_query_value(resource)
-        ),
-        None => endpoints.properties.clone(),
-    };
+    // With a resource key this is the GET the service has always answered,
+    // with a license key beside it in the query string, because the cloud
+    // adds the products the license grants to those of the resource key. A
+    // license key alone goes in the body of a POST instead, so that it stays
+    // out of request logs.
     let license = license_key.filter(|l| !l.trim().is_empty());
-    let request = CloudHttpRequest {
-        method: if license.is_some() {
-            HttpMethod::Post
-        } else {
-            HttpMethod::Get
+    let request = match (resource_key, license) {
+        (Some(resource_key), license) => {
+            let mut url = format!(
+                "{}?{}={}",
+                endpoints.properties,
+                constants::RESOURCE_PARAMETER,
+                encode_query_value(resource_key)
+            );
+            if let Some(license) = license {
+                url.push_str(&format!(
+                    "&{}={}",
+                    constants::LICENSE_PARAMETER,
+                    encode_query_value(license)
+                ));
+            }
+            CloudHttpRequest {
+                method: HttpMethod::Get,
+                url,
+                form: Vec::new(),
+                origin: origin.map(str::to_owned),
+            }
+        }
+        (None, Some(license)) => CloudHttpRequest {
+            method: HttpMethod::Post,
+            url: endpoints.properties.clone(),
+            form: vec![(constants::LICENSE_PARAMETER.to_owned(), license.to_owned())],
+            origin: origin.map(str::to_owned),
         },
-        url,
-        form: license
-            .map(|license| vec![(constants::LICENSE_PARAMETER.to_owned(), license.to_owned())])
-            .unwrap_or_default(),
-        origin: origin.map(str::to_owned),
+        (None, None) => CloudHttpRequest {
+            method: HttpMethod::Get,
+            url: endpoints.properties.clone(),
+            form: Vec::new(),
+            origin: origin.map(str::to_owned),
+        },
     };
     let parsed = send_and_validate(http, recovery, Gate::Skip, &request, true, secrets)
         .inspect_err(|_| log_discovery_failure("available properties", &endpoints.properties))?;
@@ -1842,9 +1856,9 @@ fn encode_query_value(value: &str) -> String {
     encoded
 }
 
-/// The URL without its query string, for messages. The discovery requests
-/// carry the resource and license keys in the query string, and neither
-/// belongs in an error message or a log.
+/// The URL without its query string, for messages. The accessible
+/// properties request carries the resource key in the query string, which
+/// belongs in no error message or log.
 pub(crate) fn url_without_query(url: &str) -> &str {
     url.split_once('?').map_or(url, |(endpoint, _)| endpoint)
 }
@@ -2088,17 +2102,17 @@ mod tests {
         // fails before it looks at a transport or an endpoint.
         let message = refusal(CloudRequestEngine::builder().build());
         assert!(
-            message.contains("nothing to authenticate") && message.contains("resource_key(.."),
+            message.contains("needs a credential") && message.contains("resource_key(.."),
             "the message should name the settings to change, got {message}"
         );
     }
 
-    /// cloud-request-engine.md: "The error raised MUST explain why the
-    /// combination cannot work rather than restating the rule." With no
-    /// credential "There is nothing to authenticate with, and the remote
-    /// server answers 401."
     #[test]
-    fn the_refusal_of_no_credential_explains_why_it_cannot_work() {
+    fn no_credential_refusal_explains_why_it_cannot_work() {
+        // cloud-request-engine.md line 171: "The error raised MUST explain why
+        // the combination cannot work rather than restating the rule." The
+        // table's reason for neither key is that there is nothing to
+        // authenticate with and the cloud service answers 401.
         let message = refusal(CloudRequestEngine::builder().build());
         assert!(
             message.contains("nothing to authenticate"),
@@ -2107,10 +2121,6 @@ mod tests {
         assert!(
             message.contains("401"),
             "the message should say the cloud service answers 401, got {message}"
-        );
-        assert!(
-            !message.contains("needs a credential"),
-            "the message should not restate the rule, got {message}"
         );
     }
 
@@ -2248,7 +2258,7 @@ mod tests {
         for blank in ["", "   ", "\n"] {
             let message = refusal(CloudRequestEngine::builder().resource_key(blank).build());
             assert!(
-                message.contains("nothing to authenticate"),
+                message.contains("needs a credential"),
                 "a blank resource key should not count as one, got {message}"
             );
         }

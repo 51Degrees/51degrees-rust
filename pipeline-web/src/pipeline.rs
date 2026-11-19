@@ -118,24 +118,6 @@ pub struct WebIntegrationOptions {
     /// the application's elements runs either way.
     pub client_side_evidence_enabled: bool,
 
-    /// When `true` (the default) a sequence element is added first, only when
-    /// the application's elements hold none. Set it to `false` to prevent it
-    /// being added. A sequence element among the application's elements runs
-    /// either way.
-    pub add_sequence_element: bool,
-
-    /// When `true` (the default) a JSON builder is added with
-    /// [`client_side_evidence_enabled`](Self::client_side_evidence_enabled),
-    /// only when the application's elements hold none. Set it to `false` to
-    /// prevent the JSON builder alone being added.
-    pub add_json_builder: bool,
-
-    /// When `true` (the default) a JavaScript builder is added with
-    /// [`client_side_evidence_enabled`](Self::client_side_evidence_enabled),
-    /// only when the application's elements hold none. Set it to `false` to
-    /// prevent the JavaScript builder alone being added.
-    pub add_javascript_builder: bool,
-
     /// When `true` (the default) the set-headers element is added, only when
     /// the application's elements hold none, so elements can request extra
     /// evidence (such as User-Agent Client Hints) via HTTP response headers,
@@ -166,9 +148,6 @@ impl Default for WebIntegrationOptions {
     fn default() -> Self {
         WebIntegrationOptions {
             client_side_evidence_enabled: true,
-            add_sequence_element: true,
-            add_json_builder: true,
-            add_javascript_builder: true,
             use_set_header_properties: true,
             suppress_process_exceptions: true,
             javascript_endpoint: DEFAULT_CORE_JS_ENDPOINT.to_owned(),
@@ -303,10 +282,9 @@ fn order_elements(
     let mut resources: Vec<Resource> = Vec::new();
 
     // 1. Sequence element first, unless the application's elements already
-    // hold one, as a pipeline builder's elements do with usage sharing on, or
-    // the options prevent it.
+    // hold one, as a pipeline builder's elements do with usage sharing on.
     let given_sequence = position(&elements, SequenceElement::DEFAULT_ELEMENT_DATA_KEY).is_some();
-    if options.add_sequence_element && !given_sequence {
+    if !given_sequence {
         ordered.push(Arc::new(SequenceElement::new()));
     }
 
@@ -329,25 +307,25 @@ fn order_elements(
         resources.push(javascript);
     }
 
-    // A builder is added only when the client-side endpoints are in use, the
-    // options do not prevent it and the application gives none of its kind.
-    // An added JavaScript builder calls back to the JSON endpoint this
-    // pipeline serves.
+    // A builder is added only when the client-side endpoints are in use and
+    // the application gives none of its kind. An added JavaScript builder
+    // calls back to the JSON endpoint this pipeline serves.
     let client_side = options.client_side_evidence_enabled;
-    let mut json = (client_side && options.add_json_builder && given_json.is_none())
-        .then(|| Arc::new(JsonBuilderElement::new()));
-    let javascript = (client_side && options.add_javascript_builder && given_javascript.is_none())
-        .then(|| {
-            Arc::new(
-                JavaScriptBuilderElement::builder()
-                    .set_endpoint(options.json_endpoint.clone())
-                    .build(),
-            )
-        });
+    let mut json =
+        (client_side && given_json.is_none()).then(|| Arc::new(JsonBuilderElement::new()));
+    let javascript = (client_side && given_javascript.is_none()).then(|| {
+        Arc::new(
+            JavaScriptBuilderElement::builder()
+                .set_endpoint(options.json_endpoint.clone())
+                .build(),
+        )
+    });
 
     // 2. The application's own elements, in their given order, with an added
     // JSON builder immediately before a JavaScript builder the application
-    // gives.
+    // gives. An element that must run last, being usage sharing, is held
+    // back to go after every other element.
+    let mut last = Vec::new();
     for (index, element) in elements.into_iter().enumerate() {
         if Some(index) == given_javascript {
             if let Some(json) = json.take() {
@@ -355,7 +333,11 @@ fn order_elements(
                 resources.push(json);
             }
         }
-        ordered.push(element);
+        if element.must_run_last() {
+            last.push(element);
+        } else {
+            ordered.push(element);
+        }
     }
 
     // 3. Set-headers after the core elements (so it sees their properties),
@@ -374,6 +356,9 @@ fn order_elements(
         ordered.push(javascript.clone());
         resources.push(javascript);
     }
+
+    // 6. Usage sharing last, after every other element.
+    ordered.append(&mut last);
 
     (ordered, resources)
 }

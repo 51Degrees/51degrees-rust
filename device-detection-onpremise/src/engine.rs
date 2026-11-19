@@ -259,9 +259,8 @@ impl Metric {
 
 /// An on-premise Hash device-detection engine.
 ///
-/// Holds a Hash manager, which a refresh replaces with a manager holding the
-/// new data set once that data set can be used, and what a detection reads
-/// from the data set in use
+/// Holds a Hash manager, whose data set a refresh reloads in place as the C
+/// library's reload does, and what a detection reads from the data set in use
 /// (behind an [`ArcSwap`], so a refresh replaces it while in-flight
 /// detections keep what they read and their results the data set they came
 /// from), the engine's published property and evidence-key metadata, and the
@@ -385,11 +384,24 @@ struct LentMetadata {
     tier: String,
 }
 
-#[cfg(test)]
-thread_local! {
-    /// Set by a test to make [`describe`] fail on this thread, as it does
-    /// for a data set whose metadata cannot be read.
-    static FAIL_DESCRIBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+/// The properties and components of the data file `manager` holds, from which
+/// [`describe`] builds the engine's metadata.
+fn read_metadata(manager: &Manager) -> Result<(Vec<DataFileProperty>, Vec<DataFileComponent>)> {
+    Ok((
+        manager.data_file_properties()?,
+        manager.data_file_components()?,
+    ))
+}
+
+/// Read the metadata of `candidate`, a data set opened on its own from the
+/// data a refresh is about to load, before the engine's data set is replaced
+/// with that data. Data whose metadata cannot be read then fails the refresh,
+/// and the engine goes on using the data set it had, as the data updates
+/// specification asks. A reload replaces the data set before the engine can
+/// read the new metadata, so the check cannot wait until then. `candidate`
+/// is closed when the check ends, before the reload opens the data again.
+fn check_metadata(candidate: Arc<Manager>) -> Result<()> {
+    read_metadata(&candidate).map(|_| ())
 }
 
 /// The data set `manager` holds, read from `copy` when there is one, and its
@@ -406,12 +418,6 @@ fn describe(
     tier_override: &Option<String>,
     names: &Arc<BuildNames>,
 ) -> Result<(LoadedDataSet, LentMetadata)> {
-    #[cfg(test)]
-    if FAIL_DESCRIBE.with(std::cell::Cell::get) {
-        return Err(Error::configuration(
-            "the data set's metadata could not be read (test)",
-        ));
-    }
     // An explicit builder override wins, then the tier read from the native
     // data file header (Lite, Enterprise, TAC and so on), then the safe Lite
     // default when the native name is absent.
@@ -419,12 +425,12 @@ fn describe(
         .data_set_name()
         .unwrap_or_else(|| DEFAULT_DATA_SOURCE_TIER.to_owned());
     let tier = tier_override.clone().unwrap_or_else(|| file_tier.clone());
-    let file_properties = manager.data_file_properties()?;
+    let (file_properties, file_components) = read_metadata(&manager)?;
     let EngineMetadata {
         lent,
         fiftyone_properties,
         components,
-    } = build_metadata(&file_properties, &manager.data_file_components()?, tier);
+    } = build_metadata(&file_properties, &file_components, tier);
     let readable = Arc::new(ReadableProperties::new(&file_properties, names));
     let file_property_places = file_properties
         .iter()
@@ -590,11 +596,11 @@ impl DeviceDetectionOnPremiseEngine {
     /// The engine's native manager, for an element that reads the data file's
     /// profiles and their values, as the robots.txt engine reads the crawlers.
     ///
-    /// A refresh loads its data set into a new manager, which this gives once
-    /// the refresh has put it in use, so a caller asks again for each read
-    /// rather than keeping the manager. Results it creates keep reading the
-    /// data set in use when they were created. A caller that reads the data
-    /// set in several calls can check that they all read one data set with
+    /// A refresh reloads the manager's data set in place, so this is the same
+    /// manager after it, and each call on it reads the data set in use when
+    /// the call is made. Results it creates keep reading the data set in use
+    /// when they were created. A caller that reads the data set in several
+    /// calls can check that they all read one data set with
     /// [`Results::same_data_set`](fiftyone_native::dd::Results::same_data_set),
     /// as the robots.txt engine does.
     pub fn data_set(&self) -> Arc<Manager> {
@@ -749,12 +755,13 @@ impl DeviceDetectionOnPremiseEngine {
         builder.build()
     }
 
-    /// Load a new data set from the data file at `path`, or from the copy of
-    /// it the engine reads, into a manager of its own, and put it in use once
-    /// it is described. See [`Self::swap_in`].
+    /// Reload the data set in the engine's manager from the data file at
+    /// `path`, or from the copy of it the engine reads, and describe the new
+    /// data set. See [`Self::swap_in`]. The new data's metadata is read first
+    /// (see [`check_metadata`]).
     ///
     /// Shared by [`OnPremiseAspectEngine::refresh`] and the builder's reload
-    /// path. A load that fails leaves the data set in use and removes the
+    /// path. A reload that fails leaves the data set in use and removes the
     /// copy, which nothing then reads.
     fn reload_from_path(&self, path: &Path) -> Result<()> {
         let _refreshing = self
@@ -771,47 +778,56 @@ impl DeviceDetectionOnPremiseEngine {
                 self.reuse_temp_file,
             )
         });
-        let manager = Manager::open_with_hash_options(
-            copy.as_ref().map_or(path, OperationalCopy::path),
-            self.profile,
-            requested(&self.names.list).as_deref(),
-            &self.options,
-        )?;
+        let source = copy.as_ref().map_or(path, OperationalCopy::path);
+        check_metadata(Manager::open(source, PerformanceProfile::LowMemory)?)?;
+        let manager = Arc::clone(&self.loaded.load().manager);
+        manager.reload_from_file(source)?;
         self.swap_in(copy, manager)
     }
 
-    /// Load a new data set from `data`, the whole of a data file, into a
-    /// manager of its own, and put it in use once it is described. See
-    /// [`Self::swap_in`].
+    /// Reload the data set in the engine's manager from `data`, the whole of
+    /// a data file, which the C library copies, and describe the new data
+    /// set. See [`Self::swap_in`]. The new data's metadata is read first
+    /// (see [`check_metadata`]), from a second copy of `data` held only for
+    /// that read.
     fn reload_from_memory(&self, data: &[u8]) -> Result<()> {
         let _refreshing = self
             .refresh_lock
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let manager = Manager::open_from_memory(
+        check_metadata(Manager::open_from_memory(
             data.to_vec(),
-            self.profile,
-            requested(&self.names.list).as_deref(),
-            &self.options,
-        )?;
+            PerformanceProfile::LowMemory,
+            None,
+            &HashOptions::default(),
+        )?)?;
+        let manager = Arc::clone(&self.loaded.load().manager);
+        manager.reload_from_memory(data)?;
         self.swap_in(None, manager)
     }
 
-    /// Put in use the data set `manager` holds, which reads `copy` when there
-    /// is one, together with its evidence keys, its metadata and the dates in
-    /// its data file header, because a new data file can carry different
-    /// properties or a different tier. The manager was opened with the names
-    /// the engine was built with, which the C library indexes by their place
-    /// in the list, so each name keeps its index, as in a reload in place.
-    /// In-flight detections keep what they read and the data set their
+    /// Give detections the properties of the data set `manager` holds after a
+    /// reload, which reads `copy` when there is one, together with the
+    /// evidence keys, the metadata and the dates in the data file header,
+    /// because a new data file can carry different properties or a different
+    /// tier. In-flight detections keep what they read and the data set their
     /// results came from. The caller holds the refresh lock.
     ///
-    /// When the new data set's metadata cannot be read the error is returned
-    /// and nothing changes: detections go on reading the data set the engine
-    /// had, and the new one is freed and `copy` removed.
+    /// The metadata was read before the reload, so it fails here only when a
+    /// second read of the same data fails. Then the error is returned and
+    /// detections go on reading the new data set by the properties of the one
+    /// before, whose names and indexes it keeps, with `copy` kept until
+    /// nothing reads it.
     fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
         let evidence_keys = manager.evidence_keys();
-        let (mut loaded, metadata) = describe(None, manager, &self.tier_override, &self.names)?;
+        let (mut loaded, metadata) = match describe(None, manager, &self.tier_override, &self.names)
+        {
+            Ok(described) => described,
+            Err(error) => {
+                self.keep_copy(copy);
+                return Err(error);
+            }
+        };
         loaded._copy = copy;
         if let Some(file) = self.data_files.first() {
             record_dates(&loaded.manager, file);
@@ -820,6 +836,23 @@ impl DeviceDetectionOnPremiseEngine {
         self.loaded.store(Arc::new(loaded));
         self.metadata.replace(metadata);
         Ok(())
+    }
+
+    /// Keep `copy`, which the data set the manager now holds reads, with what
+    /// detections read from the data set before it, because the new data set's
+    /// metadata could not be read. The copy before it then goes once nothing
+    /// reads its data set, and this one once nothing reads the new data set.
+    fn keep_copy(&self, copy: Option<OperationalCopy>) {
+        let current = self.loaded.load();
+        self.loaded.store(Arc::new(LoadedDataSet {
+            manager: Arc::clone(&current.manager),
+            readable: Arc::clone(&current.readable),
+            file_properties: current.file_properties.clone(),
+            missing: Arc::clone(&current.missing),
+            fiftyone_properties: Arc::clone(&current.fiftyone_properties),
+            components: Arc::clone(&current.components),
+            _copy: copy,
+        }));
     }
 }
 
@@ -895,11 +928,10 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
 
     fn refresh(&self, _data_file_identifier: Option<&str>) -> Result<()> {
         // A single-file engine ignores the identifier. Reload the data set
-        // from the file's configured path on disk. A reload that fails is
-        // returned and not logged here: the data update service logs it with
-        // the message of the specification's errors table, which is the same
-        // in every language, and a caller that refreshes directly has the
-        // error.
+        // from the file's configured path on disk. A reload that fails keeps
+        // the data the engine had and is returned without being logged,
+        // because the caller reports it, the data update service logging a
+        // failed check once.
         let path = self
             .data_files
             .first()
@@ -915,7 +947,7 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
 
     fn refresh_from_memory(&self, _data_file_identifier: Option<&str>, data: &[u8]) -> Result<()> {
         // A single-file engine ignores the identifier. A refresh that fails is
-        // returned, as a refresh from the file is.
+        // returned as a refresh from the file is.
         self.reload_from_memory(data)
     }
 }
@@ -1765,65 +1797,6 @@ mod tests {
             .find(|path| path.is_file())
     }
 
-    /// `bytes`, a data file published on `published`, with the day it was
-    /// published moved by one, so a data set loaded from it can be told from
-    /// one loaded from `bytes`.
-    fn published_another_day(bytes: &[u8], published: (i32, u32, u32)) -> Vec<u8> {
-        let (year, month, day) = published;
-        let year = i16::try_from(year).unwrap().to_le_bytes();
-        let date = [year[0], year[1], month as u8, day as u8];
-        let at = bytes[..512]
-            .windows(4)
-            .position(|window| window == date)
-            .expect("the header holds the published date");
-        let mut changed = bytes.to_vec();
-        changed[at + 3] = if day < 28 {
-            day as u8 + 1
-        } else {
-            day as u8 - 1
-        };
-        changed
-    }
-
-    /// data-updates.md: "If the updated data source cannot be used, the
-    /// refresh MUST fail with an error, and the Engine MUST go on using the
-    /// data source it had, so that processing is unaffected." A data set the
-    /// C library loads but whose metadata cannot then be read cannot be used.
-    #[test]
-    fn a_refresh_that_cannot_use_the_new_data_keeps_the_data_source_it_had() {
-        let Some(path) = data_file() else {
-            eprintln!("no Hash data file found; skipping the failed refresh");
-            return;
-        };
-        let bytes = std::fs::read(&path).unwrap();
-        for profile in [PerformanceProfile::InMemory, PerformanceProfile::LowMemory] {
-            let engine = crate::DeviceDetectionOnPremiseEngineBuilder::new(&path)
-                .performance_profile(profile)
-                .build()
-                .expect("the data file loads");
-            let published = || engine.loaded.load().manager.data_set_published();
-            let before = published().expect("the header holds a date");
-            let later = published_another_day(&bytes, before);
-
-            FAIL_DESCRIBE.with(|fail| fail.set(true));
-            let result = engine.refresh_from_memory(None, &later);
-            FAIL_DESCRIBE.with(|fail| fail.set(false));
-            assert!(result.is_err(), "{}: the refresh fails", profile.as_str());
-            assert_eq!(
-                published(),
-                Some(before),
-                "{}: detections read the data set the engine had",
-                profile.as_str()
-            );
-
-            // The same data used with nothing in the way is taken.
-            engine
-                .refresh_from_memory(None, &later)
-                .expect("the changed data file loads");
-            assert_ne!(published(), Some(before), "{}", profile.as_str());
-        }
-    }
-
     /// `FIFTYONE_DEGREES_FILE_POOL_MAX_HANDLES` in the C library's `file.h`,
     /// the most handles a data set's file pool holds.
     const FILE_POOL_MAX_HANDLES: u16 = 64;
@@ -2230,32 +2203,29 @@ mod tests {
         }
     }
 
-    /// A refresh loads the data set into a manager of its own, from the file,
-    /// from memory and from another path, so the data set the engine had is
-    /// untouched until the new one is in use, and the manager
-    /// [`DeviceDetectionOnPremiseEngine::data_set`] gives after it holds the
-    /// names of the one before, in their order.
+    /// A refresh reloads the data set into the engine's own manager, as the
+    /// C library's reload does, from the file, from memory and from another
+    /// path, so the manager [`DeviceDetectionOnPremiseEngine::data_set`]
+    /// gives is the same one after each.
     #[test]
-    fn a_refresh_loads_the_data_set_into_a_new_manager_with_the_same_names() {
+    fn a_refresh_reloads_the_data_set_in_the_engines_manager() {
         let Some(path) = data_file() else {
-            eprintln!("no Hash data file found; skipping the new manager");
+            eprintln!("no Hash data file found; skipping the reload in place");
             return;
         };
         let (engine, _) = engine_and_data(&path);
-        let names = engine.data_set().property_names();
+        let manager = engine.data_set();
         let bytes = std::fs::read(&path).expect("the data file reads");
-        let refreshes: [(&str, &dyn Fn() -> Result<()>); 3] = [
-            ("from the file", &|| engine.refresh(None)),
-            ("from memory", &|| engine.refresh_from_memory(None, &bytes)),
-            ("from a path", &|| engine.reload_from_path(&path)),
-        ];
-        for (case, refresh) in refreshes {
-            let manager = engine.data_set();
-            refresh().expect(case);
-            let now = engine.data_set();
-            assert!(!Arc::ptr_eq(&manager, &now), "{case}");
-            assert_eq!(now.property_names(), names, "{case}");
-        }
+        engine.refresh(None).expect("the data file loads again");
+        assert!(Arc::ptr_eq(&manager, &engine.data_set()), "from the file");
+        engine
+            .refresh_from_memory(None, &bytes)
+            .expect("the data loads again");
+        assert!(Arc::ptr_eq(&manager, &engine.data_set()), "from memory");
+        engine
+            .reload_from_path(&path)
+            .expect("the data file loads again");
+        assert!(Arc::ptr_eq(&manager, &engine.data_set()), "from a path");
     }
 
     /// A reload of `engine` the tests below make, with the words its

@@ -153,7 +153,7 @@ fn registering_logs_the_start_up_and_check_messages() {
     let wanted = [
         "INFO Updating on start-up".to_owned(),
         "INFO Checking for update".to_owned(),
-        format!("INFO Checking for update from '{masked_url}' for Engine 'LoadedEngine'"),
+        format!("INFO Checking for update from '{masked_url}' for Engine 'loaded'"),
         "INFO Creating file system watcher".to_owned(),
     ];
     let mut from = 0;

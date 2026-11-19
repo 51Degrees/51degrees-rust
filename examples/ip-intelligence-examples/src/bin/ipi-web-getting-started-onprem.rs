@@ -217,6 +217,10 @@ async fn home(
     result: FiftyOneResult,
 ) -> Html<String> {
     let notes = current_notes();
+    // A flow data is not safe to use from two threads at once. `with` holds
+    // this request's flow data for the closure, which copies what the page
+    // needs into values of its own. Work handed to another thread or task
+    // takes those values, never the flow data.
     let (results_html, coordinates_pair, evidence_html, evidence_ip) = result.with(|flow_data| {
         let (results, coords) = flow_data
             .get(IP_DATA_KEY)

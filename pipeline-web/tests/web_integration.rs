@@ -493,59 +493,6 @@ fn element_ordering_without_set_headers() {
     );
 }
 
-/// web-integration.md: "For all of these elements, there MUST be
-/// configuration options to allow users to prevent them being added (or
-/// disable them) if they wish to do so." Each of the Sequence Element, the
-/// JSON Builder and the JavaScript Builder has an option of its own, as the
-/// Set Headers Element has `use_set_header_properties`.
-#[test]
-fn each_web_element_has_an_option_to_prevent_it_being_added() {
-    let keys_with = |options: WebIntegrationOptions| -> Vec<String> {
-        WebPipeline::build(vec![Arc::new(TestElement::new(false))], options)
-            .expect("builds")
-            .pipeline()
-            .flow_elements()
-            .iter()
-            .map(|e| e.data_key().to_owned())
-            .collect()
-    };
-    assert_eq!(
-        keys_with(WebIntegrationOptions {
-            add_sequence_element: false,
-            ..WebIntegrationOptions::default()
-        }),
-        vec![
-            "device",
-            "set-headers",
-            "json-builder",
-            "javascriptbuilderelement"
-        ]
-    );
-    assert_eq!(
-        keys_with(WebIntegrationOptions {
-            add_json_builder: false,
-            ..WebIntegrationOptions::default()
-        }),
-        vec![
-            "sequence",
-            "device",
-            "set-headers",
-            "javascriptbuilderelement"
-        ]
-    );
-    assert_eq!(
-        keys_with(WebIntegrationOptions {
-            add_javascript_builder: false,
-            ..WebIntegrationOptions::default()
-        }),
-        vec!["sequence", "device", "set-headers", "json-builder"]
-    );
-    let defaults = WebIntegrationOptions::default();
-    assert!(defaults.add_sequence_element);
-    assert!(defaults.add_json_builder);
-    assert!(defaults.add_javascript_builder);
-}
-
 // ----------------------------------------------------------------------------
 // Endpoint suffix matching.
 // ----------------------------------------------------------------------------

@@ -1461,7 +1461,10 @@ fn accessible_properties_url(client: &FakeClient) -> String {
 fn accessible_properties_are_asked_for_with_the_license_key() {
     // The cloud adds the products a license key grants to those of the
     // resource key, and the data request sends both keys, so the metadata
-    // has to be asked for with both as well, the license key in the body.
+    // has to be asked for with both as well. With a resource key that is the
+    // GET the service has always answered, with both keys in its query
+    // string. cloud-request-engine.md lines 273 to 275 ask for a POST only
+    // for "an Engine built on a License Key alone".
     let client = Arc::new(FakeClient::default());
     CloudRequestEngine::builder()
         .resource_key("test-resource-key")
@@ -1472,69 +1475,12 @@ fn accessible_properties_are_asked_for_with_the_license_key() {
         .unwrap();
     assert_eq!(
         accessible_properties_url(&client),
-        "https://cloud.example.test/api/v4/accessibleproperties?resource=test-resource-key"
+        "https://cloud.example.test/api/v4/accessibleproperties\
+         ?resource=test-resource-key&license=LICENSE%2BKEY%2F1"
     );
-    assert_eq!(
-        accessible_properties_request(&client).form,
-        vec![("license".to_owned(), "LICENSE+KEY/1".to_owned())]
-    );
-}
-
-/// The request the builder asked the `accessibleproperties` endpoint with.
-fn accessible_properties_request(client: &FakeClient) -> CloudHttpRequest {
-    client
-        .requests
-        .lock()
-        .unwrap()
-        .iter()
-        .find(|r| r.url.contains("accessibleproperties"))
-        .expect("the build asked for the accessible properties")
-        .clone()
-}
-
-/// cloud-request-engine.md: "An Engine built on a License Key alone MUST
-/// make the `accessibleproperties` request with the License Key, sent as
-/// `license` in the body of a POST request rather than in the URL, so that
-/// the key stays out of request logs." With a resource key as well, the
-/// License Key stays out of the URL for the same reason.
-#[test]
-fn a_license_key_is_sent_for_accessible_properties_in_the_body_of_a_post() {
-    let client = Arc::new(FakeClient::default());
-    license_engine_with(client.clone(), &["device.ismobile"]);
     let request = accessible_properties_request(&client);
-    assert_eq!(request.method, HttpMethod::Post, "a License Key alone");
-    assert_eq!(
-        request.url, "https://cloud.example.test/api/v4/accessibleproperties",
-        "a License Key alone"
-    );
-    assert_eq!(
-        request.form,
-        vec![("license".to_owned(), "test-license-key".to_owned())],
-        "a License Key alone"
-    );
-
-    let client = Arc::new(FakeClient::default());
-    CloudRequestEngine::builder()
-        .resource_key("test-resource-key")
-        .license_key("LICENSE+KEY/1")
-        .endpoint("https://cloud.example.test/api/v4/")
-        .http_client(client.clone())
-        .build()
-        .unwrap();
-    let request = accessible_properties_request(&client);
-    assert_eq!(request.method, HttpMethod::Post, "both keys");
-    assert!(
-        !request.url.contains("license"),
-        "both keys: {}",
-        request.url
-    );
-    assert!(
-        request
-            .form
-            .contains(&("license".to_owned(), "LICENSE+KEY/1".to_owned())),
-        "both keys: {:?}",
-        request.form
-    );
+    assert_eq!(request.method, HttpMethod::Get);
+    assert!(request.form.is_empty(), "the form is {:?}", request.form);
 }
 
 #[test]
@@ -1617,37 +1563,76 @@ fn license_engine_with(client: Arc<FakeClient>, values: &[&str]) -> CloudRequest
         .unwrap()
 }
 
-/// cloud-request-engine.md: "The Engine MUST attempt both discovery requests
-/// when it is built (in its builder or constructor), and MAY make them in
-/// parallel, so that in the normal case a built Engine is fully initialised
-/// and immediately ready to process Flow Data." A License Key alone is no
-/// exception, because the remote server answers `accessibleproperties` for it.
-#[test]
-fn a_license_key_alone_makes_both_discovery_requests_at_build() {
-    let client = Arc::new(FakeClient::default());
-    client.set_properties(FakeClient::ok(
-        r#"{"Products":{"device":{"DataTier":"CloudV4","Properties":[{"Name":"IsMobile","Type":"Bool"}]}}}"#,
-    ));
-    let engine = license_engine_with(client.clone(), &["device.ismobile"]);
-
-    let urls: Vec<String> = client
+/// The number of recorded requests whose URL names `endpoint`.
+fn requests_naming(client: &FakeClient, endpoint: &str) -> usize {
+    client
         .requests
         .lock()
         .unwrap()
         .iter()
-        .map(|r| r.url.clone())
-        .collect();
-    assert_eq!(urls.len(), 2, "both discovery requests at build: {urls:?}");
-    assert!(urls.iter().any(|u| u.contains("evidencekeys")), "{urls:?}");
-    assert!(
-        urls.iter().any(|u| u.contains("accessibleproperties")),
-        "{urls:?}"
-    );
-    let products = engine.public_properties().unwrap();
+        .filter(|r| r.url.contains(endpoint))
+        .count()
+}
+
+#[test]
+fn a_license_key_alone_build_attempts_both_discovery_requests() {
+    // cloud-request-engine.md line 241: "The Engine MUST attempt both
+    // discovery requests when it is built (in its builder or constructor),
+    // and MAY make them in parallel, so that in the normal case a built Engine
+    // is fully initialised and immediately ready to process Flow Data."
+    let client = Arc::new(FakeClient::default());
+    client.set_properties(FakeClient::ok(
+        r#"{"Products":{"device":{"Properties":[{"Name":"IsMobile","Type":"Bool"}]}}}"#,
+    ));
+    let engine = license_engine_with(client.clone(), &["device.ismobile"]);
+    assert_eq!(requests_naming(&client, "evidencekeys"), 1, "evidence keys");
     assert_eq!(
-        products.products.get("device").unwrap().properties[0].name,
-        "IsMobile",
-        "the engine holds what the License Key entitles"
+        requests_naming(&client, "accessibleproperties"),
+        1,
+        "accessible properties"
+    );
+    assert!(engine.has_loaded_metadata(), "ready to process");
+    assert!(
+        engine
+            .public_properties()
+            .unwrap()
+            .products
+            .contains_key("device"),
+        "the products the license key entitles are known"
+    );
+}
+
+/// The request the builder asked the `accessibleproperties` endpoint with.
+fn accessible_properties_request(client: &FakeClient) -> CloudHttpRequest {
+    client
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|r| r.url.contains("accessibleproperties"))
+        .expect("the build asked for the accessible properties")
+        .clone()
+}
+
+#[test]
+fn the_license_key_goes_in_the_body_of_a_post_and_never_in_the_url() {
+    // cloud-request-engine.md line 273: "An Engine built on a License Key
+    // alone MUST make the `accessibleproperties` request with the License
+    // Key, sent as `license` in the body of a POST request rather than in the
+    // URL, so that the key stays out of request logs."
+    let client = Arc::new(FakeClient::default());
+    license_engine_with(client.clone(), &["device.ismobile"]);
+    let request = accessible_properties_request(&client);
+    assert_eq!(request.method, HttpMethod::Post, "license key alone");
+    assert_eq!(
+        request.form,
+        vec![("license".to_owned(), "test-license-key".to_owned())],
+        "license key alone"
+    );
+    assert!(
+        !request.url.contains("test-license-key"),
+        "license key alone, the URL is {}",
+        request.url
     );
 }
 
@@ -1660,8 +1645,8 @@ fn a_license_key_alone_authenticates_the_request() {
     ));
 
     let engine = license_engine_with(client.clone(), &["device.ismobile", "device.iscrawler"]);
-    // Both discovery requests were made at build, the accessible properties
-    // asked for with the license key.
+    // Both discovery documents were fetched, the accessible properties with
+    // the license key.
     assert_eq!(client.request_count(), 2, "both discovery requests");
     assert_eq!(engine.resource_key(), None);
 
@@ -1676,7 +1661,7 @@ fn a_license_key_alone_authenticates_the_request() {
     let requests = client.requests.lock().unwrap();
     let data_request = requests
         .iter()
-        .find(|r| r.method == HttpMethod::Post && r.url.contains("/json"))
+        .find(|r| r.method == HttpMethod::Post && !r.url.contains("accessibleproperties"))
         .expect("a POST to the data endpoint");
 
     // The license key authenticates the request on its own, and the properties
@@ -1804,7 +1789,7 @@ fn evidence_named_values_does_not_displace_the_engines_property_list() {
     let requests = client.requests.lock().unwrap();
     let data_request = requests
         .iter()
-        .find(|r| r.method == HttpMethod::Post && r.url.contains("/json"))
+        .find(|r| r.method == HttpMethod::Post && !r.url.contains("accessibleproperties"))
         .expect("a POST to the data endpoint");
     let values: Vec<&String> = data_request
         .form
@@ -1899,4 +1884,42 @@ fn evidence_that_differs_never_shares_a_cache_entry() {
         2,
         "each request reached the cloud"
     );
+}
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let client = Arc::new(FakeClient::default());
+    client.set_evidence_keys(FakeClient::ok(
+        r#"["header.user-agent","query.user-agent"]"#,
+    ));
+    client.set_data(FakeClient::ok(r#"{"device":{"ismobile":true}}"#));
+    let pipeline = Pipeline::builder()
+        .add_element(Arc::new(engine_with(client)))
+        .build()
+        .unwrap();
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("header.user-agent", "Mozilla/5.0")
+            .build(),
+    );
+    data.process().unwrap();
+    assert!(
+        data.get(CloudRequestEngine::DATA_KEY).is_some(),
+        "no data under '{}'",
+        CloudRequestEngine::DATA_KEY.name()
+    );
+    match data.get_or_add(CloudRequestEngine::DATA_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            CloudRequestEngine::DATA_KEY.name()
+        ),
+    }
 }

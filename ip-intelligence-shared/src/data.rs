@@ -357,9 +357,7 @@ impl StoredValue {
         }
     }
 
-    /// The value as a weighted list, ordered high weighting first. A plain
-    /// value is the one value of its list, at the full weighting, as
-    /// [`whole_weighted`] gives it.
+    /// The value as a weighted list, ordered high weighting first.
     fn weighted_string(&self) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
         match self {
             StoredValue::WeightedString(WeightedStore::Values(list)) => {
@@ -368,29 +366,8 @@ impl StoredValue {
             StoredValue::WeightedString(WeightedStore::NoValue { message }) => {
                 AspectPropertyValue::no_value(message.clone())
             }
-            StoredValue::String(store) => whole_weighted(store),
-            StoredValue::WktString(store) => whole_weighted(store),
-            StoredValue::Float(store) => whole_weighted(store),
-            StoredValue::Integer(store) => whole_weighted(store),
-            StoredValue::Boolean(store) => whole_weighted(store),
-            StoredValue::Nothing => AspectPropertyValue::empty(),
+            _ => AspectPropertyValue::empty(),
         }
-    }
-}
-
-/// A plain value as a weighted value, being a list holding the value as text
-/// at the full raw weighting, `u16::MAX`, which is a weighting of 1.0, or the
-/// no-value with its reason. The IP Intelligence data model says each
-/// property is also exposed as a weighted value, so a property that is not
-/// weighted reads through [`IpIntelligenceDataBase::weighted_string`] too.
-fn whole_weighted<T: fmt::Display>(
-    store: &ValueStore<T>,
-) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
-    match store {
-        ValueStore::Value(value) => {
-            AspectPropertyValue::new(vec![WeightedValue::new(u16::MAX, value.to_string())])
-        }
-        ValueStore::NoValue { message } => AspectPropertyValue::no_value(message.clone()),
     }
 }
 
@@ -928,41 +905,21 @@ impl IpIntelligenceDataBase {
         }
     }
 
-    /// Read any property by name as a weighted value.
+    /// Read a weighted string property by name.
     ///
     /// Returns [`AspectPropertyValue::NoValue`] when the property is absent or
     /// was recorded as a no-value. The list is ordered high weighting first.
     /// This is how the weighted properties (`CountryCodesGeographical`,
     /// `CountryCodesPopulation`, `Mcc` and `StateGeoNameIdsGeographical`) are
-    /// read. Every other property reads as a list of its one value, as text,
-    /// at the full raw weighting, `u16::MAX`, because the IP Intelligence data
-    /// model exposes each property as a weighted value too.
+    /// read.
     pub fn weighted_string(&self, name: &str) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
-        let key = key(name);
-        if let Some(store) = self.weighted_strings.get(&key) {
-            return match store {
-                WeightedStore::Values(list) => AspectPropertyValue::new(list.clone()),
-                WeightedStore::NoValue { message } => {
-                    AspectPropertyValue::no_value(message.clone())
-                }
-            };
+        match self.weighted_strings.get(&key(name)) {
+            Some(WeightedStore::Values(list)) => AspectPropertyValue::new(list.clone()),
+            Some(WeightedStore::NoValue { message }) => {
+                AspectPropertyValue::no_value(message.clone())
+            }
+            None => self.deferred_value(name, StoredValue::weighted_string),
         }
-        if let Some(store) = self.strings.get(&key) {
-            return whole_weighted(store);
-        }
-        if let Some(store) = self.wkt_strings.get(&key) {
-            return whole_weighted(store);
-        }
-        if let Some(store) = self.floats.get(&key) {
-            return whole_weighted(store);
-        }
-        if let Some(store) = self.integers.get(&key) {
-            return whole_weighted(store);
-        }
-        if let Some(store) = self.booleans.get(&key) {
-            return whole_weighted(store);
-        }
-        self.deferred_value(name, StoredValue::weighted_string)
     }
 
     // -- getters at a typed accessor's slot ---------------------------------
@@ -1345,57 +1302,6 @@ mod tests {
         );
         assert_eq!(WEIGHTED_RECORD_RAW_WEIGHTING_KEY, "rawweighting");
         assert_eq!(WEIGHTED_RECORD_VALUE_KEY, "value");
-    }
-
-    /// data-model.md: "Each property MUST also be exposed as a weighted
-    /// value". A plain property reads as a weighted list holding its value at
-    /// the full weighting, `UInt16.MaxValue`, which weighted-values.md says
-    /// represents a weighting of 1.0, and a property with no value reads as
-    /// no value with its reason.
-    #[test]
-    fn every_property_is_also_exposed_as_a_weighted_value() {
-        let mut data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
-        data.set_string("RegisteredName", "Cloudflare");
-        data.set_wkt_string("Areas", WktString::from("POINT(2 4)".to_owned()));
-        data.set_float("Latitude", 51.5);
-        data.set_integer("AccuracyRadius", 25);
-        data.set_boolean("IsVpn", false);
-        data.set_float_no_value("Longitude", "no location");
-        let whole = |value: &str| vec![WeightedValue::new(u16::MAX, value.to_owned())];
-        for (name, expected) in [
-            ("RegisteredName", "Cloudflare"),
-            ("Areas", "POINT(2 4)"),
-            ("Latitude", "51.5"),
-            ("AccuracyRadius", "25"),
-            ("IsVpn", "false"),
-        ] {
-            assert_eq!(
-                data.weighted_string(name).value().cloned().ok(),
-                Some(whole(expected)),
-                "{name}"
-            );
-        }
-        assert_eq!(
-            data.weighted_string("Longitude").no_value_message(),
-            Some("no location"),
-        );
-
-        // A value read on request is exposed in the same way.
-        for (stored, expected) in [
-            (
-                StoredValue::String(ValueStore::Value("Cloudflare".to_owned())),
-                "Cloudflare",
-            ),
-            (StoredValue::Float(ValueStore::Value(51.5)), "51.5"),
-            (StoredValue::Integer(ValueStore::Value(25)), "25"),
-            (StoredValue::Boolean(ValueStore::Value(true)), "true"),
-        ] {
-            assert_eq!(
-                stored.weighted_string().value().cloned().ok(),
-                Some(whole(expected)),
-                "{expected}"
-            );
-        }
     }
 
     #[test]

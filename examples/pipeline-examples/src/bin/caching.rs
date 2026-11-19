@@ -226,6 +226,37 @@ mod tests {
         // Four requests, two distinct: exactly two computations.
         assert_eq!(engine.computation_count(), 2);
     }
+
+    /// Element data is read only once its element has finished, as the
+    /// thread-safety specification's Element Data section requires.
+    #[test]
+    fn its_element_data_is_read_only_once_processed() {
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(CachedStarSignEngine::new(
+                CacheBuilder::new().size(100),
+            )))
+            .build()
+            .unwrap();
+        let mut data = pipeline.create_flow_data_with(
+            Evidence::builder()
+                .add(DATE_OF_BIRTH_EVIDENCE, "18/12/1992")
+                .build(),
+        );
+        data.process().unwrap();
+        assert!(
+            data.get(CachedStarSignEngine::KEY).is_some(),
+            "no star sign data"
+        );
+        match data.get_or_add(CachedStarSignEngine::KEY, || {
+            unreachable!("the element added its data")
+        }) {
+            Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+                assert!(message.contains("cannot be written"), "{message}")
+            }
+            Err(other) => panic!("not a configuration error: {other}"),
+            Ok(_) => panic!("the star sign data was written after processing"),
+        }
+    }
 }
 
 /* ---------------------------------------------------------------------------

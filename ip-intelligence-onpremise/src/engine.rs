@@ -144,10 +144,9 @@ pub struct IpIntelligenceOnPremiseEngine {
     /// keeps its native results, and the data set they came from, until it is
     /// dropped.
     base: AspectEngineBase<IpIntelligenceDataBase>,
-    /// The native manager, which a refresh replaces with a manager holding
-    /// the new data set once that data set can be used, the properties a
-    /// lookup reads from the data set it holds and their metadata, replaced
-    /// together.
+    /// The native manager, whose data set a refresh reloads in place as the
+    /// C library's reload does, the properties a lookup reads from the data
+    /// set it holds and their metadata, replaced together after each reload.
     /// In-flight results hold the data set they were created from, so a
     /// reload does not change what they read.
     loaded: ArcSwap<LoadedDataSet>,
@@ -213,11 +212,24 @@ struct FilePropertyPlace {
     value_count: u32,
 }
 
-#[cfg(test)]
-thread_local! {
-    /// Set by a test to make [`describe`] fail on this thread, as it does
-    /// for a data set whose metadata cannot be read.
-    static FAIL_DESCRIBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+/// The properties and components of the data file `manager` holds, from which
+/// [`describe`] builds the engine's metadata.
+fn read_metadata(manager: &Manager) -> Result<(Vec<DataFileProperty>, Vec<DataFileComponent>)> {
+    Ok((
+        manager.data_file_properties()?,
+        manager.data_file_components()?,
+    ))
+}
+
+/// Read the metadata of `candidate`, a data set opened on its own from the
+/// data a refresh is about to load, before the engine's data set is replaced
+/// with that data. Data whose metadata cannot be read then fails the refresh,
+/// and the engine goes on using the data set it had, as the data updates
+/// specification asks. A reload replaces the data set before the engine can
+/// read the new metadata, so the check cannot wait until then. `candidate`
+/// is closed when the check ends, before the reload opens the data again.
+fn check_metadata(candidate: Arc<Manager>) -> Result<()> {
+    read_metadata(&candidate).map(|_| ())
 }
 
 /// The data set `manager` holds, read from `copy` when there is one, and its
@@ -234,22 +246,16 @@ fn describe(
     tier_override: &Option<String>,
     names: &Arc<BuildNames>,
 ) -> Result<(LoadedDataSet, LentMetadata)> {
-    #[cfg(test)]
-    if FAIL_DESCRIBE.with(std::cell::Cell::get) {
-        return Err(Error::configuration(
-            "the data set's metadata could not be read (test)",
-        ));
-    }
     let file_tier = manager
         .data_set_name()
         .unwrap_or_else(|| DEFAULT_DATA_SOURCE_TIER.to_owned());
     let tier = tier_override.clone().unwrap_or_else(|| file_tier.clone());
-    let file_properties = manager.data_file_properties()?;
+    let (file_properties, file_components) = read_metadata(&manager)?;
     let EngineMetadata {
         lent,
         fiftyone_properties,
         components,
-    } = build_metadata(&file_properties, &manager.data_file_components()?, tier);
+    } = build_metadata(&file_properties, &file_components, tier);
     let readable = Arc::new(ReadableNames::new(&file_properties, names));
     let file_property_places = file_properties
         .iter()
@@ -554,17 +560,11 @@ impl IpIntelligenceOnPremiseEngine {
         }))
     }
 
-    /// The names the engine was built with, in their order, for a new data
-    /// set to be opened with, or [`None`] for every property when there are
-    /// none.
-    fn reload_names(&self) -> Option<Vec<&str>> {
-        (!self.names.list.is_empty()).then(|| self.names.list.iter().map(String::as_str).collect())
-    }
-
-    /// Load a new data set from the data file at `path`, or from the copy of
-    /// it the engine reads, into a manager of its own, and put it in use once
-    /// it is described. See [`Self::swap_in`]. A load that fails leaves the
-    /// data set in use and removes the copy, which nothing then reads.
+    /// Reload the data set in the engine's manager from the data file at
+    /// `path`, or from the copy of it the engine reads, and describe the new
+    /// data set. See [`Self::swap_in`]. The new data's metadata is read first
+    /// (see [`check_metadata`]). A reload that fails leaves the data set in
+    /// use and removes the copy, which nothing then reads.
     fn reload_from_path(&self, path: &Path) -> Result<()> {
         let _refreshing = self
             .refresh_lock
@@ -580,43 +580,55 @@ impl IpIntelligenceOnPremiseEngine {
                 self.reuse_temp_file,
             )
         });
-        let manager = Manager::open_with_options(
-            copy.as_ref().map_or(path, OperationalCopy::path),
-            self.profile,
-            self.reload_names().as_deref(),
-            self.concurrency,
-        )?;
+        let source = copy.as_ref().map_or(path, OperationalCopy::path);
+        check_metadata(Manager::open(source, PerformanceProfile::LowMemory)?)?;
+        let manager = Arc::clone(&self.loaded.load().manager);
+        manager.reload_from_file(source)?;
         self.swap_in(copy, manager)
     }
 
-    /// Load a new data set from `data`, the whole of a data file, into a
-    /// manager of its own, and put it in use once it is described. See
-    /// [`Self::swap_in`].
+    /// Reload the data set in the engine's manager from `data`, the whole of
+    /// a data file, which the C library copies, and describe the new data
+    /// set. See [`Self::swap_in`]. The new data's metadata is read first
+    /// (see [`check_metadata`]), from a second copy of `data` held only for
+    /// that read.
     fn reload_from_memory(&self, data: &[u8]) -> Result<()> {
         let _refreshing = self
             .refresh_lock
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let manager =
-            Manager::open_from_memory(data.to_vec(), self.profile, self.reload_names().as_deref())?;
+        check_metadata(Manager::open_from_memory(
+            data.to_vec(),
+            PerformanceProfile::LowMemory,
+            None,
+        )?)?;
+        let manager = Arc::clone(&self.loaded.load().manager);
+        manager.reload_from_memory(data)?;
         self.swap_in(None, manager)
     }
 
-    /// Put in use the data set `manager` holds, which reads `copy` when there
-    /// is one. The manager was opened with the names the engine was built
-    /// with, which the C library indexes by their place in the list, so each
-    /// name keeps its index, as in a reload in place. A concurrent `process`
+    /// Give lookups the properties of the data set `manager` holds after a
+    /// reload, which reads `copy` when there is one. A concurrent `process`
     /// call keeps what it read and the data set its results came from. The
     /// evidence keys, the metadata, the tier and the dates in the data file
     /// header follow the new data, which can differ from the old. The caller
     /// holds the refresh lock.
     ///
-    /// When the new data set's metadata cannot be read the error is returned
-    /// and nothing changes: lookups go on reading the data set the engine
-    /// had, and the new one is freed and `copy` removed.
+    /// The metadata was read before the reload, so it fails here only when a
+    /// second read of the same data fails. Then the error is returned and
+    /// lookups go on reading the new data set by the properties of the one
+    /// before, whose names and indexes it keeps, with `copy` kept until
+    /// nothing reads it.
     fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
         let evidence_keys = DataFileEvidenceKeys::whitelist(&manager);
-        let (mut loaded, metadata) = describe(None, manager, &self.tier_override, &self.names)?;
+        let (mut loaded, metadata) = match describe(None, manager, &self.tier_override, &self.names)
+        {
+            Ok(described) => described,
+            Err(error) => {
+                self.keep_copy(copy);
+                return Err(error);
+            }
+        };
         loaded._copy = copy;
         let loaded = Arc::new(loaded);
         self.loaded.store(Arc::clone(&loaded));
@@ -628,6 +640,23 @@ impl IpIntelligenceOnPremiseEngine {
             record_dates(&loaded.manager, data_file);
         }
         Ok(())
+    }
+
+    /// Keep `copy`, which the data set the manager now holds reads, with what
+    /// lookups read from the data set before it, because the new data set's
+    /// metadata could not be read. The copy before it then goes once nothing
+    /// reads its data set, and this one once nothing reads the new data set.
+    fn keep_copy(&self, copy: Option<OperationalCopy>) {
+        let current = self.loaded.load();
+        self.loaded.store(Arc::new(LoadedDataSet {
+            manager: Arc::clone(&current.manager),
+            readable: Arc::clone(&current.readable),
+            file_properties: current.file_properties.clone(),
+            missing: Arc::clone(&current.missing),
+            fiftyone_properties: Arc::clone(&current.fiftyone_properties),
+            components: Arc::clone(&current.components),
+            _copy: copy,
+        }));
     }
 }
 
@@ -1263,6 +1292,85 @@ mod tests {
     use fiftyone_pipeline_core::{ElementData, Evidence, Pipeline};
     use fiftyone_pipeline_engines::AspectData;
 
+    /// `file` published a year later, with its first property's description
+    /// past the end of the strings, as `tests/metadata.rs` makes it. The data
+    /// set loads, because loading reads no description, and reading its
+    /// metadata then fails. The places are those of `ipi.h`, `collection.h`
+    /// and `property.h` in 51degrees-cxx.
+    fn later_with_unreadable_metadata(file: &Path) -> Vec<u8> {
+        const PUBLISHED_HEADER: usize = 66;
+        const PROPERTIES_HEADER: usize = 122;
+        const PROPERTY_SIZE: usize = 44;
+        const DESCRIPTION_OFFSET: usize = 16;
+        let mut bytes = std::fs::read(file).unwrap();
+        let year_at = PUBLISHED_HEADER..PUBLISHED_HEADER + 2;
+        let year = i16::from_le_bytes(bytes[year_at.clone()].try_into().unwrap());
+        bytes[year_at].copy_from_slice(&(year + 1).to_le_bytes());
+        let read_u32 = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+        let start = u64::from_le_bytes(
+            bytes[PROPERTIES_HEADER..PROPERTIES_HEADER + 8]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let length = read_u32(PROPERTIES_HEADER + 8) as usize;
+        let count = read_u32(PROPERTIES_HEADER + 12) as usize;
+        assert_eq!(length, count * PROPERTY_SIZE, "the properties are found");
+        let at = start + DESCRIPTION_OFFSET;
+        bytes[at..at + 4].copy_from_slice(&(i32::MAX as u32).to_le_bytes());
+        bytes
+    }
+
+    /// A refresh to a data file that loads but whose metadata cannot be read
+    /// fails, and the engine goes on using the data set it had, from a path
+    /// and from memory, as the data updates specification asks. The new file
+    /// is published a year later, so the publish date of the engine's data
+    /// set shows which data set it uses.
+    #[test]
+    fn a_refresh_whose_metadata_cannot_be_read_keeps_the_data_set_it_had() {
+        let Some(file) = ipi_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping the failed refresh");
+            return;
+        };
+        let bytes = later_with_unreadable_metadata(&file);
+        let dir = std::env::temp_dir().join(format!(
+            "fiftyone-ipi-keeps-data-set-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let unreadable = dir.join("51Degrees.ipi");
+        std::fs::write(&unreadable, &bytes).unwrap();
+        let engine = no_names_engine(&file);
+        let published = || engine.loaded.load().manager.data_set_published();
+        let before = published();
+        let reloads: [Reload<'_>; 2] = [
+            (
+                "from a path".to_owned(),
+                Box::new(|| engine.reload_from_path(&unreadable)),
+            ),
+            (
+                "from memory".to_owned(),
+                Box::new(|| engine.refresh_from_memory(None, &bytes)),
+            ),
+        ];
+        for (label, reload) in reloads {
+            let error = reload().expect_err("the new metadata cannot be read");
+            assert!(
+                error
+                    .to_string()
+                    .contains("the data file's metadata could not be read (property 0)"),
+                "{label}: {error}"
+            );
+            assert_eq!(
+                published(),
+                before,
+                "{label}: the engine goes on using the data set it had"
+            );
+        }
+        drop(engine);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn the_engine_type_name_is_the_name_of_the_type() {
         let full = std::any::type_name::<IpIntelligenceOnPremiseEngine>();
@@ -1630,84 +1738,29 @@ mod tests {
         }
     }
 
-    /// `bytes`, a data file published on `published`, with the day it was
-    /// published moved by one, so a data set loaded from it can be told from
-    /// one loaded from `bytes`.
-    fn published_another_day(bytes: &[u8], published: (i32, u32, u32)) -> Vec<u8> {
-        let (year, month, day) = published;
-        let year = i16::try_from(year).unwrap().to_le_bytes();
-        let date = [year[0], year[1], month as u8, day as u8];
-        let at = bytes[..512]
-            .windows(4)
-            .position(|window| window == date)
-            .expect("the header holds the published date");
-        let mut changed = bytes.to_vec();
-        changed[at + 3] = if day < 28 {
-            day as u8 + 1
-        } else {
-            day as u8 - 1
-        };
-        changed
-    }
-
-    /// data-updates.md: "If the updated data source cannot be used, the
-    /// refresh MUST fail with an error, and the Engine MUST go on using the
-    /// data source it had, so that processing is unaffected." A data set the
-    /// C library loads but whose metadata cannot then be read cannot be used.
+    /// A refresh reloads the data set into the engine's own manager, as the
+    /// C library's reload does, from the file, from memory and from another
+    /// path, so the engine's manager is the same one after each.
     #[test]
-    fn a_refresh_that_cannot_use_the_new_data_keeps_the_data_source_it_had() {
+    fn a_refresh_reloads_the_data_set_in_the_engines_manager() {
         let Some(data_file) = ipi_data_file() else {
-            eprintln!("no usable IP-intelligence data file; skipping the failed refresh");
+            eprintln!("no usable IP-intelligence data file; skipping the reload in place");
             return;
         };
         let engine = no_names_engine(&data_file);
+        let manager = Arc::clone(&engine.loaded.load().manager);
         let bytes = std::fs::read(&data_file).expect("the data file reads");
-        let published = || engine.loaded.load().manager.data_set_published();
-        let before = published().expect("the header holds a date");
-        let later = published_another_day(&bytes, before);
-
-        FAIL_DESCRIBE.with(|fail| fail.set(true));
-        let result = engine.refresh_from_memory(None, &later);
-        FAIL_DESCRIBE.with(|fail| fail.set(false));
-        assert!(result.is_err(), "the refresh fails");
-        assert_eq!(
-            published(),
-            Some(before),
-            "lookups read the data set the engine had"
-        );
-
-        // The same data used with nothing in the way is taken.
+        let same = || Arc::ptr_eq(&manager, &engine.loaded.load().manager);
+        engine.refresh(None).expect("the data file loads again");
+        assert!(same(), "from the file");
         engine
-            .refresh_from_memory(None, &later)
-            .expect("the changed data file loads");
-        assert_ne!(published(), Some(before));
-    }
-
-    /// A refresh loads the data set into a manager of its own, from the file,
-    /// from memory and from another path, so the data set the engine had is
-    /// untouched until the new one is in use, and the new manager holds the
-    /// names of the one before, in their order.
-    #[test]
-    fn a_refresh_loads_the_data_set_into_a_new_manager_with_the_same_names() {
-        let Some(data_file) = ipi_data_file() else {
-            eprintln!("no usable IP-intelligence data file; skipping the new manager");
-            return;
-        };
-        let engine = no_names_engine(&data_file);
-        let names = engine.loaded.load().manager.available_property_names();
-        let bytes = std::fs::read(&data_file).expect("the data file reads");
-        let refreshes: [(&str, &dyn Fn() -> Result<()>); 3] = [
-            ("from the file", &|| engine.refresh(None)),
-            ("from memory", &|| engine.refresh_from_memory(None, &bytes)),
-            ("from a path", &|| engine.reload_from_path(&data_file)),
-        ];
-        for (case, refresh) in refreshes {
-            let manager = Arc::clone(&engine.loaded.load().manager);
-            refresh().expect(case);
-            let now = Arc::clone(&engine.loaded.load().manager);
-            assert!(!Arc::ptr_eq(&manager, &now), "{case}");
-            assert_eq!(now.available_property_names(), names, "{case}");
-        }
+            .refresh_from_memory(None, &bytes)
+            .expect("the data loads again");
+        assert!(same(), "from memory");
+        engine
+            .reload_from_path(&data_file)
+            .expect("the data file loads again");
+        assert!(same(), "from a path");
     }
 
     /// Flow data holding the client IP 1.1.1.1, from a pipeline of `engine`.
