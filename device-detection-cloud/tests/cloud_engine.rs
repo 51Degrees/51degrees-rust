@@ -38,6 +38,8 @@ mod deprecated_names;
 use std::sync::Arc;
 
 use fiftyone_pipeline_core::{Error, Evidence, Pipeline};
+#[cfg(not(target_family = "wasm"))]
+use fiftyone_pipeline_engines::AspectData;
 
 use fiftyone_cloud_request_engine::{
     CloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine, HttpMethod,
@@ -503,6 +505,44 @@ fn missing_cloud_request_engine_is_a_configuration_error() {
     );
 }
 
+/// "All Engines MUST populate data objects that implement Aspect Data as
+/// defined in the Pipeline specification." (device-detection-specification,
+/// data-model.md.) Both cloud Engines, the device Engine and the hardware
+/// profile lookup, store data that is Aspect Data naming the Engine.
+///
+/// Not run on WebAssembly.
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn both_cloud_engines_populate_aspect_data() {
+    let (_, request_engine) = fake_pipeline();
+    let device_engine = DeviceDetectionCloudEngine::builder()
+        .cloud_request_engine(request_engine.clone())
+        .build();
+    let hardware_engine = HardwareProfileCloudEngine::builder()
+        .cloud_request_engine(request_engine.clone())
+        .build();
+    let pipeline = Pipeline::builder()
+        .add_element(request_engine)
+        .add_element(Arc::new(device_engine))
+        .add_element(Arc::new(hardware_engine))
+        .build()
+        .expect("pipeline builds");
+    let mut data =
+        pipeline.create_flow_data_with(Evidence::builder().add("header.user-agent", "A").build());
+    data.process().expect("processing succeeds");
+
+    let device: &dyn AspectData = data
+        .get(DEVICE_DATA_KEY)
+        .expect("the device data is stored");
+    assert_eq!(device.engine_keys(), ["device"]);
+    assert!(!device.cache_hit());
+    let hardware: &dyn AspectData = data
+        .get(HARDWARE_DATA_KEY)
+        .expect("the hardware data is stored");
+    assert_eq!(hardware.engine_keys(), ["hardware"]);
+    assert!(!hardware.cache_hit());
+}
+
 /// Resolve a cloud resource key from the environment for the live test.
 ///
 /// The aligned `_51DEGREES_RESOURCE_KEY` is checked first, then the CI-exported
@@ -576,4 +616,51 @@ fn live_cloud_detection() {
         device.is_mobile().has_value(),
         "live result should carry IsMobile"
     );
+}
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let (pipeline, _request_engine) = fake_pipeline();
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("header.user-agent", "Mozilla/5.0 (Linux; Android 8.0)")
+            .build(),
+    );
+    data.process().expect("processing succeeds");
+    assert!(
+        data.get(CloudRequestEngine::DATA_KEY).is_some(),
+        "no data under '{}'",
+        CloudRequestEngine::DATA_KEY.name()
+    );
+    match data.get_or_add(CloudRequestEngine::DATA_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            CloudRequestEngine::DATA_KEY.name()
+        ),
+    }
+    assert!(
+        data.get(DEVICE_DATA_KEY).is_some(),
+        "no data under '{}'",
+        DEVICE_DATA_KEY.name()
+    );
+    match data.get_or_add(DEVICE_DATA_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            DEVICE_DATA_KEY.name()
+        ),
+    }
 }

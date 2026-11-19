@@ -2,6 +2,8 @@
 name = "fiftyone-derived-properties"
 version = "4.5.2"
 description = "DerivedPropertyElement: computes a property from properties already in the 51Degrees pipeline, using the shared format 1 script format."
+keywords = ["device-detection", "ip-geolocation", "derived-properties", "pipeline", "51degrees"]
+categories = ["web-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

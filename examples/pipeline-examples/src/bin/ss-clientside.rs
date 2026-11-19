@@ -165,6 +165,10 @@ fn build_web_pipeline(share_usage: bool) -> Result<WebPipeline> {
 async fn home(result: FiftyOneResult) -> Html<String> {
     // Read the sign (and whether client JavaScript is still pending) out of the
     // processed flow data. The closure runs while the flow data is borrowed.
+    // A flow data is not safe to use from two threads at once. `get` holds
+    // this request's flow data for the closure, which copies what the page
+    // needs into values of its own. Work handed to another thread or task
+    // takes those values, never the flow data.
     let (sign, awaiting_input) = result
         .get(SimpleClientSideElement::KEY, |data| {
             let sign = data.star_sign().unwrap_or(UNKNOWN_STAR_SIGN).to_owned();
@@ -302,6 +306,7 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
+    use fiftyone_pipeline_core::Pipeline;
     use tower::ServiceExt;
 
     /// Build a multi-thread runtime, send one request through the app and return
@@ -370,6 +375,31 @@ mod tests {
     fn client_javascript_endpoint_is_mounted() {
         let (status, _body) = request("/51Degrees.core.js");
         assert_eq!(status, StatusCode::OK);
+    }
+
+    /// Element data is read only once its element has finished, as the
+    /// thread-safety specification's Element Data section requires.
+    #[test]
+    fn its_element_data_is_read_only_once_processed() {
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(SimpleClientSideElement::new()))
+            .build()
+            .unwrap();
+        let mut data = pipeline.create_flow_data();
+        data.process().unwrap();
+        assert!(
+            data.get(SimpleClientSideElement::KEY).is_some(),
+            "no star sign data"
+        );
+        match data.get_or_add(SimpleClientSideElement::KEY, || {
+            unreachable!("the element added its data")
+        }) {
+            Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+                assert!(message.contains("cannot be written"), "{message}")
+            }
+            Err(other) => panic!("not a configuration error: {other}"),
+            Ok(_) => panic!("the star sign data was written after processing"),
+        }
     }
 }
 

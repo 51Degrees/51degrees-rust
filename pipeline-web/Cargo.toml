@@ -2,6 +2,8 @@
 name = "fiftyone-pipeline-web"
 version = "4.5.2"
 description = "Framework-neutral web elements, client-side endpoint logic and the JavaScript/Mustache assets for the 51Degrees pipeline."
+keywords = ["web", "client-hints", "device-detection", "javascript", "51degrees"]
+categories = ["web-programming", "web-programming::http-server"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

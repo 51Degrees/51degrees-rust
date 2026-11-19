@@ -804,3 +804,44 @@ fn the_source_lists_are_slices() {
     assert_eq!(codes.len(), 1);
     assert!(!names.is_empty());
 }
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let mut data = process(ip(&["GB", "FR"], &["GB", "FR"]), &[]);
+    assert!(
+        data.get(COUNTRY_NAMES_KEY).is_some(),
+        "no data under '{}'",
+        COUNTRY_NAMES_KEY.name()
+    );
+    match data.get_or_add(COUNTRY_NAMES_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            COUNTRY_NAMES_KEY.name()
+        ),
+    }
+    assert!(
+        data.get(COUNTRY_NAMES_TRANSLATED_KEY).is_some(),
+        "no data under '{}'",
+        COUNTRY_NAMES_TRANSLATED_KEY.name()
+    );
+    match data.get_or_add(COUNTRY_NAMES_TRANSLATED_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            COUNTRY_NAMES_TRANSLATED_KEY.name()
+        ),
+    }
+}
