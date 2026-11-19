@@ -914,19 +914,50 @@ fn temporary_files_left_behind_are_cleared_when_the_store_opens() {
     let crashed_secret = folder
         .path()
         .join(format!("{SECRET}.{}-1-0.tmp", now - twenty_minutes));
-    // Being written by another process now.
-    let writing = leaf.join(format!("{name}.{now}-1-1.tmp"));
+    // Left by a crash a moment ago. One store at a time has the folder, so
+    // no other store can be writing it, and it goes however recent it is.
+    let recent = leaf.join(format!("{name}.{now}-1-1.tmp"));
+    let recent_secret = folder.path().join(format!("{SECRET}.{now}-1-1.tmp"));
     // Not a name the store gives.
     let other = leaf.join("notes.tmp");
-    for path in [&crashed, &crashed_secret, &writing, &other] {
+    for path in [&crashed, &crashed_secret, &recent, &recent_secret, &other] {
         fs::write(path, b"part of a file").unwrap();
     }
 
     let disk = open(&folder, &clock);
     assert!(!crashed.exists());
     assert!(!crashed_secret.exists());
-    assert!(writing.exists());
+    assert!(!recent.exists(), "a recent temporary file was kept at open");
+    assert!(
+        !recent_secret.exists(),
+        "a recent temporary secret was kept at open"
+    );
     assert!(other.exists());
+    assert_eq!(value(&disk, "key"), Some(b"value".to_vec()));
+}
+
+#[test]
+fn a_sweep_while_open_keeps_a_temporary_file_being_written() {
+    let folder = Folder::new("temporary-sweep");
+    let clock = TestClock::new();
+    let disk = open(&folder, &clock);
+    put(&disk, &clock, "key", b"value", None);
+    let path = file_of(folder.path(), "key");
+    let leaf = path.parent().unwrap();
+    let name = path.file_name().unwrap().to_string_lossy().into_owned();
+    let now = nanos(clock.now());
+    let twenty_minutes = 20 * 60 * 1_000_000_000;
+    // Left by a write that never finished.
+    let crashed = leaf.join(format!("{name}.{}-1-0.tmp", now - twenty_minutes));
+    // Being written by this store now.
+    let writing = leaf.join(format!("{name}.{now}-1-1.tmp"));
+    for path in [&crashed, &writing] {
+        fs::write(path, b"part of a file").unwrap();
+    }
+
+    disk.clear_expired();
+    assert!(!crashed.exists());
+    assert!(writing.exists(), "a sweep removed a write in progress");
     assert_eq!(value(&disk, "key"), Some(b"value".to_vec()));
 }
 
