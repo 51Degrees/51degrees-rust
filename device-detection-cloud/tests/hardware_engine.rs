@@ -437,3 +437,47 @@ fn profiles_is_listed_with_its_item_properties() {
         ]
     );
 }
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let pipeline = fake_pipeline(HARDWARE_RESPONSE);
+    let mut data =
+        pipeline.create_flow_data_with(Evidence::builder().add("query.tac", "35925406").build());
+    data.process().expect("processing succeeds");
+    assert!(
+        data.get(CloudRequestEngine::DATA_KEY).is_some(),
+        "no data under '{}'",
+        CloudRequestEngine::DATA_KEY.name()
+    );
+    match data.get_or_add(CloudRequestEngine::DATA_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            CloudRequestEngine::DATA_KEY.name()
+        ),
+    }
+    assert!(
+        data.get(HARDWARE_DATA_KEY).is_some(),
+        "no data under '{}'",
+        HARDWARE_DATA_KEY.name()
+    );
+    match data.get_or_add(HARDWARE_DATA_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            HARDWARE_DATA_KEY.name()
+        ),
+    }
+}

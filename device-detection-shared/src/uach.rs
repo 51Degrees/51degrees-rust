@@ -537,4 +537,26 @@ mod tests {
         );
         assert_eq!(element.properties().len(), 6);
     }
+
+    /// Element data is read only once its element has finished, as the
+    /// thread-safety specification's Element Data section requires.
+    #[test]
+    fn its_element_data_is_read_only_once_processed() {
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(UachJsConversionElement::new()))
+            .build()
+            .unwrap();
+        let mut data = pipeline.create_flow_data();
+        data.process().unwrap();
+
+        let key = UachJsConversionElement::DATA_KEY;
+        assert!(data.get(key).is_some());
+        match data.get_or_add(key, || unreachable!("the element added its data")) {
+            Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+                assert!(message.contains("cannot be written"), "{message}")
+            }
+            Err(other) => panic!("not a configuration error: {other}"),
+            Ok(_) => panic!("the data was written after processing"),
+        }
+    }
 }

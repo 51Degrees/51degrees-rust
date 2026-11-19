@@ -297,19 +297,18 @@ fn every_setting_is_read_as_dotnet_reads_it() {
     );
     assert_eq!(config.session_cookie_name(), Some("MySession"));
 
-    // The element itself shares what the settings say.
+    // The element itself shares what the settings say. The included query
+    // string parameters are deprecated and have no effect, so a parameter
+    // no element of the pipeline accepts is shared only for a 51D_ name.
     let element = share_usage_element(&pipeline);
     let filter = element.shared_evidence_filter();
+    for key in ["query.51d_x", "header.accept"] {
+        assert!(filter.include(key), "{key}");
+    }
     for key in [
         "query.a",
         "query.b,c",
         "query.d",
-        "query.51d_x",
-        "header.accept",
-    ] {
-        assert!(filter.include(key), "{key}");
-    }
-    for key in [
         "query.e",
         "header.x-one",
         "header.x-two",
@@ -358,12 +357,13 @@ fn sharing_all_evidence_shares_every_key_but_those_never_shared() {
     assert!(share_usage_config(&pipeline).share_all_evidence());
     let element = share_usage_element(&pipeline);
     let filter = element.shared_evidence_filter();
-    for key in ["cookie.51d_session", "query.anything", "session.anything"] {
+    for key in ["cookie.51d_session", "query.51d_x", "session.anything"] {
         assert!(filter.include(key), "{key}");
     }
-    // usage-sharing-element.md: no cookie but a 51D_ one is shared, even
-    // when all evidence is shared.
-    for key in ["header.cookie", "cookie.session"] {
+    // usage-sharing-element.md: no cookie but a 51D_ one is shared, and no
+    // query string or form parameter but a 51D_ one or one the pipeline
+    // uses, even when all evidence is shared.
+    for key in ["header.cookie", "cookie.session", "query.anything"] {
         assert!(!filter.include(key), "{key}");
     }
 }
@@ -832,6 +832,7 @@ fn a_json_file_written_for_dotnet_makes_the_same_elements() {
           "PipelineOptions": {
             "Elements": [
               { "BuilderName": "SequenceElementBuilder" },
+              { "BuilderName": "SetHeadersElementBuilder" },
               {
                 "BuilderName": "ShareUsageBuilder",
                 "BuildParameters": {
@@ -846,8 +847,7 @@ fn a_json_file_written_for_dotnet_makes_the_same_elements() {
                   "BlockedHttpHeaders": "a,b",
                   "BlockedHttpHeader": "c"
                 }
-              },
-              { "BuilderName": "SetHeadersElementBuilder" }
+              }
             ]
           }
         }"#,
@@ -859,7 +859,7 @@ fn a_json_file_written_for_dotnet_makes_the_same_elements() {
         .iter()
         .map(|e| e.data_key())
         .collect();
-    assert_eq!(keys, ["sequence", "shareusage", "set-headers"]);
+    assert_eq!(keys, ["sequence", "set-headers", "shareusage"]);
 
     // .NET applies the names sorted, so the header is added before the
     // list replaces it, and the parameter before every one is shared.
@@ -928,6 +928,12 @@ fn track_session_with_no_session_cookie_name_is_refused() {
 
 const FIFTYONE_PIPELINE: &str =
     "fiftyone_pipeline_engines_fiftyone::configuration::FiftyOnePipelineBuilder";
+
+/// The refusal of a pipeline that puts usage sharing anywhere but last on
+/// its own.
+const MISPLACED_USAGE_SHARING: &str = "The usage sharing element, with the data key \
+                                       'shareusage', must be the last flow element in a \
+                                       pipeline and outside any parallel group.";
 
 fn build_fiftyone(options: &PipelineOptions) -> Result<Arc<Pipeline>> {
     let mut registry = registry();
@@ -1093,16 +1099,16 @@ fn a_sequence_or_usage_sharing_element_on_its_own_is_kept_where_it_is() {
                 .element(element("ShareUsageBuilder")),
             &["sequence", "set-headers", "shareusage"],
         ),
-        (
-            PipelineOptions::new()
-                .element(element("ShareUsageBuilder"))
-                .element(element("SequenceElementBuilder")),
-            &["shareusage", "sequence"],
-        ),
     ] {
         let pipeline = build_fiftyone(&options).unwrap();
         assert_eq!(data_keys(&pipeline), expected, "{options:?}");
     }
+
+    // Usage sharing on its own anywhere but last is refused.
+    let options = PipelineOptions::new()
+        .element(element("ShareUsageBuilder"))
+        .element(element("SequenceElementBuilder"));
+    assert_eq!(message(build_fiftyone(&options)), MISPLACED_USAGE_SHARING);
 
     // The usage sharing element the configuration names keeps its settings.
     let pipeline = build_fiftyone(&PipelineOptions::new().element(share_quarter())).unwrap();
@@ -1120,26 +1126,17 @@ fn an_element_in_a_parallel_group_is_not_counted() {
         ]))
     };
 
-    // .NET adds a second usage sharing element, and so do the crates.
-    let pipeline = build_fiftyone(&group("ShareUsageBuilder", "SetHeadersElementBuilder")).unwrap();
-    assert_eq!(
-        data_keys(&pipeline),
-        ["sequence", "shareusage", "shareusage", "set-headers"]
-    );
-
-    // Each of the two gives its own settings, the one added with the
-    // defaults and then the group's.
+    // Usage sharing in a group of two is not counted, so a second is added
+    // last, and the pipeline is refused, because usage sharing never runs
+    // in a parallel group.
+    let refused = build_fiftyone(&group("ShareUsageBuilder", "SetHeadersElementBuilder"));
+    assert_eq!(message(refused), MISPLACED_USAGE_SHARING);
     let half = ElementOptions::new("ShareUsageBuilder").parameter("SharePercentage", "0.5");
     let options = PipelineOptions::new().element(ElementOptions::group([
         half,
         ElementOptions::new("SetHeadersElementBuilder"),
     ]));
-    let pipeline = build_fiftyone(&options).unwrap();
-    let percentages: Vec<f64> = share_usage_configs(&pipeline)
-        .iter()
-        .map(ShareUsageConfig::share_percentage)
-        .collect();
-    assert_eq!(percentages, [1.0, 0.5]);
+    assert_eq!(message(build_fiftyone(&options)), MISPLACED_USAGE_SHARING);
 
     // .NET adds a second Sequence element before the group and builds. The
     // crates refuse a group whose element has the data key of one before it.
