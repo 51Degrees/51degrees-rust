@@ -1354,7 +1354,11 @@ fn a_store_opens_a_folder_others_can_also_write_to() {
         let clock = TestClock::new();
         let disk = open(&folder, &clock);
         put(&disk, &clock, "key", b"value", None);
-        assert_eq!(value(&disk, "key"), Some(b"value".to_vec()), "mode {mode:o}");
+        assert_eq!(
+            value(&disk, "key"),
+            Some(b"value".to_vec()),
+            "mode {mode:o}"
+        );
     }
 }
 
