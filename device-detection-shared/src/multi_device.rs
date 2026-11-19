@@ -28,7 +28,9 @@ use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 use crate::DeviceDataBase;
-use fiftyone_pipeline_core::{ElementData, ElementDataList, NoValueError, PropertyValue, TypedKey};
+use fiftyone_pipeline_core::{
+    ElementData, ElementDataList, ElementDataSnapshot, NoValueError, PropertyValue, TypedKey,
+};
 use fiftyone_pipeline_engines::AspectData;
 
 /// The element-data key string the hardware-profile lookup stores its result
@@ -83,8 +85,9 @@ pub trait ProfileReader: Send + Sync {
 /// more profiles are added after that.
 ///
 /// Its dynamic [`ElementData`] view lists one property,
-/// [`PROFILES_PROPERTY_NAME`], holding a copy of each profile added with
-/// its values as a [`PropertyValue::ElementDataList`], so the JSON
+/// [`PROFILES_PROPERTY_NAME`], holding the values of each profile added
+/// with its values, read once into an [`ElementDataSnapshot`], as a
+/// [`PropertyValue::ElementDataList`], so the JSON
 /// builder writes `hardware.profiles` with each profile as an object, and
 /// a property a profile holds with no value as null with its reason.
 /// Profiles added by id are never read for it, as .NET's `MultiDeviceData`
@@ -232,7 +235,9 @@ impl ElementData for MultiDeviceData {
             let profiles = self
                 .profiles
                 .iter()
-                .map(|profile| Arc::new(profile.clone()) as Arc<dyn ElementData>)
+                .map(|profile| {
+                    Arc::new(ElementDataSnapshot::new(profile)) as Arc<dyn ElementData + Sync>
+                })
                 .collect::<ElementDataList>();
             return Ok(PropertyValue::ElementDataList(profiles));
         }
@@ -328,8 +333,8 @@ mod tests {
         data.push_profile(unknown.clone());
 
         let expected = PropertyValue::ElementDataList(ElementDataList::new(vec![
-            Arc::new(apple) as Arc<dyn ElementData>,
-            Arc::new(unknown) as Arc<dyn ElementData>,
+            Arc::new(ElementDataSnapshot::new(&apple)) as Arc<dyn ElementData + Sync>,
+            Arc::new(ElementDataSnapshot::new(&unknown)) as Arc<dyn ElementData + Sync>,
         ]));
         // The JSON builder asks in lower case.
         assert_eq!(data.get("profiles").unwrap(), expected);
@@ -451,14 +456,36 @@ mod tests {
         data.push_profile(apple.clone());
         assert_eq!(
             data.get("Profiles").unwrap(),
-            PropertyValue::ElementDataList(ElementDataList::new(vec![
-                Arc::new(apple) as Arc<dyn ElementData>
-            ]))
+            PropertyValue::ElementDataList(ElementDataList::new(vec![Arc::new(
+                ElementDataSnapshot::new(&apple)
+            )
+                as Arc<dyn ElementData + Sync>]))
         );
         // Writing the data reads no profile added by id.
         assert_eq!(reader.reads(), 0);
         assert_eq!(data.len(), 2);
         assert_eq!(profile_id(&data.profiles()[0]), "12280");
+    }
+
+    /// Implemented for every type, and a second time for every `Sync` type,
+    /// so naming the item through it is ambiguous, and fails to compile,
+    /// exactly when the type is `Sync`.
+    trait AmbiguousIfSync<A> {
+        fn check() {}
+    }
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+    struct IsSync;
+    impl<T: ?Sized + Sync> AmbiguousIfSync<IsSync> for T {}
+
+    fn assert_send<T: Send>() {}
+
+    /// The profiles may read a results instance, so the data is `Send` but
+    /// not `Sync`, and the compiler refuses code that shares it across
+    /// threads.
+    #[test]
+    fn it_is_send_but_not_sync() {
+        assert_send::<MultiDeviceData>();
+        <MultiDeviceData as AmbiguousIfSync<_>>::check();
     }
 
     /// The data is Aspect Data naming the engine that wrote it by its data
