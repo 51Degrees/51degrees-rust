@@ -2,6 +2,8 @@
 name = "fiftyone-caching"
 version = "4.5.2"
 description = "Sharded LRU cache and loading cache for the 51Degrees pipeline and services built with it, for native and WebAssembly hosts."
+keywords = ["cache", "lru-cache", "loading-cache", "sharded", "51degrees"]
+categories = ["caching", "data-structures", "wasm"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

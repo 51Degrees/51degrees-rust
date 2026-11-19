@@ -604,6 +604,28 @@ mod tests {
             .collect();
         assert_eq!(names, [ENGAGEMENT_PROPERTY]);
     }
+
+    /// Element data is read only once its element has finished, as the
+    /// thread-safety specification's Element Data section requires.
+    #[test]
+    fn its_element_data_is_read_only_once_processed() {
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(SessionElement::new()))
+            .build()
+            .unwrap();
+        let mut data = pipeline.create_flow_data();
+        data.process().unwrap();
+        assert!(data.get(SessionElement::KEY).is_some(), "no session data");
+        match data.get_or_add(SessionElement::KEY, || {
+            unreachable!("the element added its data")
+        }) {
+            Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+                assert!(message.contains("cannot be written"), "{message}")
+            }
+            Err(other) => panic!("not a configuration error: {other}"),
+            Ok(_) => panic!("the session data was written after processing"),
+        }
+    }
 }
 
 /* ---------------------------------------------------------------------------
