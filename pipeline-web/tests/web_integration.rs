@@ -493,18 +493,21 @@ fn element_ordering_without_set_headers() {
     );
 }
 
-/// The web integration specification says, of the Sequence, JSON Builder,
-/// JavaScript Builder and Set Headers elements, that "there MUST be
-/// configuration options to allow users to prevent them being added (or
-/// disable them) if they wish to do so". So an option leaves out the Sequence
-/// Element, and the other elements are added as before.
+/// The [web integration specification](https://github.com/51Degrees/specifications/blob/d79bbe3b2aef86273570742f6b660f29bfe72816/pipeline-specification/features/web-integration.md#L73-L74)
+/// says, of the Sequence, JSON Builder, JavaScript Builder and Set Headers
+/// elements, that "there MUST be configuration options to allow users to
+/// prevent them being added (or disable them) if they wish to do so". So the
+/// builder can leave out the Sequence Element, and the other elements are
+/// added as before.
 #[test]
 fn element_ordering_without_sequence() {
-    let options = WebIntegrationOptions {
-        use_sequence_element: false,
-        ..WebIntegrationOptions::default()
-    };
-    let web = WebPipeline::build(vec![Arc::new(TestElement::new(false))], options).expect("builds");
+    let web = WebPipeline::builder(
+        vec![Arc::new(TestElement::new(false))],
+        WebIntegrationOptions::default(),
+    )
+    .use_sequence_element(false)
+    .build()
+    .expect("builds");
     let keys: Vec<&str> = web
         .pipeline()
         .flow_elements()
@@ -520,6 +523,36 @@ fn element_ordering_without_sequence() {
             "javascriptbuilderelement"
         ]
     );
+}
+
+/// The builder adds the Sequence Element first unless told not to, as
+/// `WebPipeline::build` does.
+#[test]
+fn the_builder_adds_the_sequence_element_by_default() {
+    let web = WebPipeline::builder(
+        vec![Arc::new(TestElement::new(false))],
+        WebIntegrationOptions::default(),
+    )
+    .build()
+    .expect("builds");
+    assert_eq!(web.pipeline().flow_elements()[0].data_key(), "sequence");
+}
+
+/// Code that names every field of the options, with no
+/// `..WebIntegrationOptions::default()`, still compiles, because the
+/// setting that leaves out the Sequence Element is given to the builder
+/// rather than added to the options as a field.
+#[test]
+fn options_naming_every_field_still_compile() {
+    let options = WebIntegrationOptions {
+        client_side_evidence_enabled: true,
+        use_set_header_properties: true,
+        suppress_process_exceptions: true,
+        javascript_endpoint: fiftyone_pipeline_core::constants::DEFAULT_CORE_JS_ENDPOINT.to_owned(),
+        json_endpoint: fiftyone_pipeline_core::constants::DEFAULT_JSON_ENDPOINT.to_owned(),
+    };
+    let web = WebPipeline::build(vec![Arc::new(TestElement::new(false))], options).expect("builds");
+    assert_eq!(web.pipeline().flow_elements()[0].data_key(), "sequence");
 }
 
 // ----------------------------------------------------------------------------
