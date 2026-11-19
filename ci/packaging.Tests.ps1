@@ -17,6 +17,7 @@ BeforeDiscovery {
     # Crates whose tests read files outside the crate's folder, which a
     # packaged crate does not have, so a test run from the package would fail.
     # The JavaScript builder's performance test reads
+    # .github/workflows/nightly-performance.yml and
     # ci/run-performance-tests.ps1.
     $script:TestsReadOutside = @(
         'fiftyone-javascript-builder'

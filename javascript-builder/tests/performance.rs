@@ -27,11 +27,13 @@
 //! (pipeline-specification/pipeline-elements/javascript-builder.md line 109).
 //! [`minification_stays_within_its_budget`] renders the script with
 //! minification off and on and fails when minifying adds more than
-//! [`MINIFY_BUDGET`] to a render. It measures, so it is ignored in a debug
-//! `cargo test`, and `ci/run-performance-tests.ps1` runs it in release.
-//! [`the_performance_run_runs_this_test`] checks that the script does.
+//! [`MINIFY_BUDGET`] to a render. It measures, so it is ignored, and the
+//! nightly performance workflow runs it in release as its last step.
+//! [`the_performance_run_runs_this_test`] checks that the workflow does. The
+//! pull request build runs the ignored tests in debug, where a time says
+//! nothing about a release, so there the test returns before it measures.
 //!
-//! The tests measure time or read the script from disk, so they are
+//! The tests measure time or read the workflow from disk, so they are
 //! compiled only off WebAssembly, where a test has no file system.
 #![cfg(not(target_family = "wasm"))]
 
@@ -54,22 +56,20 @@ use fiftyone_pipeline_engines_fiftyone::SequenceElement;
 
 /// The most minification may add to the median render, in release.
 ///
-/// Each measurement is in release, of the 49,196 byte unminified script and
-/// the 15,524 byte minified one, on 16 November 2026.
+/// Minifying the script of about 49,200 bytes to 15,524 bytes added, in
+/// release:
 ///
-/// - A Windows 11 developer machine: minifying added 2.34 ms.
-/// - A shared Windows 11 machine with 4 processors, busy with other work:
-///   minifying added 3.63 ms to 3.91 ms over five runs. Before the minifier's
-///   threads were used again it added 30.6 ms there, and 137.8 ms on another
-///   busy machine, most of it the start of a thread with a large stack for
-///   each request.
+/// - 0.84 ms to 0.85 ms over five runs on `ubuntu-latest` with 4 processors,
+///   the nightly performance runner and the only runner that times it.
+/// - 2.34 ms on a Windows 11 developer machine.
+/// - 3.63 ms to 3.91 ms over five runs on a shared Windows 11 machine with 4
+///   processors, busy with other work.
 ///
-/// The limit is over six times the highest of these, to leave room for a
-/// slower, shared CI runner, while still failing on a change that makes
-/// minifying many times slower. The nightly performance runner,
-/// `ubuntu-latest`, has not been measured yet, and the limit is to be checked
-/// against it. `minify::tests::minifying_uses_its_threads_again` is what
-/// keeps the minifier from starting a thread for each request.
+/// The limit is over six times the highest of these, leaving room for a busy
+/// runner while still failing on a change that makes minifying many times
+/// slower. `minify::tests::minifying_uses_its_threads_again` keeps the
+/// minifier from starting a thread for each request, which cost more than the
+/// minifying.
 #[cfg(feature = "minify")]
 const MINIFY_BUDGET: Duration = Duration::from_millis(25);
 
@@ -130,8 +130,12 @@ fn median_render(pipeline: &Arc<Pipeline>) -> (Duration, usize) {
 /// [`MINIFY_BUDGET`] to a render.
 #[cfg(feature = "minify")]
 #[test]
-#[ignore = "measures time, so ci/run-performance-tests.ps1 runs it in release"]
+#[ignore = "measures time, so the nightly performance workflow runs it in release"]
 fn minification_stays_within_its_budget() {
+    if cfg!(debug_assertions) {
+        println!("Not measured, as the budget is for a release build.");
+        return;
+    }
     let plain = pipeline(|builder| builder.set_minify(false).build());
     let minified = pipeline(|builder| builder.set_minify(true).build());
 
