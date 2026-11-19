@@ -114,7 +114,8 @@ const WRITE_LOCKS: usize = 16;
 const DEFAULT_SWEEP_EVERY: Duration = Duration::from_secs(10 * 60);
 
 /// A temporary file whose name carries a time this far from now is left
-/// from a write that never finished, and is removed.
+/// from a write that never finished, and a sweep while the store is open
+/// removes it. The sweep when the store opens removes every temporary file.
 const ABANDONED_AFTER: Duration = Duration::from_secs(10 * 60);
 
 /// A [`ByteStore`] that keeps each entry in a file of its own, for a native
@@ -153,7 +154,10 @@ const ABANDONED_AFTER: Duration = Duration::from_secs(10 * 60);
 /// - Expired files, and temporary files left by a write that never
 ///   finished, are cleared on [`FileStore::clear_expired`], when the store
 ///   opens, and as writes arrive, at most once per
-///   [sweep period](FileStoreBuilder::sweep_every).
+///   [sweep period](FileStoreBuilder::sweep_every). When the store opens it
+///   holds the folder alone, so every temporary file is a crash's leftover
+///   and is removed. Later sweeps keep one named within ten minutes of now,
+///   which may be a write of the store still in progress.
 ///
 /// The store removes only files whose names and contents it recognizes as
 /// its own, so a folder setting pointed at the wrong place never deletes
@@ -319,10 +323,22 @@ impl FileStore {
             return 0;
         }
         let _maintaining = self.maintaining.lock().unwrap_or_else(|e| e.into_inner());
-        self.clear_expired_locked()
+        self.clear_expired_locked(false)
     }
 
-    fn clear_expired_locked(&self) -> usize {
+    /// Clears as [`FileStore::clear_expired`] does, and removes every
+    /// temporary file whatever the time in its name, because no write can
+    /// be in progress while the store opens: it holds the folder alone.
+    fn clear_at_open(&self) -> usize {
+        let _maintaining = self.maintaining.lock().unwrap_or_else(|e| e.into_inner());
+        self.clear_expired_locked(true)
+    }
+
+    /// Clears the folder. With `every_temp`, every temporary file is a
+    /// leftover and is removed. Without it, a temporary file may be a write
+    /// of this store still in progress, so only one named at a time
+    /// [`ABANDONED_AFTER`] or more from now is removed.
+    fn clear_expired_locked(&self, every_temp: bool) -> usize {
         let now = self.clock.now();
         let listing = self.list();
         let mut removed = 0;
@@ -353,11 +369,11 @@ impl FileStore {
             }
         }
         for (path, at) in listing.temps {
-            if abandoned(at, now) {
+            if every_temp || abandoned(at, now) {
                 let _ = fs::remove_file(&path);
             }
         }
-        self.clear_abandoned_secrets(now);
+        self.clear_abandoned_secrets(now, every_temp);
         self.held.store(held, Ordering::Relaxed);
         self.next_sweep.store(
             nanos(now.checked_add(self.sweep_every).unwrap_or(now)),
@@ -409,7 +425,7 @@ impl FileStore {
     fn maintain(&self, now: SystemTime) {
         if nanos(now) >= self.next_sweep.load(Ordering::Relaxed) {
             if let Ok(_maintaining) = self.maintaining.try_lock() {
-                self.clear_expired_locked();
+                self.clear_expired_locked(false);
             }
         }
         if self.held.load(Ordering::Relaxed) > self.max_bytes {
@@ -548,13 +564,13 @@ impl FileStore {
 
     /// Removes the temporary files a crash left while the secret was being
     /// written.
-    fn clear_abandoned_secrets(&self, now: SystemTime) {
+    fn clear_abandoned_secrets(&self, now: SystemTime, every_temp: bool) {
         for file in fs::read_dir(&self.root).into_iter().flatten().flatten() {
             let Some(name) = file.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
             if let Some(at) = temp_time(&name, |stem| stem == SECRET_FILE) {
-                if abandoned(at, now) {
+                if every_temp || abandoned(at, now) {
                     let _ = fs::remove_file(file.path());
                 }
             }
@@ -903,7 +919,7 @@ impl FileStoreBuilder {
 
         // A new secret leaves every file under the old one unreachable, and
         // clearing removes those along with the expired.
-        store.clear_expired();
+        store.clear_at_open();
         store.max_bytes = self
             .max_bytes
             .unwrap_or_else(|| default_max_bytes(&store.root, store.held_bytes()));
