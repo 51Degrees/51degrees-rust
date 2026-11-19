@@ -300,7 +300,9 @@ impl FlowElement for PropertyKeyedDeviceEngine {
                     .profile_ids_and_reader_for_property_value(&lookup.property_name, &value)?,
             ),
         };
-        let hardware = data.get_or_add(TypedKey::new(self.data_key), MultiDeviceData::new)?;
+        let hardware = data.get_or_add(TypedKey::new(self.data_key), || {
+            MultiDeviceData::with_engine_key(self.data_key)
+        })?;
         if let Some((ids, reader)) = found {
             hardware.push_profile_ids(reader, ids);
         }
