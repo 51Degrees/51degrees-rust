@@ -395,16 +395,7 @@ impl Default for HardwareProfileCloudEngineBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fiftyone_cloud_request_engine::aspect::aspect_portion;
     use fiftyone_device_detection_shared::DeviceData;
-
-    /// The profiles of a whole cloud response.
-    fn profiles_of(json: &str) -> MultiDeviceData {
-        hardware_profiles(
-            &aspect_portion(json, HARDWARE_ELEMENT_DATA_KEY).unwrap(),
-            None,
-        )
-    }
 
     #[test]
     fn slice_profiles_reads_each_match() {
@@ -414,7 +405,7 @@ mod tests {
             {"hardwarevendor":"Apple","hardwarename":["iPhone 11"],"hardwaremodel":"iPhone11,8"},
             {"hardwarevendor":"Apple","hardwarename":["iPhone 11 Pro"],"hardwaremodel":"iPhone12,3"}
         ]}}"#;
-        let result = profiles_of(json);
+        let result = slice_hardware_profiles(json, None).unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(
             result.profiles()[0].hardware_vendor().value().unwrap(),
@@ -435,8 +426,16 @@ mod tests {
         // A standard single-device response (key without the hardware-profile
         // product) has no `hardware` block, so the result is empty, not an error.
         let json = r#"{"device":{"hardwarename":["Desktop"]}}"#;
-        let result = profiles_of(json);
+        let result = slice_hardware_profiles(json, None).unwrap();
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn slice_profiles_invalid_json_is_cloud_error() {
+        match slice_hardware_profiles("not json", None) {
+            Err(Error::CloudRequest { .. }) => {}
+            other => panic!("expected a cloud request error, got {other:?}"),
+        }
     }
 
     #[test]

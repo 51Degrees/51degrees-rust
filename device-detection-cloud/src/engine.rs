@@ -388,6 +388,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn slice_device_json_extracts_device_member() {
+        let json = r#"{"device":{"ismobile":true},"javascriptProperties":[]}"#;
+        let device = slice_device_json(json).unwrap();
+        assert_eq!(device.get("ismobile").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn slice_device_json_missing_member_is_null() {
+        let json = r#"{"location":{}}"#;
+        let device = slice_device_json(json).unwrap();
+        assert!(device.is_null());
+    }
+
+    #[test]
+    fn slice_device_json_invalid_is_cloud_error() {
+        match slice_device_json("not json") {
+            Err(Error::CloudRequest { .. }) => {}
+            other => panic!("expected a cloud request error, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn try_build_requires_request_engine() {
         match DeviceDetectionCloudEngine::builder().try_build() {
             Err(Error::PipelineConfiguration { .. }) => {}

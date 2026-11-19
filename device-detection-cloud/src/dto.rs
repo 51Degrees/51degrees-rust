@@ -258,11 +258,11 @@ mod tests {
 
     #[test]
     fn null_reason_key_detection_is_case_insensitive() {
-        assert!(is_reason_entry("hardwarevendornullreason"));
-        assert!(is_reason_entry("HardwareVendorNullReason"));
-        assert!(is_reason_entry("nullreason"));
-        assert!(!is_reason_entry("reason"));
-        assert!(!is_reason_entry("ismobile"));
-        assert!(!is_reason_entry("nullreasonx"));
+        assert!(is_null_reason_key("hardwarevendornullreason"));
+        assert!(is_null_reason_key("HardwareVendorNullReason"));
+        assert!(is_null_reason_key("nullreason"));
+        assert!(!is_null_reason_key("reason"));
+        assert!(!is_null_reason_key("ismobile"));
+        assert!(!is_null_reason_key("nullreasonx"));
     }
 }
