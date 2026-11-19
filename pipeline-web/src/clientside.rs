@@ -50,7 +50,8 @@
 //!   (JSON).
 //! - `Content-Length`: the UTF-8 byte length of the body.
 //! - `Cache-Control`: `private, max-age=1800` when the flow data recorded no
-//!   processing errors and the builder's data was there, otherwise
+//!   processing errors and the builder's data was there, with the `max-age`
+//!   [`EndpointOptions::with_max_age_seconds`] gives in place of 1800, otherwise
 //!   `private, no-cache`. That response carries no `ETag`, so a browser that
 //!   kept it fetches it again in full rather than having it confirmed by a
 //!   `304`.
@@ -157,11 +158,19 @@ pub const CONTENT_TYPE_JAVASCRIPT: &str = "application/x-javascript";
 /// The `Content-Type` used for the JSON endpoint.
 pub const CONTENT_TYPE_JSON: &str = "application/json";
 
+/// The `max-age`, in seconds, of a response the client may reuse, unless
+/// [`EndpointOptions::with_max_age_seconds`] or
+/// [`crate::WebPipeline::with_client_side_max_age_seconds`] gives another.
+/// It is 30 minutes.
+pub const DEFAULT_MAX_AGE_SECONDS: u32 = 1800;
+
 /// The `Cache-Control` value used when processing recorded no errors and the
-/// builder whose output the endpoint serves left its data.
+/// builder whose output the endpoint serves left its data, with the default
+/// `max-age`.
 ///
 /// `private` so shared caches (proxies) do not store the per-device result, and
-/// `max-age=1800` (30 minutes) so the client may reuse it for half an hour.
+/// `max-age=1800` ([`DEFAULT_MAX_AGE_SECONDS`]) so the client may reuse it for
+/// half an hour. A configured `max-age` takes the place of 1800.
 pub const CACHE_CONTROL_CACHEABLE: &str = "private, max-age=1800";
 
 /// The `Cache-Control` value used when processing recorded one or more errors,
@@ -211,6 +220,11 @@ pub struct EndpointOptions {
     /// own. The `If-None-Match` short circuit still applies, and its `304` or
     /// `412` carries no headers. `false` by default.
     suppress_extra_headers: bool,
+
+    /// The `max-age` of a response the client may reuse, set by
+    /// [`EndpointOptions::with_max_age_seconds`]. `None` gives
+    /// [`DEFAULT_MAX_AGE_SECONDS`].
+    max_age_seconds: Option<u32>,
 }
 
 /// A pipeline's shared `Vary` list that keeps [`EndpointOptions`]
@@ -240,6 +254,7 @@ impl EndpointOptions {
             vary_whitelist: Some(vary_whitelist),
             pipeline_vary: None,
             suppress_extra_headers: false,
+            max_age_seconds: None,
         }
     }
 
@@ -250,7 +265,24 @@ impl EndpointOptions {
             vary_whitelist: None,
             pipeline_vary: Some(SharedVaryList(list)),
             suppress_extra_headers: false,
+            max_age_seconds: None,
         }
+    }
+
+    /// Set the `max-age`, in seconds, of the `Cache-Control` header of a
+    /// response the client may reuse, and of the `304` that confirms one.
+    /// Returns `self` for chaining. A shorter time limits how long a client
+    /// keeps a value that changes, such as a location found by JavaScript.
+    pub fn with_max_age_seconds(mut self, seconds: u32) -> Self {
+        self.max_age_seconds = Some(seconds);
+        self
+    }
+
+    /// The `max-age`, in seconds, of a response the client may reuse, being
+    /// [`DEFAULT_MAX_AGE_SECONDS`] unless
+    /// [`EndpointOptions::with_max_age_seconds`] gave another.
+    pub fn max_age_seconds(&self) -> u32 {
+        self.max_age_seconds.unwrap_or(DEFAULT_MAX_AGE_SECONDS)
     }
 
     /// The whitelist the next response's `Vary` header is derived from, being
@@ -530,7 +562,10 @@ fn extra_headers(
     etag: &str,
     options: &EndpointOptions,
 ) -> Vec<(String, String)> {
-    let mut headers = vec![("Cache-Control".to_owned(), cache_control(cacheable))];
+    let mut headers = vec![(
+        "Cache-Control".to_owned(),
+        cache_control(cacheable, options.max_age_seconds()),
+    )];
 
     if let Some(whitelist) = options.current_vary_whitelist() {
         let vary = vary_header(whitelist);
@@ -553,10 +588,11 @@ fn extra_headers(
     headers
 }
 
-/// The `Cache-Control` value for a response.
-fn cache_control(cacheable: bool) -> String {
+/// The `Cache-Control` value for a response, with the `max-age` a response
+/// the client may reuse carries.
+fn cache_control(cacheable: bool, max_age_seconds: u32) -> String {
     if cacheable {
-        CACHE_CONTROL_CACHEABLE.to_owned()
+        format!("private, max-age={max_age_seconds}")
     } else {
         CACHE_CONTROL_NO_CACHE.to_owned()
     }

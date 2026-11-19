@@ -89,7 +89,10 @@
 //!   `application/json` for JSON.
 //! - **`Content-Length`**: the UTF-8 byte length of the body.
 //! - **`Cache-Control`**: `private, max-age=1800` when processing recorded no
-//!   errors and the builder's data was there, else `private, no-cache` and no
+//!   errors and the builder's data was there, where
+//!   [`WebPipeline::with_client_side_max_age_seconds`] or
+//!   [`EndpointOptions::with_max_age_seconds`] can give another `max-age`,
+//!   else `private, no-cache` and no
 //!   `ETag`, so a browser that kept the response to a failed request fetches
 //!   it again in full rather than having it confirmed by a `304`.
 //! - **`Vary`**: the comma-joined HTTP-header evidence keys (prefix stripped,
@@ -196,7 +199,7 @@ mod set_headers;
 pub use clientside::{
     compute_etag, etag_matches, serve_if_none_match, serve_javascript, serve_json, vary_header,
     EndpointOptions, CACHE_CONTROL_CACHEABLE, CACHE_CONTROL_NO_CACHE, CONTENT_TYPE_JAVASCRIPT,
-    CONTENT_TYPE_JSON,
+    CONTENT_TYPE_JSON, DEFAULT_MAX_AGE_SECONDS,
 };
 pub use pipeline::{
     endpoint_matches, WebEndpoint, WebIntegrationOptions, WebPipeline, WebPipelineBuilder,

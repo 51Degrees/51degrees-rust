@@ -665,6 +665,80 @@ fn cache_control_no_cache_on_processing_failure() {
 }
 
 // ----------------------------------------------------------------------------
+// Max-age is configurable (web integration specification, client-side
+// caching: "Max-age SHOULD be configurable").
+// ----------------------------------------------------------------------------
+
+#[test]
+fn the_max_age_is_30_minutes_unless_configured() {
+    let web = web_pipeline(false);
+    assert_eq!(web.endpoint_options().max_age_seconds(), 1800);
+    assert_eq!(
+        EndpointOptions::new(web.vary_whitelist().clone()).max_age_seconds(),
+        1800
+    );
+    assert_eq!(EndpointOptions::default().max_age_seconds(), 1800);
+}
+
+#[test]
+fn endpoint_options_give_the_max_age_they_are_configured_with() {
+    let web = web_pipeline(false);
+    let options = EndpointOptions::new(web.vary_whitelist().clone()).with_max_age_seconds(60);
+    assert_eq!(options.max_age_seconds(), 60);
+
+    let json = serve_json(
+        &processed(web.pipeline(), page_evidence("abc")),
+        &TestRequest::default(),
+        &options,
+    );
+    assert_eq!(json.header("Cache-Control"), Some("private, max-age=60"));
+
+    let script = serve_javascript(
+        &processed(web.pipeline(), page_evidence("abc")),
+        &TestRequest::default(),
+        &options,
+    );
+    assert_eq!(script.header("Cache-Control"), Some("private, max-age=60"));
+}
+
+#[test]
+fn a_web_pipeline_gives_the_max_age_it_is_configured_with() {
+    let web = web_pipeline(false).with_client_side_max_age_seconds(0);
+    let options = web.endpoint_options();
+    assert_eq!(options.max_age_seconds(), 0);
+
+    let good = serve_javascript(
+        &processed(web.pipeline(), page_evidence("abc")),
+        &TestRequest::default(),
+        &options,
+    );
+    assert_eq!(good.header("Cache-Control"), Some("private, max-age=0"));
+
+    // A 304 carries the Cache-Control of the 200 it confirms.
+    let etag = good.header("ETag").expect("a good response has an ETag");
+    let revalidation = TestRequest {
+        headers: vec![("If-None-Match".to_owned(), etag.to_owned())],
+        ..Default::default()
+    };
+    let flow_data = web.pipeline().create_flow_data_with(page_evidence("abc"));
+    let not_modified =
+        serve_if_none_match(&flow_data, &revalidation, &options).expect("the ETag matches");
+    assert_eq!(not_modified.status, WebResponse::STATUS_NOT_MODIFIED);
+    assert_eq!(
+        not_modified.header("Cache-Control"),
+        Some("private, max-age=0")
+    );
+}
+
+#[test]
+fn a_failed_response_is_not_cached_whatever_the_max_age() {
+    let web = web_pipeline(true).with_client_side_max_age_seconds(60);
+    let data = processed(web.pipeline(), Evidence::default());
+    let response = serve_json(&data, &TestRequest::default(), &web.endpoint_options());
+    assert_eq!(response.header("Cache-Control"), Some("private, no-cache"));
+}
+
+// ----------------------------------------------------------------------------
 // Vary derivation from a whitelist.
 // ----------------------------------------------------------------------------
 

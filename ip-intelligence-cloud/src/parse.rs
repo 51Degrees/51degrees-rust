@@ -31,6 +31,7 @@
 
 use std::collections::HashMap;
 
+use fiftyone_cloud_request_engine::aspect::{is_reason_entry, null_reason};
 use fiftyone_ip_intelligence_shared::IpIntelligenceDataBase;
 use fiftyone_pipeline_core::{round_angle, WeightedValue};
 use serde_json::Value;
@@ -43,18 +44,6 @@ const RAW_WEIGHTING_FIELD: &str = "rawweighting";
 
 /// The JSON field carrying the candidate value of a weighted value.
 const VALUE_FIELD: &str = "value";
-
-/// The suffix on a sibling key that carries the no-value reason for a property
-/// (`<propertyname>nullreason`).
-const NULL_REASON_SUFFIX: &str = "nullreason";
-
-/// The top-level object, a sibling of the property object, that maps property
-/// name to no-value reason in the newer cloud response shape.
-const NULL_VALUE_REASONS_FIELD: &str = "nullValueReasons";
-
-/// The no-value message used when the cloud sends a `null` value but supplies no
-/// reason.
-const UNKNOWN_REASON: &str = "Unknown";
 
 /// The value type a property carries, used to pick which shared setter receives
 /// it.
@@ -158,21 +147,18 @@ impl ValueKind {
 /// maps each property name (lower case) to the value kind derived from the cloud
 /// metadata; a property absent from the map has its kind inferred from its JSON
 /// value. Properties whose value is `null` (or an empty list) are recorded as
-/// no-values with the reason found in either a `<name>nullreason` sibling or the
-/// top-level `nullValueReasons` object.
+/// no-values with the reason the shared Cloud Aspect Engine processing gives,
+/// [`null_reason`], from either a `<name>nullreason` sibling or the
+/// `nullValueReasons` object.
 pub(crate) fn populate_from_aspect(
     data: &mut IpIntelligenceDataBase,
     aspect: &serde_json::Map<String, Value>,
     kinds: &HashMap<String, ValueKind>,
 ) {
-    // Collect the reasons from the dedicated top-level object first, so a
-    // null value can find its message regardless of the encoding in use.
-    let reasons = collect_null_reasons(aspect);
-
     for (name, value) in aspect {
-        // The dedicated reasons object and the per-property reason siblings are
-        // metadata about other properties, not properties in their own right.
-        if name == NULL_VALUE_REASONS_FIELD || is_null_reason_key(name) {
+        // The reasons object and the per-property reason siblings are about
+        // other properties, not properties in their own right.
+        if is_reason_entry(name) {
             continue;
         }
 
@@ -194,7 +180,7 @@ pub(crate) fn populate_from_aspect(
                     data.set_weighted_string(name, weighted);
                 }
                 ParsedProperty::Values(_) | ParsedProperty::NoValue => {
-                    let reason = lookup_reason(name, aspect, &reasons);
+                    let reason = null_reason(aspect, name);
                     data.set_weighted_string_no_value(name, reason);
                 }
             },
@@ -203,7 +189,7 @@ pub(crate) fn populate_from_aspect(
             ValueKind::WktString => match wkt_text(value) {
                 Some(text) => data.set_wkt_string(name, text),
                 None => {
-                    let reason = lookup_reason(name, aspect, &reasons);
+                    let reason = null_reason(aspect, name);
                     data.set_wkt_string_no_value(name, reason);
                 }
             },
@@ -212,7 +198,7 @@ pub(crate) fn populate_from_aspect(
             _ => match plain_scalar(value) {
                 Some(scalar) => insert_plain(data, name, kind, &scalar),
                 None => {
-                    let reason = lookup_reason(name, aspect, &reasons);
+                    let reason = null_reason(aspect, name);
                     insert_no_value(data, name, kind, reason);
                 }
             },
@@ -362,43 +348,6 @@ fn insert_no_value(data: &mut IpIntelligenceDataBase, name: &str, kind: ValueKin
     }
 }
 
-/// Find the no-value reason for `name`, checking the `<name>nullreason` sibling
-/// first and then the top-level `nullValueReasons` object, falling back to
-/// `"Unknown"`.
-fn lookup_reason(
-    name: &str,
-    aspect: &serde_json::Map<String, Value>,
-    reasons: &HashMap<String, String>,
-) -> String {
-    let sibling = format!("{name}{NULL_REASON_SUFFIX}");
-    if let Some(Value::String(message)) = field_ci(aspect, &sibling) {
-        return message.clone();
-    }
-    if let Some(message) = reasons.get(&name.to_ascii_lowercase()) {
-        return message.clone();
-    }
-    UNKNOWN_REASON.to_owned()
-}
-
-/// Build the lower-cased name to reason map from the top-level
-/// `nullValueReasons` object, if present.
-fn collect_null_reasons(aspect: &serde_json::Map<String, Value>) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    if let Some(Value::Object(reasons)) = field_ci(aspect, NULL_VALUE_REASONS_FIELD) {
-        for (name, value) in reasons {
-            if let Value::String(message) = value {
-                map.insert(name.to_ascii_lowercase(), message.clone());
-            }
-        }
-    }
-    map
-}
-
-/// True if `name` is a `<propertyname>nullreason` sibling key.
-fn is_null_reason_key(name: &str) -> bool {
-    name.to_ascii_lowercase().ends_with(NULL_REASON_SUFFIX)
-}
-
 /// Look up a field in a JSON object case-insensitively, since the cloud mixes
 /// PascalCase property names with lower-case weighted-value field names.
 fn field_ci<'a>(map: &'a serde_json::Map<String, Value>, name: &str) -> Option<&'a Value> {
@@ -462,6 +411,7 @@ fn value_to_bool(value: &Value) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fiftyone_cloud_request_engine::aspect::UNKNOWN_REASON;
     use fiftyone_ip_intelligence_shared::{IpIntelligenceData, IP_DATA_KEY_NAME};
     use fiftyone_pipeline_core::{ElementData, PropertyValue};
 

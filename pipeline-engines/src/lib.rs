@@ -85,6 +85,7 @@ mod engine_builder;
 mod lazy_loading;
 mod missing_property;
 mod on_premise_aspect_engine;
+mod values_as_string;
 
 pub use aspect_data::{AspectData, AspectDataBase};
 pub use aspect_engine::{
@@ -109,6 +110,7 @@ pub use missing_property::{
     MissingPropertySource,
 };
 pub use on_premise_aspect_engine::OnPremiseAspectEngine;
+pub use values_as_string::ProvidesValuesAsString;
 
 // Re-export the core missing-property reason so downstream engine crates can
 // match on it without importing the core crate directly.

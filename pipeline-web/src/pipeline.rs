@@ -170,6 +170,9 @@ pub struct WebPipeline {
     pipeline: Arc<Pipeline>,
     options: WebIntegrationOptions,
     vary: Arc<VaryList>,
+    /// The `max-age` [`WebPipeline::endpoint_options`] gives, set by
+    /// [`WebPipeline::with_client_side_max_age_seconds`].
+    max_age_seconds: Option<u32>,
 }
 
 impl WebPipeline {
@@ -233,7 +236,17 @@ impl WebPipeline {
             pipeline,
             options,
             vary,
+            max_age_seconds: None,
         })
+    }
+
+    /// Set the `max-age`, in seconds, that the client-side endpoints give a
+    /// response the client may reuse, in place of
+    /// [`crate::DEFAULT_MAX_AGE_SECONDS`]. Returns `self` for chaining, and
+    /// [`WebPipeline::endpoint_options`] carries it to the endpoints.
+    pub fn with_client_side_max_age_seconds(mut self, seconds: u32) -> Self {
+        self.max_age_seconds = Some(seconds);
+        self
     }
 
     /// The shared, immutable pipeline. Clone the `Arc` to create flow data.
@@ -260,9 +273,14 @@ impl WebPipeline {
     }
 
     /// The [`EndpointOptions`] for the client-side endpoints, taking the `Vary`
-    /// header from [`WebPipeline::vary_whitelist`] at each response.
+    /// header from [`WebPipeline::vary_whitelist`] at each response, with the
+    /// `max-age` [`WebPipeline::with_client_side_max_age_seconds`] gave.
     pub fn endpoint_options(&self) -> EndpointOptions {
-        EndpointOptions::from_vary_list(Arc::clone(&self.vary))
+        let options = EndpointOptions::from_vary_list(Arc::clone(&self.vary));
+        match self.max_age_seconds {
+            Some(seconds) => options.with_max_age_seconds(seconds),
+            None => options,
+        }
     }
 
     /// Decide which client-side endpoint, if any, a request path targets.

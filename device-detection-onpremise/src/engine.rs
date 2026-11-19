@@ -38,8 +38,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use arc_swap::ArcSwap;
 
 use fiftyone_device_detection_shared::{
-    declared_property_value_type, DeviceDataBase, DevicePropertyReader, DEVICE_DATA_KEY,
-    DEVICE_ELEMENT_DATA_KEY, TYPED_PROPERTY_NAMES,
+    declared_property_value_type, DeviceDataBase, DevicePropertyReader, StoredOutcome,
+    DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY, TYPED_PROPERTY_NAMES,
 };
 use fiftyone_native::dd::{
     hardware_profile_script, DataFileComponent, DataFileProperty, DataFileValue, HashOptions,
@@ -1205,7 +1205,43 @@ impl DevicePropertyReader for DetectionReader {
         let reason = no_value_reason(&values);
         Ok(native_value(Some(values), value_type).ok_or_else(|| Some(reason.message())))
     }
+
+    fn holds_values_as_strings(&self) -> bool {
+        true
+    }
+
+    /// The text the data file stores for a property, as the C++
+    /// `ResultsBase::getValueAsString` in 51degrees-cxx gives it: one value
+    /// as it is, several joined with [`STORED_VALUES_SEPARATOR`], and the
+    /// same reasons for no value as a typed read. A match metric is worked
+    /// out rather than stored, so it gives `None`.
+    fn read_stored_string(&self, position: usize) -> Option<StoredOutcome> {
+        let index = match &self.loaded.readable.properties[position] {
+            ReadableProperty::Metric(_) => return None,
+            ReadableProperty::File { index, .. } => *index,
+        };
+        let results = &self.results;
+        let values = match results.values_by_index(index) {
+            Ok(values) => values,
+            Err(error) => return Some(Err(error.to_string())),
+        };
+        Some(match values {
+            None => results
+                .no_value_reason_by_index(index)
+                .map(|reason| Err(Some(reason.message())))
+                .map_err(|error| error.to_string()),
+            Some(values) if values.is_empty() => {
+                Ok(Err(Some(NoValueReason::NO_RESULT_FOR_PROPERTY.message())))
+            }
+            Some(values) => Ok(Ok(values.join(STORED_VALUES_SEPARATOR))),
+        })
+    }
 }
+
+/// The text between the values of a property with several, in the string
+/// [`DetectionReader::read_stored_string`] gives, as the C++ `ResultsBase`
+/// in 51degrees-cxx joins them.
+const STORED_VALUES_SEPARATOR: &str = "|";
 
 /// Why [`native_value`] gives no value for the values the results hold, as
 /// the C++ `ResultsBase` in 51degrees-cxx says it. With none, the matched
