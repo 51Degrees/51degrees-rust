@@ -44,7 +44,8 @@ use fiftyone_device_detection_property_keyed::constants::{
     NATIVE_MODEL_PROPERTY_NAME, TAC_PROPERTY_NAME,
 };
 use fiftyone_device_detection_property_keyed::{
-    NativeEngineBuilder, PropertyKeyedDeviceEngine, TacEngineBuilder,
+    NativeEngineBuilder, PropertyKeyedDeviceEngine, PropertyKeyedDeviceEngineBuilder,
+    TacEngineBuilder,
 };
 use fiftyone_device_detection_shared::{
     DeviceDataBase, MultiDeviceData, HARDWARE_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY,
@@ -52,8 +53,9 @@ use fiftyone_device_detection_shared::{
 };
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{
-    ElementData, Evidence, FlowData, FlowElement, Pipeline, PropertyValue,
+    ElementData, Evidence, FlowData, FlowElement, Pipeline, PropertyValue, TypedKey,
 };
+use fiftyone_pipeline_engines::AspectData;
 
 const TAC_KEY: &str = "query.tac";
 const NATIVE_MODEL_KEY: &str = "query.nativemodel";
@@ -573,4 +575,35 @@ fn the_read_only_check_fails_when_the_named_data_file_is_missing() {
         "{test} did not fail with _51DEGREES_DD_PATH naming {}, which is missing:\n{text}",
         missing.display()
     );
+}
+
+/// The data key the engine of the Aspect Data test writes under.
+const BROWSERS: &str = "browsers";
+
+/// The engine stores Aspect Data naming it by its data key, as every Device
+/// Detection Engine must. A data file holding `BrowserName`, such as the Lite
+/// file, gives the engine its key property, so no TAC file is needed.
+#[test]
+fn the_data_is_aspect_data_naming_the_engine() {
+    let Some(device) = device_engine() else {
+        eprintln!("no Hash data file found; skipping");
+        return;
+    };
+    let engine = PropertyKeyedDeviceEngineBuilder::new()
+        .set_key_property("BrowserName")
+        .set_element_data_key(BROWSERS)
+        .build()
+        .expect("the engine builds");
+    let pipeline = pipeline(&device, &[&engine]);
+    let evidence_key = engine
+        .evidence_key()
+        .expect("the data file has BrowserName")
+        .to_owned();
+    let data = process(&pipeline, &[(evidence_key.as_str(), "Chrome")]);
+    let browsers = data
+        .get(TypedKey::<MultiDeviceData>::new(BROWSERS))
+        .expect("the engine stored its data");
+    let aspect: &dyn AspectData = browsers;
+    assert_eq!(aspect.engine_keys(), [BROWSERS]);
+    assert!(!aspect.cache_hit());
 }

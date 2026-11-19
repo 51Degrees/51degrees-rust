@@ -43,7 +43,7 @@ use fiftyone_device_detection_robots_txt::{
 };
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{Evidence, FlowElement, Pipeline};
-use fiftyone_pipeline_engines::AspectEngine;
+use fiftyone_pipeline_engines::{AspectData, AspectEngine};
 use robotstxt::DefaultMatcher;
 use url::Url;
 
@@ -451,4 +451,22 @@ fn the_read_only_check_fails_when_the_named_data_file_is_missing() {
         "{test} did not fail with _51DEGREES_DD_PATH naming {}, which is missing:\n{text}",
         missing.display()
     );
+}
+
+/// The engine stores Aspect Data naming it by its data key, as every Device
+/// Detection Engine must.
+#[test]
+fn the_data_is_aspect_data_naming_the_engine() {
+    let Some(device) = device_engine() else {
+        return;
+    };
+    let robots = robots();
+    let pipeline = pipeline(&device, &robots);
+    let mut data =
+        pipeline.create_flow_data_with(Evidence::builder().add("query.robotstxt.tdl", TDL).build());
+    data.process().expect("the request is processed");
+    let robots = data.get(ROBOTS_TXT_DATA_KEY).expect("the data is written");
+    let aspect: &dyn AspectData = robots;
+    assert_eq!(aspect.engine_keys(), ["robotstxt"]);
+    assert!(!aspect.cache_hit());
 }

@@ -240,6 +240,7 @@ mod tests {
 
     use super::*;
     use crate::DeviceData;
+    use fiftyone_pipeline_engines::AspectData;
 
     #[test]
     fn key_string_is_hardware() {
@@ -422,5 +423,21 @@ mod tests {
         assert_eq!(reader.reads(), 0);
         assert_eq!(data.len(), 2);
         assert_eq!(profile_id(&data.profiles()[0]), "12280");
+    }
+
+    /// The data is Aspect Data naming the engine that wrote it by its data
+    /// key, and is never a cache hit, as neither hardware profile engine has
+    /// a results cache.
+    #[test]
+    fn the_data_is_aspect_data_naming_its_engine() {
+        let hardware = MultiDeviceData::new();
+        let aspect: &dyn AspectData = &hardware;
+        assert_eq!(aspect.engine_keys(), [HARDWARE_ELEMENT_DATA_KEY]);
+        assert!(!aspect.cache_hit());
+
+        let browsers = MultiDeviceData::with_engine_key("browsers");
+        let aspect: &dyn AspectData = &browsers;
+        assert_eq!(aspect.engine_keys(), ["browsers"]);
+        assert!(!aspect.cache_hit());
     }
 }
