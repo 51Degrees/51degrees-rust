@@ -169,7 +169,9 @@ pub use clientside::{
     EndpointOptions, CACHE_CONTROL_CACHEABLE, CACHE_CONTROL_NO_CACHE, CONTENT_TYPE_JAVASCRIPT,
     CONTENT_TYPE_JSON,
 };
-pub use pipeline::{endpoint_matches, WebEndpoint, WebIntegrationOptions, WebPipeline};
+pub use pipeline::{
+    endpoint_matches, WebEndpoint, WebIntegrationOptions, WebPipeline, WebPipelineBuilder,
+};
 pub use request::{build_evidence, RequestData};
 pub use response::WebResponse;
 pub use set_headers::{apply_set_headers, response_headers};
