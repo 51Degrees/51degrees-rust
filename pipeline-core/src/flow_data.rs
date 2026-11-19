@@ -92,6 +92,8 @@ pub struct FlowData {
     /// to add, in order. None of them was added.
     refused_evidence: Vec<String>,
     processed: bool,
+    /// Set when processing has finished, after which nothing is added.
+    finished: bool,
     /// Which element data may be written now. See [`FlowData::get_or_add`].
     writing: Writing,
 }
@@ -164,6 +166,7 @@ impl FlowData {
             warnings: Vec::new(),
             refused_evidence: Vec::new(),
             processed: false,
+            finished: false,
             writing: Writing::Caller,
         }
     }
@@ -216,19 +219,27 @@ impl FlowData {
     /// element that adds evidence runs on its own, before the elements that
     /// read the value, and says so with [`FlowElement::adds_evidence`].
     ///
-    /// It can also be called after processing, as .NET's and Java's
-    /// `AddEvidence` can. Evidence added then changes no element's results,
-    /// but it does change what a later reader sees, being
-    /// [`FlowData::evidence`] and [`FlowData::generate_key`].
-    ///
     /// Evidence added once processing has started is left out of
     /// [`FlowData::supplied_evidence`], so the first such value copies the
     /// evidence held before it.
     ///
     /// The key is logged at debug level. The value is not, because evidence
     /// can carry credentials.
+    ///
+    /// # Panics
+    ///
+    /// When the flow data has finished processing, because a flow data is
+    /// then read only, as the
+    /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#flow-data)
+    /// requires.
     pub fn add_evidence(&mut self, key: impl AsRef<str>, value: impl Into<String>) {
         let key = key.as_ref();
+        if self.finished {
+            panic!(
+                "Evidence cannot be added to a flow data that has finished \
+                 processing. Add '{key}' before processing."
+            );
+        }
         if matches!(self.source, Source::Group(_)) {
             self.refused_evidence.push(key.to_owned());
             return;
@@ -285,6 +296,13 @@ impl FlowData {
     /// requires. A second call runs no element and returns
     /// [`Error::PipelineConfiguration`], so create a new flow data for each
     /// set of evidence.
+    ///
+    /// Once this returns, whether or not processing failed, the flow data has
+    /// finished processing and is read only, as the
+    /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#flow-data)
+    /// requires. [`FlowData::add_evidence`], [`FlowData::add_error`] and
+    /// [`FlowData::add_warning`] then panic, and [`FlowData::get_or_add`]
+    /// returns an error for data under a new key.
     pub fn process(&mut self) -> Result<()> {
         if self.processed {
             return Err(Error::configuration(
@@ -296,7 +314,9 @@ impl FlowData {
         // Clone the Arc so we do not hold an immutable borrow of `self` (via
         // `self.pipeline()`) while `process` needs `&mut self`.
         let pipeline = Arc::clone(self.pipeline());
-        pipeline.process(self)
+        let result = pipeline.process(self);
+        self.finished = true;
+        result
     }
 
     /// Record an error against this flow data, and log it at error level when
@@ -306,7 +326,19 @@ impl FlowData {
     /// errors are suppressed. An element that carries on past a failure
     /// records it here instead, using [`FlowError::with_should_throw`] with
     /// `false` when processing should not fail because of it.
+    ///
+    /// # Panics
+    ///
+    /// When the flow data has finished processing, because it is then read
+    /// only.
     pub fn add_error(&mut self, error: FlowError, should_log: bool) {
+        if self.finished {
+            panic!(
+                "An error cannot be added to a flow data that has finished \
+                 processing: {}",
+                error.source
+            );
+        }
         if should_log {
             log::error!(
                 "An error occurred in element '{}': {}",
@@ -324,8 +356,19 @@ impl FlowData {
     /// not fail the request, such as an evidence value an element could not
     /// use. `element` is the element the warning relates to, if any, and the
     /// log record names its type.
+    ///
+    /// # Panics
+    ///
+    /// When the flow data has finished processing, because it is then read
+    /// only.
     pub fn add_warning(&mut self, message: impl Into<String>, element: Option<&dyn FlowElement>) {
         let message = message.into();
+        if self.finished {
+            panic!(
+                "A warning cannot be added to a flow data that has finished \
+                 processing: {message}"
+            );
+        }
         match element {
             Some(element) => {
                 log::warn!("{message} (from {})", short_type_name(element.type_name()))
@@ -376,6 +419,7 @@ impl FlowData {
             warnings: Vec::new(),
             refused_evidence: Vec::new(),
             processed: true,
+            finished: false,
             writing: Writing::Nothing,
         }
     }
@@ -553,6 +597,13 @@ impl FlowData {
                 )));
             }
             Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(_) if self.finished => {
+                return Err(Error::configuration(format!(
+                    "Element data under key '{}' cannot be added to a flow \
+                     data that has finished processing.",
+                    key.name()
+                )));
+            }
             Entry::Vacant(entry) => {
                 self.order.push(entry.key().clone());
                 entry.insert(create())
