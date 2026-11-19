@@ -28,7 +28,9 @@ use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 use crate::DeviceDataBase;
-use fiftyone_pipeline_core::{ElementData, ElementDataList, NoValueError, PropertyValue, TypedKey};
+use fiftyone_pipeline_core::{
+    ElementData, ElementDataList, ElementDataSnapshot, NoValueError, PropertyValue, TypedKey,
+};
 
 /// The element-data key string the hardware-profile lookup stores its result
 /// under, which is `"hardware"`.
@@ -55,11 +57,7 @@ pub const PROFILES_PROPERTY_NAME: &str = "Profiles";
 
 /// Gives the device data of a profile from its id, for the profiles a
 /// [`MultiDeviceData`] holds by id until they are first read.
-///
-/// A reader is `Send` but need not be `Sync`, because one that holds results
-/// instances is not safe to use from several threads at once, so the
-/// compiler refuses code that shares one across threads.
-pub trait ProfileReader: Send {
+pub trait ProfileReader: Send + Sync {
     /// The device data of the profile with id `id`. A profile that cannot be
     /// read gives device data whose properties report why.
     fn read_profile(&self, id: u32) -> DeviceDataBase;
@@ -86,8 +84,9 @@ pub trait ProfileReader: Send {
 /// more profiles are added after that.
 ///
 /// Its dynamic [`ElementData`] view lists one property,
-/// [`PROFILES_PROPERTY_NAME`], holding a copy of each profile added with
-/// its values as a [`PropertyValue::ElementDataList`], so the JSON
+/// [`PROFILES_PROPERTY_NAME`], holding the values of each profile added
+/// with its values, read once into an [`ElementDataSnapshot`], as a
+/// [`PropertyValue::ElementDataList`], so the JSON
 /// builder writes `hardware.profiles` with each profile as an object, and
 /// a property a profile holds with no value as null with its reason.
 /// Profiles added by id are never read for it, as .NET's `MultiDeviceData`
@@ -115,17 +114,6 @@ struct FoundIds {
     reader: Arc<dyn ProfileReader>,
     ids: Vec<u32>,
 }
-
-// Safety: the reader is `Send` but not `Sync`, because it holds results
-// instances, which are not safe to use from several threads at once, and no
-// lock is taken. These ids and their reader are marked `Send` and `Sync` so
-// the element data that holds them stays usable in property values and
-// parallel groups. The caller is responsible for thread-safe access: one
-// that uses the data or a clone of it from several threads at once
-// coordinates that itself, as the thread-safety specification at 52e9b047
-// says.
-unsafe impl Send for FoundIds {}
-unsafe impl Sync for FoundIds {}
 
 impl fmt::Debug for FoundIds {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -222,7 +210,9 @@ impl ElementData for MultiDeviceData {
             let profiles = self
                 .profiles
                 .iter()
-                .map(|profile| Arc::new(profile.clone()) as Arc<dyn ElementData>)
+                .map(|profile| {
+                    Arc::new(ElementDataSnapshot::new(profile)) as Arc<dyn ElementData + Sync>
+                })
                 .collect::<ElementDataList>();
             return Ok(PropertyValue::ElementDataList(profiles));
         }
@@ -306,8 +296,8 @@ mod tests {
         data.push_profile(unknown.clone());
 
         let expected = PropertyValue::ElementDataList(ElementDataList::new(vec![
-            Arc::new(apple) as Arc<dyn ElementData>,
-            Arc::new(unknown) as Arc<dyn ElementData>,
+            Arc::new(ElementDataSnapshot::new(&apple)) as Arc<dyn ElementData + Sync>,
+            Arc::new(ElementDataSnapshot::new(&unknown)) as Arc<dyn ElementData + Sync>,
         ]));
         // The JSON builder asks in lower case.
         assert_eq!(data.get("profiles").unwrap(), expected);
@@ -429,9 +419,10 @@ mod tests {
         data.push_profile(apple.clone());
         assert_eq!(
             data.get("Profiles").unwrap(),
-            PropertyValue::ElementDataList(ElementDataList::new(vec![
-                Arc::new(apple) as Arc<dyn ElementData>
-            ]))
+            PropertyValue::ElementDataList(ElementDataList::new(vec![Arc::new(
+                ElementDataSnapshot::new(&apple)
+            )
+                as Arc<dyn ElementData + Sync>]))
         );
         // Writing the data reads no profile added by id.
         assert_eq!(reader.reads(), 0);
@@ -439,34 +430,24 @@ mod tests {
         assert_eq!(profile_id(&data.profiles()[0]), "12280");
     }
 
-    /// A profile reader that counts its reads in a `Cell`, so it is `Send`
-    /// but not `Sync`, as one over results instances is.
-    struct CellProfiles {
-        reads: std::cell::Cell<usize>,
+    /// Implemented for every type, and a second time for every `Sync` type,
+    /// so naming the item through it is ambiguous, and fails to compile,
+    /// exactly when the type is `Sync`.
+    trait AmbiguousIfSync<A> {
+        fn check() {}
     }
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+    struct IsSync;
+    impl<T: ?Sized + Sync> AmbiguousIfSync<IsSync> for T {}
 
-    impl ProfileReader for CellProfiles {
-        fn read_profile(&self, id: u32) -> DeviceDataBase {
-            self.reads.set(self.reads.get() + 1);
-            DeviceDataBase::new().set("ProfileId", id.to_string())
-        }
-    }
+    fn assert_send<T: Send>() {}
 
-    /// A profile reader need not be `Sync`, because one that holds results
-    /// instances is not safe to use from several threads at once.
+    /// The profiles may read a results instance, so the data is `Send` but
+    /// not `Sync`, and the compiler refuses code that shares it across
+    /// threads.
     #[test]
-    // The method takes an `Arc`, which a reader that is not `Sync` can still
-    // be put in.
-    #[allow(clippy::arc_with_non_send_sync)]
-    fn a_profile_reader_that_is_not_sync_gives_the_profiles() {
-        let mut data = MultiDeviceData::new();
-        data.push_profile_ids(
-            Arc::new(CellProfiles {
-                reads: std::cell::Cell::new(0),
-            }),
-            vec![7, 9],
-        );
-        let ids: Vec<String> = data.profiles().iter().map(profile_id).collect();
-        assert_eq!(ids, ["7", "9"]);
+    fn it_is_send_but_not_sync() {
+        assert_send::<MultiDeviceData>();
+        <MultiDeviceData as AmbiguousIfSync<_>>::check();
     }
 }

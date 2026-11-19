@@ -50,7 +50,7 @@ use fiftyone_pipeline_core::{
     FlowElement, PropertyMetaData, PropertyValueType, Result, WeightedValue,
 };
 use fiftyone_pipeline_engines::{
-    AspectEngine, AspectEngineBase, AspectEngineDataFile, AspectPropertyMetaData, EngineDeployment,
+    AspectEngine, AspectEngineDataFile, AspectPropertyMetaData, EngineDeployment,
     MissingPropertySource, OnPremiseAspectEngine,
 };
 use fiftyone_pipeline_engines_fiftyone::{
@@ -140,10 +140,6 @@ const MCC_PROPERTY: &str = "Mcc";
 /// it lives behind an [`ArcSwap`], replaced after the reload without blocking
 /// concurrent requests.
 pub struct IpIntelligenceOnPremiseEngine {
-    /// The reusable engine base. No cache is attached, because each result
-    /// keeps its native results, and the data set they came from, until it is
-    /// dropped.
-    base: AspectEngineBase<IpIntelligenceDataBase>,
     /// The native manager, whose data set a refresh reloads in place as the
     /// C library's reload does, the properties a lookup reads from the data
     /// set it holds and their metadata, replaced together after each reload.
@@ -325,7 +321,6 @@ impl IpIntelligenceOnPremiseEngine {
         let names = Arc::new(BuildNames::new(manager.available_property_names()));
         let (loaded, metadata) = describe(copy, manager, &tier_override, &names)?;
         Ok(IpIntelligenceOnPremiseEngine {
-            base: AspectEngineBase::new(),
             evidence_key_filter,
             loaded: ArcSwap::from_pointee(loaded),
             profile,
@@ -1205,13 +1200,11 @@ fn parse_bool(text: &str) -> Option<bool> {
 
 impl FlowElement for IpIntelligenceOnPremiseEngine {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        // No cache is attached, so `process_with_cache` simply runs the closure
-        // once. Using the base keeps the process flow identical to the cloud
-        // engine and the rest of the engine layer.
-        self.base
-            .process_with_cache(data, &self.evidence_key_filter, IP_DATA_KEY, |data| {
-                self.lookup(data)
-            })
+        // No results cache, because the result reads a results instance, so
+        // it is not `Sync` and cannot be shared between requests.
+        let produced = self.lookup(data)?;
+        data.get_or_add(IP_DATA_KEY, || produced)?;
+        Ok(())
     }
 
     fn data_key(&self) -> &str {

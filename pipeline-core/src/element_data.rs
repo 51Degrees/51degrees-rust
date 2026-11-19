@@ -38,8 +38,8 @@
 //! [`MapElementData`] is a ready-made backing that concrete element data can
 //! embed to get the dynamic bag for free.
 //!
-//! Element data is `Send + Sync`, so the elements of a parallel group can read
-//! what earlier elements added while they run at the same time.
+//! Element data is `Send`, so a flow data can move between threads, and need
+//! not be `Sync`, because it is not safe to use from several threads at once.
 
 use std::any::Any;
 use std::collections::hash_map::Entry;
@@ -56,26 +56,22 @@ use crate::value::PropertyValue;
 /// The trait is bound on [`Any`] so [`crate::FlowData`] can downcast a stored
 /// `dyn ElementData` back to its concrete type given a [`crate::TypedKey`]. It
 /// is bound on [`Send`] because a flow data may be moved between threads, for
-/// example handed from a request-handling thread to a worker.
-///
-/// It is bound on [`Sync`] because the elements of a parallel group (see
-/// [`crate::PipelineBuilder::add_parallel_elements`]) read the element data
-/// added before the group from several threads at once. Plain data is `Sync`
-/// with no extra code. A value worked out on first read needs a [`std::sync`]
-/// type such as `OnceLock`, not a `Cell` or `RefCell`.
-///
-/// Element data that reads its values from an on-premise engine's results
-/// instance, such as the Device Detection and IP Intelligence data, takes no
-/// lock and is not safe to read from several threads at once, as the
+/// example handed from a request-handling thread to a /// It is not bound on [`Sync`], because element data is not safe to use from
+/// several threads at once, so neither is a flow data. Element data that
+/// reads its values from an on-premise engine's results instance, such as the
+/// Device Detection and IP Intelligence data, takes no lock and is not
+/// `Sync`, as the
 /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#results-instances)
-/// requires. A caller that shares it across threads coordinates its own
-/// access, and a member of a parallel group that reads it is responsible for
-/// the thread safety of those reads.
+/// requires, so the compiler refuses code that shares it across threads. A
+/// caller that must share it wraps it in a lock of its own, such as a
+/// `Mutex`. A member of a parallel group that reads element data added
+/// before the group is responsible for the thread safety of those reads.
+/// reads.
 ///
 /// Element data is still written from one thread only, by the element that
 /// adds it. See the
 /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#element-data).
-pub trait ElementData: Any + Send + Sync {
+pub trait ElementData: Any + Send {
     /// Get a property value by name.
     ///
     /// Returns `Err(NoValueError)` when the property is present in this data but
@@ -196,5 +192,126 @@ impl ElementData for MapElementData {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+}
+
+/// The values of element data, read once, so they can be listed and shared.
+///
+/// Element data that reads a results instance is not `Sync`, so it cannot be
+/// held in an [`crate::ElementDataList`]. A snapshot reads, through
+/// [`ElementData::get`], every property the data lists in
+/// [`ElementData::keys`], and then answers from what it read, the value or
+/// the reason for no value, in the data's order.
+#[derive(Debug, Clone)]
+pub struct ElementDataSnapshot {
+    /// The names the data listed, in its order.
+    names: Vec<String>,
+    /// What reading each name gave, in the same order.
+    values: Vec<Result<PropertyValue, NoValueError>>,
+}
+
+impl ElementDataSnapshot {
+    /// Read every property `data` lists.
+    pub fn new(data: &dyn ElementData) -> Self {
+        let names = data.keys();
+        let values = names.iter().map(|name| data.get(name)).collect();
+        ElementDataSnapshot { names, values }
+    }
+
+    /// The position of a name, ignoring case.
+    fn position(&self, name: &str) -> Option<usize> {
+        self.names.iter().position(|known| {
+            known.eq_ignore_ascii_case(name)
+                || (!(known.is_ascii() && name.is_ascii())
+                    && known.to_lowercase() == name.to_lowercase())
+        })
+    }
+}
+
+impl ElementData for ElementDataSnapshot {
+    fn get(&self, name: &str) -> Result<PropertyValue, NoValueError> {
+        match self.position(name) {
+            Some(position) => self.values[position].clone(),
+            None => Err(NoValueError::new(format!(
+                "No value for property '{name}'."
+            ))),
+        }
+    }
+
+    fn has_property(&self, name: &str) -> bool {
+        self.position(name).is_some()
+    }
+
+    fn keys(&self) -> Vec<String> {
+        self.names.clone()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    /// Element data that counts its reads, gives one value and one reason,
+    /// and is not `Sync`.
+    struct Counted {
+        reads: Cell<usize>,
+    }
+
+    impl ElementData for Counted {
+        fn get(&self, name: &str) -> Result<PropertyValue, NoValueError> {
+            self.reads.set(self.reads.get() + 1);
+            match name {
+                "Vendor" => Ok(PropertyValue::String("Apple".to_owned())),
+                _ => Err(NoValueError::new("No model for this profile.")),
+            }
+        }
+
+        fn keys(&self) -> Vec<String> {
+            vec!["Vendor".to_owned(), "Model".to_owned()]
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+    }
+
+    fn assert_sync<T: Sync>() {}
+
+    /// A snapshot reads each property once, keeps its value or reason in the
+    /// data's order, matches names ignoring case, and is `Sync`.
+    #[test]
+    fn a_snapshot_reads_each_listed_property_once() {
+        let data = Counted {
+            reads: Cell::new(0),
+        };
+        let snapshot = ElementDataSnapshot::new(&data);
+        assert_eq!(data.reads.get(), 2);
+        assert_eq!(snapshot.keys(), ["Vendor", "Model"]);
+        assert_eq!(
+            snapshot.get("vendor").unwrap(),
+            PropertyValue::String("Apple".to_owned())
+        );
+        assert_eq!(
+            snapshot.get("MODEL").unwrap_err().message,
+            "No model for this profile."
+        );
+        assert!(snapshot.has_property("model"));
+        assert!(!snapshot.has_property("Colour"));
+        assert!(snapshot.get("Colour").is_err());
+        assert_eq!(data.reads.get(), 2);
+        assert_sync::<ElementDataSnapshot>();
     }
 }

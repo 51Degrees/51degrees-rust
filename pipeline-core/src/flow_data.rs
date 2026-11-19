@@ -105,6 +105,15 @@ pub(crate) struct BeforeGroup {
     warnings: Vec<FlowWarning>,
 }
 
+// Safety: the elements of a parallel group read this view from several
+// threads at once and never write it. Element data need not be `Sync`, and
+// the parallel processing specification makes a member that reads element
+// data from before the group responsible for the thread safety of those
+// reads, for example of data that reads a results instance. This is the one
+// place element data is shared between threads without the caller's own
+// lock.
+unsafe impl Sync for BeforeGroup {}
+
 /// What one element of a parallel group added to its flow data.
 pub(crate) struct GroupMemberAdded {
     /// The element data it added, keyed by lowercased data key.
