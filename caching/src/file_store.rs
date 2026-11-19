@@ -838,8 +838,8 @@ impl FileStoreBuilder {
     ///
     /// When the store lacks the permissions it needs on the folder, to make
     /// it or to read, write and remove files in it, with an error that names
-    /// the folder. On Unix, also when the folder belongs to another user or
-    /// other users can write to it. A secret that is missing or not 32 bytes
+    /// the folder. Whether other users can reach the folder is left to whoever
+    /// deploys the package. A secret that is missing or not 32 bytes
     /// long is not an error: the store makes a new one.
     pub fn open(self) -> io::Result<FileStore> {
         let dir = self.dir;
@@ -853,7 +853,6 @@ impl FileStoreBuilder {
             )
         };
         make_folder(&dir).map_err(named)?;
-        check_private(&dir).map_err(named)?;
         let folder = fs::canonicalize(&dir).map_err(named)?;
         let clock = self
             .clock
@@ -1012,37 +1011,6 @@ fn make_folder(folder: &Path) -> io::Result<()> {
         builder.mode(0o700);
     }
     builder.create(folder)
-}
-
-/// On Unix, refuses a folder that belongs to another user, or that other
-/// users can write to. The folder may be one another user made first, in a
-/// shared place such as /tmp, and whoever can write to it can read or set
-/// the secret and plant entries.
-///
-/// On Windows nothing is checked, as before: who may use a folder there is
-/// set by its access control list, which this does not read.
-fn check_private(folder: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let metadata = fs::metadata(folder)?;
-        // SAFETY: geteuid takes nothing and cannot fail.
-        if metadata.uid() != unsafe { libc::geteuid() } {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "it belongs to another user",
-            ));
-        }
-        if metadata.mode() & 0o022 != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "other users can write to it",
-            ));
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = folder;
-    Ok(())
 }
 
 /// Opens the secret file at `path` to read and write, making it empty and
