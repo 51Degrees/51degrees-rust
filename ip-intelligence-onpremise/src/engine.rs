@@ -549,7 +549,7 @@ impl IpIntelligenceOnPremiseEngine {
         ip.base_mut()
             .add_missing_property_source(Arc::clone(&loaded.missing));
         Ok(ip.with_reader(LookupReader {
-            results: Mutex::new(results),
+            results,
             client_ip,
             loaded,
         }))
@@ -991,10 +991,10 @@ impl ReadableNames {
 /// Reads the properties of one lookup from its native results when they are
 /// requested.
 struct LookupReader {
-    /// The native results. Reading a value writes into them, so each read
-    /// holds the lock. Declared first, so they are freed before the data set
-    /// they came from.
-    results: Mutex<Results>,
+    /// The native results. Reading a value writes into them, and no lock is
+    /// taken. Declared first, so they are freed before the data set they came
+    /// from.
+    results: Results,
     /// The client IP evidence the lookup read, for [`ADDED_PROPERTIES`].
     client_ip: ClientIpEvidence,
     /// The data set the results came from, with its properties.
@@ -1026,8 +1026,7 @@ impl IpIntelligencePropertyReader for LookupReader {
         };
         let name = &readable.names[position];
         let value_type = readable.value_types[position];
-        let results = self.results.lock().unwrap_or_else(PoisonError::into_inner);
-        populate_property(data, &results, name, index, value_type)
+        populate_property(data, &self.results, name, index, value_type)
             .map_err(|error| error.to_string())
     }
 }
@@ -1284,6 +1283,27 @@ mod tests {
 
     use fiftyone_pipeline_core::{ElementData, Evidence, Pipeline};
     use fiftyone_pipeline_engines::AspectData;
+
+    /// Implemented twice for a `Sync` type, so naming `check` on one is then
+    /// ambiguous and the test does not build.
+    trait AmbiguousIfSync<A> {
+        fn check() {}
+    }
+
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+
+    impl<T: ?Sized + Sync> AmbiguousIfSync<u8> for T {}
+
+    fn is_send<T: Send>() {}
+
+    /// A lookup's reader is `Send` but not `Sync`, because a results instance is not safe
+    /// to use from several threads at once, so the compiler refuses code that
+    /// shares one across threads.
+    #[test]
+    fn a_lookup_reader_is_send_but_not_sync() {
+        is_send::<LookupReader>();
+        <LookupReader as AmbiguousIfSync<_>>::check();
+    }
 
     /// `file` published a year later, with its first property's description
     /// past the end of the strings, as `tests/metadata.rs` makes it. The data
@@ -2079,7 +2099,7 @@ mod tests {
             .process_client_ip_evidence(&evidence)
             .expect("the address is read");
         LookupReader {
-            results: Mutex::new(results),
+            results,
             client_ip,
             loaded,
         }
