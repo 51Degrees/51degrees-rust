@@ -739,7 +739,7 @@ mod tests {
         EngineDeployment, MissingPropertyReason, MissingPropertySource,
     };
     use std::collections::HashMap;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn data_key_string_is_device() {
@@ -1432,5 +1432,54 @@ mod tests {
             reads: std::cell::Cell::new(0),
         });
         assert_eq!(device.platform_name().value().unwrap().as_str(), "Android");
+    }
+
+    /// Implemented for every type, and a second time for every `Sync` type,
+    /// so naming the item through it is ambiguous, and fails to compile,
+    /// exactly when the type is `Sync`.
+    trait AmbiguousIfSync<A> {
+        fn check() {}
+    }
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+    struct IsSync;
+    impl<T: ?Sized + Sync> AmbiguousIfSync<IsSync> for T {}
+
+    fn assert_send<T: Send>() {}
+    /// Device data that reads a results instance is not safe to use from
+    /// several threads at once, so it is `Send` but not `Sync`, and the
+    /// compiler refuses code that shares one across threads.
+    #[test]
+    fn it_is_send_but_not_sync() {
+        assert_send::<DeviceDataBase>();
+        <DeviceDataBase as AmbiguousIfSync<_>>::check();
+    }
+
+    /// A clone reads every property the reader holds, once, and answers from
+    /// those outcomes, so it never reads through the reader again.
+    #[test]
+    fn a_clone_reads_every_property_once_and_keeps_the_outcomes() {
+        let (reader, reads) = CountingReader::new();
+        let device = DeviceDataBase::new().with_reader(reader);
+        assert!(*device.is_mobile().value().unwrap());
+        let copy = device.clone();
+        let names = ["ismobile", "platformname", "browsername", "hardwarevendor"];
+        for name in names {
+            assert_eq!(reads_of(&reads, name), 1, "{name}");
+        }
+        let platform = device.get("PlatformName").unwrap();
+        drop(device);
+        assert!(*copy.is_mobile().value().unwrap());
+        assert_eq!(copy.get("platformname").unwrap(), platform);
+        assert_eq!(
+            copy.get("browsername").unwrap_err().message,
+            "No value for property 'browsername'."
+        );
+        assert_eq!(
+            copy.get("hardwarevendor").unwrap_err().message,
+            "the native read failed"
+        );
+        for name in names {
+            assert_eq!(reads_of(&reads, name), 1, "{name}");
+        }
     }
 }

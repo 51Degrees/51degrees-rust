@@ -306,8 +306,8 @@ mod tests {
         data.push_profile(unknown.clone());
 
         let expected = PropertyValue::ElementDataList(ElementDataList::new(vec![
-            Arc::new(apple) as Arc<dyn ElementData>,
-            Arc::new(unknown) as Arc<dyn ElementData>,
+            Arc::new(ElementDataSnapshot::new(&apple)) as Arc<dyn ElementData + Sync>,
+            Arc::new(ElementDataSnapshot::new(&unknown)) as Arc<dyn ElementData + Sync>,
         ]));
         // The JSON builder asks in lower case.
         assert_eq!(data.get("profiles").unwrap(), expected);
@@ -429,9 +429,10 @@ mod tests {
         data.push_profile(apple.clone());
         assert_eq!(
             data.get("Profiles").unwrap(),
-            PropertyValue::ElementDataList(ElementDataList::new(vec![
-                Arc::new(apple) as Arc<dyn ElementData>
-            ]))
+            PropertyValue::ElementDataList(ElementDataList::new(vec![Arc::new(
+                ElementDataSnapshot::new(&apple)
+            )
+                as Arc<dyn ElementData + Sync>]))
         );
         // Writing the data reads no profile added by id.
         assert_eq!(reader.reads(), 0);
@@ -439,34 +440,24 @@ mod tests {
         assert_eq!(profile_id(&data.profiles()[0]), "12280");
     }
 
-    /// A profile reader that counts its reads in a `Cell`, so it is `Send`
-    /// but not `Sync`, as one over results instances is.
-    struct CellProfiles {
-        reads: std::cell::Cell<usize>,
+    /// Implemented for every type, and a second time for every `Sync` type,
+    /// so naming the item through it is ambiguous, and fails to compile,
+    /// exactly when the type is `Sync`.
+    trait AmbiguousIfSync<A> {
+        fn check() {}
     }
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+    struct IsSync;
+    impl<T: ?Sized + Sync> AmbiguousIfSync<IsSync> for T {}
 
-    impl ProfileReader for CellProfiles {
-        fn read_profile(&self, id: u32) -> DeviceDataBase {
-            self.reads.set(self.reads.get() + 1);
-            DeviceDataBase::new().set("ProfileId", id.to_string())
-        }
-    }
+    fn assert_send<T: Send>() {}
 
-    /// A profile reader need not be `Sync`, because one that holds results
-    /// instances is not safe to use from several threads at once.
+    /// The profiles may read a results instance, so the data is `Send` but
+    /// not `Sync`, and the compiler refuses code that shares it across
+    /// threads.
     #[test]
-    // The method takes an `Arc`, which a reader that is not `Sync` can still
-    // be put in.
-    #[allow(clippy::arc_with_non_send_sync)]
-    fn a_profile_reader_that_is_not_sync_gives_the_profiles() {
-        let mut data = MultiDeviceData::new();
-        data.push_profile_ids(
-            Arc::new(CellProfiles {
-                reads: std::cell::Cell::new(0),
-            }),
-            vec![7, 9],
-        );
-        let ids: Vec<String> = data.profiles().iter().map(profile_id).collect();
-        assert_eq!(ids, ["7", "9"]);
+    fn it_is_send_but_not_sync() {
+        assert_send::<MultiDeviceData>();
+        <MultiDeviceData as AmbiguousIfSync<_>>::check();
     }
 }

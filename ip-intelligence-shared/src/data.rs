@@ -1190,7 +1190,7 @@ mod tests {
     use fiftyone_pipeline_engines::{
         EngineDeployment, MissingPropertyReason, MissingPropertySource, DEFAULT_NO_VALUE_MESSAGE,
     };
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     /// A small weighted string list, deliberately out of weighting order so the
     /// setter's sort is exercised.
@@ -2231,5 +2231,60 @@ mod tests {
             reads: std::cell::Cell::new(0),
         });
         assert_eq!(data.country().value().unwrap().as_str(), "United Kingdom");
+    }
+
+    /// Implemented for every type, and a second time for every `Sync` type,
+    /// so naming the item through it is ambiguous, and fails to compile,
+    /// exactly when the type is `Sync`.
+    trait AmbiguousIfSync<A> {
+        fn check() {}
+    }
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+    struct IsSync;
+    impl<T: ?Sized + Sync> AmbiguousIfSync<IsSync> for T {}
+
+    fn assert_send<T: Send>() {}
+    /// IP Intelligence data that reads a results instance is not safe to use
+    /// from several threads at once, so it is `Send` but not `Sync`, and the
+    /// compiler refuses code that shares one across threads.
+    #[test]
+    fn it_is_send_but_not_sync() {
+        assert_send::<IpIntelligenceDataBase>();
+        <IpIntelligenceDataBase as AmbiguousIfSync<_>>::check();
+    }
+
+    /// A clone reads every property the reader holds, once, and answers from
+    /// what was read, so it never reads through the reader again.
+    #[test]
+    fn a_clone_reads_every_property_once_and_keeps_the_values() {
+        let (reader, reads) = CountingReader::new();
+        let data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader);
+        assert!(!*data.is_vpn().value().unwrap());
+        let copy = data.clone();
+        let names = [
+            "country",
+            "isvpn",
+            "countrycodesgeographical",
+            "region",
+            "areas",
+        ];
+        for name in names {
+            assert_eq!(reads_of(&reads, name), 1, "{name}");
+        }
+        let mut keys = data.keys();
+        drop(data);
+        assert_eq!(copy.country().value().unwrap().as_str(), "United Kingdom");
+        assert!(!*copy.is_vpn().value().unwrap());
+        assert_eq!(
+            copy.country_codes_geographical().value().unwrap()[0].value,
+            "FR"
+        );
+        let mut copy_keys = copy.keys();
+        keys.sort();
+        copy_keys.sort();
+        assert_eq!(copy_keys, keys);
+        for name in names {
+            assert_eq!(reads_of(&reads, name), 1, "{name}");
+        }
     }
 }

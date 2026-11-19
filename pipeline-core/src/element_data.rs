@@ -198,3 +198,64 @@ impl ElementData for MapElementData {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    /// Element data that counts its reads, gives one value and one reason,
+    /// and is not `Sync`.
+    struct Counted {
+        reads: Cell<usize>,
+    }
+
+    impl ElementData for Counted {
+        fn get(&self, name: &str) -> Result<PropertyValue, NoValueError> {
+            self.reads.set(self.reads.get() + 1);
+            match name {
+                "Vendor" => Ok(PropertyValue::String("Apple".to_owned())),
+                _ => Err(NoValueError::new("No model for this profile.")),
+            }
+        }
+
+        fn keys(&self) -> Vec<String> {
+            vec!["Vendor".to_owned(), "Model".to_owned()]
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+    }
+
+    fn assert_sync<T: Sync>() {}
+
+    /// A snapshot reads each property once, keeps its value or reason in the
+    /// data's order, matches names ignoring case, and is `Sync`.
+    #[test]
+    fn a_snapshot_reads_each_listed_property_once() {
+        let data = Counted {
+            reads: Cell::new(0),
+        };
+        let snapshot = ElementDataSnapshot::new(&data);
+        assert_eq!(data.reads.get(), 2);
+        assert_eq!(snapshot.keys(), ["Vendor", "Model"]);
+        assert_eq!(
+            snapshot.get("vendor").unwrap(),
+            PropertyValue::String("Apple".to_owned())
+        );
+        assert_eq!(
+            snapshot.get("MODEL").unwrap_err().message,
+            "No model for this profile."
+        );
+        assert!(snapshot.has_property("model"));
+        assert!(!snapshot.has_property("Colour"));
+        assert!(snapshot.get("Colour").is_err());
+        assert_eq!(data.reads.get(), 2);
+        assert_sync::<ElementDataSnapshot>();
+    }
+}

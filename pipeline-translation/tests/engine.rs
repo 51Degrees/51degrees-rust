@@ -55,7 +55,7 @@ struct Source<T> {
     filter: EvidenceKeyFilterWhitelist,
 }
 
-impl<T: ElementData + Clone> Source<T> {
+impl<T: ElementData + Clone + Sync> Source<T> {
     fn new(key: &'static str, data: T) -> Self {
         Source {
             key,
@@ -65,7 +65,7 @@ impl<T: ElementData + Clone> Source<T> {
     }
 }
 
-impl<T: ElementData + Clone> FlowElement for Source<T> {
+impl<T: ElementData + Clone + Sync> FlowElement for Source<T> {
     fn process(&self, data: &mut FlowData) -> Result<()> {
         let copy = self.data.clone();
         data.get_or_add(TypedKey::<T>::new(self.key), move || copy)?;
@@ -156,7 +156,7 @@ fn process_elements(elements: Vec<Arc<dyn FlowElement>>, entries: &[(&str, &str)
     data
 }
 
-fn process<T: ElementData + Clone>(
+fn process<T: ElementData + Clone + Sync>(
     engine: TranslationEngine,
     source: T,
     entries: &[(&str, &str)],

@@ -25,7 +25,7 @@
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use fiftyone_ip_intelligence_shared::IpIntelligenceDataBase;
 use fiftyone_ip_intelligence_translation::{
@@ -43,10 +43,12 @@ use icu_collator::options::{CollatorOptions, Strength};
 use icu_collator::{Collator, CollatorBorrowed, CollatorPreferences};
 use icu_locale_core::Locale;
 
-/// Adds a copy of the data it is given under its key.
+/// Adds a copy of the data it is given under its key. The data is held in a
+/// lock, because element data need not be `Sync`, and an element is shared
+/// by every thread that processes with its pipeline.
 struct Source<T> {
     key: &'static str,
-    data: T,
+    data: Mutex<T>,
     filter: EvidenceKeyFilterWhitelist,
 }
 
@@ -54,7 +56,7 @@ impl<T: ElementData + Clone> Source<T> {
     fn new(key: &'static str, data: T) -> Self {
         Source {
             key,
-            data,
+            data: Mutex::new(data),
             filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
         }
     }
@@ -62,7 +64,7 @@ impl<T: ElementData + Clone> Source<T> {
 
 impl<T: ElementData + Clone> FlowElement for Source<T> {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        let copy = self.data.clone();
+        let copy = self.data.lock().unwrap().clone();
         data.get_or_add(TypedKey::<T>::new(self.key), move || copy)?;
         Ok(())
     }

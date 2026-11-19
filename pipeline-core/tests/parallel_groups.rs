@@ -40,13 +40,83 @@ use fiftyone_pipeline_core::{
 /// How long each of the two slow elements waits.
 const WAIT_MILLISECONDS: u64 = 200;
 
-/// The elements of a group read the data added before the group from several
-/// threads at once, so element data and flow data are `Send + Sync`.
+/// A flow data and its element data may move between threads, so they are
+/// `Send`. Neither is safe to use from several threads at once, so neither is
+/// `Sync`, which `flow_data_not_sync.rs` checks.
 #[test]
-fn flow_data_and_element_data_are_send_and_sync() {
-    fn send_and_sync<T: Send + Sync + ?Sized>() {}
-    send_and_sync::<FlowData>();
-    send_and_sync::<dyn ElementData>();
+fn flow_data_and_element_data_are_send() {
+    fn send<T: Send + ?Sized>() {}
+    send::<FlowData>();
+    send::<dyn ElementData>();
+}
+
+/// Element data that keeps state in a `Cell`, so it is `Send` but not `Sync`,
+/// as element data that reads a results instance is.
+struct CellData {
+    reads: std::cell::Cell<usize>,
+}
+
+impl ElementData for CellData {
+    fn get(&self, name: &str) -> std::result::Result<PropertyValue, NoValueError> {
+        self.reads.set(self.reads.get() + 1);
+        if name.eq_ignore_ascii_case("value") {
+            Ok(PropertyValue::String("before".to_owned()))
+        } else {
+            Err(NoValueError::new(format!("No value for '{name}'.")))
+        }
+    }
+    fn keys(&self) -> Vec<String> {
+        vec!["value".to_owned()]
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+/// An element of a group reads element data added before the group that is
+/// not `Sync`, as a member that reads data backed by a results instance does,
+/// and is responsible for the thread safety of that read.
+#[test]
+fn a_group_member_reads_data_from_before_the_group_that_is_not_sync() {
+    let before = element("before", &[], |element, data| {
+        data.get_or_add(TypedKey::<CellData>::new(element.key), || CellData {
+            reads: std::cell::Cell::new(0),
+        })?;
+        Ok(())
+    });
+    let reader = element("reader", &[], |element, data| {
+        let value = data
+            .get_str("before")
+            .expect("the data from before the group")
+            .get("value")
+            .expect("a value")
+            .as_str()
+            .expect("a string")
+            .to_owned();
+        element.write(data, value)
+    });
+    let other = element("other", &[], |element, data| element.write(data, "other"));
+    let pipeline = Pipeline::builder()
+        .add_element(before)
+        .add_parallel_elements(vec![reader, other])
+        .build()
+        .expect("the pipeline builds");
+    let mut data = pipeline.create_flow_data();
+    data.process().expect("processing succeeds");
+    let read = data
+        .get(TypedKey::<ValueData>::new("reader"))
+        .expect("the reader's data");
+    assert_eq!(
+        read.0.get_value("value").and_then(PropertyValue::as_str),
+        Some("before")
+    );
+    let before = data
+        .get(TypedKey::<CellData>::new("before"))
+        .expect("the data from before the group");
+    assert_eq!(before.reads.get(), 1);
 }
 
 /// Element data holding string values.

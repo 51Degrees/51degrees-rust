@@ -492,7 +492,7 @@ mod tests {
     use crate::element_data::MapElementData;
 
     /// A result holding `name` with `value`.
-    fn result(name: &str, value: &str) -> Arc<dyn ElementData> {
+    fn result(name: &str, value: &str) -> Arc<dyn ElementData + Sync> {
         Arc::new(MapElementData::new().set(name, value))
     }
 
