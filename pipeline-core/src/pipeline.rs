@@ -46,6 +46,7 @@ use crate::evidence::{Evidence, EvidenceKeyFilter, EvidenceKeyFilterAggregator};
 use crate::flow_data::{BeforeGroup, FlowData};
 use crate::flow_element::FlowElement;
 use crate::group_threads::Job;
+use crate::property::PropertyMetaData;
 
 /// An immutable, shareable container of ordered flow elements.
 ///
@@ -86,6 +87,36 @@ impl Pipeline {
     /// what. A group itself is not an element.
     pub fn flow_elements(&self) -> &[Arc<dyn FlowElement>] {
         &self.listed
+    }
+
+    /// Metadata for every property that the elements of this pipeline can
+    /// populate, element by element in the order of
+    /// [`Pipeline::flow_elements`], and within an element in the order it
+    /// gives them.
+    ///
+    /// The list is read from the elements on each call, because an element
+    /// such as a cloud aspect engine learns its properties after it is built
+    /// (see [`FlowElement::properties_loaded`]). This answers the
+    /// [properties specification](https://github.com/51Degrees/specifications/blob/706de1f0cb3edd560eb7fd7ef3bb19b93a4883dc/pipeline-specification/features/properties.md#property-metadata),
+    /// which says it must be possible to get property metadata at the
+    /// pipeline level for all properties of all its elements.
+    pub fn properties(&self) -> Vec<PropertyMetaData> {
+        self.listed
+            .iter()
+            .flat_map(|element| element.properties().iter().cloned())
+            .collect()
+    }
+
+    /// Metadata for the property with the given name that the element with
+    /// the given data key populates, if any. Both are matched ignoring case,
+    /// as string keys are.
+    pub fn property(&self, element_data_key: &str, name: &str) -> Option<PropertyMetaData> {
+        self.listed
+            .iter()
+            .filter(|element| element.data_key().eq_ignore_ascii_case(element_data_key))
+            .flat_map(|element| element.properties().iter())
+            .find(|property| property.name.eq_ignore_ascii_case(name))
+            .cloned()
     }
 
     /// A filter including the evidence keys usable by any element in this
