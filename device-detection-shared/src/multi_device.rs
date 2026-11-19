@@ -28,7 +28,9 @@ use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 use crate::DeviceDataBase;
-use fiftyone_pipeline_core::{ElementData, ElementDataList, NoValueError, PropertyValue, TypedKey};
+use fiftyone_pipeline_core::{
+    ElementData, ElementDataList, ElementDataSnapshot, NoValueError, PropertyValue, TypedKey,
+};
 
 /// The element-data key string the hardware-profile lookup stores its result
 /// under, which is `"hardware"`.
@@ -55,11 +57,7 @@ pub const PROFILES_PROPERTY_NAME: &str = "Profiles";
 
 /// Gives the device data of a profile from its id, for the profiles a
 /// [`MultiDeviceData`] holds by id until they are first read.
-///
-/// A reader is `Send` but need not be `Sync`, because one that holds results
-/// instances is not safe to use from several threads at once, so the
-/// compiler refuses code that shares one across threads.
-pub trait ProfileReader: Send {
+pub trait ProfileReader: Send + Sync {
     /// The device data of the profile with id `id`. A profile that cannot be
     /// read gives device data whose properties report why.
     fn read_profile(&self, id: u32) -> DeviceDataBase;
@@ -86,8 +84,9 @@ pub trait ProfileReader: Send {
 /// more profiles are added after that.
 ///
 /// Its dynamic [`ElementData`] view lists one property,
-/// [`PROFILES_PROPERTY_NAME`], holding a copy of each profile added with
-/// its values as a [`PropertyValue::ElementDataList`], so the JSON
+/// [`PROFILES_PROPERTY_NAME`], holding the values of each profile added
+/// with its values, read once into an [`ElementDataSnapshot`], as a
+/// [`PropertyValue::ElementDataList`], so the JSON
 /// builder writes `hardware.profiles` with each profile as an object, and
 /// a property a profile holds with no value as null with its reason.
 /// Profiles added by id are never read for it, as .NET's `MultiDeviceData`
@@ -115,17 +114,6 @@ struct FoundIds {
     reader: Arc<dyn ProfileReader>,
     ids: Vec<u32>,
 }
-
-// Safety: the reader is `Send` but not `Sync`, because it holds results
-// instances, which are not safe to use from several threads at once, and no
-// lock is taken. These ids and their reader are marked `Send` and `Sync` so
-// the element data that holds them stays usable in property values and
-// parallel groups. The caller is responsible for thread-safe access: one
-// that uses the data or a clone of it from several threads at once
-// coordinates that itself, as the thread-safety specification at 52e9b047
-// says.
-unsafe impl Send for FoundIds {}
-unsafe impl Sync for FoundIds {}
 
 impl fmt::Debug for FoundIds {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -222,7 +210,9 @@ impl ElementData for MultiDeviceData {
             let profiles = self
                 .profiles
                 .iter()
-                .map(|profile| Arc::new(profile.clone()) as Arc<dyn ElementData>)
+                .map(|profile| {
+                    Arc::new(ElementDataSnapshot::new(profile)) as Arc<dyn ElementData + Sync>
+                })
                 .collect::<ElementDataList>();
             return Ok(PropertyValue::ElementDataList(profiles));
         }

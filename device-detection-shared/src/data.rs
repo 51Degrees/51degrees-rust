@@ -31,8 +31,8 @@
 
 use std::any::Any;
 use std::cell::UnsafeCell;
+use std::collections::HashMap;
 use std::fmt;
-use std::sync::Arc;
 
 use fiftyone_pipeline_core::{
     ElementData, MapElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType,
@@ -135,15 +135,6 @@ struct DeferredValues {
     read: UnsafeCell<Vec<Option<ReadOutcome>>>,
 }
 
-// Safety: the reader is `Send` but not `Sync`, because it reads a results
-// instance, which is not safe to use from several threads at once, and no
-// lock is taken. This is marked `Sync` so the element data that holds it
-// stays usable in property values and parallel groups. The caller is
-// responsible for thread-safe access: one that uses it from several threads
-// at once coordinates that itself, as the thread-safety specification at
-// 52e9b047 says.
-unsafe impl Sync for DeferredValues {}
-
 impl DeferredValues {
     /// The position of a property in the reader's names, or `None` when the
     /// reader cannot read it.
@@ -183,8 +174,8 @@ impl DeferredValues {
         if position >= self.reader.property_names().len() {
             return None;
         }
-        // Safety: the caller coordinates access, so no other reference to
-        // the values read is live.
+        // Safety: the values are not `Sync`, so only one thread reaches them,
+        // and no reference into them outlives this call.
         let read = unsafe { &mut *self.read.get() };
         Some(self.outcome(read, position).clone())
     }
@@ -193,8 +184,8 @@ impl DeferredValues {
     /// reader cannot read it.
     fn get(&self, name: &str) -> Option<ReadOutcome> {
         let position = self.readable(name)?;
-        // Safety: the caller coordinates access, so no other reference to
-        // the values read is live.
+        // Safety: the values are not `Sync`, so only one thread reaches them,
+        // and no reference into them outlives this call.
         let read = unsafe { &mut *self.read.get() };
         Some(self.outcome(read, position).clone())
     }
@@ -206,6 +197,65 @@ impl DeferredValues {
     }
 }
 
+impl Clone for DeferredValues {
+    /// Read every property the reader holds, so the clone answers from those
+    /// outcomes and shares nothing with this data. A reader is not `Clone`,
+    /// and two values sharing one would not be `Send`.
+    fn clone(&self) -> Self {
+        let names = self.reader.property_names();
+        // Safety: the values are not `Sync`, so only one thread reaches them,
+        // and no reference into them outlives this call.
+        let read = unsafe { &mut *self.read.get() };
+        let outcomes = (0..names.len())
+            .map(|position| self.outcome(read, position).clone())
+            .collect();
+        DeferredValues {
+            reader: Box::new(ReadOutcomes {
+                positions: names
+                    .iter()
+                    .enumerate()
+                    .map(|(position, name)| (name.clone(), position))
+                    .collect(),
+                names: names.to_vec(),
+                typed: self.reader.typed_positions().map(<[_]>::to_vec),
+                outcomes,
+            }),
+            read: UnsafeCell::new(Vec::new()),
+        }
+    }
+}
+
+/// A reader that gives the outcomes another reader gave, for a clone.
+struct ReadOutcomes {
+    names: Vec<String>,
+    positions: HashMap<String, usize>,
+    typed: Option<Vec<Option<usize>>>,
+    outcomes: Vec<ReadOutcome>,
+}
+
+impl DevicePropertyReader for ReadOutcomes {
+    fn property_names(&self) -> &[String] {
+        &self.names
+    }
+
+    fn position(&self, name: &str) -> Option<usize> {
+        self.positions.get(name).copied()
+    }
+
+    fn read_property(&self, position: usize) -> Result<Option<PropertyValue>, String> {
+        self.read_property_with_reason(position)
+            .map(|outcome| outcome.ok())
+    }
+
+    fn read_property_with_reason(&self, position: usize) -> ReadOutcome {
+        self.outcomes[position].clone()
+    }
+
+    fn typed_positions(&self) -> Option<&[Option<usize>]> {
+        self.typed.as_deref()
+    }
+}
+
 /// Whether a property name has letters that lowercasing would change.
 fn needs_lowercase(name: &str) -> bool {
     !name.is_ascii() || name.bytes().any(|byte| byte.is_ascii_uppercase())
@@ -213,8 +263,8 @@ fn needs_lowercase(name: &str) -> bool {
 
 impl fmt::Debug for DeferredValues {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Safety: the caller coordinates access, so nothing writes the
-        // values read meanwhile.
+        // Safety: the values are not `Sync`, so only one thread reaches them,
+        // and nothing writes them while this reads.
         let read = unsafe { &*self.read.get() };
         let read: Vec<(&String, &ReadOutcome)> = self
             .reader
@@ -312,7 +362,7 @@ pub struct DeviceDataBase {
     /// among the bag's names where it was added.
     no_value_places: Vec<usize>,
     /// The values read on request, when an engine attached a reader.
-    deferred: Option<Arc<DeferredValues>>,
+    deferred: Option<Box<DeferredValues>>,
 }
 
 impl DeviceDataBase {
@@ -342,12 +392,12 @@ impl DeviceDataBase {
     /// A value in the bag takes precedence over the reader's. Reads take no
     /// lock, as the
     /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#results-instances)
-    /// requires, so the data is not safe to read from several threads at
-    /// once, and a caller that shares it across threads coordinates its own
-    /// access. A clone shares the values read with the data it was cloned
-    /// from, so the two are not safe to read from two threads at once either.
+    /// requires, so the data is not `Sync` and the compiler refuses code that
+    /// shares it across threads. A caller that must share it wraps it in a
+    /// lock of its own. A clone reads every property the reader holds, so it
+    /// shares nothing with the data it was cloned from.
     pub fn with_reader(mut self, reader: impl DevicePropertyReader + 'static) -> Self {
-        self.deferred = Some(Arc::new(DeferredValues {
+        self.deferred = Some(Box::new(DeferredValues {
             reader: Box::new(reader),
             read: UnsafeCell::new(Vec::new()),
         }));

@@ -364,18 +364,22 @@ impl From<ElementDataList> for PropertyValue {
 /// Two lists are equal when they hold as many results and each pair lists
 /// the same names in the same order, with the same value or the same
 /// reason for having none.
+///
+/// Each result is `Sync`, because a list is a property value, which is cloned
+/// and read wherever the element data that holds it is. Element data that
+/// reads a results instance is not `Sync`, so it cannot be held in a list.
 #[derive(Clone, Default)]
-pub struct ElementDataList(Vec<Arc<dyn ElementData>>);
+pub struct ElementDataList(Vec<Arc<dyn ElementData + Sync>>);
 
 impl ElementDataList {
     /// Hold the results in the order given.
-    pub fn new(items: Vec<Arc<dyn ElementData>>) -> Self {
+    pub fn new(items: Vec<Arc<dyn ElementData + Sync>>) -> Self {
         ElementDataList(items)
     }
 
     /// The results, in order.
     pub fn iter(&self) -> impl Iterator<Item = &dyn ElementData> + '_ {
-        self.0.iter().map(|item| item.as_ref())
+        self.0.iter().map(|item| item.as_ref() as &dyn ElementData)
     }
 
     /// The number of results.
@@ -394,8 +398,8 @@ impl ElementDataList {
 impl std::panic::UnwindSafe for ElementDataList {}
 impl std::panic::RefUnwindSafe for ElementDataList {}
 
-impl FromIterator<Arc<dyn ElementData>> for ElementDataList {
-    fn from_iter<I: IntoIterator<Item = Arc<dyn ElementData>>>(items: I) -> Self {
+impl FromIterator<Arc<dyn ElementData + Sync>> for ElementDataList {
+    fn from_iter<I: IntoIterator<Item = Arc<dyn ElementData + Sync>>>(items: I) -> Self {
         ElementDataList(items.into_iter().collect())
     }
 }

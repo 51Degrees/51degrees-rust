@@ -63,9 +63,8 @@
 use std::any::Any;
 use std::borrow::Cow;
 use std::cell::UnsafeCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::sync::Arc;
 
 use fiftyone_pipeline_core::{
     ElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType, TypedKey,
@@ -384,15 +383,6 @@ struct DeferredValues {
     state: UnsafeCell<DeferredState>,
 }
 
-// Safety: the reader is `Send` but not `Sync`, because it reads a results
-// instance, which is not safe to use from several threads at once, and no
-// lock is taken. This is marked `Sync` so the element data that holds it
-// stays usable in property values and parallel groups. The caller is
-// responsible for thread-safe access: one that uses it from several threads
-// at once coordinates that itself, as the thread-safety specification at
-// 52e9b047 says.
-unsafe impl Sync for DeferredValues {}
-
 struct DeferredState {
     /// The dynamic-bag mirror of the values read so far, which the reader
     /// writes into. The typed value of each moves to `stored`.
@@ -447,8 +437,8 @@ impl DeferredValues {
         position: usize,
         look: impl FnOnce(&StoredValue, &IpIntelligenceDataBase) -> R,
     ) -> Result<R, String> {
-        // Safety: the caller coordinates access, so no other reference to
-        // the state is live.
+        // Safety: the state is not `Sync`, so only one thread reaches it, and
+        // no reference into it outlives this call.
         let state = unsafe { &mut *self.state.get() };
         if let Some(message) = self.read(state, position) {
             return Err(message);
@@ -460,8 +450,8 @@ impl DeferredValues {
     /// reason for none, in the reader's order whatever order they were read
     /// in, reading any not yet read.
     fn keys(&self) -> Vec<String> {
-        // Safety: the caller coordinates access, so no other reference to
-        // the state is live.
+        // Safety: the state is not `Sync`, so only one thread reaches it, and
+        // no reference into it outlives this call.
         let state = unsafe { &mut *self.state.get() };
         for position in 0..self.reader.property_names().len() {
             self.read(state, position);
@@ -475,6 +465,67 @@ impl DeferredValues {
     }
 }
 
+impl Clone for DeferredValues {
+    /// Read every property the reader holds, so the clone answers from what
+    /// was read and shares nothing with this data. A reader is not `Clone`,
+    /// and two values sharing one would not be `Send`.
+    fn clone(&self) -> Self {
+        let names = self.reader.property_names();
+        // Safety: the state is not `Sync`, so only one thread reaches it, and
+        // no reference into it outlives this call.
+        let state = unsafe { &mut *self.state.get() };
+        for position in 0..names.len() {
+            self.read(state, position);
+        }
+        DeferredValues {
+            reader: Box::new(ReadNames {
+                positions: names
+                    .iter()
+                    .enumerate()
+                    .map(|(position, name)| (name.clone(), position))
+                    .collect(),
+                names: names.to_vec(),
+                typed: self.reader.typed_positions().map(<[_]>::to_vec),
+            }),
+            state: UnsafeCell::new(DeferredState {
+                values: state.values.clone(),
+                read: state.read.clone(),
+                stored: state.stored.clone(),
+            }),
+        }
+    }
+}
+
+/// The names and positions of another reader, for a clone whose properties
+/// have all been read, so it never reads one.
+struct ReadNames {
+    names: Vec<String>,
+    positions: HashMap<String, usize>,
+    typed: Option<Vec<Option<usize>>>,
+}
+
+impl IpIntelligencePropertyReader for ReadNames {
+    fn property_names(&self) -> &[String] {
+        &self.names
+    }
+
+    fn position(&self, name: &str) -> Option<usize> {
+        self.positions.get(name).copied()
+    }
+
+    fn read_property(
+        &self,
+        _position: usize,
+        _data: &mut IpIntelligenceDataBase,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn typed_positions(&self) -> Option<&[Option<usize>]> {
+        self.typed.as_deref()
+    }
+}
+
 /// Whether a property name has letters that lowercasing would change.
 fn needs_lowercase(name: &str) -> bool {
     !name.is_ascii() || name.bytes().any(|byte| byte.is_ascii_uppercase())
@@ -482,8 +533,8 @@ fn needs_lowercase(name: &str) -> bool {
 
 impl fmt::Debug for DeferredValues {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Safety: the caller coordinates access, so nothing writes the state
-        // meanwhile.
+        // Safety: the state is not `Sync`, so only one thread reaches it, and
+        // nothing writes it while this reads.
         let state = unsafe { &*self.state.get() };
         f.debug_struct("DeferredValues")
             .field("read", &state.read)
@@ -536,7 +587,7 @@ pub struct IpIntelligenceDataBase {
     /// lists it among the bag's names where it was set.
     no_value_places: Vec<(String, usize)>,
     /// The values read on request, when an engine attached a reader.
-    deferred: Option<Arc<DeferredValues>>,
+    deferred: Option<Box<DeferredValues>>,
 }
 
 impl IpIntelligenceDataBase {
@@ -568,12 +619,12 @@ impl IpIntelligenceDataBase {
     /// A value set directly takes precedence over the reader's. Reads take no
     /// lock, as the
     /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#results-instances)
-    /// requires, so the data is not safe to read from several threads at
-    /// once, and a caller that shares it across threads coordinates its own
-    /// access. A clone shares the values read with the data it was cloned
-    /// from, so the two are not safe to read from two threads at once either.
+    /// requires, so the data is not `Sync` and the compiler refuses code that
+    /// shares it across threads. A caller that must share it wraps it in a
+    /// lock of its own. A clone reads every property the reader holds, so it
+    /// shares nothing with the data it was cloned from.
     pub fn with_reader(mut self, reader: impl IpIntelligencePropertyReader + 'static) -> Self {
-        self.deferred = Some(Arc::new(DeferredValues {
+        self.deferred = Some(Box::new(DeferredValues {
             reader: Box::new(reader),
             state: UnsafeCell::new(DeferredState {
                 values: IpIntelligenceDataBase::new(IP_DATA_KEY_NAME),
