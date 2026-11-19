@@ -1163,7 +1163,7 @@ fn stores_opening_one_folder_at_once_leave_it_to_one() {
 
 /// Names the folder `opens_a_folder_another_process_holds` opens, in a
 /// process of its own.
-const HELD_FOLDER: &str = "FIFTYONE_CACHING_HELD_FOLDER";
+const HELD_FOLDER: &str = "_51DEGREES_CACHING_HELD_FOLDER";
 
 #[test]
 fn a_store_in_another_process_is_refused_the_folder() {
