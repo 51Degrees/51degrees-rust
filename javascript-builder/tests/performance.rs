@@ -156,25 +156,50 @@ fn minification_stays_within_its_budget() {
     );
 }
 
-/// The performance run, which the nightly performance workflow starts, runs
-/// [`minification_stays_within_its_budget`] in release with the ignored tests.
+/// The nightly performance workflow runs
+/// [`minification_stays_within_its_budget`] in release with the ignored tests,
+/// in a step after the last upload of the night's figures, so a failure here
+/// costs none of them. `ci/run-performance-tests.ps1`, whose failure stops the
+/// uploads, does not run it.
 #[test]
 fn the_performance_run_runs_this_test() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../ci/run-performance-tests.ps1");
-    let script = std::fs::read_to_string(&script)
-        .unwrap_or_else(|error| panic!("{} reads: {error}", script.display()));
-    let runs_it = script.lines().any(|line| {
-        let line = line.trim();
-        !line.starts_with('#')
-            && line.contains("cargo test")
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let read = |relative: &str| {
+        let path = root.join(relative);
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{} reads: {error}", path.display()))
+    };
+    let runs_it = |line: &str| {
+        line.contains("cargo test")
             && line.contains("--release")
             && line.contains("-p fiftyone-javascript-builder")
             && line.contains("--test performance")
             && line.contains("--ignored")
-    });
+    };
+    let workflow = read(".github/workflows/nightly-performance.yml");
+    let steps: Vec<&str> = workflow
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with('#'))
+        .collect();
+    let test = steps.iter().position(|line| runs_it(line));
+    let last_upload = steps
+        .iter()
+        .rposition(|line| line.contains("actions/upload-artifact"));
     assert!(
-        runs_it,
-        "ci/run-performance-tests.ps1 runs `cargo test --release -p \
-         fiftyone-javascript-builder --test performance -- --ignored`"
+        matches!((test, last_upload), (Some(test), Some(upload)) if test > upload),
+        "nightly-performance.yml runs `cargo test --release -p \
+         fiftyone-javascript-builder --test performance -- --ignored` after \
+         its last upload"
+    );
+
+    let script = read("ci/run-performance-tests.ps1");
+    assert!(
+        !script
+            .lines()
+            .map(str::trim)
+            .any(|line| !line.starts_with('#') && runs_it(line)),
+        "ci/run-performance-tests.ps1 leaves the minification test to its own \
+         step"
     );
 }
