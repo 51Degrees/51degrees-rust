@@ -375,11 +375,7 @@ impl IpIntelligenceOnPremiseEngineBuilder {
             self.reuse_temp_file,
         );
         let manager = {
-            let property_refs: Option<Vec<&str>> = if requested.is_empty() {
-                None
-            } else {
-                Some(requested.iter().map(String::as_str).collect())
-            };
+            let property_refs = names_to_open_with(&requested);
             Manager::open_with_options(
                 copy.as_ref()
                     .map_or(self.data_file_path.as_path(), OperationalCopy::path),
@@ -446,9 +442,45 @@ impl IpIntelligenceOnPremiseEngineBuilder {
     }
 }
 
+/// The names the native Engine is opened with: none when the builder was
+/// given none, never the data set's own, so an Engine with no names walks a
+/// graph only when a Property of it is first read, and otherwise the names
+/// the builder was given.
+fn names_to_open_with(requested: &[String]) -> Option<Vec<&str>> {
+    if requested.is_empty() {
+        None
+    } else {
+        Some(requested.iter().map(String::as_str).collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ip-intelligence-on-premise.md lines 394 to 399 at
+    /// 51Degrees/specifications d79bbe3b: "An implementation
+    /// configured with no names MUST create the Engine with no names, and
+    /// MUST NOT pass the data set's names itself". With no names set, the
+    /// native Engine is opened with no names, and with names set, with those
+    /// names alone.
+    #[test]
+    fn no_names_configured_opens_the_engine_with_no_names() {
+        assert_eq!(names_to_open_with(&[]), None);
+        let set = ["RegisteredName".to_string(), "Asn".to_string()];
+        assert_eq!(
+            names_to_open_with(&set),
+            Some(vec!["RegisteredName", "Asn"])
+        );
+    }
+
+    /// With no names set, the builder holds no names at the point it opens
+    /// the Engine, so it has none of the data set's to pass.
+    #[test]
+    fn builder_with_no_names_holds_none_to_pass() {
+        let builder = IpIntelligenceOnPremiseEngineBuilder::new("does-not-exist.ipi");
+        assert_eq!(names_to_open_with(&builder.requested_properties), None);
+    }
 
     /// The defaults are those of the .NET and Java engines: updates and the
     /// watcher on, no poll at startup, the Distributor as the source with its
