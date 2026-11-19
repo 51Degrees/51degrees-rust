@@ -552,9 +552,10 @@ impl DataUpdateService {
     ///
     /// Returns the status of the startup poll, or [`AutoUpdateStatus::NotNeeded`]
     /// when no startup poll was requested. A failed startup poll leaves the
-    /// engine on the data it loaded, as the specification says. It is logged
-    /// and returned as an error, and the file is registered all the same, so
-    /// the updates that follow still run.
+    /// engine on the data it loaded, as the specification says. It is
+    /// returned as an error and not logged, as the errors table says of the
+    /// update on start-up, and the file is registered all the same, so the
+    /// updates that follow still run.
     ///
     /// The registration lasts as long as the caller keeps `engine`. Given the
     /// only reference, the engine is dropped as this returns, so nothing is
@@ -599,23 +600,15 @@ impl DataUpdateService {
 
         // Update on startup: poll once, synchronously. A failure leaves the
         // engine on the data it loaded, so the file is still registered for
-        // the updates that follow.
+        // the updates that follow. The failure goes to the caller and is not
+        // logged, as the errors table says of the update on start-up.
         if config.update_on_startup && !already_registered {
             log::info!("Updating on start-up");
             self.inner
                 .callbacks
                 .start(engine.data_key(), Some(&data_file));
             startup = self.check_for_update_from_url(&registration);
-            if let Err(error) = &startup {
-                if error.status != AutoUpdateStatus::RefreshFailed {
-                    log::warn!(
-                        "An error occurred while updating the data file for {} on start-up. \
-                         The data it has is used. Error detail: {error}",
-                        engine.data_key()
-                    );
-                }
-            }
-            self.inner.callbacks.finish(
+            self.inner.callbacks.report(
                 engine.data_key(),
                 Some(&data_file),
                 &startup,

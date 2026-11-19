@@ -56,7 +56,9 @@ use crate::value::PropertyValue;
 /// The trait is bound on [`Any`] so [`crate::FlowData`] can downcast a stored
 /// `dyn ElementData` back to its concrete type given a [`crate::TypedKey`]. It
 /// is bound on [`Send`] because a flow data may be moved between threads, for
-/// example handed from a request-handling thread to a /// It is not bound on [`Sync`], because element data is not safe to use from
+/// example handed from a request-handling thread to a worker.
+///
+/// It is not bound on [`Sync`], because element data is not safe to use from
 /// several threads at once, so neither is a flow data. Element data that
 /// reads its values from an on-premise engine's results instance, such as the
 /// Device Detection and IP Intelligence data, takes no lock and is not
@@ -66,11 +68,12 @@ use crate::value::PropertyValue;
 /// caller that must share it wraps it in a lock of its own, such as a
 /// `Mutex`. A member of a parallel group that reads element data added
 /// before the group is responsible for the thread safety of those reads.
-/// reads.
 ///
-/// Element data is still written from one thread only, by the element that
-/// adds it. See the
-/// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#element-data).
+/// Element data is written only by the flow element that provides it, or the
+/// flow elements that share it, and only while they process, as the
+/// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#element-data)
+/// requires. [`crate::FlowData::get_or_add`] refuses a write once that
+/// element has finished.
 pub trait ElementData: Any + Send {
     /// Get a property value by name.
     ///

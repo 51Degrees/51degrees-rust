@@ -2,6 +2,8 @@
 name = "fiftyone-pipeline-engines-fiftyone"
 version = "4.5.2"
 description = "ShareUsage, SetHeaders and Sequence elements plus the FiftyOne metadata model for the 51Degrees pipeline."
+keywords = ["usage-sharing", "set-headers", "client-hints", "pipeline", "51degrees"]
+categories = ["web-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
