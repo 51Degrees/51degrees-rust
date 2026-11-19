@@ -26,10 +26,10 @@
 use std::fmt::{Display, Write};
 use std::future::Future;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::clock::{self, Clock};
-use super::codec::{decode_entry, encode_entry, read_header, Codec};
+use super::codec::{decode_entry, encode_entry_published, read_header, Codec};
 use super::entry::Entry;
 use super::store::{Lookup, Store};
 
@@ -113,6 +113,12 @@ pub trait ListKeys {
 /// all. Bytes that are not an entry in a format this crate reads are a miss,
 /// and the next write replaces them.
 ///
+/// Each entry also holds the published date of the data its source used,
+/// from [`EncodedStoreBuilder::published`], and the version of its codec's
+/// format, from [`Codec::version`]. An entry whose date or version differs
+/// from the current ones is a miss, and is removed, so a data update or an
+/// upgrade never serves a value from older data or in an older format.
+///
 /// A key is written as its [`Display`] text with every byte other than an
 /// ASCII letter, digit, `-`, `.`, `_` or `~` written as `%` and two
 /// uppercase hex digits, behind the namespace and a `/` when one is set. Two
@@ -124,7 +130,11 @@ pub struct EncodedStore<B, C> {
     codec: C,
     namespace: Option<String>,
     clock: Arc<dyn Clock>,
+    published: Published,
 }
+
+/// Gives the published date of the data the source uses now.
+type Published = Arc<dyn Fn() -> SystemTime + Send + Sync>;
 
 impl<B, C> EncodedStore<B, C> {
     /// A store over `bytes` with values turned into bytes by `codec`, no
@@ -146,6 +156,7 @@ impl<B, C> EncodedStore<B, C> {
             codec,
             namespace: None,
             clock: None,
+            published: None,
         }
     }
 
@@ -229,6 +240,14 @@ where
             ByteLookup::Reserved(reservation) => return Lookup::Reserved(reservation),
             ByteLookup::Miss => return Lookup::Miss,
         };
+        // An entry from other data or in another value format is removed
+        // before its value is decoded, which the codec may not accept.
+        if read_header(&bytes).is_ok_and(|(header, _)| {
+            header.published != (self.published)() || header.value_version != self.codec.version()
+        }) {
+            self.bytes.remove(&key).await;
+            return Lookup::Miss;
+        }
         match decode_entry(&self.codec, &bytes) {
             Ok(stored) if !self.is_past(stored.drop_at) => Lookup::Hit(stored.entry),
             Ok(_) => {
@@ -277,7 +296,7 @@ impl<B, C> EncodedStore<B, C> {
             Some(keep_for) => Some(self.clock.now().checked_add(keep_for)?),
             None => None,
         };
-        encode_entry(&self.codec, entry, drop_at)
+        encode_entry_published(&self.codec, entry, drop_at, (self.published)())
     }
 }
 
@@ -287,6 +306,7 @@ pub struct EncodedStoreBuilder<B, C> {
     codec: C,
     namespace: Option<String>,
     clock: Option<Arc<dyn Clock>>,
+    published: Option<Published>,
 }
 
 impl<B, C> EncodedStoreBuilder<B, C> {
@@ -305,6 +325,16 @@ impl<B, C> EncodedStoreBuilder<B, C> {
         self
     }
 
+    /// Gives the published date of the data the source uses now, such as a
+    /// data file's, which each write keeps with the entry. A read answers
+    /// absent for an entry kept with another date, and removes it. Called on
+    /// every read and write, so keep it cheap. Defaults to the epoch, for a
+    /// source with no published date.
+    pub fn published(mut self, published: impl Fn() -> SystemTime + Send + Sync + 'static) -> Self {
+        self.published = Some(Arc::new(published));
+        self
+    }
+
     /// Builds the store.
     ///
     /// # Panics
@@ -316,6 +346,7 @@ impl<B, C> EncodedStoreBuilder<B, C> {
             codec: self.codec,
             namespace: self.namespace,
             clock: clock::given_or_system(self.clock),
+            published: self.published.unwrap_or_else(|| Arc::new(|| UNIX_EPOCH)),
         }
     }
 }

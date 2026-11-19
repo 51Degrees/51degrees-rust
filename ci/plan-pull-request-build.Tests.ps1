@@ -41,6 +41,7 @@ BeforeAll {
             New-Member 'inner' 'outer/inner'
             New-Member 'fiftyone-native' 'native' @('core')
             New-Member 'fodid' 'fodid'
+            New-Member 'fiftyone-caching' 'caching'
         )
     } | ConvertTo-Json -Depth 6 | Set-Content -Path $script:Metadata -Encoding utf8
 
@@ -127,6 +128,12 @@ Describe 'What a pull request into rc builds' {
         $plan = Invoke-Plan -ChangedFiles 'fodid/src/lib.rs'
         $plan.native | Should -Be 'false'
         $plan.fodid | Should -Be 'true'
+    }
+
+    It 'says whether fiftyone-caching is built' {
+        (Invoke-Plan -ChangedFiles 'fodid/src/lib.rs').caching | Should -Be 'false'
+        (Invoke-Plan -ChangedFiles 'caching/src/lib.rs').caching | Should -Be 'true'
+        (Invoke-Plan -BaseRef 'main' -ChangedFiles 'alone/src/lib.rs').caching | Should -Be 'true'
     }
 }
 

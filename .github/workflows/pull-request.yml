@@ -49,6 +49,7 @@ jobs:
       packages: ${{ steps.plan.outputs.packages }}
       native: ${{ steps.plan.outputs.native }}
       fodid: ${{ steps.plan.outputs.fodid }}
+      caching: ${{ steps.plan.outputs.caching }}
     steps:
       # A pull request is checked out as its merge into the base branch, so
       # the merge's first parent is the base and the two differ by exactly
@@ -242,6 +243,19 @@ jobs:
       - name: cargo clippy (fodid, all features)
         if: needs.plan.outputs.fodid == 'true'
         run: cargo clippy -p fodid --all-targets --all-features -- -D warnings
+
+      # The store on disk in fiftyone-caching sits behind its `disk` feature,
+      # off by default, so the steps above build and test the crate without
+      # it. Here it is tested and linted again with the feature on, on every
+      # system in the matrix, Linux included, as the disk cache page of the
+      # specification requires.
+      - name: cargo test (fiftyone-caching, disk)
+        if: needs.plan.outputs.caching == 'true'
+        run: cargo test -p fiftyone-caching --features disk
+
+      - name: cargo clippy (fiftyone-caching, disk)
+        if: needs.plan.outputs.caching == 'true'
+        run: cargo clippy -p fiftyone-caching --all-targets --features disk -- -D warnings
 
       - name: cargo doc
         run: cargo doc ${{ needs.plan.outputs.packages }} --no-deps
