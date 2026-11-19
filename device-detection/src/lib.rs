@@ -835,6 +835,44 @@ mod tests {
         );
     }
 
+    /// The on-premise builder adds usage sharing after every element it adds
+    /// itself, the decoder included when asked for.
+    #[cfg(feature = "on-premise")]
+    #[test]
+    #[allow(deprecated)]
+    fn on_premise_usage_sharing_runs_last() {
+        let Some(data_file) = resolve_dd_data_file() else {
+            eprintln!(
+                "skipping on_premise_usage_sharing_runs_last: no Lite Hash data file \
+                 found (set _51DEGREES_DD_PATH to enable this test)"
+            );
+            return;
+        };
+        for use_uach in [false, true] {
+            // Built but never processed, so nothing is queued or sent.
+            let pipeline = super::DeviceDetectionPipelineBuilder::on_premise(&data_file)
+                .performance_profile(super::PerformanceProfile::LowMemory)
+                .auto_update(false)
+                .file_system_watcher(false)
+                .share_usage(true)
+                .use_uach(use_uach)
+                .build()
+                .expect("the on-premise pipeline builds over the Lite file");
+
+            let names: Vec<&str> = pipeline
+                .flow_elements()
+                .iter()
+                .map(|element| element.type_name())
+                .collect();
+            assert_eq!(names.len(), if use_uach { 4 } else { 3 }, "{names:?}");
+            assert_eq!(
+                names.last().copied(),
+                Some("fiftyone_pipeline_engines_fiftyone::share_usage_element::ShareUsageElement"),
+                "use_uach({use_uach}) {names:?}"
+            );
+        }
+    }
+
     /// Data updates are on by default, so a build with no licence key refuses
     /// and says which switch turns them off. With a key the pipeline owns a
     /// data update service with the engine's data file registered. With every

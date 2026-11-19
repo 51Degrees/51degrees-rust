@@ -2,6 +2,8 @@
 name = "fiftyone-agent-signature"
 version = "4.5.2"
 description = "AgentSignatureElement: checks the HTTP Message Signature an automated agent sends under the IETF Web Bot Auth protocol, for the 51Degrees pipeline."
+keywords = ["web-bot-auth", "http-signatures", "bot-detection", "crawler", "user-agent"]
+categories = ["web-programming", "authentication", "cryptography"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

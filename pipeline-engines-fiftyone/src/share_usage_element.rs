@@ -264,9 +264,11 @@ impl ShareUsageConfig {
         &self.blocked_http_headers
     }
 
-    /// The query string parameters that are shared, as they were given, in
-    /// addition to any starting with `51d_`. `None`, the default, shares
-    /// every one.
+    /// The included query string parameters, as they were given.
+    ///
+    /// Deprecated, and has no effect. A query string or form parameter is
+    /// shared only when its name starts with `51d_` or an element of the
+    /// pipeline accepts it, whatever the configuration.
     pub fn included_query_string_parameters(&self) -> Option<&[String]> {
         self.included_query_string_parameters.as_deref()
     }
@@ -452,10 +454,12 @@ impl ShareUsageConfigBuilder {
         self
     }
 
-    /// Set the query string parameters to share (in addition to any starting
-    /// with `51d_`). Passing `None`, the default, shares every query
-    /// parameter, and `Some` of an empty list shares only those starting with
-    /// `51d_`. Returns `self` for chaining.
+    /// Set the included query string parameters. Returns `self` for
+    /// chaining.
+    ///
+    /// Deprecated, and has no effect. A query string or form parameter is
+    /// shared only when its name starts with `51d_` or an element of the
+    /// pipeline accepts it, whatever the configuration.
     pub fn included_query_string_parameters<I, S>(mut self, params: Option<I>) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -752,6 +756,8 @@ pub struct ShareUsageElement {
     filter: Arc<EvidenceKeyFilterShareUsage>,
     properties: Vec<PropertyMetaData>,
     tracker: ShareUsageTracker,
+    /// The tracker's filter, asked with each request's pipeline.
+    tracker_filter: EvidenceKeyFilterShareUsageTracker,
     config: ShareUsageConfig,
     sender: SyncSender<UsageRecord>,
     worker: Mutex<Option<JoinHandle<()>>>,
@@ -822,10 +828,7 @@ impl ShareUsageElement {
             if config.share_all_evidence {
                 EvidenceKeyFilterShareUsage::share_all()
             } else {
-                EvidenceKeyFilterShareUsage::new(
-                    config.blocked_http_headers.clone(),
-                    config.included_query_string_parameters.clone(),
-                )
+                EvidenceKeyFilterShareUsage::new(config.blocked_http_headers.clone(), None)
             }
         };
 
@@ -843,7 +846,7 @@ impl ShareUsageElement {
             config
                 .maximum_queue_size
                 .max(SHARE_USAGE_DEFAULT_MAX_QUEUE_SIZE),
-            Box::new(tracker_filter),
+            Box::new(tracker_filter.clone()),
         );
 
         let (tx, rx) = sync_channel::<UsageRecord>(config.maximum_queue_size);
@@ -885,6 +888,7 @@ impl ShareUsageElement {
             filter,
             properties: Vec::new(),
             tracker,
+            tracker_filter,
             config,
             sender: tx,
             worker: Mutex::new(worker),
@@ -919,7 +923,10 @@ impl ShareUsageElement {
 
     /// Which of the keys the element finds are shared, as the configuration
     /// sets it. The element itself accepts no evidence, so this is not its
-    /// [`FlowElement::evidence_key_filter`].
+    /// [`FlowElement::evidence_key_filter`]. A query string or form parameter
+    /// also depends on the pipeline, so the element asks
+    /// [`EvidenceKeyFilterShareUsage::include_for`] with the pipeline's
+    /// filter.
     pub fn shared_evidence_filter(&self) -> &EvidenceKeyFilterShareUsage {
         &self.filter
     }
@@ -928,8 +935,9 @@ impl ShareUsageElement {
     /// shared. Each key is read from the evidence, and from the web request
     /// only when the shared evidence filter includes it, so a key of the
     /// request that is not shared and that no element accepts never stops a
-    /// request being shared. A key in both has the evidence's value.
-    fn is_ignored(&self, evidence: &Evidence) -> bool {
+    /// request being shared. A key in both has the evidence's value. `used`
+    /// is the pipeline's filter.
+    fn is_ignored(&self, evidence: &Evidence, used: &dyn EvidenceKeyFilter) -> bool {
         self.config
             .ignore_flow_data_evidence_filter
             .iter()
@@ -937,7 +945,7 @@ impl ShareUsageElement {
                 let found = evidence.get(key).or_else(|| {
                     evidence
                         .http_request()
-                        .filter(|_| self.filter.include(key))
+                        .filter(|_| self.filter.include_for(key, used))
                         .and_then(|request| request.get(key))
                 });
                 found == Some(value.as_str())
@@ -956,6 +964,7 @@ impl ShareUsageElement {
     /// evidence the element found for it. The evidence is read in the order
     /// it was given, with each key spelled as given.
     fn extract(&self, data: &FlowData, evidence: &Evidence) -> UsageRecord {
+        let used = data.evidence_key_filter();
         let mut record = UsageRecord::new(
             data.pipeline()
                 .flow_elements()
@@ -976,7 +985,7 @@ impl ShareUsageElement {
                 record.session_id = entry.value().to_owned();
             } else if key.eq_ignore_ascii_case(EVIDENCE_SEQUENCE) {
                 record.sequence = parse_sequence(entry.value()).unwrap_or(0);
-            } else if self.filter.include(key) {
+            } else if self.filter.include_for(key, used) {
                 record.add_evidence(entry.key_as_given(), entry.value());
             }
         }
@@ -1010,8 +1019,18 @@ impl Default for ShareUsageElement {
 }
 
 impl FlowElement for ShareUsageElement {
+    /// Usage sharing runs last and outside any parallel group, so it shares
+    /// the Evidence every other element added and reads it while nothing
+    /// changes it.
+    fn must_run_last(&self) -> bool {
+        true
+    }
+
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        if self.is_ignored(data.evidence()) {
+        // The keys the pipeline's elements accept, which decide whether a
+        // query string or form parameter is shared.
+        let used = data.evidence_key_filter();
+        if self.is_ignored(data.evidence(), used) {
             return Ok(());
         }
 
@@ -1023,7 +1042,11 @@ impl FlowElement for ShareUsageElement {
         // Repeat-evidence deduplication: the tracker decides whether the
         // evidence found for this request is new enough to share.
         let found = found_evidence(data.evidence());
-        if !self.tracker.track_evidence(&found) {
+        let tracked = ForPipeline {
+            tracker: &self.tracker_filter,
+            used,
+        };
+        if !self.tracker.track_evidence_with(&found, &tracked) {
             return Ok(());
         }
 
@@ -1135,6 +1158,22 @@ impl Drop for ShareUsageElement {
              finish within {SHARE_USAGE_CLOSE_TIMEOUT_MS} ms when closing down.",
             self.queued.load(Ordering::Relaxed)
         );
+    }
+}
+
+/// The tracker's filter in one pipeline, whose filter is `used`.
+struct ForPipeline<'a> {
+    tracker: &'a EvidenceKeyFilterShareUsageTracker,
+    used: &'a dyn EvidenceKeyFilter,
+}
+
+impl EvidenceKeyFilter for ForPipeline<'_> {
+    fn include(&self, key: &str) -> bool {
+        self.tracker.include_for(key, self.used)
+    }
+
+    fn order(&self, key: &str) -> Option<i32> {
+        self.include(key).then_some(100)
     }
 }
 
@@ -2047,7 +2086,12 @@ mod tests {
                 .http_request(request("two", "yes"))
                 .build(),
         ];
-        share(config, capture.clone(), Vec::new(), requests);
+        share(
+            config,
+            capture.clone(),
+            vec![accepts(["query.extra"])],
+            requests,
+        );
         let xml = capture.messages().concat();
         assert!(
             xml.contains(
@@ -2729,38 +2773,149 @@ mod tests {
         }
     }
 
-    /// usage-sharing-element.md: share all query string parameters is on by
-    /// default, so every query string and form value is shared.
-    #[test]
-    fn every_query_value_is_shared_by_default() {
-        assert_eq!(
-            ShareUsageConfig::default().included_query_string_parameters(),
-            None
-        );
-        let capture = Capture::default();
-        let element = Arc::new(ShareUsageElement::with_sink(
-            ShareUsageConfig::default(),
-            capture.clone(),
-        ));
-        let pipeline = Pipeline::builder()
-            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
-            .build()
-            .unwrap();
-        let mut data = pipeline.create_flow_data_with(
-            Evidence::builder()
-                .add("header.user-agent", "agent")
-                .add("query.campaign", "spring")
-                .add("query.51D_Other", "1")
-                .build(),
-        );
-        data.process().unwrap();
-        drop(data);
-        drop(pipeline);
-        drop(element);
+    /// An element that accepts the evidence its filter lists and does nothing,
+    /// so the Pipeline uses those keys.
+    struct Accepts {
+        filter: EvidenceKeyFilterWhitelist,
+    }
 
-        let xml = capture.messages().concat();
-        assert!(xml.contains(">spring</query>"), "{xml}");
-        assert!(xml.contains("Name=\"51D_Other\""), "{xml}");
+    impl FlowElement for Accepts {
+        fn process(&self, _data: &mut FlowData) -> Result<()> {
+            Ok(())
+        }
+        fn data_key(&self) -> &str {
+            "accepts"
+        }
+        fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+            &self.filter
+        }
+        fn properties(&self) -> &[PropertyMetaData] {
+            &[]
+        }
+    }
+
+    /// An element in the Pipeline that accepts `keys`.
+    fn accepts<const N: usize>(keys: [&str; N]) -> Arc<dyn FlowElement> {
+        Arc::new(Accepts {
+            filter: EvidenceKeyFilterWhitelist::new(keys),
+        })
+    }
+
+    /// A request with a `password` parameter no element accepts, a `51D_`
+    /// parameter and a `campaign` parameter, in the evidence or, as a web
+    /// integration gives the query string and a POST request's form, in the
+    /// web request.
+    fn with_parameters(in_request: bool) -> Evidence {
+        let parameters = [
+            ("query.password", "secret"),
+            ("query.51D_ScreenPixelsWidth", "1080"),
+            ("query.campaign", "spring"),
+        ];
+        let mut builder = Evidence::builder().add("header.user-agent", "agent");
+        if in_request {
+            let mut request = Evidence::builder();
+            for (key, value) in parameters {
+                request = request.add(key, value);
+            }
+            builder = builder.http_request(request.build());
+        } else {
+            for (key, value) in parameters {
+                builder = builder.add(key, value);
+            }
+        }
+        builder.build()
+    }
+
+    /// usage-sharing-element.md: a query string or form parameter is shared
+    /// only when its name starts with `51D_` or a Flow Element in the
+    /// Pipeline accepts it, whatever the configuration and even when all
+    /// evidence is shared.
+    #[test]
+    fn only_51d_parameters_and_those_the_pipeline_uses_are_shared() {
+        for share_all in [false, true] {
+            for in_request in [false, true] {
+                let case = format!("share all {share_all}, in the web request {in_request}");
+                for (used, campaign) in [(Vec::new(), false), (vec!["query.campaign"], true)] {
+                    let capture = Capture::default();
+                    let before = used.iter().map(|key| accepts([*key])).collect::<Vec<_>>();
+                    share(
+                        ShareUsageConfig::builder()
+                            .share_all_evidence(share_all)
+                            .build(),
+                        capture.clone(),
+                        before,
+                        vec![with_parameters(in_request)],
+                    );
+                    let xml = capture.messages().concat();
+                    assert!(!xml.contains("secret"), "{case}: {xml}");
+                    assert!(
+                        xml.contains("Name=\"51D_ScreenPixelsWidth\""),
+                        "{case}: {xml}"
+                    );
+                    assert_eq!(
+                        xml.contains(">spring</query>"),
+                        campaign,
+                        "{case}, campaign used {campaign}: {xml}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// usage-sharing-element.md: the included query string parameters and
+    /// share all query string parameters options are deprecated and change
+    /// nothing that is shared. Share all query string parameters gives `None`
+    /// here, and an included parameter gives a list.
+    #[test]
+    fn the_deprecated_parameter_options_change_nothing_shared() {
+        let configs = [
+            ShareUsageConfig::builder()
+                .included_query_string_parameters(Some(["password", "campaign"]))
+                .build(),
+            ShareUsageConfig::builder()
+                .included_query_string_parameters(None::<Vec<&str>>)
+                .build(),
+        ];
+        for config in configs {
+            let capture = Capture::default();
+            share(
+                config,
+                capture.clone(),
+                Vec::new(),
+                vec![with_parameters(false)],
+            );
+            let xml = capture.messages().concat();
+            assert!(!xml.contains("secret"), "{xml}");
+            assert!(!xml.contains(">spring</query>"), "{xml}");
+            assert!(xml.contains("Name=\"51D_ScreenPixelsWidth\""), "{xml}");
+        }
+    }
+
+    /// A parameter that is not shared does not make a request new to the
+    /// repeat evidence tracker, and one the Pipeline uses does.
+    #[test]
+    fn only_a_shared_parameter_makes_a_request_new() {
+        for (key, used, devices) in [("query.password", false, 1), ("query.campaign", true, 2)] {
+            let capture = Capture::default();
+            let before = if used {
+                vec![accepts([key])]
+            } else {
+                Vec::new()
+            };
+            let request = |value: &str| {
+                Evidence::builder()
+                    .add("header.user-agent", "agent")
+                    .add(key, value)
+                    .build()
+            };
+            share(
+                ShareUsageConfig::default(),
+                capture.clone(),
+                before,
+                vec![request("one"), request("two")],
+            );
+            assert_eq!(capture.devices(), devices, "{key}");
+        }
     }
 
     /// An element that replaces the session id and sequence evidence.
