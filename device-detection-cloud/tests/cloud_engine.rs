@@ -38,6 +38,8 @@ mod deprecated_names;
 use std::sync::Arc;
 
 use fiftyone_pipeline_core::{Error, Evidence, Pipeline};
+#[cfg(not(target_family = "wasm"))]
+use fiftyone_pipeline_engines::AspectData;
 
 use fiftyone_cloud_request_engine::{
     CloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine, HttpMethod,
@@ -501,6 +503,44 @@ fn missing_cloud_request_engine_is_a_configuration_error() {
         result.is_err(),
         "processing without a cloud request engine must error"
     );
+}
+
+/// "All Engines MUST populate data objects that implement Aspect Data as
+/// defined in the Pipeline specification." (device-detection-specification,
+/// data-model.md.) Both cloud Engines, the device Engine and the hardware
+/// profile lookup, store data that is Aspect Data naming the Engine.
+///
+/// Not run on WebAssembly.
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn both_cloud_engines_populate_aspect_data() {
+    let (_, request_engine) = fake_pipeline();
+    let device_engine = DeviceDetectionCloudEngine::builder()
+        .cloud_request_engine(request_engine.clone())
+        .build();
+    let hardware_engine = HardwareProfileCloudEngine::builder()
+        .cloud_request_engine(request_engine.clone())
+        .build();
+    let pipeline = Pipeline::builder()
+        .add_element(request_engine)
+        .add_element(Arc::new(device_engine))
+        .add_element(Arc::new(hardware_engine))
+        .build()
+        .expect("pipeline builds");
+    let mut data =
+        pipeline.create_flow_data_with(Evidence::builder().add("header.user-agent", "A").build());
+    data.process().expect("processing succeeds");
+
+    let device: &dyn AspectData = data
+        .get(DEVICE_DATA_KEY)
+        .expect("the device data is stored");
+    assert_eq!(device.engine_keys(), ["device"]);
+    assert!(!device.cache_hit());
+    let hardware: &dyn AspectData = data
+        .get(HARDWARE_DATA_KEY)
+        .expect("the hardware data is stored");
+    assert_eq!(hardware.engine_keys(), ["hardware"]);
+    assert!(!hardware.cache_hit());
 }
 
 /// Resolve a cloud resource key from the environment for the live test.
