@@ -31,6 +31,7 @@ use crate::DeviceDataBase;
 use fiftyone_pipeline_core::{
     ElementData, ElementDataList, ElementDataSnapshot, NoValueError, PropertyValue, TypedKey,
 };
+use fiftyone_pipeline_engines::AspectData;
 
 /// The element-data key string the hardware-profile lookup stores its result
 /// under, which is `"hardware"`.
@@ -94,7 +95,11 @@ pub trait ProfileReader: Send + Sync {
 /// `hardware.profiles` is written empty. Any other name is a no-value.
 /// Read typed values, without copying, through
 /// [`MultiDeviceData::profiles`].
-#[derive(Debug, Clone, Default)]
+///
+/// It is [`AspectData`] naming the engine that wrote it by its data key,
+/// [`HARDWARE_ELEMENT_DATA_KEY`] unless made with
+/// [`with_engine_key`](MultiDeviceData::with_engine_key).
+#[derive(Debug, Clone)]
 pub struct MultiDeviceData {
     /// The profiles added with their values, in the order added.
     profiles: Vec<DeviceDataBase>,
@@ -103,6 +108,8 @@ pub struct MultiDeviceData {
     /// Every profile in the order added, once read. Unset until the first
     /// call to `profiles` when any were added by id.
     read: OnceLock<Vec<DeviceDataBase>>,
+    /// The data key of the engine that wrote this data.
+    engine_keys: Vec<String>,
 }
 
 /// Profiles added by id and the reader that gives their device data.
@@ -124,10 +131,28 @@ impl fmt::Debug for FoundIds {
     }
 }
 
+impl Default for MultiDeviceData {
+    fn default() -> Self {
+        MultiDeviceData::with_engine_key(HARDWARE_ELEMENT_DATA_KEY)
+    }
+}
+
 impl MultiDeviceData {
-    /// Create an empty result with no matching profiles.
+    /// Create an empty result with no matching profiles, written by an
+    /// engine under [`HARDWARE_ELEMENT_DATA_KEY`].
     pub fn new() -> Self {
         MultiDeviceData::default()
+    }
+
+    /// Create an empty result with no matching profiles, written by the
+    /// engine whose data key is `engine_key`.
+    pub fn with_engine_key(engine_key: impl Into<String>) -> Self {
+        MultiDeviceData {
+            profiles: Vec::new(),
+            found: Vec::new(),
+            read: OnceLock::new(),
+            engine_keys: vec![engine_key.into()],
+        }
     }
 
     /// The device profiles that matched the lookup, in the order they were
@@ -236,6 +261,18 @@ impl ElementData for MultiDeviceData {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+}
+
+impl AspectData for MultiDeviceData {
+    fn engine_keys(&self) -> &[String] {
+        &self.engine_keys
+    }
+
+    /// Always false, as neither hardware profile engine has a results
+    /// cache.
+    fn cache_hit(&self) -> bool {
+        false
     }
 }
 
@@ -449,5 +486,21 @@ mod tests {
     fn it_is_send_but_not_sync() {
         assert_send::<MultiDeviceData>();
         <MultiDeviceData as AmbiguousIfSync<_>>::check();
+    }
+
+    /// The data is Aspect Data naming the engine that wrote it by its data
+    /// key, and is never a cache hit, as neither hardware profile engine has
+    /// a results cache.
+    #[test]
+    fn the_data_is_aspect_data_naming_its_engine() {
+        let hardware = MultiDeviceData::new();
+        let aspect: &dyn AspectData = &hardware;
+        assert_eq!(aspect.engine_keys(), [HARDWARE_ELEMENT_DATA_KEY]);
+        assert!(!aspect.cache_hit());
+
+        let browsers = MultiDeviceData::with_engine_key("browsers");
+        let aspect: &dyn AspectData = &browsers;
+        assert_eq!(aspect.engine_keys(), ["browsers"]);
+        assert!(!aspect.cache_hit());
     }
 }

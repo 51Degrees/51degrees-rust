@@ -39,7 +39,9 @@ use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{
     ElementData, Evidence, FlowElement, Pipeline, PropertyValue, PropertyValueType,
 };
-use fiftyone_pipeline_engines::{AspectEngine, MissingPropertyReason, OnPremiseAspectEngine};
+use fiftyone_pipeline_engines::{
+    AspectData, AspectEngine, MissingPropertyReason, OnPremiseAspectEngine,
+};
 
 /// A representative desktop Chrome on Windows User-Agent.
 const DESKTOP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
@@ -970,4 +972,18 @@ fn the_read_only_check_fails_when_the_named_data_file_is_missing() {
         "{test} did not fail with _51DEGREES_DD_PATH naming {}, which is missing:\n{text}",
         missing.display()
     );
+}
+
+/// The engine stores Aspect Data naming it by its data key, as every Device
+/// Detection Engine must.
+#[test]
+fn the_device_data_is_aspect_data_naming_the_engine() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping Aspect Data test");
+        return;
+    };
+    let device = detect(engine, DESKTOP_USER_AGENT);
+    let aspect: &dyn AspectData = &device;
+    assert_eq!(aspect.engine_keys(), ["device"]);
+    assert!(!aspect.cache_hit());
 }
