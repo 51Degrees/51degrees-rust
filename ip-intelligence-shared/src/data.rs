@@ -53,6 +53,9 @@
 //! [`PropertyValue::KeyValueList`] of records, each holding the raw weighting
 //! (0 to 65,535) under `rawweighting` and the candidate under `value`, which is
 //! how the JSON builder writes them and the cloud service sends them.
+//! Every other property is also read as a weighted value through
+//! [`IpIntelligenceDataBase::weighted_string`], being its value as text with
+//! the full weighting, as the IP Intelligence data model requires.
 //!
 //! Both engines populate the same backing the same way: a plain value is stored
 //! through one of the `set_*` builders (for example
@@ -370,7 +373,12 @@ impl StoredValue {
             StoredValue::WeightedString(WeightedStore::NoValue { message }) => {
                 AspectPropertyValue::no_value(message.clone())
             }
-            _ => AspectPropertyValue::empty(),
+            StoredValue::String(store) => value_store_weighted(store, String::clone),
+            StoredValue::WktString(store) => value_store_weighted(store, |value| value.to_string()),
+            StoredValue::Float(store) => value_store_weighted(store, f32::to_string),
+            StoredValue::Integer(store) => value_store_weighted(store, i32::to_string),
+            StoredValue::Boolean(store) => value_store_weighted(store, render_bool),
+            StoredValue::Nothing => AspectPropertyValue::empty(),
         }
     }
 }
@@ -980,21 +988,38 @@ impl IpIntelligenceDataBase {
         }
     }
 
-    /// Read a weighted string property by name.
+    /// Read a property by name as a weighted list of strings.
     ///
     /// Returns [`AspectPropertyValue::NoValue`] when the property is absent or
     /// was recorded as a no-value. The list is ordered high weighting first.
     /// This is how the weighted properties (`CountryCodesGeographical`,
     /// `CountryCodesPopulation`, `Mcc` and `StateGeoNameIdsGeographical`) are
-    /// read.
+    /// read. Every other property is also exposed as a weighted value, as
+    /// the IP Intelligence data model requires, being its value as text with
+    /// the full weighting. A float or an integer is written as Rust writes
+    /// it, which for a float is the shortest text that reads back as the same
+    /// `f32` and need not be the text the data file holds.
     pub fn weighted_string(&self, name: &str) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
-        match self.weighted_strings.get(&key(name)) {
-            Some(WeightedStore::Values(list)) => AspectPropertyValue::new(list.clone()),
-            Some(WeightedStore::NoValue { message }) => {
-                AspectPropertyValue::no_value(message.clone())
-            }
-            None => self.deferred_value(name, StoredValue::weighted_string),
+        let key = key(name);
+        if let Some(store) = self.weighted_strings.get(&key) {
+            return StoredValue::WeightedString(store.clone()).weighted_string();
         }
+        if let Some(store) = self.strings.get(&key) {
+            return value_store_weighted(store, String::clone);
+        }
+        if let Some(store) = self.wkt_strings.get(&key) {
+            return value_store_weighted(store, |value| value.to_string());
+        }
+        if let Some(store) = self.floats.get(&key) {
+            return value_store_weighted(store, f32::to_string);
+        }
+        if let Some(store) = self.integers.get(&key) {
+            return value_store_weighted(store, i32::to_string);
+        }
+        if let Some(store) = self.booleans.get(&key) {
+            return value_store_weighted(store, render_bool);
+        }
+        self.deferred_value(name, StoredValue::weighted_string)
     }
 
     // -- getters at a typed accessor's slot ---------------------------------
@@ -1071,6 +1096,26 @@ fn value_store_converted<T: Clone, U: From<T>>(store: &ValueStore<T>) -> AspectP
         ValueStore::Value(value) => AspectPropertyValue::new(U::from(value.clone())),
         ValueStore::NoValue { message } => AspectPropertyValue::no_value(message.clone()),
     }
+}
+
+/// Expose a plain [`ValueStore`] as a weighted value, being its one value as
+/// text with the full weighting, so every property is also exposed as a
+/// weighted value.
+fn value_store_weighted<T>(
+    store: &ValueStore<T>,
+    render: impl Fn(&T) -> String,
+) -> AspectPropertyValue<Vec<WeightedValue<String>>> {
+    match store {
+        ValueStore::Value(value) => {
+            AspectPropertyValue::new(vec![WeightedValue::new(u16::MAX, render(value))])
+        }
+        ValueStore::NoValue { message } => AspectPropertyValue::no_value(message.clone()),
+    }
+}
+
+/// A boolean as the data files render it.
+fn render_bool(value: &bool) -> String {
+    if *value { "True" } else { "False" }.to_string()
 }
 
 /// The message of a [`ValueStore::NoValue`].
@@ -2337,5 +2382,45 @@ mod tests {
         for name in names {
             assert_eq!(reads_of(&reads, name), 1, "{name}");
         }
+    }
+
+    /// Every plain property the reader gives, as the on-premise engine's
+    /// reader gives it, is also a weighted value holding its value as text
+    /// with the full weighting, read by name and at its typed accessor's
+    /// slot. A property with no value gives the same reason.
+    #[test]
+    fn plain_properties_from_a_reader_are_also_weighted_values() {
+        let (reader, _) = SlotReader::new(&SLOT_NAMES);
+        let data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader);
+        let pairs = |value: AspectPropertyValue<Vec<WeightedValue<String>>>| {
+            value.value().ok().map(|list| {
+                list.iter()
+                    .map(|item| (item.value.clone(), item.raw_weighting))
+                    .collect::<Vec<_>>()
+            })
+        };
+        for (name, expected) in [
+            ("Asn", "AS13335"),
+            ("Areas", "POLYGON((1 2,3 4,5 6,1 2))"),
+            ("Latitude", "51.45"),
+            ("TimeZoneOffset", "60"),
+            ("IsVPN", "False"),
+        ] {
+            let full = Some(vec![(expected.to_owned(), u16::MAX)]);
+            assert_eq!(pairs(data.weighted_string(name)), full, "{name} by name");
+            let slot = crate::TYPED_PROPERTY_NAMES
+                .iter()
+                .position(|typed| *typed == name)
+                .expect("a typed accessor's slot");
+            assert_eq!(
+                pairs(data.weighted_string_at(slot, name)),
+                full,
+                "{name} at its slot"
+            );
+        }
+        assert_eq!(
+            data.weighted_string("AsnName").no_value_message(),
+            Some("no name for this range")
+        );
     }
 }

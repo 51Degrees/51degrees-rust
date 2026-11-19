@@ -34,7 +34,8 @@
 //!
 //! The built pipeline runs:
 //!
-//! 1. [`fiftyone_pipeline_engines_fiftyone::SequenceElement`] first, so the
+//! 1. [`fiftyone_pipeline_engines_fiftyone::SequenceElement`] first (unless
+//!    [`WebPipelineBuilder::use_sequence_element`] turns it off), so the
 //!    session id and sequence number exist before anything else reads them.
 //!    It is only added when the application's elements do not already hold
 //!    one, found by its data key ignoring case, so the elements of a pipeline
@@ -159,7 +160,8 @@ impl Default for WebIntegrationOptions {
 /// A built, web-ready pipeline together with the configuration the endpoints
 /// need.
 ///
-/// Construct one with [`WebPipeline::build`]. It owns the shared
+/// Construct one with [`WebPipeline::build`], or with [`WebPipeline::builder`]
+/// for the settings [`WebIntegrationOptions`] does not hold. It owns the shared
 /// [`Pipeline`], the resolved [`WebIntegrationOptions`] and the evidence-key
 /// whitelist used to derive the `Vary` header. An adapter clones the `Arc` to
 /// create flow data per request, reads the endpoint paths, and serves the
@@ -188,7 +190,30 @@ impl WebPipeline {
         elements: Vec<Arc<dyn FlowElement>>,
         options: WebIntegrationOptions,
     ) -> Result<WebPipeline> {
-        let (ordered, builders) = order_elements(elements, &options);
+        WebPipeline::builder(elements, options).build()
+    }
+
+    /// Start a web pipeline from the application's elements and options, to
+    /// give settings that [`WebIntegrationOptions`] does not hold before
+    /// calling [`WebPipelineBuilder::build`]. With no setting changed it
+    /// builds what [`WebPipeline::build`] builds.
+    pub fn builder(
+        elements: Vec<Arc<dyn FlowElement>>,
+        options: WebIntegrationOptions,
+    ) -> WebPipelineBuilder {
+        WebPipelineBuilder {
+            elements,
+            options,
+            use_sequence_element: true,
+        }
+    }
+
+    fn assemble(
+        elements: Vec<Arc<dyn FlowElement>>,
+        options: WebIntegrationOptions,
+        use_sequence_element: bool,
+    ) -> Result<WebPipeline> {
+        let (ordered, builders) = order_elements(elements, &options, use_sequence_element);
 
         // The Vary whitelist is the union of the header keys every element in
         // the pipeline names, shared with the endpoints.
@@ -256,6 +281,49 @@ impl WebPipeline {
     }
 }
 
+/// Builds a [`WebPipeline`] with settings that [`WebIntegrationOptions`] does
+/// not hold. Start one with [`WebPipeline::builder`].
+///
+/// The settings are methods rather than fields of [`WebIntegrationOptions`],
+/// whose fields are all public, so adding one never stops code that names
+/// every field of the options from compiling.
+#[must_use = "a builder does nothing until build is called"]
+pub struct WebPipelineBuilder {
+    elements: Vec<Arc<dyn FlowElement>>,
+    options: WebIntegrationOptions,
+    use_sequence_element: bool,
+}
+
+impl WebPipelineBuilder {
+    /// Whether a sequence element is added first, only when the application's
+    /// elements hold none, so the session id and sequence number exist before
+    /// anything else reads them. `true` by default. Give `false` to leave it
+    /// out. A sequence element among the application's elements runs either
+    /// way.
+    pub fn use_sequence_element(mut self, use_sequence_element: bool) -> Self {
+        self.use_sequence_element = use_sequence_element;
+        self
+    }
+
+    /// Assemble the web pipeline as [`WebPipeline::build`] describes, with
+    /// the settings given to this builder.
+    ///
+    /// Returns the same errors as [`WebPipeline::build`].
+    pub fn build(self) -> Result<WebPipeline> {
+        WebPipeline::assemble(self.elements, self.options, self.use_sequence_element)
+    }
+}
+
+impl fmt::Debug for WebPipelineBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WebPipelineBuilder")
+            .field("elements", &self.elements.len())
+            .field("options", &self.options)
+            .field("use_sequence_element", &self.use_sequence_element)
+            .finish()
+    }
+}
+
 /// True if a request path targets the given endpoint path.
 ///
 /// The match is a case-insensitive `ends_with`. This lets an application be
@@ -273,18 +341,21 @@ type Resource = Arc<dyn Any + Send + Sync>;
 
 /// Insert the web elements around the application elements and return the full
 /// ordered list, with the client-side builders it runs as resources for the
-/// pipeline.
+/// pipeline. A sequence element is added only when `use_sequence_element` is
+/// set.
 fn order_elements(
     elements: Vec<Arc<dyn FlowElement>>,
     options: &WebIntegrationOptions,
+    use_sequence_element: bool,
 ) -> (Vec<Arc<dyn FlowElement>>, Vec<Resource>) {
     let mut ordered: Vec<Arc<dyn FlowElement>> = Vec::with_capacity(elements.len() + 4);
     let mut resources: Vec<Resource> = Vec::new();
 
-    // 1. Sequence element first, unless the application's elements already
-    // hold one, as a pipeline builder's elements do with usage sharing on.
+    // 1. Sequence element first, unless the setting leaves it out or the
+    // application's elements already hold one, as a pipeline builder's
+    // elements do with usage sharing on.
     let given_sequence = position(&elements, SequenceElement::DEFAULT_ELEMENT_DATA_KEY).is_some();
-    if !given_sequence {
+    if use_sequence_element && !given_sequence {
         ordered.push(Arc::new(SequenceElement::new()));
     }
 
