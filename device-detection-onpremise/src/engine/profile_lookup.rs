@@ -325,25 +325,40 @@ mod tests {
 
     use super::*;
 
-    /// Implemented twice for a `Sync` type, so naming `check` on one is then
-    /// ambiguous and the test does not build.
-    trait AmbiguousIfSync<A> {
-        fn check() {}
+    fn is_send_and_sync<T: Send + Sync>() {}
+
+    /// The profile reader of a lookup gives each id's results to one read,
+    /// taken with an atomic swap and no lock, so it is safe to share and is
+    /// `Send` and `Sync`, as a profile reader must be.
+    #[test]
+    fn a_profile_reader_is_send_and_sync() {
+        is_send_and_sync::<LoadedProfiles>();
     }
 
-    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
-
-    impl<T: ?Sized + Sync> AmbiguousIfSync<u8> for T {}
-
-    fn is_send<T: Send>() {}
-
-    /// The profile reader of a lookup is `Send` but not `Sync`, because a results instance is not safe
-    /// to use from several threads at once, so the compiler refuses code that
-    /// shares one across threads.
+    /// A value is taken by exactly one of the threads that try at once.
     #[test]
-    fn a_profile_reader_is_send_but_not_sync() {
-        is_send::<LoadedProfiles>();
-        <LoadedProfiles as AmbiguousIfSync<_>>::check();
+    fn a_value_is_taken_once_whatever_the_threads() {
+        for _ in 0..100 {
+            let once = TakeOnce::new(String::from("results"));
+            let taken: usize = std::thread::scope(|scope| {
+                let tries: Vec<_> = (0..4)
+                    .map(|_| scope.spawn(|| once.take().is_some()))
+                    .collect();
+                tries
+                    .into_iter()
+                    .map(|taker| usize::from(taker.join().unwrap()))
+                    .sum()
+            });
+            assert_eq!(taken, 1);
+        }
+    }
+
+    /// A value never taken is dropped with its holder.
+    #[test]
+    fn a_value_not_taken_is_dropped() {
+        let value = Arc::new(());
+        drop(TakeOnce::new(Arc::clone(&value)));
+        assert_eq!(Arc::strong_count(&value), 1);
     }
 
     thread_local! {
