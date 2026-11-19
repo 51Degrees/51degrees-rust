@@ -80,6 +80,29 @@ impl AutoUpdateStatus {
             AutoUpdateStatus::Success | AutoUpdateStatus::NotNeeded | AutoUpdateStatus::InProgress
         )
     }
+
+    /// The name the specification's errors table and .NET give the status,
+    /// such as `AUTO_UPDATE_ERR_403_FORBIDDEN`, so a message names it the
+    /// same way in every language. A stream error is given as an unknown
+    /// error, as the service reports it.
+    pub fn name(&self) -> &'static str {
+        match self {
+            AutoUpdateStatus::Success => "AUTO_UPDATE_SUCCESS",
+            AutoUpdateStatus::NotNeeded => "AUTO_UPDATE_NOT_NEEDED",
+            AutoUpdateStatus::InProgress => "AUTO_UPDATE_IN_PROGRESS",
+            AutoUpdateStatus::HttpsError => "AUTO_UPDATE_HTTPS_ERR",
+            AutoUpdateStatus::TooManyRequests => "AUTO_UPDATE_ERR_429_TOO_MANY_ATTEMPTS",
+            AutoUpdateStatus::Forbidden => "AUTO_UPDATE_ERR_403_FORBIDDEN",
+            AutoUpdateStatus::StreamError => "AUTO_UPDATE_UNKNOWN_ERROR",
+            AutoUpdateStatus::Md5ValidationFailed => "AUTO_UPDATE_ERR_MD5_VALIDATION_FAILED",
+            AutoUpdateStatus::NewFileCannotRename => "AUTO_UPDATE_NEW_FILE_CANT_RENAME",
+            AutoUpdateStatus::RefreshFailed => "AUTO_UPDATE_REFRESH_FAILED",
+            AutoUpdateStatus::NoConfiguration => "AUTO_UPDATE_NO_CONFIGURATION",
+            AutoUpdateStatus::TempPathNotSet => "AUTO_UPDATE_TEMP_PATH_NOT_SET",
+            AutoUpdateStatus::Timeout => "AUTO_UPDATE_TIMEOUT",
+            AutoUpdateStatus::UnknownError => "AUTO_UPDATE_UNKNOWN_ERROR",
+        }
+    }
 }
 
 /// An error raised while checking for or applying a data-file update.
@@ -101,6 +124,19 @@ impl DataUpdateError {
             status,
             message: message.into(),
         }
+    }
+
+    /// The message for an update on start-up of the data file `identifier`
+    /// that ended with this error, being the errors table's "Update on
+    /// startup failed for \<data file identifier\> with status \<status\>.
+    /// See log for details", with this error's message after it.
+    pub fn on_startup_message(&self, identifier: &str) -> String {
+        format!(
+            "Update on startup failed for {identifier} with status {}. See log for details. \
+             Error detail: {}",
+            self.status.name(),
+            self.message
+        )
     }
 }
 
@@ -137,5 +173,17 @@ mod tests {
         ] {
             assert!(!status.is_ok(), "{status:?}");
         }
+    }
+
+    /// The update on start-up's message names the data file and the status as
+    /// the errors table does, then the error's own message.
+    #[test]
+    fn the_start_up_message_names_the_file_and_the_status_as_the_table_does() {
+        let error = DataUpdateError::new(AutoUpdateStatus::Forbidden, "denied");
+        assert_eq!(
+            error.on_startup_message("hash"),
+            "Update on startup failed for hash with status \
+             AUTO_UPDATE_ERR_403_FORBIDDEN. See log for details. Error detail: denied"
+        );
     }
 }
