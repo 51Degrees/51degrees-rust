@@ -58,6 +58,7 @@ use crate::error::{Error, FlowError, NoValueError, Result};
 use crate::evidence::{DataKey, Evidence, EvidenceKeyFilter};
 use crate::flow_element::FlowElement;
 use crate::pipeline::Pipeline;
+use crate::pool;
 use crate::typed_key::TypedKey;
 use crate::value::PropertyValue;
 use crate::warning::FlowWarning;
@@ -431,12 +432,12 @@ impl FlowData {
 
     /// What a group member's element added. Dropping the member releases its
     /// share of the view.
-    pub(crate) fn into_added(self) -> GroupMemberAdded {
+    pub(crate) fn into_added(mut self) -> GroupMemberAdded {
         GroupMemberAdded {
-            data: self.data,
-            order: self.order,
-            errors: self.errors,
-            warnings: self.warnings,
+            data: std::mem::take(&mut self.data),
+            order: std::mem::take(&mut self.order),
+            errors: std::mem::take(&mut self.errors),
+            warnings: std::mem::take(&mut self.warnings),
         }
     }
 
@@ -535,6 +536,38 @@ impl FlowData {
         T: ElementData,
         F: FnOnce() -> T,
     {
+        self.get_or_insert(key, || Box::new(create()))
+    }
+
+    /// As [`FlowData::get_or_add`], with new data taken from those that flow
+    /// data dropped earlier gave back, on any thread, or `T::default()` when
+    /// there is none, so an element does not create its data for every
+    /// request. Data taken this way starts with no values, as
+    /// [`ElementData::reset`] left it.
+    ///
+    /// Only a type some element takes this way has a pool, which every thread
+    /// shares and which keeps a bounded number. When a flow data is dropped,
+    /// on any thread, each element data it holds that [`ElementData::reset`]
+    /// clears goes back to the pool for its type. So keeping a reference to
+    /// element data after its flow data is dropped is not supported. The
+    /// borrow checker stops a reference outliving the flow data, and a clone
+    /// made before then is a copy of its own.
+    pub fn get_or_add_pooled<T>(&mut self, key: TypedKey<T>) -> Result<&mut T>
+    where
+        T: ElementData + Default,
+    {
+        self.get_or_insert(key, || {
+            pool::take::<T>().unwrap_or_else(|| Box::new(T::default()))
+        })
+    }
+
+    /// Get the element data under `key`, or insert what `create` gives, which
+    /// is of type `T`.
+    fn get_or_insert<T, F>(&mut self, key: TypedKey<T>, create: F) -> Result<&mut T>
+    where
+        T: ElementData,
+        F: FnOnce() -> Box<dyn ElementData>,
+    {
         let stored_key = key.name().to_lowercase();
         if let Some(before) = self.before_group() {
             if before.data.contains_key(&stored_key) {
@@ -565,7 +598,7 @@ impl FlowData {
             }
             Entry::Vacant(entry) => {
                 self.order.push(entry.key().clone());
-                entry.insert(Box::new(create()))
+                entry.insert(create())
             }
         };
         boxed.as_any_mut().downcast_mut::<T>().ok_or_else(|| {
@@ -706,6 +739,18 @@ impl FlowData {
         match &self.source {
             Source::Pipeline(_) => None,
             Source::Group(before) => Some(before),
+        }
+    }
+}
+
+/// A flow data gives back to the pool each element data it holds that
+/// [`ElementData::reset`] clears, as the
+/// [resource cleanup specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/resource-cleanup.md#reusing-element-data)
+/// recommends.
+impl Drop for FlowData {
+    fn drop(&mut self) {
+        for (_, data) in self.data.drain() {
+            pool::give(data);
         }
     }
 }
