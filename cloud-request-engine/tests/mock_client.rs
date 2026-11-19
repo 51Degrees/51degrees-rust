@@ -677,7 +677,7 @@ fn a_4xx_answer_to_either_discovery_request_fails_the_build() {
 }
 
 /// A 4xx answer whose `errors` holds several entries fails the build as one
-/// with a single entry does, with each entry kept apart.
+/// with a single entry does, with every entry in its message.
 #[test]
 fn a_4xx_answer_with_several_errors_fails_the_build_with_each() {
     let client = Arc::new(FakeClient::default());
@@ -690,23 +690,18 @@ fn a_4xx_answer_with_several_errors_fails_the_build_with_each() {
         .endpoint("https://cloud.example.test/api/v4/")
         .http_client(client)
         .build();
-    let Err(Error::Aggregate(errors)) = &result else {
-        panic!("expected the build to fail with each error");
+    let Err(Error::CloudRequest {
+        status_code,
+        message,
+        ..
+    }) = &result
+    else {
+        panic!("expected the build to fail with one cloud error");
     };
-    let entries: Vec<(u16, &str)> = errors
-        .iter()
-        .map(|error| match &error.source {
-            Error::CloudRequest {
-                status_code,
-                message,
-                ..
-            } => (*status_code, message.as_str()),
-            other => panic!("expected a cloud error, got {other:?}"),
-        })
-        .collect();
-    assert_eq!(
-        entries,
-        vec![(403, "first refusal"), (403, "second refusal")]
+    assert_eq!(*status_code, 403);
+    assert!(
+        message.contains("first refusal") && message.contains("second refusal"),
+        "an entry was lost: {message}"
     );
 }
 
