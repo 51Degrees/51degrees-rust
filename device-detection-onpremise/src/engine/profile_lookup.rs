@@ -23,9 +23,9 @@
 //! The profiles that hold a value of a property, looked up in the data set
 //! the engine has loaded.
 
-use std::cell::UnsafeCell;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::ptr;
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::Arc;
 
 use fiftyone_device_detection_shared::{DeviceDataBase, DevicePropertyReader, ProfileReader};
@@ -122,9 +122,8 @@ impl DeviceDetectionOnPremiseEngine {
     /// ids, before anything is read. Give both to
     /// [`MultiDeviceData::push_profile_ids`](fiftyone_device_detection_shared::MultiDeviceData::push_profile_ids)
     /// to read the profiles only when they are first asked for. The reader
-    /// holds those results and takes no lock on them, so it is not safe to
-    /// use from several threads at once, and a caller that shares it
-    /// coordinates its own access.
+    /// gives each id's results to the id's first read with one atomic swap,
+    /// so it takes no lock and is safe to share.
     ///
     /// A profile the reader cannot read gives device data holding its id,
     /// whose other properties give the error as the reason they have no
@@ -146,14 +145,13 @@ impl DeviceDetectionOnPremiseEngine {
         let ids = found.iter().map(|(id, _)| *id).collect();
         let reader = LoadedProfiles {
             loaded,
-            results: UnsafeCell::new(found.into_iter().collect()),
+            results: found
+                .into_iter()
+                .map(|(id, results)| (id, TakeOnce::new(results)))
+                .collect(),
             warned: AtomicBool::new(false),
         };
-        // The reader is not `Sync`. `MultiDeviceData` holds it in an `Arc`,
-        // and a caller that shares the data coordinates its own access.
-        #[allow(clippy::arc_with_non_send_sync)]
-        let reader = Arc::new(reader);
-        Ok((ids, reader))
+        Ok((ids, Arc::new(reader)))
     }
 }
 
@@ -233,18 +231,16 @@ struct LoadedProfiles {
     loaded: Arc<LoadedDataSet>,
     /// The results to read each id's profile from, created from the data set
     /// the ids were found in, and taken by the id's first read. An id read
-    /// again, or one not found, is read from the data set in use. No lock is
-    /// taken.
-    results: UnsafeCell<HashMap<u32, Results>>,
+    /// again, or one not found, is read from the data set in use. Each is
+    /// taken with one atomic swap, so no lock is taken.
+    results: HashMap<u32, TakeOnce<Results>>,
     /// Set once a profile of this lookup has failed to read.
     warned: AtomicBool,
 }
 
 impl ProfileReader for LoadedProfiles {
     fn read_profile(&self, id: u32) -> DeviceDataBase {
-        // Safety: the caller coordinates access, so no other reference to
-        // the map is live.
-        let results = unsafe { &mut *self.results.get() }.remove(&id);
+        let results = self.results.get(&id).and_then(TakeOnce::take);
         profile(&self.loaded, results, id).unwrap_or_else(|error| {
             unread_profile(
                 id,
@@ -254,6 +250,34 @@ impl ProfileReader for LoadedProfiles {
                 &self.loaded.missing,
             )
         })
+    }
+}
+
+/// A value that the first of any number of threads to ask takes, with one
+/// atomic swap and no lock. The value must be `Send`, because the thread
+/// that takes it may not be the one that made it.
+struct TakeOnce<T: Send>(AtomicPtr<T>);
+
+impl<T: Send> TakeOnce<T> {
+    fn new(value: T) -> Self {
+        TakeOnce(AtomicPtr::new(Box::into_raw(Box::new(value))))
+    }
+
+    /// The value, for the first call only.
+    fn take(&self) -> Option<T> {
+        let taken = self.0.swap(ptr::null_mut(), Ordering::AcqRel);
+        if taken.is_null() {
+            return None;
+        }
+        // Safety: a pointer that is not null came from `Box::into_raw` in
+        // `new`, and the swap gave it to this call alone.
+        Some(*unsafe { Box::from_raw(taken) })
+    }
+}
+
+impl<T: Send> Drop for TakeOnce<T> {
+    fn drop(&mut self) {
+        drop(self.take());
     }
 }
 
