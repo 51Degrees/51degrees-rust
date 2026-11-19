@@ -38,7 +38,7 @@ use fiftyone_pipeline_core::{
     TypedKey,
 };
 use fiftyone_pipeline_engines::{
-    AspectData, AspectDataBase, AspectPropertyMetaData, AspectPropertyValue,
+    AspectData, AspectDataBase, AspectPropertyMetaData, AspectPropertyValue, ProvidesValuesAsString,
 };
 
 use crate::device_data::GENERATED_PROPERTY_TYPES;
@@ -115,11 +115,33 @@ pub trait DevicePropertyReader: Send + Sync {
     fn typed_positions(&self) -> Option<&[Option<usize>]> {
         None
     }
+
+    /// Whether the reader holds each value as the string the data stores
+    /// and parses it into the property's type, so that
+    /// [`Self::read_stored_string`] can give the string. `false` by default.
+    fn holds_values_as_strings(&self) -> bool {
+        false
+    }
+
+    /// Read the property at `position` as the string the data stores,
+    /// before it is parsed, with the reason it has none as
+    /// [`Self::read_property_with_reason`] gives it. `None` when the reader
+    /// does not hold the property as a string, which is every property by
+    /// default.
+    fn read_stored_string(&self, _position: usize) -> Option<StoredOutcome> {
+        None
+    }
 }
 
 /// The outcome of reading one property, as
 /// [`DevicePropertyReader::read_property_with_reason`] gives it.
 type ReadOutcome = Result<Result<PropertyValue, Option<String>>, String>;
+
+/// The outcome of reading one property's stored string, as
+/// [`DevicePropertyReader::read_stored_string`] gives it. `Ok(Err(reason))`
+/// when the property has no value, and `Err` with a message when the read
+/// fails.
+pub type StoredOutcome = Result<Result<String, Option<String>>, String>;
 
 /// The values a [`DevicePropertyReader`] has read, so each property is read at
 /// most once.
@@ -185,6 +207,14 @@ impl DeferredValues {
     /// without a value. Nothing is read.
     fn keys(&self) -> Vec<String> {
         self.reader.property_names().to_vec()
+    }
+
+    /// The stored string of a property, or `None` when the reader cannot
+    /// read it or does not hold it as a string. It is read each time it is
+    /// asked for, and the parsed values are left as they are.
+    fn stored_string(&self, name: &str) -> Option<StoredOutcome> {
+        let position = self.readable(name)?;
+        self.reader.read_stored_string(position)
     }
 }
 
@@ -327,6 +357,17 @@ impl DeviceDataBase {
             read: Mutex::new(Vec::new()),
         }));
         self
+    }
+
+    /// The stored string of each property, where the reader the engine
+    /// attached holds its values as strings and parses them, as the
+    /// on-premise engine's does, or `None` where it does not, as for the
+    /// cloud engine's data. The typed accessors are unchanged either way.
+    pub fn values_as_string(&self) -> Option<&dyn ProvidesValuesAsString> {
+        self.deferred
+            .as_ref()
+            .filter(|deferred| deferred.reader.holds_values_as_strings())
+            .map(|_| self as &dyn ProvidesValuesAsString)
     }
 
     /// Look a property up in the bag, then among the properties held with no
@@ -583,6 +624,32 @@ fn string_list(value: PropertyValue) -> Option<Vec<String>> {
 impl Default for DeviceDataBase {
     fn default() -> Self {
         DeviceDataBase::new()
+    }
+}
+
+impl ProvidesValuesAsString for DeviceDataBase {
+    /// The string the reader stores for the property, read each time. A
+    /// property in the bag, or one the reader does not hold as a string such
+    /// as a match metric, is looked up as the typed accessors look it up,
+    /// giving a string value as it is and no value for any other. A property
+    /// with no value has the message the typed accessors give.
+    fn value_as_string(&self, name: &str) -> AspectPropertyValue<String> {
+        let in_bag =
+            self.base.values().get_value(name).is_some() || self.no_value_message(name).is_some();
+        let stored = if in_bag {
+            None
+        } else {
+            self.deferred
+                .as_ref()
+                .and_then(|deferred| deferred.stored_string(name))
+        };
+        let lookup = match stored {
+            Some(outcome) => {
+                self.lookup_outcome(outcome.map(|value| value.map(PropertyValue::String)), name)
+            }
+            None => self.lookup(name),
+        };
+        Self::converted(lookup, |value| value.as_str().map(str::to_owned))
     }
 }
 

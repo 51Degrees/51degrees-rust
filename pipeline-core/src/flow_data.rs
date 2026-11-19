@@ -64,7 +64,8 @@ use crate::warning::FlowWarning;
 ///
 /// Construct one via [`crate::Pipeline::create_flow_data`], add evidence when
 /// creating it, call [`FlowData::process`], then read results with
-/// [`FlowData::get`] (typed) or [`FlowData::get_str`] (by key).
+/// [`FlowData::get`] (typed), [`FlowData::get_str`] (by key) or
+/// [`FlowData::get_from_element`] (by element).
 ///
 /// A flow data is not safe to use from several threads at once, even once it
 /// has been processed, because element data that reads an on-premise
@@ -458,6 +459,19 @@ impl FlowData {
     pub fn get<T: ElementData>(&self, key: TypedKey<T>) -> Option<&T> {
         self.lookup(key.name())
             .and_then(|data| data.as_any().downcast_ref::<T>())
+    }
+
+    /// Get the element data the given element added, found under its
+    /// [`FlowElement::data_key`].
+    ///
+    /// This is mechanism 3 of the
+    /// [access-to-results specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/access-to-results.md#accessing-results)
+    /// (get element data by supplying an element instance). The key is
+    /// matched case-insensitively, as for [`FlowData::get_str`], and the
+    /// concrete type is recovered with [`ElementData::as_any`]. Returns
+    /// `None` if there is no data under the element's key.
+    pub fn get_from_element(&self, element: &dyn FlowElement) -> Option<&dyn ElementData> {
+        self.lookup(element.data_key())
     }
 
     /// Get the element data for a [`TypedKey`], or insert it using `create` if
