@@ -26,10 +26,6 @@
 //! The on-premise test needs the ASN file `_51DEGREES_IPI_PATH` names, or the
 //! one at `cxx/data/ip-intelligence`, and skips with a note without it.
 
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 use std::sync::Arc;
 
 use fiftyone_ip_intelligence::configuration::{self, ElementOptions, PipelineOptions};
@@ -137,7 +133,7 @@ fn asn_file() -> Option<String> {
 
     let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi");
-    let found = crate::deprecated_names::var("_51DEGREES_IPI_PATH")
+    let found = std::env::var("_51DEGREES_IPI_PATH")
         .ok()
         .map(PathBuf::from)
         .into_iter()

@@ -26,12 +26,10 @@
 //! than spelled out in words because the shorter form is preferred. The tests
 //! read every file git tracks, which leaves out build output and the
 //! submodules, and fail on any name that starts with the digit, or with the
-//! number spelled out where an environment variable is named. The
-//! exceptions are the deprecated names that are still read when the name
-//! that replaced each is unset or empty. A crate's own old name is allowed
-//! only in that crate's folder ([`STILL_READ`]), and the names the tests and
-//! the examples read are allowed only in the one file they all read them
-//! through ([`SHARED_READER`]).
+//! number spelled out where an environment variable is named. No old name
+//! is read any longer. The one exception is a deprecated public constant
+//! that still holds an old name, which is allowed only in its crate's folder
+//! ([`STILL_READ`]).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -44,54 +42,22 @@ const DIGIT_INITIAL: &str = concat!("5", "1DEGREES_");
 /// does not match itself.
 const DEPRECATED_CLOUD_ENDPOINT: &str = concat!("5", "1DEGREES_CLOUD_ENDPOINT");
 
-/// The deprecated name of the resource key variable, which one workflow
-/// step still reads, split so this file does not match itself.
+/// The deprecated name of the resource key variable, which is no longer
+/// read, split so this file does not match itself.
 const DEPRECATED_RESOURCE_KEY: &str = concat!("5", "1DEGREES_RESOURCE_KEY");
 
 /// The deprecated name of the variable that points a build at a checkout of
 /// the C sources, split so this file does not match itself.
 const DEPRECATED_CXX_DIR: &str = concat!("FIFTY", "ONE_CXX_DIR");
 
-/// Each deprecated name that may still be written, with the folders of the
-/// crates that still read it. Anywhere else the name is refused.
-const STILL_READ: [(&str, &[&str]); 3] = [
-    (DEPRECATED_CLOUD_ENDPOINT, &["cloud-request-engine/"]),
-    (
-        DEPRECATED_RESOURCE_KEY,
-        &[".github/workflows/pull-request.yml"],
-    ),
-    (
-        DEPRECATED_CXX_DIR,
-        &[
-            "common-sys/",
-            "device-detection-sys/",
-            "ip-intelligence-sys/",
-        ],
-    ),
-];
-
-/// The folder of the file every test and example reads a renamed variable
-/// through, which holds each of [`READ_THROUGH_SHARED_READER`] once.
-const SHARED_READER: &str = "deprecated-names/";
-
-/// The deprecated names [`SHARED_READER`] reads, each split so this file
-/// does not match itself.
-const READ_THROUGH_SHARED_READER: [&str; 7] = [
-    DEPRECATED_RESOURCE_KEY,
-    concat!("5", "1DEGREES_LICENSE_KEY"),
-    concat!("5", "1DEGREES_DD_PATH"),
-    concat!("5", "1DEGREES_IPI_PATH"),
-    concat!("5", "1DEGREES_IPI_ENTERPRISE_SHARE"),
-    DEPRECATED_CLOUD_ENDPOINT,
-    DEPRECATED_CXX_DIR,
-];
+/// Each deprecated name that may still be written, in a deprecated public
+/// constant that holds it and the tests of that constant, with the folders of
+/// the crates that keep it. Anywhere else the name is refused.
+const STILL_READ: [(&str, &[&str]); 1] = [(DEPRECATED_CLOUD_ENDPOINT, &["cloud-request-engine/"])];
 
 /// True when `name` is a deprecated name that the file at `relative` may
-/// hold, because the code there still reads it.
+/// hold, because a deprecated constant there still holds it.
 fn still_read(relative: &str, name: &str) -> bool {
-    if relative.starts_with(SHARED_READER) && READ_THROUGH_SHARED_READER.contains(&name) {
-        return true;
-    }
     STILL_READ.iter().any(|(deprecated, folders)| {
         name == *deprecated && folders.iter().any(|folder| relative.starts_with(*folder))
     })
@@ -258,33 +224,25 @@ fn the_name_matcher_finds_only_names_that_start_with_the_digit() {
 }
 
 #[test]
-fn a_deprecated_name_is_allowed_only_where_it_is_still_read() {
+fn a_deprecated_name_is_allowed_only_where_its_constant_is_kept() {
     assert!(still_read(
         "cloud-request-engine/src/constants.rs",
         DEPRECATED_CLOUD_ENDPOINT
     ));
-    assert!(still_read("common-sys/build.rs", DEPRECATED_CXX_DIR));
-    assert!(still_read(
+    // The names no longer read are refused where they were read before.
+    assert!(!still_read("common-sys/build.rs", DEPRECATED_CXX_DIR));
+    assert!(!still_read(
         "device-detection-sys/src/cxx_dir.rs",
         DEPRECATED_CXX_DIR
     ));
-    assert!(still_read(
-        "ip-intelligence-sys/tests/cxx_dir.rs",
-        DEPRECATED_CXX_DIR
-    ));
-    assert!(still_read(
+    assert!(!still_read(
         ".github/workflows/pull-request.yml",
         DEPRECATED_RESOURCE_KEY
     ));
     assert!(!still_read(
-        ".github/workflows/examples.yml",
+        "examples/examples-shared/src/keys.rs",
         DEPRECATED_RESOURCE_KEY
     ));
-    for name in READ_THROUGH_SHARED_READER {
-        assert!(still_read("deprecated-names/environment.rs", name));
-        assert!(!still_read("native/tests/smoke.rs", name));
-        assert!(!still_read("examples/examples-shared/src/keys.rs", name));
-    }
     // Not in another crate, an example, a workflow or a document.
     for elsewhere in [
         "fodid-client/src/client.rs",

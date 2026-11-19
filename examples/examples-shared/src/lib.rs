@@ -72,9 +72,6 @@ pub mod evidence;
 
 mod data_file_check;
 mod data_paths;
-#[allow(dead_code)]
-#[path = "../../../deprecated-names/environment.rs"]
-mod deprecated_names;
 mod endpoint;
 mod enterprise;
 mod find_file;
@@ -101,10 +98,10 @@ pub use find_out_more::{
     print_find_out_more, write_find_out_more, CLOUD_REPOSITORIES, FIND_OUT_MORE_HEADING,
     ON_PREMISE_REPOSITORIES,
 };
-pub use performance_results::{json_output_path, PerformanceResults, JSON_OUTPUT_FLAG};
 pub use keys::{
     is_invalid_key, license_key_from_env, resource_key_from_env, CI_RESOURCE_KEY_BASIC_ENV_VAR,
     CI_RESOURCE_KEY_BESPOKE_ENV_VAR, LICENSE_KEY_ENV_VAR, RESOURCE_KEY_ENV_VAR,
     RESOURCE_KEY_ENV_VARS,
 };
+pub use performance_results::{json_output_path, PerformanceResults, JSON_OUTPUT_FLAG};
 pub use properties::{get_property_as_string, property_value_to_string, NO_VALUE_MARKER};

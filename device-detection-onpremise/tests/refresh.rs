@@ -29,10 +29,6 @@
 //! with more properties beside it, `Enterprise-HashV41.hash` or
 //! `TAC-HashV41.hash`, and skips with a note when either is missing.
 
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -53,7 +49,7 @@ const RICHER_PROPERTY: &str = "HardwareModel";
 
 /// The Lite file and a file with more properties beside it.
 fn data_files() -> Option<(PathBuf, PathBuf)> {
-    let lite = PathBuf::from(crate::deprecated_names::var("_51DEGREES_DD_PATH").ok()?);
+    let lite = PathBuf::from(std::env::var("_51DEGREES_DD_PATH").ok()?);
     let folder = lite.parent()?;
     let richer = ["Enterprise-HashV41.hash", "TAC-HashV41.hash"]
         .into_iter()

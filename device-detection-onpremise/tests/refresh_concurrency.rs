@@ -30,10 +30,6 @@
 //! `_51DEGREES_DD_PATH` or the data repository in the `cxx` submodule, and
 //! skip with a note without it.
 
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -64,7 +60,7 @@ const PROCESSING_THREADS: usize = 4;
 /// The Lite file `_51DEGREES_DD_PATH` names, or the one in the data
 /// repository inside the `cxx` submodule.
 fn lite_data_file() -> Option<PathBuf> {
-    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
+    if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path.trim());
         if path.is_file() {
             return Some(path);

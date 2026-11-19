@@ -28,21 +28,9 @@
 /// The variable a developer sets to build from a checkout.
 pub const CXX_DIR_VARIABLE: &str = "_51DEGREES_CXX_DIR";
 
-/// The deprecated name [`CXX_DIR_VARIABLE`] replaced, read only when
-/// [`CXX_DIR_VARIABLE`] is unset or empty.
-pub const OLD_CXX_DIR_VARIABLE: &str = "FIFTYONE_CXX_DIR";
-
 /// The checkout the environment names and the variable that named it, or
-/// `None` when neither variable is set. [`CXX_DIR_VARIABLE`] wins unless it
-/// is unset or empty and the deprecated name is set. `read` gives the value
-/// of a variable.
+/// `None` when [`CXX_DIR_VARIABLE`] is not set. `read` gives the value of a
+/// variable.
 pub fn cxx_dir_override(read: impl Fn(&str) -> Option<String>) -> Option<(String, &'static str)> {
-    let current = read(CXX_DIR_VARIABLE);
-    if current.as_ref().is_some_and(|dir| !dir.is_empty()) {
-        return current.map(|dir| (dir, CXX_DIR_VARIABLE));
-    }
-    match read(OLD_CXX_DIR_VARIABLE) {
-        Some(dir) => Some((dir, OLD_CXX_DIR_VARIABLE)),
-        None => current.map(|dir| (dir, CXX_DIR_VARIABLE)),
-    }
+    read(CXX_DIR_VARIABLE).map(|dir| (dir, CXX_DIR_VARIABLE))
 }

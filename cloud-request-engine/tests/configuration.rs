@@ -186,14 +186,12 @@ fn refused_in_code(builder: CloudRequestEngineBuilder) -> String {
 }
 
 /// The base URL an endpoint not given is made from, which is the one the
-/// environment names under the new name or the deprecated one, or else the
-/// default.
-#[allow(deprecated)]
+/// environment names under `_51DEGREES_CLOUD_ENDPOINT`, or else the default.
 fn default_base() -> String {
-    use fiftyone_cloud_request_engine::{CLOUD_ENDPOINT_ENV_VAR, CLOUD_ENDPOINT_VARIABLE};
-    [CLOUD_ENDPOINT_VARIABLE, CLOUD_ENDPOINT_ENV_VAR]
-        .into_iter()
-        .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
+    use fiftyone_cloud_request_engine::CLOUD_ENDPOINT_VARIABLE;
+    std::env::var(CLOUD_ENDPOINT_VARIABLE)
+        .ok()
+        .filter(|value| !value.is_empty())
         .unwrap_or_else(|| CLOUD_URI_DEFAULT.to_string())
 }
 
