@@ -571,7 +571,7 @@ impl DataUpdateService {
                  service was given the only reference to its engine, which is dropped \
                  when registration ends. Keep a reference to the engine for as long as \
                  it is to be updated.",
-                engine.engine_type_name()
+                engine.data_key()
             );
             return Ok(AutoUpdateStatus::NotNeeded);
         }
@@ -604,7 +604,7 @@ impl DataUpdateService {
             log::info!("Updating on start-up");
             self.inner
                 .callbacks
-                .start(engine.data_key(), Some(&data_file));
+                .start(engine.engine_type_name(), Some(&data_file));
             startup = self.check_for_update_from_url(&registration);
             if let Err(error) = &startup {
                 if error.status != AutoUpdateStatus::RefreshFailed {
@@ -616,7 +616,7 @@ impl DataUpdateService {
                 }
             }
             self.inner.callbacks.finish(
-                engine.data_key(),
+                engine.engine_type_name(),
                 Some(&data_file),
                 &startup,
                 CallbackPanic::Raise,
@@ -695,7 +695,7 @@ impl DataUpdateService {
 
         self.inner
             .callbacks
-            .start(engine.data_key(), Some(&registration.data_file));
+            .start(engine.engine_type_name(), Some(&registration.data_file));
         let result = if registration.data_file.data_update_url().is_some() {
             self.check_for_update_from_url(&registration)
         } else if let Some(path) = registration.data_file.data_file_path() {
@@ -707,7 +707,7 @@ impl DataUpdateService {
             self.reschedule_after_update(&registration);
         }
         self.inner.callbacks.report(
-            engine.data_key(),
+            engine.engine_type_name(),
             Some(&registration.data_file),
             &result,
             CallbackPanic::Raise,
@@ -1026,12 +1026,12 @@ impl ServiceHandle {
                 };
                 self.inner
                     .callbacks
-                    .start(engine.data_key(), Some(&registration.data_file));
+                    .start(engine.engine_type_name(), Some(&registration.data_file));
                 let result = self.check_for_update_from_url(&registration);
                 let applied = matches!(result, Ok(AutoUpdateStatus::Success));
                 log_poll(&result);
                 self.inner.callbacks.finish(
-                    engine.data_key(),
+                    engine.engine_type_name(),
                     Some(&registration.data_file),
                     &result,
                     CallbackPanic::Log,
@@ -1078,10 +1078,10 @@ impl ServiceHandle {
             callbacks.report(name, Some(data_file), &result, CallbackPanic::Log);
             return;
         };
-        let key = engine.data_key();
-        callbacks.start(key, Some(data_file));
+        let name = engine.engine_type_name();
+        callbacks.start(name, Some(data_file));
         let result = Self::refresh_from_watched_file(&engine, data_file, stop);
-        callbacks.finish(key, Some(data_file), &result, CallbackPanic::Log);
+        callbacks.finish(name, Some(data_file), &result, CallbackPanic::Log);
     }
 
     /// Refresh `engine` from its watched data file when the file is newer
