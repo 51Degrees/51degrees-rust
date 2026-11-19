@@ -205,8 +205,10 @@ fn a_warning_is_logged_at_warning_level_naming_the_element_type() {
         .build()
         .unwrap();
     let mut data = pipeline.create_flow_data();
-    data.process().unwrap();
+    // A warning is added before processing, because a flow data that has
+    // finished processing is read only.
     data.add_warning("an evidence value from the caller", None);
+    data.process().unwrap();
     assert_eq!(
         logged_about("an evidence value was not used"),
         ["WARN an evidence value was not used (from Warner)"]

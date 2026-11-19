@@ -1284,6 +1284,13 @@ impl NoValueReason {
 /// [`Results::value_as_string`]. The native results hold the data set they
 /// were created from, which a reload of the manager does not change, until
 /// they are freed. Holds an [`Arc`] to its [`Manager`] too.
+///
+/// Reading a value writes into the results, so they are not safe to use from
+/// several threads at once, and the on-premise engines take no lock on them,
+/// as the
+/// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#results-instances)
+/// requires. A caller that shares them across threads coordinates its own
+/// access.
 pub struct Results {
     results: NonNull<sys::ResultsHash>,
     /// The data set the native results hold, in which a name is looked up.

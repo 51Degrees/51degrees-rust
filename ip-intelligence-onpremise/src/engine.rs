@@ -50,7 +50,7 @@ use fiftyone_pipeline_core::{
     FlowElement, PropertyMetaData, PropertyValueType, Result, WeightedValue,
 };
 use fiftyone_pipeline_engines::{
-    AspectEngine, AspectEngineBase, AspectEngineDataFile, AspectPropertyMetaData, EngineDeployment,
+    AspectEngine, AspectEngineDataFile, AspectPropertyMetaData, EngineDeployment,
     MissingPropertySource, OnPremiseAspectEngine,
 };
 use fiftyone_pipeline_engines_fiftyone::{
@@ -140,10 +140,6 @@ const MCC_PROPERTY: &str = "Mcc";
 /// it lives behind an [`ArcSwap`], replaced after the reload without blocking
 /// concurrent requests.
 pub struct IpIntelligenceOnPremiseEngine {
-    /// The reusable engine base. No cache is attached, because each result
-    /// keeps its native results, and the data set they came from, until it is
-    /// dropped.
-    base: AspectEngineBase<IpIntelligenceDataBase>,
     /// The native manager, whose data set a refresh reloads in place as the
     /// C library's reload does, the properties a lookup reads from the data
     /// set it holds and their metadata, replaced together after each reload.
@@ -325,7 +321,6 @@ impl IpIntelligenceOnPremiseEngine {
         let names = Arc::new(BuildNames::new(manager.available_property_names()));
         let (loaded, metadata) = describe(copy, manager, &tier_override, &names)?;
         Ok(IpIntelligenceOnPremiseEngine {
-            base: AspectEngineBase::new(),
             evidence_key_filter,
             loaded: ArcSwap::from_pointee(loaded),
             profile,
@@ -554,7 +549,7 @@ impl IpIntelligenceOnPremiseEngine {
         ip.base_mut()
             .add_missing_property_source(Arc::clone(&loaded.missing));
         Ok(ip.with_reader(LookupReader {
-            results: Mutex::new(results),
+            results,
             client_ip,
             loaded,
         }))
@@ -996,10 +991,10 @@ impl ReadableNames {
 /// Reads the properties of one lookup from its native results when they are
 /// requested.
 struct LookupReader {
-    /// The native results. Reading a value writes into them, so each read
-    /// holds the lock. Declared first, so they are freed before the data set
-    /// they came from.
-    results: Mutex<Results>,
+    /// The native results. Reading a value writes into them, and no lock is
+    /// taken. Declared first, so they are freed before the data set they came
+    /// from.
+    results: Results,
     /// The client IP evidence the lookup read, for [`ADDED_PROPERTIES`].
     client_ip: ClientIpEvidence,
     /// The data set the results came from, with its properties.
@@ -1031,8 +1026,7 @@ impl IpIntelligencePropertyReader for LookupReader {
         };
         let name = &readable.names[position];
         let value_type = readable.value_types[position];
-        let results = self.results.lock().unwrap_or_else(PoisonError::into_inner);
-        populate_property(data, &results, name, index, value_type)
+        populate_property(data, &self.results, name, index, value_type)
             .map_err(|error| error.to_string())
     }
 }
@@ -1206,13 +1200,11 @@ fn parse_bool(text: &str) -> Option<bool> {
 
 impl FlowElement for IpIntelligenceOnPremiseEngine {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        // No cache is attached, so `process_with_cache` simply runs the closure
-        // once. Using the base keeps the process flow identical to the cloud
-        // engine and the rest of the engine layer.
-        self.base
-            .process_with_cache(data, &self.evidence_key_filter, IP_DATA_KEY, |data| {
-                self.lookup(data)
-            })
+        // No results cache, because the result reads a results instance, so
+        // it is not `Sync` and cannot be shared between requests.
+        let produced = self.lookup(data)?;
+        data.get_or_add(IP_DATA_KEY, || produced)?;
+        Ok(())
     }
 
     fn data_key(&self) -> &str {
@@ -1291,6 +1283,27 @@ mod tests {
 
     use fiftyone_pipeline_core::{ElementData, Evidence, Pipeline};
     use fiftyone_pipeline_engines::AspectData;
+
+    /// Implemented twice for a `Sync` type, so naming `check` on one is then
+    /// ambiguous and the test does not build.
+    trait AmbiguousIfSync<A> {
+        fn check() {}
+    }
+
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+
+    impl<T: ?Sized + Sync> AmbiguousIfSync<u8> for T {}
+
+    fn is_send<T: Send>() {}
+
+    /// A lookup's reader is `Send` but not `Sync`, because a results instance is not safe
+    /// to use from several threads at once, so the compiler refuses code that
+    /// shares one across threads.
+    #[test]
+    fn a_lookup_reader_is_send_but_not_sync() {
+        is_send::<LookupReader>();
+        <LookupReader as AmbiguousIfSync<_>>::check();
+    }
 
     /// `file` published a year later, with its first property's description
     /// past the end of the strings, as `tests/metadata.rs` makes it. The data
@@ -1578,6 +1591,76 @@ mod tests {
             .auto_update(false)
             .build()
             .expect("the IP Intelligence data file should build an engine")
+    }
+
+    /// The number of graphs a lookup of `1.1.1.1` through the engine's data
+    /// set leaves unwalked, read after the lookup as the engine's `lookup`
+    /// makes it, and again after `Asn` is read.
+    fn graphs_left_by_a_lookup(engine: &IpIntelligenceOnPremiseEngine) -> (u32, u32) {
+        let loaded = engine.loaded.load_full();
+        let mut results = loaded
+            .manager
+            .create_results()
+            .expect("the results are created");
+        let evidence = Evidence::builder()
+            .add("query.client-ip", "1.1.1.1")
+            .build();
+        results
+            .process_client_ip_evidence(&evidence)
+            .expect("the lookup succeeds");
+        let after_process = results.pending_graph_count();
+        results.read_property("Asn").expect("Asn is read");
+        (after_process, results.pending_graph_count())
+    }
+
+    /// ip-intelligence-on-premise.md line 395 at 51Degrees/specifications
+    /// 706de1f0: "An implementation configured with no names MUST create the
+    /// Engine with no names, and MUST NOT pass the data set's names itself,
+    /// because an Engine created with names walks graphs during `process`
+    /// [...] where one created with no names walks a graph only when a
+    /// Property of it is first read". An engine the builder opens with no
+    /// names has every property of the data file, and its lookup walks no
+    /// graph until a property is read. One opened with names walks every
+    /// graph during the lookup, which is what passing the data set's names
+    /// would do.
+    #[test]
+    fn an_engine_built_with_no_names_walks_no_graph_during_process() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping the graphs a lookup walks");
+            return;
+        };
+        let engine = no_names_engine(&data_file);
+        let file_names: Vec<String> = engine
+            .loaded
+            .load()
+            .manager
+            .data_file_properties()
+            .expect("the data file's properties should be read")
+            .into_iter()
+            .map(|property| property.name)
+            .collect();
+        assert_eq!(engine.populated_property_names(), file_names);
+        let (after_process, after_read) = graphs_left_by_a_lookup(&engine);
+        assert!(
+            after_process > 0,
+            "a lookup through an engine built with no names walks no graph"
+        );
+        assert!(
+            after_read < after_process,
+            "reading a property walks its component's graph"
+        );
+
+        let named = IpIntelligenceOnPremiseEngine::builder(&data_file)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            .properties(file_names.iter().map(String::as_str))
+            .auto_update(false)
+            .build()
+            .expect("the IP Intelligence data file should build an engine");
+        assert_eq!(
+            graphs_left_by_a_lookup(&named),
+            (0, 0),
+            "a lookup through an engine built with names walks every graph"
+        );
     }
 
     /// An engine built with no names keeps the table of the names it was
@@ -2016,7 +2099,7 @@ mod tests {
             .process_client_ip_evidence(&evidence)
             .expect("the address is read");
         LookupReader {
-            results: Mutex::new(results),
+            results,
             client_ip,
             loaded,
         }

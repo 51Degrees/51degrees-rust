@@ -70,7 +70,7 @@ const REFRESH_PANIC: &str = "a refresh that panics";
 
 /// The start of the record logged for a refresh from memory that failed.
 const APPLYING: &str = "ERROR Error during check for data update. An error occurred when \
-                        applying a data update to engine 'failing'.";
+                        applying a data update to engine 'FailingEngine'.";
 
 /// How many times the service tries a refresh from the data file before the
 /// update fails, as the errors table gives it.
@@ -80,7 +80,7 @@ const TRIES: usize = 10;
 /// every try failed.
 const APPLYING_AFTER_TRIES: &str = "ERROR Error during check for data update. An error \
                                     occurred when applying a data update to engine \
-                                    'failing' after 10 tries.";
+                                    'FailingEngine' after 10 tries.";
 
 /// How much older than the file last applied a file put in place is.
 const OLDER: Duration = Duration::from_secs(60);
@@ -88,9 +88,11 @@ const OLDER: Duration = Duration::from_secs(60);
 /// How much newer than it was a file is made to be.
 const NEWER: Duration = Duration::from_secs(60);
 
-/// The start of the record logged for a callback that panicked.
+/// The start of the record logged for a callback that panicked, which names
+/// the engine by its type as the errors table does.
 const PANIC_RECORD: &str =
-    "ERROR An unhandled error occurred while checking for automatic updates for engine 'failing'.";
+    "ERROR An unhandled error occurred while checking for automatic updates for engine \
+     'FailingEngine'.";
 
 /// Log records at warning level or above, as "LEVEL message".
 static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -238,7 +240,7 @@ fn data_file(engine: &Arc<dyn OnPremiseAspectEngine>) -> Arc<AspectEngineDataFil
 fn applying(cause: &str) -> String {
     format!(
         "ERROR Error during check for data update. An error occurred when applying a data \
-         update to engine 'failing'. Error detail: {cause}"
+         update to engine 'FailingEngine'. Error detail: {cause}"
     )
 }
 
@@ -345,7 +347,7 @@ fn a_programmatic_update(dir: &Path) {
         .expect_err("the refresh fails");
     assert_eq!(error.status, AutoUpdateStatus::RefreshFailed);
     assert!(
-        error.message.contains("'failing' after 10 tries."),
+        error.message.contains("'FailingEngine' after 10 tries."),
         "{}",
         error.message
     );
@@ -440,7 +442,7 @@ fn a_download_that_cannot_be_decompressed(dir: &Path) {
         assert!(
             error.message.starts_with(
                 "An unhandled error occurred while checking for automatic updates for \
-                 engine 'failing'."
+                 engine 'FailingEngine'."
             ),
             "{case}: {}",
             error.message
@@ -541,9 +543,9 @@ fn an_update_from_memory() {
     assert_eq!(engine.refreshes.load(Ordering::SeqCst), 2);
 }
 
-/// The update on start-up, which logs the refresh's own record and not the
-/// start-up warning as well.
-fn the_update_on_start_up(refused: &str) {
+/// The update on start-up, which passes the refresh that failed to its caller
+/// and logs nothing, as the errors table says.
+fn the_update_on_start_up() {
     let url = serve(b"new data");
     let (engine, shared) = engine(
         DataFileConfiguration::memory_builder()
@@ -564,7 +566,7 @@ fn the_update_on_start_up(refused: &str) {
         .register(Arc::clone(&shared), data_file(&shared))
         .expect_err("the refresh fails");
     assert_eq!(error.status, AutoUpdateStatus::RefreshFailed);
-    assert_eq!(take(), [refused], "the update on start-up");
+    assert_eq!(take(), Vec::<String>::new(), "the update on start-up");
     assert_eq!(statuses(&reports), [AutoUpdateStatus::RefreshFailed]);
 
     let status = service.check_for_update(&shared, None).unwrap();
@@ -935,7 +937,7 @@ fn a_refresh_that_fails_is_logged_and_reported_as_a_failure() {
     a_programmatic_update_of_a_registered_file(&dir);
     a_programmatic_update_of_data_in_memory();
     an_update_from_memory();
-    the_update_on_start_up(&refused);
+    the_update_on_start_up();
     a_scheduled_poll(&refused);
     a_watched_file(&dir);
     a_watched_file_that_is_not_newer(&dir);

@@ -697,10 +697,10 @@ impl ElementData for Profile {
 
 /// Two matched profiles, the second with no vendor.
 fn matched_profiles() -> ElementDataList {
-    let apple: Arc<dyn ElementData> = Arc::new(Profile {
+    let apple: Arc<dyn ElementData + Sync> = Arc::new(Profile {
         vendor: Some("Apple"),
     });
-    let unknown: Arc<dyn ElementData> = Arc::new(Profile { vendor: None });
+    let unknown: Arc<dyn ElementData + Sync> = Arc::new(Profile { vendor: None });
     ElementDataList::new(vec![apple, unknown])
 }
 
