@@ -99,6 +99,8 @@ Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the
 - API documentation: [docs.rs/fiftyone-pipeline-translation](https://docs.rs/fiftyone-pipeline-translation)
 - The engine specification: [51Degrees/specifications](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/translation-engine.md)
 - Build custom data services with the Pipeline API: [51degrees.com/build-your-own](https://51degrees.com/build-your-own?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-translation-readme.md&utm_term=build-your-own)
+- Device detection: [51degrees.com/device-detection](https://51degrees.com/device-detection?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-translation-readme.md&utm_term=device-detection)
+- IP intelligence: [51degrees.com/ip-intelligence](https://51degrees.com/ip-intelligence?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-translation-readme.md&utm_term=ip-intelligence)
 - Pipeline API documentation: [51degrees.com/documentation](https://51degrees.com/documentation/_pipeline_api__index.html?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-translation-readme.md&utm_term=documentation)
 - About 51Degrees: [51degrees.com](https://51degrees.com/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-translation-readme.md&utm_term=about)
 - Data files and pricing: [51degrees.com/pricing](https://51degrees.com/pricing?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-pipeline-translation-readme.md&utm_term=pricing)

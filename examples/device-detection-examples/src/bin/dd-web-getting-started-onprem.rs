@@ -180,6 +180,10 @@ fn current_warnings() -> Vec<String> {
 /// evidence and response-header tables, and the Lite/stale data-file warnings.
 /// `available` holds the properties the data file carries.
 async fn home(result: FiftyOneResult, available: Arc<Vec<String>>) -> Html<String> {
+    // A flow data is not safe to use from two threads at once. `with` holds
+    // this request's flow data for the closure, which copies what the page
+    // needs into values of its own. Work handed to another thread or task
+    // takes those values, never the flow data.
     let (results_html, evidence_html, headers_html, has_accept_ch) = result.with(|flow_data| {
         let results = flow_data
             .get(DEVICE_DATA_KEY)

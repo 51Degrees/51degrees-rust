@@ -654,3 +654,29 @@ fn a_script_can_be_read_from_a_file() {
 
     std::fs::remove_file(&path).ok();
 }
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let pipeline = pipeline_with(device_data(), ip_data());
+    let mut data = pipeline.create_flow_data();
+    data.process().unwrap();
+    assert!(
+        data.get(DerivedPropertyElement::KEY).is_some(),
+        "no data under '{}'",
+        DerivedPropertyElement::KEY.name()
+    );
+    match data.get_or_add(DerivedPropertyElement::KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            DerivedPropertyElement::KEY.name()
+        ),
+    }
+}

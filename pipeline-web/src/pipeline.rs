@@ -341,7 +341,9 @@ fn order_elements(
 
     // 2. The application's own elements, in their given order, with an added
     // JSON builder immediately before a JavaScript builder the application
-    // gives.
+    // gives. An element that must run last, being usage sharing, is held
+    // back to go after every other element.
+    let mut last = Vec::new();
     for (index, element) in elements.into_iter().enumerate() {
         if Some(index) == given_javascript {
             if let Some(json) = json.take() {
@@ -349,7 +351,11 @@ fn order_elements(
                 resources.push(json);
             }
         }
-        ordered.push(element);
+        if element.must_run_last() {
+            last.push(element);
+        } else {
+            ordered.push(element);
+        }
     }
 
     // 3. Set-headers after the core elements (so it sees their properties),
@@ -368,6 +374,9 @@ fn order_elements(
         ordered.push(javascript.clone());
         resources.push(javascript);
     }
+
+    // 6. Usage sharing last, after every other element.
+    ordered.append(&mut last);
 
     (ordered, resources)
 }
