@@ -202,6 +202,18 @@ pub trait FlowElement: Send + Sync {
         false
     }
 
+    /// True for an element that must be the last flow element in a pipeline
+    /// and outside any parallel group, as the usage sharing element must be.
+    /// Defaults to `false`.
+    ///
+    /// [`crate::PipelineBuilder::build`] refuses a pipeline that puts such an
+    /// element anywhere else, as the
+    /// [usage sharing element specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/usage-sharing-element.md#position-in-the-pipeline)
+    /// requires. An element that wraps another forwards this.
+    fn must_run_last(&self) -> bool {
+        false
+    }
+
     /// The fully qualified name of the element's type, for example
     /// `fiftyone_pipeline_engines_fiftyone::share_usage_element::ShareUsageElement`.
     ///
@@ -286,6 +298,14 @@ mod tests {
             filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
         };
         assert!(!element.adds_evidence());
+    }
+
+    #[test]
+    fn an_element_need_not_run_last_unless_it_says_so() {
+        let element: &dyn FlowElement = &Plain {
+            filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+        };
+        assert!(!element.must_run_last());
     }
 
     #[test]

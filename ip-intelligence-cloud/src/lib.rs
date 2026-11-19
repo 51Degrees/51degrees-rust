@@ -82,7 +82,8 @@
 //! [`ElementData::has_property`](fiftyone_pipeline_core::ElementData::has_property)
 //! answers `false` for such a property, so an element that asks first, such
 //! as Set Headers, can tell it from one the response gave as null. With a
-//! license key alone the granted properties are not listed, so every property
+//! license key alone the property metadata lists what the license key
+//! entitles, but the data has no missing property source, so every property
 //! counts as held.
 //!
 //! # Configuration

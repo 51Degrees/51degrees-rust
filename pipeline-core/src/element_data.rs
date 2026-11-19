@@ -64,9 +64,11 @@ use crate::value::PropertyValue;
 /// with no extra code. A value worked out on first read needs a [`std::sync`]
 /// type such as `Mutex` or `OnceLock`, not a `Cell` or `RefCell`.
 ///
-/// Element data is still written from one thread only, by the element that
-/// adds it. See the
-/// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#element-data).
+/// Element data is written only by the flow element that provides it, or the
+/// flow elements that share it, and only while they process, as the
+/// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#element-data)
+/// requires. [`crate::FlowData::get_or_add`] refuses a write once that
+/// element has finished.
 pub trait ElementData: Any + Send + Sync {
     /// Get a property value by name.
     ///

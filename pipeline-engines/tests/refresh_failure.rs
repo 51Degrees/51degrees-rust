@@ -543,9 +543,9 @@ fn an_update_from_memory() {
     assert_eq!(engine.refreshes.load(Ordering::SeqCst), 2);
 }
 
-/// The update on start-up, which logs the refresh's own record and not the
-/// start-up warning as well.
-fn the_update_on_start_up(refused: &str) {
+/// The update on start-up, which passes the refresh that failed to its caller
+/// and logs nothing, as the errors table says.
+fn the_update_on_start_up() {
     let url = serve(b"new data");
     let (engine, shared) = engine(
         DataFileConfiguration::memory_builder()
@@ -566,7 +566,7 @@ fn the_update_on_start_up(refused: &str) {
         .register(Arc::clone(&shared), data_file(&shared))
         .expect_err("the refresh fails");
     assert_eq!(error.status, AutoUpdateStatus::RefreshFailed);
-    assert_eq!(take(), [refused], "the update on start-up");
+    assert_eq!(take(), Vec::<String>::new(), "the update on start-up");
     assert_eq!(statuses(&reports), [AutoUpdateStatus::RefreshFailed]);
 
     let status = service.check_for_update(&shared, None).unwrap();
@@ -937,7 +937,7 @@ fn a_refresh_that_fails_is_logged_and_reported_as_a_failure() {
     a_programmatic_update_of_a_registered_file(&dir);
     a_programmatic_update_of_data_in_memory();
     an_update_from_memory();
-    the_update_on_start_up(&refused);
+    the_update_on_start_up();
     a_scheduled_poll(&refused);
     a_watched_file(&dir);
     a_watched_file_that_is_not_newer(&dir);

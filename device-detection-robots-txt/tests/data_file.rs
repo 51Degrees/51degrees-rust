@@ -43,7 +43,7 @@ use fiftyone_device_detection_robots_txt::{
 };
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{Evidence, FlowElement, Pipeline};
-use fiftyone_pipeline_engines::AspectEngine;
+use fiftyone_pipeline_engines::{AspectData, AspectEngine};
 use robotstxt::DefaultMatcher;
 use url::Url;
 
@@ -373,4 +373,100 @@ fn a_second_pipeline_needs_the_same_device_detection_engine() {
         .add_element(Arc::clone(&robots) as Arc<dyn FlowElement>)
         .build();
     assert!(result.is_err());
+}
+
+/// The data file `_51DEGREES_DD_PATH` names, or `None` when it names none.
+/// CI names the data file there, so the check that element data is read
+/// only fails rather than skips when the file it names is missing.
+fn named_data_file() -> Option<PathBuf> {
+    let path = crate::deprecated_names::var("_51DEGREES_DD_PATH").ok()?;
+    let path = PathBuf::from(path.trim());
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    assert!(
+        path.is_file(),
+        "{} is missing, but _51DEGREES_DD_PATH names it",
+        path.display()
+    );
+    Some(path)
+}
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let named = named_data_file();
+    let Some(device) = device_engine() else {
+        assert!(
+            named.is_none(),
+            "the data file _51DEGREES_DD_PATH names did not load"
+        );
+        return;
+    };
+    let robots = robots();
+    let pipeline = pipeline(&device, &robots);
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("query.robotstxt.tdl", "https://m4ow.uk/socw/1.txt")
+            .build(),
+    );
+    data.process().expect("the request is processed");
+    assert!(
+        data.get(ROBOTS_TXT_DATA_KEY).is_some(),
+        "no data under '{}'",
+        ROBOTS_TXT_DATA_KEY.name()
+    );
+    match data.get_or_add(ROBOTS_TXT_DATA_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            ROBOTS_TXT_DATA_KEY.name()
+        ),
+    }
+}
+
+/// CI names the data file in `_51DEGREES_DD_PATH`. The check that element
+/// data is read only fails, rather than skips, when the file it names is
+/// missing, so a run without its data file cannot pass the check. The
+/// check runs here in a new process of this test binary, given a name
+/// that is missing.
+#[test]
+fn the_read_only_check_fails_when_the_named_data_file_is_missing() {
+    let test = "its_element_data_is_read_only_once_processed";
+    let missing = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("missing-data-file");
+    let output = std::process::Command::new(std::env::current_exe().expect("the test binary"))
+        .args([test, "--exact"])
+        .env("_51DEGREES_DD_PATH", &missing)
+        .output()
+        .expect("the test binary runs");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains(&format!("test {test} ... FAILED")),
+        "{test} did not fail with _51DEGREES_DD_PATH naming {}, which is missing:\n{text}",
+        missing.display()
+    );
+}
+
+/// The engine stores Aspect Data naming it by its data key, as every Device
+/// Detection Engine must.
+#[test]
+fn the_data_is_aspect_data_naming_the_engine() {
+    let Some(device) = device_engine() else {
+        return;
+    };
+    let robots = robots();
+    let pipeline = pipeline(&device, &robots);
+    let mut data =
+        pipeline.create_flow_data_with(Evidence::builder().add("query.robotstxt.tdl", TDL).build());
+    data.process().expect("the request is processed");
+    let robots = data.get(ROBOTS_TXT_DATA_KEY).expect("the data is written");
+    let aspect: &dyn AspectData = robots;
+    assert_eq!(aspect.engine_keys(), ["robotstxt"]);
+    assert!(!aspect.cache_hit());
 }

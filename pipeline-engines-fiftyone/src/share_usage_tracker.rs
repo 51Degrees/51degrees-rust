@@ -85,19 +85,29 @@ impl ShareUsageTracker {
     /// as it is, if it was. The evidence is the flow data's with the web
     /// request, when a web integration gave one.
     pub fn track(&self, data: &FlowData) -> bool {
-        self.track_evidence(&found_evidence(data.evidence()))
+        self.track_evidence_at(&found_evidence(data.evidence()), Instant::now())
     }
 
     /// [`ShareUsageTracker::track`] for the evidence the usage sharing
-    /// element has already found, so it is not found twice.
-    pub(crate) fn track_evidence(&self, evidence: &Evidence) -> bool {
-        self.track_evidence_at(evidence, Instant::now())
+    /// element has already found, so it is not found twice, with `filter`,
+    /// which knows the element's pipeline, in place of the tracker's own.
+    pub(crate) fn track_evidence_with(
+        &self,
+        evidence: &Evidence,
+        filter: &dyn EvidenceKeyFilter,
+    ) -> bool {
+        self.track_key_at(evidence.generate_key(filter), Instant::now())
     }
 
-    /// [`ShareUsageTracker::track_evidence`] at a given time, so tests can
-    /// step through the interval without waiting.
+    /// [`ShareUsageTracker::track`] at a given time, so tests can step
+    /// through the interval without waiting.
     fn track_evidence_at(&self, evidence: &Evidence, now: Instant) -> bool {
-        let key = evidence.generate_key(self.filter.as_ref());
+        self.track_key_at(evidence.generate_key(self.filter.as_ref()), now)
+    }
+
+    /// Whether evidence giving `key` is shared at `now`, recording the time
+    /// when it is.
+    fn track_key_at(&self, key: DataKey, now: Instant) -> bool {
         // Evidence that produces an empty key (nothing matched the filter) is
         // always shared; there is nothing meaningful to deduplicate on.
         if key.is_empty() {

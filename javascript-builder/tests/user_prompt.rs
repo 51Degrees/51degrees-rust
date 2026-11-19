@@ -403,8 +403,8 @@ fn the_section_waits_for_the_51did_cloud_engine_discovery() {
     assert!(fodid.properties_loaded());
 }
 
-/// A cloud that answers only the evidence keys request, the one discovery
-/// request an engine with a license key alone makes, and refuses the rest.
+/// A cloud that answers only the evidence keys request and refuses the rest,
+/// the accessible properties request included.
 struct EvidenceKeysOnly;
 
 impl CloudHttpClient for EvidenceKeysOnly {
@@ -421,9 +421,9 @@ impl CloudHttpClient for EvidenceKeysOnly {
     }
 }
 
-/// A license key alone gives the 51Did cloud engine no accessible properties,
-/// so a builder with no setting leaves the section out and
-/// `set_user_prompt(true)` keeps it.
+/// A license key alone whose accessible properties request fails gives the
+/// 51Did cloud engine no accessible properties, so a builder with no setting
+/// leaves the section out and `set_user_prompt(true)` keeps it.
 #[test]
 fn a_license_key_alone_leaves_the_section_out_unless_set_user_prompt_keeps_it() {
     let prompts_with =
