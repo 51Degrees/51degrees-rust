@@ -37,8 +37,7 @@
 //! properties.
 //!
 //! So it runs on its own, never in a parallel group, whose elements read the
-//! evidence at the same time. [`FlowElement::adds_evidence`] is `true`, and a
-//! pipeline refuses a group holding it.
+//! evidence at the same time.
 
 use std::any::Any;
 
@@ -215,12 +214,6 @@ impl FlowElement for SequenceElement {
 
     fn properties(&self) -> &[PropertyMetaData] {
         &self.properties
-    }
-
-    /// The session id and sequence go into the evidence, so a pipeline
-    /// refuses a parallel group holding this element.
-    fn adds_evidence(&self) -> bool {
-        true
     }
 }
 

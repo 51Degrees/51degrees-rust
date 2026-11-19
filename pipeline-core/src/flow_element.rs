@@ -78,6 +78,16 @@ pub trait FlowElement: Send + Sync {
     ///
     /// `process` takes `&self` so a single element instance can serve many
     /// concurrent requests.
+    ///
+    /// An element in a parallel group (see
+    /// [`crate::PipelineBuilder::add_parallel_elements`]) must not add
+    /// evidence, as the
+    /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#evidence)
+    /// says, and that is the element's responsibility, because nothing
+    /// checks it. Evidence it adds all the same stays in its own view of the
+    /// flow data and is dropped when the group finishes, because the group
+    /// adds nothing on its members' behalf. So an element that needs evidence
+    /// it adds to outlive the group must not run in a group.
     fn process(&self, data: &mut FlowData) -> Result<()>;
 
     /// The string data key used to store and retrieve this element's data in a
@@ -187,17 +197,15 @@ pub trait FlowElement: Send + Sync {
         false
     }
 
-    /// True if this element adds values to the evidence while it processes,
-    /// with [`FlowData::add_evidence`], as the Sequence element does.
+    /// True if this element adds values to the evidence while it processes.
     /// Defaults to `false`.
     ///
-    /// [`crate::PipelineBuilder::build`] refuses a parallel group holding an
-    /// element that says so, because the other elements of a group read the
-    /// evidence at the same time, as the
+    /// Nothing reads this. An element of a parallel group must not add
+    /// evidence, and that is the element's responsibility, as the
     /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#evidence)
-    /// says. Evidence that an element of a group adds without saying so is
-    /// not added, and the pipeline records a configuration error against the
-    /// element instead. An element that wraps another forwards this.
+    /// says, so a pipeline no longer refuses a group holding an element that
+    /// says it does.
+    #[deprecated(note = "has no effect. A pipeline does not check which elements add evidence.")]
     fn adds_evidence(&self) -> bool {
         false
     }
@@ -293,6 +301,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn an_element_adds_no_evidence_unless_it_says_otherwise() {
         let element: &dyn FlowElement = &Plain {
             filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),

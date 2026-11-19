@@ -21,16 +21,17 @@
  * ********************************************************************* */
 
 //! Evidence an element adds with `FlowData::add_evidence`, read by the
-//! elements after it and by the caller, refused from an element of a parallel
-//! group, and left out of `FlowData::supplied_evidence`.
+//! elements after it and by the caller, dropped when the group finishes from
+//! an element of a parallel group, and left out of
+//! `FlowData::supplied_evidence`.
 
 use std::any::Any;
 use std::sync::Arc;
 
 use fiftyone_pipeline_core::{
-    ElementData, Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData,
-    FlowElement, FlowError, MapElementData, NoValueError, Pipeline, PipelineBuilder,
-    PropertyMetaData, PropertyValue, Result, TypedKey,
+    ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    MapElementData, NoValueError, Pipeline, PipelineBuilder, PropertyMetaData, PropertyValue,
+    Result, TypedKey,
 };
 
 /// Element data holding what an element read from the evidence.
@@ -229,30 +230,12 @@ fn the_caller_can_add_evidence_before_processing() {
     assert_eq!(seen(&data, "reader", "query.added"), "by the caller");
 }
 
-/// The message of an error recorded for evidence an element of a group tried
-/// to add under `key`.
-fn refused(key: &str) -> String {
-    format!(
-        "An element of a parallel group tried to add the evidence '{key}', which was refused, \
-         because the other elements of the group read the evidence at the same time. Add the \
-         element on its own, before the elements that read the value."
-    )
-}
-
-fn configuration_message(error: &FlowError) -> String {
-    match &error.source {
-        Error::PipelineConfiguration { message } => message.clone(),
-        other => panic!("not a configuration error: {other}"),
-    }
-}
-
-/// An element of a group that adds evidence without saying so adds nothing,
-/// so it, the other element of the group and the element after the group all
-/// see the evidence from before the group. The pipeline records a
-/// configuration error against it for each key, in the order it tried them,
-/// and with errors suppressed processing carries on.
+/// An element of a group must not add evidence, and nothing checks it. What
+/// one adds all the same stays in its own view of the flow data, which is
+/// dropped when the group finishes, so every element sees the evidence from
+/// before the group, the flow data keeps it, and no error is recorded.
 #[test]
-fn evidence_an_element_of_a_group_adds_is_refused_with_an_error_for_each_key() {
+fn evidence_an_element_of_a_group_adds_is_dropped_when_the_group_finishes() {
     const NAMES: &[&str] = &["query.added", "query.sequence"];
     let group = [
         element("adder", |data| {
@@ -279,29 +262,13 @@ fn evidence_an_element_of_a_group_adds_is_refused_with_an_error_for_each_key() {
         entries(data.evidence()),
         pairs(&[("header.User-Agent", "test"), ("query.Sequence", "5")])
     );
-    let errors: Vec<(&str, String)> = data
-        .errors()
-        .iter()
-        .map(|error| {
-            (
-                error.element_data_key.as_str(),
-                configuration_message(error),
-            )
-        })
-        .collect();
-    assert_eq!(
-        errors,
-        [
-            ("adder", refused("query.added")),
-            ("adder", refused("QUERY.SEQUENCE")),
-        ]
-    );
+    assert!(data.errors().is_empty(), "{:?}", data.errors());
 }
 
-/// With errors not suppressed, refused evidence fails processing with the
-/// error, once every element has run.
+/// With errors not suppressed, evidence an element of a group adds fails
+/// nothing, and is dropped when the group finishes.
 #[test]
-fn refused_evidence_fails_processing_unless_errors_are_suppressed() {
+fn evidence_an_element_of_a_group_adds_fails_nothing() {
     let pipeline = Pipeline::builder()
         .add_parallel_elements([
             adder("adder", &[("query.added", "1")]),
@@ -312,40 +279,29 @@ fn refused_evidence_fails_processing_unless_errors_are_suppressed() {
         .unwrap();
     let mut data = pipeline.create_flow_data_with(supplied());
 
-    match data.process() {
-        Err(Error::Aggregate(errors)) => {
-            assert_eq!(errors.len(), 1, "{errors:?}");
-            assert_eq!(errors[0].element_data_key, "adder");
-            assert_eq!(configuration_message(&errors[0]), refused("query.added"));
-        }
-        other => panic!("not an aggregate error: {other:?}"),
-    }
+    data.process().unwrap();
     assert_eq!(seen(&data, "after", "query.added"), "absent");
     assert_eq!(data.evidence().get("query.added"), None);
 }
 
-/// A pipeline refuses a group holding an element that says it adds
-/// evidence, wherever it is in the group. The element builds on its own, and
-/// as a group of one, which is the element on its own.
+/// A pipeline builds a group holding an element that says it adds evidence,
+/// wherever it is in the group, because that is the element's
+/// responsibility, and what it added is dropped when the group finishes. The
+/// element builds on its own, and as a group of one, which is the element on
+/// its own, and then the element after it reads what it added.
 #[test]
-fn a_group_holding_an_element_that_adds_evidence_is_refused() {
+fn a_group_holding_an_element_that_adds_evidence_is_built() {
     const ADDED: &[(&str, &str)] = &[("query.added", "1")];
-    const EXPECTED: &str = "An element of a parallel group with the data key 'Adder' adds \
-                            evidence, which the other elements of the group read at the same \
-                            time. Add it on its own, before the elements that read what it adds.";
     for group in [
         vec![declared_adder("Adder", ADDED), reader("other", &[])],
         vec![reader("other", &[]), declared_adder("Adder", ADDED)],
     ] {
-        match Pipeline::builder()
-            .add_parallel_elements(group)
-            .build()
-            .err()
-        {
-            Some(Error::PipelineConfiguration { message }) => assert_eq!(message, EXPECTED),
-            Some(other) => panic!("not a configuration error: {other}"),
-            None => panic!("the pipeline was built"),
-        }
+        let data = process(
+            Pipeline::builder()
+                .add_parallel_elements(group)
+                .add_element(reader("after", &["query.added"])),
+        );
+        assert_eq!(seen(&data, "after", "query.added"), "absent");
     }
 
     for builder in [
