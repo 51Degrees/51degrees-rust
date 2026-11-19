@@ -2204,4 +2204,44 @@ mod tests {
         }
         assert!(seen.iter().all(|seen| *seen), "a slot no accessor passes");
     }
+
+    /// Every plain property the reader gives, as the on-premise engine's
+    /// reader gives it, is also a weighted value holding its value as text
+    /// with the full weighting, read by name and at its typed accessor's
+    /// slot. A property with no value gives the same reason.
+    #[test]
+    fn plain_properties_from_a_reader_are_also_weighted_values() {
+        let (reader, _) = SlotReader::new(&SLOT_NAMES);
+        let data = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME).with_reader(reader);
+        let pairs = |value: AspectPropertyValue<Vec<WeightedValue<String>>>| {
+            value.value().ok().map(|list| {
+                list.iter()
+                    .map(|item| (item.value.clone(), item.raw_weighting))
+                    .collect::<Vec<_>>()
+            })
+        };
+        for (name, expected) in [
+            ("Asn", "AS13335"),
+            ("Areas", "POLYGON((1 2,3 4,5 6,1 2))"),
+            ("Latitude", "51.45"),
+            ("TimeZoneOffset", "60"),
+            ("IsVPN", "False"),
+        ] {
+            let full = Some(vec![(expected.to_owned(), u16::MAX)]);
+            assert_eq!(pairs(data.weighted_string(name)), full, "{name} by name");
+            let slot = crate::TYPED_PROPERTY_NAMES
+                .iter()
+                .position(|typed| *typed == name)
+                .expect("a typed accessor's slot");
+            assert_eq!(
+                pairs(data.weighted_string_at(slot, name)),
+                full,
+                "{name} at its slot"
+            );
+        }
+        assert_eq!(
+            data.weighted_string("AsnName").no_value_message(),
+            Some("no name for this range")
+        );
+    }
 }
