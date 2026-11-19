@@ -30,8 +30,9 @@
 //! interface-compatible.
 
 use std::any::Any;
+use std::cell::UnsafeCell;
+use std::collections::HashMap;
 use std::fmt;
-use std::sync::{Arc, Mutex, PoisonError};
 
 use fiftyone_pipeline_core::{
     ElementData, MapElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType,
@@ -83,7 +84,11 @@ const DATA_TYPE_NAME: &str = "DeviceDataBase";
 /// An on-premise engine gives its [`DeviceDataBase`] a reader rather than a copy
 /// of every value, so a caller that reads one property does not pay to read the
 /// others.
-pub trait DevicePropertyReader: Send + Sync {
+///
+/// A reader is `Send` but need not be `Sync`, because one that reads a results
+/// instance is not safe to use from several threads at once, so the compiler
+/// refuses code that shares one across threads.
+pub trait DevicePropertyReader: Send {
     /// The lowercase names of the properties this reader can read. A property
     /// is identified by its position in this list.
     fn property_names(&self) -> &[String];
@@ -126,8 +131,8 @@ type ReadOutcome = Result<Result<PropertyValue, Option<String>>, String>;
 struct DeferredValues {
     reader: Box<dyn DevicePropertyReader>,
     /// The outcome of each read so far, by position in the reader's names.
-    /// Empty until the first read.
-    read: Mutex<Vec<Option<ReadOutcome>>>,
+    /// Empty until the first read. No lock is taken.
+    read: UnsafeCell<Vec<Option<ReadOutcome>>>,
 }
 
 impl DeferredValues {
@@ -169,22 +174,85 @@ impl DeferredValues {
         if position >= self.reader.property_names().len() {
             return None;
         }
-        let mut read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
-        Some(self.outcome(&mut read, position).clone())
+        // Safety: the values are not `Sync`, so only one thread reaches them,
+        // and no reference into them outlives this call.
+        let read = unsafe { &mut *self.read.get() };
+        Some(self.outcome(read, position).clone())
     }
 
     /// The value of a property, read on its first request, or `None` when the
     /// reader cannot read it.
     fn get(&self, name: &str) -> Option<ReadOutcome> {
         let position = self.readable(name)?;
-        let mut read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
-        Some(self.outcome(&mut read, position).clone())
+        // Safety: the values are not `Sync`, so only one thread reaches them,
+        // and no reference into them outlives this call.
+        let read = unsafe { &mut *self.read.get() };
+        Some(self.outcome(read, position).clone())
     }
 
     /// The lowercase names of every property the reader holds, with or
     /// without a value. Nothing is read.
     fn keys(&self) -> Vec<String> {
         self.reader.property_names().to_vec()
+    }
+}
+
+impl Clone for DeferredValues {
+    /// Read every property the reader holds, so the clone answers from those
+    /// outcomes and shares nothing with this data. A reader is not `Clone`,
+    /// and two values sharing one would not be `Send`.
+    fn clone(&self) -> Self {
+        let names = self.reader.property_names();
+        // Safety: the values are not `Sync`, so only one thread reaches them,
+        // and no reference into them outlives this call.
+        let read = unsafe { &mut *self.read.get() };
+        let outcomes = (0..names.len())
+            .map(|position| self.outcome(read, position).clone())
+            .collect();
+        DeferredValues {
+            reader: Box::new(ReadOutcomes {
+                positions: names
+                    .iter()
+                    .enumerate()
+                    .map(|(position, name)| (name.clone(), position))
+                    .collect(),
+                names: names.to_vec(),
+                typed: self.reader.typed_positions().map(<[_]>::to_vec),
+                outcomes,
+            }),
+            read: UnsafeCell::new(Vec::new()),
+        }
+    }
+}
+
+/// A reader that gives the outcomes another reader gave, for a clone.
+struct ReadOutcomes {
+    names: Vec<String>,
+    positions: HashMap<String, usize>,
+    typed: Option<Vec<Option<usize>>>,
+    outcomes: Vec<ReadOutcome>,
+}
+
+impl DevicePropertyReader for ReadOutcomes {
+    fn property_names(&self) -> &[String] {
+        &self.names
+    }
+
+    fn position(&self, name: &str) -> Option<usize> {
+        self.positions.get(name).copied()
+    }
+
+    fn read_property(&self, position: usize) -> Result<Option<PropertyValue>, String> {
+        self.read_property_with_reason(position)
+            .map(|outcome| outcome.ok())
+    }
+
+    fn read_property_with_reason(&self, position: usize) -> ReadOutcome {
+        self.outcomes[position].clone()
+    }
+
+    fn typed_positions(&self) -> Option<&[Option<usize>]> {
+        self.typed.as_deref()
     }
 }
 
@@ -195,7 +263,9 @@ fn needs_lowercase(name: &str) -> bool {
 
 impl fmt::Debug for DeferredValues {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
+        // Safety: the values are not `Sync`, so only one thread reaches them,
+        // and nothing writes them while this reads.
+        let read = unsafe { &*self.read.get() };
         let read: Vec<(&String, &ReadOutcome)> = self
             .reader
             .property_names()
@@ -292,7 +362,7 @@ pub struct DeviceDataBase {
     /// among the bag's names where it was added.
     no_value_places: Vec<usize>,
     /// The values read on request, when an engine attached a reader.
-    deferred: Option<Arc<DeferredValues>>,
+    deferred: Option<Box<DeferredValues>>,
 }
 
 impl DeviceDataBase {
@@ -319,12 +389,17 @@ impl DeviceDataBase {
     /// Read every property not in the bag from `reader` when it is first
     /// requested, keeping each value once read.
     ///
-    /// A value in the bag takes precedence over the reader's. Reads go through
-    /// a lock, so the data can be shared between threads.
+    /// A value in the bag takes precedence over the reader's. Reads take no
+    /// lock, as the
+    /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#results-instances)
+    /// requires, so the data is not `Sync` and the compiler refuses code that
+    /// shares it across threads. A caller that must share it wraps it in a
+    /// lock of its own. A clone reads every property the reader holds, so it
+    /// shares nothing with the data it was cloned from.
     pub fn with_reader(mut self, reader: impl DevicePropertyReader + 'static) -> Self {
-        self.deferred = Some(Arc::new(DeferredValues {
+        self.deferred = Some(Box::new(DeferredValues {
             reader: Box::new(reader),
-            read: Mutex::new(Vec::new()),
+            read: UnsafeCell::new(Vec::new()),
         }));
         self
     }
@@ -714,6 +789,7 @@ mod tests {
         EngineDeployment, MissingPropertyReason, MissingPropertySource,
     };
     use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn data_key_string_is_device() {
@@ -1242,16 +1318,21 @@ mod tests {
         );
     }
 
+    /// Reads from several threads, each holding a lock of the caller's own
+    /// because the data takes none, agree and read once.
     // WebAssembly has no threads to spawn.
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn reads_from_several_threads_agree_and_read_once() {
         let (reader, reads) = CountingReader::new();
-        let device = Arc::new(DeviceDataBase::new().with_reader(reader));
+        let device = Arc::new(Mutex::new(DeviceDataBase::new().with_reader(reader)));
         let handles: Vec<_> = (0..8)
             .map(|_| {
                 let device = Arc::clone(&device);
-                std::thread::spawn(move || device.platform_name().value().unwrap().clone())
+                std::thread::spawn(move || {
+                    let device = device.lock().unwrap();
+                    device.platform_name().value().unwrap().clone()
+                })
             })
             .collect();
         for handle in handles {
@@ -1368,5 +1449,87 @@ mod tests {
             seen[slot] = true;
         }
         assert!(seen.iter().all(|seen| *seen), "a slot no accessor passes");
+    }
+
+    /// A reader that counts its reads in a `Cell`, so it is `Send` but not
+    /// `Sync`, as a reader over a results instance is.
+    struct CellReader {
+        names: Vec<String>,
+        reads: std::cell::Cell<usize>,
+    }
+
+    impl DevicePropertyReader for CellReader {
+        fn property_names(&self) -> &[String] {
+            &self.names
+        }
+
+        fn position(&self, name: &str) -> Option<usize> {
+            self.names.iter().position(|known| known == name)
+        }
+
+        fn read_property(&self, _position: usize) -> Result<Option<PropertyValue>, String> {
+            self.reads.set(self.reads.get() + 1);
+            Ok(Some(PropertyValue::String("Android".to_owned())))
+        }
+    }
+
+    /// A reader need not be `Sync`, because one that reads a results instance
+    /// is not safe to use from several threads at once.
+    #[test]
+    fn a_reader_that_is_not_sync_backs_device_data() {
+        let device = DeviceDataBase::new().with_reader(CellReader {
+            names: vec!["platformname".to_owned()],
+            reads: std::cell::Cell::new(0),
+        });
+        assert_eq!(device.platform_name().value().unwrap().as_str(), "Android");
+    }
+
+    /// Implemented for every type, and a second time for every `Sync` type,
+    /// so naming the item through it is ambiguous, and fails to compile,
+    /// exactly when the type is `Sync`.
+    trait AmbiguousIfSync<A> {
+        fn check() {}
+    }
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+    struct IsSync;
+    impl<T: ?Sized + Sync> AmbiguousIfSync<IsSync> for T {}
+
+    fn assert_send<T: Send>() {}
+    /// Device data that reads a results instance is not safe to use from
+    /// several threads at once, so it is `Send` but not `Sync`, and the
+    /// compiler refuses code that shares one across threads.
+    #[test]
+    fn it_is_send_but_not_sync() {
+        assert_send::<DeviceDataBase>();
+        <DeviceDataBase as AmbiguousIfSync<_>>::check();
+    }
+
+    /// A clone reads every property the reader holds, once, and answers from
+    /// those outcomes, so it never reads through the reader again.
+    #[test]
+    fn a_clone_reads_every_property_once_and_keeps_the_outcomes() {
+        let (reader, reads) = CountingReader::new();
+        let device = DeviceDataBase::new().with_reader(reader);
+        assert!(*device.is_mobile().value().unwrap());
+        let copy = device.clone();
+        let names = ["ismobile", "platformname", "browsername", "hardwarevendor"];
+        for name in names {
+            assert_eq!(reads_of(&reads, name), 1, "{name}");
+        }
+        let platform = device.get("PlatformName").unwrap();
+        drop(device);
+        assert!(*copy.is_mobile().value().unwrap());
+        assert_eq!(copy.get("platformname").unwrap(), platform);
+        assert_eq!(
+            copy.get("browsername").unwrap_err().message,
+            "No value for property 'browsername'."
+        );
+        assert_eq!(
+            copy.get("hardwarevendor").unwrap_err().message,
+            "the native read failed"
+        );
+        for name in names {
+            assert_eq!(reads_of(&reads, name), 1, "{name}");
+        }
     }
 }

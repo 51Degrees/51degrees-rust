@@ -129,13 +129,14 @@ mod flow_data;
 mod flow_element;
 mod group_threads;
 mod pipeline;
+mod pool;
 mod property;
 pub mod redact;
 mod typed_key;
 mod value;
 mod warning;
 
-pub use element_data::{ElementData, MapElementData};
+pub use element_data::{ElementData, ElementDataSnapshot, MapElementData};
 pub use error::{Error, FlowError, MissingPropertyReason, NoValueError, Result};
 pub use evidence::{
     compare_keys, DataKey, Evidence, EvidenceBuilder, EvidenceEntry, EvidenceKeyFilter,

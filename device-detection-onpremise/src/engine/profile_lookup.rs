@@ -24,8 +24,9 @@
 //! the engine has loaded.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::ptr;
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::sync::Arc;
 
 use fiftyone_device_detection_shared::{DeviceDataBase, DevicePropertyReader, ProfileReader};
 use fiftyone_pipeline_core::{Error, Evidence, Result};
@@ -120,7 +121,9 @@ impl DeviceDetectionOnPremiseEngine {
     /// so the results each id's profile is read from are created with the
     /// ids, before anything is read. Give both to
     /// [`MultiDeviceData::push_profile_ids`](fiftyone_device_detection_shared::MultiDeviceData::push_profile_ids)
-    /// to read the profiles only when they are first asked for.
+    /// to read the profiles only when they are first asked for. The reader
+    /// gives each id's results to the id's first read with one atomic swap,
+    /// so it takes no lock and is safe to share.
     ///
     /// A profile the reader cannot read gives device data holding its id,
     /// whose other properties give the error as the reason they have no
@@ -142,7 +145,10 @@ impl DeviceDetectionOnPremiseEngine {
         let ids = found.iter().map(|(id, _)| *id).collect();
         let reader = LoadedProfiles {
             loaded,
-            results: Mutex::new(found.into_iter().collect()),
+            results: found
+                .into_iter()
+                .map(|(id, results)| (id, TakeOnce::new(results)))
+                .collect(),
             warned: AtomicBool::new(false),
         };
         Ok((ids, Arc::new(reader)))
@@ -212,7 +218,7 @@ fn profile(
         .build();
     results.process_evidence(&evidence)?;
     let mut device = device_data(DetectionReader {
-        results: Mutex::new(results),
+        results,
         loaded: Arc::clone(loaded),
     });
     device.insert(PROFILE_ID_PROPERTY_NAME, id.to_string());
@@ -225,19 +231,16 @@ struct LoadedProfiles {
     loaded: Arc<LoadedDataSet>,
     /// The results to read each id's profile from, created from the data set
     /// the ids were found in, and taken by the id's first read. An id read
-    /// again, or one not found, is read from the data set in use.
-    results: Mutex<HashMap<u32, Results>>,
+    /// again, or one not found, is read from the data set in use. Each is
+    /// taken with one atomic swap, so no lock is taken.
+    results: HashMap<u32, TakeOnce<Results>>,
     /// Set once a profile of this lookup has failed to read.
     warned: AtomicBool,
 }
 
 impl ProfileReader for LoadedProfiles {
     fn read_profile(&self, id: u32) -> DeviceDataBase {
-        let results = self
-            .results
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&id);
+        let results = self.results.get(&id).and_then(TakeOnce::take);
         profile(&self.loaded, results, id).unwrap_or_else(|error| {
             unread_profile(
                 id,
@@ -247,6 +250,34 @@ impl ProfileReader for LoadedProfiles {
                 &self.loaded.missing,
             )
         })
+    }
+}
+
+/// A value that the first of any number of threads to ask takes, with one
+/// atomic swap and no lock. The value must be `Send`, because the thread
+/// that takes it may not be the one that made it.
+struct TakeOnce<T: Send>(AtomicPtr<T>);
+
+impl<T: Send> TakeOnce<T> {
+    fn new(value: T) -> Self {
+        TakeOnce(AtomicPtr::new(Box::into_raw(Box::new(value))))
+    }
+
+    /// The value, for the first call only.
+    fn take(&self) -> Option<T> {
+        let taken = self.0.swap(ptr::null_mut(), Ordering::AcqRel);
+        if taken.is_null() {
+            return None;
+        }
+        // Safety: a pointer that is not null came from `Box::into_raw` in
+        // `new`, and the swap gave it to this call alone.
+        Some(*unsafe { Box::from_raw(taken) })
+    }
+}
+
+impl<T: Send> Drop for TakeOnce<T> {
+    fn drop(&mut self) {
+        drop(self.take());
     }
 }
 
@@ -317,6 +348,42 @@ mod tests {
     use fiftyone_pipeline_engines::EngineDeployment;
 
     use super::*;
+
+    fn is_send_and_sync<T: Send + Sync>() {}
+
+    /// The profile reader of a lookup gives each id's results to one read,
+    /// taken with an atomic swap and no lock, so it is safe to share and is
+    /// `Send` and `Sync`, as a profile reader must be.
+    #[test]
+    fn a_profile_reader_is_send_and_sync() {
+        is_send_and_sync::<LoadedProfiles>();
+    }
+
+    /// A value is taken by exactly one of the threads that try at once.
+    #[test]
+    fn a_value_is_taken_once_whatever_the_threads() {
+        for _ in 0..100 {
+            let once = TakeOnce::new(String::from("results"));
+            let taken: usize = std::thread::scope(|scope| {
+                let tries: Vec<_> = (0..4)
+                    .map(|_| scope.spawn(|| once.take().is_some()))
+                    .collect();
+                tries
+                    .into_iter()
+                    .map(|taker| usize::from(taker.join().unwrap()))
+                    .sum()
+            });
+            assert_eq!(taken, 1);
+        }
+    }
+
+    /// A value never taken is dropped with its holder.
+    #[test]
+    fn a_value_not_taken_is_dropped() {
+        let value = Arc::new(());
+        drop(TakeOnce::new(Arc::clone(&value)));
+        assert_eq!(Arc::strong_count(&value), 1);
+    }
 
     thread_local! {
         /// The records logged on this thread, each as "LEVEL target message".

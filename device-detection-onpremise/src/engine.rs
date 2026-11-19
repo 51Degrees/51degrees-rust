@@ -730,10 +730,7 @@ impl DeviceDetectionOnPremiseEngine {
         let evidence = self.collect_evidence(data);
         results.process_evidence(&evidence)?;
 
-        Ok(DetectionReader {
-            results: Mutex::new(results),
-            loaded,
-        })
+        Ok(DetectionReader { results, loaded })
     }
 
     /// Collect the evidence the engine's filter accepts into a single
@@ -1135,10 +1132,10 @@ impl ReadableProperties {
 /// Reads the properties of one detection from its native results when they are
 /// requested.
 struct DetectionReader {
-    /// The native results. Reading a value writes into them, so each read
-    /// holds the lock. Declared first, so they are freed before the data set
-    /// they came from.
-    results: Mutex<Results>,
+    /// The native results. Reading a value writes into them, and no lock is
+    /// taken. Declared first, so they are freed before the data set they came
+    /// from.
+    results: Results,
     /// The data set snapshot the results came from, which the property indexes
     /// belong to.
     loaded: Arc<LoadedDataSet>,
@@ -1177,10 +1174,10 @@ impl DevicePropertyReader for DetectionReader {
     /// results hold no value that is the reason the C library decides, and
     /// otherwise the reason `no_value_reason` gives.
     fn read_property_with_reason(&self, position: usize) -> ReasonedOutcome {
-        let results = self.results.lock().unwrap_or_else(PoisonError::into_inner);
+        let results = &self.results;
         let (name, value_type, index) = match &self.loaded.readable.properties[position] {
             ReadableProperty::Metric(metric) => {
-                return metric.read(&results).map(|value| value.ok_or(None));
+                return metric.read(results).map(|value| value.ok_or(None));
             }
             ReadableProperty::File {
                 name,
@@ -1522,6 +1519,27 @@ fn record_dates(manager: &Manager, data_file: &AspectEngineDataFile) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Implemented twice for a `Sync` type, so naming `check` on one is then
+    /// ambiguous and the test does not build.
+    trait AmbiguousIfSync<A> {
+        fn check() {}
+    }
+
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+
+    impl<T: ?Sized + Sync> AmbiguousIfSync<u8> for T {}
+
+    fn is_send<T: Send>() {}
+
+    /// A detection's reader is `Send` but not `Sync`, because a results instance is not safe
+    /// to use from several threads at once, so the compiler refuses code that
+    /// shares one across threads.
+    #[test]
+    fn a_detection_reader_is_send_but_not_sync() {
+        is_send::<DetectionReader>();
+        <DetectionReader as AmbiguousIfSync<_>>::check();
+    }
 
     #[test]
     fn the_engine_type_name_is_the_name_of_the_type() {
@@ -1878,13 +1896,7 @@ mod tests {
         let (engine, data) = engine_and_data(&path);
         for metric in Metric::READ_ORDER {
             let reader = engine.detection_reader(&data).expect("detection succeeds");
-            let pending = || {
-                reader
-                    .results
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .pending_graphs()
-            };
+            let pending = || reader.results.pending_graphs();
             let all = pending();
             assert!(all > 1, "a graph for each component: {all}");
             let position = |name: &str| reader.position(name).expect(name);
