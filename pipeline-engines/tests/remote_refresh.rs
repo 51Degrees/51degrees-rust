@@ -452,7 +452,7 @@ fn serve_cut_short() -> (String, std::thread::JoinHandle<()>) {
 fn assert_access_error(error: &fiftyone_pipeline_engines::DataUpdateError, url: &str) {
     let message = &error.message;
     let first_row = format!(
-        "Error accessing data update service at '{url}' for engine 'device'. Error detail: "
+        "Error accessing data update service at '{url}' for engine 'TestEngine'. Error detail: "
     );
     assert_eq!(error.status, AutoUpdateStatus::HttpsError, "{message}");
     assert!(message.starts_with(&first_row), "{message}");

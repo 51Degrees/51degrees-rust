@@ -100,6 +100,57 @@ pub trait FlowElement: Send + Sync {
     /// [advertise-accepted-evidence specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/advertize-accepted-evidence.md).
     /// The pipeline ORs every element's filter together to derive its own
     /// pipeline-wide filter.
+    ///
+    /// The specification says "Every Flow Element MUST declare the Evidence
+    /// it accepts.", so this method has no default, and an element that
+    /// declares no filter does not compile.
+    ///
+    /// ```compile_fail,E0046
+    /// use fiftyone_pipeline_core::{FlowData, FlowElement, PropertyMetaData, Result};
+    ///
+    /// struct DeclaresNothing;
+    ///
+    /// impl FlowElement for DeclaresNothing {
+    ///     fn process(&self, _data: &mut FlowData) -> Result<()> {
+    ///         Ok(())
+    ///     }
+    ///     fn data_key(&self) -> &str {
+    ///         "nothing"
+    ///     }
+    ///     fn properties(&self) -> &[PropertyMetaData] {
+    ///         &[]
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// The same element with its filter declared compiles.
+    ///
+    /// ```
+    /// use fiftyone_pipeline_core::{
+    ///     EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    ///     PropertyMetaData, Result,
+    /// };
+    ///
+    /// struct DeclaresUserAgent(EvidenceKeyFilterWhitelist);
+    ///
+    /// impl FlowElement for DeclaresUserAgent {
+    ///     fn process(&self, _data: &mut FlowData) -> Result<()> {
+    ///         Ok(())
+    ///     }
+    ///     fn data_key(&self) -> &str {
+    ///         "user-agent"
+    ///     }
+    ///     fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+    ///         &self.0
+    ///     }
+    ///     fn properties(&self) -> &[PropertyMetaData] {
+    ///         &[]
+    ///     }
+    /// }
+    ///
+    /// let element = DeclaresUserAgent(EvidenceKeyFilterWhitelist::new(["header.user-agent"]));
+    /// assert!(element.evidence_key_filter().include("header.user-agent"));
+    /// ```
     fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter;
 
     /// True once [`FlowElement::evidence_key_filter`] holds every key this
