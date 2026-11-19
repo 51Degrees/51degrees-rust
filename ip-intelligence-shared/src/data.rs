@@ -53,6 +53,9 @@
 //! [`PropertyValue::KeyValueList`] of records, each holding the raw weighting
 //! (0 to 65,535) under `rawweighting` and the candidate under `value`, which is
 //! how the JSON builder writes them and the cloud service sends them.
+//! Every other property is also read as a weighted value through
+//! [`IpIntelligenceDataBase::weighted_string`], being its value as text with
+//! the full weighting, as the IP Intelligence data model requires.
 //!
 //! Both engines populate the same backing the same way: a plain value is stored
 //! through one of the `set_*` builders (for example
