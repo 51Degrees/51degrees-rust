@@ -35,17 +35,23 @@
 //! `server.request-path` and `query.id.email` are never shared, while
 //! `query.valid.email` is an ordinary query string parameter. Nor is the key
 //! `server.http-request`, under which a web integration gives the web
-//! request, only the values read from it.
+//! request, only the values read from it. Nor is a `cookie.*` key whose name
+//! does not start with `51d_`, so a site's own cookies, its session cookie
+//! among them, are never shared.
+//!
+//! A `query.*` key, which carries a query string or form parameter, is shared
+//! only when the parameter name starts with `51d_` or the key is evidence the
+//! pipeline uses, being a key an element of the pipeline accepts, whatever the
+//! configuration and even when all evidence is shared. A filter on its own
+//! knows no pipeline, so [`EvidenceKeyFilter::include`] shares only `51d_`
+//! parameters, and [`EvidenceKeyFilterShareUsage::include_for`] is given the
+//! pipeline's filter, as usage sharing does for each request.
 //!
 //! Unless all evidence is shared:
 //!
 //! - `header.*` is shared unless the header name is in the blocked list (the
 //!   `cookie` header, which carries every cookie, is always blocked).
-//! - `cookie.*` and `session.*` are shared only when the name starts with
-//!   `51d_`.
-//! - `query.*` is shared only when the parameter name starts with `51d_` or is
-//!   in the configured allow list. With no allow list (`None`) every query
-//!   parameter is shared.
+//! - `session.*` is shared only when the name starts with `51d_`.
 //! - everything else is shared.
 
 use std::borrow::Cow;
@@ -87,6 +93,15 @@ fn is_never_shared(key: &str) -> bool {
     })
 }
 
+/// Accepts no key, for a filter asked without a pipeline.
+struct NoKeys;
+
+impl EvidenceKeyFilter for NoKeys {
+    fn include(&self, _key: &str) -> bool {
+        false
+    }
+}
+
 /// The key in lowercase, borrowed when it is already lowercase ASCII.
 fn lowercase(key: &str) -> Cow<'_, str> {
     if key.bytes().all(|b| b.is_ascii() && !b.is_ascii_uppercase()) {
@@ -109,19 +124,17 @@ pub struct EvidenceKeyFilterShareUsage {
     share_all: bool,
     /// Lower-cased HTTP header names that must never be shared.
     blocked_http_headers: HashSet<String>,
-    /// Lower-cased query parameter names to share. `None` means share all
-    /// query parameters.
-    included_query_string_params: Option<HashSet<String>>,
 }
 
 impl EvidenceKeyFilterShareUsage {
     /// Create a rule-based filter.
     ///
     /// `blocked_http_headers` are header names (any case) that must not be
-    /// shared. The `cookie` header is always added to this set. If
-    /// `included_query_string_params` is `Some`, only those query parameters
-    /// (plus any starting with `51d_`) are shared. If `None`, all query
-    /// parameters are shared.
+    /// shared. The `cookie` header is always added to this set.
+    ///
+    /// `included_query_string_params` is deprecated and has no effect. A
+    /// query string or form parameter is shared only when its name starts
+    /// with `51d_` or the pipeline uses it, as the module documentation says.
     pub fn new<I, S>(blocked_http_headers: I, included_query_string_params: Option<Vec<S>>) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -132,18 +145,12 @@ impl EvidenceKeyFilterShareUsage {
             .map(|h| h.as_ref().to_lowercase())
             .collect();
         blocked.insert(EVIDENCE_HTTPHEADER_COOKIE_SUFFIX.to_lowercase());
-
-        let included = included_query_string_params.map(|params| {
-            params
-                .into_iter()
-                .map(|p| p.as_ref().to_lowercase())
-                .collect::<HashSet<String>>()
-        });
+        // Deprecated, with no effect.
+        drop(included_query_string_params);
 
         EvidenceKeyFilterShareUsage {
             share_all: false,
             blocked_http_headers: blocked,
-            included_query_string_params: included,
         }
     }
 
@@ -152,50 +159,59 @@ impl EvidenceKeyFilterShareUsage {
         EvidenceKeyFilterShareUsage {
             share_all: true,
             blocked_http_headers: HashSet::new(),
-            included_query_string_params: None,
         }
     }
 
+    /// True if `key` is shared in a pipeline whose elements accept the keys
+    /// `used` includes, such as the filter
+    /// [`FlowData::evidence_key_filter`](fiftyone_pipeline_core::FlowData::evidence_key_filter)
+    /// gives. Only a `query.*` key depends on `used`.
+    pub fn include_for(&self, key: &str, used: &dyn EvidenceKeyFilter) -> bool {
+        self.include_inner(key, used)
+    }
+
     /// The core rule, shared by this filter and the tracker filter.
-    fn include_inner(&self, key: &str) -> bool {
+    fn include_inner(&self, key: &str, used: &dyn EvidenceKeyFilter) -> bool {
         let key = lowercase(key);
         if is_never_shared(&key) || key == EVIDENCE_HTTP_REQUEST_KEY {
             return false;
-        }
-        if self.share_all {
-            return true;
         }
 
         let Some((prefix, field)) = key.split_once(EVIDENCE_SEPARATOR) else {
             // No prefix: share by default.
             return true;
         };
-        if prefix.is_empty() {
+        if prefix == EVIDENCE_COOKIE_PREFIX {
+            // Only 51D_ cookies, even when all evidence is shared.
+            return field.starts_with(FIFTYONE_PREFIX);
+        }
+        if prefix == EVIDENCE_QUERY_PREFIX {
+            // Whatever the configuration, even when all evidence is shared.
+            return field.starts_with(FIFTYONE_PREFIX) || used.include(&key);
+        }
+        if self.share_all || prefix.is_empty() {
             return true;
         }
 
         if prefix == EVIDENCE_HTTP_HEADER_PREFIX {
             !self.blocked_http_headers.contains(field)
-        } else if prefix == EVIDENCE_COOKIE_PREFIX || prefix == EVIDENCE_SESSION_PREFIX {
+        } else if prefix == EVIDENCE_SESSION_PREFIX {
             field.starts_with(FIFTYONE_PREFIX)
-        } else if prefix == EVIDENCE_QUERY_PREFIX {
-            match &self.included_query_string_params {
-                None => true,
-                Some(included) => field.starts_with(FIFTYONE_PREFIX) || included.contains(field),
-            }
         } else {
             true
         }
     }
 }
 
+/// Knows no pipeline, so a `query.*` key is included only for a `51d_` name.
+/// See [`EvidenceKeyFilterShareUsage::include_for`].
 impl EvidenceKeyFilter for EvidenceKeyFilterShareUsage {
     fn include(&self, key: &str) -> bool {
-        self.include_inner(key)
+        self.include_inner(key, &NoKeys)
     }
 
     fn order(&self, key: &str) -> Option<i32> {
-        if self.include_inner(key) {
+        if self.include(key) {
             Some(100)
         } else {
             None
@@ -209,28 +225,62 @@ impl EvidenceKeyFilter for EvidenceKeyFilterShareUsage {
 /// and sequence evidence. Those values are unique per request (the sequence
 /// element makes the session id unique and increments the sequence), so
 /// including them in the dedup key would make every request look unique and
-/// defeat the repeat-evidence suppression.
+/// defeat the repeat-evidence suppression. With track session on it also
+/// includes the session cookie, which the wrapped filter does not share
+/// unless its name starts with `51D_`.
 #[derive(Debug, Clone)]
 pub struct EvidenceKeyFilterShareUsageTracker {
     inner: EvidenceKeyFilterShareUsage,
+    /// The lower-cased key of the session cookie track session compares.
+    session_cookie_key: Option<String>,
 }
 
 impl EvidenceKeyFilterShareUsageTracker {
     /// Wrap a share-usage filter for tracker use.
     pub fn new(inner: EvidenceKeyFilterShareUsage) -> Self {
-        EvidenceKeyFilterShareUsageTracker { inner }
+        EvidenceKeyFilterShareUsageTracker {
+            inner,
+            session_cookie_key: None,
+        }
     }
-}
 
-impl EvidenceKeyFilter for EvidenceKeyFilterShareUsageTracker {
-    fn include(&self, key: &str) -> bool {
+    /// Include the cookie with this name, in any case, as track session
+    /// compares it. Returns `self` for chaining.
+    pub fn with_session_cookie(mut self, name: &str) -> Self {
+        self.session_cookie_key = Some(format!(
+            "{EVIDENCE_COOKIE_PREFIX}{EVIDENCE_SEPARATOR}{}",
+            name.to_lowercase()
+        ));
+        self
+    }
+
+    /// True for the session cookie track session compares.
+    fn is_session_cookie(&self, key: &str) -> bool {
+        self.session_cookie_key.as_deref() == Some(lowercase(key).as_ref())
+    }
+
+    /// True if `key` forms the tracker's key in a pipeline whose elements
+    /// accept the keys `used` includes, as
+    /// [`EvidenceKeyFilterShareUsage::include_for`] says.
+    pub fn include_for(&self, key: &str, used: &dyn EvidenceKeyFilter) -> bool {
         if key == EVIDENCE_SESSIONID || key == EVIDENCE_SEQUENCE {
             return false;
         }
-        self.inner.include(key)
+        self.is_session_cookie(key) || self.inner.include_for(key, used)
+    }
+}
+
+/// Knows no pipeline, so a `query.*` key is included only for a `51d_` name.
+/// See [`EvidenceKeyFilterShareUsageTracker::include_for`].
+impl EvidenceKeyFilter for EvidenceKeyFilterShareUsageTracker {
+    fn include(&self, key: &str) -> bool {
+        self.include_for(key, &NoKeys)
     }
 
     fn order(&self, key: &str) -> Option<i32> {
+        if self.is_session_cookie(key) {
+            return Some(100);
+        }
         if key == EVIDENCE_SESSIONID || key == EVIDENCE_SEQUENCE {
             return None;
         }
@@ -240,7 +290,14 @@ impl EvidenceKeyFilter for EvidenceKeyFilterShareUsageTracker {
 
 #[cfg(test)]
 mod tests {
+    use fiftyone_pipeline_core::EvidenceKeyFilterWhitelist;
+
     use super::*;
+
+    /// A pipeline's filter that accepts `keys`.
+    fn used<const N: usize>(keys: [&str; N]) -> EvidenceKeyFilterWhitelist {
+        EvidenceKeyFilterWhitelist::new(keys)
+    }
 
     #[test]
     fn the_web_request_key_is_never_shared() {
@@ -251,7 +308,7 @@ mod tests {
             assert!(!filter.include("server.http-request"));
             assert!(!filter.include("Server.HTTP-Request"));
             assert!(filter.include("server.http-requests"));
-            assert!(filter.include("query.http-request"));
+            assert!(filter.include_for("query.http-request", &used(["query.http-request"])));
         }
     }
 
@@ -275,21 +332,46 @@ mod tests {
     fn query_allow_list_and_fiftyone_prefix() {
         let filter = EvidenceKeyFilterShareUsage::new(Vec::<&str>::new(), Some(vec!["myparam"]));
         assert!(filter.include("query.51d_something"));
-        assert!(filter.include("query.myparam"));
+        // The allow list has no effect, and a parameter the pipeline uses is
+        // shared.
+        assert!(!filter.include("query.myparam"));
+        assert!(filter.include_for("query.myparam", &used(["query.myparam"])));
         assert!(!filter.include("query.other"));
     }
 
     #[test]
     fn null_query_list_shares_all_query() {
         let filter = EvidenceKeyFilterShareUsage::new(Vec::<&str>::new(), None::<Vec<&str>>);
-        assert!(filter.include("query.anything"));
+        // No list has no effect either, so only a parameter the pipeline uses
+        // is shared.
+        assert!(!filter.include("query.anything"));
+        assert!(filter.include_for("query.anything", &used(["query.anything"])));
     }
 
     #[test]
     fn share_all_includes_every_key_but_those_never_shared() {
         let filter = EvidenceKeyFilterShareUsage::share_all();
-        assert!(filter.include("cookie.sessionid"));
-        assert!(filter.include("query.other"));
+        assert!(filter.include("cookie.51d_profile"));
+        // Even when all evidence is shared, only a parameter the pipeline
+        // uses or with a 51D_ name.
+        assert!(!filter.include("query.other"));
+        assert!(filter.include_for("query.other", &used(["query.other"])));
+        assert!(filter.include("session.other"));
+    }
+
+    /// usage-sharing-element.md: a cookie whose name does not start with
+    /// `51D_` is never shared, even when all evidence is shared.
+    #[test]
+    fn no_cookie_but_51d_ones_is_shared_even_when_all_evidence_is() {
+        for (name, filter) in both_filters() {
+            for key in spellings("cookie.sessionid") {
+                assert!(!filter.include(&key), "{name}: {key} shared");
+                assert_eq!(filter.order(&key), None, "{name}: {key}");
+            }
+            for key in spellings("cookie.51d_profile") {
+                assert!(filter.include(&key), "{name}: {key} not shared");
+            }
+        }
     }
 
     /// The keys never shared, bare and after a prefix.
@@ -357,7 +439,9 @@ mod tests {
                 "server.my-request-path",
                 "header.x-request-query-id",
             ] {
-                assert!(filter.include(key), "{name}: {key} not shared");
+                // Each query parameter is one the pipeline uses.
+                let uses = used([key]);
+                assert!(filter.include_for(key, &uses), "{name}: {key} not shared");
             }
         }
     }
@@ -397,7 +481,8 @@ mod tests {
         let filter = EvidenceKeyFilterShareUsage::new(["Referer"], Some(vec!["MyParam"]));
         assert!(!filter.include("HEADER.REFERER"));
         assert!(filter.include("Header.User-Agent"));
-        assert!(filter.include("Query.MYPARAM"));
+        assert!(!filter.include("Query.MYPARAM"));
+        assert!(filter.include_for("Query.MYPARAM", &used(["query.myparam"])));
         assert!(filter.include("QUERY.51D_Other"));
         assert!(!filter.include("Query.Other"));
         assert!(filter.include("Cookie.51D_Profile"));

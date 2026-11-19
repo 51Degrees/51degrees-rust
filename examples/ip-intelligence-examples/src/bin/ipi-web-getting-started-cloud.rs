@@ -200,6 +200,10 @@ async fn home(
 ) -> Html<String> {
     // Read every displayed property, the coordinates and the evidence while the
     // flow data is briefly locked, then build the HTML outside the lock.
+    // A flow data is not safe to use from two threads at once. `with` holds
+    // this request's flow data for the closure, which copies what the page
+    // needs into values of its own. Work handed to another thread or task
+    // takes those values, never the flow data.
     let (results_html, coordinates_pair, evidence_html, evidence_ip) = result.with(|flow_data| {
         let (results, coords) = flow_data
             .get(IP_DATA_KEY)
@@ -262,10 +266,19 @@ async fn home(
 
 fn main() -> anyhow::Result<()> {
     // The resource key is read from `_51DEGREES_RESOURCE_KEY` or the CI names.
-    let resource_key = examples_shared::resource_key_from_env().context(
-        "no 51Degrees cloud resource key found. Set _51DEGREES_RESOURCE_KEY to a key from \
-         https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-cloud.rs&utm_term=resource-key-required and run again.",
-    )?;
+    // Without one, say how to get a key and end without starting the server.
+    let Some(resource_key) = examples_shared::resource_key_from_env() else {
+        eprintln!(
+            "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
+             variable to run this web example. The 51Degrees cloud service is accessed \
+             using a resource key, which you can create for free at https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-cloud.rs&utm_term=resource-key-required."
+        );
+        examples_shared::print_find_out_more(
+            web_support::FIND_OUT_MORE,
+            examples_shared::CLOUD_REPOSITORIES,
+        );
+        return Ok(());
+    };
 
     // A fixed local port for the runnable binary; override with PORT if taken.
     let port: u16 = std::env::var("PORT")

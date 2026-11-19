@@ -127,6 +127,35 @@ jobs:
         if: steps.plan.outputs.count != '0'
         shell: pwsh
         run: ./ci/record-derived-properties-commit.ps1
+      # The examples' tests read the free data files, which come from the
+      # Actions cache data-files.yml keeps. Only a file the cache lacks is
+      # downloaded.
+      - name: Restore the data files
+        id: data
+        if: steps.plan.outputs.count != '0'
+        uses: ./.github/actions/restore-data-files
+      - name: Download any data file not restored
+        if: steps.plan.outputs.count != '0'
+        continue-on-error: true
+        shell: pwsh
+        env:
+          DATA_FILES: ${{ steps.data.outputs.paths }}
+        run: |
+          $names = $env:DATA_FILES.Trim() -split '\r?\n' |
+            ForEach-Object { Split-Path -Leaf $_.Trim() }
+          ./cxx/data/get-data-files.ps1 @names
+      - name: Check the data files
+        if: steps.plan.outputs.count != '0'
+        shell: bash
+        env:
+          DATA_FILES: ${{ steps.data.outputs.paths }}
+        run: |
+          while IFS= read -r file; do
+            if [ -n "$file" ] && [ ! -f "$file" ]; then
+              echo "::error::$file was neither restored nor downloaded"
+              exit 1
+            fi
+          done <<< "$DATA_FILES"
       # The examples are built and tested against this tree's crates, as the
       # other languages test their examples against the package they are
       # about to publish. The script gives every crate a version above every
@@ -182,10 +211,54 @@ jobs:
       run:
         working-directory: examples
     steps:
+      # The data repository inside cxx lists the free data files, which the
+      # on-premise examples' tests skip without.
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
+      - name: Restore the data files
+        id: data
+        uses: ./.github/actions/restore-data-files
+      - name: Download any data file not restored
+        continue-on-error: true
+        shell: pwsh
+        working-directory: .
+        env:
+          DATA_FILES: ${{ steps.data.outputs.paths }}
+        run: |
+          $names = $env:DATA_FILES.Trim() -split '\r?\n' |
+            ForEach-Object { Split-Path -Leaf $_.Trim() }
+          ./cxx/data/get-data-files.ps1 @names
+      - name: Check the data files
+        shell: bash
+        working-directory: .
+        env:
+          DATA_FILES: ${{ steps.data.outputs.paths }}
+        run: |
+          while IFS= read -r file; do
+            if [ -n "$file" ] && [ ! -f "$file" ]; then
+              echo "::error::$file is missing, so the on-premise examples' tests would skip"
+              exit 1
+            fi
+          done <<< "$DATA_FILES"
+      # A fresh clone builds the examples with the lock this commit holds,
+      # which names the crates of an earlier release until the nightly
+      # package update moves it.
+      - name: Test the examples with the committed lock, as a fresh clone does
+        run: cargo test --locked
+      # Each example that needs no key also runs as a program, as the run
+      # against this tree's crates does, so a main that fails against the
+      # published crates is found.
+      - name: Run the examples that need no key against the published crates
+        working-directory: .
+        shell: pwsh
+        run: ./ci/run-examples-on-free-data.ps1 -Published
       # Give the crates.io index a moment to serve the just-published versions,
       # then resolve them and run the examples' tests against the real packages.
-      - run: sleep 90
-      - run: cargo update
-      - run: cargo test
+      - name: Test the examples with the crates just published
+        if: ${{ !cancelled() }}
+        run: |
+          sleep 90
+          cargo update
+          cargo test

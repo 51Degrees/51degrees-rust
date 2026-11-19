@@ -1722,6 +1722,35 @@ fn a_text_mixing_the_two_alphabets_is_refused() {
     }
 }
 
+/// A character outside both alphabets inside the text is refused, as is
+/// white space there. Each replaces one character of a text that reads, so
+/// the length stays the same and only the character can be the reason.
+#[test]
+fn a_character_outside_the_alphabet_inside_the_text_is_refused() {
+    let fixture = Fixture::new();
+    for clean in [
+        fixture.signed_owid_base64(canonical_payload()),
+        fixture
+            .signed_owid_base64(canonical_payload())
+            .replace('+', "-")
+            .replace('/', "_")
+            .trim_end_matches('=')
+            .to_owned(),
+    ] {
+        assert_eq!(status_of(&FodId::from_base64(&clean)), Status::Parsed);
+        let middle = clean.len() / 2;
+        for outside in ['*', '.', '!', '%', '~', '?', ' ', '\t', '\n'] {
+            let mut text = clean.clone();
+            text.replace_range(middle..=middle, &outside.to_string());
+            assert_eq!(
+                status_of(&FodId::from_base64(&text)),
+                Status::Owid(ParseStatus::InvalidBase64),
+                "{outside:?} at {middle} of {clean}"
+            );
+        }
+    }
+}
+
 #[test]
 fn as_base64_url_round_trips_and_carries_no_padding_or_standard_symbols() {
     let fixture = Fixture::new();

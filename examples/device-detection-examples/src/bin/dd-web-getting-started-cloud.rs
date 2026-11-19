@@ -185,6 +185,10 @@ pub fn run(options: Options) -> anyhow::Result<()> {
 async fn home(result: FiftyOneResult) -> Html<String> {
     // Read every displayed property and the evidence/response-header tables while
     // the flow data is briefly locked, then build the HTML outside the lock.
+    // A flow data is not safe to use from two threads at once. `with` holds
+    // this request's flow data for the closure, which copies what the page
+    // needs into values of its own. Work handed to another thread or task
+    // takes those values, never the flow data.
     let (results_html, evidence_html, headers_html, has_accept_ch) = result.with(|flow_data| {
         let results = flow_data
             .get(DEVICE_DATA_KEY)
@@ -241,10 +245,19 @@ async fn home(result: FiftyOneResult) -> Html<String> {
 
 fn main() -> anyhow::Result<()> {
     // The resource key is read from `_51DEGREES_RESOURCE_KEY` or the CI names.
-    let resource_key = examples_shared::resource_key_from_env().context(
-        "no 51Degrees cloud resource key found. Set _51DEGREES_RESOURCE_KEY to a key from \
-         https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=resource-key-required and run again.",
-    )?;
+    // Without one, say how to get a key and end without starting the server.
+    let Some(resource_key) = examples_shared::resource_key_from_env() else {
+        eprintln!(
+            "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
+             variable to run this web example. The 51Degrees cloud service is accessed \
+             using a resource key, which you can create for free at https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=resource-key-required."
+        );
+        examples_shared::print_find_out_more(
+            web_support::FIND_OUT_MORE,
+            examples_shared::CLOUD_REPOSITORIES,
+        );
+        return Ok(());
+    };
 
     // A fixed local port for the runnable binary; override with PORT if taken.
     let port: u16 = std::env::var("PORT")

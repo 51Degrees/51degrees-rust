@@ -403,9 +403,12 @@ submodule is checked out and from that file otherwise.
 - `data-files.yml` runs each day on `main` and keeps the free data files in
   one Actions cache entry. It restores the newest entry, asks the Distributor
   only whether each file has changed (`-Update`), and saves the files under a
-  new dated key. `pull-request.yml`, `examples.yml` and
-  `nightly-performance.yml` restore that entry through
-  `.github/actions/restore-data-files`. They leave the daily entry to
+  new dated key. `pull-request.yml`, `examples.yml`,
+  `nightly-performance.yml`, `dotnet-comparison.yml` and both jobs of
+  `publish.yml` restore that entry through
+  `.github/actions/restore-data-files`, and download only a file the entry
+  lacks, so no job downloads the free data files while the entry holds them.
+  They leave the daily entry to
   `data-files.yml`, because an entry saved by a pull request run can only be
   restored by that pull request. Until a daily entry
   exists, the action falls back to an entry keyed by the ref, the workflow
@@ -428,7 +431,17 @@ submodule is checked out and from that file otherwise.
   `ci/fetch-assets.ps1` once before the builds and keeps the Lite and ASN
   files it fetches in the Actions cache. Each build runs the script again,
   which takes the files from that cache through common-ci's
-  `steps/fetch-assets.ps1` and copies them into `cxx/data`.
+  `steps/fetch-assets.ps1` and copies them into `cxx/data`. Beside the
+  submodule update, common-ci's package update runs `ci/update-packages.ps1`,
+  which moves this repository's crates in the examples' lock to their latest
+  versions on crates.io, and
+  raises a pull request into `rc` when it moved, so a fresh clone builds the
+  examples with the crates last released. The check of the examples against
+  the published crates, run by hand in `examples.yml` and after each release
+  in `publish.yml`, tests them first with the committed lock, as a fresh
+  clone does, and runs every example that needs no key as a program against
+  those crates with `ci/run-examples-on-free-data.ps1 -Published`, then
+  tests them with the latest crates, and reads the free data files.
 - `caching-wasm.yml` lints and tests `fiftyone-caching`, the loading cache
   included, on wasm32-wasip1 under wasmtime and, with default features off,
   on wasm32-unknown-unknown under Node through `ci/run-wasm-unknown.mjs`.
@@ -439,10 +452,22 @@ submodule is checked out and from that file otherwise.
   tests the crate on wasm32-wasip2 under wasmtime. Same triggers, and it
   reads no secrets.
 - `examples.yml` builds and tests `examples/` against local source
-  (`source.toml`) before a release. Its contract job builds the two device
+  (`source.toml`) before a release. It then runs every example that needs no
+  key as a fresh clone would, with no settings, through
+  `ci/run-examples-on-free-data.ps1`, which lists them. The same script
+  runs every cloud example with no key, the web examples and the 51Did demo
+  included, where each must give the link to create one and exit 0 without
+  starting a server, and a step before it runs the cloud examples'
+  ignored tests against the cloud service with the workflow's resource key.
+  The `usage-sharing`
+  example is not in that list, because it sends to the usage sharing service
+  when it ends. Its contract job builds the two device
   detection web examples the same way, through
   `ci/test-examples-against-source.ps1`, and runs the browser contract
-  against them. Runs on every PR.
+  against them. Before the tests, `ci/start-browsers-once.ps1` starts one
+  session in Chrome and one in Firefox through the drivers the suite uses,
+  because the first session of a browser on a fresh runner can take longer
+  than the suite allows one WebDriver command. Runs on every PR.
 - `publish.yml` publishes the crates that changed on push to `main`, then a
   `verify-published` job builds and tests `examples/` against the
   just-released crates.io packages. That job runs whenever a crate is tagged
@@ -457,6 +482,12 @@ submodule is checked out and from that file otherwise.
   `javascript-builder/assets` differs from the `javascript-templates`
   submodule, on every PR that touches either and on every push to `main` and
   `rc`.
+- `fodid-demo-page.yml` opens the 51Did creator context demo's page in
+  headless Chrome on its two routes with `ci/check-51did-demo-page.ps1`, and
+  fails unless an identifier is created and its signature and creator context
+  verify. The demo is built from this checkout's crates and calls the public
+  cloud with a resource key and a licence key that carry 51Did. Runs on pull
+  requests that change the demo or the check.
 - `dotnet-comparison.yml` runs the crates and the published .NET packages
   over the corpus in `parity/` and fails on any difference that
   `parity/allowed-differences.json` does not list with its reason. See

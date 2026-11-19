@@ -30,6 +30,7 @@
 
 use std::any::Any;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, ThreadId};
 
@@ -730,4 +731,273 @@ async fn accept_ch(use_set_header_properties: bool) -> Option<String> {
 async fn the_set_headers_output_is_written_only_with_the_option_on() {
     assert_eq!(accept_ch(true).await.as_deref(), Some("Sec-CH-UA"));
     assert_eq!(accept_ch(false).await, None);
+}
+
+// ----------------------------------------------------------------------------
+// A matching If-None-Match is answered before the pipeline processes it.
+// ----------------------------------------------------------------------------
+
+/// Counts the requests it processes and fails each one while `failing` is
+/// set. It accepts the `User-Agent` header, so the `ETag` and `Vary` cover it.
+struct CountingElement {
+    processed: AtomicUsize,
+    failing: AtomicBool,
+    filter: EvidenceKeyFilterWhitelist,
+}
+
+impl CountingElement {
+    fn new() -> Self {
+        CountingElement {
+            processed: AtomicUsize::new(0),
+            failing: AtomicBool::new(false),
+            filter: EvidenceKeyFilterWhitelist::new(["header.user-agent"]),
+        }
+    }
+
+    fn processed(&self) -> usize {
+        self.processed.load(Ordering::SeqCst)
+    }
+}
+
+impl FlowElement for CountingElement {
+    fn process(&self, _data: &mut FlowData) -> Result<()> {
+        self.processed.fetch_add(1, Ordering::SeqCst);
+        if self.failing.load(Ordering::SeqCst) {
+            return Err(fiftyone_pipeline_core::Error::CloudRequest {
+                status_code: 0,
+                retry_after_seconds: None,
+                message: "the request timed out".to_owned(),
+            });
+        }
+        Ok(())
+    }
+    fn data_key(&self) -> &str {
+        "counting"
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        &self.filter
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        &[]
+    }
+}
+
+/// A router over a web pipeline holding `counting`, to which `WebPipeline`
+/// adds the sequence, set-headers and builder elements.
+fn counting_app(counting: &Arc<CountingElement>) -> Router {
+    let elements: Vec<Arc<dyn FlowElement>> = vec![counting.clone()];
+    let web = WebPipeline::build(elements, WebIntegrationOptions::default())
+        .expect("web pipeline builds");
+    register(Router::new(), FiftyOneState::from_web_pipeline(&web))
+}
+
+/// A `GET` of the JavaScript endpoint, with `If-None-Match` when given.
+fn get_javascript(if_none_match: Option<&str>) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method("GET")
+        .uri("/51Degrees.core.js?session-id=abc")
+        .header("host", "localhost")
+        .header("user-agent", "Mozilla/5.0 (test)");
+    if let Some(tag) = if_none_match {
+        builder = builder.header("if-none-match", tag);
+    }
+    builder.body(Body::empty()).unwrap()
+}
+
+/// A `POST` to the JSON endpoint, with `If-None-Match` when given.
+fn post_json(if_none_match: Option<&str>) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri("/51dpipeline/json")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .header("host", "localhost")
+        .header("user-agent", "Mozilla/5.0 (test)");
+    if let Some(tag) = if_none_match {
+        builder = builder.header("if-none-match", tag);
+    }
+    builder
+        .body(Body::from("session-id=abc&sequence=1"))
+        .unwrap()
+}
+
+/// The web integration specification says the endpoint compares
+/// `If-None-Match` with the `ETag` before the pipeline processes the request,
+/// and must not process a request whose `If-None-Match` matches. So the
+/// JavaScript endpoint's `304` and the JSON endpoint's `412` are given with
+/// the pipeline's elements not run again.
+#[tokio::test]
+async fn a_matching_if_none_match_is_answered_without_processing() {
+    let counting = Arc::new(CountingElement::new());
+    let app = counting_app(&counting);
+
+    let first = app.clone().oneshot(get_javascript(None)).await.unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(counting.processed(), 1);
+    let etag = header(&first, "etag").expect("the 200 has an ETag");
+
+    let second = app
+        .clone()
+        .oneshot(get_javascript(Some(&etag)))
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        counting.processed(),
+        1,
+        "the GET revalidation was processed"
+    );
+
+    let third = app.clone().oneshot(post_json(None)).await.unwrap();
+    assert_eq!(third.status(), StatusCode::OK);
+    assert_eq!(counting.processed(), 2);
+    let etag = header(&third, "etag").expect("the 200 has an ETag");
+
+    let fourth = app.oneshot(post_json(Some(&etag))).await.unwrap();
+    assert_eq!(fourth.status(), StatusCode::PRECONDITION_FAILED);
+    assert_eq!(
+        counting.processed(),
+        2,
+        "the POST revalidation was processed"
+    );
+}
+
+/// A browser that holds a good response keeps it through an outage. Its
+/// revalidation is not processed, so the `304` carries the `Cache-Control`,
+/// `Vary` and `ETag` a `200` carries when processing records no errors, as
+/// the web integration specification says.
+#[tokio::test]
+async fn a_304_during_an_outage_keeps_the_etag_and_max_age() {
+    let counting = Arc::new(CountingElement::new());
+    let app = counting_app(&counting);
+
+    let good = app.clone().oneshot(get_javascript(None)).await.unwrap();
+    assert_eq!(good.status(), StatusCode::OK);
+    let etag = header(&good, "etag").expect("the good 200 has an ETag");
+    assert!(header(&good, "vary").is_some());
+
+    counting.failing.store(true, Ordering::SeqCst);
+    let failed = app.clone().oneshot(get_javascript(None)).await.unwrap();
+    assert_eq!(failed.status(), StatusCode::OK);
+    assert_eq!(
+        header(&failed, "cache-control").as_deref(),
+        Some("private, no-cache"),
+        "processing is failing"
+    );
+    assert_eq!(header(&failed, "etag"), None);
+
+    let during = app.oneshot(get_javascript(Some(&etag))).await.unwrap();
+    assert_eq!(during.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        header(&during, "cache-control").as_deref(),
+        Some("private, max-age=1800")
+    );
+    assert_eq!(header(&during, "etag"), Some(etag));
+    assert_eq!(header(&during, "vary"), header(&good, "vary"));
+}
+
+// ----------------------------------------------------------------------------
+// The endpoints' paths and the JSON they serve.
+// ----------------------------------------------------------------------------
+
+/// Send one request with no body to the router. A `POST` carries the form
+/// content type the client-side script sends.
+async fn send(app: &Router, method: &str, uri: &str) -> axum::response::Response {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("host", "localhost")
+        .header("user-agent", "test-agent");
+    if method == "POST" {
+        request = request.header("content-type", "application/x-www-form-urlencoded");
+    }
+    app.clone()
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+/// The two endpoints are served from the paths the options give, and the
+/// default paths are then left to the application.
+#[tokio::test]
+async fn the_endpoints_are_served_from_the_paths_the_options_give() {
+    let elements: Vec<Arc<dyn FlowElement>> = vec![Arc::new(HintsElement::new())];
+    let options = WebIntegrationOptions {
+        javascript_endpoint: "/assets/fod.js".to_owned(),
+        json_endpoint: "/api/fod.json".to_owned(),
+        ..WebIntegrationOptions::default()
+    };
+    let web = WebPipeline::build(elements, options).expect("web pipeline builds");
+    let app = register(Router::new(), FiftyOneState::from_web_pipeline(&web));
+
+    let javascript = send(&app, "GET", "/assets/fod.js").await;
+    assert_eq!(javascript.status(), StatusCode::OK);
+    assert_eq!(
+        header(&javascript, "content-type").as_deref(),
+        Some("application/x-javascript")
+    );
+    let json = send(&app, "POST", "/api/fod.json").await;
+    assert_eq!(json.status(), StatusCode::OK);
+    assert_eq!(
+        header(&json, "content-type").as_deref(),
+        Some("application/json")
+    );
+    for (method, path) in [("GET", "/51Degrees.core.js"), ("POST", "/51dpipeline/json")] {
+        assert_eq!(
+            send(&app, method, path).await.status(),
+            StatusCode::NOT_FOUND,
+            "{method} {path} reaches the application, which has no such route"
+        );
+    }
+}
+
+/// The JSON endpoint answers with the JSON the JavaScript embeds for the same
+/// Evidence, so the script's call back to it gets data of the same form.
+#[tokio::test]
+async fn the_json_endpoint_gives_the_json_the_javascript_embeds() {
+    // The application gives an unminified JavaScript builder, so the JSON it
+    // embeds is the JSON builder's text as written.
+    let elements: Vec<Arc<dyn FlowElement>> = vec![
+        Arc::new(HintsElement::new()),
+        Arc::new(
+            JavaScriptBuilderElement::builder()
+                .set_minify(false)
+                .build(),
+        ),
+    ];
+    let web = WebPipeline::build(elements, WebIntegrationOptions::default())
+        .expect("web pipeline builds");
+    let app = register(Router::new(), FiftyOneState::from_web_pipeline(&web));
+    let evidence = "session-id=abc&sequence=1";
+
+    let javascript = send(&app, "GET", &format!("/51Degrees.core.js?{evidence}")).await;
+    assert_eq!(javascript.status(), StatusCode::OK);
+    let javascript = to_bytes(javascript.into_body(), usize::MAX).await.unwrap();
+    let javascript = String::from_utf8(javascript.to_vec()).unwrap();
+    let (_, after) = javascript
+        .split_once("var json = ")
+        .unwrap_or_else(|| panic!("the JavaScript embeds its JSON, got: {javascript}"));
+    let embedded = serde_json::Deserializer::from_str(after)
+        .into_iter::<serde_json::Value>()
+        .next()
+        .expect("a JSON value follows `var json = `")
+        .unwrap_or_else(|error| panic!("the embedded JSON parses: {error}"));
+    assert!(
+        embedded.get("hints").is_some(),
+        "the embedded JSON holds the element's data, got: {embedded}"
+    );
+
+    let json = Request::builder()
+        .method("POST")
+        .uri("/51dpipeline/json")
+        .header("host", "localhost")
+        .header("user-agent", "test-agent")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(Body::from(evidence))
+        .unwrap();
+    let json = app.oneshot(json).await.unwrap();
+    assert_eq!(json.status(), StatusCode::OK);
+    let json = to_bytes(json.into_body(), usize::MAX).await.unwrap();
+    let served: serde_json::Value = serde_json::from_slice(&json).unwrap();
+
+    assert_eq!(served, embedded);
 }

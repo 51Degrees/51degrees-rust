@@ -169,10 +169,6 @@ fn pairs(values: &[(&str, &str)]) -> Vec<(String, String)> {
         .collect()
 }
 
-fn ignored(setting: &str) -> String {
-    format!("WARN The usage sharing setting '{setting}' has no effect here and is ignored.")
-}
-
 #[test]
 fn the_builders_are_found_by_the_names_dotnet_finds_them_by() {
     let _serial = start();
@@ -222,9 +218,16 @@ fn the_defaults_are_those_of_dotnet() {
         Duration::from_secs(20 * MINUTE_SECONDS)
     );
     assert!(config.blocked_http_headers().is_empty());
-    assert_eq!(config.included_query_string_parameters(), Some(&[][..]));
+    // usage-sharing-element.md: share all query string parameters is on by
+    // default, where .NET up to 4.5.130 has it off.
+    assert_eq!(config.included_query_string_parameters(), None);
     assert!(!config.share_all_evidence());
     assert!(config.ignore_flow_data_evidence_filter().is_empty());
+    assert_eq!(config.failures_to_enter_recovery(), 10);
+    assert_eq!(config.failures_window(), Duration::from_secs(100));
+    assert_eq!(config.initial_recovery_delay(), Duration::from_secs(2));
+    assert_eq!(config.max_recovery_delay(), Duration::from_secs(300));
+    assert_eq!(config.recovery_multiplier(), 2.0);
     assert!(logged().is_empty(), "{:?}", logged());
 }
 
@@ -234,6 +237,7 @@ fn every_setting_is_read_as_dotnet_reads_it() {
     let pipeline = share_usage(&[
         ("IncludedQueryStringParameters", "a,\"b,c\",,"),
         ("IncludedQueryStringParameter", "d"),
+        ("ShareAllQueryStringParameters", "false"),
         ("ShareAllEvidence", "false"),
         ("BlockedHttpHeaders", "X-One,x-two"),
         ("BlockedHttpHeader", "X-Three"),
@@ -279,6 +283,11 @@ fn every_setting_is_read_as_dotnet_reads_it() {
     assert_eq!(config.maximum_queue_size(), 200);
     assert_eq!(config.add_timeout(), Duration::from_millis(7));
     assert_eq!(config.take_timeout(), Duration::from_millis(300));
+    assert_eq!(config.failures_to_enter_recovery(), 5);
+    assert_eq!(config.failures_window(), Duration::from_secs(50));
+    assert_eq!(config.initial_recovery_delay(), Duration::from_millis(1500));
+    assert_eq!(config.max_recovery_delay(), Duration::from_secs(60));
+    assert_eq!(config.recovery_multiplier(), 3.0);
     // .NET holds the address as a Uri, which writes the scheme and host in
     // lower case.
     assert_eq!(config.share_usage_url(), "HTTPS://Example.com/usage");
@@ -286,20 +295,20 @@ fn every_setting_is_read_as_dotnet_reads_it() {
         config.repeat_evidence_interval(),
         Duration::from_secs(30 * MINUTE_SECONDS)
     );
+    assert_eq!(config.session_cookie_name(), Some("MySession"));
 
-    // The element itself shares what the settings say.
+    // The element itself shares what the settings say. The included query
+    // string parameters are deprecated and have no effect, so a parameter
+    // no element of the pipeline accepts is shared only for a 51D_ name.
     let element = share_usage_element(&pipeline);
     let filter = element.shared_evidence_filter();
+    for key in ["query.51d_x", "header.accept"] {
+        assert!(filter.include(key), "{key}");
+    }
     for key in [
         "query.a",
         "query.b,c",
         "query.d",
-        "query.51d_x",
-        "header.accept",
-    ] {
-        assert!(filter.include(key), "{key}");
-    }
-    for key in [
         "query.e",
         "header.x-one",
         "header.x-two",
@@ -314,13 +323,6 @@ fn every_setting_is_read_as_dotnet_reads_it() {
         [
             "WARN Configuration for 'IgnoreFlowDataEvidenceFilter' is invalid.bad".to_string(),
             "WARN Configuration for 'IgnoreFlowDataEvidenceFilter' is invalid.".to_string(),
-            ignored("SetAspSessionCookieName"),
-            ignored("SetTrackSession"),
-            ignored("SetFailuresToEnterRecovery"),
-            ignored("SetFailuresWindowSeconds"),
-            ignored("SetInitialRecoveryDelaySeconds"),
-            ignored("SetMaxRecoveryDelaySeconds"),
-            ignored("SetRecoveryMultiplier"),
         ]
     );
 }
@@ -355,10 +357,15 @@ fn sharing_all_evidence_shares_every_key_but_those_never_shared() {
     assert!(share_usage_config(&pipeline).share_all_evidence());
     let element = share_usage_element(&pipeline);
     let filter = element.shared_evidence_filter();
-    for key in ["cookie.session", "query.anything"] {
+    for key in ["cookie.51d_session", "query.51d_x", "session.anything"] {
         assert!(filter.include(key), "{key}");
     }
-    assert!(!filter.include("header.cookie"));
+    // usage-sharing-element.md: no cookie but a 51D_ one is shared, and no
+    // query string or form parameter but a 51D_ one or one the pipeline
+    // uses, even when all evidence is shared.
+    for key in ["header.cookie", "cookie.session", "query.anything"] {
+        assert!(!filter.include(key), "{key}");
+    }
 }
 
 #[test]
@@ -477,30 +484,110 @@ fn settings_that_have_no_effect_still_refuse_what_dotnet_refuses() {
             )
         )
     );
-    // Recovery settings other than the failure count take any number, as
-    // in .NET.
-    share_usage(&[
-        ("FailuresWindowSeconds", "-1"),
-        ("RecoveryMultiplier", "-1"),
-    ])
-    .expect("negative recovery settings");
 }
 
+/// usage-sharing-element.md, "Configuration options": "An implementation
+/// MUST reject a value outside the range given." The messages are those of
+/// .NET's `ShareUsageBuilderBase`, an `ArgumentOutOfRangeException` with the
+/// value it was given.
 #[test]
-fn query_string_parameters_are_shared_as_dotnet_shares_them() {
+fn recovery_settings_are_checked_as_dotnet_checks_them() {
+    let _serial = start();
+    for (setting, value, parameter, rule) in [
+        (
+            "FailuresWindowSeconds",
+            "0",
+            "failuresWindowSeconds",
+            "Must be 1 or more.",
+        ),
+        (
+            "FailuresWindowSeconds",
+            "-1",
+            "failuresWindowSeconds",
+            "Must be 1 or more.",
+        ),
+        (
+            "InitialRecoveryDelaySeconds",
+            "0",
+            "initialDelaySeconds",
+            "Must be more than 0.",
+        ),
+        (
+            "InitialRecoveryDelaySeconds",
+            "-1.5",
+            "initialDelaySeconds",
+            "Must be more than 0.",
+        ),
+        (
+            "MaxRecoveryDelaySeconds",
+            "0",
+            "maxDelaySeconds",
+            "Must be more than 0.",
+        ),
+        (
+            "RecoveryMultiplier",
+            "0.5",
+            "multiplier",
+            "Must be 1 or more.",
+        ),
+        (
+            "RecoveryMultiplier",
+            "-1",
+            "multiplier",
+            "Must be 1 or more.",
+        ),
+    ] {
+        assert_eq!(
+            message(share_usage(&[(setting, value)])),
+            failed(
+                "ShareUsage",
+                &format!("{rule} (Parameter '{parameter}')\nActual value was {value}.")
+            ),
+            "{setting} {value}"
+        );
+    }
+    for (setting, value) in [
+        ("FailuresWindowSeconds", "1"),
+        ("InitialRecoveryDelaySeconds", "0.001"),
+        ("MaxRecoveryDelaySeconds", "0.001"),
+        ("RecoveryMultiplier", "1"),
+    ] {
+        share_usage(&[(setting, value)]).expect(setting);
+    }
+}
+
+/// usage-sharing-element.md: share all query string parameters is on by
+/// default, and the included query string parameters have an effect only
+/// when it is off, whichever of the two settings comes first.
+#[test]
+fn query_string_parameters_are_shared_as_the_specification_says() {
     let _serial = start();
     let included = |parameters: &[(&str, &str)]| {
         config(share_usage(parameters))
             .included_query_string_parameters()
             .map(<[String]>::to_vec)
     };
-    assert_eq!(
-        included(&[
-            ("IncludedQueryStringParameter", "x"),
-            ("ShareAllQueryStringParameters", "true"),
-        ]),
-        None
-    );
+    assert_eq!(included(&[]), None);
+    for setting in [
+        "IncludedQueryStringParameter",
+        "IncludedQueryStringParameters",
+    ] {
+        assert_eq!(included(&[(setting, "x")]), None, "{setting}");
+        for share_all in ["true", "false"] {
+            let shared = (share_all == "false").then(|| strings(&["x"]));
+            let all = ("ShareAllQueryStringParameters", share_all);
+            assert_eq!(
+                included(&[(setting, "x"), all]),
+                shared,
+                "{setting} then {share_all}"
+            );
+            assert_eq!(
+                included(&[all, (setting, "x")]),
+                shared,
+                "{share_all} then {setting}"
+            );
+        }
+    }
     assert_eq!(
         included(&[
             ("ShareAllQueryStringParameters", "true"),
@@ -508,20 +595,11 @@ fn query_string_parameters_are_shared_as_dotnet_shares_them() {
         ]),
         Some(Vec::new())
     );
-    // .NET fails for both with a NullReferenceException. A configuration
-    // file cannot give this order, as its names are applied sorted.
-    for setting in [
-        "IncludedQueryStringParameter",
-        "IncludedQueryStringParameters",
-    ] {
-        assert_eq!(
-            included(&[("ShareAllQueryStringParameters", "true"), (setting, "x")]),
-            None,
-            "{setting}"
-        );
-    }
     assert_eq!(
-        included(&[("SetIncludedQueryStringParameters", "")]),
+        included(&[
+            ("SetIncludedQueryStringParameters", ""),
+            ("ShareAllQueryStringParameters", "false"),
+        ]),
         Some(Vec::new())
     );
     // The list adds to what is there, as one parameter does.
@@ -529,6 +607,7 @@ fn query_string_parameters_are_shared_as_dotnet_shares_them() {
         included(&[
             ("IncludedQueryStringParameter", "x"),
             ("IncludedQueryStringParameters", "y,z"),
+            ("ShareAllQueryStringParameters", "false"),
         ]),
         Some(strings(&["x", "y", "z"]))
     );
@@ -536,7 +615,8 @@ fn query_string_parameters_are_shared_as_dotnet_shares_them() {
     // A list given in code is taken as it is.
     let options = PipelineOptions::new().element(
         ElementOptions::new("ShareUsage")
-            .parameter("SetIncludedQueryStringParameters", vec!["p", "q,r"]),
+            .parameter("SetIncludedQueryStringParameters", vec!["p", "q,r"])
+            .parameter("SetShareAllQueryStringParameters", "false"),
     );
     assert_eq!(
         config(build(&options)).included_query_string_parameters(),
@@ -752,12 +832,14 @@ fn a_json_file_written_for_dotnet_makes_the_same_elements() {
           "PipelineOptions": {
             "Elements": [
               { "BuilderName": "SequenceElementBuilder" },
+              { "BuilderName": "SetHeadersElementBuilder" },
               {
                 "BuilderName": "ShareUsageBuilder",
                 "BuildParameters": {
                   // Written out of order, as a person might.
                   "TrackSession": true,
                   "SetShareAllQueryStringParameters": true,
+                  "AspSessionCookieName": "ASP.NET_SessionId",
                   "IncludedQueryStringParameter": "x",
                   "SharePercentage": 0.25,
                   "MinimumEntriesPerMessage": 200,
@@ -765,8 +847,7 @@ fn a_json_file_written_for_dotnet_makes_the_same_elements() {
                   "BlockedHttpHeaders": "a,b",
                   "BlockedHttpHeader": "c"
                 }
-              },
-              { "BuilderName": "SetHeadersElementBuilder" }
+              }
             ]
           }
         }"#,
@@ -778,7 +859,7 @@ fn a_json_file_written_for_dotnet_makes_the_same_elements() {
         .iter()
         .map(|e| e.data_key())
         .collect();
-    assert_eq!(keys, ["sequence", "shareusage", "set-headers"]);
+    assert_eq!(keys, ["sequence", "set-headers", "shareusage"]);
 
     // .NET applies the names sorted, so the header is added before the
     // list replaces it, and the parameter before every one is shared.
@@ -792,7 +873,52 @@ fn a_json_file_written_for_dotnet_makes_the_same_elements() {
     assert_eq!(config.share_percentage(), 0.25);
     assert_eq!(config.minimum_entries_per_message(), 200);
     assert_eq!(config.maximum_queue_size(), 2000);
-    assert_eq!(logged(), [ignored("SetTrackSession")]);
+    assert_eq!(config.session_cookie_name(), Some("ASP.NET_SessionId"));
+    assert_eq!(logged(), Vec::<String>::new());
+}
+
+/// Track session compares the session cookie, so with no cookie named there
+/// is no session to compare, and that is refused rather than ignored.
+#[test]
+fn track_session_with_no_session_cookie_name_is_refused() {
+    let _serial = start();
+    assert_eq!(
+        message(share_usage(&[("TrackSession", "true")])),
+        failed(
+            "ShareUsage",
+            "Usage sharing's 'SetTrackSession' is on but 'SetAspSessionCookieName' names no \
+             session cookie, so there is no session to compare. Set \
+             'SetAspSessionCookieName' to the name of the cookie that holds the session id, \
+             or turn 'SetTrackSession' off."
+        )
+    );
+
+    // A session cookie name has no effect unless track session is on.
+    let named_only = config(share_usage(&[("AspSessionCookieName", "sid")]));
+    assert_eq!(named_only.session_cookie_name(), None);
+
+    // usage-sharing-element.md: track session works the same whether or not
+    // all evidence is shared, so it needs a name either way.
+    assert_eq!(
+        message(share_usage(&[
+            ("TrackSession", "true"),
+            ("ShareAllEvidence", "true"),
+        ])),
+        failed(
+            "ShareUsage",
+            "Usage sharing's 'SetTrackSession' is on but 'SetAspSessionCookieName' names no \
+             session cookie, so there is no session to compare. Set \
+             'SetAspSessionCookieName' to the name of the cookie that holds the session id, \
+             or turn 'SetTrackSession' off."
+        )
+    );
+    let share_all = config(share_usage(&[
+        ("TrackSession", "true"),
+        ("ShareAllEvidence", "true"),
+        ("AspSessionCookieName", "sid"),
+    ]));
+    assert_eq!(share_all.session_cookie_name(), Some("sid"));
+    assert_eq!(logged(), Vec::<String>::new());
 }
 
 // The pipeline .NET's `FiftyOnePipelineBuilder` makes from a configuration.
@@ -802,6 +928,12 @@ fn a_json_file_written_for_dotnet_makes_the_same_elements() {
 
 const FIFTYONE_PIPELINE: &str =
     "fiftyone_pipeline_engines_fiftyone::configuration::FiftyOnePipelineBuilder";
+
+/// The refusal of a pipeline that puts usage sharing anywhere but last on
+/// its own.
+const MISPLACED_USAGE_SHARING: &str = "The usage sharing element, with the data key \
+                                       'shareusage', must be the last flow element in a \
+                                       pipeline and outside any parallel group.";
 
 fn build_fiftyone(options: &PipelineOptions) -> Result<Arc<Pipeline>> {
     let mut registry = registry();
@@ -967,16 +1099,16 @@ fn a_sequence_or_usage_sharing_element_on_its_own_is_kept_where_it_is() {
                 .element(element("ShareUsageBuilder")),
             &["sequence", "set-headers", "shareusage"],
         ),
-        (
-            PipelineOptions::new()
-                .element(element("ShareUsageBuilder"))
-                .element(element("SequenceElementBuilder")),
-            &["shareusage", "sequence"],
-        ),
     ] {
         let pipeline = build_fiftyone(&options).unwrap();
         assert_eq!(data_keys(&pipeline), expected, "{options:?}");
     }
+
+    // Usage sharing on its own anywhere but last is refused.
+    let options = PipelineOptions::new()
+        .element(element("ShareUsageBuilder"))
+        .element(element("SequenceElementBuilder"));
+    assert_eq!(message(build_fiftyone(&options)), MISPLACED_USAGE_SHARING);
 
     // The usage sharing element the configuration names keeps its settings.
     let pipeline = build_fiftyone(&PipelineOptions::new().element(share_quarter())).unwrap();
@@ -994,26 +1126,17 @@ fn an_element_in_a_parallel_group_is_not_counted() {
         ]))
     };
 
-    // .NET adds a second usage sharing element, and so do the crates.
-    let pipeline = build_fiftyone(&group("ShareUsageBuilder", "SetHeadersElementBuilder")).unwrap();
-    assert_eq!(
-        data_keys(&pipeline),
-        ["sequence", "shareusage", "shareusage", "set-headers"]
-    );
-
-    // Each of the two gives its own settings, the one added with the
-    // defaults and then the group's.
+    // Usage sharing in a group of two is not counted, so a second is added
+    // last, and the pipeline is refused, because usage sharing never runs
+    // in a parallel group.
+    let refused = build_fiftyone(&group("ShareUsageBuilder", "SetHeadersElementBuilder"));
+    assert_eq!(message(refused), MISPLACED_USAGE_SHARING);
     let half = ElementOptions::new("ShareUsageBuilder").parameter("SharePercentage", "0.5");
     let options = PipelineOptions::new().element(ElementOptions::group([
         half,
         ElementOptions::new("SetHeadersElementBuilder"),
     ]));
-    let pipeline = build_fiftyone(&options).unwrap();
-    let percentages: Vec<f64> = share_usage_configs(&pipeline)
-        .iter()
-        .map(ShareUsageConfig::share_percentage)
-        .collect();
-    assert_eq!(percentages, [1.0, 0.5]);
+    assert_eq!(message(build_fiftyone(&options)), MISPLACED_USAGE_SHARING);
 
     // .NET adds a second Sequence element before the group and builds. The
     // crates refuse a group whose element has the data key of one before it.
