@@ -150,6 +150,13 @@ mod tests {
     use fiftyone_device_detection_shared::DeviceData;
     use fiftyone_pipeline_core::ElementData;
 
+    /// Whether an entry gives the reason a property has no value rather
+    /// than being a property, as the shared Cloud Aspect Engine processing
+    /// decides.
+    fn is_null_reason_key(name: &str) -> bool {
+        is_reason_entry(name)
+    }
+
     #[test]
     fn maps_scalar_values_to_typed_properties() {
         let device = serde_json::json!({

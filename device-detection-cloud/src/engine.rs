@@ -386,6 +386,18 @@ impl Default for DeviceDetectionCloudEngineBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fiftyone_cloud_request_engine::aspect::aspect_portion;
+
+    /// The `device` portion of a whole cloud response, as the shared Cloud
+    /// Aspect Engine processing takes it, or null where there is none.
+    fn slice_device_json(json: &str) -> Result<serde_json::Value> {
+        let portion = aspect_portion(json, DEVICE_ELEMENT_DATA_KEY)?;
+        Ok(if portion.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::Object(portion)
+        })
+    }
 
     #[test]
     fn slice_device_json_extracts_device_member() {

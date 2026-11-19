@@ -395,7 +395,20 @@ impl Default for HardwareProfileCloudEngineBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fiftyone_cloud_request_engine::aspect::aspect_portion;
     use fiftyone_device_detection_shared::DeviceData;
+
+    /// The profiles of a whole cloud response, taken through the shared
+    /// Cloud Aspect Engine processing.
+    fn slice_hardware_profiles(
+        json: &str,
+        metadata: Option<&DiscoveredMetadata>,
+    ) -> Result<MultiDeviceData> {
+        Ok(hardware_profiles(
+            &aspect_portion(json, HARDWARE_ELEMENT_DATA_KEY)?,
+            metadata,
+        ))
+    }
 
     #[test]
     fn slice_profiles_reads_each_match() {
