@@ -121,11 +121,9 @@
 //! The accessible-properties request carries the resource key and, when one is
 //! set, the license key, because the cloud adds the products the license grants
 //! to those of the resource key. An engine holding a license key and no resource
-//! key is the exception, because the endpoint takes a resource key and refuses a
-//! request without one. The builder does not call it for such an engine, which
-//! therefore starts with no accessible properties, and a downstream cloud aspect
-//! engine reads the response JSON and infers each property's type from the value,
-//! as it already does for a resource key that grants it no product.
+//! key asks with the license key, sent as `license` in the body of a POST so
+//! that the key stays out of request logs, and the cloud answers with every
+//! property the license key entitles.
 //!
 //! Because both results depend only on the keys, a consumer can persist
 //! them and skip the build-time fetch on the next start. The builder retains the

@@ -689,9 +689,9 @@ fn a_key_without_the_product_has_no_properties_and_logs_once() {
     }
 }
 
-/// With only a license key the granted properties are not listed, so each
-/// value's form is read from the JSON, nothing is logged, and a property
-/// the response did not return has no reason.
+/// With only a license key whose accessible properties list no product, each
+/// value's form is read from the JSON, nothing is logged, and a property the
+/// response did not return has no reason.
 #[test]
 fn a_license_key_alone_reads_each_form_from_the_json() {
     let _serial = start();
@@ -751,4 +751,47 @@ fn the_engine_needs_a_request_engine() {
         .unwrap();
     let mut data = alone.create_flow_data_with(Evidence::builder().build());
     assert!(data.process().is_err());
+}
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let _serial = start();
+    let pipeline = granted(r#"{"countrynamestranslated":{"CountryCodesGeographicalAll":["DE"]}}"#);
+    let mut data = process(&pipeline);
+    assert!(
+        data.get(CloudRequestEngine::DATA_KEY).is_some(),
+        "no data under '{}'",
+        CloudRequestEngine::DATA_KEY.name()
+    );
+    match data.get_or_add(CloudRequestEngine::DATA_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            CloudRequestEngine::DATA_KEY.name()
+        ),
+    }
+    assert!(
+        data.get(COUNTRY_NAMES_TRANSLATED_KEY).is_some(),
+        "no data under '{}'",
+        COUNTRY_NAMES_TRANSLATED_KEY.name()
+    );
+    match data.get_or_add(COUNTRY_NAMES_TRANSLATED_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            COUNTRY_NAMES_TRANSLATED_KEY.name()
+        ),
+    }
 }

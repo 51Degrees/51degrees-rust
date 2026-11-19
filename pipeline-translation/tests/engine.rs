@@ -937,3 +937,32 @@ fn the_language_evidence_keys_are_a_slice_in_order() {
         ]
     );
 }
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let engine = french_animals(MissingTranslationBehavior::Original, "");
+    let mut data = process(
+        engine,
+        animal("dog"),
+        &[("header.accept-language", "fr_FR")],
+    );
+    assert!(
+        data.get(TRANSLATION_KEY).is_some(),
+        "no data under '{}'",
+        TRANSLATION_KEY.name()
+    );
+    match data.get_or_add(TRANSLATION_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            TRANSLATION_KEY.name()
+        ),
+    }
+}

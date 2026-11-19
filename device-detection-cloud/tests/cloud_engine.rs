@@ -223,6 +223,39 @@ fn a_failed_request_stores_empty_device_and_hardware_data() {
     assert!(hardware.is_empty());
 }
 
+/// Read IsMobile through the `DeviceData` interface alone, as code written
+/// against the on-premise engine does.
+fn is_mobile_through_the_interface<D: DeviceData + ?Sized>(device: &D) -> bool {
+    *device.is_mobile().value().expect("IsMobile has a value")
+}
+
+#[test]
+fn device_data_is_interface_compatible_with_the_on_premise_engine() {
+    // cloud-aspect-engine.md line 24: "The key requirement is that the
+    // Element Data for a Cloud Aspect Engine MUST be interface compatible
+    // with the Element Data for the equivalent on-premise Engine."
+    //
+    // The on-premise engine stores its data under the shared crate's
+    // DEVICE_DATA_KEY, a TypedKey of DeviceDataBase. The cloud engine's key
+    // must be that same key, which the compiler checks here, and the data it
+    // stores must read through that key and the DeviceData trait.
+    let shared: fiftyone_pipeline_core::TypedKey<fiftyone_device_detection_shared::DeviceDataBase> =
+        DEVICE_DATA_KEY;
+    let (pipeline, _request_engine) = fake_pipeline();
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("header.user-agent", "Mozilla/5.0 (Linux; Android 8.0)")
+            .build(),
+    );
+    data.process().expect("processing succeeds");
+    let device = data
+        .get(fiftyone_device_detection_shared::DEVICE_DATA_KEY)
+        .expect("the cloud data reads through the on-premise key");
+    assert!(is_mobile_through_the_interface(device));
+    let device: &dyn DeviceData = data.get(shared).expect("and through the trait object");
+    assert!(is_mobile_through_the_interface(device));
+}
+
 #[test]
 fn populates_device_data_from_cloud_json() {
     let (pipeline, _request_engine) = fake_pipeline();
@@ -637,4 +670,51 @@ fn live_cloud_detection() {
         device.is_mobile().has_value(),
         "live result should carry IsMobile"
     );
+}
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let (pipeline, _request_engine) = fake_pipeline();
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("header.user-agent", "Mozilla/5.0 (Linux; Android 8.0)")
+            .build(),
+    );
+    data.process().expect("processing succeeds");
+    assert!(
+        data.get(CloudRequestEngine::DATA_KEY).is_some(),
+        "no data under '{}'",
+        CloudRequestEngine::DATA_KEY.name()
+    );
+    match data.get_or_add(CloudRequestEngine::DATA_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            CloudRequestEngine::DATA_KEY.name()
+        ),
+    }
+    assert!(
+        data.get(DEVICE_DATA_KEY).is_some(),
+        "no data under '{}'",
+        DEVICE_DATA_KEY.name()
+    );
+    match data.get_or_add(DEVICE_DATA_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            DEVICE_DATA_KEY.name()
+        ),
+    }
 }
