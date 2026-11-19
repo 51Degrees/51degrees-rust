@@ -360,8 +360,8 @@ fn the_supplied_evidence_is_the_evidence_when_nothing_is_added() {
     assert_eq!(entries(data.evidence()), entries(&supplied()));
 }
 
-/// Evidence the caller adds before processing is supplied, and evidence it
-/// adds after processing is not.
+/// Evidence the caller adds before processing is supplied. Adding evidence
+/// after processing panics, which `finished_flow_data.rs` tests.
 #[test]
 fn the_supplied_evidence_holds_what_the_caller_added_before_processing() {
     let pipeline = Pipeline::builder()
@@ -373,8 +373,6 @@ fn the_supplied_evidence_holds_what_the_caller_added_before_processing() {
     assert_eq!(data.supplied_evidence().get("query.before"), Some("1"));
 
     data.process().unwrap();
-    data.add_evidence("query.after", "2");
-    data.add_evidence("query.sequence", "7");
 
     assert_eq!(
         entries(data.supplied_evidence()),
@@ -384,8 +382,7 @@ fn the_supplied_evidence_holds_what_the_caller_added_before_processing() {
             ("query.before", "1"),
         ])
     );
-    assert_eq!(data.evidence().get("query.after"), Some("2"));
-    assert_eq!(data.evidence().get("query.sequence"), Some("7"));
+    assert_eq!(entries(data.evidence()), entries(data.supplied_evidence()));
 }
 
 /// An element after the one that added evidence reads the supplied evidence
