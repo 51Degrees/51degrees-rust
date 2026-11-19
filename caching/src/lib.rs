@@ -187,7 +187,7 @@
 //! ```
 //!
 //! - Data loaded from the source is kept on disk and in memory.
-//! - The [`MemoryBudget`] follows the machine's memory, so the copies in
+//! - The `MemoryBudget` follows the machine's memory, so the copies in
 //!   memory are evicted, least recently used first, when memory comes under
 //!   pressure. Each store can instead be given a fixed number of bytes.
 //! - An evicted entry is read back from disk without going to the source,
@@ -203,7 +203,7 @@
 //!   another has open logs a warning and carries on without the disk.
 //!
 //! Both size themselves from the machine, with no setting. `FileStore`,
-//! [`MemoryBudget`] and [`machine`] are on native targets only.
+//! `MemoryBudget` and `machine` are on native targets only.
 //!
 //! ```no_run
 //! # #[cfg(all(feature = "disk", not(target_family = "wasm")))]

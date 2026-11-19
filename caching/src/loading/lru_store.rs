@@ -52,7 +52,7 @@ fn entry_overhead<K, V>() -> usize {
 ///
 /// A store can also be bounded by bytes, with a fixed
 /// [limit](LruStoreBuilder::max_bytes) or, on native targets, a
-/// [`MemoryBudget`](crate::MemoryBudget) that follows the machine's memory,
+/// `MemoryBudget` that follows the machine's memory,
 /// so that copies in memory are evicted when memory comes under pressure.
 /// Below a store on disk, an evicted entry is read back from there rather
 /// than loaded from the source.
