@@ -88,12 +88,11 @@ const OLDER: Duration = Duration::from_secs(60);
 /// How much newer than it was a file is made to be.
 const NEWER: Duration = Duration::from_secs(60);
 
-/// The start of the record logged for a callback that panicked. This is the
-/// one message of the errors table still named by the engine's data key,
-/// because a callback is keyed by it and the engine itself is out of reach
-/// where the record is written.
+/// The start of the record logged for a callback that panicked, which names
+/// the engine by its type as the errors table does.
 const PANIC_RECORD: &str =
-    "ERROR An unhandled error occurred while checking for automatic updates for engine 'failing'.";
+    "ERROR An unhandled error occurred while checking for automatic updates for engine \
+     'FailingEngine'.";
 
 /// Log records at warning level or above, as "LEVEL message".
 static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());

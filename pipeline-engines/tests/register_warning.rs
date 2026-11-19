@@ -133,7 +133,7 @@ fn registering_the_only_reference_to_an_engine_is_logged() {
     assert_eq!(
         take(),
         [
-            "WARN The data file for QuietEngine will not be updated, because the data update \
+            "WARN The data file for quiet will not be updated, because the data update \
           service was given the only reference to its engine, which is dropped when \
           registration ends. Keep a reference to the engine for as long as it is to \
           be updated."
