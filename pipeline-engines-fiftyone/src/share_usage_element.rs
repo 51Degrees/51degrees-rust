@@ -2773,6 +2773,79 @@ mod tests {
         }
     }
 
+    /// A sink that holds every send until the test lets it go.
+    struct Held {
+        release: Arc<Mutex<mpsc::Receiver<()>>>,
+        received: Arc<AtomicUsize>,
+    }
+
+    impl UsageSink for Held {
+        fn receive(&self, _batch: UsageBatch) -> std::result::Result<(), SinkError> {
+            let _ = self.release.lock().unwrap().recv();
+            self.received.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    /// usage-sharing-element.md: "The process function SHOULD get the data
+    /// it needs and complete as soon as possible." Process returns while
+    /// the send it queued is still held, so it never waits for a send. The
+    /// test does not measure how long process takes. It fails only when
+    /// process waits for the held send, which then never ends.
+    #[test]
+    fn process_completes_while_the_send_is_held() {
+        const RECORDS: usize = 5;
+        let (release, held) = mpsc::channel();
+        let received = Arc::new(AtomicUsize::new(0));
+        let element = Arc::new(ShareUsageElement::with_sink(
+            ShareUsageConfig::builder()
+                .minimum_entries_per_message(1)
+                .maximum_queue_size(RECORDS * 2)
+                .build(),
+            Held {
+                release: Arc::new(Mutex::new(held)),
+                received: Arc::clone(&received),
+            },
+        ));
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+
+        let (done, finished) = mpsc::channel();
+        let processing = {
+            let pipeline = Arc::clone(&pipeline);
+            std::thread::spawn(move || {
+                for i in 0..RECORDS {
+                    let mut data = pipeline.create_flow_data_with(
+                        Evidence::builder()
+                            .add("header.user-agent", format!("agent-{i}"))
+                            .build(),
+                    );
+                    data.process().unwrap();
+                }
+                done.send(()).unwrap();
+            })
+        };
+
+        // Nothing releases the sink before this, so process finishing here
+        // shows it did not wait for a send.
+        let returned = finished.recv_timeout(Duration::from_secs(60)).is_ok();
+        let sent_before_return = received.load(Ordering::SeqCst);
+        for _ in 0..RECORDS {
+            let _ = release.send(());
+        }
+        drop(release);
+        assert!(returned, "process waited for the held send");
+        assert_eq!(
+            sent_before_return, 0,
+            "a send ended before the sink was released"
+        );
+        processing.join().unwrap();
+        drop(pipeline);
+        drop(element);
+    }
+
     /// An element that accepts the evidence its filter lists and does nothing,
     /// so the Pipeline uses those keys.
     struct Accepts {

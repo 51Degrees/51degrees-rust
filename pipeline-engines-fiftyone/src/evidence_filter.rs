@@ -446,6 +446,32 @@ mod tests {
         }
     }
 
+    /// usage-sharing-element.md: "the filter function MUST return true for
+    /// both, whatever the configuration, because usage is counted against
+    /// them", being `fiftyone.resource-key` and `fiftyone.license-key`.
+    #[test]
+    fn the_resource_key_and_license_key_are_shared_whatever_the_configuration() {
+        let narrow = EvidenceKeyFilterShareUsage::new(
+            ["user-agent", "fiftyone", "resource-key", "license-key"],
+            Some(vec!["other"]),
+        );
+        let mut filters: Vec<(&str, EvidenceKeyFilterShareUsage)> = both_filters().into();
+        filters.push(("headers blocked and one query value", narrow));
+        for (name, filter) in filters {
+            let tracker = EvidenceKeyFilterShareUsageTracker::new(filter.clone());
+            for key in ["fiftyone.resource-key", "fiftyone.license-key"] {
+                for spelling in spellings(key) {
+                    assert!(filter.include(&spelling), "{name}: {spelling} not shared");
+                    assert!(filter.order(&spelling).is_some(), "{name}: {spelling}");
+                    assert!(
+                        tracker.include(&spelling),
+                        "{name}: {spelling} not in the tracker's key"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn session_values_are_shared_only_when_they_start_51d() {
         let filter = EvidenceKeyFilterShareUsage::new(Vec::<&str>::new(), None::<Vec<&str>>);
